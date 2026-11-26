@@ -1,0 +1,77 @@
+{
+  "task": "DEV-MEMORY-BUDGET-STARTUP-PEAK-20261118",
+  "follow_up_of": [
+    "DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117",
+    "DEV-MEMORY-BUDGET-DAILY-MEASUREMENT-20261117"
+  ],
+  "hosted_facts_read_only": {
+    "dmesg_oom_kills": [
+      {
+        "at": "2026-11-17T20:40:48Z",
+        "process": "uvicorn",
+        "anon_rss_kb": 1034296,
+        "container": "incidents",
+        "limit_mib": 1024
+      },
+      {
+        "at": "2026-11-18T04:46:09Z",
+        "process": "uvicorn",
+        "anon_rss_kb": 1045232,
+        "container": "incidents",
+        "limit_mib": 1024
+      }
+    ],
+    "state_at_2026-11-18T05:38Z": {
+      "container": "pantheon-incidents-1",
+      "running": true,
+      "healthy": true,
+      "RestartCount": 1,
+      "OOMKilled": false
+    },
+    "daily_measurement_run": {
+      "id": 44245690990,
+      "incidents": {
+        "limit": 1073741824,
+        "peak": 541327360,
+        "percent": 50.4,
+        "oom_kill": 0,
+        "max_events": 0,
+        "restarts": 1
+      },
+      "finding_for_incidents": null
+    }
+  },
+  "incidents": {
+    "old_limit_mib": 1024,
+    "new_limit_mib": 2048,
+    "startup_peak_mib": 1045,
+    "steady_peak_mib": 631,
+    "ratio_to_startup_peak": 1.96,
+    "measured_by": "dmesg anon-rss at kill; lower bound (process was killed while still growing)"
+  },
+  "startup_peak_by_service": {
+    "incidents": "startup peak well above steady peak (1045 vs 631 MiB)",
+    "all_other_services": "not measured at start: the data available are steady cgroup memory.peak from a container up about 60 minutes plus the 2026-11-18 daily report, both after the start (a restart resets memory.peak), and no other OOM kill at start is recorded in dmesg"
+  },
+  "rule": "recorded peak of a service = max(steady peak, one start of that service); measure with cgroup memory.peak read after a fresh start (docker compose up --force-recreate <svc>, wait for healthy, read memory.peak); a restart resets memory.peak, memory.events and so oom_kill",
+  "report_change": {
+    "finding": "container_restarted_since_creation",
+    "severity": "warning",
+    "fields": [
+      "service",
+      "container",
+      "restarts",
+      "created",
+      "oom_kill",
+      "note"
+    ],
+    "emitted_when": "docker RestartCount > 0, with or without previous report, whether or not the count grew",
+    "max_growth": "one finding per restarted service",
+    "replay_2026-11-18T05:40Z": "produces the finding (test_restarted_service_reported_without_previous_report)"
+  },
+  "sum_limits_mib": 84352,
+  "rollback": "revert the commit or set DEV_MEM_LIMIT_INCIDENTS; dev compose only, staging and production untouched",
+  "residual_findings": [
+    "scheduled GitHub workflows on this repository start hours late or not at all; the daily measurement had never run by schedule before the manual run 44245690990"
+  ]
+}

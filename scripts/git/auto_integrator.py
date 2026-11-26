@@ -100,6 +100,10 @@ FAILURE_VALUES = {
     "STARTUP_FAILURE",
 }
 IGNORABLE_DIAGNOSTIC_WORKFLOWS = frozenset({"Canonical Review Attestation Audit"})
+CANONICAL_REVIEW_PUBLISHER_CHECK = "Publish canonical review status"
+CANONICAL_REVIEW_PUBLISHER_WORKFLOWS = frozenset(
+    {"Canonical Review Gate", "Pantheon canonical review gate"}
+)
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNSTABLE", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNSTABLE", "UNKNOWN"}
 BEHIND_MERGE_STATE = "BEHIND"
@@ -778,7 +782,21 @@ def is_ignorable_diagnostic(
     if is_check_required(item) is not False:
         return False
     workflow_name = str(item.get("workflowName") or "").strip()
-    return workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS
+    if workflow_name in IGNORABLE_DIAGNOSTIC_WORKFLOWS:
+        return True
+    # The canonical-review metadata publisher is optional and only mirrors the
+    # authoritative canonical context; its cancellation (superseded run) is not
+    # substantive CI. Ignore only cancellation of this job in a recognized publisher workflow.
+    if (
+        name == CANONICAL_REVIEW_PUBLISHER_CHECK
+        and workflow_name in CANONICAL_REVIEW_PUBLISHER_WORKFLOWS
+    ):
+        values = {
+            normalize_state(item.get("conclusion")),
+            normalize_state(item.get("state")),
+        } - {""}
+        return bool(values) and values <= {"CANCELLED", "CANCELED"}
+    return False
 
 
 def check_start_time(item: Mapping[str, Any]) -> str:
@@ -937,6 +955,89 @@ def integration_status_rollup(
         review_bridge_is_required=review_bridge_is_required,
         required_contexts=required_contexts,
     )
+
+
+GATE_REDISPATCH_ACTIVE_STATUSES = frozenset(
+    {"queued", "in_progress", "waiting", "pending", "requested"}
+)
+# A dispatched gate run still queued/in progress is trusted for this long; a
+# run of any status dispatched more recently than the short interval is also
+# trusted. Beyond that the integrator dispatches once more.
+GATE_REDISPATCH_ACTIVE_MAX_AGE_SECONDS = 60 * 60
+GATE_REDISPATCH_MIN_INTERVAL_SECONDS = 10 * 60
+
+
+def _parse_github_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def outstanding_gate_dispatch_wait(
+    json_runner: GitHubJsonCommandRunner,
+    *,
+    repository: str,
+    head_sha: str,
+    now: float | None = None,
+) -> str | None:
+    """Describe an in-flight/recent dispatched gate run for ``head_sha``.
+
+    The workflow's concurrency group is keyed on the head sha with
+    cancel-in-progress, so dispatching again while an earlier dispatched run is
+    still queued cancels it and sends it to the back of the runner queue.
+    Returns a human wait description, or None when a dispatch is warranted.
+    Lookup failures fail open (None): a duplicate dispatch is the old behavior.
+    """
+
+    current = time.time() if now is None else now
+    try:
+        workflow_id = github_review_bridge._canonical_review_gate_workflow_id(
+            json_runner, repository=repository
+        )
+        payload = json_runner.run_json(
+            [
+                "gh",
+                "api",
+                f"repos/{repository}/actions/workflows/{workflow_id}/runs"
+                "?event=workflow_dispatch&per_page=100",
+            ]
+        )
+    except Exception:
+        return None
+    runs = payload.get("workflow_runs") if isinstance(payload, Mapping) else None
+    if not isinstance(runs, list):
+        return None
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        # canonical-review-gate.yml run-name carries the dispatched head sha.
+        if head_sha not in str(run.get("display_title") or run.get("name") or ""):
+            continue
+        created = _parse_github_timestamp(run.get("created_at"))
+        if created is None:
+            continue
+        age = max(0.0, current - created)
+        status = str(run.get("status") or "").lower()
+        if status in GATE_REDISPATCH_ACTIVE_STATUSES:
+            if age < GATE_REDISPATCH_ACTIVE_MAX_AGE_SECONDS:
+                return (
+                    f"dispatched gate run {run.get('id')} is {status} "
+                    f"({int(age // 60)}m old)"
+                )
+        elif age < GATE_REDISPATCH_MIN_INTERVAL_SECONDS:
+            return (
+                f"gate run {run.get('id')} was dispatched {int(age // 60)}m ago "
+                f"({status or 'unknown'})"
+            )
+    return None
 
 
 def make_integrator_tag_lookup(
@@ -2230,8 +2331,8 @@ def open_unblock_task(
         )
         return None
     if not (
-        unblock_contract.requires_repair_task(reason)
-        or unblock_contract.requires_source_reopen(reason)
+        unblock_contract.requires_repair_task(reason, candidate.repository_id)
+        or unblock_contract.requires_source_reopen(reason, candidate.repository_id)
     ):
         print(
             f"auto-integrator: {candidate.task_id} remains blocked by {reason}; "
@@ -3310,7 +3411,10 @@ def integrate_candidate(
         )
         if (has_review or has_operator) and reopen_inspection.is_absent:
             dispatch_error: str | None = None
-            if execute:
+            outstanding_wait = outstanding_gate_dispatch_wait(
+                json_runner, repository=repo_slug, head_sha=decision.head_oid
+            )
+            if execute and outstanding_wait is None:
                 try:
                     github_review_bridge._dispatch_canonical_review_gate_workflow(
                         json_runner,
@@ -3326,6 +3430,12 @@ def integrate_candidate(
                     f"PR #{number} canonical review gate check is not green; "
                     f"failed to re-dispatch workflow for verified proof tag at {decision.head_oid[:12]}: "
                     f"{dispatch_error} and waiting for check to complete."
+                )
+            elif outstanding_wait is not None:
+                detail = (
+                    f"PR #{number} canonical review gate check is not green; "
+                    f"not re-dispatching for verified proof tag at {decision.head_oid[:12]}: "
+                    f"{outstanding_wait}; waiting for it to complete."
                 )
             else:
                 detail = (

@@ -1970,3 +1970,22 @@ def test_unfiltered_collector_pull_materializes_through_source_authority(
     )
     assert {o["field"] for o in result.payload["feature_observations"]} >= fields
     assert result.payload["records"] == []
+
+
+def test_official_industry_storage_reader_preserves_first_acquisition_time():
+    import json
+    from services.source_ingestion.connectors.taiwan_official import normalize_industry_classification_rows
+    from services.source_ingestion.feature_catalogue import catalogue_document, read_feature_series
+
+    recording = json.loads((SERVICE_DIR.parents[1] / "services/source_ingestion/tests/fixtures/twse_company_profile_recorded.json").read_text())
+    row = normalize_industry_classification_rows("TWSE", recording["records"],
+        source_dataset="t187ap03_L", api_endpoint=recording["source_url"], ingest_time=recording["recorded_at"])[0]
+    wrapper = _feature_wrapper(row, "tw_industry_classification")
+    wrapper["metadata"]["symbol_canonical"] = row["symbol_canonical"]
+    observations = _load_authority_module().feature_observations_from_wrappers(
+        [wrapper], catalogue=catalogue_document(), connector_id="tw-test", dataset_id="tw_industry_classification",
+        trusted_now=datetime(2026, 11, 13, tzinfo=timezone.utc),
+    )
+    assert observations[0]["available_time"] == row["available_time"] == recording["recorded_at"]
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-12T14:28:00Z")
+    assert read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-13")

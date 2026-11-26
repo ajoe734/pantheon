@@ -1,0 +1,118 @@
+{
+ "institutional_text_recorded.csv": {
+  "url": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
+  "fetched_at": "2026-11-18T03:56:02Z",
+  "sha256": "4b9d5965199c699eea55e51c4a209b9a0139079c9cede9ec0f11520e15549c8a",
+  "bytes": 6319,
+  "derived": false,
+  "fresh_fetch": true,
+  "response_headers": {
+   "date": "Wed, 18 Nov 2026 03:56:02 GMT",
+   "content-type": "application/octet-stream",
+   "content-length": "6319",
+   "server": "cloudflare",
+   "x-frame-options": "SAMEORIGIN",
+   "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://validator.swagger.io; connect-src 'self'; frame-ancestors 'self';",
+   "strict-transport-security": "max-age=31536000; includeSubDomains",
+   "cross-origin-embedder-policy": "credentialless",
+   "cross-origin-opener-policy": "same-origin",
+   "cross-origin-resource-policy": "same-origin",
+   "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+   "x-content-type-options": "nosniff",
+   "referrer-policy": "strict-origin-when-cross-origin",
+   "vary": "Accept",
+   "last-modified": "Tue, 17 Nov 2026 22:36:26 GMT",
+   "accept-ranges": "bytes",
+   "content-disposition": "attachment; filename=MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate.csv",
+   "age": "2281",
+   "cf-cache-status": "HIT",
+   "cf-ray": "a5c40b04f877843a-TPE"
+  }
+ },
+ "put_call_ratio_json_recorded.json": {
+  "url": "https://openapi.taifex.com.tw/v1/PutCallRatio",
+  "fetched_at": "2026-11-18T03:56:02Z",
+  "sha256": "14f197069cf33ec7603617e19f1ef2e5bc8eb7a05ed18bd0516716a3b7e4efe2",
+  "bytes": 3080,
+  "derived": false,
+  "fresh_fetch": true,
+  "response_headers": {
+   "date": "Wed, 18 Nov 2026 03:56:02 GMT",
+   "content-type": "application/octet-stream",
+   "content-length": "3080",
+   "server": "cloudflare",
+   "x-frame-options": "SAMEORIGIN",
+   "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://validator.swagger.io; connect-src 'self'; frame-ancestors 'self';",
+   "strict-transport-security": "max-age=31536000; includeSubDomains",
+   "cross-origin-embedder-policy": "credentialless",
+   "cross-origin-opener-policy": "same-origin",
+   "cross-origin-resource-policy": "same-origin",
+   "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=()",
+   "x-content-type-options": "nosniff",
+   "referrer-policy": "strict-origin-when-cross-origin",
+   "vary": "Accept",
+   "last-modified": "Tue, 17 Nov 2026 22:36:08 GMT",
+   "accept-ranges": "bytes",
+   "content-disposition": "attachment; filename=PutCallRatio.json",
+   "age": "208",
+   "cf-cache-status": "HIT",
+   "cf-ray": "a5c40b046d7ba1a1-TPE"
+  }
+ },
+ "institutional_json_derived.json": {
+  "derived": true,
+  "derived_from": "institutional_text_recorded.csv",
+  "derivation": "csv.DictReader over the BOM-stripped recorded text; every row becomes an object keyed by the Chinese header with the cell strings unchanged; json.dumps(ensure_ascii=False). Not a recorded response.",
+  "sha256": "9224091d9e3358e69fc1502b3f6725d2efe90bbd5299d5f3fb910eff00260541"
+ },
+ "_dataset_forms_2026-11-18T03:56Z": {
+  "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate.csv",
+   "first_bytes": "b'\\xef\\xbb\\xbf\\xe6\\x97\\xa5\\xe6\\x9c\\x9f,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe5\\x90\\x8d\\xe7\\xa8\\xb1,\\xe8\\xba\\xab\\xe4\\xbb\\xbd\\xe5\\x88\\xa5,\\xe5\\xa4\\x9a\\xe6\\x96\\xb9\\xe4\\xba\\xa4\\xe6\\x98\\x93\\xe5\\x8f\\xa3\\xe6\\x95\\xb8,\\xe5\\xa4\\x9a\\xe6\\x96\\xb9\\xe4\\xba'",
+   "bytes": 6319,
+   "form": "csv"
+  },
+  "PutCallRatio": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=PutCallRatio.json",
+   "first_bytes": "b'[{\"Date\":\"20261117\",\"PutVolume\":\"218602\",\"CallVolume\":\"27689'",
+   "bytes": 3080,
+   "form": "json"
+  },
+  "DailyMarketReportFut": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=DailyMarketReportFut.json",
+   "first_bytes": "b'[{\"Date\":\"20261117\",\"Contract\":\"ZFF\",\"ContractMonth(Week)\":\"'",
+   "bytes": 886392,
+   "form": "json"
+  },
+  "SingleStockFuturesMargining": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=SingleStockFuturesMargining.json",
+   "first_bytes": "b'[{\"Contract\":\"CAF\",\"UnderlyingSecurityCode\":\"1303\",\"Contract'",
+   "bytes": 85586,
+   "form": "json"
+  },
+  "SingleStockFuturesETFMargining": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=SingleStockFuturesETFMargining.csv",
+   "first_bytes": "b'\\xef\\xbb\\xbf\\xe8\\x82\\xa1\\xe7\\xa5\\xa8\\xe6\\x9c\\x9f\\xe8\\xb2\\xa8\\xe8\\x8b\\xb1\\xe6\\x96\\x87\\xe4\\xbb\\xa3\\xe7\\xa2\\xbc,\\xe8\\x82\\xa1\\xe7\\xa5\\xa8\\xe6\\x9c\\x9f\\xe8\\xb2\\xa8\\xe6\\xa8\\x99\\xe7\\x9a\\x84\\xe8\\xad\\x89\\xe5\\x88\\xb8\\xe4\\xbb\\xa3\\xe8\\x99\\x9f,\\xe8'",
+   "bytes": 3221,
+   "form": "csv"
+  },
+  "FinalSettlementPriceSSF": {
+   "status": 200,
+   "content_type": "application/octet-stream",
+   "content_disposition": "attachment; filename=FinalSettlementPriceSSF.csv",
+   "first_bytes": "b'\\xe5\\x88\\xb0\\xe6\\x9c\\x9f\\xe6\\x97\\xa5,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe4\\xbb\\xa3\\xe8\\x99\\x9f,\\xe5\\x95\\x86\\xe5\\x93\\x81\\xe5\\x90\\x8d\\xe7\\xa8\\xb1,\\xe5\\xa5\\x91\\xe7\\xb4\\x84\\xe6\\x9c\\x88\\xe4\\xbb\\xbd,\\xe6\\x9c\\x80\\xe5\\xbe\\x8c\\xe7\\xb5\\x90\\xe7\\xae'",
+   "bytes": 14389,
+   "form": "csv"
+  }
+ }
+}

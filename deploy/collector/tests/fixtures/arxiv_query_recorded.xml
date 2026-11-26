@@ -1,0 +1,344 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/LFCs3qLJSrRMOn7HSbKNFaPRBKE</id>
+  <title>arXiv Query: search_query=(cat:q-fin.* OR cat:stat.ML) AND (all:"quantitative finance" OR all:"machine learning")&amp;id_list=&amp;start=0&amp;max_results=10</title>
+  <updated>2026-11-13T08:54:40Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=(cat:q-fin.*+OR+cat:stat.ML)+AND+(all:%22quantitative+finance%22+OR+all:%22machine+learning%22)&amp;start=0&amp;max_results=10&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>100668</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2306.04338v1</id>
+    <title>Changing Data Sources in the Age of Machine Learning for Official Statistics</title>
+    <updated>2023-06-07T11:08:12Z</updated>
+    <link href="https://arxiv.org/abs/2306.04338v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2306.04338v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Data science has become increasingly essential for the production of official statistics, as it enables the automated collection, processing, and analysis of large amounts of data. With such data science practices in place, it enables more timely, more insightful and more flexible reporting. However, the quality and integrity of data-science-driven statistics rely on the accuracy and reliability of the data sources and the machine learning techniques that support them. In particular, changes in data sources are inevitable to occur and pose significant risks that are crucial to address in the context of machine learning for official statistics.
+  This paper gives an overview of the main risks, liabilities, and uncertainties associated with changing data sources in the context of machine learning for official statistics. We provide a checklist of the most prevalent origins and causes of changing data sources; not only on a technical level but also regarding ownership, ethics, regulation, and public perception. Next, we highlight the repercussions of changing data sources on statistical reporting. These include technical effects such as concept drift, bias, availability, validity, accuracy and completeness, but also the neutrality and potential discontinuation of the statistical offering. We offer a few important precautionary measures, such as enhancing robustness in both data sourcing and statistical techniques, and thorough monitoring. In doing so, machine learning-based official statistics can maintain integrity, reliability, consistency, and relevance in policy-making, decision-making, and public discourse.</summary>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-06-07T11:08:12Z</published>
+    <arxiv:comment>Presented at UNECE Machine Learning for Official Statistics Workshop 2023</arxiv:comment>
+    <arxiv:primary_category term="stat.ML"/>
+    <arxiv:journal_ref>UNECE Machine Learning for Official Statistics Workshop 2023</arxiv:journal_ref>
+    <author>
+      <name>Cedric De Boom</name>
+    </author>
+    <author>
+      <name>Michael Reusens</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1905.04749v2</id>
+    <title>A Benchmark Study of Machine Learning Models for Online Fake News Detection</title>
+    <updated>2021-03-26T05:30:08Z</updated>
+    <link href="https://arxiv.org/abs/1905.04749v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1905.04749v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The proliferation of fake news and its propagation on social media has become a major concern due to its ability to create devastating impacts. Different machine learning approaches have been suggested to detect fake news. However, most of those focused on a specific type of news (such as political) which leads us to the question of dataset-bias of the models used. In this research, we conducted a benchmark study to assess the performance of different applicable machine learning approaches on three different datasets where we accumulated the largest and most diversified one. We explored a number of advanced pre-trained language models for fake news detection along with the traditional and deep learning ones and compared their performances from different aspects for the first time to the best of our knowledge. We find that BERT and similar pre-trained models perform the best for fake news detection, especially with very small dataset. Hence, these models are significantly better option for languages with limited electronic contents, i.e., training data. We also carried out several analysis based on the models' performance, article's topic, article's length, and discussed different lessons learned from them. We believe that this benchmark study will help the research community to explore further and news sites/blogs to select the most appropriate fake news detection method.</summary>
+    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-05-12T17:15:11Z</published>
+    <arxiv:comment>22 pages, 5 figures, to be published in Machine Learning with Applications journal</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <arxiv:journal_ref>Machine Learning with Applications: 4(2021).100032</arxiv:journal_ref>
+    <author>
+      <name>Junaed Younus Khan</name>
+    </author>
+    <author>
+      <name>Md. Tawkat Islam Khondaker</name>
+    </author>
+    <author>
+      <name>Sadia Afroz</name>
+    </author>
+    <author>
+      <name>Gias Uddin</name>
+    </author>
+    <author>
+      <name>Anindya Iqbal</name>
+    </author>
+    <arxiv:doi>10.1016/j.mlwa.2021.100032</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1016/j.mlwa.2021.100032" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1906.01101v1</id>
+    <title>MEMe: An Accurate Maximum Entropy Method for Efficient Approximations in Large-Scale Machine Learning</title>
+    <updated>2019-06-03T22:10:52Z</updated>
+    <link href="https://arxiv.org/abs/1906.01101v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1906.01101v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Efficient approximation lies at the heart of large-scale machine learning problems. In this paper, we propose a novel, robust maximum entropy algorithm, which is capable of dealing with hundreds of moments and allows for computationally efficient approximations. We showcase the usefulness of the proposed method, its equivalence to constrained Bayesian variational inference and demonstrate its superiority over existing approaches in two applications, namely, fast log determinant estimation and information-theoretic Bayesian optimisation.</summary>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-06-03T22:10:52Z</published>
+    <arxiv:comment>18 pages, 3 figures, Published at Entropy 2019: Special Issue Entropy Based Inference and Optimization in Machine Learning</arxiv:comment>
+    <arxiv:primary_category term="stat.ML"/>
+    <arxiv:journal_ref>MEMe: An Accurate Maximum Entropy Method for Efficient Approximations in Large-Scale Machine Learning. Entropy, 21(6), 551 (2019)</arxiv:journal_ref>
+    <author>
+      <name>Diego Granziol</name>
+    </author>
+    <author>
+      <name>Binxin Ru</name>
+    </author>
+    <author>
+      <name>Stefan Zohren</name>
+    </author>
+    <author>
+      <name>Xiaowen Doing</name>
+    </author>
+    <author>
+      <name>Michael Osborne</name>
+    </author>
+    <author>
+      <name>Stephen Roberts</name>
+    </author>
+    <arxiv:doi>10.3390/e21060551</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.3390/e21060551" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1706.01513v2</id>
+    <title>Beyond Volume: The Impact of Complex Healthcare Data on the Machine Learning Pipeline</title>
+    <updated>2018-01-26T15:05:34Z</updated>
+    <link href="https://arxiv.org/abs/1706.01513v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1706.01513v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>From medical charts to national census, healthcare has traditionally operated under a paper-based paradigm. However, the past decade has marked a long and arduous transformation bringing healthcare into the digital age. Ranging from electronic health records, to digitized imaging and laboratory reports, to public health datasets, today, healthcare now generates an incredible amount of digital information. Such a wealth of data presents an exciting opportunity for integrated machine learning solutions to address problems across multiple facets of healthcare practice and administration. Unfortunately, the ability to derive accurate and informative insights requires more than the ability to execute machine learning models. Rather, a deeper understanding of the data on which the models are run is imperative for their success. While a significant effort has been undertaken to develop models able to process the volume of data obtained during the analysis of millions of digitalized patient records, it is important to remember that volume represents only one aspect of the data. In fact, drawing on data from an increasingly diverse set of sources, healthcare data presents an incredibly complex set of attributes that must be accounted for throughout the machine learning pipeline. This chapter focuses on highlighting such challenges, and is broken down into three distinct components, each representing a phase of the pipeline. We begin with attributes of the data accounted for during preprocessing, then move to considerations during model building, and end with challenges to the interpretation of model output. For each component, we present a discussion around data as it relates to the healthcare domain and offer insight into the challenges each may impose on the efficiency of machine learning techniques.</summary>
+    <category term="cs.CY" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2017-06-01T20:34:41Z</published>
+    <arxiv:comment>Healthcare Informatics, Machine Learning, Knowledge Discovery: 20 Pages, 1 Figure</arxiv:comment>
+    <arxiv:primary_category term="cs.CY"/>
+    <arxiv:journal_ref>Towards Integrative Machine Learning and Knowledge Extraction, LNCS vol 10344 (2017) 150-169</arxiv:journal_ref>
+    <author>
+      <name>Keith Feldman</name>
+    </author>
+    <author>
+      <name>Louis Faust</name>
+    </author>
+    <author>
+      <name>Xian Wu</name>
+    </author>
+    <author>
+      <name>Chao Huang</name>
+    </author>
+    <author>
+      <name>Nitesh V. Chawla</name>
+    </author>
+    <arxiv:doi>10.1007/978-3-319-69775-8_9</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1007/978-3-319-69775-8_9" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1907.01463v1</id>
+    <title>Reproducibility in Machine Learning for Health</title>
+    <updated>2019-07-02T15:46:46Z</updated>
+    <link href="https://arxiv.org/abs/1907.01463v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1907.01463v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Machine learning algorithms designed to characterize, monitor, and intervene on human health (ML4H) are expected to perform safely and reliably when operating at scale, potentially outside strict human supervision. This requirement warrants a stricter attention to issues of reproducibility than other fields of machine learning.
+  In this work, we conduct a systematic evaluation of over 100 recently published ML4H research papers along several dimensions related to reproducibility. We find that the field of ML4H compares poorly to more established machine learning fields, particularly concerning data and code accessibility. Finally, drawing from success in other fields of science, we propose recommendations to data providers, academic publishers, and the ML4H research community in order to promote reproducible research moving forward.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CY" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-07-02T15:46:46Z</published>
+    <arxiv:comment>Presented at the ICLR 2019 Reproducibility in Machine Learning Workshop</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Matthew B. A. McDermott</name>
+      <arxiv:affiliation>Massachusetts Institute of Technology</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Shirly Wang</name>
+      <arxiv:affiliation>University of Toronto</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Nikki Marinsek</name>
+      <arxiv:affiliation>Evidation Health, Inc</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Rajesh Ranganath</name>
+      <arxiv:affiliation>New York University</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Marzyeh Ghassemi</name>
+      <arxiv:affiliation>University of Toronto</arxiv:affiliation>
+      <arxiv:affiliation>Vector Institute</arxiv:affiliation>
+    </author>
+    <author>
+      <name>Luca Foschini</name>
+      <arxiv:affiliation>Evidation Health, Inc</arxiv:affiliation>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1810.13348v4</id>
+    <title>Multimodal Machine Learning for Automated ICD Coding</title>
+    <updated>2022-09-01T17:53:05Z</updated>
+    <link href="https://arxiv.org/abs/1810.13348v4" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1810.13348v4" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This study presents a multimodal machine learning model to predict ICD-10 diagnostic codes. We developed separate machine learning models that can handle data from different modalities, including unstructured text, semi-structured text and structured tabular data. We further employed an ensemble method to integrate all modality-specific models to generate ICD-10 codes. Key evidence was also extracted to make our prediction more convincing and explainable. We used the Medical Information Mart for Intensive Care III (MIMIC -III) dataset to validate our approach. For ICD code prediction, our best-performing model (micro-F1 = 0.7633, micro-AUC = 0.9541) significantly outperforms other baseline models including TF-IDF (micro-F1 = 0.6721, micro-AUC = 0.7879) and Text-CNN model (micro-F1 = 0.6569, micro-AUC = 0.9235). For interpretability, our approach achieves a Jaccard Similarity Coefficient (JSC) of 0.1806 on text data and 0.3105 on tabular data, where well-trained physicians achieve 0.2780 and 0.5002 respectively.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-10-31T15:39:32Z</published>
+    <arxiv:comment>Machine Learning for Healthcare 2019</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Keyang Xu</name>
+    </author>
+    <author>
+      <name>Mike Lam</name>
+    </author>
+    <author>
+      <name>Jingzhi Pang</name>
+    </author>
+    <author>
+      <name>Xin Gao</name>
+    </author>
+    <author>
+      <name>Charlotte Band</name>
+    </author>
+    <author>
+      <name>Piyush Mathur</name>
+    </author>
+    <author>
+      <name>Frank Papay</name>
+    </author>
+    <author>
+      <name>Ashish K. Khanna</name>
+    </author>
+    <author>
+      <name>Jacek B. Cywinski</name>
+    </author>
+    <author>
+      <name>Kamal Maheshwari</name>
+    </author>
+    <author>
+      <name>Pengtao Xie</name>
+    </author>
+    <author>
+      <name>Eric Xing</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1905.10345v1</id>
+    <title>Automatic Machine Learning by Pipeline Synthesis using Model-Based Reinforcement Learning and a Grammar</title>
+    <updated>2019-05-24T17:27:10Z</updated>
+    <link href="https://arxiv.org/abs/1905.10345v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1905.10345v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Automatic machine learning is an important problem in the forefront of machine learning. The strongest AutoML systems are based on neural networks, evolutionary algorithms, and Bayesian optimization. Recently AlphaD3M reached state-of-the-art results with an order of magnitude speedup using reinforcement learning with self-play. In this work we extend AlphaD3M by using a pipeline grammar and a pre-trained model which generalizes from many different datasets and similar tasks. Our results demonstrate improved performance compared with our earlier work and existing methods on AutoML benchmark datasets for classification and regression tasks. In the spirit of reproducible research we make our data, models, and code publicly available.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-05-24T17:27:10Z</published>
+    <arxiv:comment>ICML Workshop on Automated Machine Learning</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Iddo Drori</name>
+    </author>
+    <author>
+      <name>Yamuna Krishnamurthy</name>
+    </author>
+    <author>
+      <name>Raoni Lourenco</name>
+    </author>
+    <author>
+      <name>Remi Rampin</name>
+    </author>
+    <author>
+      <name>Kyunghyun Cho</name>
+    </author>
+    <author>
+      <name>Claudio Silva</name>
+    </author>
+    <author>
+      <name>Juliana Freire</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1807.05351v1</id>
+    <title>ML-Schema: Exposing the Semantics of Machine Learning with Schemas and Ontologies</title>
+    <updated>2018-07-14T08:07:31Z</updated>
+    <link href="https://arxiv.org/abs/1807.05351v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1807.05351v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The ML-Schema, proposed by the W3C Machine Learning Schema Community Group, is a top-level ontology that provides a set of classes, properties, and restrictions for representing and interchanging information on machine learning algorithms, datasets, and experiments. It can be easily extended and specialized and it is also mapped to other more domain-specific ontologies developed in the area of machine learning and data mining. In this paper we overview existing state-of-the-art machine learning interchange formats and present the first release of ML-Schema, a canonical format resulted of more than seven years of experience among different research institutions. We argue that exposing semantics of machine learning algorithms, models, and experiments through a canonical format may pave the way to better interpretability and to realistically achieve the full interoperability of experiments regardless of platform or adopted workflow solution.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DB" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.IR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-07-14T08:07:31Z</published>
+    <arxiv:comment>Poster, selected for the 2nd Reproducibility in Machine Learning Workshop at ICML 2018, Stockholm, Sweden</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Gustavo Correa Publio</name>
+    </author>
+    <author>
+      <name>Diego Esteves</name>
+    </author>
+    <author>
+      <name>Agnieszka Ławrynowicz</name>
+    </author>
+    <author>
+      <name>Panče Panov</name>
+    </author>
+    <author>
+      <name>Larisa Soldatova</name>
+    </author>
+    <author>
+      <name>Tommaso Soru</name>
+    </author>
+    <author>
+      <name>Joaquin Vanschoren</name>
+    </author>
+    <author>
+      <name>Hamid Zafar</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2108.08712v1</id>
+    <title>Teaching Uncertainty Quantification in Machine Learning through Use Cases</title>
+    <updated>2021-08-19T14:22:17Z</updated>
+    <link href="https://arxiv.org/abs/2108.08712v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2108.08712v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Uncertainty in machine learning is not generally taught as general knowledge in Machine Learning course curricula. In this paper we propose a short curriculum for a course about uncertainty in machine learning, and complement the course with a selection of use cases, aimed to trigger discussion and let students play with the concepts of uncertainty in a programming setting. Our use cases cover the concept of output uncertainty, Bayesian neural networks and weight distributions, sources of uncertainty, and out of distribution detection. We expect that this curriculum and set of use cases motivates the community to adopt these important concepts into courses for safety in AI.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2021-08-19T14:22:17Z</published>
+    <arxiv:comment>2nd Teaching in Machine Learning Workshop, Camera Ready, 5 pages, 3 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Matias Valdenegro-Toro</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1811.10455v1</id>
+    <title>A Framework for Implementing Machine Learning on Omics Data</title>
+    <updated>2018-11-26T15:35:57Z</updated>
+    <link href="https://arxiv.org/abs/1811.10455v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1811.10455v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The potential benefits of applying machine learning methods to -omics data are becoming increasingly apparent, especially in clinical settings. However, the unique characteristics of these data are not always well suited to machine learning techniques. These data are often generated across different technologies in different labs, and frequently with high dimensionality. In this paper we present a framework for combining -omics data sets, and for handling high dimensional data, making -omics research more accessible to machine learning applications. We demonstrate the success of this framework through integration and analysis of multi-analyte data for a set of 3,533 breast cancers. We then use this data-set to predict breast cancer patient survival for individuals at risk of an impending event, with higher accuracy and lower variance than methods trained on individual data-sets. We hope that our pipelines for data-set generation and transformation will open up -omics data to machine learning researchers. We have made these freely available for noncommercial use at www.ccg.ai.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="q-bio.GN" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-11-26T15:35:57Z</published>
+    <arxiv:comment>Machine Learning for Health (ML4H) Workshop at NeurIPS 2018 arXiv:1811.07216</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Geoffroy Dubourg-Felonneau</name>
+    </author>
+    <author>
+      <name>Timothy Cannings</name>
+    </author>
+    <author>
+      <name>Fergal Cotter</name>
+    </author>
+    <author>
+      <name>Hannah Thompson</name>
+    </author>
+    <author>
+      <name>Nirmesh Patel</name>
+    </author>
+    <author>
+      <name>John W Cassidy</name>
+    </author>
+    <author>
+      <name>Harry W Clifford</name>
+    </author>
+  </entry>
+</feed>

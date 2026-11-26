@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import threading
 from dataclasses import asdict, dataclass, field
@@ -74,6 +75,68 @@ class ResearchRetrievalInfluenceRecord:
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
+
+
+def demand_case_file_influence(
+    demand: Dict[str, Any], case_file: Optional[Dict[str, Any]], *,
+    cited_item_ids: Optional[List[str]] = None, unavailable_reason: Optional[str] = None,
+) -> ResearchRetrievalInfluenceRecord:
+    """Record context actually attached to a demand, never invent an effect size.
+
+    IDs are checked against the immutable case content, including its digest and
+    tenant/persona subject. Callers may select a subset; the automatic demand
+    writer consumes all bounded items attached as its research context.
+    """
+    items: Dict[str, Dict[str, Any]] = {}
+    if case_file is not None:
+        from jsonschema import validate, ValidationError
+        schema = Path(__file__).parents[1] / "knowledge" / "case_file.schema.json"
+        try:
+            validate(case_file, json.loads(schema.read_text()))
+        except ValidationError as exc:
+            raise ResearchRetrievalInfluenceError("case_file_invalid") from exc
+        content = {k: v for k, v in case_file.items() if k not in {"case_file_id", "digest"}}
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
+        if case_file["digest"] != digest or case_file["case_file_id"] != f"casefile-{digest[:24]}":
+            raise ResearchRetrievalInfluenceError("case_file_digest_mismatch")
+        subject = case_file["subject"]
+        if (subject["tenant_id"], subject["persona_id"], subject["decision_type"]) != (
+            demand["tenant_id"], demand["persona_id"], "research_demand"
+        ):
+            raise ResearchRetrievalInfluenceError("case_file_subject_mismatch")
+        for group in case_file["groups"].values():
+            for item in group["items"]:
+                if item["item_id"] in items:
+                    raise ResearchRetrievalInfluenceError("case_file_duplicate_item_id")
+                items[item["item_id"]] = item
+    cited = list(items) if cited_item_ids is None else list(cited_item_ids)
+    if len(set(cited)) != len(cited) or any(ref not in items for ref in cited):
+        raise ResearchRetrievalInfluenceError("case_file_unknown_or_duplicate_citation")
+    if case_file is None and not unavailable_reason:
+        raise ResearchRetrievalInfluenceError("case_file_unavailable_reason_required")
+    selected = [items[ref] for ref in cited]
+    metadata = {
+        "tenant_id": demand["tenant_id"], "decision_type": "research_demand",
+        "demand_id": demand["demand_id"], "cited_item_ids": cited,
+        "case_file_id": case_file["case_file_id"] if case_file else None,
+        "case_file_digest": case_file["digest"] if case_file else None,
+        "unavailable_reason": unavailable_reason,
+        "unavailable_sources": {name: group["unavailable"] for name, group in case_file["groups"].items()}
+                               if case_file else {},
+    }
+    return ResearchRetrievalInfluenceRecord(
+        retrieval_id="mret-demand-" + demand["demand_id"],
+        task_id=demand["demand_id"], run_id=demand["demand_id"], persona_id=demand["persona_id"],
+        query_snapshot={"subject": case_file["subject"], "lesson_query": case_file["lesson_query"]}
+                       if case_file else {k: demand[k] for k in ("tried_families", "missing_datasets", "short_measure")},
+        selected_memory_refs=sorted({i["source_id"] for i in selected if i["source_owner"] == "memory"}),
+        selected_evidence_refs=sorted({i["source_id"] for i in selected if i["group"] == "evidence"}),
+        influence_assessment="Case-file context attached to research demand; outcome influence not yet assessed."
+                             if case_file else "Case-file context unavailable: " + str(unavailable_reason),
+        influence_state="influence_unknown", influence_weight=None,
+        model_ranker_version="decision_case_file.v1", created_at=demand["created_at"], metadata=metadata,
+    )
 
 
 def project_lineage_inspiration_edge(

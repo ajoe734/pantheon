@@ -1,0 +1,8 @@
+{
+  "task": "DEV-ACCEPTANCE-PROBE-VIEWER-CREDENTIALS-20261119",
+  "localTests": [
+    {"command": "python -m pytest -q scripts/test_dev_acceptance_stage.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_environment_lease_deploy_contract.py", "result": "passed (all tests, including the new redaction, viewer-environment, plan-declaration and workflow-contract tests)"}
+  ],
+  "hostedAcceptance": "Hosted proof is the first dev Root verdict after deployment in which probe:persona-pool-member-rules has an exit code other than 77. Not verified by the worker (no hosted access).",
+  "containsCredentials": false
+}

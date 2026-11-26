@@ -153,6 +153,40 @@ def _load_reconciliation_drift_main() -> Any:
             sys.path.remove(str(service_dir))
 
 
+
+def _official_open_reader(symbol, session_date, now):
+    """Recorded official daily open of a reconciled session; a future session has none."""
+    if session_date > now.date().isoformat():
+        return []
+    return [{"symbol": symbol, "bar_start": f"{session_date}T09:00:00+08:00", "bar_frequency": "1d",
+             "bar_availability_ts": f"{session_date}T16:00:00+08:00", "open": 92.5}]
+
+
+_RealPaperSignalProducer = PaperSignalProducer
+
+
+class PaperSignalProducer(_RealPaperSignalProducer):  # noqa: F811 - injects the recorded official open
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("daily_bar_reader", _official_open_reader)
+        super().__init__(*args, **kwargs)
+
+
+def _release_time(decision_now_iso):
+    """The tick after the official open of the session following the decision's session."""
+    from datetime import date, timedelta
+
+    following = date.fromisoformat(decision_now_iso[:10]) + timedelta(days=1)
+    while following.weekday() >= 5:
+        following += timedelta(days=1)
+    return following.isoformat() + "T10:00:00Z"
+
+
+def _decide_and_settle(producer, binding, now_iso):
+    """A daily decision is parked at the close of D and released at the official open of D+1."""
+    assert producer.produce(binding, now_iso) == 0, producer.degraded_bindings
+    return producer.settle_pending_intraday(binding, _release_time(now_iso))
+
+
 class _StubRuntimeManagerClient:
     def __init__(self, binding: dict[str, Any]) -> None:
         self._binding = dict(binding)
@@ -369,6 +403,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
         "metadata": {
             "internal": True,
             "execution_context": "paper",
+            "profile_mapping_approval_id": "apv-pool-rb-expr",
             "risk_policy": {
                 "risk_policy_id": "rp-pool-rb-expr",
                 "version": "1.0",
@@ -381,6 +416,63 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             },
         },
     }
+
+    def setUp(self) -> None:
+        from services.capital import risk_policy as _rp_mod
+        from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+        from services.governance.test_approval_authority import approval_snapshot
+
+        super().setUp()
+        env_patcher = patch.dict(
+            os.environ,
+            {
+                "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+                "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-reader",
+                "PANTHEON_TENANT_ID": "default",
+            },
+            clear=False,
+        )
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+        pool_json = json.loads(json.dumps(self.POOL))
+        policy = dict(pool_json["metadata"]["risk_policy"])
+        approval_json = json.loads(
+            json.dumps(
+                approval_snapshot(
+                    decision_id="apv-pool-rb-expr",
+                    tenant_id=str(pool_json.get("tenant_id") or "default"),
+                    owner_user_id="proposer-1",
+                    target_type="capital_pool_activation",
+                    target_id=str(pool_json["pool_id"]),
+                    target_version=capital_pool_approval_digest(pool_json),
+                    metadata={
+                        "subject": {
+                            "pool_id": str(pool_json["pool_id"]),
+                            "risk_direction": "increase",
+                            "risk_policy_id": str(policy["risk_policy_id"]),
+                            "risk_policy_version": str(policy["version"]),
+                            "risk_policy_digest": risk_policy_digest(policy),
+                            "requested_risk": "low",
+                        },
+                        "approvals": [
+                            {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                            {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                        ],
+                    },
+                )
+            )
+        )
+
+        def fetch_owner_approval(url, headers, timeout):
+            self.assertEqual(headers["Authorization"], "Bearer capital-reader")
+            self.assertEqual(headers["X-Pantheon-Service"], "runtime-manager")
+            self.assertTrue(url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr"))
+            return approval_json
+
+        http_patcher = patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval)
+        http_patcher.start()
+        self.addCleanup(http_patcher.stop)
 
     def _artifact(self, *, symbol: str = "0050.TWSE", bearish: bool = False):
         import copy
@@ -524,7 +616,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding, "2026-11-09T09:00:00Z"), 1)
+                self.assertEqual(_decide_and_settle(producer, binding, "2026-11-09T09:00:00Z"), 1)
 
             [open_sig] = list(store._pending)
             self.assertEqual(open_sig["metadata"]["instrument_id"], "ssf:SRF:202611")
@@ -540,7 +632,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             self.assertEqual(open_sig["metadata"]["maintenance_margin_per_unit"], 6700.0)
             self.assertEqual(open_sig["metadata"]["trade_date"], "2026-11-09")
 
-            snap_after_open = self._drain_at(service, "2026-11-09T09:00:00Z")
+            snap_after_open = self._drain_at(service, _release_time("2026-11-09T09:00:00Z"))
             self.assertEqual(snap_after_open["status"], "ok")
             pos_open = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertIsNotNone(pos_open)
@@ -590,7 +682,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1110, "2026-11-10T13:50:00Z"), 1)
+                self.assertEqual(_decide_and_settle(producer, binding_1110, "2026-11-10T13:50:00Z"), 1)
 
             [hold_sig] = list(store._pending)
             self.assertEqual(hold_sig["action"], "HOLD")
@@ -608,7 +700,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 hold_sig["metadata"]["session_settlement_price_reasons"], {}
             )
 
-            self._drain_at(service, "2026-11-10T13:50:00Z")
+            self._drain_at(service, _release_time("2026-11-10T13:50:00Z"))
             pos_1110 = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertAlmostEqual(pos_1110["mark_price"], 94.0, places=4)
             self.assertEqual(pos_1110["mark_as_of"], "2026-11-09")
@@ -636,7 +728,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1111, "2026-11-11T13:50:00Z"), 1)
+                self.assertEqual(_decide_and_settle(producer, binding_1111, "2026-11-11T13:50:00Z"), 1)
 
             [missing_sig] = list(store._pending)
             self.assertEqual(missing_sig["action"], "HOLD")
@@ -651,7 +743,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 missing_sig["metadata"]["futures_mark_unavailable_reason"],
             )
 
-            snap_1111 = self._drain_at(service, "2026-11-11T13:50:00Z")
+            snap_1111 = self._drain_at(service, _release_time("2026-11-11T13:50:00Z"))
             pos_1111 = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertEqual(pos_1111["mark_as_of"], "2026-11-09")
             self.assertEqual(
@@ -719,8 +811,8 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             producer = PaperSignalProducer(
                 store_for=lambda _: store, strategy=_runner_strategy()
             )
-            self.assertEqual(producer.produce(binding, "2026-11-09T09:00:00Z"), 1)
-        self._drain_at(service, "2026-11-09T09:00:00Z")
+            self.assertEqual(_decide_and_settle(producer, binding, "2026-11-09T09:00:00Z"), 1)
+        self._drain_at(service, _release_time("2026-11-09T09:00:00Z"))
         pos = service._algo.get_instrument_position("ssf:SRF:202611")
         self.assertEqual(pos["quantity"], 2.0)
         self.assertAlmostEqual(pos["average_entry_price"], 97.1, places=4)
@@ -774,7 +866,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             producer = PaperSignalProducer(
                 store_for=lambda _: store, strategy=_runner_strategy()
             )
-            self.assertEqual(producer.produce(binding, now_iso), 1)
+            self.assertEqual(_decide_and_settle(producer, binding, now_iso), 1)
         [sig] = list(store._pending)
         return sig
 
@@ -795,7 +887,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
             # Hosted layout: partition date=2026-11-10 holds price_date 2026-11-09.
             self._hosted_layout(root, {"2026-11-10": [_srf_row("2026-11-09", 97.1)]})
 
-            sig = self._produce_hold_at(service, "2026-11-10T07:30:00Z")
+            sig = self._produce_hold_at(service, "2026-11-10T10:30:00Z")
             meta = sig["metadata"]
             self.assertEqual(meta["session_settlement_prices"], {"ssf:SRF:202611": 97.1})
             self.assertEqual(meta["trade_date"], "2026-11-09")
@@ -809,7 +901,7 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 return real_mark(*args, **kwargs)
 
             service._algo.MarkFuturesSession = spy
-            snap = self._drain_at(service, "2026-11-10T07:30:00Z")
+            snap = self._drain_at(service, _release_time("2026-11-10T10:30:00Z"))
             pos = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertEqual(pos["mark_price"], 97.1)
             self.assertEqual(pos["mark_as_of"], "2026-11-09")
@@ -827,11 +919,11 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
 
             again = copy.deepcopy(sig)
             again["signal_id"] = f"{sig['signal_id']}-later-bar"
-            again["timestamp"] = "2026-11-10T08:30:00Z"
+            again["timestamp"] = "2026-11-11T11:30:00Z"
             again["metadata"]["decision_id"] = f"{meta['decision_id']}-later-bar"
             self._prod["store"].enqueue(again)
             processed_before = len(service._consumer._processed_signal_ids)
-            self._drain_at(service, "2026-11-10T08:30:00Z")
+            self._drain_at(service, "2026-11-11T11:30:00Z")
             self.assertEqual(
                 len(service._consumer._processed_signal_ids), processed_before + 1
             )
@@ -859,13 +951,13 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 service, _emitter = self._open_srf_via_production_path(root, tmpdir)
                 self._hosted_layout(root, {"2026-11-10": rows})
 
-                sig = self._produce_hold_at(service, "2026-11-10T07:30:00Z")
+                sig = self._produce_hold_at(service, "2026-11-10T10:30:00Z")
                 meta = sig["metadata"]
                 self.assertEqual(meta["session_settlement_prices"], {})
                 self.assertEqual(
                     meta["session_settlement_price_reasons"], {"ssf:SRF:202611": reason}
                 )
-                snap = self._drain_at(service, "2026-11-10T07:30:00Z")
+                snap = self._drain_at(service, _release_time("2026-11-10T10:30:00Z"))
                 pos = service._algo.get_instrument_position("ssf:SRF:202611")
                 self.assertNotEqual(pos["mark_price"], 99.0)
                 self.assertIsNone(service._algo._last_futures_mark_session_date)
@@ -1172,8 +1264,8 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding, "2026-11-09T09:00:00Z"), 1)
-            self._drain_at(service, "2026-11-09T09:00:00Z")
+                self.assertEqual(_decide_and_settle(producer, binding, "2026-11-09T09:00:00Z"), 1)
+            self._drain_at(service, _release_time("2026-11-09T09:00:00Z"))
             self.assertEqual(
                 service._algo.get_instrument_position("ssf:SRF:202611")["quantity"], 2.0
             )
@@ -1231,9 +1323,9 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1118, "2026-11-19T13:50:00Z"), 1)
+                self.assertEqual(_decide_and_settle(producer, binding_1118, "2026-11-19T13:50:00Z"), 1)
 
-            self._drain_at(service, "2026-11-19T13:50:00Z")
+            self._drain_at(service, _release_time("2026-11-19T13:50:00Z"))
             pos_pending = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertIsNotNone(pos_pending)
             self.assertEqual(pos_pending["status"], "settlement_pending")
@@ -1270,9 +1362,9 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1119, "2026-11-20T13:50:00Z"), 1)
+                self.assertEqual(_decide_and_settle(producer, binding_1119, "2026-11-20T13:50:00Z"), 1)
 
-            snap_settled = self._drain_at(service, "2026-11-20T13:50:00Z")
+            snap_settled = self._drain_at(service, _release_time("2026-11-20T13:50:00Z"))
             pos_settled = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertIsNotNone(pos_settled)
             self.assertEqual(pos_settled["status"], "closed")
@@ -1361,8 +1453,8 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding, "2026-11-09T09:00:00Z"), 1)
-            self._drain_at(service, "2026-11-09T09:00:00Z")
+                self.assertEqual(_decide_and_settle(producer, binding, "2026-11-09T09:00:00Z"), 1)
+            self._drain_at(service, _release_time("2026-11-09T09:00:00Z"))
             pos = service._algo.get_instrument_position("ssf:SRF:202611")
             self.assertEqual(pos["quantity"], 2.0)
             self.assertAlmostEqual(pos["initial_margin_per_contract"], 8700.0, places=4)
@@ -1411,8 +1503,8 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1110, "2026-11-10T13:50:00Z"), 1)
-            snap_1110 = self._drain_at(service, "2026-11-10T13:50:00Z")
+                self.assertEqual(_decide_and_settle(producer, binding_1110, "2026-11-10T13:50:00Z"), 1)
+            snap_1110 = self._drain_at(service, _release_time("2026-11-10T13:50:00Z"))
             reconcil_1110 = service._algo.assert_ledger_reconciliation()
             self.assertTrue(reconcil_1110["margin_call_active"])
             self.assertLess(
@@ -1452,8 +1544,8 @@ class ProducerRuntimeFuturesWiringIntegrationTests(unittest.TestCase):
                 producer = PaperSignalProducer(
                     store_for=lambda _: store, strategy=_runner_strategy()
                 )
-                self.assertEqual(producer.produce(binding_1111, "2026-11-11T13:50:00Z"), 1)
-            snap_1111 = self._drain_at(service, "2026-11-11T13:50:00Z")
+                self.assertEqual(_decide_and_settle(producer, binding_1111, "2026-11-11T13:50:00Z"), 1)
+            snap_1111 = self._drain_at(service, _release_time("2026-11-11T13:50:00Z"))
             reconcil_1111 = service._algo.assert_ledger_reconciliation()
             self.assertFalse(reconcil_1111["margin_call_active"])
             self.assertAlmostEqual(reconcil_1111["margin_reserved"], 0.0, places=4)

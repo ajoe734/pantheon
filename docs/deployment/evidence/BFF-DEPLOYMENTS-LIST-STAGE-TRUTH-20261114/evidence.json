@@ -1,0 +1,271 @@
+{
+  "task_id": "BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "scope": "Bound deployment list stage-truth reads without changing response contracts or release budgets",
+  "measurement": {
+    "kind": "local real-port fixture, not hosted acceptance",
+    "plans": 162,
+    "page_size": 200,
+    "fixture": "_fixture(162) in test_deployments_list_bounded_stage_truth.py; nested owner-shaped DTOs, no artificial latency",
+    "http_response_bytes": 2390604,
+    "warmups_per_mode": 1,
+    "measured_requests_per_mode": 7,
+    "p95_method": "nearest rank (maximum of seven)",
+    "latency": {
+      "before": {
+        "p50_seconds": 0.546758949989453,
+        "p95_seconds": 0.5788958689954598,
+        "samples_seconds": [
+          0.5788958689954598,
+          0.546758949989453,
+          0.5428243710193783,
+          0.5272318669885863,
+          0.5222198709961958,
+          0.5526569180074148,
+          0.557349251001142
+        ]
+      },
+      "after": {
+        "p50_seconds": 0.14766234799753875,
+        "p95_seconds": 0.17665623399079777,
+        "samples_seconds": [
+          0.14754454599460587,
+          0.16610613800003193,
+          0.17665623399079777,
+          0.14505732199177146,
+          0.14766234799753875,
+          0.1523710870242212,
+          0.1457724249921739
+        ]
+      }
+    },
+    "profile_legacy_per_plan_path": [
+      {
+        "function": "test_deployments_list_bounded_stage_truth.py:97:_legacy_page",
+        "calls": 1,
+        "self_seconds": 0.00044592000000000004,
+        "cumulative_seconds": 1.549252907
+      },
+      {
+        "function": "service.py:649:deployment_plan_with_stage_truth",
+        "calls": 162,
+        "self_seconds": 0.000857931,
+        "cumulative_seconds": 1.548806987
+      },
+      {
+        "function": "service.py:452:deployment_stage_truth",
+        "calls": 162,
+        "self_seconds": 0.006329278000000001,
+        "cumulative_seconds": 1.547949056
+      },
+      {
+        "function": "service.py:303:deployment_runtime_binding",
+        "calls": 162,
+        "self_seconds": 0.0005082110000000001,
+        "cumulative_seconds": 1.473992439
+      },
+      {
+        "function": "adapters.py:51:get_runtime_binding",
+        "calls": 162,
+        "self_seconds": 0.000391282,
+        "cumulative_seconds": 1.473350514
+      },
+      {
+        "function": "read_surface_ports.py:386:get_runtime_binding",
+        "calls": 162,
+        "self_seconds": 0.00044799200000000003,
+        "cumulative_seconds": 1.472476871
+      },
+      {
+        "function": "persona_capital_runtime.py:1113:get_runtime_binding",
+        "calls": 162,
+        "self_seconds": 0.000419921,
+        "cumulative_seconds": 1.4717922840000002
+      },
+      {
+        "function": "persona_capital_runtime.py:564:get_runtime_binding",
+        "calls": 162,
+        "self_seconds": 0.048555848000000006,
+        "cumulative_seconds": 1.4713723630000002
+      },
+      {
+        "function": "persona_capital_runtime.py:535:list_runtime_bindings",
+        "calls": 162,
+        "self_seconds": 0.055326049,
+        "cumulative_seconds": 1.406444569
+      },
+      {
+        "function": "persona_capital_runtime.py:61:_deep_copy",
+        "calls": 944784,
+        "self_seconds": 0.832874451,
+        "cumulative_seconds": 1.2149853000000002
+      },
+      {
+        "function": "~:0:<built-in method builtins.isinstance>",
+        "calls": 2756218,
+        "self_seconds": 0.38648733500000004,
+        "cumulative_seconds": 0.437788025
+      },
+      {
+        "function": "typing.py:1194:__instancecheck__",
+        "calls": 26298,
+        "self_seconds": 0.011543077,
+        "cumulative_seconds": 0.058805971000000005
+      },
+      {
+        "function": "~:0:<method 'get' of 'dict' objects>",
+        "calls": 239224,
+        "self_seconds": 0.058496092000000006,
+        "cumulative_seconds": 0.058496092000000006
+      },
+      {
+        "function": "typing.py:1465:__subclasscheck__",
+        "calls": 26298,
+        "self_seconds": 0.016124941,
+        "cumulative_seconds": 0.047262894
+      },
+      {
+        "function": "service.py:350:runtime_fleet_stage_truth",
+        "calls": 162,
+        "self_seconds": 0.002395051,
+        "cumulative_seconds": 0.039763404
+      },
+      {
+        "function": "persona_capital_runtime.py:525:_runtime_id",
+        "calls": 26244,
+        "self_seconds": 0.021849572,
+        "cumulative_seconds": 0.037526054
+      },
+      {
+        "function": "adapters.py:76:get_paper_runtime_monitoring_session",
+        "calls": 162,
+        "self_seconds": 0.0009470720000000001,
+        "cumulative_seconds": 0.025675408
+      },
+      {
+        "function": "~:0:<built-in method builtins.issubclass>",
+        "calls": 26298,
+        "self_seconds": 0.010557792,
+        "cumulative_seconds": 0.023632672
+      }
+    ],
+    "shape_reference": "services/control-plane/bff/test_loop_auto_dep004_stage_truth.py deployment, saga, binding, monitoring, and approval owner DTO fields; deterministic scaled nested metadata",
+    "command": ".venv-pantheon/bin/python3 -c 'from services.control_plane.bff.tests.test_deployments_list_bounded_stage_truth import write_performance_evidence; write_performance_evidence(\"docs/deployment/evidence/BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114/evidence.json\")'",
+    "dominant_cost": "Runtime binding resolution consumes 1.473s / 1.548s (95.1%) of profiled legacy stage truth. 162 get_runtime_binding calls cause 162 full list copies, 26,244 copied bindings, and 944,784 recursive _deep_copy calls. Profile timings include profiler overhead and are separate from unprofiled HTTP latency."
+  },
+  "bounded_reads_20": {
+    "store.list_deployment_plans": 1,
+    "store.dataset_source": 7,
+    "store.get_approval_decisions": 1,
+    "approval._approval_decisions_reader": 2,
+    "store.list_runtime_bindings": 1,
+    "runtime._get_raw_bindings": 2,
+    "store.list_paper_runtime_monitoring_sessions": 1,
+    "store.list_telemetry_summaries": 1
+  },
+  "bounded_reads_200": {
+    "store.list_deployment_plans": 1,
+    "store.dataset_source": 7,
+    "store.get_approval_decisions": 1,
+    "approval._approval_decisions_reader": 2,
+    "store.list_runtime_bindings": 1,
+    "runtime._get_raw_bindings": 2,
+    "store.list_paper_runtime_monitoring_sessions": 1,
+    "store.list_telemetry_summaries": 1
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped editable distribution provisioned; shared dependency interpreter unchanged."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_deployments_list_bounded_stage_truth.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/test_loop_auto_dep004_stage_truth.py services/control-plane/bff/test_pkt001_deployment_review_console_contract.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_pkt007_deployment_diff_contract.py",
+      "exit_code": 0,
+      "result": "35 passed in 9.77s; includes all 20 new regression cases."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -c 'from services.control_plane.bff.tests.test_deployments_list_bounded_stage_truth import write_performance_evidence; write_performance_evidence(\"docs/deployment/evidence/BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114/evidence.json\")'",
+      "exit_code": 0,
+      "result": "Full HTTP response parity and p95 < 2s assertions passed. Samples retained in measurement."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_deployments_list_bounded_stage_truth.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/test_loop_auto_dep004_stage_truth.py services/control-plane/bff/test_pkt001_deployment_review_console_contract.py services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py services/control-plane/bff/test_pkt007_deployment_diff_contract.py services/control-plane/bff/smoke_test.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_receipt_owner_routes.py",
+      "exit_code": 124,
+      "result": "INCOMPLETE extended diagnostic batch. Reached >85%; one existing migration AST assertion failure. No pass claim for this batch."
+    },
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py -x",
+      "exit_code": 1,
+      "result": "3 passed, 1 failed: unchanged main.py has 23 read_store attributes, stale assertion expects 25."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py services/control-plane/bff/smoke_test.py services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
+      "exit_code": 1,
+      "result": "117 passed, 1 failed in 75.03s. Sole failure is the baseline-reproduced Persona detail parity test; architecture inventory, Deployment facade, smoke, and read-cutoff checks passed."
+    }
+  ],
+  "limitations": [
+    "Local owner-shaped fixtures do not prove hosted latency or deployment acceptance."
+  ],
+  "base_commit": "6cb713b01",
+  "acceptance_evidence": {
+    "1": "162 deterministic owner-shaped plans profiled through real ReadSurfacePorts and runtime port; profile below identifies full-list deep copying.",
+    "2": "Parameterized targeted/fallback approval readers; 20 and 200 unique plans have equal store/owner read counts and zero per-item getters.",
+    "3": "Complete HTTP JSON equality against legacy page and collection projection: 200 items, one item, status filter, page token, empty, fresh, degraded, unavailable. Additional missing/alias IDs, first-match priority, immutable inputs, request refresh/isolation, owner failure parity.",
+    "4": "162 plans at page_size=200; 2,390,604-byte HTTP response; one warmup plus seven measurements per mode; after p95 0.1767s < 2s.",
+    "5": "Only request-local bulk input records; no retained cache, new settings, endpoints, background jobs, frontend, write-path, or budget changes.",
+    "6": "Existing assertions retained. New tests registered as router/DECOUPLED in BFF inventory."
+  },
+  "additional_boundary_files": {
+    "services/control-plane/bff/deployment/ports.py": "Expose bulk query contract to the consuming domain.",
+    "services/control-plane/bff/deployment/adapters.py": "Delegate bulk reads to the existing owning ReadSurfacePorts.",
+    "services/control-plane/bff/ports/read_surface_ports.py": "Batch decision reads while preserving targeted/raw/queue first-match precedence and exception fallback."
+  },
+  "review": {
+    "status": "pending_independent_review",
+    "assigned_reviewer": "Claude2",
+    "manifest_precedes_review": true
+  },
+  "known_base_failures": [
+    {
+      "test": "test_bff_b2_list_detail_facade.py::test_persona_detail_field_for_field_identity_and_cpu_reduction",
+      "baseline_commit": "6cb713b01",
+      "baseline_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_persona_detail_field_for_field_identity_and_cpu_reduction",
+      "baseline_exit_code": 1,
+      "baseline_location": "Independent clean shared clone /tmp/pantheon-deployments-baseline-20261114 with its own provisioned interpreter; traceback imports baseline source.",
+      "failure": "Existing Persona detail full-JSON parity assertion fails on baseline and task branch; Persona source and assertion unchanged."
+    },
+    {
+      "test": "test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped",
+      "baseline_commit": "6cb713b01",
+      "baseline_command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped",
+      "baseline_exit_code": 1,
+      "baseline_location": "Clean baseline clone, invoked with cwd at baseline checkout.",
+      "failure": "23 != 25; main.py and migration test are unchanged from baseline."
+    }
+  ],
+  "bounded_targeted_reads_20": {
+    "store.list_deployment_plans": 1,
+    "store.dataset_source": 7,
+    "store.get_approval_decisions": 1,
+    "approval._approval_decisions_by_id_reader": 1,
+    "store.list_runtime_bindings": 1,
+    "runtime._get_raw_bindings": 2,
+    "store.list_paper_runtime_monitoring_sessions": 1,
+    "store.list_telemetry_summaries": 1,
+    "approval._approval_decisions_reader": 1
+  },
+  "bounded_targeted_reads_200": {
+    "store.list_deployment_plans": 1,
+    "store.dataset_source": 7,
+    "store.get_approval_decisions": 1,
+    "approval._approval_decisions_by_id_reader": 1,
+    "store.list_runtime_bindings": 1,
+    "runtime._get_raw_bindings": 2,
+    "store.list_paper_runtime_monitoring_sessions": 1,
+    "store.list_telemetry_summaries": 1,
+    "approval._approval_decisions_reader": 1
+  }
+}

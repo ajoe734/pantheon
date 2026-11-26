@@ -1,0 +1,79 @@
+{
+  "task_id": "COLLECTOR-HOURLY-TIMER-CADENCE-20261113",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "status": "ready_for_independent_review",
+  "scope": "Source-only timer cadence repair; collector-host installation remains coordinator-owned after merge.",
+  "task_base_commit": "c1738cd5feb4ab5460b767aedb7fd55b95a460a8",
+  "implementation_anchor": "2f5053fcfb851fe15522faad53ee571ec050efc8",
+  "acceptance": {
+    "1": {
+      "result": "verified_offline",
+      "sources": ["collector-gdelt", "collector-news-rss"],
+      "cadence_seconds": 3600,
+      "timer": "deploy/collector/systemd/pantheon-collector-hourly@.timer",
+      "calendar": "*-*-* *:15:00",
+      "evidence": ["test_documented_source_timers_match_enabled_policy_cadences"]
+    },
+    "2": {
+      "result": "unchanged",
+      "evidence": ["deploy/collector/systemd/pantheon-collector@.timer", "README.md"]
+    },
+    "3": {
+      "result": "verified_offline",
+      "evidence": ["deploy/collector/README.md#step-25--install-and-enable-systemd-timers", "test_documented_source_timers_match_enabled_policy_cadences"],
+      "note": "Logged execution of the actual README loops verifies complete enabled-source coverage and disable-before-enable without host commands."
+    },
+    "4": {
+      "result": "implemented",
+      "evidence": ["deploy/collector/tests/test_compose_and_docs.py:test_documented_source_timers_match_enabled_policy_cadences"],
+      "note": "Source membership derives from policy; a cadence below the assigned timer interval fails."
+    },
+    "5": {
+      "result": "unchanged_and_verified",
+      "evidence": ["deploy/collector/fetch-policy.json", "test_gdelt_requires_single_official_hourly_raw_feed", "validation.txt"]
+    },
+    "6": {
+      "result": "passed",
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python -m pytest deploy/collector/tests",
+      "exit_code": 0,
+      "passed": 176,
+      "skipped": 2,
+      "output": "validation.txt",
+      "note": "Provisioned module entry point used after missing bare pytest launcher (exit 127); both terminal attempts retained."
+    },
+    "7": {
+      "result": "boundary_preserved",
+      "evidence": ["README.md#rollout-boundary"],
+      "note": "No SSH, collector-host changes or hosted acceptance performed or claimed."
+    }
+  },
+  "additional_validation": [
+    {
+      "command": "PYTHONPATH=deploy/collector .venv-pantheon/bin/python -m pytest -q deploy/collector/tests/test_compose_and_docs.py",
+      "exit_code": 0,
+      "passed": 3
+    },
+    {
+      "command": "systemd-analyze calendar --iterations=4 --base-time='2026-11-13 22:00:00 UTC' '*-*-* *:15:00'",
+      "exit_code": 0,
+      "trigger_times_utc": ["2026-11-13T22:15:00Z", "2026-11-13T23:15:00Z", "2026-11-14T00:15:00Z", "2026-11-14T01:15:00Z"]
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "records": [
+    {
+      "path": "validation.txt",
+      "sha256": "cdef5a1ebc6490d1c1bddf9ec5af9024bf49d5471028c207bff9c082998e6ce6"
+    }
+  ],
+  "rollout_owner": "coordinator after merge",
+  "limits": [
+    "Existing optional browser and image-build tests skipped.",
+    "Hourly latest export only; no GDELT backfill or exhaustive 15-minute coverage.",
+    "Local tests and calendar parsing do not establish collector-host activation."
+  ]
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Pantheon Collector Hourly Source (%i)
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=pantheon-collector@%i.service
+
+[Install]
+WantedBy=timers.target

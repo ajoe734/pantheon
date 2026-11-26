@@ -264,3 +264,17 @@ def test_recovery_failure_keeps_old_row_untouched_and_valid_rows_never_recharge(
     rows = _stored(stack)
     assert rows[0] == valid and rows[1]["review_state"] == "quarantined" and set(rows[2]["covered_episode_ids"]) == {"ep-3", "ep-4"}
     assert stack["provider"].calls == 2  # failed attempt + one recovery; valid pair never recharged
+
+
+class _StubLessonRegistrar:
+    """Test double for the memory service lesson registry (these tests do not exercise registration)."""
+    configured = True
+
+    def register(self, candidates, authorization):
+        return {"registered": [c["lesson_candidate_id"] for c in candidates], "already_registered": []}
+
+
+@pytest.fixture(autouse=True)
+def _stub_lesson_registrar(monkeypatch):
+    import services.persona.write_owner as write_owner
+    monkeypatch.setattr(write_owner, "MemoryLessonRegistrar", _StubLessonRegistrar)

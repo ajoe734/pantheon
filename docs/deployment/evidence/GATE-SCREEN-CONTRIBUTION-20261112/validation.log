@@ -1,0 +1,12 @@
+93 passed in 170.55s, exit 0 (.venv-pantheon/bin/python3 -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q)
+
+## Entry-only resubmission fix (acceptance 2 follow-up)
+timeout 400 .venv-pantheon/bin/python3 -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q
+  -> 94 passed + 1 failing forged-flag test (assertion corrected afterwards);
+timeout 300 .venv-pantheon/bin/python3 -m pytest services/research/replication/tests/test_gate_screen_contribution.py -q
+  -> 9 passed, exit 0
+git diff --check -> exit 0
+
+## Collision-safe control input fix (reopen P1)
+timeout 590 .venv-pantheon/bin/python3 -m pytest services/research/replication services/research/alpha_replication/test_revalidation_worker.py -q
+  -> 98 passed in 277.66s, exit 0

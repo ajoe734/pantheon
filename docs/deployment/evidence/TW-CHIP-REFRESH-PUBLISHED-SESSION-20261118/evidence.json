@@ -1,0 +1,148 @@
+{
+  "task_id": "TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118",
+  "title": "Taiwan chip refresh asks each provider only for a session it has already published and decides before stopping steady intake",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "delivery_state": "merged",
+  "problem_register": {
+    "class": "RC1 / RC2",
+    "work_package": "WP2.3",
+    "domain": "market-data",
+    "register_commit": "cb4f6795 (PR #7586)",
+    "instances": ["I-20261118-02", "I-20261118-04"]
+  },
+  "runtime_budget": {
+    "statement": "none",
+    "details": "No workflow or timer changes, no steady scheduler or price daily rule changes, and no new recurring job, emitter, or persistent writer. Replaces the 13:30 Asia/Taipei session-close assumption for the six Taiwan official/TAIFEX chip refresh profiles with their measured provider publication schedule."
+  },
+  "provider_publication_probes": [
+    {
+      "probe_id": "2026-11-14-morning-post-publication",
+      "probed_at_utc": "2026-11-14T03:18:52Z",
+      "probed_at_taipei": "2026-11-14T11:18:52+08:00",
+      "latest_closed_session": "2026-11-13",
+      "source_artifact": "docs/deployment/evidence/REGIME-DATA-TW-CHIP-SCHEDULE-20261114/evidence.json",
+      "observations": {
+        "tw-official-twse-margin-balances": {"endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 21:23:00 GMT", "row_count": 1309, "body_date_raw": null, "resolved_session": "2026-11-13"},
+        "tw-official-tpex-margin-balances": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 14:00:07 GMT", "row_count": 922, "body_date_raw": "1151113", "resolved_session": "2026-11-13"},
+        "tw-official-tpex-institutional-flow": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 12:00:17 GMT", "row_count": 896, "body_date_raw": "1151113", "resolved_session": "2026-11-13"},
+        "tw-taifex-institutional-positions": {"endpoint": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:26 GMT", "row_count": 66, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
+        "tw-taifex-put-call": {"endpoint": "https://openapi.taifex.com.tw/v1/PutCallRatio", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:08 GMT", "row_count": 21, "body_date_raw": "20261113", "resolved_session": "2026-11-13"},
+        "tw-taifex-tx-daily": {"endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "http_status": 200, "last_modified": "Fri, 13 Nov 2026 22:36:02 GMT", "row_count": 2305, "body_date_raw": "20261113", "resolved_session": "2026-11-13"}
+      }
+    },
+    {
+      "probe_id": "2026-11-18-morning-post-overnight-rebuild",
+      "probed_at_utc": "2026-11-18T00:26:25Z",
+      "probed_at_taipei": "2026-11-18T08:26:25+08:00",
+      "latest_closed_session": "2026-11-17",
+      "source_artifact": "GitHub Actions run 44199899154 & TW-TAIFEX-OPENAPI-ALL-DATASETS-BOTH-FORMS-20261118/evidence.json",
+      "observations": {
+        "tw-official-twse-margin-balances": {"endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 21:23:16 GMT", "last_modified_taipei": "2026-11-18T05:23:16+08:00", "row_count": 1310, "body_date_raw": null, "resolved_session": "2026-11-17"},
+        "tw-official-tpex-margin-balances": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 14:00:07 GMT", "row_count": 922, "body_date_raw": "1151117", "resolved_session": "2026-11-17"},
+        "tw-official-tpex-institutional-flow": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 12:00:17 GMT", "row_count": 896, "body_date_raw": "1151117", "resolved_session": "2026-11-17"},
+        "tw-taifex-institutional-positions": {"endpoint": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
+        "tw-taifex-put-call": {"endpoint": "https://openapi.taifex.com.tw/v1/PutCallRatio", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17"},
+        "tw-taifex-tx-daily": {"endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17"}
+      }
+    },
+    {
+      "probe_id": "2026-11-18-afternoon-1753-taipei",
+      "probed_at_utc": "2026-11-18T09:53:13Z",
+      "probed_at_taipei": "2026-11-18T17:53:13+08:00",
+      "latest_closed_session": "2026-11-18",
+      "source_artifact": "GitHub Actions run 44273374890",
+      "observations": {
+        "tw-official-twse-margin-balances": {"ingest_run_id": "ingest-5a09f0d9b8ee", "last_modified": "Tue, 17 Nov 2026 21:23:16 GMT", "body_date_raw": null, "resolved_session": "2026-11-17"},
+        "tw-taifex-institutional-positions": {"ingest_run_id": "ingest-a2ff29e83440", "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "body_date_raw": "20261117", "resolved_session": "2026-11-17"}
+      }
+    },
+    {
+      "probe_id": "2026-11-18-evening-2154-taipei-coordinator",
+      "probed_at_utc": "2026-11-18T13:54:33Z",
+      "probed_at_taipei": "2026-11-18T21:54:33+08:00",
+      "latest_closed_session": "2026-11-18",
+      "source_artifact": "Coordinator read-only GET probe from dev host (task note) & 21:59:45+08:00 SHA-256 verification probe",
+      "observations": {
+        "tw-official-twse-margin-balances": {"endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 21:23:16 GMT", "last_modified_taipei": "2026-11-18T05:23:16+08:00", "row_count": 1310, "body_date_raw": null, "resolved_session": "2026-11-17", "sha256": "115f0e21f7e58d2bd4b1e8ef6f73e9e4c8dc09e8f131f73c76da24d510a29140"},
+        "tw-official-tpex-margin-balances": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance", "http_status": 200, "last_modified": "Wed, 18 Nov 2026 12:00:07 GMT", "last_modified_taipei": "2026-11-18T20:00:07+08:00", "row_count": 668, "body_date_raw": "1151117", "resolved_session": "2026-11-17", "sha256": "c6f000b4011ffdded346367da05c9f1a611e1d4a4c0969be76601a4a55f235cf"},
+        "tw-official-tpex-institutional-flow": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", "http_status": 200, "last_modified": "Wed, 18 Nov 2026 12:00:17 GMT", "last_modified_taipei": "2026-11-18T20:00:17+08:00", "row_count": 899, "body_date_raw": "1151118", "resolved_session": "2026-11-18", "sha256": "0da8526a5ff567e58d6d71b820d1f77383a38a623645123e244c50dad4026828"},
+        "tw-taifex-institutional-positions": {"endpoint": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "be8c544b86debbba683ce7195079d6598f614c17a78e67bcba3dc8a316db583a"},
+        "tw-taifex-put-call": {"endpoint": "https://openapi.taifex.com.tw/v1/PutCallRatio", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "f053b1661d507dd6b235e9d918b5f5c0020816f617ca3a8bbbc169a38513c8eb"},
+        "tw-taifex-tx-daily": {"endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "43343da3fc5dd9f3c3363b81fb4cf16060b0f6e2793de1de0fc4c7bc4c587de3"}
+      }
+    },
+    {
+      "probe_id": "2026-11-18-evening-post-2200-taipei",
+      "probed_at_utc": "2026-11-18T14:12:52Z",
+      "probed_at_taipei": "2026-11-18T22:12:52+08:00",
+      "latest_closed_session": "2026-11-18",
+      "observations": {
+        "tw-official-twse-margin-balances": {"endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 21:23:16 GMT", "last_modified_taipei": "2026-11-18T05:23:16+08:00", "row_count": 1310, "body_date_raw": null, "resolved_session": "2026-11-17", "sha256": "115f0e21f7e58d2bd4b1e8ef6f73e9e4c8dc09e8f131f73c76da24d510a29140"},
+        "tw-official-tpex-margin-balances": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance", "http_status": 200, "last_modified": "Wed, 18 Nov 2026 14:00:07 GMT", "last_modified_taipei": "2026-11-18T22:00:07+08:00", "row_count": 923, "body_date_raw": "1151118", "resolved_session": "2026-11-18", "sha256": "a1da5bd1bc2f77ac41d15cabb9e551c46c77d70fa957b1edd87487eb490d07d4"},
+        "tw-official-tpex-institutional-flow": {"endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", "http_status": 200, "last_modified": "Wed, 18 Nov 2026 14:00:18 GMT", "last_modified_taipei": "2026-11-18T22:00:18+08:00", "row_count": 899, "body_date_raw": "1151118", "resolved_session": "2026-11-18", "sha256": "0da8526a5ff567e58d6d71b820d1f77383a38a623645123e244c50dad4026828"},
+        "tw-taifex-institutional-positions": {"endpoint": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:26 GMT", "last_modified_taipei": "2026-11-18T06:36:26+08:00", "row_count": 72, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "be8c544b86debbba683ce7195079d6598f614c17a78e67bcba3dc8a316db583a"},
+        "tw-taifex-put-call": {"endpoint": "https://openapi.taifex.com.tw/v1/PutCallRatio", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:08 GMT", "last_modified_taipei": "2026-11-18T06:36:08+08:00", "row_count": 20, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "f053b1661d507dd6b235e9d918b5f5c0020816f617ca3a8bbbc169a38513c8eb"},
+        "tw-taifex-tx-daily": {"endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "http_status": 200, "last_modified": "Tue, 17 Nov 2026 22:36:02 GMT", "last_modified_taipei": "2026-11-18T06:36:02+08:00", "row_count": 2342, "body_date_raw": "20261117", "resolved_session": "2026-11-17", "sha256": "43343da3fc5dd9f3c3363b81fb4cf16060b0f6e2793de1de0fc4c7bc4c587de3"}
+      }
+    }
+  ],
+  "publication_schedule_table": [
+    {"connector_id": "tw-official-twse-margin-balances", "dataset": "tw_margin_short_balance", "provider": "TWSE", "endpoint": "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN", "earliest_observed_taipei_time": "05:23:16 (T+1)", "safety_margin_minutes": 17, "scheduled_publication_time_taipei": "05:40 (T+1)", "publication_day_offset": 1, "max_publication_delay_seconds": 9000, "body_date_field": null},
+    {"connector_id": "tw-official-tpex-margin-balances", "dataset": "tw_margin_short_balance", "provider": "TPEx", "endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance", "earliest_observed_taipei_time": "22:00:07 (T)", "safety_margin_minutes": 15, "scheduled_publication_time_taipei": "22:15 (T)", "publication_day_offset": 0, "max_publication_delay_seconds": 9000, "body_date_field": "Date"},
+    {"connector_id": "tw-official-tpex-institutional-flow", "dataset": "tw_institutional_flow", "provider": "TPEx", "endpoint": "https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", "earliest_observed_taipei_time": "20:00:17 (T)", "safety_margin_minutes": 15, "scheduled_publication_time_taipei": "20:15 (T)", "publication_day_offset": 0, "max_publication_delay_seconds": 9000, "body_date_field": "Date"},
+    {"connector_id": "tw-taifex-institutional-positions", "dataset": "taifex_futures_chip", "provider": "TAIFEX", "endpoint": "https://openapi.taifex.com.tw/v1/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate", "earliest_observed_taipei_time": "06:36:26 (T+1)", "safety_margin_minutes": 14, "scheduled_publication_time_taipei": "06:50 (T+1)", "publication_day_offset": 1, "max_publication_delay_seconds": 9000, "body_date_field": "Date"},
+    {"connector_id": "tw-taifex-put-call", "dataset": "taifex_options_chip", "provider": "TAIFEX", "endpoint": "https://openapi.taifex.com.tw/v1/PutCallRatio", "earliest_observed_taipei_time": "06:36:08 (T+1)", "safety_margin_minutes": 14, "scheduled_publication_time_taipei": "06:50 (T+1)", "publication_day_offset": 1, "max_publication_delay_seconds": 9000, "body_date_field": "Date"},
+    {"connector_id": "tw-taifex-tx-daily", "dataset": "taifex_tx_daily", "provider": "TAIFEX", "endpoint": "https://openapi.taifex.com.tw/v1/DailyMarketReportFut", "earliest_observed_taipei_time": "06:36:02 (T+1)", "safety_margin_minutes": 14, "scheduled_publication_time_taipei": "06:50 (T+1)", "publication_day_offset": 1, "max_publication_delay_seconds": 9000, "body_date_field": "Date"}
+  ],
+  "dispatch_window_impact": {
+    "afternoon_dev_host_timer_dispatches_taipei": ["14:40", "15:40", "18:50"],
+    "morning_github_schedule_dispatches_taipei": ["07:30", "08:30"],
+    "before_change": {
+      "afternoon_behavior": "All six profiles computed session_date = T after 13:30 Taipei close, saw stored T-1 != T, stopped steady collector controller, recreated source-ingest, ran bounded one-shot containers against providers still serving T-1, and failed readback or timed out at 300s.",
+      "steady_intake_stopped_minutes_per_afternoon_run": "20-30 minutes across the 6 chip profiles",
+      "steady_intake_stopped_minutes_across_three_afternoon_runs": "60-90 minutes/day"
+    },
+    "after_change": {
+      "afternoon_behavior": "At 14:40, 15:40, and 18:50 Taipei on session T, latest_published_chip_session returns T-1 for all six profiles. With T-1 already stored from the morning refresh, check_taiwan_refresh_preflight emits status=noop (reason=already_fresh) before stopping the steady controller or recreating source-ingest.",
+      "steady_intake_stopped_minutes_per_afternoon_run": "0 minutes (when T-1 is stored)",
+      "steady_intake_stopped_minutes_across_three_afternoon_runs": "0 minutes/day",
+      "morning_0730_taipei_behavior": "All six profiles have passed their scheduled publication time for session T (20:15 T, 22:15 T, 05:40 T+1, 06:50 T+1). Each profile proceeds once to ingest session T (~2-4 minutes total across all 6 profiles post-PR #7574). If a provider is delayed within the 2h30m bound, readback records status=not_yet_published, restores steady intake, and exits 0.",
+      "morning_0830_taipei_behavior": "Profiles that completed session T at 07:30 Taipei emit status=noop (reason=already_fresh) at preflight with 0 minutes of steady intake stopped; only profiles that returned not_yet_published at 07:30 Taipei retry."
+    }
+  },
+  "equity_chip_300s_timeout_diagnosis": {
+    "reproduced_runs": {
+      "morning_run_44199899154": "2026-11-17T23:30:27Z to 2026-11-18T00:20:32Z: tw-official-twse-margin-balances failed at preflight (23:49:13Z) on snapshot lookup 3s timeout; tw-official-tpex-margin-balances completed in 8m05s (23:49:49Z-23:57:54Z); tw-official-tpex-institutional-flow succeeded inside source-ingest at 00:03:48Z (ingest-107b88b929f6, 500 records) while the one-shot scheduler container timed out at 00:07:43Z (300s).",
+      "afternoon_run_44253021385": "2026-11-18T06:46:26Z: tw-official-twse-margin-balances one-shot container exited 0 in 190s (06:49:36Z), then verify_bounded_source_refresh_readback failed because MI_MARGN rows have no Date field (metadata.date=None -> record_date='' != '2026-11-18').",
+      "afternoon_run_44273374890": "2026-11-18T09:12:41Z to 09:56:58Z: tw-official-twse-margin-balances started at 09:24:09Z, completed HTTP fetch and ingest receipt ingest-5a09f0d9b8ee at 09:25:03Z (500 records), and timed out at 09:29:10Z (300s) on pre-PR-#7574 image 01c51aa69."
+    },
+    "root_causes_of_300s_wall_time": [
+      "1. Pre-PR-#7574 (SOURCE-INGEST-STEADY-TICK-OVERHEAD-20261118) journal replay overhead: on image 01c51aa69 (built at 06:14Z before PR #7574 merged at 07:55Z), pre_actual + reconcile_desired_state + post_actual re-parsed the 4,512-line connector_config.jsonl ~199 times per tick, consuming 54-85s before and after run_scheduled_connectors.",
+      "2. Per-record synchronous post-processing for 500-row equity chip batches: unlike collector bundle pulls (collapsed into 1 summary record), the 3 equity chip profiles emit SOURCE_INGEST_MAX_RECORDS=500 individual SourceRecords. Inside persist_source_evidence_refs, admit_normalized_records_to_distillation performs 500 individual SQLite transactions with PRAGMA synchronous=FULL (4,003 SQLite execute calls) and evidence_repository performs 1,501 individual writes + 500 dedupe lookups (~220-250s on hosted disk). Combined with 54-85s pre-PR-#7574 journal replay, the 500-row tick straddled the 300s bound (280-320s).",
+      "3. Undated MI_MARGN readback bug: TWSE MI_MARGN OpenAPI rows carry no Date field, so metadata.date is None; verify_bounded_source_refresh_readback checked str(row.get('date') or record_metadata.get('date') or '') which evaluated to '' and always failed readback even when the container finished under 300s."
+    ],
+    "cprofile_benchmark_on_current_dev_hosted_shaped_root": {
+      "data_root_shape": {"connector_config_lines": 4512, "scheduled_ingest_runs_lines": 5951, "scheduled_frontier_lines": 1252, "records_emitted": 500},
+      "stage_timings_seconds": {"pre_readback": 0.081, "reconcile_desired_state": 0.466, "run_scheduled_connectors_500_rows": 9.051, "post_readback": 0.123, "total_tick_seconds": 9.721},
+      "sub_stage_breakdown_seconds": {"distillation_sqlite_500_enqueues": 3.938, "evidence_repository_1501_writes": 2.313, "ingest_batch_into_runtime": 0.874}
+    }
+  },
+  "residual_findings": [
+    {
+      "finding_id": "RF-TW-CHIP-REFRESH-PUBLISHED-SESSION-20261118-01",
+      "problem_register_class": "RC1 / RC2 (WP2.3)",
+      "file": "scripts/test_dev_tw_market_refresh.py:3384",
+      "summary": "Legacy test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session in scripts/test_dev_tw_market_refresh.py (outside the 5 scoped files for this task) pins deploy_started_at='2026-11-13T11:00:00Z' (19:00 Taipei) and asserts all 9 TW_CHIP_REFRESH_PROFILES expect session 2026-11-13 under the old 13:30 rule, whereas at 19:00 Taipei none of the 6 official/TAIFEX chip profiles has published 2026-11-13 yet."
+    }
+  ],
+  "validation": {
+    "commands": [
+      {"command": "bash -n scripts/deploy_nonprod_vm.sh", "exit_code": 0, "result": "passed"},
+      {"command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py", "exit_code": 0, "result": "51 passed"},
+      {"command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py", "exit_code": 0, "result": "192 passed, 2 skipped (194 collected)"},
+      {"command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report-tw-chip.json", "exit_code": 0, "result": "passed=true, failures=[]"},
+      {"command": "python3 scripts/git/diff_budget.py --base origin/dev", "exit_code": 0, "result": "docs/evidence +150 lines (under 400 cap)"}
+    ]
+  }
+}

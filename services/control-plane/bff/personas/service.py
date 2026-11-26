@@ -199,11 +199,12 @@ from services.control_plane.bff.persona_provisioning import (
 from services.control_plane.bff.command_queue import CommandStore
 from services.control_plane.bff.ports.rankings import RankingSnapshotReadPort
 from services.rankings.snapshots import (
-    FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
-    snapshot_record, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
+    RETURN_ON_CAPITAL_FORMULA_VERSION as _PM12_LEAGUE_FORMULA_VERSION,
+    snapshot_record, snapshot_content_digest, _pm12_ranking_snapshot_content, _pm12_ranking_snapshot_payload_items,
 )
 from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
 from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
+from services.control_plane.bff.ports.persona_pool import PersonaPoolViewsPort
 
 from services.control_plane.bff.persona_provisioning_coordinator import (
     PersonaProvisioningCoordinator,
@@ -389,6 +390,7 @@ from ..persona_provisioning import (
 
 
 # --- deterministic_provisioning_ids ---
+from ..persona_paper_enrollment import enrollment_settled, retry_due
 from ..persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
@@ -1421,6 +1423,9 @@ def _chain_paper_capital_coordinator(tenant_id: str) -> PersonaProvisioningCoord
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"chain-paper-capital:{uuid.uuid4().hex}",
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=os.getenv(
+            "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+        ),
         runtime_binding_reader=_runtime_bindings_for_case,
     )
 
@@ -1433,6 +1438,12 @@ def ensure_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -
 
 def retire_chain_paper_capital(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
     return _chain_paper_capital_coordinator(tenant_id).retire_chain_paper_capital(
+        tenant_id=tenant_id, persona_id=persona_id, **kwargs
+    )
+
+
+def repair_paper_pool_risk_policy(tenant_id: str, persona_id: str, **kwargs: Any) -> Dict[str, Any]:
+    return _chain_paper_capital_coordinator(tenant_id).repair_paper_pool_risk_policy(
         tenant_id=tenant_id, persona_id=persona_id, **kwargs
     )
 
@@ -2338,6 +2349,20 @@ def _clone_json_value(value: Any) -> Any:
     return value
 
 
+def _project_recorded_success_rate(*candidates: Any) -> Optional[float]:
+    for raw_value in candidates:
+        if raw_value is None or raw_value == "" or isinstance(raw_value, bool):
+            continue
+        try:
+            numeric = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if numeric == 0.0:
+            continue
+        return numeric
+    return None
+
+
 # --- _project_persona_dto ---
 def _project_persona_dto(
     raw: Dict[str, Any],
@@ -2411,19 +2436,29 @@ def _project_persona_dto(
             or metadata.get("capital_pool_id")
         )
     capital_pool_id = None if capital_mode == "paper" else metadata.get("capital_pool_id")
+    projected_state = _persona_record_projected_state(raw)
     dto: Dict[str, Any] = {
         "id": persona_id,
         "name": raw.get("name") or persona_id,
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "tenantId": metadata.get("tenant_id"),
         "updatedAt": raw.get("updated_at") or raw.get("created_at") or utc_now(),
-        "state": _persona_record_projected_state(raw),
+        "state": projected_state,
+        "listScope": _fleet_cls.classify_persona_list_scope(raw, projected_state=projected_state),
         "risk": _normalize_risk_level(metadata.get("risk_level")),
         "archetype": archetype,
         "routedStrategies": int(routed_strategies if routed_strategies is not None else 0),
-        "successRate": float(metadata.get("success_rate") or 0.0),
+        "successRate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "labelKey": f"persona.{persona_id}" if persona_id else None,
         "lifecycleStatus": str(raw.get("lifecycle_state") or ""),
+        "ownerLifecycleState": _persona_owner_lifecycle_state(raw),
+        "provisioningLifecycleState": _persona_provisioning_lifecycle_state(raw),
+        "dataScope": metadata.get("data_scope"),
         "marketScope": list(metadata.get("market_scope") or []),
         "assetClasses": list(metadata.get("asset_classes") or []),
         "paperLedgerId": paper_ledger_id,
@@ -2482,6 +2517,9 @@ def _project_persona_dto(
         ("research_status", "researchStatus"),
         ("research_refs", "researchRefs"),
         ("current_research_projects", "currentResearchProjects"),
+        ("risk_policy_resolution", "riskPolicyResolution"),
+        ("risk_policy_owner_decision_request", "riskPolicyOwnerDecisionRequest"),
+        ("provisioning_waiting_reason", "provisioningWaitingReason"),
     ):
         value = metadata.get(source_key)
         if value is not None:
@@ -2494,7 +2532,7 @@ def _project_persona_dto(
         dto["metrics"] = _clone_json_value(performance)
     if overlay:
         for k, v in overlay.items():
-            if v is not None:
+            if v is not None or k == "successRate":
                 dto[k] = v
     return dto
 
@@ -2837,6 +2875,9 @@ def _list_persona_records(
     return result
 
 
+_DEFAULT_LIST_PERSONA_RECORDS = _list_persona_records
+
+
 # --- _get_persona_record_for_detail ---
 def _get_persona_record_for_detail(
     persona_id: str,
@@ -2928,13 +2969,14 @@ def _get_persona_directory_snapshot(
     *,
     snapshot_at: Optional[str] = None,
     reuse_request_read: bool = False,
+    read_store: Optional[Any] = None,
 ) -> PersonaDirectorySnapshot:
     snapshot_timestamp = snapshot_at or utc_now()
     clean_tenant = str(tenant_id or "").strip()
     records_by_id: Dict[str, Dict[str, Any]] = {}
     catalog_defaults_by_id: Dict[str, Dict[str, Any]] = {}
 
-    for raw in _list_persona_records(clean_tenant, reuse_request_read=reuse_request_read):
+    for raw in _list_persona_records(clean_tenant, read_store=read_store, reuse_request_read=reuse_request_read):
         if not isinstance(raw, dict):
             continue
         rec_tenant = _persona_record_tenant_id(raw)
@@ -2944,7 +2986,7 @@ def _get_persona_directory_snapshot(
         if pid:
             records_by_id[pid] = raw
 
-    active_store = _get_active_read_store()
+    active_store = _get_active_read_store(explicit=read_store)
     try:
         if (
             reuse_request_read
@@ -3511,6 +3553,123 @@ def _project_persona_fleet_health(
     }
 
 
+def _resolve_active_runtime_binding_overlay(
+    raw_persona: Mapping[str, Any],
+    *,
+    all_runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Resolve active replacement RuntimeBinding (e.g. after publish_pool_envelope) for a persona DTO."""
+    persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
+    if not persona_id:
+        return {}
+    raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
+    recorded_rb_id = str(raw_meta.get("runtime_binding_id") or "").strip()
+    expected_tenant = str(raw_persona.get("tenant_id") or raw_meta.get("tenant_id") or "").strip()
+
+    binding_ids: set[str] = set()
+    for meta_key in ("persona_capital_binding_id", "binding_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            binding_ids.add(val)
+
+    capital_pool_ids: set[str] = set()
+    for meta_key in ("capital_pool_id", "internal_paper_capital_pool_id", "legacy_paper_capital_pool_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            capital_pool_ids.add(val)
+
+    runtime_refs: set[str] = set()
+    for meta_key in ("runtime_binding_id", "runtime_id"):
+        val = str(raw_meta.get(meta_key) or "").strip()
+        if val:
+            runtime_refs.add(val)
+
+    plan_ids: set[str] = set()
+    meta_plan_id = str(raw_meta.get("deployment_plan_id") or "").strip()
+    if meta_plan_id:
+        plan_ids.add(meta_plan_id)
+
+    try:
+        candidates = (
+            list(all_runtime_bindings)
+            if all_runtime_bindings is not None
+            else list(_fleet_runtime_bindings() or [])
+        )
+    except Exception:
+        return {}
+
+    matching: List[Dict[str, Any]] = []
+    for rb in candidates:
+        if not isinstance(rb, dict):
+            continue
+        rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), Mapping) else {}
+        rb_tenant = str(rb.get("tenant_id") or rb_meta.get("tenant_id") or "").strip()
+        if expected_tenant and rb_tenant and rb_tenant != expected_tenant:
+            continue
+        rb_persona = str(rb.get("persona_id") or rb_meta.get("persona_id") or "").strip()
+        if rb_persona and rb_persona != persona_id:
+            continue
+        if _persona_fleet_runtime_matches(
+            rb,
+            binding_ids=binding_ids,
+            capital_pool_ids=capital_pool_ids,
+            runtime_refs=runtime_refs,
+            persona_id=persona_id,
+            plan_ids=plan_ids,
+            plans_by_id={},
+        ):
+            matching.append(rb)
+
+    if not matching:
+        return {}
+
+    active_matches = [
+        rb
+        for rb in matching
+        if str(rb.get("state") or rb.get("status") or "").strip().lower() in {"active", "running", "ok"}
+    ]
+    if not active_matches:
+        return {}
+
+    # Prefer an active binding that explicitly replaces the recorded binding or is the latest active binding.
+    chosen: Optional[Dict[str, Any]] = None
+    if recorded_rb_id:
+        for rb in active_matches:
+            rb_meta = rb.get("metadata") if isinstance(rb.get("metadata"), Mapping) else {}
+            replaces_id = str(
+                rb.get("replaces_binding_id")
+                or rb.get("replacement_parent_binding_id")
+                or rb_meta.get("replaces_binding_id")
+                or rb_meta.get("replacement_parent_binding_id")
+                or ""
+            ).strip()
+            if replaces_id == recorded_rb_id:
+                chosen = rb
+                break
+        if chosen is None:
+            for rb in active_matches:
+                rb_id = str(rb.get("binding_id") or rb.get("runtime_binding_id") or rb.get("id") or "").strip()
+                if rb_id == recorded_rb_id:
+                    chosen = rb
+                    break
+    if chosen is None:
+        sorted_active = _sort_records_latest_first(active_matches, ("updated_at", "created_at"))
+        chosen = sorted_active[0] if sorted_active else active_matches[-1]
+
+    chosen_rb_id = str(chosen.get("binding_id") or chosen.get("runtime_binding_id") or chosen.get("id") or "").strip()
+    if not chosen_rb_id:
+        return {}
+    chosen_rt_id = str(chosen.get("runtime_id") or "").strip() or chosen_rb_id
+    chosen_plan_id = str(chosen.get("plan_id") or chosen.get("deployment_plan_id") or "").strip()
+    overlay: Dict[str, Any] = {
+        "runtimeBindingId": chosen_rb_id,
+        "runtimeId": chosen_rt_id,
+    }
+    if chosen_plan_id:
+        overlay["deploymentPlanId"] = chosen_plan_id
+    return overlay
+
+
 # --- _project_persona_fleet_item ---
 def _project_persona_fleet_item(
     raw_persona: Dict[str, Any],
@@ -3522,7 +3681,14 @@ def _project_persona_fleet_item(
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
     raw_meta = raw_persona.get("metadata") if isinstance(raw_persona.get("metadata"), Mapping) else {}
     routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
+    rb_overlay = _resolve_active_runtime_binding_overlay(
+        raw_persona, all_runtime_bindings=all_runtime_bindings
+    )
+    persona_dto = _project_persona_dto(
+        raw_persona,
+        overlay=rb_overlay or None,
+        routed_strategies=routed,
+    )
 
     bindings = list(_get_active_read_store().get_bindings_for_persona(persona_id) or [])
     binding_ids = {
@@ -3856,6 +4022,105 @@ _PERSONA_INTENT_SOURCE_ALIASES = {
     "agora_sessions": "agora_session",
 }
 
+_PERSONA_INTENT_KIND_ALIASES = {
+    "trade": "trade_intent",
+    "trade_intent": "trade_intent",
+    "trade_intents": "trade_intent",
+    "intent": "trade_intent",
+    "intents": "trade_intent",
+    "persona_trace": "trade_intent",
+    "persona_traces": "trade_intent",
+    "consult": "consultation",
+    "consultation": "consultation",
+    "consultations": "consultation",
+    "persona_panel": "consultation",
+    "gate_panel": "consultation",
+    "panel": "consultation",
+    "panels": "consultation",
+    "meeting": "meeting",
+    "meetings": "meeting",
+    "persona_meeting": "meeting",
+    "persona_meetings": "meeting",
+    "deliberative_meeting": "meeting",
+    "trainer": "trainer",
+    "trainers": "trainer",
+    "trainer_session": "trainer",
+    "trainer_sessions": "trainer",
+    "teaching": "trainer",
+    "teaching_session": "trainer",
+    "teaching_sessions": "trainer",
+}
+
+_PERSONA_INTENT_PRIVATE_SCOPES = frozenset({
+    "persona_private",
+    "private",
+    "private_user",
+    "user_private",
+})
+
+_PERSONA_INTENT_PRIVATE_MEMORY_KEYS = frozenset({
+    "private_memory",
+    "private_memories",
+    "private_memory_text",
+    "persona_private_memory",
+    "memory_trace",
+    "private_bank",
+    "private_memory_entries",
+    "private_text",
+    "private_content",
+    "privateMemory",
+    "privateMemories",
+    "privateMemoryText",
+    "personaPrivateMemory",
+    "memoryTrace",
+    "privateBank",
+    "privateMemoryEntries",
+    "privateText",
+    "privateContent",
+})
+
+_PERSONA_INTENT_PRIVATE_INTERPRETATION_KEYS = frozenset({
+    "private_interpretation",
+    "private_interpretations",
+    "persona_interpretation",
+    "persona_interpretations",
+    "interpretation_turn",
+    "reasoning_trace",
+    "privateInterpretation",
+    "privateInterpretations",
+    "personaInterpretation",
+    "personaInterpretations",
+    "interpretationTurn",
+    "reasoningTrace",
+})
+
+_PERSONA_INTENT_BUILTIN_PERSONA_NAMES = {
+    "persona-risk-officer": "Risk Officer",
+    "persona-red-team": "Red Team",
+    "persona-risk-chief": "Risk Chief",
+    "persona-execution-sponsor": "Execution Sponsor",
+    "p-risk-analyst": "Risk Analyst Persona",
+}
+
+_PERSONA_INTENT_FIELD_REASON_CODES = {
+    "private_memory": "private_memory_withheld",
+    "private_memories": "private_memory_withheld",
+    "private_memory_text": "private_memory_withheld",
+    "persona_private_memory": "private_memory_withheld",
+    "memory_trace": "private_memory_withheld",
+    "private_bank": "private_memory_withheld",
+    "private_memory_entries": "private_memory_withheld",
+    "private_text": "private_memory_withheld",
+    "private_content": "private_memory_withheld",
+    "persona_interpretation": "private_interpretation_withheld",
+    "persona_interpretations": "private_interpretation_withheld",
+    "private_interpretation": "private_interpretation_withheld",
+    "private_interpretations": "private_interpretation_withheld",
+    "interpretation_turn": "private_interpretation_withheld",
+    "reasoning_trace": "private_interpretation_withheld",
+    "raw_control_diff": "raw_control_diff_withheld",
+}
+
 
 # --- _persona_intent_csv_filter ---
 def _persona_intent_csv_filter(value: Optional[str]) -> Optional[set[str]]:
@@ -3873,6 +4138,23 @@ def _persona_intent_source_filter(value: Optional[str]) -> Optional[set[str]]:
     return {
         _PERSONA_INTENT_SOURCE_ALIASES.get(source_type, source_type)
         for source_type in requested
+    }
+
+
+# --- _persona_intent_kind_filter ---
+def _persona_intent_kind_filter(
+    value: Optional[str],
+    *,
+    default_to_trade_intent: bool = True,
+) -> Optional[set[str]]:
+    requested = _persona_intent_csv_filter(value)
+    if not requested:
+        return {"trade_intent"} if default_to_trade_intent else None
+    if "all" in requested or "*" in requested:
+        return None
+    return {
+        _PERSONA_INTENT_KIND_ALIASES.get(kind_token, kind_token)
+        for kind_token in requested
     }
 
 
@@ -3898,12 +4180,193 @@ def _persona_intent_timestamp(record: Dict[str, Any]) -> str:
     )
 
 
+# --- _persona_intent_format_fallback_persona_name ---
+def _persona_intent_format_fallback_persona_name(persona_id: str) -> str:
+    clean_id = _persona_intent_text(persona_id)
+    if not clean_id:
+        return ""
+    if clean_id in _PERSONA_INTENT_BUILTIN_PERSONA_NAMES:
+        return _PERSONA_INTENT_BUILTIN_PERSONA_NAMES[clean_id]
+    parts = [part for part in clean_id.replace("_", "-").split("-") if part]
+    if len(parts) == 2 and parts[0].lower() in {"persona", "p"} and len(parts[1]) >= 16 and all(
+        c in "0123456789abcdef" for c in parts[1].lower()
+    ):
+        return f"Persona {parts[1][:8]}"
+    return " ".join(part.capitalize() for part in parts) or clean_id
+
+
 # --- _persona_intent_persona_label ---
-def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
-    persona = _get_active_read_store().get_persona(persona_id)
-    if not persona:
+def _persona_intent_persona_label(
+    persona_id: str,
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hint_name: Optional[str] = None,
+) -> Optional[str]:
+    clean_id = _persona_intent_text(persona_id)
+    if not clean_id:
         return None
-    return persona.get("name") or persona.get("display_name") or persona_id
+    if persona_names_by_id and clean_id in persona_names_by_id and persona_names_by_id[clean_id]:
+        return persona_names_by_id[clean_id]
+    clean_hint = _persona_intent_text(hint_name)
+    if clean_hint and clean_hint != clean_id:
+        return clean_hint
+    store = _get_active_read_store()
+    persona: Optional[Dict[str, Any]] = None
+    if hasattr(store, "get_persona"):
+        try:
+            persona = store.get_persona(clean_id)
+        except Exception:
+            persona = None
+    if not persona and hasattr(store, "list_personas"):
+        try:
+            for candidate in store.list_personas() or []:
+                if isinstance(candidate, dict):
+                    cid = _persona_intent_text(candidate.get("persona_id") or candidate.get("id"))
+                    if cid == clean_id:
+                        persona = candidate
+                        break
+        except Exception:
+            persona = None
+    if isinstance(persona, dict):
+        meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        label = _persona_intent_text(
+            persona.get("display_name")
+            or persona.get("displayName")
+            or persona.get("name")
+            or meta.get("display_name")
+            or meta.get("name")
+        )
+        if label:
+            return label
+    if clean_hint:
+        return clean_hint
+    return _persona_intent_format_fallback_persona_name(clean_id)
+
+
+# --- _persona_intent_persona_entry ---
+def _persona_intent_persona_entry(
+    persona_id: str,
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hint_name: Optional[str] = None,
+) -> Dict[str, str]:
+    clean_id = _persona_intent_text(persona_id)
+    display_name = (
+        _persona_intent_persona_label(
+            clean_id,
+            persona_names_by_id=persona_names_by_id,
+            hint_name=hint_name,
+        )
+        or clean_id
+    )
+    return {
+        "id": clean_id,
+        "persona_id": clean_id,
+        "name": display_name,
+        "display_name": display_name,
+    }
+
+
+# --- _persona_intent_build_persona_entries ---
+def _persona_intent_build_persona_entries(
+    persona_ids: List[str],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+    hints_by_id: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
+    entries: List[Dict[str, str]] = []
+    seen: set[str] = set()
+    for pid in persona_ids:
+        clean_id = _persona_intent_text(pid)
+        if not clean_id or clean_id in seen:
+            continue
+        seen.add(clean_id)
+        entries.append(
+            _persona_intent_persona_entry(
+                clean_id,
+                persona_names_by_id=persona_names_by_id,
+                hint_name=(hints_by_id or {}).get(clean_id),
+            )
+        )
+    return entries
+
+
+# --- _persona_intent_is_private_item ---
+def _persona_intent_is_private_item(item: Mapping[str, Any]) -> Optional[str]:
+    for key in ("relevance_scope", "memory_layer", "scope", "visibility_scope", "memory_scope", "owner_scope"):
+        val = _persona_intent_text(item.get(key)).lower()
+        if val in _PERSONA_INTENT_PRIVATE_SCOPES:
+            kind_token = _persona_intent_text(
+                item.get("kind") or item.get("memory_type") or item.get("type")
+            ).lower()
+            if "interpretation" in kind_token:
+                return "private_interpretation_withheld"
+            return "private_memory_withheld"
+    if item.get("is_private") is True or item.get("private") is True:
+        return "private_memory_withheld"
+    for key in ("kind", "memory_type", "type", "event_type"):
+        val = _persona_intent_text(item.get(key)).lower()
+        if val in {"private_memory", "persona_private", "persona_private_memory"}:
+            return "private_memory_withheld"
+        if val in {"private_interpretation", "persona_interpretation", "interpretation_turn"}:
+            return "private_interpretation_withheld"
+    return None
+
+
+# --- _persona_intent_strip_private_content ---
+def _persona_intent_strip_private_content(
+    obj: Any,
+    withheld_acc: Optional[List[Dict[str, str]]] = None,
+) -> tuple[Any, List[Dict[str, str]]]:
+    acc = withheld_acc if withheld_acc is not None else []
+
+    def _record(field_name: str, reason_code: str) -> None:
+        canonical_field = _management_camel_to_snake_key(field_name) if _MANAGEMENT_CAMEL_KEY_RE.search(field_name) else field_name
+        entry = {"field": canonical_field, "reason_code": reason_code}
+        if entry not in acc:
+            acc.append(entry)
+
+    if isinstance(obj, Mapping):
+        item_reason = _persona_intent_is_private_item(obj)
+        if item_reason is not None:
+            field_for_reason = (
+                "persona_interpretation"
+                if item_reason == "private_interpretation_withheld"
+                else "private_memory"
+            )
+            _record(field_for_reason, item_reason)
+            return None, acc
+        cleaned: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key_str = str(k)
+            if key_str in _PERSONA_INTENT_PRIVATE_MEMORY_KEYS:
+                _record(key_str, "private_memory_withheld")
+                continue
+            if key_str in _PERSONA_INTENT_PRIVATE_INTERPRETATION_KEYS:
+                _record(key_str, "private_interpretation_withheld")
+                continue
+            stripped_val, _ = _persona_intent_strip_private_content(v, acc)
+            if stripped_val is not None or v is None:
+                cleaned[key_str] = stripped_val
+        return cleaned, acc
+    if isinstance(obj, list):
+        out: List[Any] = []
+        for elem in obj:
+            if isinstance(elem, Mapping):
+                elem_reason = _persona_intent_is_private_item(elem)
+                if elem_reason is not None:
+                    field_for_reason = (
+                        "persona_interpretation"
+                        if elem_reason == "private_interpretation_withheld"
+                        else "private_memory"
+                    )
+                    _record(field_for_reason, elem_reason)
+                    continue
+            stripped_elem, _ = _persona_intent_strip_private_content(elem, acc)
+            if stripped_elem is not None or elem is None:
+                out.append(stripped_elem)
+        return out, acc
+    return obj, acc
 
 
 # --- _persona_intent_capability_summary ---
@@ -3911,8 +4374,9 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
     snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
     snapshot = _get_active_read_store().get_capability_snapshot(snapshot_id) if snapshot_id else None
     if not snapshot:
-        persona_id = _persona_intent_text(session.get("persona_id"))
-        snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id)
+        persona_id = _persona_intent_text(session.get("persona_id") or session.get("from_persona_id"))
+        if persona_id:
+            snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id)
         snapshot_id = _persona_intent_text((snapshot or {}).get("snapshot_id") or snapshot_id)
     if not snapshot:
         return {
@@ -3922,10 +4386,15 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
             "effective_skill_count": 0,
             "restriction_count": 0,
         }
+    effective_tools = [
+        _persona_intent_text(t)
+        for t in (snapshot.get("effective_tools") or snapshot.get("tools_enabled") or [])
+        if _persona_intent_text(t)
+    ]
     return {
         "snapshot_id": snapshot_id or snapshot.get("snapshot_id") or snapshot.get("id"),
         "available": True,
-        "effective_tool_count": len(snapshot.get("effective_tools") or []),
+        "effective_tool_count": len(effective_tools),
         "effective_skill_count": len(snapshot.get("effective_skills") or []),
         "effective_workflow_count": len(snapshot.get("effective_workflows") or []),
         "restriction_count": len(snapshot.get("restrictions") or []),
@@ -3933,112 +4402,628 @@ def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any
     }
 
 
+# --- _persona_intent_extract_tools_used ---
+def _persona_intent_extract_tools_used(session: Dict[str, Any], *, persona_id: Optional[str] = None) -> List[str]:
+    tools: List[str] = []
+
+    def _add_tool(val: Any) -> None:
+        if isinstance(val, str):
+            clean = val.strip()
+            if clean and clean not in tools:
+                tools.append(clean)
+        elif isinstance(val, Mapping):
+            name = _persona_intent_text(
+                val.get("tool_name")
+                or val.get("toolName")
+                or val.get("name")
+                or val.get("tool")
+                or val.get("tool_id")
+                or val.get("id")
+            )
+            if name and name not in tools:
+                tools.append(name)
+        elif isinstance(val, list):
+            for elem in val:
+                _add_tool(elem)
+
+    for key in (
+        "tools_used",
+        "toolsUsed",
+        "tool_path",
+        "toolPath",
+        "tool_calls",
+        "toolCalls",
+        "tools_enabled",
+        "toolsEnabled",
+        "effective_tools",
+        "effectiveTools",
+    ):
+        if key in session:
+            _add_tool(session.get(key))
+
+    for container_key in ("events", "messages", "rounds"):
+        for entry in session.get(container_key) or []:
+            if not isinstance(entry, Mapping):
+                continue
+            for key in ("tools_used", "toolsUsed", "tool_calls", "toolCalls", "tool_name", "toolName", "tool"):
+                if key in entry:
+                    _add_tool(entry.get(key))
+
+    if not tools:
+        snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
+        snapshot = _get_active_read_store().get_capability_snapshot(snapshot_id) if snapshot_id else None
+        if not snapshot:
+            eff_pid = _persona_intent_text(persona_id or session.get("persona_id") or session.get("from_persona_id"))
+            if eff_pid:
+                try:
+                    snapshot = _get_active_read_store().get_capability_snapshot_for_persona(eff_pid)
+                except Exception:
+                    snapshot = None
+        if isinstance(snapshot, Mapping):
+            _add_tool(snapshot.get("effective_tools") or snapshot.get("tools_enabled"))
+            if not tools:
+                for cap in snapshot.get("capabilities") or []:
+                    if isinstance(cap, Mapping) and cap.get("effective", True):
+                        _add_tool(cap.get("name") or cap.get("id"))
+    return tools
+
+
+# --- _persona_intent_extract_string_list ---
+def _persona_intent_extract_string_list(*values: Any) -> List[str]:
+    result: List[str] = []
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for raw_item in value:
+            if isinstance(raw_item, Mapping):
+                text = _persona_intent_text(
+                    raw_item.get("id")
+                    or raw_item.get("ref_id")
+                    or raw_item.get("ref")
+                    or raw_item.get("evidence_ref")
+                    or raw_item.get("artifact_ref")
+                    or raw_item.get("item_id")
+                )
+            else:
+                text = _persona_intent_text(raw_item)
+            if text and text not in result:
+                result.append(text)
+    return result
+
+
+# --- _persona_intent_item_kind ---
+def _persona_intent_item_kind(source_type: str, session: Mapping[str, Any]) -> str:
+    explicit_kind = _persona_intent_text(session.get("kind")).lower()
+    if explicit_kind and explicit_kind in _PERSONA_INTENT_KIND_ALIASES:
+        return _PERSONA_INTENT_KIND_ALIASES[explicit_kind]
+    if source_type == "trainer_session":
+        return "trainer"
+    meta = session.get("metadata") if isinstance(session.get("metadata"), Mapping) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), Mapping) else {}
+    consultation_type = _persona_intent_text(
+        session.get("consultation_type") or consult_meta.get("consultation_type")
+    ).lower()
+    session_class = _persona_intent_text(session.get("session_class")).lower()
+    mode = _persona_intent_text(
+        session.get("mode")
+        or session.get("session_type")
+        or session.get("sessionType")
+        or consultation_type
+    ).lower()
+    session_id = _persona_intent_text(
+        _management_record_id(
+            dict(session),
+            "sessionId",
+            "session_id",
+            "id",
+            "requestId",
+            "request_id",
+            "meeting_id",
+        )
+    ).lower()
+
+    if (
+        consultation_type == "persona_meeting"
+        or mode in {"persona_meeting", "meeting", "deliberative_meeting"}
+        or session_class == "deliberative_meeting"
+        or bool(session.get("meeting_type"))
+        or isinstance(meta.get("meeting"), Mapping)
+        or session_id.startswith("mtg-")
+    ):
+        return "meeting"
+
+    if (
+        mode in {"trainer", "trainer_session", "teaching", "teaching_session", "persona_teaching_advisory"}
+        or consultation_type in {"trainer", "teaching", "persona_teaching_advisory"}
+        or session_id.startswith("teach-")
+        or session_id.startswith("creq-teach-")
+    ):
+        return "trainer"
+
+    if source_type == "agora_session":
+        if mode in {"trade_intent", "trading_room", "decision_lock", "trade_proposal", "order_intent"}:
+            return "trade_intent"
+        return "consultation"
+
+    if mode in {
+        "consult",
+        "consultation",
+        "persona_panel",
+        "gate_panel",
+        "committee",
+        "committee_review",
+        "strategy_review",
+        "pre_deployment",
+    }:
+        return "consultation"
+    return "trade_intent"
+
+
 # --- _persona_intent_redaction ---
-def _persona_intent_redaction(fields: List[str]) -> Dict[str, Any]:
+def _persona_intent_redaction(
+    fields: Optional[List[Any]] = None,
+    *,
+    extra_withheld: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    withheld_fields: List[Dict[str, str]] = []
+    seen_fields: set[str] = set()
+
+    def _add_entry(field_name: str, reason_code: Optional[str] = None) -> None:
+        clean_field = _persona_intent_text(field_name)
+        if not clean_field:
+            return
+        canonical_field = (
+            _management_camel_to_snake_key(clean_field)
+            if _MANAGEMENT_CAMEL_KEY_RE.search(clean_field)
+            else clean_field
+        )
+        if canonical_field in seen_fields:
+            return
+        resolved_reason = (
+            _persona_intent_text(reason_code)
+            or _PERSONA_INTENT_FIELD_REASON_CODES.get(canonical_field)
+            or _PERSONA_INTENT_FIELD_REASON_CODES.get(clean_field)
+            or "private_memory_withheld"
+        )
+        seen_fields.add(canonical_field)
+        withheld_fields.append(
+            {
+                "field": canonical_field,
+                "reason_code": resolved_reason,
+            }
+        )
+
+    _add_entry("private_memory", "private_memory_withheld")
+    _add_entry("persona_interpretation", "private_interpretation_withheld")
+
+    for raw in fields or []:
+        if isinstance(raw, Mapping):
+            _add_entry(
+                str(raw.get("field") or ""),
+                str(raw.get("reason_code") or raw.get("reason") or ""),
+            )
+        elif isinstance(raw, str):
+            if raw in _PERSONA_INTENT_FIELD_REASON_CODES:
+                _add_entry(raw, _PERSONA_INTENT_FIELD_REASON_CODES[raw])
+
+    for extra in extra_withheld or []:
+        if isinstance(extra, Mapping):
+            _add_entry(
+                str(extra.get("field") or ""),
+                str(extra.get("reason_code") or extra.get("reason") or ""),
+            )
+
+    reason_codes: List[str] = []
+    for entry in withheld_fields:
+        rc = entry["reason_code"]
+        if rc not in reason_codes:
+            reason_codes.append(rc)
+
     return {
         "is_redacted": True,
         "redacted": True,
-        "policy": "management_persona_intent_public_summary",
-        "redacted_fields": fields,
+        "status": "redacted",
+        "policy": "sd_persona_meetings_12_2_private_memory_boundary",
+        "reason_code": reason_codes[0] if reason_codes else "private_memory_withheld",
+        "reason_codes": reason_codes,
+        "redacted_fields": [entry["field"] for entry in withheld_fields],
+        "withheld_fields": withheld_fields,
+        "field_reasons": {entry["field"]: entry["reason_code"] for entry in withheld_fields},
     }
 
 
+# --- _persona_intent_compose_summary ---
+def _persona_intent_compose_summary(
+    *,
+    title: str,
+    topic: str,
+    proposed_action: str,
+    outcome: str,
+    explicit_summary: Optional[str] = None,
+) -> str:
+    clean_explicit = _persona_intent_text(explicit_summary)
+    if clean_explicit and clean_explicit != _persona_intent_text(title):
+        return clean_explicit
+    parts: List[str] = []
+    if topic:
+        parts.append(topic)
+    if proposed_action and proposed_action != topic:
+        parts.append(f"Proposed: {proposed_action}")
+    if outcome and outcome not in {topic, proposed_action}:
+        parts.append(f"Outcome: {outcome}")
+    composed = " — ".join(parts)
+    if composed and composed != _persona_intent_text(title):
+        return composed
+    return f"{topic or title} (outcome: {outcome or 'recorded'})"
+
+
 # --- _persona_intent_trace_item ---
-def _persona_intent_trace_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "session_id", "id")
+def _persona_intent_trace_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(cleaned_session, "session_id", "id")
     if not session_id:
         return None
-    persona_id = _persona_intent_text(session.get("persona_id"))
-    session_type = _persona_intent_text(session.get("session_type") or "persona_session")
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    occurred_at = _persona_intent_timestamp(session)
+    persona_id = _persona_intent_text(cleaned_session.get("persona_id"))
+    persona_label = (
+        _persona_intent_persona_label(persona_id, persona_names_by_id=persona_names_by_id)
+        if persona_id
+        else None
+    )
+    session_type = _persona_intent_text(cleaned_session.get("session_type") or "persona_session")
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"persona_trace:{session_id}"
+    kind = _persona_intent_item_kind("persona_trace", cleaned_session)
+
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=persona_id)
+    cap_summary = _persona_intent_capability_summary(cleaned_session)
+    if tools_used and not cap_summary.get("effective_tool_count"):
+        cap_summary["effective_tool_count"] = len(tools_used)
+
+    meta = cleaned_session.get("metadata") if isinstance(cleaned_session.get("metadata"), dict) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), dict) else {}
+    deployment_stage = _persona_intent_text(cleaned_session.get("deployment_stage") or "paper")
+    capital_pool_id = _persona_intent_text(
+        cleaned_session.get("capital_pool_id") or cleaned_session.get("pool_scope")
+    )
+    runtime_binding_id = _persona_intent_text(cleaned_session.get("runtime_binding_id"))
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_ref")
+        or cleaned_session.get("objective")
+        or meta.get("topic")
+        or meta.get("task")
+        or (
+            f"{session_type.replace('_', ' ').title()} on {capital_pool_id}"
+            if capital_pool_id
+            else f"{session_type.replace('_', ' ').title()} ({deployment_stage})"
+        )
+    )
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or cleaned_session.get("action")
+        or cleaned_session.get("recommendation")
+        or meta.get("proposed_action")
+        or (
+            f"Execute {session_type.replace('_', ' ')} for {capital_pool_id} ({deployment_stage})"
+            if capital_pool_id
+            else (
+                cleaned_session.get("summary")
+                if _persona_intent_text(cleaned_session.get("summary")) != topic
+                else f"Execute {session_type.replace('_', ' ')} in {deployment_stage} stage"
+            )
+        )
+    )
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or cleaned_session.get("verdict")
+        or consult_meta.get("outcome")
+        or meta.get("outcome")
+        or meta.get("decision")
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or cleaned_session.get("outcome")
+        or consult_meta.get("outcome")
+        or outcome
+    )
+
+    raw_consulted = _persona_intent_extract_string_list(
+        cleaned_session.get("consulted_personas"),
+        cleaned_session.get("consultedPersonas"),
+        consult_meta.get("responder_session_ids"),
+        consult_meta.get("committee_session_ids"),
+    )
+    consulted_entries = _persona_intent_build_persona_entries(
+        raw_consulted,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = [
+        pid
+        for pid in [persona_id, *[e["persona_id"] for e in consulted_entries]]
+        if pid
+    ]
+    all_persona_ids = list(dict.fromkeys(all_persona_ids))
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+        consult_meta.get("evidence_refs"),
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title") or topic or f"Persona trace {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation"],
+        extra_withheld=stripped_withheld,
+    )
+
     trace = {
         "session_id": session_id,
-        "trace_id": session.get("trace_id"),
-        "request_id": session.get("request_id"),
-        "runtime_binding_id": session.get("runtime_binding_id"),
-        "deployment_stage": session.get("deployment_stage"),
-        "capital_pool_id": session.get("capital_pool_id"),
-        "last_heartbeat_at": session.get("last_heartbeat_at"),
-        "capability_summary": _persona_intent_capability_summary(session),
+        "trace_id": cleaned_session.get("trace_id"),
+        "request_id": cleaned_session.get("request_id"),
+        "runtime_binding_id": runtime_binding_id or None,
+        "deployment_stage": cleaned_session.get("deployment_stage"),
+        "capital_pool_id": capital_pool_id or None,
+        "last_heartbeat_at": cleaned_session.get("last_heartbeat_at"),
+        "capability_summary": cap_summary,
+        "tools_used": tools_used,
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "persona_trace",
+        "kind": kind,
         "source_type": "persona_trace",
         "source_id": session_id,
-        "personaId": persona_id or None,
         "persona_id": persona_id or None,
-        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
+        "persona_name": persona_label,
+        "persona_display_name": persona_label,
+        "persona_label": persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
         "intent": session_type,
-        "title": f"Persona trace {session_id}",
-        "summary": f"{session_type.replace('_', ' ').title()} session intent summary.",
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("started_at") or session.get("created_at"),
-        "updated_at": session.get("last_heartbeat_at") or session.get("updated_at"),
+        "created_at": cleaned_session.get("started_at") or cleaned_session.get("created_at"),
+        "updated_at": cleaned_session.get("last_heartbeat_at") or cleaned_session.get("updated_at"),
         "occurred_at": occurred_at,
         "trace": trace,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(
-            ["capability_snapshot", "tools_enabled", "memory_trace", "reasoning_trace"]
-        ),
+        "redaction": redaction,
         "route": "/management/persona-intent?source_type=persona_trace",
         "bff_detail_path": f"/api/v1/sessions/{session_id}",
     }
 
 
 # --- _persona_intent_trainer_item ---
-def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "session_id", "id")
+def _persona_intent_trainer_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(cleaned_session, "session_id", "id")
     if not session_id:
         return None
-    persona_id = _persona_intent_text(session.get("persona_id"))
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    raw_events = [event for event in (session.get("events") or []) if isinstance(event, dict)]
+    persona_id = _persona_intent_text(cleaned_session.get("persona_id"))
+    persona_label = (
+        _persona_intent_persona_label(persona_id, persona_names_by_id=persona_names_by_id)
+        if persona_id
+        else None
+    )
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    raw_events = [event for event in (cleaned_session.get("events") or []) if isinstance(event, dict)]
     latest_event = None
     if raw_events:
         latest_event = sorted(
             raw_events,
             key=lambda event: int(event.get("sequence_number") or 0),
         )[-1]
-    outcomes = list(session.get("outcomes") or [])
-    objective = _persona_intent_text(session.get("objective") or session.get("topic"))
-    occurred_at = _persona_intent_timestamp(session)
+    outcomes = [
+        _persona_intent_text(o)
+        for o in (cleaned_session.get("outcomes") or [])
+        if _persona_intent_text(o)
+    ]
+    evaluation = cleaned_session.get("evaluation") if isinstance(cleaned_session.get("evaluation"), dict) else {}
+    if not outcomes and evaluation:
+        eval_note = _persona_intent_text(evaluation.get("notes") or evaluation.get("summary"))
+        if eval_note:
+            outcomes.append(eval_note)
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("objective")
+        or cleaned_session.get("title")
+        or f"Trainer session for {persona_label or persona_id or session_id}"
+    )
+    objective = _persona_intent_text(cleaned_session.get("objective") or cleaned_session.get("topic") or topic)
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"trainer_session:{session_id}"
+    mode = _persona_intent_text(cleaned_session.get("mode") or cleaned_session.get("session_type") or "trainer")
+
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or (outcomes[0] if outcomes else "")
+        or objective
+    )
+    latest_signal = _persona_intent_text((latest_event or {}).get("outcome_signal"))
+    eval_outcome = ""
+    if evaluation:
+        if "passed" in evaluation:
+            score_part = f" (score {evaluation['score']})" if evaluation.get("score") is not None else ""
+            eval_outcome = f"{'passed' if evaluation.get('passed') else 'failed'}{score_part}"
+        else:
+            eval_outcome = _persona_intent_text(evaluation.get("outcome") or evaluation.get("notes"))
+
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or ("; ".join(outcomes) if outcomes else "")
+        or latest_signal
+        or eval_outcome
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or latest_signal
+        or eval_outcome
+        or outcome
+    )
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=persona_id)
+
+    raw_consulted = _persona_intent_extract_string_list(
+        cleaned_session.get("consulted_personas"),
+        cleaned_session.get("consultedPersonas"),
+    )
+    consulted_entries = _persona_intent_build_persona_entries(
+        raw_consulted,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = [
+        pid
+        for pid in [persona_id, *[e["persona_id"] for e in consulted_entries]]
+        if pid
+    ]
+    all_persona_ids = list(dict.fromkeys(all_persona_ids))
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+        cleaned_session.get("session_artifacts"),
+        cleaned_session.get("artifacts"),
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title") or topic or f"Trainer session {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation", "raw_control_diff"],
+        extra_withheld=stripped_withheld,
+    )
+
     trainer_summary = {
         "session_id": session_id,
         "objective": objective or None,
-        "mode": session.get("mode") or session.get("session_type") or "trainer",
+        "topic": topic or None,
+        "mode": mode,
         "status": status,
-        "started_at": session.get("started_at"),
-        "ended_at": session.get("ended_at") or session.get("completed_at"),
-        "current_control_state": session.get("current_control_state"),
+        "started_at": cleaned_session.get("started_at"),
+        "ended_at": cleaned_session.get("ended_at") or cleaned_session.get("completed_at"),
+        "current_control_state": cleaned_session.get("current_control_state"),
         "event_count": len(raw_events),
         "outcome_count": len(outcomes),
+        "outcomes": outcomes,
         "latest_outcome_signal": (latest_event or {}).get("outcome_signal"),
-        "artifact_count": len(session.get("session_artifacts") or session.get("artifacts") or []),
+        "artifact_count": len(cleaned_session.get("session_artifacts") or cleaned_session.get("artifacts") or []),
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "trainer_session",
+        "kind": "trainer",
         "source_type": "trainer_session",
         "source_id": session_id,
-        "personaId": persona_id or None,
         "persona_id": persona_id or None,
-        "persona_label": _persona_intent_persona_label(persona_id) if persona_id else None,
-        "intent": trainer_summary["mode"],
-        "title": f"Trainer session {session_id}",
-        "summary": objective or "Trainer session intent summary.",
+        "persona_name": persona_label,
+        "persona_display_name": persona_label,
+        "persona_label": persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
+        "intent": mode,
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("started_at") or session.get("created_at"),
-        "updated_at": session.get("ended_at") or session.get("completed_at") or session.get("updated_at"),
+        "created_at": cleaned_session.get("started_at") or cleaned_session.get("created_at"),
+        "updated_at": cleaned_session.get("ended_at") or cleaned_session.get("completed_at") or cleaned_session.get("updated_at"),
         "occurred_at": occurred_at,
         "trainer": trainer_summary,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(["events", "message_body", "raw_control_diff"]),
+        "redaction": redaction,
         "route": "/management/persona-intent?source_type=trainer_session",
         "bff_detail_path": f"/api/v1/trainer/sessions/{session_id}",
     }
@@ -4047,7 +5032,16 @@ def _persona_intent_trainer_item(session: Dict[str, Any]) -> Optional[Dict[str, 
 # --- _persona_intent_agora_persona_ids ---
 def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
     persona_ids: List[str] = []
+    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId", "chair_persona_id", "chairPersonaId"):
+        raw_val = _persona_intent_text(session.get(key))
+        if raw_val:
+            persona_ids.append(raw_val)
     for participant in session.get("participants") or []:
+        if isinstance(participant, str):
+            clean_p = _persona_intent_text(participant)
+            if clean_p.startswith("persona-") or clean_p.startswith("p-"):
+                persona_ids.append(clean_p)
+            continue
         if not isinstance(participant, dict):
             continue
         actor_id = _persona_intent_text(
@@ -4062,12 +5056,8 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
         ref_id = _persona_intent_text(ref.get("ref_id") or ref.get("id"))
         if ref_type == "persona" and ref_id:
             persona_ids.append(ref_id)
-    for key in ("persona_id", "personaId", "from_persona_id", "fromPersonaId"):
-        raw_val = _persona_intent_text(session.get(key))
-        if raw_val:
-            persona_ids.append(raw_val)
     if session.get("target_type") == "persona":
-        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef"))
+        target_ref = _persona_intent_text(session.get("target_ref") or session.get("targetRef") or session.get("target_id"))
         if target_ref:
             persona_ids.append(target_ref)
     raw_pids = session.get("persona_ids") or session.get("personaIds")
@@ -4085,14 +5075,114 @@ def _persona_intent_agora_persona_ids(session: Dict[str, Any]) -> List[str]:
     return ordered
 
 
+# --- _persona_intent_agora_consulted_entries ---
+def _persona_intent_agora_consulted_entries(
+    session: Dict[str, Any],
+    *,
+    primary_persona_id: Optional[str],
+    kind: str,
+    mode: str,
+    persona_ids: List[str],
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, str]]:
+    hints_by_id: Dict[str, str] = {}
+    candidate_ids: List[str] = []
+
+    def _collect_from_list(items: Any) -> None:
+        if not isinstance(items, list):
+            return
+        for raw in items:
+            if isinstance(raw, str):
+                clean = _persona_intent_text(raw)
+                if clean:
+                    candidate_ids.append(clean)
+            elif isinstance(raw, Mapping):
+                pid = _persona_intent_text(
+                    raw.get("persona_id")
+                    or raw.get("actorId")
+                    or raw.get("actor_id")
+                    or raw.get("participant_ref")
+                    or raw.get("id")
+                )
+                if pid:
+                    candidate_ids.append(pid)
+                    hint = _persona_intent_text(raw.get("display_name") or raw.get("name") or raw.get("label"))
+                    if hint and hint != pid:
+                        hints_by_id[pid] = hint
+
+    _collect_from_list(session.get("consulted_personas") or session.get("consultedPersonas"))
+    _collect_from_list(session.get("participants"))
+
+    meta = session.get("metadata") if isinstance(session.get("metadata"), Mapping) else {}
+    panel_meta = meta.get("panel") if isinstance(meta.get("panel"), Mapping) else {}
+    meeting_meta = meta.get("meeting") if isinstance(meta.get("meeting"), Mapping) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), Mapping) else {}
+
+    _collect_from_list(panel_meta.get("participants"))
+    _collect_from_list(meeting_meta.get("participants"))
+    _collect_from_list(consult_meta.get("committee_participants"))
+    _collect_from_list(consult_meta.get("actual_reviewers"))
+
+    for pid in persona_ids:
+        if pid and pid not in candidate_ids:
+            candidate_ids.append(pid)
+
+    deduped = list(dict.fromkeys([pid for pid in candidate_ids if pid]))
+    non_primary = [pid for pid in deduped if pid != primary_persona_id]
+
+    if non_primary:
+        selected_ids = non_primary
+    elif kind == "consultation" and mode in {"persona_panel", "gate_panel"}:
+        selected_ids = ["persona-risk-officer"]
+    else:
+        selected_ids = deduped
+
+    return _persona_intent_build_persona_entries(
+        selected_ids,
+        persona_names_by_id=persona_names_by_id,
+        hints_by_id=hints_by_id,
+    )
+
+
 # --- _persona_intent_agora_item ---
-def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    session_id = _management_record_id(session, "sessionId", "session_id", "id", "requestId", "request_id")
+def _persona_intent_agora_item(
+    session: Dict[str, Any],
+    *,
+    persona_names_by_id: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    cleaned_session, stripped_withheld = _persona_intent_strip_private_content(session)
+    if not isinstance(cleaned_session, dict):
+        return None
+    session_id = _management_record_id(
+        cleaned_session,
+        "sessionId",
+        "session_id",
+        "id",
+        "requestId",
+        "request_id",
+        "meeting_id",
+    )
     if not session_id:
         return None
-    status = _persona_intent_text(session.get("status") or "unknown").lower() or "unknown"
-    mode = _persona_intent_text(session.get("mode") or session.get("sessionType") or session.get("consultation_type") or "agora_session")
-    messages = [message for message in (session.get("messages") or []) if isinstance(message, dict)]
+    status = _persona_intent_text(cleaned_session.get("status") or "unknown").lower() or "unknown"
+    meta = cleaned_session.get("metadata") if isinstance(cleaned_session.get("metadata"), dict) else {}
+    consult_meta = meta.get("consultation") if isinstance(meta.get("consultation"), dict) else {}
+    panel_meta = meta.get("panel") if isinstance(meta.get("panel"), dict) else {}
+    meeting_meta = meta.get("meeting") if isinstance(meta.get("meeting"), dict) else {}
+
+    mode = _persona_intent_text(
+        cleaned_session.get("mode")
+        or cleaned_session.get("sessionType")
+        or cleaned_session.get("session_type")
+        or cleaned_session.get("consultation_type")
+        or consult_meta.get("consultation_type")
+        or cleaned_session.get("meeting_type")
+        or meeting_meta.get("meeting_type")
+        or "agora_session"
+    )
+    kind = _persona_intent_item_kind("agora_session", cleaned_session)
+
+    messages = [message for message in (cleaned_session.get("messages") or []) if isinstance(message, dict)]
     latest_message_at = max(
         [
             _persona_intent_text(message.get("createdAt") or message.get("created_at"))
@@ -4102,60 +5192,303 @@ def _persona_intent_agora_item(session: Dict[str, Any]) -> Optional[Dict[str, An
         default=None,
     )
     context_refs = [
-        ref for ref in (session.get("contextRefs") or session.get("context_refs") or [])
+        ref for ref in (cleaned_session.get("contextRefs") or cleaned_session.get("context_refs") or [])
         if isinstance(ref, dict)
     ]
-    persona_ids = _persona_intent_agora_persona_ids(session)
-    topic = _persona_intent_text(
-        session.get("topic")
-        or session.get("title")
-        or session.get("task")
-        or session.get("task_summary")
-        or session.get("taskSummary")
+    persona_ids = _persona_intent_agora_persona_ids(cleaned_session)
+    primary_persona_id = (
+        _persona_intent_text(
+            cleaned_session.get("from_persona_id")
+            or cleaned_session.get("chair_persona_id")
+            or cleaned_session.get("persona_id")
+            or (persona_ids[0] if persona_ids else "")
+        )
+        or None
     )
-    occurred_at = _persona_intent_timestamp(session)
+    primary_persona_label = (
+        _persona_intent_persona_label(primary_persona_id, persona_names_by_id=persona_names_by_id)
+        if primary_persona_id
+        else None
+    )
+
+    consulted_entries = _persona_intent_agora_consulted_entries(
+        cleaned_session,
+        primary_persona_id=primary_persona_id,
+        kind=kind,
+        mode=mode,
+        persona_ids=persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+    all_persona_ids = list(
+        dict.fromkeys(
+            [
+                pid
+                for pid in [primary_persona_id, *persona_ids, *[e["persona_id"] for e in consulted_entries]]
+                if pid
+            ]
+        )
+    )
+    persona_entries = _persona_intent_build_persona_entries(
+        all_persona_ids,
+        persona_names_by_id=persona_names_by_id,
+    )
+
+    topic = _persona_intent_text(
+        cleaned_session.get("topic")
+        or cleaned_session.get("agenda")
+        or cleaned_session.get("title")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_summary")
+        or cleaned_session.get("taskSummary")
+        or meeting_meta.get("topic")
+        or meta.get("task")
+        or f"Agora {mode.replace('_', ' ')} session"
+    )
+    occurred_at = _persona_intent_timestamp(cleaned_session)
     item_id = f"agora_session:{session_id}"
+
+    synthesis = cleaned_session.get("synthesis") if isinstance(cleaned_session.get("synthesis"), dict) else {}
+    raw_proposals = (
+        cleaned_session.get("proposals")
+        if isinstance(cleaned_session.get("proposals"), list)
+        else (synthesis.get("proposals") if isinstance(synthesis.get("proposals"), list) else [])
+    )
+    proposal_texts: List[str] = []
+    for prop in raw_proposals:
+        if isinstance(prop, str) and prop.strip():
+            proposal_texts.append(prop.strip())
+        elif isinstance(prop, Mapping):
+            p_text = _persona_intent_text(
+                prop.get("summary")
+                or prop.get("title")
+                or prop.get("proposed_action")
+                or prop.get("action")
+                or prop.get("description")
+            )
+            if not p_text:
+                p_kind = _persona_intent_text(prop.get("kind"))
+                p_target = _persona_intent_text(
+                    prop.get("target_id")
+                    or ((prop.get("downstream") or {}).get("id") if isinstance(prop.get("downstream"), Mapping) else "")
+                    or ((prop.get("downstream") or {}).get("target") if isinstance(prop.get("downstream"), Mapping) else "")
+                    or prop.get("proposal_id")
+                )
+                if p_kind or p_target:
+                    p_text = f"{p_kind}: {p_target}".strip(": ")
+            if p_text and p_text not in proposal_texts:
+                proposal_texts.append(p_text)
+
+    message_proposal = ""
+    message_outcome = ""
+    for msg in reversed(messages):
+        msg_text = _persona_intent_text(
+            msg.get("proposed_action") or msg.get("recommendation") or msg.get("content") or msg.get("text")
+        )
+        role = _persona_intent_text(msg.get("role")).lower()
+        if msg_text:
+            if not message_proposal and role in {"assistant", "chair", "reviewer", "persona", ""}:
+                message_proposal = msg_text
+            if not message_outcome and role in {"assistant", "chair", "reviewer", "system"}:
+                message_outcome = msg_text
+
+    gated_decision = panel_meta.get("gated_decision") if isinstance(panel_meta.get("gated_decision"), dict) else {}
+    gated_type = _persona_intent_text(gated_decision.get("type") or cleaned_session.get("target_type"))
+    gated_target = _persona_intent_text(
+        gated_decision.get("id")
+        or cleaned_session.get("target_ref")
+        or cleaned_session.get("target_id")
+    )
+    target_action = ""
+    if gated_type and gated_target:
+        target_action = f"{gated_type.replace('_', ' ')} for {gated_target}"
+    elif gated_type:
+        target_action = f"{gated_type.replace('_', ' ')} review"
+
+    proposed_action = _persona_intent_text(
+        cleaned_session.get("proposed_action")
+        or cleaned_session.get("proposedAction")
+        or cleaned_session.get("recommendation")
+        or synthesis.get("proposed_action")
+        or synthesis.get("recommendation")
+        or ("; ".join(proposal_texts) if proposal_texts else "")
+        or message_proposal
+        or target_action
+        or topic
+    )
+
+    synth_summary = consult_meta.get("synthesis_summary") if isinstance(consult_meta.get("synthesis_summary"), dict) else {}
+    outcome = _persona_intent_text(
+        cleaned_session.get("outcome")
+        or cleaned_session.get("decision")
+        or synthesis.get("outcome")
+        or synthesis.get("decision")
+        or synthesis.get("summary")
+        or consult_meta.get("outcome")
+        or synth_summary.get("outcome")
+        or message_outcome
+        or status
+    )
+    decision = _persona_intent_text(
+        cleaned_session.get("decision")
+        or synthesis.get("decision")
+        or synthesis.get("outcome")
+        or consult_meta.get("outcome")
+        or outcome
+    )
+    tools_used = _persona_intent_extract_tools_used(cleaned_session, persona_id=primary_persona_id)
+
+    evidence_refs = _persona_intent_extract_string_list(
+        cleaned_session.get("evidence_refs"),
+        cleaned_session.get("evidenceRefs"),
+         cleaned_session.get("service_evidence_refs"),
+        consult_meta.get("evidence_refs"),
+        synth_summary.get("evidence_refs"),
+        context_refs,
+    )
+    risk_flags = _persona_intent_extract_string_list(
+        cleaned_session.get("risk_flags"),
+        cleaned_session.get("riskFlags"),
+    )
+    policy_violations = _persona_intent_extract_string_list(
+        cleaned_session.get("policy_violations"),
+        cleaned_session.get("policyViolations"),
+    )
+
+    title = _persona_intent_text(
+        cleaned_session.get("title")
+        or cleaned_session.get("task")
+        or cleaned_session.get("task_summary")
+        or cleaned_session.get("taskSummary")
+        or topic
+        or f"Agora session {session_id}"
+    )
+    summary = _persona_intent_compose_summary(
+        title=title,
+        topic=topic,
+        proposed_action=proposed_action,
+        outcome=outcome,
+        explicit_summary=cleaned_session.get("summary"),
+    )
+    redaction = _persona_intent_redaction(
+        ["private_memory", "persona_interpretation"],
+        extra_withheld=stripped_withheld,
+    )
+
+    detail_path = (
+        f"/management/meetings/{session_id}"
+        if kind == "meeting"
+        else (
+            f"/api/v1/consultations/{cleaned_session.get('linked_session_id') or session_id}"
+            if kind == "consultation"
+            else None
+        )
+    )
+
     agora_summary = {
-        "sessionId": session_id,
         "session_id": session_id,
+        "kind": kind,
         "mode": mode,
         "status": status,
         "topic": topic or None,
-        "participant_count": len(session.get("participants") or []),
+        "proposed_action": proposed_action or None,
+        "outcome": outcome or None,
+        "decision": decision or None,
+        "participant_count": max(
+            len(cleaned_session.get("participants") or []),
+            len(all_persona_ids),
+        ),
         "context_ref_count": len(context_refs),
         "message_count": len(messages),
         "latest_message_at": latest_message_at,
-        "persona_ids": persona_ids,
-        "sse_topic": session.get("sse_topic"),
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "consulted_personas": consulted_entries,
+        "tools_used": tools_used,
+        "sse_topic": cleaned_session.get("sse_topic"),
     }
     return {
         "id": item_id,
         "intent_id": item_id,
-        "sourceType": "agora_session",
+        "kind": kind,
         "source_type": "agora_session",
         "source_id": session_id,
-        "personaId": persona_ids[0] if persona_ids else None,
-        "persona_id": persona_ids[0] if persona_ids else None,
-        "persona_ids": persona_ids,
+        "persona_id": primary_persona_id,
+        "persona_name": primary_persona_label,
+        "persona_display_name": primary_persona_label,
+        "persona_label": primary_persona_label,
+        "persona_ids": all_persona_ids,
+        "personas": persona_entries,
+        "persona_display_names": {e["persona_id"]: e["display_name"] for e in persona_entries},
         "intent": mode,
-        "title": (
-            session.get("title")
-            or session.get("task")
-            or session.get("task_summary")
-            or session.get("taskSummary")
-            or f"Agora session {session_id}"
-        ),
-        "summary": topic or "Agora session intent summary.",
+        "title": title,
+        "topic": topic,
+        "summary": summary,
+        "user_intent_summary": summary,
+        "proposed_action": proposed_action,
+        "outcome": outcome,
+        "decision": decision,
+        "tools_used": tools_used,
+        "tool_path": tools_used,
+        "consulted_personas": consulted_entries,
+        "consulted_persona_ids": [e["persona_id"] for e in consulted_entries],
+        "consulted_persona_names": [e["display_name"] for e in consulted_entries],
+        "evidence_refs": evidence_refs,
+        "risk_flags": risk_flags,
+        "policy_violations": policy_violations,
         "status": status,
-        "created_at": session.get("createdAt") or session.get("created_at"),
-        "updated_at": session.get("updatedAt") or session.get("updated_at") or latest_message_at or session.get("createdAt") or session.get("created_at"),
+        "created_at": cleaned_session.get("createdAt") or cleaned_session.get("created_at") or cleaned_session.get("started_at"),
+        "updated_at": (
+            cleaned_session.get("updatedAt")
+            or cleaned_session.get("updated_at")
+            or latest_message_at
+            or cleaned_session.get("completed_at")
+            or cleaned_session.get("ended_at")
+            or cleaned_session.get("createdAt")
+            or cleaned_session.get("created_at")
+            or cleaned_session.get("started_at")
+        ),
         "occurred_at": occurred_at,
         "agora": agora_summary,
+        "withheld_fields": redaction["withheld_fields"],
+        "withheld_reason_codes": redaction["reason_codes"],
         "redacted": True,
-        "redaction": _persona_intent_redaction(["messages", "message_content", "raw_transcript"]),
-        "route": "/management/persona-intent?source_type=agora_session",
-        "bff_detail_path": None,
+        "redaction": redaction,
+        "route": f"/management/persona-intent?kind={kind}",
+        "bff_detail_path": detail_path,
     }
+
+
+# --- _persona_intent_enrich_consult_record ---
+def _persona_intent_enrich_consult_record(
+    session: Dict[str, Any],
+    *,
+    c_store: Any = None,
+) -> Dict[str, Any]:
+    if c_store is None:
+        return session
+    req_id = _persona_intent_text(
+        session.get("request_id") or session.get("session_id") or session.get("id")
+    )
+    if not req_id:
+        return session
+    merged = dict(session)
+    try:
+        if hasattr(c_store, "get_request"):
+            raw_req = c_store.get_request(req_id)
+            if raw_req is not None:
+                req_data = raw_req.model_dump(mode="json") if hasattr(raw_req, "model_dump") else dict(raw_req)
+                for k in ("metadata", "evidence_refs", "task", "target_type", "target_id", "tenant_id", "consultation_type"):
+                    if req_data.get(k) is not None and not merged.get(k):
+                        merged[k] = req_data.get(k)
+        if hasattr(c_store, "get_meeting"):
+            raw_mtg = c_store.get_meeting(req_id)
+            if isinstance(raw_mtg, Mapping):
+                for k in ("meeting_type", "topic", "agenda", "outcome", "chair_persona_id", "participants", "synthesis", "proposals"):
+                    if raw_mtg.get(k) is not None and not merged.get(k):
+                        merged[k] = raw_mtg.get(k)
+    except Exception:
+        pass
+    return merged
 
 
 # --- _persona_intent_all_items ---
@@ -4166,6 +5499,22 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
     List[Dict[str, Any]],
 ]:
     personas = _list_persona_records(tenant_id)
+    persona_names_by_id: Dict[str, str] = {}
+    for persona in personas:
+        pid = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
+        if not pid:
+            continue
+        meta = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+        pname = _persona_intent_text(
+            persona.get("display_name")
+            or persona.get("displayName")
+            or persona.get("name")
+            or meta.get("display_name")
+            or meta.get("name")
+        )
+        if pname:
+            persona_names_by_id[pid] = pname
+
     items: List[Dict[str, Any]] = []
     persona_sessions: List[Dict[str, Any]] = []
     trainer_sessions: List[Dict[str, Any]] = []
@@ -4173,12 +5522,12 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         persona_id = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
         for session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
             persona_sessions.append(session)
-            item = _persona_intent_trace_item(session)
+            item = _persona_intent_trace_item(session, persona_names_by_id=persona_names_by_id)
             if item is not None:
                 items.append(item)
         for session in _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []:
             trainer_sessions.append(session)
-            item = _persona_intent_trainer_item(session)
+            item = _persona_intent_trainer_item(session, persona_names_by_id=persona_names_by_id)
             if item is not None:
                 items.append(item)
 
@@ -4188,20 +5537,45 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
     }
     active_store = _get_active_read_store()
+    op_port = getattr(active_store, "operations_consultation", None)
+    c_store = None
+    if op_port is not None and hasattr(op_port, "_consultation_store"):
+        try:
+            c_store = op_port._consultation_store()
+        except Exception:
+            c_store = None
+
+    consult_records: List[Dict[str, Any]] = []
     if hasattr(active_store, "list_consult_requests"):
-        consult_records = list(active_store.list_consult_requests() or [])
-    else:
-        consult_records = []
+        try:
+            consult_records = list(active_store.list_consult_requests() or [])
+        except Exception:
+            if c_store is None:
+                raise
+            consult_records = []
+    if not consult_records and c_store is not None and hasattr(c_store, "list_requests"):
+        try:
+            for raw_req in c_store.list_requests() or []:
+                req_dict = raw_req.model_dump(mode="json") if hasattr(raw_req, "model_dump") else dict(raw_req)
+                if hasattr(op_port, "_project_service_request_record") and hasattr(op_port, "_project_consult_request_summary"):
+                    projected = op_port._project_service_request_record(req_dict)
+                    summary = op_port._project_consult_request_summary(projected)
+                    consult_records.append(summary)
+                else:
+                    consult_records.append(req_dict)
+        except Exception:
+            pass
     if not consult_records and hasattr(active_store, "list_agora_sessions"):
         agora_sessions = list(active_store.list_agora_sessions() or [])
     else:
         agora_sessions = consult_records
 
     for session in agora_sessions:
-        session_tenant = _persona_intent_text(session.get("tenant_id") or session.get("tenantId"))
+        enriched_session = _persona_intent_enrich_consult_record(session, c_store=c_store)
+        session_tenant = _persona_intent_text(enriched_session.get("tenant_id") or enriched_session.get("tenantId"))
         if tenant_id and session_tenant and session_tenant != tenant_id:
             continue
-        referenced_persona_ids = _persona_intent_agora_persona_ids(session)
+        referenced_persona_ids = _persona_intent_agora_persona_ids(enriched_session)
         if referenced_persona_ids and not all(
             persona_id in visible_persona_ids for persona_id in referenced_persona_ids
         ):
@@ -4209,7 +5583,7 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
             # session when any referenced Persona lacks an explicit matching
             # tenant admission in the caller's directory.
             continue
-        item = _persona_intent_agora_item(session)
+        item = _persona_intent_agora_item(enriched_session, persona_names_by_id=persona_names_by_id)
         if item is not None:
             items.append(item)
 
@@ -4227,16 +5601,26 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
 def _persona_intent_filter_items(
     items: List[Dict[str, Any]],
     *,
-    source_type: Optional[str],
-    persona_id: Optional[str],
-    status: Optional[str],
-    intent: Optional[str],
+    kind: Optional[str] = None,
+    source_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    status: Optional[str] = None,
+    intent: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     source_types = _persona_intent_source_filter(source_type)
+    kinds = _persona_intent_kind_filter(
+        kind,
+        default_to_trade_intent=(source_types is None),
+    )
     persona_ids = _persona_intent_csv_filter(persona_id)
     statuses = _persona_intent_csv_filter(status)
     intents = _persona_intent_csv_filter(intent)
     filtered = items
+    if kinds:
+        filtered = [
+            item for item in filtered
+            if str(item.get("kind") or "").lower() in kinds
+        ]
     if source_types:
         filtered = [
             item for item in filtered
@@ -4247,6 +5631,7 @@ def _persona_intent_filter_items(
             item for item in filtered
             if str(item.get("persona_id") or "").lower() in persona_ids
             or any(str(pid or "").lower() in persona_ids for pid in (item.get("persona_ids") or []))
+            or any(str(pid or "").lower() in persona_ids for pid in (item.get("consulted_persona_ids") or []))
         ]
     if statuses:
         filtered = [
@@ -4259,13 +5644,21 @@ def _persona_intent_filter_items(
             if str(item.get("intent") or "").lower() in intents
             or any(token in str(item.get("summary") or "").lower() for token in intents)
             or any(token in str(item.get("title") or "").lower() for token in intents)
+            or any(token in str(item.get("topic") or "").lower() for token in intents)
         ]
     return filtered
 
 
 # --- _persona_intent_summary ---
-def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) -> Dict[str, Any]:
+def _persona_intent_summary(
+    items: List[Dict[str, Any]],
+    returned_count: int,
+    *,
+    all_items: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     by_source_type = _management_count_by(items, "source_type")
+    by_kind = _management_count_by(items, "kind")
+    available_by_kind = _management_count_by(all_items if all_items is not None else items, "kind")
     by_status = _management_count_by(items, "status")
     by_intent = _management_count_by(items, "intent")
     persona_ids = sorted(
@@ -4283,6 +5676,9 @@ def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) ->
     return {
         "total_items": len(items),
         "returned_items": returned_count,
+        "trade_intent_count": by_kind.get("trade_intent", 0),
+        "consultation_count": by_kind.get("consultation", 0),
+        "meeting_count": by_kind.get("meeting", 0),
         "persona_trace_count": by_source_type.get("persona_trace", 0),
         "trainer_session_count": by_source_type.get("trainer_session", 0),
         "agora_session_count": by_source_type.get("agora_session", 0),
@@ -4290,11 +5686,10 @@ def _persona_intent_summary(items: List[Dict[str, Any]], returned_count: int) ->
         "persona_count": len(persona_ids),
         "persona_ids": persona_ids,
         "latest_at": latest_at,
-        "bySourceType": by_source_type,
+        "by_kind": by_kind,
+        "available_by_kind": available_by_kind,
         "by_source_type": by_source_type,
-        "byStatus": by_status,
         "by_status": by_status,
-        "byIntent": by_intent,
         "by_intent": by_intent,
     }
 
@@ -4575,9 +5970,340 @@ def _persona_readback_snapshot() -> Tuple[
     return all_bindings, all_cron_registrations, monitoring_sessions
 
 
+# --- _reconcile_paper_enrollment_once ---
+_PERSONA_PROVISIONING_ORPHAN_SKIP: Set[str] = set()
+_PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT: Dict[Tuple[str, str], str] = {}
+_TRANSIENT_PAPER_ENROLLMENT_BINDING_REASONS = frozenset({
+    "paper_runtime_binding_not_active",
+    "paper_capital_binding_not_active",
+    "runtime_binding_reader_failed",
+})
+
+
+def _persona_owner_supports_paper_enrollment(owner: Any) -> bool:
+    return (
+        owner is not None
+        and callable(getattr(owner, "get_persona", None))
+        and callable(getattr(owner, "advance_lifecycle_governed", None))
+        and callable(getattr(owner, "get_strategy_pool", None))
+        and callable(getattr(owner, "seed_strategy_pool", None))
+        and callable(getattr(owner, "get_harness", None))
+        and callable(getattr(owner, "initialize_harness", None))
+    )
+
+
+def _is_paper_enrollment_record_actionable(
+    record: ProvisioningRecord,
+    now: datetime,
+    retry_seconds: int,
+) -> bool:
+    if record.state not in {"provisioning", "succeeded"}:
+        return False
+    existing = (record.references or {}).get("paper_enrollment")
+    if enrollment_settled(existing):
+        return False
+    if not isinstance(existing, Mapping):
+        return True
+    status = str(existing.get("status") or "").strip().lower()
+    reason = str(existing.get("reason") or "").strip()
+    attempted_at = (
+        str(existing.get("attempted_at") or "").strip()
+        or str(record.updated_at or "").strip()
+    )
+    if status == "not_eligible":
+        if reason not in _TRANSIENT_PAPER_ENROLLMENT_BINDING_REASONS:
+            return False
+        throttled = {"status": "unavailable", "attempted_at": attempted_at}
+        if record.state == "provisioning":
+            return retry_due(throttled, now, retry_seconds)
+        key = (record.tenant_id, record.idempotency_key)
+        if _PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT.get(key) == attempted_at:
+            return retry_due(throttled, now, retry_seconds)
+        readback = (record.references or {}).get("authoritative_readback")
+        readback_at = (
+            str(readback.get("observed_at") or "").strip()
+            if isinstance(readback, Mapping)
+            else ""
+        )
+        recorded_at = (
+            str((record.result or {}).get("recorded_at") or "").strip()
+            if isinstance(record.result, Mapping)
+            else ""
+        )
+        succeeded_dt = _parse_rfc3339(readback_at or recorded_at)
+        attempt_dt = _parse_rfc3339(attempted_at)
+        if attempt_dt is not None and (succeeded_dt is None or attempt_dt > succeeded_dt):
+            return retry_due(throttled, now, retry_seconds)
+        return True
+    if status in {"refused", "unavailable", "enrolled"}:
+        return retry_due({**existing, "attempted_at": attempted_at}, now, retry_seconds)
+    return True
+
+
+def _reconcile_paper_enrollment_once() -> int:
+    """Enrol already paper-provisioned personas through the provisioning ledger.
+
+    Lease-guarded and GET-first inside the coordinator, so safe under restart
+    and concurrent replicas.  Failures stay a readable readback on the record.
+    """
+
+    if not _persona_owner_supports_paper_enrollment(_get_active_write_owner()):
+        return 0
+    enrolled = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper enrollment could not list provisioning ledger: %s", exc)
+        return 0
+    now = datetime.now(timezone.utc)
+    retry_seconds = max(
+        0, int(os.getenv("PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS", "600"))
+    )
+    for record in records:
+        if not _is_paper_enrollment_record_actionable(record, now, retry_seconds):
+            continue
+        try:
+            coordinator = PersonaProvisioningCoordinator(
+                store=_persona_provisioning_store(),
+                transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
+                schedule_registrar=_register_persona_cron_required,
+                lease_owner=f"paper-enrollment:{uuid.uuid4().hex}",
+                lease_seconds=max(
+                    30,
+                    int(os.getenv("PANTHEON_PERSONA_PROVISIONING_LEASE_SECONDS", "180")),
+                ),
+                actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+                runtime_binding_reader=_runtime_bindings_for_case,
+                governance_actor_id=os.getenv(
+                    "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID",
+                    "pantheon-dev-paper-provisioner",
+                ),
+            )
+            updated = coordinator.reconcile_paper_enrollment(record)
+            if record.state == "succeeded":
+                post_enrollment = (updated.references or {}).get("paper_enrollment")
+                if isinstance(post_enrollment, Mapping):
+                    post_attempt = (
+                        str(post_enrollment.get("attempted_at") or "").strip()
+                        or str(updated.updated_at or "").strip()
+                    )
+                    if post_attempt:
+                        _PERSONA_ENROLLMENT_POST_SUCCEEDED_ATTEMPT_AT[
+                            (record.tenant_id, record.idempotency_key)
+                        ] = post_attempt
+            enrolled += 1
+        except Exception as exc:
+            log.warning(
+                "Paper enrollment reconcile failed for %s: %s", record.persona_id, exc
+            )
+    return enrolled
+
+
+def _reconcile_paper_risk_policy_renewal_once() -> int:
+    """Renew gate-approved paper risk-policy approvals before they lapse (no operator call).
+
+    A record whose next check time is in the future costs no owner call.  Lease-guarded inside the coordinator,
+    so safe under restart and concurrent replicas; an unavailable Governance leaves the old approval in place
+    and is retried on the next due check.
+    """
+
+    renewed = 0
+    try:
+        records = _persona_provisioning_store().list_all()
+    except Exception as exc:
+        log.warning("Paper risk policy renewal could not list provisioning ledger: %s", exc)
+        return 0
+    now = datetime.now(timezone.utc)
+    for record in records:
+        if record.state != "succeeded" or not PersonaProvisioningCoordinator.paper_risk_renewal_due(
+            (record.references or {}).get("paper_risk_policy_renewal"), now
+        ):
+            continue
+        try:
+            coordinator = _chain_paper_capital_coordinator(record.tenant_id)
+            coordinator.reconcile_paper_risk_policy_renewal(record, now=now)
+            renewed += 1
+        except Exception as exc:
+            log.warning("Paper risk policy renewal failed for %s: %s", record.persona_id, exc)
+    return renewed
+
+
+def _is_persona_provisioning_record_actionable(
+    raw: Mapping[str, Any],
+    *,
+    now_mono: Optional[float] = None,
+) -> bool:
+    """True when a Persona record requires non-terminal evaluation or terminal cleanup."""
+    persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
+    if not persona_id or persona_id in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+        return False
+    state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
+    if state not in {"provisioning", "provisioning_failed"}:
+        return False
+    metadata = raw.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    prov_state = str(metadata.get("provisioning_state") or "").strip().lower()
+    if prov_state in {"succeeded", "retired"}:
+        return False
+    if state == "provisioning_failed":
+        existing_cleanup = metadata.get("first_evaluation_schedule_cleanup")
+        cleanup_settled = (
+            isinstance(existing_cleanup, Mapping)
+            and existing_cleanup.get("registered") is False
+        )
+        if not cleanup_settled:
+            if isinstance(existing_cleanup, Mapping) and _PERSONA_CLEANUP_BACKOFF:
+                try:
+                    writer_id = id(_get_active_write_owner())
+                except Exception:
+                    writer_id = id(None)
+                backoff_key = (writer_id, persona_id)
+                _, retry_at = _PERSONA_CLEANUP_BACKOFF.get(backoff_key, (0, 0.0))
+                current_mono = time.monotonic() if now_mono is None else now_mono
+                cleanup_due = current_mono >= retry_at
+            else:
+                cleanup_due = True
+        else:
+            cleanup_due = False
+        existing_comp = metadata.get("provisioning_compensation")
+        comp_settled = isinstance(existing_comp, Mapping) and existing_comp.get(
+            "status"
+        ) in {"completed", "not_required"}
+        comp_due = not comp_settled
+        recon_state_due = (
+            metadata.get("provisioning_reconciliation_state") != "provisioning_failed"
+        )
+        return cleanup_due or comp_due or recon_state_due
+    return True
+
+
+def _has_actionable_persona_provisioning_store_records(
+    store: Any,
+) -> Optional[bool]:
+    """Bounded read check on the durable provisioning store and read surface before full projection or lease writes.
+
+    Prefers ``store.list_non_terminal(limit=64)`` when exposed by the store port,
+    and otherwise executes a bounded 64-row non-terminal check before falling
+    back to ``list_all()`` (``services/control-plane/bff/persona_provisioning.py``
+    is outside this task's declared artifact scope).
+
+    Returns ``False`` when the store was inspected and holds only ``succeeded``,
+    ``retired``, or confirmed-orphan rows and no read-surface persona is
+    actionable in ``provisioning`` or ``provisioning_failed``, ``True`` when at
+    least one non-terminal or cleanup-candidate record exists, or ``None`` when
+    the pre-check cannot decide.
+    """
+    list_non_terminal = getattr(store, "list_non_terminal", None)
+    if callable(list_non_terminal):
+        try:
+            for item in list_non_terminal(limit=64) or []:
+                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                    pid = str(item[0] or "").strip()
+                    row_state = str(item[1] or "").strip().lower()
+                else:
+                    pid = str(getattr(item, "persona_id", "") or "").strip()
+                    row_state = str(getattr(item, "state", "") or "").strip().lower()
+                if (
+                    pid
+                    and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
+                    and row_state not in {"succeeded", "retired"}
+                ):
+                    return True
+        except Exception as exc:
+            log.warning("Bounded provisioning store list_non_terminal failed: %s", exc)
+            return None
+    else:
+        connect = getattr(store, "_connect", None)
+        dsn = getattr(store, "dsn", None)
+        table = getattr(store, "table", None)
+        if callable(connect) and dsn and table:
+            try:
+                with connect(dsn) as conn, conn.cursor() as cur:
+                    cur.execute(
+                        f"""SELECT persona_id, state
+                            FROM {table}
+                            WHERE state NOT IN ('succeeded', 'retired')
+                            ORDER BY created_at ASC, persona_id ASC
+                            LIMIT 64"""
+                    )
+                    rows = cur.fetchall() or []
+                for row in rows:
+                    if not isinstance(row, (tuple, list)) or len(row) < 2:
+                        return True
+                    pid = str(row[0] or "").strip()
+                    row_state = str(row[1] or "").strip().lower()
+                    if (
+                        pid
+                        and pid not in _PERSONA_PROVISIONING_ORPHAN_SKIP
+                        and row_state not in {"succeeded", "retired"}
+                    ):
+                        return True
+            except Exception as exc:
+                log.warning("Bounded provisioning store read check failed: %s", exc)
+                return None
+        else:
+            list_all = getattr(store, "list_all", None)
+            if not callable(list_all):
+                return None
+            try:
+                records = list(list_all() or [])
+            except Exception:
+                return None
+            for record in records:
+                pid = str(getattr(record, "persona_id", "") or "").strip()
+                rec_state = str(getattr(record, "state", "") or "").strip().lower()
+                if not pid or pid in _PERSONA_PROVISIONING_ORPHAN_SKIP:
+                    continue
+                if rec_state in {"succeeded", "retired"}:
+                    continue
+                return True
+
+    try:
+        active_store = _get_active_read_store()
+    except Exception:
+        active_store = None
+    list_personas = (
+        getattr(active_store, "list_personas", None)
+        if active_store is not None
+        else None
+    )
+    if not callable(list_personas):
+        return False
+    try:
+        now_mono = time.monotonic()
+        for item in list_personas() or []:
+            if not isinstance(item, Mapping):
+                continue
+            if _is_persona_provisioning_record_actionable(item, now_mono=now_mono):
+                return True
+    except Exception:
+        return None
+    return False
+
+
 # --- _reconcile_persona_provisioning_once ---
 def _reconcile_persona_provisioning_once() -> int:
     """Materialize provisioning lifecycle from owner readbacks off read paths."""
+    from .reconciliation import PersonaReconciliationMutationError
+
+    if _list_persona_records is _DEFAULT_LIST_PERSONA_RECORDS:
+        try:
+            store_has_work = _has_actionable_persona_provisioning_store_records(
+                _persona_provisioning_store()
+            )
+        except Exception:
+            store_has_work = None
+        if store_has_work is False:
+            return 0
+
+    now_mono = time.monotonic()
+    actionable_records = [
+        raw
+        for raw in _list_persona_records()
+        if _is_persona_provisioning_record_actionable(raw, now_mono=now_mono)
+    ]
+    if not actionable_records:
+        return 0
 
     snapshot: Optional[
         Tuple[
@@ -4587,12 +6313,10 @@ def _reconcile_persona_provisioning_once() -> int:
         ]
     ] = None
     reconciled = 0
-    for raw in _list_persona_records():
+    for raw in actionable_records:
         state = str(raw.get("lifecycle_state") or raw.get("state") or "").strip()
-        if state not in {"provisioning", "provisioning_failed"}:
-            continue
         persona_id = str(raw.get("persona_id") or raw.get("id") or "").strip()
-        if not persona_id:
+        if not persona_id or persona_id in _PERSONA_PROVISIONING_ORPHAN_SKIP:
             continue
         if state == "provisioning" and snapshot is None:
             snapshot = _persona_readback_snapshot()
@@ -4617,6 +6341,15 @@ def _reconcile_persona_provisioning_once() -> int:
                 )
                 raw.setdefault("metadata", {})["provisioning_reconciliation_state"] = decided
             reconciled += 1
+        except PersonaReconciliationMutationError as exc:
+            _PERSONA_PROVISIONING_ORPHAN_SKIP.add(persona_id)
+            log.warning(
+                "Persona provisioning reconciliation abandoned for %s: the "
+                "mutation owner has no record of this persona, so it can "
+                "never be reconciled; will not retry until process restart: %s",
+                persona_id,
+                exc,
+            )
         except Exception as exc:
             log.warning(
                 "Persona provisioning reconciliation failed for %s: %s",
@@ -4630,7 +6363,10 @@ def _reconcile_persona_provisioning_once() -> int:
 def _reconcile_persona_provisioning_pass() -> Any:
     """One background pass in its own fresh read scope (never shared across passes)."""
     with request_read_scope():
-        return _reconcile_persona_provisioning_once()
+        result = _reconcile_persona_provisioning_once()
+        _reconcile_paper_enrollment_once()
+        _reconcile_paper_risk_policy_renewal_once()
+        return result
 
 
 async def _persona_provisioning_reconciler_loop() -> None:
@@ -4709,6 +6445,24 @@ def _persona_record_tenant_id(raw: Mapping[str, Any]) -> str:
         if tenant_id:
             return tenant_id
     return ""
+
+
+# --- _persona_owner_lifecycle_state ---
+def _persona_owner_lifecycle_state(raw: Mapping[str, Any]) -> Optional[str]:
+    """Owner lifecycle_state verbatim; never the BFF provisioning projection."""
+    owner = raw.get("owner_lifecycle_state")
+    if owner in (None, ""):
+        if raw.get("provisioning_lifecycle_state"):
+            # Projected record without a captured owner state: do not guess.
+            return None
+        owner = raw.get("lifecycle_state")
+    return str(owner or "").strip().lower() or None
+
+
+# --- _persona_provisioning_lifecycle_state ---
+def _persona_provisioning_lifecycle_state(raw: Mapping[str, Any]) -> Optional[str]:
+    value = raw.get("provisioning_lifecycle_state")
+    return str(value).strip().lower() if value else None
 
 
 # --- _persona_record_projected_state ---
@@ -4871,11 +6625,45 @@ def _persona_create_canonical_payload(
     ):
         canonical.pop(field, None)
     canonical["requested_by"] = requested_by
-    if "budget" not in canonical:
-        canonical["budget"] = canonical.get("paperBudget") or canonical.get("paper_budget")
-    if "risk_policy_ref" not in canonical:
+    if "budget" not in canonical or canonical.get("budget") is None:
+        fallback_budget = canonical.get("paperBudget") if canonical.get("paperBudget") is not None else canonical.get("paper_budget")
+        if fallback_budget is not None or "budget" not in canonical:
+            canonical["budget"] = fallback_budget
+    if not str(canonical.get("risk_policy_ref") or "").strip():
         canonical["risk_policy_ref"] = canonical.get("riskPolicyRef")
+    if "riskPolicyRef" in canonical:
+        canonical.pop("riskPolicyRef", None)
+    if "risk" not in canonical or not str(canonical.get("risk") or "").strip():
+        risk_profile_obj = canonical.get("risk_profile") if isinstance(canonical.get("risk_profile"), Mapping) else {}
+        inferred_risk = (
+            canonical.get("risk_level")
+            or canonical.get("riskLevel")
+            or risk_profile_obj.get("risk_level")
+            or risk_profile_obj.get("riskLevel")
+        )
+        if inferred_risk is not None and str(inferred_risk).strip():
+            canonical["risk"] = str(inferred_risk).strip()
     return canonical
+
+
+def _persona_create_effective_profile_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Label the existing new-Persona default after hashing the original input.
+
+    This is create ingress normalization, never a fallback for an older pool.
+    Explicit policies retain their existing independent contract.
+    """
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
+    effective = deepcopy(dict(payload))
+    profile, required, _ = ProfileProvenance._extract_request_risk_profile_context(effective)
+    if profile is not None:
+        effective["risk"] = profile
+    if profile is None and required:
+        effective["risk"] = "low"
+        metadata = dict(effective["metadata"]) if isinstance(effective.get("metadata"), Mapping) else {}
+        metadata["requested_risk_profile_provenance"] = "persona_create_default"
+        effective["metadata"] = metadata
+    return effective
 
 
 def _market_persona_required_data_sources(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -4938,10 +6726,20 @@ def _persona_record_for_provisioning(
     mutate_store: bool = False,
     existing: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    from ..persona_provisioning_coordinator import PersonaProvisioningCoordinator as ProfileProvenance
+
     canonical_owner = str(record.request_payload.get("requested_by") or owner).strip()
     ids = deterministic_provisioning_ids(record)
     archetype = str(payload.get("archetype") or "generalist")
-    risk = _normalize_risk_level(payload.get("risk") or "low")
+    requested_profile, _, _ = ProfileProvenance._extract_request_risk_profile_context(payload)
+    recovered = record.references.get("requested_risk_profile_provenance")
+    if (requested_profile is None and isinstance(recovered, Mapping)
+            and recovered.get("source") == "verified_persona_owner"
+            and recovered.get("persona_id") == record.persona_id
+            and recovered.get("tenant_id") == record.tenant_id):
+        requested_profile = ProfileProvenance._verified_requested_profile(
+            ("verified_persona_owner", recovered.get("requested_profile")))
+    risk = _normalize_risk_level(requested_profile or "low")
     mandate = str(payload.get("mandate") or "").strip() or None
     strategy_family = str(
         payload.get("strategy_family") or payload.get("strategyFamily") or ""
@@ -4995,6 +6793,12 @@ def _persona_record_for_provisioning(
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
     if existing is None:
         existing = _get_active_read_store().get_persona(record.persona_id)
+    # The OpenClaw agent status is recorded on the owner Persona after create;
+    # every later readback/lifecycle rebuild of this metadata must carry it.
+    _prior_meta = (existing or {}).get("metadata") if isinstance(existing, Mapping) else None
+    _prior_agent = _prior_meta.get("openclaw_agent") if isinstance(_prior_meta, Mapping) else None
+    if isinstance(_prior_agent, Mapping) and "openclaw_agent" not in metadata:
+        metadata["openclaw_agent"] = deepcopy(dict(_prior_agent))
     if existing is None:
         if mutate_store:
             if not callable(creator):
@@ -5085,16 +6889,20 @@ def _persona_record_for_provisioning(
     }:
         # The owner remains draft/research_only. Only this BFF projection
         # exposes coordinator progress to the response and reconciler.
+        # The owner state is read verbatim from the owner record before the
+        # projection overlays lifecycle_state. The progress lives in its own
+        # provisioning_lifecycle_state field and never feeds the owner field.
         owner_state = persona.get("owner_lifecycle_state")
-        if persona.get("lifecycle_state") in {"draft", "research_only"}:
-            owner_state = persona["lifecycle_state"]
+        if not owner_state and (existing is not None or mutate_store):
+            owner_state = persona.get("lifecycle_state")
         persona = {
             **persona,
             "lifecycle_state": lifecycle_state,
+            "provisioning_lifecycle_state": lifecycle_state,
             "metadata": {**(persona.get("metadata") or {}), **metadata},
         }
         if owner_state:
-            persona["owner_lifecycle_state"] = owner_state
+            persona["owner_lifecycle_state"] = str(owner_state)
     return persona, metadata
 
 
@@ -5113,7 +6921,13 @@ def _persona_create_response(
         persona,
         overlay={
             "routedStrategies": int(payload.get("routedStrategies") or 0),
-            "successRate": float(payload.get("successRate") or 0.0),
+            "successRate": _project_recorded_success_rate(
+                payload.get("successRate")
+                if "successRate" in payload
+                else payload.get("success_rate"),
+                metadata.get("success_rate"),
+                metadata.get("successRate"),
+            ),
             "capitalMode": "paper",
             "paperLedgerId": metadata["paper_ledger_id"],
             "paperLedger": metadata["paper_ledger"],
@@ -5149,6 +6963,8 @@ def _persona_create_response(
         "live_capital_side_effects": False,
         "human_review_required_for_live": True,
     }
+    if isinstance(metadata.get("openclaw_agent"), Mapping):
+        meta["openclaw_agent"] = deepcopy(dict(metadata["openclaw_agent"]))
     if ooda_packet:
         meta["ooda_packet_id"] = ooda_packet.get("packet_id")
         meta["ooda_loop_status"] = ooda_packet.get("status")
@@ -5156,6 +6972,12 @@ def _persona_create_response(
         meta["terminal_error"] = deepcopy(record.error)
     if record.compensation:
         meta["compensation"] = deepcopy(record.compensation)
+    if isinstance(record.references.get("capital_pool_risk_policy_resolution"), Mapping):
+        meta["risk_policy_resolution"] = deepcopy(dict(record.references["capital_pool_risk_policy_resolution"]))
+    if isinstance(record.references.get("risk_policy_owner_decision_request"), Mapping):
+        meta["risk_policy_owner_decision_request"] = deepcopy(
+            dict(record.references["risk_policy_owner_decision_request"])
+        )
     return {"data": overlay, "meta": meta}
 
 
@@ -5248,6 +7070,7 @@ def _coordinate_persona_create(
         # Owner mutations are authenticated as this BFF service principal; the
         # requesting human stays audit metadata inside each owner payload.
         actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+        runtime_binding_reader=_runtime_bindings_for_case,
         governance_actor_id=os.getenv(
             "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
         ),
@@ -5263,12 +7086,32 @@ def _coordinate_persona_create(
         active = latest
     persona, metadata = _persona_record_for_provisioning(
         active,
-        payload=payload,
+        payload=active.request_payload,
         owner=owner,
         mutate_store=True,
     )
     ooda_packet = None
-    if active.state not in {"failed", "compensated"}:
+    if active.state not in {"failed", "compensated", "retired"}:
+        # Only after the owner Persona record exists (AC1/AC6), and never
+        # blocking paper: failure becomes a readable degraded status that is
+        # persisted on the Persona so readbacks and the response expose it.
+        agent_status = coordinator.provision_persona_agent(active.persona_id)
+        metadata["openclaw_agent"] = agent_status
+        persona = {
+            **persona,
+            "metadata": {**(persona.get("metadata") or {}), "openclaw_agent": agent_status},
+        }
+        try:
+            _updater = getattr(_get_active_write_owner(), "update_persona", None)
+            if callable(_updater):
+                _updater(
+                    active.persona_id,
+                    lifecycle_state=persona.get("owner_lifecycle_state")
+                    or persona.get("lifecycle_state"),
+                    metadata=metadata,
+                )
+        except Exception as exc:  # noqa: BLE001 - status persistence is best effort
+            log.warning("Persona openclaw_agent status persistence failed: %s", exc)
         ooda_packet = _ensure_persona_ooda_packet(
             active.persona_id,
             deterministic_provisioning_ids(active).capital_pool_id,
@@ -5295,6 +7138,10 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
     }
     if metadata.get("provisioning_waiting_reason"):
         result["provisioning_waiting_reason"] = metadata["provisioning_waiting_reason"]
+    if isinstance(metadata.get("risk_policy_resolution"), Mapping):
+        result["risk_policy_resolution"] = deepcopy(dict(metadata["risk_policy_resolution"]))
+    if isinstance(metadata.get("risk_policy_owner_decision_request"), Mapping):
+        result["risk_policy_owner_decision_request"] = deepcopy(dict(metadata["risk_policy_owner_decision_request"]))
     if runtime_binding:
         result["runtime_binding"] = {
             "runtime_binding_id": (
@@ -5335,6 +7182,7 @@ def _persona_provisioning_authoritative_meta(raw: Mapping[str, Any]) -> Dict[str
 
 # --- _PERSONA_PATCH_SERVER_MANAGED_FIELDS ---
 _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
+    "riskPolicyChange",
     "owner",
     "state",
     "status",
@@ -5651,19 +7499,19 @@ _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 
 # --- _PM12_QUARTERLY_FORMULA_DOC_REF ---
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
-    "docs/04/pantheon_bff_api_gap_2026-05-23/"
-    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+    "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/"
+    "operator-decision.md"
 )
 
 
 # --- _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID ---
 _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
-    "pm12-quarterly-ranking-formula-v1-governance"
+    "pm12-quarterly-ranking-formula-v2-operator-20261112"
 )
 
 
 # --- _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT ---
-_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-11-12T00:00:00Z"
 
 
 # --- _PM12_HEATMAP_BUCKET_DELTAS ---
@@ -5712,8 +7560,8 @@ _PM12_LEAGUE_TIER_DEFINITIONS = [
 
 
 # --- _pm12_persona_league_scores ---
-def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, float]:
-    pnl = _management_number(metrics.get("pnl"))
+def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    pnl_return = _pm12_finite_number(metrics.get("pnl_return"))
     drawdown = _management_number(metrics.get("drawdown"))
     fill_rate = _management_number(metrics.get("fill_rate"))
     slippage = _management_number(metrics.get("avg_slippage_bps"))
@@ -5722,7 +7570,7 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
     capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
     memory = row.get("memory_summary") if isinstance(row.get("memory_summary"), dict) else {}
 
-    pnl_score = 50.0 if pnl is None else _pm12_clamp_score(50.0 + (pnl * 100.0))
+    pnl_score = None if pnl_return is None else _pm12_clamp_score(50.0 + pnl_return * 100.0)
     risk_floor = {
         "low": 90.0,
         "medium": 70.0,
@@ -5731,7 +7579,10 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         "unknown": 60.0,
     }.get(str(row.get("risk") or "unknown").lower(), 60.0)
     drawdown_score = 65.0 if drawdown is None else _pm12_clamp_score(100.0 - (drawdown * 400.0))
-    risk_score = round((risk_floor + drawdown_score) / 2.0, 6)
+    risk_score = (
+        None if metrics.get("quarter_window") and drawdown is None
+        else round((risk_floor + drawdown_score) / 2.0, 6)
+    )
     execution_score = 50.0
     if fill_rate is not None:
         execution_score = fill_rate * 100.0
@@ -5745,14 +7596,14 @@ def _pm12_persona_league_scores(row: Dict[str, Any], metrics: Dict[str, Any]) ->
         + (float(row.get("routed_strategy_count") or 0) * 5.0)
         + min(float(memory.get("total") or 0) * 2.0, 10.0)
     )
-    overall = (
+    overall = None if pnl_score is None or risk_score is None else (
         pnl_score * _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]
         + risk_score * _PM12_LEAGUE_SCORE_WEIGHTS["risk"]
         + execution_score * _PM12_LEAGUE_SCORE_WEIGHTS["execution"]
         + activity_score * _PM12_LEAGUE_SCORE_WEIGHTS["activity"]
     )
     return {
-        "overall_score": round(overall, 6),
+        "overall_score": round(overall, 6) if overall is not None else None,
         "pnl_score": pnl_score,
         "risk_score": risk_score,
         "execution_score": execution_score,
@@ -5766,8 +7617,8 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
         {
             "id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
             "ref_id": _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID,
-            "title": "PM-12 quarterly ranking formula governance baseline",
-            "display_label": "PM-12 quarterly ranking formula governance baseline",
+            "title": "Operator decision 2026-11-12: PnL return on capital",
+            "display_label": "Operator decision 2026-11-12: PnL return on capital",
             "source_type": "governance_record",
             "source_ref": _PM12_QUARTERLY_FORMULA_DOC_REF,
             "captured_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
@@ -5776,7 +7627,7 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
                 "tier": "primary",
                 "verified": True,
                 "last_verified_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-                "verification_method": "task_review",
+                "verification_method": "operator_decision_in_canonical_task",
             },
             "linked_object_summary": {
                 "entity_type": "ranking_formula",
@@ -5786,7 +7637,7 @@ def _pm12_quarter_formula_governance_evidence_refs() -> List[Dict[str, Any]]:
             "resolved_link": {
                 "availability": "available",
                 "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
-                "display_label": "Open PM-12 integration spec",
+                "display_label": "Open operator decision record",
                 "open_in_new_tab": False,
             },
             "route_href": _PM12_QUARTERLY_FORMULA_DOC_REF,
@@ -5805,10 +7656,18 @@ def _pm12_quarter_formula_version_history() -> List[Dict[str, Any]]:
             "version": _PM12_LEAGUE_FORMULA_VERSION,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "effective_at": _PM12_QUARTERLY_FORMULA_EFFECTIVE_AT,
-            "change_type": "baseline",
+            "change_type": "pnl_return_on_capital",
             "governance_evidence_refs": evidence_ref_ids,
-            "description": "Baseline formula accepted for PM-12 quarterly ranking reads.",
-        }
+            "description": "Operator decision 2026-11-12: PnL divided by persona capital; weights unchanged.",
+        },
+        {
+            "version": "pm12-default-v1",
+            "formula_version": "pm12-default-v1",
+            "effective_at": "2026-05-23T00:00:00Z",
+            "change_type": "baseline",
+            "governance_evidence_refs": ["pm12-quarterly-ranking-formula-v1-governance"],
+            "description": "Historical absolute-PnL formula; existing snapshots remain readable.",
+        },
     ]
 
 
@@ -5830,6 +7689,9 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
         "version": _PM12_LEAGUE_FORMULA_VERSION,
         "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
+        "pnl_formula": "clamp(50 + 100 * (pnl / capital), 0, 100)",
+        "pnl_return_unit": "fraction",
+        "missing_pnl_policy": "unknown_component_and_overall_score_ineligible_for_allocation",
         "score_field": "overall_score",
         "components": [
             {"key": "pnl", "label": "PnL", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["pnl"]},
@@ -5837,7 +7699,7 @@ def _pm12_quarter_formula_payload() -> Dict[str, Any]:
             {"key": "execution", "label": "Execution", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["execution"]},
             {"key": "activity", "label": "Activity", "weight": _PM12_LEAGUE_SCORE_WEIGHTS["activity"]},
         ],
-        "basis": "latest_available_persona_league_metrics_with_quarter_window",
+        "basis": "persona_return_on_capital_with_verified_period",
         "policy": "read_only_governance_advisory",
         "governance_evidence_refs": evidence_ref_ids,
         "version_history": version_history,
@@ -5883,6 +7745,143 @@ def _pm12_is_unlinked_source_ingest_row(item: Dict[str, Any]) -> bool:
     return True
 
 
+_PM12_QUARTER_EVIDENCE_PAGE_SIZE = 500  # owner list endpoint maximum page
+_PM12_QUARTER_EVIDENCE_MAX_WORKERS = 8
+_PM12_RANKING_EVIDENCE_ENTITY_TYPES = (
+    "artifact", "capital_pool", "capital_sleeve", "paper_ledger", "persona",
+    "persona_binding", "persona_capital_binding", "runtime", "runtime_binding",
+    "strategy", "strategy_spec",
+)
+
+
+def _pm12_read_fn_accepts(read_fn: Any, name: str) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(read_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def _pm12_read_all_evidence_pages(
+    read_fn: Any, quarter_window: Optional[Dict[str, Any]] = None,
+    *, _legacy: bool = False, _deadline: Optional[float] = None,
+) -> Optional[List[Dict[str, Any]]]:
+    """Read every owner evidence page exactly (no truncation, no ordering
+    assumption), or return ``None`` when the owner is unavailable.
+
+    Every read, including the first, runs under one overall deadline equal to
+    the evidence owner read timeout; the caller never blocks past it (worker
+    threads are abandoned, not joined). The first page yields the owner total
+    and an offset page token; the remaining offset pages are requested
+    concurrently so a slow owner is waited on about once per request. A page
+    that is empty after tenant filtering still carries a continuation token and
+    is followed. Any unavailable page, or exceeding the deadline, marks the
+    whole surface unavailable.
+    """
+    import concurrent.futures
+    import contextvars
+    import time
+
+    try:
+        from ..ports.research_knowledge_source import evidence_owner_read_timeout_seconds
+
+        deadline = time.monotonic() + max(evidence_owner_read_timeout_seconds(), 0.05)
+    except Exception:
+        deadline = time.monotonic() + 4.0
+    if _deadline is not None:
+        deadline = _deadline
+    page_size = _PM12_QUARTER_EVIDENCE_PAGE_SIZE
+    # Ask the owner to page only the quarter's rows so the request count follows
+    # the quarter population, not the total evidence count. An owner that
+    # predates the window ignores it and the quarter filter downstream still
+    # makes the output identical, only with more pages.
+    window_kwargs: Dict[str, Any] = {}
+    if quarter_window and _pm12_read_fn_accepts(read_fn, "captured_from"):
+        start_at = _audit_datetime(quarter_window.get("start_at"))
+        end_at = _audit_datetime(quarter_window.get("end_exclusive_at"))
+        if start_at is not None and end_at is not None:
+            window_kwargs = {
+                "captured_from": start_at.isoformat(),
+                "captured_before": end_at.isoformat(),
+            }
+    if _pm12_read_fn_accepts(read_fn, "include_summary"):
+        window_kwargs["include_summary"] = False
+    if quarter_window and page_size and _pm12_read_fn_accepts(read_fn, "linked_entity_types"):
+        window_kwargs["linked_entity_types"] = _PM12_RANKING_EVIDENCE_ENTITY_TYPES
+    if _legacy:
+        window_kwargs = {}
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=_PM12_QUARTER_EVIDENCE_MAX_WORKERS)
+
+    def _submit(token: Optional[str]) -> Any:
+        return pool.submit(
+            contextvars.copy_context().run,
+            lambda: read_fn(page_size=page_size, page_token=token, **window_kwargs),
+        )
+
+    def _sorted(all_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # The unpaged read returns rows newest-first; paged owner reads keep
+        # append order, so restore the same order for identical output.
+        from ..ports.research_knowledge_source import evidence_ref_sort_key
+
+        return sorted(all_rows, key=evidence_ref_sort_key, reverse=True)
+
+    def _wait(future: Any) -> Any:
+        return future.result(timeout=max(deadline - time.monotonic(), 0.0))
+
+    try:
+        first = _wait(_submit(None))
+        if not first.available:
+            return None
+        if not getattr(first, "owner_hints_applied", True):
+            # First page already contains the full legacy population. Keep all
+            # subsequent pages on it, with no repeated capability probes.
+            window_kwargs = {}
+        rows: List[Dict[str, Any]] = list(first.items or [])
+        token = first.next_page_token
+        if not token:
+            return _sorted(rows)
+        total = first.total
+        step = int(token) if str(token).isdigit() else 0
+        if isinstance(total, int) and not isinstance(total, bool) and step == page_size:
+            futures = [_submit(str(o)) for o in range(step, total, step)]
+            for future in futures:
+                page = _wait(future)
+                if not page.available:
+                    return None
+                if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                    # Mixed-version owner replicas must never mix offsets from
+                    # different populations. Restart the complete legacy stream
+                    # under the original request deadline.
+                    return _pm12_read_all_evidence_pages(
+                        read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                    )
+                rows.extend(page.items or [])
+            return _sorted(rows)
+        # Opaque or short-page tokens: sequential follow, still complete.
+        seen = {str(token)}
+        while token:
+            page = _wait(_submit(str(token)))
+            if not page.available:
+                return None
+            if window_kwargs and not getattr(page, "owner_hints_applied", True):
+                return _pm12_read_all_evidence_pages(
+                    read_fn, quarter_window, _legacy=True, _deadline=deadline,
+                )
+            rows.extend(page.items or [])
+            token = page.next_page_token
+            if token is not None and str(token) in seen:
+                return None
+            if token is not None:
+                seen.add(str(token))
+        return _sorted(rows)
+    except Exception:
+        return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 # --- _pm12_public_quarter_evidence_refs ---
 def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
@@ -5896,9 +7895,10 @@ def _pm12_public_quarter_evidence_refs(
     read_fn = getattr(store, "read_evidence_refs", None) if store is not None else None
     try:
         if callable(read_fn):
-            result = read_fn()
-            raw_evidence_refs = list(result.items or [])
-            evidence_dataset_available = bool(result.available)
+            all_rows = _pm12_read_all_evidence_pages(read_fn, quarter_window)
+            if all_rows is not None:
+                raw_evidence_refs = all_rows
+                evidence_dataset_available = True
         elif store is not None:
             raw_evidence_refs = list(store.list_evidence_refs() or [])
             evidence_dataset_available = store.dataset_source("evidence_refs") not in ("missing", "unavailable")
@@ -6039,6 +8039,52 @@ def _pm12_quarterly_ranking_governance_state(
 
 
 # --- _pm12_quarterly_ranking_items ---
+def _pm12_prefetch_runtime_telemetry(
+    rows: List[Dict[str, Any]],
+    telemetry_cache: Dict[str, Optional[Dict[str, Any]]],
+    *,
+    max_workers: int = 8,
+) -> None:
+    """Warm ``telemetry_cache`` for rows with authoritative runtime ids.
+
+    Only successful reads are cached; a failing read is left uncached so the
+    serial path re-reads it and raises exactly as before.
+    """
+    runtime_ids: List[str] = []
+    seen: set = set()
+    for row in rows:
+        if "runtime_resolution" not in row:
+            continue
+        for runtime_id in _pm12_persona_runtime_ids(row):
+            if runtime_id not in seen:
+                seen.add(runtime_id)
+                runtime_ids.append(runtime_id)
+    if len(runtime_ids) < 2:
+        return
+    store = _get_active_read_store()
+    read_fn = getattr(store, "get_telemetry_summary", None)
+    if not callable(read_fn):
+        return
+    import contextvars as _cv
+
+    def _read(runtime_id: str) -> Optional[Dict[str, Any]]:
+        return read_fn(runtime_id)
+
+    pool = ThreadPoolExecutor(max_workers=min(max_workers, len(runtime_ids)))
+    try:
+        futures = {
+            runtime_id: pool.submit(_cv.copy_context().run, _read, runtime_id)
+            for runtime_id in runtime_ids
+        }
+        for runtime_id, future in futures.items():
+            try:
+                telemetry_cache[runtime_id] = future.result()
+            except Exception:
+                continue
+    finally:
+        pool.shutdown(wait=True)
+
+
 def _pm12_quarterly_ranking_items(
     rows: List[Dict[str, Any]],
     *,
@@ -6048,18 +8094,24 @@ def _pm12_quarterly_ranking_items(
     # Explicit non-trading assistants never enter the trading cohort; ranks are
     # computed over the whole trading cohort, not renumbered per page.
     rows = [row for row in rows if not _fleet_cls.is_non_trading_persona(row)]
+    if telemetry_cache is None:
+        # One cache per ranking pass: runtimes shared by several personas are
+        # read once, and distinct runtimes are prefetched concurrently instead
+        # of one serial store round trip per persona.
+        telemetry_cache = {}
+        _pm12_prefetch_runtime_telemetry(rows, telemetry_cache)
 
     def ranking_item(row: Dict[str, Any]) -> Dict[str, Any]:
-        if telemetry_cache is None:
-            return _pm12_persona_league_ranking_item(row)
         return _pm12_persona_league_ranking_item(
             row,
             telemetry_cache=telemetry_cache,
+            quarter_window=quarter_window,
         )
 
     ranked = sorted(
         (ranking_item(row) for row in rows),
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -6075,7 +8127,7 @@ def _pm12_quarterly_ranking_items(
         else {}
     )
     for rank, item in enumerate(ranked, start=1):
-        score = _management_number(item.get("overall_score")) or 0.0
+        score = _management_number(item.get("overall_score"))
         persona_id = str(item.get("persona_id") or "")
         quarter = quarter_window["quarter"]
         gov_state = _pm12_quarterly_ranking_governance_state(
@@ -6083,19 +8135,19 @@ def _pm12_quarterly_ranking_items(
         )
         ranking_item = {
             **item,
-            "rank": rank,
+            "rank": rank if score is not None else None,
             "score": score,
             "score_field": "overall_score",
             "quarter": quarter,
             "quarter_window": quarter_window,
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
-            "basis": "latest_available_persona_league_metrics_with_quarter_window",
+            "basis": "persona_return_on_capital_with_verified_period",
             "period": "quarter",
             "criteria": "overall",
             "governance_state": gov_state,
         }
-        ranking_item["allocation_policy_input"] = build_pm12_allocation_policy_input(
-            ranking_item
+        ranking_item["allocation_policy_input"] = (
+            build_pm12_allocation_policy_input(ranking_item) if score is not None else None
         )
         items.append(ranking_item)
     return items
@@ -6133,7 +8185,7 @@ def _pm12_quarterly_find_persona_row(
 def _pm12_quarterly_component_score(
     components: Dict[str, Any],
     score_field: str,
-) -> float:
+) -> Optional[float]:
     camel_score_fields = {
         "pnl_score": "pnlScore",
         "risk_score": "riskScore",
@@ -6144,7 +8196,7 @@ def _pm12_quarterly_component_score(
     value = _management_number(components.get(score_field))
     if value is None:
         value = _management_number(components.get(camel_score_fields.get(score_field, "")))
-    return value or 0.0
+    return value
 
 
 # --- _pm12_quarterly_drilldown_contributions ---
@@ -6161,8 +8213,9 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
         score_field, label = _PM12_LEAGUE_RANKING_CRITERIA[key]
         weight = _management_number(component.get("weight")) or 0.0
         score = _pm12_quarterly_component_score(components, score_field)
-        weighted = round(score * weight, 6)
-        total_weighted += weighted
+        weighted = round(score * weight, 6) if score is not None else None
+        if weighted is not None:
+            total_weighted += weighted
         contribution_rows.append({
             "id": f"{item.get('persona_id') or item.get('id')}-{key}",
             "key": key,
@@ -6174,10 +8227,11 @@ def _pm12_quarterly_drilldown_contributions(item: Dict[str, Any]) -> List[Dict[s
             "basis": "component_score_x_formula_weight",
         })
 
-    denominator = total_weighted if total_weighted > 0 else None
+    complete = all(row["score"] is not None for row in contribution_rows)
+    denominator = total_weighted if complete and total_weighted > 0 else None
     for row in contribution_rows:
         weighted = _management_number(row.get("weighted_contribution")) or 0.0
-        share = round(weighted / denominator, 6) if denominator else 0.0
+        share = round(weighted / denominator, 6) if denominator else None
         row["contribution_share"] = share
 
     return contribution_rows
@@ -6195,11 +8249,11 @@ def _pm12_quarterly_drilldown_payload(
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
     formula = _pm12_quarter_formula_payload()
     contributions = _pm12_quarterly_drilldown_contributions(item)
-    total_weighted = round(
+    total_weighted = None if any(entry["weighted_contribution"] is None for entry in contributions) else round(
         sum(_management_number(entry.get("weighted_contribution")) or 0.0 for entry in contributions),
         6,
     )
-    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or total_weighted
+    score = _management_number(item.get("overall_score"))
     route_policy = row.get("route_policy_summary") if isinstance(row.get("route_policy_summary"), dict) else {}
     capabilities = row.get("capability_summary") if isinstance(row.get("capability_summary"), dict) else {}
     bindings = row.get("binding_summary") if isinstance(row.get("binding_summary"), dict) else {}
@@ -6801,22 +8855,39 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
         row = _get_active_read_store().get_approval_decision(decision_id)
     except Exception:
         row = None
+    promotion = request.get("target_type") == "paper_canary_candidacy"
+    if promotion:
+        content = {k: saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage",
+                                            "rule_summary", "rationale", "evidence_ref_ids")}
+        if "panel_memo" in saved:
+            content["panel_memo"] = saved["panel_memo"]
+        digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (
+            isinstance(subject, dict) and subject == request.get("subject")
+            and all(subject.get(k) == saved.get(k) for k in ("persona_id", "quarter", "ranking_snapshot_id", "from_stage", "to_stage"))
+            and subject.get("from_stage") == "paper" and subject.get("to_stage") == "canary_candidate"
+            and subject.get("proposal_content_digest") == digest
+            and row.get("target_version") == saved.get("ranking_snapshot_id")
+        )
+    else:
+        digest = hashlib.sha256(json.dumps({
+            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
+            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
+            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
+        }, sort_keys=True).encode()).hexdigest()
+        subject = (row.get("metadata") or {}).get("subject") if isinstance(row, dict) else None
+        bound_subject = (isinstance(subject, dict) and subject.get("persona_id") == saved.get("persona_id")
+                         and subject.get("from_state") == saved.get("from_state")
+                         and subject.get("to_state") == request.get("to_state"))
     owned = (
         isinstance(row, dict)
         and str(row.get("decision_id") or "") == decision_id
         and str(row.get("tenant_id") or "") == tenant_id
         and str(row.get("target_id") or "") == str(saved.get("persona_id") or "")
         and row.get("proposal_id") == saved.get("recommendation_id")
-        and row.get("target_type") == "persona_lifecycle_transition"
-        and isinstance(subject := (row.get("metadata") or {}).get("subject"), dict)
-        and subject.get("persona_id") == saved.get("persona_id")
-        and subject.get("from_state") == saved.get("from_state")
-        and subject.get("to_state") == request.get("to_state")
-        and row.get("proposal_content_digest") == hashlib.sha256(json.dumps({
-            "persona_id": str(saved.get("persona_id") or ""), "action_id": str(saved.get("action_id") or ""),
-            "from_state": str(saved.get("from_state") or ""), "rationale": str(saved.get("rationale") or "").strip(),
-            "evidence_ref_ids": sorted(saved.get("evidence_ref_ids") or []),
-        }, sort_keys=True).encode()).hexdigest()
+        and row.get("target_type") == ("paper_canary_candidacy" if promotion else "persona_lifecycle_transition")
+        and bound_subject and row.get("proposal_content_digest") == digest
     )
     if not owned:
         return {**state, "submitted": True, "submit_status": "owner_unavailable", "status": "owner_unavailable",
@@ -6827,13 +8898,13 @@ def _lifecycle_owner_review_state(saved: Dict[str, Any], *, tenant_id: str) -> D
     pending = decision_state in ("", "proposed", "under_review")
     return {
         **state, "submitted": True, "submit_status": "owner_proposed",
-        "status": "pending_human_gate" if pending else "decision_accepted" if decided else f"decision_{decision_state}",
+        "status": "pending_human_gate" if pending else ("decision_rejected" if row.get("decision") == "rejected" else "decision_accepted") if decided else f"decision_{decision_state}",
         "decision_status": "pending" if pending else decision_state,
         "decision": row.get("decision") if decided else None,
         "decided_at": row.get("decided_at") if decided else None,
         "decided_by": row.get("actor_id") if decided else None,
         "owner_decision": {
-            "decision_id": decision_id, "available": True, "to_state": subject["to_state"],
+            "decision_id": decision_id, "available": True, "to_state": subject.get("to_stage") if promotion else subject["to_state"],
             "decision_state": row.get("decision_state"), "version": row.get("version"),
             "vote_count": len(votes) if isinstance(votes, list) else 0,
             "proposal_content_digest": row.get("proposal_content_digest"),
@@ -7194,11 +9265,17 @@ def _project_persona_league_row(
         "owner": metadata.get("owner") or raw.get("owner") or "pantheon-bff",
         "updated_at": raw.get("updated_at") or raw.get("created_at") or utc_now(),
         "state": state,
-        "owner_lifecycle_state": str(raw.get("lifecycle_state") or "").strip().lower() or None,
+        "owner_lifecycle_state": _persona_owner_lifecycle_state(raw),
+        "provisioning_lifecycle_state": _persona_provisioning_lifecycle_state(raw),
         "risk": _normalize_risk_level(metadata.get("risk_level") or raw.get("risk")),
         "archetype": archetype,
         "routed_strategy_count": int(routed or 0),
-        "success_rate": float(metadata.get("success_rate") or 0.0),
+        "success_rate": _project_recorded_success_rate(
+            metadata.get("success_rate"),
+            metadata.get("successRate"),
+            raw.get("success_rate"),
+            raw.get("successRate"),
+        ),
         "mandate": raw.get("mandate") or "",
         "strategy_family": raw.get("strategy_family") or "",
         "capability_summary": capabilities,
@@ -7461,6 +9538,85 @@ def _pm12_persona_league_rows(
     )
 
 
+# --- _pm12_persona_league_rows_shared ---
+# Single-flight + short tenant-scoped memo for the unfiltered league rows that
+# persona-league, persona-league/rankings and quarterly-ranking all recompute.
+# Concurrent identical reads share one computation (single-flight); a finished
+# result is reused for at most _PM12_LEAGUE_ROWS_REUSE_SECONDS, measured from the
+# moment the computation STARTED, so a store change is visible to the first read
+# after that window. Failures are never stored. Every caller gets its own deep
+# copy so one response can never mutate another's rows.
+_PM12_LEAGUE_ROWS_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PM12_LEAGUE_ROWS_WAIT_SECONDS = 30.0
+_pm12_league_rows_lock = threading.Lock()
+_pm12_league_rows_entries: Dict[Any, Any] = {}
+_pm12_league_rows_inflight: Dict[Any, Any] = {}
+
+
+def _pm12_league_rows_cache_clear() -> None:
+    with _pm12_league_rows_lock:
+        _pm12_league_rows_entries.clear()
+
+
+def _pm12_persona_league_rows_shared(*, tenant_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Unfiltered, summary-free league rows; same output as _pm12_persona_league_rows."""
+    import weakref
+
+    def compute() -> List[Dict[str, Any]]:
+        return _pm12_persona_league_rows(
+            tenant_id=tenant_id,
+            include_route_policy=False,
+            include_health=False,
+            include_allowed_actions=False,
+        )
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+    )
+    while True:
+        with _pm12_league_rows_lock:
+            entry = _pm12_league_rows_entries.get(key)
+            if entry is not None:
+                expires, ref, rows = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(rows)
+                _pm12_league_rows_entries.pop(key, None)
+            flight = _pm12_league_rows_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "rows": None}
+                _pm12_league_rows_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PM12_LEAGUE_ROWS_WAIT_SECONDS)
+            if flight["rows"] is not None:
+                return copy.deepcopy(flight["rows"])
+            continue  # leader failed (or timed out): recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            rows = compute()
+            flight["rows"] = rows
+            with _pm12_league_rows_lock:
+                _pm12_league_rows_entries[key] = (
+                    started + min(_PM12_LEAGUE_ROWS_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    rows,
+                )
+            return copy.deepcopy(rows)
+        finally:
+            with _pm12_league_rows_lock:
+                if _pm12_league_rows_inflight.get(key) is flight:
+                    del _pm12_league_rows_inflight[key]
+            flight["event"].set()
+
+
 # --- _pm12_persona_league_source_surfaces ---
 def _pm12_persona_league_source_surfaces(snapshot_at: str, read_store: Optional[Any] = None) -> Dict[str, Dict[str, Any]]:
     return {
@@ -7482,13 +9638,18 @@ def _pm12_persona_league_ranking_item(
     *,
     metrics: Optional[Dict[str, Any]] = None,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     metrics = (
         metrics
         if isinstance(metrics, dict)
-        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache)
+        else _pm12_persona_telemetry_metrics(row, telemetry_cache=telemetry_cache, quarter_window=quarter_window)
     )
     scores = _pm12_persona_league_scores(row, metrics)
+    # Admission of missing source data is separate from the score formula.
+    # The formula's historical neutral default must not invent fill evidence.
+    if metrics.get("fill_rate") is None:
+        scores.update(execution_score=None, overall_score=None)
     tier = _pm12_tier_for_score(scores["overall_score"])
     components = dict(scores)
 
@@ -7507,6 +9668,15 @@ def _pm12_persona_league_ranking_item(
 
     exclusion_codes: List[str] = []
     exclusion_reasons: List[str] = []
+    if metrics.get("fill_rate") is None:
+        exclusion_codes.append("unknown_fill_rate")
+        exclusion_reasons.append("Submitted order quantity or matching fill period is unknown")
+    if scores["pnl_score"] is None:
+        exclusion_codes.append("unknown_pnl_return")
+        exclusion_reasons.append("PnL, capital or matching performance period is unknown")
+    if quarter_window is not None and metrics.get("drawdown") is None:
+        exclusion_codes.append("unknown_quarter_drawdown")
+        exclusion_reasons.append("Owner-backed quarter equity series is unknown")
     if not lifecycle_operational:
         exclusion_codes.append("inactive_lifecycle")
         exclusion_reasons.append(f"Inactive lifecycle state: {state}")
@@ -7577,7 +9747,7 @@ def _pm12_persona_league_ranking_item(
 
     if telemetry_count == 0:
         source_confidence = "unavailable"
-    elif metrics.get("pnl") is None or metrics.get("drawdown") is None:
+    elif scores["pnl_score"] is None or metrics.get("drawdown") is None or metrics.get("fill_rate") is None:
         source_confidence = "degraded"
     else:
         source_confidence = "formal"
@@ -7621,6 +9791,7 @@ def _pm12_persona_league_ranking_item(
         "tier_id": tier["id"],
         "tier_label": tier["label"],
         "overall_score": scores["overall_score"],
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "metrics": metrics,
         "components": components,
         "links": row.get("links") or {},
@@ -7664,6 +9835,7 @@ def _pm12_persona_league_rankings(
         ranked = sorted(
             base_items,
             key=lambda item: (
+                (item.get("components") or {}).get(score_key) is not None,
                 _management_number((item.get("components") or {}).get(score_key)) or 0.0,
                 str(item.get("persona_id") or ""),
             ),
@@ -7671,10 +9843,10 @@ def _pm12_persona_league_rankings(
         )[:limit]
         block_items: List[Dict[str, Any]] = []
         for rank, item in enumerate(ranked, start=1):
-            score = _management_number((item.get("components") or {}).get(score_key)) or 0.0
+            score = _management_number((item.get("components") or {}).get(score_key))
             block_items.append({
                 **item,
-                "rank": rank,
+                "rank": rank if score is not None else None,
                 "score": score,
                 "score_field": score_key,
                 "period": "short_cycle",
@@ -7685,7 +9857,7 @@ def _pm12_persona_league_rankings(
             "ranking_id": f"persona-league-{criterion}",
             "criteria": criterion,
             "label": label,
-            "formula_version": "pm12-default-v1",
+            "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
             "weights": dict(_PM12_LEAGUE_SCORE_WEIGHTS),
             "items": block_items,
             "ranked_count": len(block_items),
@@ -7703,6 +9875,7 @@ def _pm12_persona_league_tier_payload(
     ranking_items = sorted(
         ranking_items,
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -7736,7 +9909,7 @@ def _pm12_persona_league_tier_payload(
         })
     summary = {
         "season_id": "current",
-        "formula_version": "pm12-default-v1",
+        "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
         "persona_count": len(assignments),
         "tier_count": len(tiers),
         "by_tier": by_tier,
@@ -7754,6 +9927,7 @@ def _pm12_persona_league_mover_items(
     ranked_items = sorted(
         (_pm12_persona_league_ranking_item(row) for row in rows),
         key=lambda item: (
+            item.get("overall_score") is not None,
             _management_number(item.get("overall_score")) or 0.0,
             str(item.get("persona_id") or ""),
         ),
@@ -7763,14 +9937,14 @@ def _pm12_persona_league_mover_items(
     direction_counts = {"up": 0, "down": 0, "flat": 0, "new": 0}
     for current_rank, item in enumerate(ranked_items, start=1):
         persona_id = str(item.get("persona_id") or item.get("id") or "")
-        current_score = _management_number(item.get("overall_score")) or 0.0
+        current_score = _management_number(item.get("overall_score"))
         movement_direction = "new"
         direction_counts[movement_direction] += 1
         mover = {
             **item,
             "id": f"persona-league-mover-{persona_id}",
             "mover_id": f"persona-league-mover-{persona_id}",
-            "current_rank": current_rank,
+            "current_rank": current_rank if current_score is not None else None,
             "previous_rank": None,
             "rank_delta": None,
             "direction": movement_direction,
@@ -7780,7 +9954,7 @@ def _pm12_persona_league_mover_items(
             "score_delta_display": "baseline unavailable",
             "baseline_status": "unavailable",
             "basis": "current_persona_league_snapshot_no_historical_baseline",
-            "rank": current_rank,
+            "rank": current_rank if current_score is not None else None,
             "score": current_score,
             "score_field": "overall_score",
             "formula_version": _PM12_LEAGUE_FORMULA_VERSION,
@@ -9474,6 +11648,116 @@ def _persona_fleet_submit_post_rank_reads(
         future = submit_owner_read(_PERSONA_FLEET_READ_EXECUTOR, read, warm_key=key)
         if future is not None:
             futures.append(future)
+
+
+# --- _persona_fleet_shared_payload ---
+# Single-flight + short memo for the whole persona-fleet response (slim list plus
+# per-row persona_cycle_health), same pattern as _pm12_persona_league_rows_shared.
+# Reuse window is measured from computation start (hard ceiling 30s); failures
+# are never stored; every caller receives its own deep copy. A reused payload
+# keeps the snapshot_at of when it was actually computed.
+_PERSONA_FLEET_REUSE_SECONDS = 10.0  # hard ceiling: 30s
+_PERSONA_FLEET_WAIT_SECONDS = 30.0
+_persona_fleet_shared_lock = threading.Lock()
+_persona_fleet_shared_entries: Dict[Any, Any] = {}
+_persona_fleet_shared_inflight: Dict[Any, Any] = {}
+
+
+def _persona_fleet_shared_cache_clear() -> None:
+    with _persona_fleet_shared_lock:
+        _persona_fleet_shared_entries.clear()
+
+
+def _persona_fleet_shared_payload(
+    *,
+    tenant_id: str,
+    state: Optional[str],
+    health: Optional[str],
+    deployment_stage: Optional[str],
+    market_scope: Optional[str],
+    q: Optional[str],
+    page_token: Optional[str],
+    page_size: int,
+    purpose: Optional[str],
+    data_scope: Optional[str],
+    archived: Optional[str],
+    viewer_user_id: Optional[str],
+    read_cycle_health: Callable[[str, List[str]], Dict[str, Any]],
+    now: Callable[[], str] = utc_now,
+    slim_payload: Optional[Callable[..., Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    import weakref
+
+    def compute() -> Dict[str, Any]:
+        result = (slim_payload or _persona_fleet_slim_list_payload)(
+            tenant_id=tenant_id,
+            snapshot_at=now(),
+            state=state,
+            health=health,
+            deployment_stage=deployment_stage,
+            market_scope=market_scope,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+            purpose=purpose,
+            data_scope=data_scope,
+            archived=archived,
+            viewer_user_id=viewer_user_id,
+        )
+        items = result["data"]["items"]
+        ids = [str(row.get("persona_id") or row.get("id")) for row in items]
+        health_by_persona = read_cycle_health(tenant_id, ids)
+        for row, pid in zip(items, ids):
+            row["persona_cycle_health"] = health_by_persona[pid]
+        return result
+
+    store = _get_active_read_store()
+    try:
+        store_ref = weakref.ref(store)
+    except TypeError:
+        return compute()
+    key = (
+        id(store),
+        id(_persona_provisioning_store()),
+        str(tenant_id or "").strip(),
+        selected_tenant.get(),
+        state, health, deployment_stage, market_scope, q, purpose, data_scope,
+        archived, page_token, page_size, viewer_user_id,
+    )
+    while True:
+        with _persona_fleet_shared_lock:
+            entry = _persona_fleet_shared_entries.get(key)
+            if entry is not None:
+                expires, ref, payload = entry
+                if ref() is store and time.monotonic() < expires:
+                    return copy.deepcopy(payload)
+                _persona_fleet_shared_entries.pop(key, None)
+            flight = _persona_fleet_shared_inflight.get(key)
+            leader = flight is None
+            if leader:
+                flight = {"event": threading.Event(), "payload": None}
+                _persona_fleet_shared_inflight[key] = flight
+        if not leader:
+            flight["event"].wait(_PERSONA_FLEET_WAIT_SECONDS)
+            if flight["payload"] is not None:
+                return copy.deepcopy(flight["payload"])
+            continue  # leader failed: recompute, never reuse a failure
+        started = time.monotonic()
+        try:
+            payload = compute()
+            flight["payload"] = payload
+            with _persona_fleet_shared_lock:
+                _persona_fleet_shared_entries[key] = (
+                    started + min(_PERSONA_FLEET_REUSE_SECONDS, 30.0),
+                    store_ref,
+                    payload,
+                )
+            return copy.deepcopy(payload)
+        finally:
+            with _persona_fleet_shared_lock:
+                if _persona_fleet_shared_inflight.get(key) is flight:
+                    del _persona_fleet_shared_inflight[key]
+            flight["event"].set()
 
 
 # --- _persona_fleet_slim_list_payload ---
@@ -11729,66 +14013,10 @@ def _management_prune_camel_aliases(value: Any) -> Any:
 
 # --- _management_evidence_public_item ---
 def _management_evidence_public_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    ref_id = str(item.get("ref_id") or item.get("id") or "").strip()
-    display_label = item.get("display_label") or ref_id
-    if item.get("redacted"):
-        required_capability = item.get("required_capability")
-        return {
-            "id": ref_id,
-            "ref_id": ref_id,
-            "display_label": display_label,
-            "kind": item.get("kind"),
-            "required_capability": required_capability,
-            "reason": item.get("reason"),
-            "redacted": True,
-        }
+    """One mapping for list, detail and persona surfaces (single owner: management_read_models)."""
+    from ..management_read_models.service import _management_evidence_public_item as _one
 
-    source_document = item.get("source_document") if isinstance(item.get("source_document"), dict) else {}
-    linked_summary = (
-        item.get("linked_object_summary")
-        if isinstance(item.get("linked_object_summary"), dict)
-        else {}
-    )
-    resolved_link = item.get("resolved_link") if isinstance(item.get("resolved_link"), dict) else {}
-    credibility = item.get("credibility") if isinstance(item.get("credibility"), dict) else {}
-    source_type = source_document.get("source_type") or item.get("source_type") or item.get("sourceType")
-    source_ref = source_document.get("source_ref") or item.get("source_ref") or item.get("sourceRef")
-    captured_at = source_document.get("captured_at") or item.get("captured_at") or item.get("capturedAt")
-    link_type = item.get("link_type")
-    route_href = item.get("route_href") or (f"/knowledge/evidence/{ref_id}" if ref_id else None)
-    title = source_document.get("title") or item.get("title") or display_label
-    public_item = {
-        "id": ref_id,
-        "ref_id": ref_id,
-        "title": title,
-        "display_label": display_label,
-        "source_type": source_type,
-        "source_ref": source_ref,
-        "captured_at": captured_at,
-        "link_type": link_type,
-        "credibility": json.loads(json.dumps(credibility)),
-        "linked_object_summary": json.loads(json.dumps(linked_summary)),
-        "resolved_link": json.loads(json.dumps(resolved_link)),
-        "route_href": route_href,
-        "management_href": f"/management/evidence?ref_id={ref_id}" if ref_id else None,
-        "redacted": False,
-    }
-    artifact_manifest = item.get("artifact_manifest")
-    if isinstance(artifact_manifest, dict):
-        cloned_manifest = _management_json_clone(artifact_manifest)
-        public_item["artifact_manifest"] = cloned_manifest
-    criteria = item.get("criteria")
-    if isinstance(criteria, dict):
-        public_item["criteria"] = _management_json_clone(criteria)
-    operator_remediation = item.get("operator_remediation")
-    if isinstance(operator_remediation, dict):
-        public_item["operator_remediation"] = _management_json_clone(operator_remediation)
-    release_gate_summary = item.get("release_gate_summary")
-    if isinstance(release_gate_summary, dict):
-        public_item["release_gate_summary"] = _management_json_clone(release_gate_summary)
-    if "overall" in item:
-        public_item["overall"] = item.get("overall")
-    return public_item
+    return _one(item)
 
 
 # --- _request_dry_run_requested ---
@@ -12488,7 +14716,6 @@ def _persona_provisioning_metadata(
         "provisioning_step": record.current_step,
         "initial_mode": "paper",
         "execution_mode": "paper",
-        "success_rate": float(payload.get("successRate") or 0.0),
         "capital_mode": "paper",
         "paper_ledger_id": paper_ledger_id,
         "paper_ledger": {
@@ -12543,6 +14770,10 @@ def _persona_provisioning_metadata(
             f"evidence://persona-create/{record.persona_id}/deployment-saga",
         ],
     }
+    if "successRate" in payload and payload.get("successRate") is not None:
+        metadata["success_rate"] = float(payload["successRate"])
+    elif "success_rate" in payload and payload.get("success_rate") is not None:
+        metadata["success_rate"] = float(payload["success_rate"])
     readback_started_at = record.references.get("provisioning_readback_started_at")
     if isinstance(readback_started_at, str) and readback_started_at.strip():
         metadata["provisioning_readback_started_at"] = readback_started_at.strip()
@@ -12552,6 +14783,36 @@ def _persona_provisioning_metadata(
         metadata["runtime_id"] = runtime_id
     if record.error:
         metadata["provisioning_error"] = deepcopy(record.error)
+    else:
+        metadata["provisioning_error"] = None
+    if isinstance(record.references.get("capital_pool_risk_policy_resolution"), Mapping):
+        metadata["risk_policy_resolution"] = deepcopy(dict(record.references["capital_pool_risk_policy_resolution"]))
+    owner_dec_req = record.references.get("risk_policy_owner_decision_request") or (
+        (record.error or {}).get("owner_decision_request") if isinstance(record.error, Mapping) else None
+    )
+    if isinstance(owner_dec_req, Mapping):
+        owner_dec_copy = deepcopy(dict(owner_dec_req))
+        metadata["risk_policy_owner_decision_request"] = owner_dec_copy
+        metadata["provisioning_waiting_reason"] = str(
+            owner_dec_copy.get("absence_source")
+            or owner_dec_copy.get("reason_code")
+            or "risk_policy_profile_mapping_unapproved"
+        )
+        metadata["recommended_governance_action"] = str(
+            owner_dec_copy.get("recommended_governance_action")
+            or "approve_capital_pool_risk_policy_mapping"
+        )
+        if "risk_policy_resolution" not in metadata:
+            metadata["risk_policy_resolution"] = {
+                "resolved": False,
+                "status": str(owner_dec_copy.get("resolution_status") or "unresolved_profile_mapping"),
+                "reason_code": str(owner_dec_copy.get("reason_code") or "risk_policy_profile_mapping_unapproved"),
+                "absence_source": owner_dec_copy.get("absence_source"),
+                "owner_decision_request": owner_dec_copy,
+            }
+    elif isinstance(metadata.get("risk_policy_resolution"), Mapping) and metadata["risk_policy_resolution"].get("resolved") is True:
+        metadata["risk_policy_owner_decision_request"] = None
+        metadata["provisioning_waiting_reason"] = None
     if record.compensation:
         metadata["provisioning_compensation"] = deepcopy(record.compensation)
     cleanup = record.references.get("first_evaluation_schedule_cleanup")
@@ -12598,13 +14859,13 @@ _PM12_LEAGUE_RANKING_CRITERIA = {
 }
 _PM12_LEAGUE_MOVER_DIRECTIONS = {"all", "up", "down", "flat", "new"}
 _PM12_QUARTERLY_FORMULA_DOC_REF = (
-    "docs/04/pantheon_bff_api_gap_2026-05-23/"
-    "BFF_API_GAP_final_integration_spec.md#b34-pm-12-composition-sources"
+    "docs/deployment/evidence/RANKING-PNL-NORMALISATION-20261112/"
+    "operator-decision.md"
 )
 _PM12_QUARTERLY_FORMULA_GOVERNANCE_REF_ID = (
-    "pm12-quarterly-ranking-formula-v1-governance"
+    "pm12-quarterly-ranking-formula-v2-operator-20261112"
 )
-_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-05-23T00:00:00Z"
+_PM12_QUARTERLY_FORMULA_EFFECTIVE_AT = "2026-11-12T00:00:00Z"
 _PM12_QUARTER_PATTERN = re.compile(r"^(?P<year>\d{4})-Q(?P<quarter>[1-4])$", re.IGNORECASE)
 _PM12_HEATMAP_BUCKET_DELTAS = {
     "hour": timedelta(hours=1),
@@ -13191,6 +15452,8 @@ def _pm12_telemetry_record_timestamp(record: Dict[str, Any]) -> Optional[datetim
 
 # --- _pm12_finite_number ---
 def _pm12_finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     parsed = _management_number(value)
     if parsed is None or not math.isfinite(parsed):
         return None
@@ -13220,7 +15483,11 @@ def _pm12_telemetry_record_resolution(
 def _pm12_telemetry_metrics_from_records(
     runtime_ids: List[str],
     telemetry: List[Dict[str, Any]],
+    *,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    if quarter_window is not None:
+        return _pm12_quarter_metrics(runtime_ids, telemetry, quarter_window)
     telemetry = sorted(
         telemetry,
         key=lambda item: _pm12_telemetry_record_timestamp(item) or datetime.min.replace(tzinfo=timezone.utc),
@@ -13246,16 +15513,6 @@ def _pm12_telemetry_metrics_from_records(
                     "max_drawdown",
                     "summary.max_drawdown",
                 )
-            )
-            for item in telemetry
-        )
-        if value is not None
-    ]
-    fill_rate_values = [
-        value
-        for value in (
-            _pm12_finite_number(
-                _management_first_float(item, "fill_rate", "summary.fill_rate")
             )
             for item in telemetry
         )
@@ -13323,12 +15580,268 @@ def _pm12_telemetry_metrics_from_records(
         "telemetry_coverage_count": len(telemetry),
         "pnl": round(sum(pnl_values), 6) if pnl_values else None,
         "drawdown": max(drawdown_values) if drawdown_values else None,
-        "fill_rate": _management_avg(fill_rate_values),
+        **_pm12_fill_rate_metrics(runtime_ids, telemetry),
         "avg_slippage_bps": _management_avg(slippage_values),
         "total_trades": int(sum(trade_values)) if trade_values else 0,
         "latest_telemetry_at": latest_timestamp_iso,
         "telemetry_evidence_refs": telemetry_evidence_refs,
+        **_pm12_pnl_return_metrics(runtime_ids, telemetry, quarter_window=quarter_window),
     }
+
+
+def _pm12_fill_rate_metrics(
+    runtime_ids: List[str], records: List[Dict[str, Any]],
+    window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from services.telemetry.runtime_summary import period_fill_rate
+
+    return period_fill_rate(runtime_ids, records, window)
+
+
+def _pm12_quarter_metrics(
+    runtime_ids: List[str], records: List[Dict[str, Any]], window: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Reduce retained owner valuations, never latest rolling drawdown or sums.
+
+    Quarter bounds are [start, end) in UTC. Initial funding is usable only
+    when the ledger opened in the quarter; older ledgers require an actual
+    observation exactly at quarter open. Multiple ledgers must share a grid:
+    inventing synchronized marks by carrying values forward is unsafe.
+    """
+    start = _audit_datetime(window["start_at"])
+    end = _audit_datetime(window["end_exclusive_at"])
+    days = (end - start).days
+    by_runtime: Dict[str, Dict[datetime, Dict[str, Any]]] = {rid: {} for rid in runtime_ids}
+    reasons: List[str] = []
+    evidence: List[Dict[str, Any]] = []
+    covered_days: Set[str] = set()
+    for record in records:
+        runtime_id = record.get("runtime_id")
+        if runtime_id not in by_runtime:
+            continue
+        for sample in record.get("quarter_equity_observations") or []:
+            if not isinstance(sample, dict):
+                reasons.append("malformed_quarter_observation")
+                continue
+            raw_at = sample.get("as_of")
+            try:
+                parsed = datetime.fromisoformat(str(raw_at).replace("Z", "+00:00"))
+                at = parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+            except ValueError:
+                at = None
+            if at is None:
+                reasons.append("invalid_observation_timezone")
+                continue
+            if not start <= at < end:
+                continue
+            if (sample.get("runtime_id") != runtime_id or not sample.get("binding_id")
+                    or (record.get("binding_id") and sample["binding_id"] != record["binding_id"])):
+                reasons.append("quarter_observation_identity_mismatch")
+                continue
+            covered_days.add(at.date().isoformat())
+            values = [_pm12_finite_number(sample.get(key)) for key in ("pnl", "equity", "initial_cash")]
+            pnl, equity, capital = values
+            if (sample.get("schema_version") != "quarter_equity.v1" or sample.get("status") != "known"
+                    or sample.get("valuation_method") != "fill_cash_ledger_mark_to_market"
+                    or any(value is None for value in values) or capital <= 0
+                    or not math.isclose(equity, capital + pnl, rel_tol=1e-9, abs_tol=1e-6)):
+                reasons.append(str(sample.get("reason") or "invalid_quarter_equity"))
+                continue
+            normalized = {**sample, "as_of": _pm12_iso_z(at)}
+            previous = by_runtime[runtime_id].get(at)
+            # Event retries may have a new id. Conflicting values, provenance,
+            # or binding generations at one boundary never pick a winner.
+            if previous and (
+                {k: v for k, v in previous.items() if k != "event_id"}
+                != {k: v for k, v in normalized.items() if k != "event_id"}
+            ):
+                reasons.append("ambiguous_quarter_observation")
+            elif previous is None:
+                by_runtime[runtime_id][at] = normalized
+    observed = sum(bool(samples) for samples in by_runtime.values())
+    count = sum(len(samples) for samples in by_runtime.values())
+    result: Dict[str, Any] = {
+        "runtime_ids": runtime_ids, "runtime_count": len(runtime_ids),
+        "telemetry_coverage_count": count, "quarter_window": window,
+        "pnl": None, "pnl_return": None, "pnl_capital": None, "pnl_period": None,
+        "pnl_unit": "ledger_currency", "pnl_return_unit": "fraction",
+        "pnl_return_status": "unknown", "pnl_return_reason": "missing_quarter_series",
+        "drawdown": None, "drawdown_status": "unknown", "drawdown_reason": "missing_quarter_series",
+        "drawdown_basis": "quarter_maximum_equity_drawdown", "pnl_sources": [],
+        **_pm12_fill_rate_metrics(runtime_ids, records, window),
+        "avg_slippage_bps": None, "total_trades": None,
+        "latest_telemetry_at": None, "telemetry_evidence_refs": evidence,
+        "runtime_coverage": {"observed": observed, "expected": len(runtime_ids),
+                             "ratio": observed / len(runtime_ids) if runtime_ids else 0.0},
+        "temporal_observation_coverage": {
+            "observed_utc_days": len(covered_days), "quarter_utc_days": days,
+            "ratio": len(covered_days) / days, "basis": "distinct_utc_days_with_observations",
+            "complete_intraday_history_proven": False,
+        },
+        "trading_sample_sufficiency": {"status": "unknown", "total_trades": None,
+                                       "reason": "no_trading_sample_threshold_declared"},
+    }
+    if observed != len(runtime_ids) or not runtime_ids:
+        reasons.append("missing_quarter_series")
+    series = []
+    sources = []
+    for runtime_id, points in by_runtime.items():
+        if not points:
+            continue
+        ordered = sorted(points.items())
+        first, last = ordered[0][1], ordered[-1][1]
+        inception = _audit_datetime(first.get("period_start_at"))
+        if inception is None or inception > ordered[0][0]:
+            reasons.append("missing_quarter_opening_equity")
+            continue
+        if any((p.get("initial_cash"), p.get("period_start_at"), p.get("currency"), p.get("binding_id"))
+               != (first.get("initial_cash"), first.get("period_start_at"), first.get("currency"), first.get("binding_id"))
+               for _, p in ordered):
+            reasons.append("incompatible_ledger_funding_or_binding")
+            continue
+        if inception >= start:
+            opening_at, opening, opening_pnl, opening_fills = inception, first["initial_cash"], 0.0, 0
+            values = [(opening_at, opening), *[(at, p["equity"]) for at, p in ordered]]
+        elif ordered[0][0] == start:
+            opening_at, opening, opening_pnl, opening_fills = start, first["equity"], first["pnl"], first.get("fill_count")
+            values = [(at, p["equity"]) for at, p in ordered]
+        else:
+            reasons.append("missing_quarter_opening_equity")
+            continue
+        fills = [p.get("fill_count") for _, p in ordered]
+        if (any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in fills)
+                or any(b < a for a, b in zip(fills, fills[1:])) or opening <= 0):
+            reasons.append("invalid_quarter_equity_or_fill_count")
+            continue
+        series.append(values)
+        sources.append({"runtime_id": runtime_id, "binding_id": first["binding_id"],
+                        "pnl": last["pnl"] - opening_pnl, "capital": opening,
+                        "currency": first.get("currency"), "start_at": _pm12_iso_z(opening_at),
+                        "as_of": last["as_of"], "total_trades": fills[-1] - opening_fills,
+                        "capital_source": "owner_quarter_opening_equity",
+                        "event_id": last.get("event_id")})
+        evidence.extend({"ref_id": f"telemetry-event:{p.get('event_id')}", "source_type": "quarter_equity",
+                         "runtime_id": runtime_id, "observed_at": p["as_of"]} for _, p in ordered)
+    if len(series) > 1 and (
+        len({tuple(at for at, _ in points) for points in series}) != 1
+        or len({s["currency"] for s in sources}) != 1 or not sources[0]["currency"]
+    ):
+        reasons.append("incompatible_runtime_quarter_series")
+    if reasons:
+        reason = ";".join(sorted(set(reasons)))
+        result.update(pnl_return_reason=reason, drawdown_reason=reason)
+        return result
+    equities = [sum(points[i][1] for points in series) for i in range(len(series[0]))]
+    peak, maximum = equities[0], 0.0
+    for equity in equities:
+        peak = max(peak, equity)
+        maximum = max(maximum, min(1.0, (peak - equity) / peak))
+    capital = sum(s["capital"] for s in sources)
+    pnl = sum(s["pnl"] for s in sources)
+    if not all(math.isfinite(v) for v in (*equities, capital, pnl, pnl / capital)):
+        result.update(pnl_return_reason="nonfinite_quarter_equity", drawdown_reason="nonfinite_quarter_equity")
+        return result
+    trades = sum(s["total_trades"] for s in sources)
+    result.update({"pnl": pnl, "pnl_capital": capital, "pnl_return": pnl / capital,
+                   "pnl_return_status": "known", "pnl_return_reason": None,
+                   "drawdown": maximum, "drawdown_status": "known", "drawdown_reason": None,
+                   "pnl_sources": sources, "total_trades": trades,
+                   "latest_telemetry_at": sources[0]["as_of"],
+                   "pnl_period": {"start_at": sources[0]["start_at"], "as_of": sources[0]["as_of"],
+                                  "quarter": window["quarter"]}})
+    result["trading_sample_sufficiency"]["total_trades"] = trades
+    for field in ("avg_slippage_bps",):
+        per_runtime = []
+        for runtime_id in runtime_ids:
+            candidates = [(at, value) for record in records if record.get("runtime_id") == runtime_id
+                          for at in [_audit_datetime(record.get(f"{field}_at"))]
+                          for value in [_pm12_finite_number(record.get(field))]
+                          if at is not None and start <= at < end and value is not None]
+            if candidates:
+                latest_at = max(at for at, _ in candidates)
+                values = {value for at, value in candidates if at == latest_at}
+                if len(values) == 1:
+                    per_runtime.append(values.pop())
+        if len(per_runtime) == len(runtime_ids):
+            result[field] = _management_avg(per_runtime)
+    return result
+
+
+def _pm12_pnl_return_metrics(
+    runtime_ids: List[str],
+    records: List[Dict[str, Any]],
+    *,
+    quarter_window: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Use the latest cumulative PnL/capital tuple per authoritative runtime.
+
+    No historical cumulative sums, metadata budget defaults or invented quarter
+    opening equity. A ledger opened within the quarter is a since-inception
+    quarter-to-date observation; an older ledger needs a period owner first.
+    """
+    result: Dict[str, Any] = {
+        "pnl_return": None, "pnl_capital": None,
+        "pnl_unit": "ledger_currency", "pnl_return_unit": "fraction",
+        "pnl_period": None, "pnl_return_status": "unknown",
+        "pnl_return_reason": "missing_pnl_capital_or_period", "pnl_sources": [],
+    }
+    if not runtime_ids:
+        return result
+    for runtime_id in runtime_ids:
+        candidates = [record for record in records if record.get("runtime_id") == runtime_id]
+        # PnL's own timestamp must not advance with unrelated heartbeat metrics.
+        def pnl_at(record):
+            return _audit_datetime(record.get("pnl_at") or record.get("pnl_as_of"))
+        candidates = [record for record in candidates if pnl_at(record) is not None]
+        if not candidates:
+            return result
+        latest_at = max(pnl_at(record) for record in candidates)
+        latest = [record for record in candidates if pnl_at(record) == latest_at]
+        tuples = []
+        for record in latest:
+            pnl = _pm12_finite_number(record.get("pnl"))
+            capital = _pm12_finite_number(record.get("initial_cash"))
+            start = _audit_datetime(record.get("pnl_period_start_at"))
+            tuples.append((pnl, capital, start, str(record.get("pnl_currency") or "")))
+        if any(value != tuples[0] for value in tuples):
+            result["pnl_return_reason"] = "ambiguous_pnl_observation"
+            return result
+        pnl, capital, start, currency = tuples[0]
+        if pnl is None or capital is None or capital <= 0 or start is None or start > latest_at:
+            return result
+        if quarter_window is not None:
+            quarter_start = _audit_datetime(quarter_window.get("start_at"))
+            quarter_end = _audit_datetime(quarter_window.get("end_exclusive_at"))
+            if quarter_start is None or quarter_end is None or not quarter_start <= start <= latest_at < quarter_end:
+                result["pnl_return_reason"] = "pnl_period_outside_ranking_quarter"
+                return result
+        result["pnl_sources"].append({
+            "runtime_id": runtime_id, "pnl": pnl, "capital": capital,
+            "capital_source": "pnl_snapshot.initial_cash", "currency": currency or None,
+            "start_at": _pm12_iso_z(start), "as_of": _pm12_iso_z(latest_at),
+            "event_id": latest[0].get("pnl_event_id"),
+        })
+    sources = result["pnl_sources"]
+    # Different windows/currencies cannot form one persona return. In particular,
+    # do not add two unlabelled currencies across independent ledgers.
+    if len(sources) > 1 and (
+        len({(s["start_at"], s["as_of"], s["currency"]) for s in sources}) != 1
+        or not sources[0]["currency"]
+    ):
+        result["pnl_return_reason"] = "incompatible_runtime_pnl_periods_or_currencies"
+        return result
+    capital = sum(source["capital"] for source in sources)
+    pnl = sum(source["pnl"] for source in sources)
+    pnl_return = pnl / capital
+    if not all(math.isfinite(value) for value in (capital, pnl, pnl_return)):
+        return result
+    result.update({
+        "pnl": pnl, "pnl_capital": capital, "pnl_return": pnl_return,
+        "pnl_period": {"start_at": sources[0]["start_at"], "as_of": sources[0]["as_of"],
+                       "quarter": quarter_window.get("quarter") if quarter_window else None},
+        "pnl_return_status": "known", "pnl_return_reason": None,
+    })
+    return result
 
 
 # --- _pm12_persona_telemetry_records ---
@@ -13367,18 +15880,7 @@ def _pm12_persona_telemetry_records(
             candidate.setdefault("runtime_id", runtime_id)
             dedupe_key = (
                 str(candidate.get("runtime_id") or ""),
-                str(
-                    candidate.get("collected_at")
-                    or candidate.get("collectedAt")
-                    or candidate.get("bucket_start")
-                    or candidate.get("bucketStart")
-                    or candidate.get("timestamp")
-                    or candidate.get("updated_at")
-                    or candidate.get("updatedAt")
-                    or candidate.get("created_at")
-                    or candidate.get("createdAt")
-                    or ""
-                ),
+                json.dumps(candidate, sort_keys=True, default=str),
             )
             if dedupe_key in seen:
                 continue
@@ -13392,6 +15894,7 @@ def _pm12_persona_telemetry_metrics(
     row: Dict[str, Any],
     *,
     telemetry_cache: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+    quarter_window: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     telemetry_cache = telemetry_cache if telemetry_cache is not None else {}
     runtime_ids = _pm12_persona_runtime_ids(row, telemetry_cache=telemetry_cache)
@@ -13407,6 +15910,7 @@ def _pm12_persona_telemetry_metrics(
     metrics = _pm12_telemetry_metrics_from_records(
         runtime_ids,
         records,
+        quarter_window=quarter_window,
     )
     resolutions = [
         _pm12_telemetry_record_resolution(summary, runtime_id)
@@ -13429,7 +15933,9 @@ def _pm12_persona_telemetry_metrics(
 
 
 # --- _pm12_tier_for_score ---
-def _pm12_tier_for_score(score: float) -> Dict[str, Any]:
+def _pm12_tier_for_score(score: Optional[float]) -> Dict[str, Any]:
+    if score is None:
+        return {"id": "unknown", "label": "Unknown", "governance_posture": "insufficient_evidence"}
     for tier in _PM12_LEAGUE_TIER_DEFINITIONS:
         if score >= float(tier["min_score"]):
             return tier
@@ -13785,7 +16291,12 @@ def _pm12_evidence_ref_key(ref: Any) -> str:
 
 def _pm12_attach_ranking_snapshot(items, *, surface, period):
     """Attach a content identity only; scheduled evaluator admission owns persistence."""
-    snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+    # Only the identity is attached. Build it from the content digest alone:
+    # snapshot_record() additionally rebuilds the content, deep-freezes every
+    # item and hashes evidence assertions, then the record is discarded.
+    digest = snapshot_content_digest(items, surface=surface, period=period)
+    clean_period = re.sub(r"[^a-z0-9]+", "-", str(period or "current").strip().lower()).strip("-")
+    snapshot_id = f"ranking-{surface}-{clean_period or 'current'}-{digest[:24]}"
     return ([{**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"},
               "ranking_snapshot_id": snapshot_id} for item in items], snapshot_id)
 
@@ -13802,7 +16313,7 @@ def _pm12_quarterly_recommendation_item(
 ) -> Dict[str, Any]:
     action = _PM12_QUARTERLY_RECOMMENDATION_ACTIONS[action_id]
     persona_id = str(item.get("persona_id") or item.get("personaId") or item.get("id") or "")
-    score = _management_number(item.get("score")) or _management_number(item.get("overall_score")) or 0.0
+    score = _management_number(item.get("overall_score"))
     evidence_sample = list(item.get("evidence_refs") or [])[:5]
     evidence_ref_ids = list(saved.get("evidence_ref_ids") or [])
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
@@ -13892,6 +16403,10 @@ def _pm12_quarterly_recommendation_item(
         "evaluator_run_id": saved.get("evaluator_run_id"),
         "evaluated_at": saved.get("evaluated_at"),
         "governance_request": saved.get("governance_request"),
+        "routing": {k: v for k, v in (saved.get("routing") or {}).items() if k in
+                    {"owner", "status", "reason", "ranking_snapshot_id", "rebalance_id"}},
+        "panel_memo": saved.get("panel_memo"),
+        "mapping_version": saved.get("mapping_version"),
         "rationale_codes": [
             f"tier:{item.get('tier') or 'unknown'}",
             f"action:{action_id}",
@@ -14711,6 +17226,12 @@ def _build_persona_health_items_impl(
         if cpid and cpid not in runtime_by_pool:
             runtime_by_pool[cpid] = rt
     routed_strategy_counts = _routed_strategy_counts_by_persona() if personas_list else {}
+    from ..loop_inventory import project_persona_cycle_health
+    packet_reader = getattr(read_store, "list_ooda_packets", None)
+    try:
+        cycle_packets = list(packet_reader() or []) if callable(packet_reader) else []
+    except Exception:
+        cycle_packets = []
     items: List[Dict[str, Any]] = []
     for persona in personas_list:
         persona_id = _persona_id(persona)
@@ -14863,6 +17384,7 @@ def _build_persona_health_items_impl(
                 data_source_status,
                 data_sources,
                 required_data_sources=required_data_sources,
+                thin=True,
             )
         else:
             source_health_bindings = []
@@ -15033,6 +17555,7 @@ def _build_persona_health_items_impl(
             "deploymentStage": deployment_stage,
             "ooda_stage": ooda_stage,
             "oodaStage": ooda_stage,
+            "persona_cycle_health": project_persona_cycle_health(persona, cycle_packets),
             "recommendation": recommendation,
             "governance_required": governance_required,
             "governanceRequired": governance_required,
@@ -15277,6 +17800,46 @@ class PersonaService:
 
     def get_write_owner(self) -> Any:
         return self._write_owner
+
+    def read_strategy_pool(
+        self,
+        persona_id: str,
+        tenant_id: str,
+        *,
+        authorization: Optional[str],
+        snapshot_at: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Read owner pool observations for an authorized, tenant-scoped persona.
+
+        Detail routes resolve the persona and caller tenant before this use case.
+        The existing owner port preserves unavailable sections and version/digest
+        checks, using this application's bound cycle read owner.
+        """
+        return PersonaPoolViewsPort(
+            read_store=self.get_read_store(), authorization=authorization,
+        ).read(persona_id, tenant_id, snapshot_at=snapshot_at)
+
+    def read_persona_cycle(self, persona_id, tenant_id, *, identity, authorization, snapshot_at,
+                           lifecycle_state=None):
+        """Compose authorized detail reads from the existing owning services."""
+        from .cycle_views import cycle_owner_lifecycle, read_cycle_views
+        # The route passes the projected record state; the day check needs the
+        # owner's own lifecycle_state (registrar rule), so read the owner record.
+        try:
+            owner_record = self.get_read_store().get_persona(persona_id)
+        except Exception:
+            owner_record = None
+        if isinstance(owner_record, dict):
+            lifecycle_state = cycle_owner_lifecycle(owner_record)
+        else:
+            lifecycle_state = None
+        return read_cycle_views(self.get_read_store(), persona_id, tenant_id, identity,
+                                authorization, snapshot_at, lifecycle_state=lifecycle_state)
+
+    def read_persona_cycle_health(self, tenant_id, persona_ids):
+        """One controller owner read for the authorized Management page."""
+        from .cycle_views import read_fleet_cycle_health
+        return read_fleet_cycle_health(self.get_read_store(), tenant_id, persona_ids)
 
     def _source_ingest_truth_by_connector(self) -> Dict[str, Dict[str, Any]]:
         """Sole implementation of the TTL-cached source-ingest truth read.
@@ -15735,6 +18298,16 @@ class PersonaService:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
+        from .risk_changes import paper_pool_id, project_risk_change, key_issued_at_ms
+
+        risk_pool_id = None
+        if "risk" in payload:
+            try:
+                risk_pool_id = paper_pool_id(raw)
+            except ValueError as exc:
+                raise self._bff_error(409, ErrorCode.PRECONDITION_FAILED, "Paper pool identity conflict", str(exc)) from exc
+            if risk_pool_id and payload["risk"] not in ("low", "medium", "high"):
+                raise self._bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid risk tier", "risk must be low, medium or high")
         cache_key = ":".join(
             ("persona-patch", caller_tenant, identity.operator_id, resolved_key)
         )
@@ -15748,7 +18321,7 @@ class PersonaService:
             }
         )
         cached = _strategy_persona_idempotency_check(cache_key, request_hash)
-        if cached is not None:
+        if cached is not None and not risk_pool_id:
             return cached
         snapshot_at = self._utc_now()
         routed = _routed_strategies_for_persona(persona_id)
@@ -15760,7 +18333,41 @@ class PersonaService:
             if field in payload:
                 base[field] = payload[field]
         if "risk" in payload:
-            base["risk"] = _normalize_risk_level(payload["risk"])
+            if risk_pool_id:
+                issued_at_ms = key_issued_at_ms(resolved_key)
+                try:
+                    risk_request_id = _stable_json_hash({"tenant": caller_tenant, "persona": persona_id,
+                                                         "actor": identity.operator_id, "key": resolved_key})
+                    risk_change = _chain_paper_capital_coordinator(caller_tenant).change_paper_risk_profile(
+                        tenant_id=caller_tenant, persona_id=persona_id, pool_id=risk_pool_id,
+                        profile=payload["risk"],
+                        requested_by=identity.operator_id,
+                        request_id=risk_request_id,
+                        request_hash=request_hash,
+                        issued_at_ms=issued_at_ms,
+                    )
+                except Exception as exc:
+                    conflict = getattr(exc, "reason_code", "") in {
+                        "paper_risk_change_idempotency_conflict", "paper_risk_change_revision_conflict",
+                        "paper_risk_change_key_stale",
+                    }
+                    raise self._bff_error(409 if conflict else 503,
+                                          ErrorCode.PRECONDITION_FAILED if conflict else ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                          "Paper risk change unavailable", str(exc)) from exc
+                if (not set(payload).intersection({"name", "archetype", "routedStrategies", "successRate"})
+                        or cached is not None or risk_change.get("requestId") != risk_request_id):
+                    # Risk-only requests need no second Persona write. Cached
+                    # or superseded retries must not replay older name/trait
+                    # edits while reconciling the latest Capital binding.
+                    data = _project_persona_dto(raw, routed_strategies=routed)
+                    project_risk_change(data, raw, caller_tenant)
+                    return {"data": data, "meta": {"snapshot_at": snapshot_at}}
+                # Capital owns the current request. Keep the legacy Persona
+                # scalar as creation provenance; stale Persona writes cannot
+                # change the latest intent. GET/PATCH project Capital below.
+                base["risk"] = _project_persona_dto(raw, routed_strategies=routed).get("risk", "low")
+            else:
+                base["risk"] = _normalize_risk_level(payload["risk"])
         base["updatedAt"] = snapshot_at
         base["id"] = persona_id
         base["tenantId"] = caller_tenant
@@ -15770,9 +18377,11 @@ class PersonaService:
             or (raw or {}).get("state")
             or "draft"
         )
-        update_metadata: Dict[str, Any] = {
-            "success_rate": float(base.get("successRate") or 0.0),
-        }
+        update_metadata: Dict[str, Any] = {}
+        if "successRate" in payload and payload.get("successRate") is not None:
+            update_metadata["success_rate"] = float(payload["successRate"])
+        elif "success_rate" in payload and payload.get("success_rate") is not None:
+            update_metadata["success_rate"] = float(payload["success_rate"])
         update_metadata["openclaw_agent_reconcile"] = _openclaw_agent_reconcile_request(
             {
                 "id": persona_id,
@@ -15824,12 +18433,24 @@ class PersonaService:
             persona_record,
             overlay={
                 "routedStrategies": int(base.get("routedStrategies") or routed),
-                "successRate": float(base.get("successRate") or 0.0),
+                "successRate": _project_recorded_success_rate(
+                    payload.get("successRate")
+                    if "successRate" in payload
+                    else (
+                        payload.get("success_rate")
+                        if "success_rate" in payload
+                        else base.get("successRate")
+                    ),
+                    (persona_record.get("metadata") or {}).get("success_rate")
+                    if isinstance(persona_record, Mapping)
+                    else None,
+                ),
                 "tenantId": caller_tenant,
             },
             routed_strategies=routed,
         )
         result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
+        project_risk_change(result["data"], persona_record, caller_tenant)
         _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
             "request_hash": request_hash,
             "result": deepcopy(result),
@@ -15876,12 +18497,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         quarter_window = _pm12_quarter_window(quarter, snap)
-        rows = _pm12_persona_league_rows(
-            tenant_id=caller_tenant_id,
-            include_route_policy=False,
-            include_health=False,
-            include_allowed_actions=False,
-        )
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         ranked_items = _pm12_quarterly_ranking_items(rows, quarter_window=quarter_window)
         (
             public_evidence_refs,
@@ -15965,7 +18581,8 @@ class PersonaService:
             "review_count": total,
             "returned_count": len(page_items),
             "pending_count": len([item for item in reviews if item.get("decision_status") == "pending"]),
-            "decision_accepted_count": len([item for item in reviews if item.get("decision_status") == "accepted"]),
+            "decision_accepted_count": len([item for item in reviews if item.get("status") == "decision_accepted"]),
+            "decision_rejected_count": len([item for item in reviews if item.get("status") == "decision_rejected"]),
             "live_capital_mutation_count": 0,
             "requires_human_gate_decision": True,
                 "policy": "promotion_governance_human_gate_no_direct_live_capital",
@@ -16805,7 +19422,7 @@ class PersonaService:
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
         slice_fn = page_slice_fn or _page_slice
-        all_rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id, include_route_policy=False, include_health=False, include_allowed_actions=False)
+        all_rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
         all_rows = [r for r in all_rows if not _fleet_cls.is_non_trading_persona(r)]
         ranking_basis, ranking_snapshot_id = _pm12_attach_ranking_snapshot(
             [_pm12_persona_league_ranking_item(row) for row in all_rows],
@@ -16843,13 +19460,41 @@ class PersonaService:
         )
         total = len(rows)
         page_items, next_page_token = slice_fn(rows, page_token, page_size)
-        for item in page_items:
-            pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
-            item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
-            item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
-            allowed = {} if is_ret else (_get_active_read_store().get_persona_allowed_actions(pid) or {})
-            enabled = sorted(str(k) for k, v in allowed.items() if v)
-            item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        import contextvars as _cv
+
+        def _allowed_for(pid_: str) -> Any:
+            return _get_active_read_store().get_persona_allowed_actions(pid_)
+
+        _allowed_futures: Dict[int, Any] = {}
+        _allowed_pool = None
+        _to_fetch = [
+            (idx, str(it.get("persona_id") or it.get("id") or ""))
+            for idx, it in enumerate(page_items)
+            if it.get("state") != "retired"
+        ]
+        if len(_to_fetch) > 1:
+            _allowed_pool = ThreadPoolExecutor(
+                max_workers=min(8, len(_to_fetch)), thread_name_prefix="bff-league-allowed"
+            )
+            for idx, pid_ in _to_fetch:
+                _allowed_futures[idx] = _allowed_pool.submit(_cv.copy_context().run, _allowed_for, pid_)
+        try:
+            for idx, item in enumerate(page_items):
+                pid, is_ret = str(item.get("persona_id") or item.get("id") or ""), item.get("state") == "retired"
+                item["route_policy_summary"] = _pm12_persona_route_summary(pid, policy={} if is_ret else None)
+                item["health_summary"] = _pm12_persona_health_summary({"lifecycle_state": item.get("owner_lifecycle_state") or item.get("state")}, item.get("session_summary") or {}, item.get("capability_summary") or {})
+                fut = _allowed_futures.get(idx)
+                if is_ret:
+                    allowed = {}
+                elif fut is not None:
+                    allowed = fut.result() or {}
+                else:
+                    allowed = _allowed_for(pid) or {}
+                enabled = sorted(str(k) for k, v in allowed.items() if v)
+                item["allowed_action_summary"] = {"count": len(allowed), "enabled_count": len(enabled), "enabled_actions": enabled}
+        finally:
+            if _allowed_pool is not None:
+                _allowed_pool.shutdown(wait=False, cancel_futures=True)
         summary = {
             "persona_count": total,
             "returned_count": len(page_items),
@@ -16921,7 +19566,10 @@ class PersonaService:
         snapshot_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self._utc_now()
-        rows = _pm12_persona_league_rows(tenant_id=caller_tenant_id)
+        # Ranking blocks never read the per-persona route-policy / health /
+        # allowed-actions summaries; skipping them removes 2-3 store reads per
+        # persona from this read path without changing any ranking field.
+        rows = _pm12_persona_league_rows_shared(tenant_id=caller_tenant_id)
 
         # Pre-enrich and filter the base league rows represented as ranking items
         base_items, ranking_snapshot_id = _pm12_attach_ranking_snapshot(

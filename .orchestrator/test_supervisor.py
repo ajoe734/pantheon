@@ -2262,6 +2262,14 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
+    def test_repo_antigravity_dispatch_uses_the_shared_account_cap(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text())
+        account = supervisor.agent_account_id(config, "antigravity")
+        self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "antigravity2"))
+        # Operator 2026-11-16: raise the shared Antigravity account cap from 4 back to 6
+        # while both Codex accounts are quota-terminal; both lanes share this cap.
+        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
+
     def test_repo_claude_dispatch_uses_the_shared_account_cap(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
         account = supervisor.agent_account_id(config, "claude")
@@ -2469,12 +2477,12 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             "source_task_id": "ABC-001",
             "source_task_generation": 1,
             "unblock_task_id": supervisor.unblock_contract.task_id_from_identity({
-                "source_task_id": "ABC-001", "reason": "ci-red",
+                "source_task_id": "ABC-001", "reason": "dirty-repository-checkout",
                 "source_task_generation": 1,
                 "repository_slug": "ajoe734/pantheon", "pr": 44,
                 "head_sha": "a" * 40,
             }),
-            "reason": "ci-red",
+            "reason": "dirty-repository-checkout",
             "detail": "required CI is red",
             "repository_id": "pantheon",
             "repository_slug": "ajoe734/pantheon",
@@ -2493,7 +2501,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         path.write_bytes(encoded + b"\n")
         return path
 
-    def _task_id(self, reason: str = "ci-red", **changes: object) -> str:
+    def _task_id(self, reason: str = "dirty-repository-checkout", **changes: object) -> str:
         request = {
             "source_task_id": "ABC-001", "source_task_generation": 1,
             "repository_slug": "ajoe734/pantheon", "pr": 44,
@@ -2568,16 +2576,111 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertTrue(self._materialize())
         self._assert_own_branch_wording(self._task_id())
 
-    def test_repair_task_states_own_branch_delivery_rule_execute_plans_source(self) -> None:
+    def test_execute_plans_ci_red_reopens_source_without_pantheon_repair_task(self) -> None:
         fe = self._make_execute_plans_source()
         reason = "ci-red"
-        unblock_id = self._fe_task_id(reason)
-        self._publish(
-            reason=reason, detail="required CI is red",
-            unblock_task_id=unblock_id, **fe,
+        self.assertTrue(supervisor.unblock_contract.requires_repair_task(reason))
+        self.assertTrue(supervisor.unblock_contract.requires_source_reopen(reason))
+        self.assertTrue(
+            supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
         )
-        self.assertTrue(self._materialize())
-        self._assert_own_branch_wording(unblock_id)
+        request = self._publish(
+            reason=reason, detail="required frontend CI is red",
+            unblock_task_id=self._fe_task_id(reason), **fe,
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        tasks = snapshot["state"]["tasks"]
+        # No execute-plans repair task declaring Pantheon integrator tooling.
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertNotIn(
+            "scripts/git/auto_integrator.py",
+            json.dumps(tasks, sort_keys=True),
+        )
+        self.assertEqual(tasks[0]["status"], "in_progress")
+        self.assertIn("source-owned return (ci-red)", tasks[0]["next"])
+        self.assertIn("required frontend CI is red", tasks[0]["next"])
+
+    def test_execute_plans_integration_environment_faults_leave_source_untouched(self) -> None:
+        for reason in (
+            "missing-dedicated-integration-path", "integration-checkout-not-detached",
+            "contradictory-review-bridge-policy", "final-authority-timeout",
+            "final-pr-refresh-failed",
+        ):
+            with self.subTest(reason=reason):
+                fe = self._make_execute_plans_source()
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_source_reopen(reason, "execute_plans")
+                )
+                self.assertFalse(
+                    supervisor.unblock_contract.requires_repair_task(reason, "execute_plans")
+                )
+                request = self._publish(
+                    reason=reason, detail="integration checkout fault",
+                    unblock_task_id=self._fe_task_id(reason), **fe,
+                )
+                calls: list[tuple[list[str], dict[str, str], str]] = []
+                with mock.patch.object(
+                    supervisor.subprocess, "run",
+                    side_effect=self._run_real_reopen_subprocess(calls),
+                ):
+                    self._materialize()
+                self.assertEqual(calls, [])
+                snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+                    self.config["task_state_store"]["event_log"]
+                )
+                tasks = snapshot["state"]["tasks"]
+                self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+                self.assertEqual(tasks[0]["status"], "review_approved")
+                self.assertEqual(tasks[0]["delivery_binding"]["pr"], 940)
+                self.assertFalse(request.exists())
+
+    def test_non_pantheon_source_reopen_is_limited_to_source_owned_reasons(self) -> None:
+        contract = supervisor.unblock_contract
+        for reason in contract.SOURCE_OWNED_REASONS:
+            self.assertTrue(contract.requires_source_reopen(reason, "execute_plans"), reason)
+        for reason in contract.REASONS - contract.SOURCE_OWNED_REASONS:
+            if reason == contract.EXACT_HEAD_BEHIND_BASE_REASON:
+                continue
+            self.assertFalse(contract.requires_source_reopen(reason, "execute_plans"), reason)
+            self.assertFalse(contract.requires_repair_task(reason, "execute_plans"), reason)
+
+    def test_pantheon_source_owned_ci_red_returns_to_same_source_without_child(self) -> None:
+        contract = supervisor.unblock_contract
+        for reason in contract.SOURCE_OWNED_REASONS:
+            self.assertTrue(contract.requires_source_reopen(reason, "pantheon"), reason)
+        for reason in contract.REASONS - contract.SOURCE_OWNED_REASONS:
+            if reason == contract.EXACT_HEAD_BEHIND_BASE_REASON:
+                continue
+            self.assertFalse(contract.requires_source_reopen(reason, "pantheon"), reason)
+        request = self._publish(
+            reason="ci-red", unblock_task_id=self._task_id("ci-red"),
+        )
+        calls: list[tuple[list[str], dict[str, str], str]] = []
+        with mock.patch.object(
+            supervisor.subprocess, "run",
+            side_effect=self._run_real_reopen_subprocess(calls),
+        ):
+            self.assertTrue(self._materialize())
+        self.assertFalse(request.exists())
+        self.assertEqual(len(calls), 1)
+        tasks = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )["state"]["tasks"]
+        self.assertEqual([task["id"] for task in tasks], ["ABC-001"])
+        self.assertEqual(tasks[0]["owner"], "Codex")
+        self.assertEqual(tasks[0]["reviewer"], "Claude")
+        self.assertEqual(tasks[0]["status"], "in_progress")
+        self.assertNotIn("scripts/git/auto_integrator.py", json.dumps(tasks))
 
     def test_queued_child_repair_is_rejected_without_mutating_source(self) -> None:
         for provenance in (
@@ -2607,7 +2710,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self._publish()
         self.assertTrue(self._materialize())
         before = supervisor.load_status(self.config)
-        request = self._publish(reason="final-ci-red", unblock_task_id=self._task_id("final-ci-red"))
+        request = self._publish(reason="head-branch-mismatch", unblock_task_id=self._task_id("head-branch-mismatch"))
         self.assertFalse(self._materialize())
         after = supervisor.load_status(self.config)
         self.assertEqual(before, after)
@@ -2678,13 +2781,13 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             command_runtime_sha="b" * 40,
         )
         first = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
         self.assertTrue(self._materialize())
 
         second = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
 
@@ -2709,7 +2812,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             command_runtime_sha="b" * 40,
         )
         first = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
         self.assertIsNotNone(first)
@@ -2728,7 +2831,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertFalse(self._materialize())
 
         replay = auto_integrator.open_unblock_task(
-            candidate, "ci-red", "required CI is red", settings,
+            candidate, "dirty-repository-checkout", "required CI is red", settings,
             auto_integrator.CommandRunner(), root=self.status_root, execute=True,
         )
 
@@ -2845,10 +2948,10 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
 
     def test_write_failure_is_receipted_and_does_not_hide_later_valid_request(self) -> None:
-        first = self._publish(reason="ci-red")
+        first = self._publish(reason="dirty-repository-checkout")
         second = self._publish(
-            reason="smoke-failed",
-            unblock_task_id=self._task_id("smoke-failed"),
+            reason="head-branch-mismatch",
+            unblock_task_id=self._task_id("head-branch-mismatch"),
         )
         ordered = sorted((first, second))
         real_write = supervisor.write_status
@@ -3122,32 +3225,6 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertFalse(self._materialize())
         self.assertEqual(supervisor.load_status(self.config), before)
         self.assertTrue(self._rejected_receipt(request).is_file())
-
-    def test_execute_plans_ci_red_creates_one_repair_task_in_execute_plans_workspace(self) -> None:
-        fe = self._make_execute_plans_source()
-        unblock_id = self._fe_task_id("ci-red")
-        request = self._publish(
-            reason="ci-red", unblock_task_id=unblock_id, detail="PR #940 has failing checks.",
-            **fe,
-        )
-        self.assertTrue(self._materialize())
-        self.assertFalse(request.exists())
-        status = supervisor.load_status(self.config)
-        repairs = [t for t in status["tasks"] if t["id"] == unblock_id]
-        self.assertEqual(len(repairs), 1)
-        self.assertEqual(len(status["tasks"]), 2)
-        repair = repairs[0]
-        self.assertEqual(
-            supervisor.task_target_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.task_primary_repository_id(self.config, repair), "execute_plans"
-        )
-        self.assertEqual(
-            supervisor.repository_slug(self.config, "execute_plans"), "ajoe734/execute-plans"
-        )
-        # Repair task must pass the same repository-scope validation used by dispatch.
-        supervisor.validate_task_repository_scope(self.config, repair)
 
     def test_exact_head_behind_base_reopen_failure_keeps_request_retryable(self) -> None:
         reason = "exact-head-behind-base"
@@ -4340,33 +4417,6 @@ class SharedPlannerContractTests(unittest.TestCase):
         elapsed = decide(900, {event["key"]: "2026-08-10T23:00:00Z"})
         self.assertTrue(elapsed["eligible"])
 
-    def test_task_review_reopen_revision_sources_and_bounds(self) -> None:
-        task = task_fixture(task_id="TASK-1", status="in_progress")
-        self.assertEqual(supervisor.task_review_reopen_revision(task), 0)
-
-        task_explicit = {**task, "review_reopen_revision": 2}
-        self.assertEqual(supervisor.task_review_reopen_revision(task_explicit), 2)
-
-        task_str = {**task, "reopen_revision": "3"}
-        self.assertEqual(supervisor.task_review_reopen_revision(task_str), 3)
-
-        activity_events = [
-            {"ts": "2026-08-24T12:00:00Z", "agent": "Codex", "type": "start", "task_id": "TASK-1"},
-            {"ts": "2026-08-24T12:01:00Z", "agent": "Codex", "type": "handoff", "task_id": "TASK-1"},
-            {"ts": "2026-08-24T12:02:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix 1"},
-            {"ts": "2026-08-24T12:03:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-2", "message": "other task"},
-            {"ts": "2026-08-24T12:04:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix 2"},
-        ]
-        self.assertEqual(
-            supervisor.task_review_reopen_revision(task, activity_events=activity_events),
-            2,
-        )
-        task_2 = task_fixture(task_id="TASK-2", status="in_progress")
-        self.assertEqual(
-            supervisor.task_review_reopen_revision(task_2, activity_events=activity_events),
-            1,
-        )
-
     def test_integration_resume_redispatches_owner_finalize_once(self) -> None:
         task = task_fixture(
             task_id="TASK-1",
@@ -4438,168 +4488,122 @@ class SharedPlannerContractTests(unittest.TestCase):
         self.assertFalse(repeated["eligible"])
         self.assertEqual(repeated["first_blocking_gate"], "unchanged_cooldown")
 
-    def test_review_reopen_advances_reopen_revision_and_redispatches_owner_once(self) -> None:
+    @staticmethod
+    def _reopen_intent(nonce: str, status: str = "pending") -> dict[str, object]:
+        extra = (
+            {
+                "queue_event_id": "evt-reopen",
+                "event_key": "dispatcher:key",
+                "materialized_at": "2026-08-24T12:02:05Z",
+            }
+            if status == "materialized"
+            else {}
+        )
+        return {
+            **extra,
+            "schema_version": supervisor.REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
+            "intent_id": "review-requeue-" + nonce * 64,
+            "status": status,
+            "task_id": "TASK-1",
+            "task_generation": 1,
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "reopened_at": "2026-08-24T12:02:00Z",
+            "reopened_by": "Codex2",
+            "reason": "fix requested",
+        }
+
+    def test_review_reopen_identity_is_canonical_intent_not_activity_history(self) -> None:
         task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")
-        task_map = {"TASK-1": task}
-        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
-        resolver = supervisor.task_resolver_for_config(self.config, task_map)
-        settings = supervisor.ready_dispatch_settings(self.config)
-
-        # 1. Initial in-progress state before reopen has revision 0
-        first_event = supervisor.build_dispatch_event(
-            task,
-            "Codex",
-            supervisor.REASON_OWNED_IN_PROGRESS,
-            resolver,
-            activity_events=[],
-        )
-        self.assertNotIn("review_reopen_revision", first_event)
-        seen_event_keys = {first_event["key"]: "2026-08-24T12:00:00Z"}
-
-        # Ordinary in-progress polling is blocked by unchanged cooldown
-        decision_initial_poll = supervisor.evaluate_dispatch_candidate(
-            self.config,
-            state,
-            {"tasks": [task]},
-            task,
-            "Codex",
-            resolver,
-            settings=settings,
-            active_task_ids=set(),
-            pending_task_ids=set(),
-            pending_event_keys=set(),
-            agent_loads={},
-            active_account_loads={},
-            pending_account_loads={},
-            seen_event_keys=seen_event_keys,
-            checked_at="2026-08-24T12:01:00Z",
-            cooldown_seconds=900,
-            activity_events=[],
-        )
-        self.assertFalse(decision_initial_poll["eligible"])
-        self.assertEqual(decision_initial_poll["first_blocking_gate"], "unchanged_cooldown")
-
-        # 2. Reviewer reopens the task (owner, reviewer, generation remain unchanged)
-        reopen_events_1 = [
-            {"ts": "2026-08-24T12:02:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "fix requested"}
-        ]
-        decision_after_reopen = supervisor.evaluate_dispatch_candidate(
-            self.config,
-            state,
-            {"tasks": [task]},
-            task,
-            "Codex",
-            resolver,
-            settings=settings,
-            active_task_ids=set(),
-            pending_task_ids=set(),
-            pending_event_keys=set(),
-            agent_loads={},
-            active_account_loads={},
-            pending_account_loads={},
-            seen_event_keys=seen_event_keys,
-            checked_at="2026-08-24T12:02:05Z",
-            cooldown_seconds=900,
-            activity_events=reopen_events_1,
-        )
-        self.assertTrue(decision_after_reopen["eligible"])
-        self.assertEqual(decision_after_reopen["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
-        reopened_event_1 = decision_after_reopen["event"]
-        self.assertEqual(reopened_event_1["review_reopen_revision"], 1)
-        self.assertEqual(reopened_event_1["task"]["review_reopen_revision"], 1)
-        self.assertNotEqual(reopened_event_1["key"], first_event["key"])
-
-        # 3. Simulate dispatch of reopened task: record new key in seen_event_keys
-        seen_event_keys[reopened_event_1["key"]] = "2026-08-24T12:02:05Z"
-
-        # Subsequent in-progress polling with the same reopen state is suppressed
-        decision_reopen_poll = supervisor.evaluate_dispatch_candidate(
-            self.config,
-            state,
-            {"tasks": [task]},
-            task,
-            "Codex",
-            resolver,
-            settings=settings,
-            active_task_ids=set(),
-            pending_task_ids=set(),
-            pending_event_keys=set(),
-            agent_loads={},
-            active_account_loads={},
-            pending_account_loads={},
-            seen_event_keys=seen_event_keys,
-            checked_at="2026-08-24T12:02:30Z",
-            cooldown_seconds=900,
-            activity_events=reopen_events_1,
-        )
-        self.assertFalse(decision_reopen_poll["eligible"])
-        self.assertEqual(decision_reopen_poll["first_blocking_gate"], "unchanged_cooldown")
-
-        # 4. A second rejection advances revision to 2 and redispatches owner again
-        reopen_events_2 = reopen_events_1 + [
-            {"ts": "2026-08-24T12:05:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1", "message": "second fix"}
-        ]
-        decision_after_reopen_2 = supervisor.evaluate_dispatch_candidate(
-            self.config,
-            state,
-            {"tasks": [task]},
-            task,
-            "Codex",
-            resolver,
-            settings=settings,
-            active_task_ids=set(),
-            pending_task_ids=set(),
-            pending_event_keys=set(),
-            agent_loads={},
-            active_account_loads={},
-            pending_account_loads={},
-            seen_event_keys=seen_event_keys,
-            checked_at="2026-08-24T12:05:05Z",
-            cooldown_seconds=900,
-            activity_events=reopen_events_2,
-        )
-        self.assertTrue(decision_after_reopen_2["eligible"])
-        reopened_event_2 = decision_after_reopen_2["event"]
-        self.assertEqual(reopened_event_2["review_reopen_revision"], 2)
-        self.assertNotEqual(reopened_event_2["key"], reopened_event_1["key"])
-
-    def test_stale_dispatch_skip_message_with_review_reopen_revision(self) -> None:
-        task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex")
         resolver = supervisor.task_resolver_for_config(self.config, {"TASK-1": task})
-        reopen_events_1 = [
-            {"ts": "2026-08-24T12:00:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
-        ]
-        event = supervisor.build_dispatch_event(
-            task,
-            "Codex",
-            supervisor.REASON_OWNED_IN_PROGRESS,
-            resolver,
-            activity_events=reopen_events_1,
-        )
-        event.update({"event_key": event["key"], "target_display_name": "Codex"})
+        reason = supervisor.REASON_OWNED_IN_PROGRESS
+        self.assertFalse(hasattr(supervisor, "task_review_reopen_revision"))
 
-        # Event matches current task state at revision 1
+        base = supervisor.build_dispatch_event(task, "Codex", reason, resolver, activity_events=[])
+        reopen = {"ts": "2026-08-24T12:02:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
+        for events in ([], [reopen], [reopen, reopen]):
+            event = supervisor.build_dispatch_event(
+                task, "Codex", reason, resolver, activity_events=events
+            )
+            self.assertEqual(event["key"], base["key"])
+            self.assertNotIn("review_reopen_revision", event)
+            self.assertNotIn("review_reopen_revision", event["task"])
+
+        pending = copy.deepcopy(task)
+        pending[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("1")
+        queued = supervisor.build_dispatch_event(pending, "Codex", reason, resolver, activity_events=[reopen, reopen])
+        self.assertNotEqual(queued["key"], base["key"])
+        self.assertEqual(queued["review_requeue_intent_id"], "review-requeue-" + "1" * 64)
+
+        # Activity tail rotation (shrinking history) must not change the key.
+        rotated = supervisor.build_dispatch_event(pending, "Codex", reason, resolver, activity_events=[])
+        self.assertEqual(rotated["key"], queued["key"])
+
+        # Pending -> materialized acknowledgement keeps the same identity.
+        acked = copy.deepcopy(pending)
+        acked[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("1", "materialized")
+        acked_key = supervisor.current_dispatch_event_key(
+            self.config,
+            {**queued, "target_display_name": "Codex"},
+            {"TASK-1": acked},
+            activity_events=[],
+        )
+        self.assertEqual(acked_key, queued["key"])
         self.assertIsNone(
             supervisor.stale_dispatch_skip_message(
                 self.config,
-                event,
-                {"TASK-1": task},
-                activity_events=reopen_events_1,
+                {**queued, "event_key": queued["key"], "target_display_name": "Codex"},
+                {"TASK-1": acked},
+                activity_events=[],
             )
         )
 
-        # When a second reopen occurs, the queued revision 1 event is recognized as stale
-        reopen_events_2 = reopen_events_1 + [
-            {"ts": "2026-08-24T12:05:00Z", "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
-        ]
-        skip_msg = supervisor.stale_dispatch_skip_message(
-            self.config,
-            event,
-            {"TASK-1": task},
-            activity_events=reopen_events_2,
-        )
-        self.assertIsNotNone(skip_msg)
-        self.assertIn("task state changed after the wake-up was queued", skip_msg or "")
+        # A new canonical intent, owner, reviewer, or generation is stale.
+        variants = []
+        newer = copy.deepcopy(pending)
+        newer[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("2")
+        variants.append(newer)
+        reviewer = copy.deepcopy(pending)
+        reviewer["reviewer"] = "Codex3"
+        variants.append(reviewer)
+        generation = copy.deepcopy(pending)
+        generation["generation"] = 2
+        variants.append(generation)
+        for variant in variants:
+            self.assertNotEqual(
+                supervisor.build_dispatch_event(variant, "Codex", reason, resolver)["key"],
+                queued["key"],
+            )
+
+    def test_review_reopen_redispatches_owner_once_via_intent(self) -> None:
+        task = task_fixture(task_id="TASK-1", status="in_progress", owner="Codex", reviewer="Codex2")
+        state = with_healthy_delivery_health(self.config, {"workers": {}, "queue": {"events": {}}})
+        resolver = supervisor.task_resolver_for_config(self.config, {"TASK-1": task})
+        settings = supervisor.ready_dispatch_settings(self.config)
+        first = supervisor.build_dispatch_event(task, "Codex", supervisor.REASON_OWNED_IN_PROGRESS, resolver)
+        seen = {first["key"]: "2026-08-24T12:00:00Z"}
+
+        def decide(candidate: dict[str, object], checked_at: str) -> dict[str, object]:
+            return supervisor.evaluate_dispatch_candidate(
+                self.config, state, {"tasks": [candidate]}, candidate, "Codex",
+                resolver, settings=settings, active_task_ids=set(),
+                pending_task_ids=set(), pending_event_keys=set(), agent_loads={},
+                active_account_loads={}, pending_account_loads={},
+                seen_event_keys=seen, checked_at=checked_at,
+                cooldown_seconds=900, activity_events=[],
+            )
+
+        self.assertEqual(decide(task, "2026-08-24T12:01:00Z")["first_blocking_gate"], "unchanged_cooldown")
+        reopened = copy.deepcopy(task)
+        reopened[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("1")
+        decision = decide(reopened, "2026-08-24T12:02:05Z")
+        self.assertTrue(decision["eligible"])
+        seen[decision["event"]["key"]] = "2026-08-24T12:02:05Z"
+        again = decide(reopened, "2026-08-24T12:02:30Z")
+        self.assertFalse(again["eligible"])
+        second = copy.deepcopy(task)
+        second[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("2")
+        self.assertTrue(decide(second, "2026-08-24T12:05:05Z")["eligible"])
 
     def test_explain_dispatch_reflects_reopen_eligibility(self) -> None:
         config = copy.deepcopy(self.config)
@@ -4634,15 +4638,14 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
 
         # After reviewer reopen, explain shows Codex eligible
-        reopen_events = [
-            {"ts": now, "agent": "Codex2", "type": "reopen", "task_id": "TASK-1"}
-        ]
+        reopened = copy.deepcopy(task)
+        reopened[supervisor.REVIEW_REQUEUE_INTENT_KEY] = self._reopen_intent("1")
         explanation_after = supervisor.explain_dispatch_for_task(
             config,
             state,
             "TASK-1",
-            status={"tasks": [task]},
-            activity_events=reopen_events,
+            status={"tasks": [reopened]},
+            activity_events=[],
         )
         self.assertFalse(explanation_after["agents"]["Codex"]["blocked"])
         self.assertEqual(
@@ -8230,6 +8233,175 @@ class DurableWorkerRecoveryTests(unittest.TestCase):
                 self.assertIsNone(supervisor.worker_recovery_assignment_pair(
                     config, candidate_state, self.status, self.task, candidate_receipt,
                 ))
+
+    def test_owner_fallback_prefers_other_family_reviewer_over_listed_own_family(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="todo", owner="Codex", reviewer="Antigravity")
+        state = self._state()
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, self.task, state=state,
+            owner_candidates=["Codex2"], preferred_reviewers=["Codex", "Antigravity"],
+        )
+        self.assertEqual(pair, ("Codex2", "Antigravity"))
+
+    def test_same_family_pair_only_when_every_other_family_unavailable(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="todo", owner="Codex", reviewer="Antigravity")
+        state = self._state()
+        state["delivery_health"]["endpoints"]["antigravity"]["state"] = "unavailable"
+        pair = supervisor.plan_task_assignment_pair(
+            self.config, self.task, state=state,
+            owner_candidates=["Codex2"], preferred_reviewers=["Codex", "Antigravity"],
+        )
+        self.assertEqual(pair, ("Codex2", "Codex"))
+        with mock.patch.object(supervisor, "load_runtime_state", return_value=state):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.config, "Codex2", "Codex", self.task
+            )
+        exception = supervisor.build_review_independence_exception(
+            owner="Codex2", reviewer="Codex", capacity_evidence=evidence
+        )
+        reasons = {e["family"]: e["reason"] for e in exception["considered"]}
+        self.assertTrue(reasons["antigravity"].startswith("antigravity:"))
+        self.assertNotIn("no capacity evidence supplied", reasons.values())
+
+    def test_real_lock_same_family_reassignment_records_concrete_reasons(self) -> None:
+        # Replay of the 2026-11-20 ENV-PROD-CONTROL-IMPL-001 recovery: no
+        # patched runtime-state loader, real task_state lock and lock-order
+        # check. The evidence read must not take runtime_admission.
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Codex2")
+        status = supervisor.load_status(self.config)
+        status["tasks"] = [self.task]
+        supervisor.write_status(self.config, status, source="test-seed")
+        state = runtime_state.default_state()
+        state["delivery_health"] = healthy_delivery_health(self.config)
+        runtime_state.save_runtime_state(self.config, state)
+        captured: list[dict[str, object]] = []
+
+        def drain(config: dict[str, object]) -> bool:
+            outbox = supervisor.load_status(config).get("status_activity_outbox")
+            captured.append(json.loads(json.dumps(outbox)))
+            return self._drain_status_outbox(config)
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=drain):
+            self.assertTrue(
+                supervisor.persist_task_reassignment(
+                    self.config,
+                    task_id="TASK-1",
+                    new_owner="Codex2",
+                    new_reviewer="Codex",
+                    message="incumbent retry",
+                    expected_owner="Codex",
+                    expected_reviewer="Codex2",
+                    expected_status="in_progress",
+                )
+            )
+        text = json.dumps(captured)
+        self.assertNotIn("no capacity evidence supplied", text)
+        self.assertNotIn("evidence_unavailable", text)
+        self.assertIn("review_independence_exception", text)
+        self.assertIn("available:antigravity", text)
+
+    def test_evidence_failure_records_evidence_unavailable_with_error_class(self) -> None:
+        with mock.patch.object(
+            supervisor, "load_runtime_state_snapshot", side_effect=RuntimeError("boom")
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.config, "Codex2", "Codex", self.task
+            )
+        exception = supervisor.build_review_independence_exception(
+            owner="Codex2", reviewer="Codex", capacity_evidence=evidence
+        )
+        self.assertTrue(exception["considered"])
+        for entry in exception["considered"]:
+            self.assertEqual(entry["reason"], "evidence_unavailable:RuntimeError")
+
+    def test_process_missing_keeps_incumbent_pair_when_branch_has_trailers(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
+        receipt = {"recovery_role": "owner", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        state = self._state()
+        with mock.patch.object(
+            supervisor, "task_branch_incumbent_pair", return_value=("Codex", "Antigravity")
+        ):
+            self.assertEqual(
+                supervisor.worker_recovery_assignment_pair(
+                    self.config, copy.deepcopy(state), self.status, self.task, receipt,
+                ),
+                ("Codex", "Antigravity"),
+            )
+            # Incumbent owner cannot take it -> fallback owner is allowed.
+            down = copy.deepcopy(state)
+            down["delivery_health"]["endpoints"]["codex"]["state"] = "unavailable"
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, down, self.status, self.task, receipt,
+            )
+            self.assertNotEqual(pair[0], "Codex")
+
+    def test_replay_20261120_pushed_head_owner_missing_not_same_family(self) -> None:
+        # Owner/reviewer of different families, pushed head with their trailers,
+        # owner process gone while the owner family has capacity (Codex2 first
+        # fallback would have produced a trailer-incompatible same-family pair).
+        self._add_agent("antigravity", "Antigravity")
+        self.task.update(status="in_progress", owner="Codex", reviewer="Antigravity")
+        receipt = {"recovery_role": "owner", "reason_kind": "worker_process_missing",
+                   "worker": {"agent": "Codex"}}
+        with mock.patch.object(
+            supervisor, "task_branch_incumbent_pair", return_value=("Codex", "Antigravity")
+        ):
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, self._state(), self.status, self.task, receipt,
+            )
+        self.assertEqual(pair, ("Codex", "Antigravity"))
+        self.assertNotEqual(
+            supervisor.agent_family(pair[0]), supervisor.agent_family(pair[1])
+        )
+
+    def test_reviewer_role_recovery_prefers_other_family_over_listed_own_family(self) -> None:
+        self._add_agent("antigravity", "Antigravity")
+        self._add_agent("claude2", "Claude2")
+        self.task.update(status="review", owner="Codex", reviewer="Claude2")
+        self.task["delivery_binding"] = review_admission_binding()
+        receipt = {"recovery_role": "reviewer", "reason_kind": "lease_expired",
+                   "worker": {"agent": "Claude2"}}
+        with mock.patch.object(
+            supervisor, "reassignment_candidate_order",
+            return_value=["Codex2", "Antigravity"],
+        ):
+            pair = supervisor.worker_recovery_assignment_pair(
+                self.config, self._state(), self.status, self.task, receipt,
+            )
+        self.assertEqual(pair, ("Codex", "Antigravity"))
+
+    def test_task_branch_incumbent_pair_parses_trailers(self) -> None:
+        self.task["id"] = "T-TRAILER"
+        log = (
+            "newer\n\nTask-ID: OTHER\nLLM-Agent: Claude\nReviewer: Codex\n\x00"
+            "mine\n\nTask-ID: T-TRAILER\nLLM-Agent: Codex\nReviewer: Antigravity\n\x00"
+        )
+        proc = mock.Mock(returncode=0, stdout=log)
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertEqual(
+                supervisor.task_branch_incumbent_pair(self.config, self.task),
+                ("Codex", "Antigravity"),
+            )
+        proc.stdout = "no trailers\x00"
+        with (
+            mock.patch.object(supervisor, "validate_task_repository_scope", return_value="r"),
+            mock.patch.object(supervisor, "worker_worktree_source_root", return_value="."),
+            mock.patch.object(supervisor, "worker_repository_base_ref", return_value="dev"),
+            mock.patch.object(supervisor, "worker_task_branch", return_value="task/x"),
+            mock.patch.object(supervisor.subprocess, "run", return_value=proc),
+        ):
+            self.assertIsNone(supervisor.task_branch_incumbent_pair(self.config, self.task))
 
     def test_lost_owner_retries_healthy_incumbent_only_for_process_missing(self) -> None:
         self._add_agent("antigravity", "Antigravity")
@@ -14539,6 +14711,66 @@ class ExecutionResourceAdmissionTests(unittest.TestCase):
             self.config, self.state, [event], stale_map
         )
         self.assertEqual(counts_stale, {})
+
+
+class ReviewIndependenceExceptionEvidenceTests(unittest.TestCase):
+    CONFIG = {"agents": {"claude": {}, "claude2": {}, "codex": {}, "antigravity": {}}}
+
+    def test_family_map_matches_ai_status_and_covers_config_agents(self) -> None:
+        self.assertEqual(supervisor.AGENT_FAMILIES, ai_status.AGENT_FAMILIES)
+        config = json.loads((Path(__file__).resolve().parent / "config.json").read_text())
+        for name in config.get("agents", {}):
+            self.assertIsNotNone(supervisor.agent_family(name), name)
+
+    def test_cross_family_pair_yields_no_evidence(self) -> None:
+        self.assertEqual(
+            supervisor._review_exception_capacity_evidence(self.CONFIG, "Claude", "Codex"), {}
+        )
+
+    def test_same_family_evidence_lists_only_unavailable_families(self) -> None:
+        def fake_unavailable(config: Any, state: Any, agent: str) -> str | None:
+            return {"codex": "terminal_quota:codex", "antigravity": None}.get(agent, None)
+
+        with (
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
+            mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.CONFIG, "Claude", "Claude2"
+            )
+        # Changed expectation (WP4.3): a family with an able agent now carries
+        # a concrete "available:<agent>" reason instead of being omitted, which
+        # used to surface as "no capacity evidence supplied".
+        self.assertEqual(
+            evidence,
+            {
+                "codex": "codex:terminal_quota:codex",
+                "antigravity": "available:antigravity",
+                "copilot": "no_agent_configured",
+                "piastra": "no_agent_configured",
+            },
+        )
+        exception = supervisor.build_review_independence_exception(
+            owner="Claude", reviewer="Claude2", capacity_evidence=evidence
+        )
+        for entry in exception["considered"]:
+            self.assertNotEqual(entry["reason"], "no capacity evidence supplied")
+
+
+    def test_multi_agent_family_not_masked_by_first_unavailable_agent(self) -> None:
+        def fake_unavailable(config: Any, state: Any, agent: str) -> str | None:
+            return "terminal_quota" if agent == "claude" else None
+
+        with (
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
+            mock.patch.object(supervisor, "assignment_terminal_unavailability", side_effect=fake_unavailable),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            evidence = supervisor._review_exception_capacity_evidence(
+                self.CONFIG, "Codex", "Codex2"
+            )
+        self.assertEqual(evidence["claude"], "available:claude2")
 
 
 class SupervisorCycleLatencyRecoveryTests(unittest.TestCase):

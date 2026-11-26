@@ -38,8 +38,113 @@ from ..service import (
     _strategy_persona_idempotency_check,
 )
 from .common import PersonaRouteContext, make_context_dependency
+from ...persona_pool_publisher import (
+    OwnerPoolReader,
+    PersonaPoolPublisher,
+    PoolPublishRefused,
+)
 
 log = logging.getLogger(__name__)
+
+
+_POOL_PUBLISH_RECORDS: Any = None
+
+# Host-issued least-privilege role for the persona daily pool cycle. It is accepted by the strategy-pool
+# publish route ONLY: no shared role set (read/write helpers) includes it, so every other route refuses it.
+POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
+
+
+def _pool_owner_authorization(identity: Any, authorization: Optional[str], tenant_id: str = "") -> Optional[str]:
+    if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+        return authorization
+    from ..service import PERSONA_OWNER_SERVICE_ACTOR_ID, _PersonaOwnerHttpTransport, _owner_read_authorization
+
+    try:
+        # Tenant-bound short-lived BFF service JWT: passes bound_tenant and the owner's strict auth.
+        token = _PersonaOwnerHttpTransport(tenant_id=tenant_id)._service_jwt("persona")
+    except RuntimeError:
+        # No signing secret (stub/test environments only): carry the tenant claim unsigned.
+        import base64
+        import json
+
+        def _b64(obj: Any) -> str:
+            return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+        claims = {"sub": PERSONA_OWNER_SERVICE_ACTOR_ID, "tenant_id": tenant_id,
+                  "allowed_tenants": [tenant_id], "roles": ["operator", "admin", "service"]}
+        token = f"{_b64({'alg': 'none'})}.{_b64(claims)}."
+    _owner_read_authorization.set(f"Bearer {token}")
+    return _owner_read_authorization.get()
+
+
+def _pool_publisher(authorization: Optional[str]) -> PersonaPoolPublisher:
+    """Real coordinator + owner pool reader; only owner HTTP is external."""
+
+    from ..service import (
+        PERSONA_OWNER_SERVICE_ACTOR_ID,
+        PersonaProvisioningCoordinator,
+        _PersonaOwnerHttpTransport,
+        _get_json,
+        _persona_provisioning_store,
+        _register_persona_cron_required,
+        _runtime_bindings_for_case,
+    )
+    import os
+
+    global _POOL_PUBLISH_RECORDS
+    if _POOL_PUBLISH_RECORDS is None:
+        from ...persona_pool_publisher import build_publish_records
+
+        _POOL_PUBLISH_RECORDS = build_publish_records()
+
+    def fetch(path: str, tenant_id: str) -> Any:
+        base = (
+            os.getenv("PANTHEON_PERSONA_API_URL")
+            or os.getenv("PANTHEON_PERSONA_SERVICE_URL")
+            or ""
+        ).strip().rstrip("/")
+        if not base:
+            raise PoolPublishRefused("persona owner is unconfigured", status_code=503, step="pool")
+        import urllib.error
+
+        try:
+            return _get_json(base + path, auth_token=authorization, tenant_id=tenant_id)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None  # OwnerPoolReader maps None to PoolNotFound (404)
+            raise PoolPublishRefused(
+                f"persona owner pool read failed: HTTP {exc.code}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise PoolPublishRefused(
+                f"persona owner pool read unavailable: {type(exc).__name__}: {exc}",
+                status_code=503, step="owner_unavailable",
+            ) from exc
+
+    def tenant_coordinator(tenant_id: str) -> PersonaProvisioningCoordinator:
+        return PersonaProvisioningCoordinator(
+            store=_persona_provisioning_store(),
+            transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+            schedule_registrar=_register_persona_cron_required,
+            lease_owner=f"pool-publish:{uuid.uuid4().hex}",
+            actor_id=PERSONA_OWNER_SERVICE_ACTOR_ID,
+            governance_actor_id=os.getenv(
+                "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID", "pantheon-dev-paper-provisioner"
+            ),
+            runtime_binding_reader=_runtime_bindings_for_case,
+        )
+
+    class _TenantBoundPublisher(PersonaPoolPublisher):
+        def publish(self, *, tenant_id, **kwargs):  # type: ignore[override]
+            self.coordinator = tenant_coordinator(tenant_id)
+            return super().publish(tenant_id=tenant_id, **kwargs)
+
+    return _TenantBoundPublisher(
+        coordinator=tenant_coordinator(""),
+        pool_store=OwnerPoolReader(fetch),
+        records=_POOL_PUBLISH_RECORDS,
+    )
 
 
 def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
@@ -376,6 +481,76 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
             },
         }
 
+
+    @router.post("/bff/personas/{persona_id}/strategy-pool/publish", status_code=200)
+    @request_read_scope()
+    async def bff_publish_persona_strategy_pool(
+        persona_id: str,
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        authorization: Optional[str] = Header(default=None),
+        x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    ):
+        """Publish a pool version as a new immutable paper envelope.
+
+        The binding is replaced only by Deployment through the existing owner
+        paths; any mismatch is refused and the previous envelope keeps running.
+        """
+
+        identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+        tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_operator_role(identity)
+        unknown = set(payload) - {"pool_version", "stage"}
+        if unknown:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Unsupported publish fields",
+                f"Unexpected fields: {sorted(unknown)}",
+            )
+        pool_version = payload.get("pool_version")
+        if pool_version is not None and (
+            isinstance(pool_version, bool) or not isinstance(pool_version, int) or pool_version < 1
+        ):
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED, "Invalid pool_version",
+                "pool_version must be a positive integer",
+            )
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
+        await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
+        publisher = _pool_publisher(authorization)
+        try:
+            result = await asyncio.to_thread(
+                publisher.publish,
+                tenant_id=tenant_id,
+                persona_id=persona_id,
+                requested_by=str(identity.operator_id),
+                pool_version=pool_version,
+                stage=str(payload.get("stage") or "paper"),
+            )
+        except PoolPublishRefused as exc:
+            raise _bff_error(
+                exc.status_code,
+                ErrorCode.PRECONDITION_FAILED,
+                "Pool publish refused; the previous envelope keeps running",
+                exc.reason,
+            ) from exc
+        return {"data": result, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
+
+    @router.get("/bff/personas/{persona_id}/strategy-pool/publish-history")
+    @request_read_scope()
+    async def bff_get_persona_strategy_pool_publish_history(
+        persona_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """What was published for this persona (durable record); the pool cycle diffs against it."""
+
+        identity = _extract_identity(authorization)
+        tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
+            _require_read_role(identity)
+        authorization = _pool_owner_authorization(identity, authorization, tenant_id)
+        await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
+        history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
+        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
 
     @router.get("/api/v1/personas/{persona_id}/strategy-matches")
     @router.get("/bff/personas/{persona_id}/strategy-matches")

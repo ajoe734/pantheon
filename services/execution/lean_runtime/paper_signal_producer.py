@@ -15,8 +15,10 @@ runtime activation guard.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import time
 import logging
 import math
 import os
@@ -43,6 +45,27 @@ from services.execution.lean_runtime.symbol_parser import (
     is_taiwan_venue_symbol,
     validate_executable_symbol,
 )
+from services.execution.lean_runtime.intraday_settlement import (
+    ENQUEUED_RECORD_SUFFIX,
+
+    SETTLEMENT_RECORD_SUFFIX,
+    STATUS_SETTLED,
+    PENDING_RECORD_SUFFIX,
+    advance_decision,
+    PENDING_DISCOVERY_DAYS,
+    index_slot_id,
+    parse_ts,
+    ExecutionPlan,
+    IntradayWindowError,
+    STATUS_PENDING,
+    is_intraday_frequency,
+    pending_record,
+    plan_daily_next_open_decision,
+    plan_next_session_decision,
+    DAILY_FREQUENCY,
+)
+from services.registry.strategy_artifact import BAR_FREQUENCY_DATASETS
+from services.execution.lean_runtime.instrument_candidates import TAIPEI_TZ
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
     admit_market_snapshot,
@@ -51,6 +74,7 @@ from services.execution.shioaji_adapter import normalize_taiwan_symbol
 
 from services.worker_health import healthcheck as check_worker_health
 from services.worker_health import write_health
+from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     mint_trade_envelope,
@@ -326,6 +350,19 @@ def apply_expression_record(
             candidates_list = [dict(c) for c in raw_cands if isinstance(c, Mapping)]
         if isinstance(replay_input.get("book_before"), Mapping):
             book_before = replay_input["book_before"]
+    pre_trade_sizing = stored.get("pre_trade_sizing")
+    if isinstance(pre_trade_sizing, Mapping):
+        from services.execution.lean_runtime.expression_policy import compact_pre_trade_sizing
+
+        metadata["pre_trade_sizing"] = compact_pre_trade_sizing(pre_trade_sizing)
+        for pol_key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest"):
+            if pre_trade_sizing.get(pol_key) is not None:
+                metadata.setdefault(pol_key, pre_trade_sizing.get(pol_key))
+    if isinstance(replay_input, Mapping) and isinstance(replay_input.get("budget"), Mapping):
+        replay_budget = replay_input["budget"]
+        for pol_key in ("risk_policy_id", "risk_policy_version", "risk_policy_digest"):
+            if replay_budget.get(pol_key) is not None:
+                metadata.setdefault(pol_key, replay_budget.get(pol_key))
     metadata["reason_code"] = record.get("reason_code")
     attach_futures_session_inputs(
         decision,
@@ -431,6 +468,7 @@ class CurrentArtifactStrategy:
         {
             "close_to_close_momentum",
             "factor_rule_v1",
+            "persona_portfolio_v1",
         }
     )
 
@@ -464,6 +502,9 @@ class CurrentArtifactStrategy:
         b_dict: Mapping[str, Any],
         metadata: Mapping[str, Any],
         now_iso: str,
+        allocation: Mapping[str, Any] | None = None,
+        frozen_inputs: Mapping[str, Any] | None = None,
+        reconcile_instrument_id: str | None = None,
     ) -> dict[str, Any]:
         from services.execution.lean_runtime import expression_policy
         from services.execution.lean_runtime.instrument_candidates import (
@@ -473,7 +514,12 @@ class CurrentArtifactStrategy:
 
         underlying = normalize_underlying_code(symbol)
         unavailable: ExpressionInputsUnavailable | None = None
-        if self._expression_inputs is not None:
+        if frozen_inputs is not None:
+            inputs = dict(frozen_inputs)
+            error = inputs.get("unavailable")
+            if error:
+                unavailable = ExpressionInputsUnavailable(error["missing"], error.get("detail", ""))
+        elif self._expression_inputs is not None:
             try:
                 inputs = dict(self._expression_inputs(b_dict) or {})
             except ExpressionInputsUnavailable as exc:
@@ -513,12 +559,22 @@ class CurrentArtifactStrategy:
             "strength": view.get("strength"),
         }
         params = dict(strategy_artifact["expression_policy"].get("parameters") or {})
+        policy_kind = strategy_artifact["expression_policy"]["kind"]
+        if policy_kind == expression_policy.TARGET_POLICY_KIND:
+            decision_view["target_notional"] = (allocation or {}).get("targets", {}).get(symbol, -1)
+            if reconcile_instrument_id:
+                decision_view["reconcile_instrument_id"] = reconcile_instrument_id
         if unavailable is not None:
             # The limits or the book could not be read: a real NoTrade naming
             # the missing input, never a misleading gross_limit binding.
-            record = expression_policy.budget_unavailable_no_trade(
-                decision_view, unavailable.missing, unavailable.detail
-            )
+            record = (expression_policy.target_inputs_unavailable_no_trade(
+                decision_view, unavailable.missing, unavailable.detail, params)
+                if policy_kind == expression_policy.TARGET_POLICY_KIND else
+                expression_policy.budget_unavailable_no_trade(
+                    decision_view, unavailable.missing, unavailable.detail))
+        elif policy_kind == expression_policy.TARGET_POLICY_KIND:
+            record = expression_policy.decide_for_policy(
+                policy_kind, decision_view, candidates, book, budget, params)
         else:
             record = expression_policy.decide_validated(
                 decision_view,
@@ -528,10 +584,32 @@ class CurrentArtifactStrategy:
                 params,
                 decider=self._decider or expression_policy.decide,
             )
+        if view.get("exit_reason") and record.get("reason_code") != "close_leg":
+            # An exit may only reduce an actual held instrument. A stale feed
+            # position must never turn removal from a pool into a fresh short.
+            record = expression_policy.budget_unavailable_no_trade(
+                decision_view, "held_position", "candidate pool exit has no validated close leg",
+            )
         chosen_candidate = next(
             (c for c in candidates if c.get("instrument_id") == record.get("instrument_id")),
             {},
         )
+        pre_trade_sizing = None
+        if unavailable is None:
+            try:
+                pre_trade_sizing = expression_policy.compact_pre_trade_sizing(
+                    expression_policy.evaluate_pre_trade_sizing(
+                        decision_view,
+                        candidates,
+                        book,
+                        budget,
+                        params,
+                        policy_kind=policy_kind,
+                        decision=record,
+                    )
+                )
+            except Exception:
+                pre_trade_sizing = None
         return {
             "view": {
                 **decision_view,
@@ -540,6 +618,7 @@ class CurrentArtifactStrategy:
                 "multiplier": chosen_candidate.get("multiplier"),
             },
             "decision": record,
+            "pre_trade_sizing": pre_trade_sizing,
             # Exactly what the policy was given, so expression_replay input can
             # be rebuilt from recorded events (dev plan section 6).
             "replay_input": {
@@ -549,8 +628,167 @@ class CurrentArtifactStrategy:
                 "book_before": book,
                 "budget": budget,
                 "parameters": params,
+                **({"policy_kind": policy_kind, "bar_allocation": allocation,
+                    **({"inputs_unavailable": {"missing": unavailable.missing, "detail": unavailable.detail}}
+                       if unavailable is not None else {})}
+                   if policy_kind == expression_policy.TARGET_POLICY_KIND else {}),
             },
         }
+
+    def _target_portfolio(self, artifact, binding, metadata, now_iso):
+        """Freeze a bar's book/budget, net every underlying, then size deltas."""
+        from services.registry.candidate_pool import MARKET_FEATURE_KEY, canonical_symbol
+        from services.registry.portfolio_envelope import evaluate_portfolio_bar, uses_target_positions
+        from services.execution.lean_runtime.expression_policy import allocate_targets
+        from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+        from services.registry.portfolio_envelope import is_screened
+        features = {**(metadata.get("features") or {}), **(binding.get("features") or {})}
+        screened = any(is_screened(m["artifact"]) for m in artifact["strategy_logic"]["members"])
+        snapshots = binding.get("market_inputs") or metadata.get("market_inputs")
+        if not isinstance(snapshots, Mapping) or not snapshots:
+            # A one-underlying target envelope still requires an explicit bar.
+            one = binding.get("market_input")
+            snapshots = {one["symbol"]: one} if isinstance(one, Mapping) and one.get("symbol") else {}
+        source_admitted = not snapshots
+        derived: set[str] = set()
+        try:
+            if self._expression_inputs is not None:
+                inputs = dict(self._expression_inputs(binding) or {})
+            else:
+                inputs = dict(metadata.get("expression_inputs") or {})
+        except ExpressionInputsUnavailable as exc:
+            inputs = {"unavailable": {"missing": exc.missing, "detail": exc.detail}}
+        inputs = copy.deepcopy(inputs)
+        if source_admitted and screened:
+            from services.execution.lean_runtime.pool_market_inputs import market_snapshots
+            day = _taipei_day(now_iso)
+            if features.get(MARKET_FEATURE_KEY) is None:
+                features[MARKET_FEATURE_KEY] = self._obtain_candidate_pool_market(artifact, day)
+            snapshots = market_snapshots(features[MARKET_FEATURE_KEY], day, now_iso)
+            derived = set(snapshots)
+            # Symbols the envelope or the member virtual holdings need outside the market
+            # still come from Source, admitted at one common bar.
+            extra = [c for c in dict.fromkeys(
+                [canonical_symbol(x) for x in artifact["parameters"]["symbols"]]
+                + [canonical_symbol(str(p["underlying"]) + ".TW") if "." not in str(p["underlying"])
+                   else canonical_symbol(str(p["underlying"]))
+                   for p in inputs.get("persona_book", {}).get("positions", []) if int(p.get("units") or 0) > 0])
+                if c not in snapshots]
+            if extra:
+                admitted = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso, symbols=extra)
+                snapshots = {**snapshots, **{s_: {**v, "event_time": f"{day}T00:00:00+08:00"} for s_, v in admitted.items()}}
+        elif source_admitted:
+            snapshots = self._obtain_pool_market_inputs(artifact, binding, metadata, now_iso)
+        elif screened and features.get(MARKET_FEATURE_KEY) is None:
+            features[MARKET_FEATURE_KEY] = self._obtain_candidate_pool_market(artifact, _taipei_day(now_iso))
+        keyed = {}
+        try:
+            for symbol, snapshot in snapshots.items():
+                canonical = canonical_symbol(symbol)
+                if canonical in keyed:
+                    raise ValueError("duplicate portfolio underlying aliases")
+                row_binding = {**binding, "symbol": canonical,
+                               "market_input": {**snapshot, "symbol": canonical},
+                               "features": features}
+                row_metadata = metadata
+                if canonical in derived:
+                    row_binding.pop("market_data_policy", None)
+                    row_metadata = {k: v for k, v in metadata.items() if k != "market_data_policy"}
+                keyed[canonical] = _market_input_for_binding(
+                    row_binding, row_metadata, strategy_artifact=artifact, now_iso=now_iso)
+            positions = inputs.get("persona_book", {}).get("positions", [])
+            by_code = {normalize_underlying_code(symbol): symbol for symbol in keyed}
+            held = [by_code.get(str(p["underlying"]), str(p["underlying"]) + ".TW")
+                    for p in positions if int(p.get("units") or 0) > 0]
+            results = evaluate_portfolio_bar(
+                artifact, keyed, market=features.get(MARKET_FEATURE_KEY), held_symbols=held)
+            views = {symbol: result["view"] for symbol, result in results.items()}
+            target_policy = uses_target_positions(artifact)
+            try:
+                allocation = allocate_targets(views, inputs.get("risk_budget", {}),
+                                              artifact.get("expression_policy", {}).get("parameters", {}))
+            except (ValueError, ArithmeticError) as exc:
+                allocation = {"targets": {}, "unavailable_reason": str(exc), "views": views}
+            decisions = []
+            for symbol, result in results.items():
+                held_legs = [p for p in positions if str(p["underlying"]) == normalize_underlying_code(symbol)
+                             and int(p.get("units") or 0) > 0]
+                target = allocation["targets"].get(symbol, -1)
+                held_notional = sum(float(p.get("notional") or 0) for p in held_legs)
+                closing = target_policy and (result["view"]["direction"] == "FLAT"
+                           or any(p["direction"] != result["view"]["direction"] for p in held_legs)
+                           or (target >= 0 and held_notional > target))
+                selectors = sorted({p["instrument_id"] for p in held_legs}) if closing and len(held_legs) > 1 else [None]
+                for selector in selectors:
+                    row_binding = {**binding, "symbol": symbol, "features": features,
+                                   "market_input": {**keyed[symbol], "symbol": symbol}}
+                    if source_admitted:
+                        # Admitted once, at the common bar, against the Source snapshot itself;
+                        # the normalized row must not be re-admitted as if it were that snapshot.
+                        row_binding.pop("market_data_policy", None)
+                        row_binding["metadata"] = {k: v for k, v in metadata.items() if k != "market_data_policy"}
+                    out = self(row_binding, now_iso, _portfolio_symbol=symbol,
+                               _portfolio_result=result, _allocation=allocation if target_policy else None,
+                               _frozen_inputs=inputs, _reconcile_instrument_id=selector)
+                    decisions.append(out)
+            return {"portfolio_decisions": decisions}
+        except (ValueError, TypeError, KeyError) as exc:
+            code = "market_input_missing" if "snapshot missing" in str(exc) else "market_input_invalid"
+            raise SignalDecisionUnavailable(code, str(exc)) from exc
+
+    @staticmethod
+    def _obtain_candidate_pool_market(artifact, decision_day=None):
+        """Governed whole market (candidate_pool_market.v1) from Source; never synthesized here."""
+        from services.execution.lean_runtime.pool_market_inputs import (
+            PoolMarketInputsUnavailable, fetch_candidate_pool_market, screen_inputs,
+        )
+
+        url = os.getenv("PANTHEON_SOURCE_INGEST_URL") or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or ""
+        inputs = screen_inputs(artifact)
+        key = (url, decision_day, json.dumps(inputs, sort_keys=True))
+        cached = _POOL_MARKET_CACHE.get(key)
+        if cached is not None and time.monotonic() - cached[0] < _POOL_MARKET_TTL_SECONDS:
+            return cached[1]
+        try:
+            market = dict(fetch_candidate_pool_market(url, inputs, decision_day=decision_day))
+        except PoolMarketInputsUnavailable as exc:
+            raise SignalDecisionUnavailable(exc.code, exc.detail) from exc
+        # A screen needs the whole market once per completed daily bar, not on every tick.
+        _POOL_MARKET_CACHE.clear()
+        _POOL_MARKET_CACHE[key] = (time.monotonic(), market)
+        return market
+
+    @staticmethod
+    def _obtain_pool_market_inputs(artifact, binding, metadata, now_iso, symbols=None):
+        """Production source of an envelope's bar: one admitted Source snapshot per symbol.
+
+        Only reached when the binding carries no inline inputs. A symbol that fails
+        admission, or symbols at different bars, raise so the whole pool records
+        no decision for the bar rather than netting a partial book.
+        """
+        from services.execution.lean_runtime.pool_market_inputs import (
+            PoolMarketInputsUnavailable, envelope_symbols, obtain_envelope_market_inputs,
+        )
+
+        policy = _market_input_policy(binding, metadata)
+        if policy is None:
+            raise SignalDecisionUnavailable(
+                "market_input_missing",
+                f"binding {binding.get('binding_id') or '<unknown>'} has no RuntimeBinding market_data_policy",
+            )
+        try:
+            return obtain_envelope_market_inputs(
+                list(symbols) if symbols is not None else envelope_symbols(artifact),
+                source_ingest_url=(os.getenv("PANTHEON_SOURCE_INGEST_URL")
+                                   or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or "").rstrip("/"),
+                max_age_seconds=policy["max_age_seconds"],
+                minimum_closes=policy["minimum_closes"],
+                now_iso=now_iso,
+                binding_id=str(binding.get("binding_id") or "") or None,
+            )
+        except PoolMarketInputsUnavailable as exc:
+            raise SignalDecisionUnavailable(exc.code, exc.detail) from exc
 
     @staticmethod
     def _expression_base_view(view: Mapping[str, Any], decision_id: str, symbol: str) -> dict[str, Any]:
@@ -564,7 +802,12 @@ class CurrentArtifactStrategy:
             "momentum": view.get("momentum"),
         }
 
-    def __call__(self, binding: Any, now_iso: str) -> dict[str, Any]:
+    def __call__(self, binding: Any, now_iso: str, *, _portfolio_symbol: str | None = None,
+                 _screen_view: Mapping[str, Any] | None = None,
+                 _portfolio_result: Mapping[str, Any] | None = None,
+                 _allocation: Mapping[str, Any] | None = None,
+                 _frozen_inputs: Mapping[str, Any] | None = None,
+                 _reconcile_instrument_id: str | None = None) -> dict[str, Any]:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = _required_binding_text(b_dict, "binding_id")
         metadata = (
@@ -645,9 +888,78 @@ class CurrentArtifactStrategy:
                 f"binding {binding_id} requested unsupported strategy_logic kind {logic_kind!r}",
             )
 
+        screened = logic_kind == "factor_rule_v1" and "screen" in strategy_logic
+        if screened and _portfolio_symbol is None:
+            from services.registry.candidate_pool import (
+                MARKET_FEATURE_KEY, _market, canonical_symbol, evaluate_screened_views,
+            )
+
+            snapshots = b_dict.get("market_inputs") or metadata.get("market_inputs")
+            if not isinstance(snapshots, Mapping) or not snapshots:
+                raise SignalDecisionUnavailable("market_input_missing", "screen requires market_inputs for the governed market")
+            try:
+                features = {**(metadata.get("features") or {}), **(b_dict.get("features") or {})}
+                _, market_symbols = _market(features.get(MARKET_FEATURE_KEY))
+                keyed = {canonical_symbol(s): s for s in snapshots}
+                if len(keyed) != len(snapshots) or set(keyed) != set(market_symbols):
+                    raise ValueError("screen market_inputs must cover the complete governed market")
+                if not all(isinstance(snapshots[s], Mapping) for s in snapshots):
+                    raise ValueError("screen market_inputs must contain snapshot objects")
+                stamps = {snapshots[s].get("event_time") for s in snapshots}
+                if len(stamps) != 1 or not next(iter(stamps)):
+                    raise ValueError("screen market_inputs require one common decision bar")
+                positions = {s: snapshots[keyed[s]] for s in keyed}
+                views = evaluate_screened_views(
+                    strategy_artifact, features[MARKET_FEATURE_KEY], next(iter(stamps)), positions=positions,
+                )
+            except (ValueError, TypeError) as exc:
+                raise SignalDecisionUnavailable("market_input_invalid", str(exc)) from exc
+            decisions = []
+            for symbol in sorted(keyed):
+                member_binding = {**b_dict, "symbol": symbol, "features": features,
+                                  "market_input": {**snapshots[keyed[symbol]], "symbol": symbol}}
+                decisions.append(self(member_binding, now_iso, _portfolio_symbol=symbol, _screen_view=views[symbol]))
+            return {"portfolio_decisions": decisions}
+
+        if logic_kind == "persona_portfolio_v1":
+            from services.registry.strategy_artifact import (
+                StrategyArtifactValidationError, validate_strategy_artifact,
+            )
+
+            try:
+                validate_strategy_artifact(strategy_artifact)
+            except (StrategyArtifactValidationError, ValueError, TypeError) as exc:
+                raise SignalDecisionUnavailable("artifact_payload_invalid", str(exc)) from exc
+            from services.registry.portfolio_envelope import uses_target_positions, is_screened
+            if _portfolio_symbol is None and (
+                uses_target_positions(strategy_artifact)
+                or any(is_screened(m["artifact"]) for m in strategy_logic["members"])
+            ):
+                return self._target_portfolio(strategy_artifact, b_dict, metadata, now_iso)
+            symbols = strategy_artifact["parameters"]["symbols"]
+            if len(symbols) > 1 and _portfolio_symbol is None:
+                decisions = []
+                snapshots = b_dict.get("market_inputs") or metadata.get("market_inputs")
+                for underlying in symbols:
+                    member_binding = {**b_dict, "symbol": underlying}
+                    if isinstance(snapshots, Mapping):
+                        if underlying not in snapshots:
+                            raise SignalDecisionUnavailable(
+                                "market_input_missing", f"portfolio snapshot missing for {underlying}"
+                            )
+                        member_binding["market_input"] = snapshots[underlying]
+                    decisions.append(self(member_binding, now_iso, _portfolio_symbol=underlying))
+                return {"portfolio_decisions": decisions}
+
         market_input = _market_input_for_binding(
             b_dict, metadata, strategy_artifact=strategy_artifact, now_iso=now_iso
         )
+        if logic_kind == "persona_portfolio_v1" and (
+            not market_input.get("event_time") or not market_input.get("source_ref")
+        ):
+            raise SignalDecisionUnavailable(
+                "market_input_missing", "portfolio virtual marks require event_time and source_ref"
+            )
         closes = market_input["closes"]
         features = market_input.get("features")
         decision_time = (
@@ -655,6 +967,10 @@ class CurrentArtifactStrategy:
             or market_input.get("observed_at")
             or now_iso
         )
+        if market_input.get("intraday_plan") is not None:
+            # The real submission clock, not the bar end: a bar fetched and reconciled
+            # after the close is visible only from its own availability stamp.
+            decision_time = market_input["intraday_plan"]["decision_time"]
         holding_bars = market_input.get("holding_bars")
         current_direction = market_input.get("current_direction")
         try:
@@ -678,7 +994,8 @@ class CurrentArtifactStrategy:
             )
 
             assert_governed_feature_inputs(strategy_logic)
-            assert_governed_feature_observations(strategy_logic, features, decision_time)
+            if not screened:
+                assert_governed_feature_observations(strategy_logic, features, decision_time)
         except FactorRuleValidationError as exc:
             raise SignalDecisionUnavailable(
                 "feature_not_in_catalogue",
@@ -689,7 +1006,21 @@ class CurrentArtifactStrategy:
                 self._expression_on()
                 and strategy_artifact.get("expression_policy") is not None
             )
-            if expression_enabled:
+            portfolio_result = None
+            if logic_kind == "persona_portfolio_v1":
+                from services.registry.portfolio_envelope import evaluate_portfolio_envelope
+
+                portfolio_result = _portfolio_result or evaluate_portfolio_envelope(
+                    strategy_artifact, closes, features=features, decision_time=decision_time,
+                    symbol=market_input["symbol"],
+                    holding_bars=holding_bars, current_direction=current_direction,
+                )
+                view = portfolio_result["view"]
+                action = view["action"]
+            elif screened and _screen_view is not None:
+                view = dict(_screen_view)
+                action = view["action"]
+            elif expression_enabled or screened:
                 from services.registry.strategy_artifact import evaluate_strategy_view
 
                 view = evaluate_strategy_view(
@@ -699,6 +1030,7 @@ class CurrentArtifactStrategy:
                     decision_time=decision_time,
                     holding_bars=holding_bars,
                     current_direction=current_direction,
+                    symbol=market_input["symbol"],
                 )
                 action = view["action"]
             else:
@@ -763,6 +1095,12 @@ class CurrentArtifactStrategy:
             "symbol": symbol,
             "bar": bar_key,
         }
+        if _reconcile_instrument_id:
+            decision_key["reconcile_instrument_id"] = _reconcile_instrument_id
+        if _portfolio_result is not None:
+            decision_key["member_candidate_pool_digests"] = _portfolio_result["member_candidate_pool_digests"]
+        if screened:
+            decision_key["candidate_pool_digest"] = view["candidate_pool_digest"]
         decision_digest = hashlib.sha256(
             json.dumps(decision_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
@@ -818,6 +1156,9 @@ class CurrentArtifactStrategy:
                 ),
                 "market_data": {
                     "close": closes[-1],
+                    # The decision session's own open: the fill price of the previous session's
+                    # decision for the member virtual books (shared next-open convention).
+                    "open": _decision_bar_open(features),
                     "event_time": market_input.get("event_time"),
                     "source_ref": market_input.get("source_ref"),
                 },
@@ -825,6 +1166,77 @@ class CurrentArtifactStrategy:
                 "is_real_capital": False,
             },
         }
+        intraday_plan = market_input.get("intraday_plan")
+        if intraday_plan is not None:
+            out["metadata"]["market_input_bar_frequency"] = market_input["bar_frequency"]
+            out["metadata"]["bar_availability_ts"] = market_input.get("bar_availability_ts")
+            out["metadata"]["decision_time"] = intraday_plan["decision_time"]
+            out["metadata"]["execution_target_bar_start"] = intraday_plan["execution_target_bar_start"]
+            out["metadata"]["settlement_status"] = STATUS_PENDING
+            out["metadata"]["settlement_mode"] = "delayed_simulated"
+            out["intraday_settlement"] = pending_record(
+                ExecutionPlan(**intraday_plan), decision_id=decision_id, symbol=symbol, direction=direction
+            )
+        elif (
+            action in ("BUY", "SELL")
+            # A flat or reduced target view is a HOLD action that the expression layer turns into a
+            # close/trim order from the same decision-bar close: it settles at the next open too.
+            or (expression_enabled and view is not None)
+        ) and is_taiwan_venue_symbol(symbol) and (
+            _declared_bar_frequency(strategy_artifact) in (None, DAILY_FREQUENCY)
+        ):
+            # Operator decision 2026-11-15 (option A): a daily decision computed from the close of
+            # session D is parked and settled at the official open of D+1 like the intraday path.
+            # It is never filled at D's close.  The gate backtest, pool admission replay and member
+            # virtual books use the same convention (GATE-DAILY-NEXT-OPEN-REBASELINE-20261115).
+            if not market_input.get("event_time") or not market_input.get("observed_at"):
+                raise SignalDecisionUnavailable(
+                    "daily_availability_missing",
+                    f"binding {binding_id} daily decision needs the bar event_time and observed_at "
+                    "to schedule the next-session open fill; no close fill is substituted",
+                )
+            try:
+                daily_plan = plan_daily_next_open_decision(
+                    event_time=market_input["event_time"],
+                    bar_availability_ts=market_input["observed_at"],
+                    decision_time=now_iso,
+                )
+            except IntradayWindowError as exc:
+                raise SignalDecisionUnavailable(exc.reason, exc.detail) from exc
+            out["metadata"]["bar_availability_ts"] = market_input.get("observed_at")
+            out["metadata"]["decision_time"] = daily_plan.decision_time
+            out["metadata"]["execution_target_bar_start"] = daily_plan.execution_target_bar_start
+            out["metadata"]["settlement_status"] = STATUS_PENDING
+            out["metadata"]["settlement_mode"] = "delayed_simulated"
+            out["intraday_settlement"] = pending_record(
+                daily_plan, decision_id=decision_id, symbol=symbol, direction=direction
+            )
+        if portfolio_result is not None:
+            out["metadata"]["portfolio_member_views"] = {
+                member["member_id"]: {
+                    **{key: member[key] for key in (
+                        "artifact_id", "version", "checksum", "risk_weight", "virtual_only"
+                    )},
+                    "view": portfolio_result["member_views"][member["member_id"]],
+                    "underlying_count": len(member["artifact"]["parameters"]["symbols"]),
+                }
+                for member in strategy_logic["members"]
+                if member["member_id"] in portfolio_result["member_views"]
+            }
+            if _portfolio_result is not None:
+                out["metadata"]["member_candidate_pool_digests"] = portfolio_result["member_candidate_pool_digests"]
+                out["metadata"]["member_candidate_pool_snapshots"] = portfolio_result["member_candidate_pool_snapshots"]
+            if _allocation is not None:
+                out["metadata"]["bar_allocation"] = _allocation
+                out["metadata"]["target_expression_required"] = True
+            out["metadata"]["portfolio_net_view"] = dict(portfolio_result["view"])
+            out["metadata"]["portfolio_bar_frequency"] = parameters["bar_frequency"]
+        if screened:
+            out["metadata"]["candidate_pool_snapshot"] = view["candidate_pool_snapshot"]
+            out["metadata"]["candidate_pool_digest"] = view["candidate_pool_digest"]
+            out["metadata"]["candidate_pool_view"] = {
+                k: v for k, v in view.items() if k != "candidate_pool_snapshot"
+            }
         if expression_enabled and view is not None and is_taiwan_venue_symbol(symbol):
             # Lazy: the producer evaluates only after admission and a stored
             # record lookup, so a restart never re-runs builder or decider.
@@ -834,7 +1246,7 @@ class CurrentArtifactStrategy:
                 # not graded because their bars are not one session each.
                 "grading": (
                     {"closes": list(closes), "decision_id_for_bar": decision_id_for_bar}
-                    if str(parameters.get("bar_frequency") or "").strip().lower()
+                    if not screened and str(parameters.get("bar_frequency") or "").strip().lower()
                     in {"1d", "d", "1day", "daily"}
                     else None
                 ),
@@ -848,6 +1260,9 @@ class CurrentArtifactStrategy:
                     b_dict=b_dict,
                     metadata=metadata,
                     now_iso=now_iso,
+                    allocation=_allocation,
+                    frozen_inputs=_frozen_inputs,
+                    reconcile_instrument_id=_reconcile_instrument_id,
                 ),
             }
         return out
@@ -874,6 +1289,19 @@ class CurrentArtifactStrategy:
                     f"binding {binding_id} expected {field}={expected_value!r}, got {actual or None!r}",
                 )
 
+
+
+def _decision_leg_count(decision: Mapping[str, Any]) -> int:
+    """Signals one decision expands to (mirrors ``signal_producer._decision_targets``)."""
+    for key in ("signals", "signal_targets", "targets"):
+        explicit = decision.get(key)
+        if isinstance(explicit, Sequence) and not isinstance(explicit, (str, bytes)):
+            return max(1, len(explicit))
+    for key in ("target_weights", "targetWeights"):
+        weights = decision.get(key)
+        if isinstance(weights, Mapping):
+            return max(1, len(weights))
+    return 1
 
 
 def _bar_identity(market_input: Mapping[str, Any], closes: Sequence[float], bar_frequency: Any) -> str:
@@ -1069,6 +1497,17 @@ def _collect_explicit_market_contexts(
     return market_origins, explicit_venue
 
 
+_POOL_MARKET_CACHE: dict = {}
+_POOL_MARKET_TTL_SECONDS = 900
+
+
+def _taipei_day(now_iso: str) -> str:
+    stamp = datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+
+
 def _market_input_for_binding(
     binding: Mapping[str, Any],
     metadata: Mapping[str, Any],
@@ -1087,6 +1526,8 @@ def _market_input_for_binding(
 
     raw = binding.get("market_input") or metadata.get("market_input")
     policy = _market_input_policy(binding, metadata)
+    declared_frequency = _declared_bar_frequency(strategy_artifact)
+    intraday_frequency = declared_frequency if is_intraday_frequency(declared_frequency) else None
     if raw is None:
         if policy is None:
             binding_id = str(binding.get("binding_id") or "<unknown>")
@@ -1125,6 +1566,14 @@ def _market_input_for_binding(
                 f"{source_ingest_url}/api/source-ingest/snapshots/latest"
                 f"?symbol={urllib.parse.quote(symbol, safe='')}"
             )
+            if intraday_frequency is None and policy["minimum_closes"] > 60:
+                # SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW: only a plan needing more than the snapshot's 60
+                # closes asks Source for the older part; <=60 URLs stay byte-identical.
+                url += f"&min_closes={int(policy['minimum_closes'])}"
+            if intraday_frequency is not None:
+                # Daily URLs stay byte-identical; only a declared intraday cadence
+                # asks for the dataset-isolated minute snapshot.
+                url += f"&frequency={urllib.parse.quote(intraday_frequency, safe='')}"
             req = urllib.request.Request(
                 url,
                 headers={"Accept": "application/json"},
@@ -1133,6 +1582,12 @@ def _market_input_for_binding(
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
+            if intraday_frequency is not None and getattr(exc, "code", None) == 404:
+                raise SignalDecisionUnavailable(
+                    "intraday_bar_missing",
+                    f"no reconciled {intraday_frequency} bar is stored for {symbol}; "
+                    "no previous, daily or synthetic bar is substituted",
+                ) from exc
             raise SignalDecisionUnavailable(
                 "market_input_unavailable",
                 f"Source stored snapshot is unavailable for {symbol}: {exc}",
@@ -1149,6 +1604,12 @@ def _market_input_for_binding(
         raise SignalDecisionUnavailable(
             "market_input_missing",
             f"binding {binding_id} has no market_input.closes snapshot",
+        )
+    if raw.get("reason") == "history_insufficient":
+        raise SignalDecisionUnavailable(
+            "market_input_insufficient",
+            f"binding {binding.get('binding_id') or '<unknown>'} requires {raw.get('requested')} closes, "
+            f"Source has {raw.get('available')} from {raw.get('first_available_date')}: {raw.get('detail')}",
         )
     closes = raw.get("closes")
     if (
@@ -1194,7 +1655,13 @@ def _market_input_for_binding(
             "market_input_invalid",
             f"Source snapshot symbol {snapshot_symbol!r} does not match binding symbol {requested_symbol!r}",
         )
-    if policy is not None:
+    _assert_snapshot_frequency_isolation(raw, declared_frequency, binding)
+    intraday_plan = None
+    if intraday_frequency is not None:
+        intraday_plan = _admit_intraday_snapshot(
+            raw, binding, metadata, strategy_artifact, intraday_frequency, now_iso
+        )
+    if policy is not None and intraday_frequency is None:
         decision = admit_market_snapshot(
             raw,
             expected_symbol=requested_symbol or None,
@@ -1228,6 +1695,10 @@ def _market_input_for_binding(
         if pv_key not in feature_map and raw.get(pv_key) is not None:
             feature_map[pv_key] = raw.get(pv_key)
     feature_map.setdefault("close", normalized_closes)
+    if intraday_frequency is not None:
+        _project_snapshot_closes_as_features(
+            feature_map, strategy_artifact, intraday_frequency, normalized_closes, raw
+        )
 
     return {
         "closes": normalized_closes,
@@ -1248,7 +1719,114 @@ def _market_input_for_binding(
         "market_code": raw.get("market_code"),
         "exchange": raw.get("exchange"),
         "country": raw.get("country"),
+        "bar_frequency": declared_frequency,
+        **(
+            {"intraday_plan": intraday_plan, "bar_availability_ts": raw.get("observed_at")}
+            if intraday_plan is not None
+            else {}
+        ),
     }
+
+
+def _project_snapshot_closes_as_features(
+    feature_map: dict[str, Any],
+    strategy_artifact: Mapping[str, Any] | None,
+    frequency: str,
+    closes: Sequence[float],
+    raw: Mapping[str, Any],
+) -> None:
+    """Tag the stored snapshot closes as PIT observations for minute ``close`` inputs.
+
+    The public snapshot carries only ordered closes plus the real ``event_time`` (the
+    last bar end) and ``observed_at`` (the reconciled availability stamp); it does not
+    carry per-observation timestamps.  Only the last close, whose event time is real, is
+    projected -- available from ``observed_at``, never earlier than the reconcile.  No
+    earlier event time or session identity is invented, so inputs needing a longer
+    history (and non-close fields / other datasets) stay absent and fail closed in the
+    evaluator; such strategies must supply inline point-in-time features.
+    """
+    logic = (strategy_artifact or {}).get("strategy_logic") if isinstance(strategy_artifact, Mapping) else None
+    inputs = logic.get("inputs") if isinstance(logic, Mapping) else None
+    dataset = BAR_FREQUENCY_DATASETS.get(frequency)
+    if not isinstance(inputs, Sequence) or not closes:
+        return
+    try:
+        last_end = parse_ts(raw.get("event_time"), field="event_time")
+        available = parse_ts(raw.get("observed_at"), field="observed_at").astimezone(TAIPEI_TZ).isoformat()
+    except (IntradayWindowError, ValueError):
+        return
+    for item in inputs:
+        if not isinstance(item, Mapping) or item.get("dataset") != dataset or item.get("field") != "close":
+            continue
+        name = str(item.get("name"))
+        if name in feature_map:
+            continue
+        feature_map[name] = [
+            {
+                "event_time": last_end.astimezone(TAIPEI_TZ).isoformat(),
+                "available_time": available,
+                "value": float(closes[-1]),
+                "dataset": dataset,
+                "field": "close",
+            }
+        ]
+
+
+def _declared_bar_frequency(strategy_artifact: Mapping[str, Any] | None) -> str | None:
+    params = strategy_artifact.get("parameters") if isinstance(strategy_artifact, Mapping) else None
+    value = params.get("bar_frequency") if isinstance(params, Mapping) else None
+    text = str(value or "").strip().lower()
+    return {"d": "1d", "1day": "1d", "daily": "1d"}.get(text, text) or None
+
+
+def _assert_snapshot_frequency_isolation(
+    raw: Mapping[str, Any], declared_frequency: str | None, binding: Mapping[str, Any]
+) -> None:
+    """A snapshot of one dataset can never feed a strategy declaring another frequency."""
+    binding_id = str(binding.get("binding_id") or "<unknown>")
+    carried = raw.get("dataset")
+    if declared_frequency is None:
+        expected = None
+    else:
+        expected = BAR_FREQUENCY_DATASETS.get(declared_frequency)
+    if is_intraday_frequency(declared_frequency):
+        if carried != expected:
+            raise SignalDecisionUnavailable(
+                "market_input_frequency_mismatch",
+                f"binding {binding_id} declares {declared_frequency} ({expected}) but the "
+                f"snapshot dataset is {carried!r}; no daily or other-frequency substitute",
+            )
+    elif carried not in (None, "", "tw_price_daily") and declared_frequency in (None, "1d"):
+        raise SignalDecisionUnavailable(
+            "market_input_frequency_mismatch",
+            f"binding {binding_id} is daily but the snapshot dataset is {carried!r}",
+        )
+
+
+def _admit_intraday_snapshot(
+    raw: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    strategy_artifact: Mapping[str, Any] | None,
+    frequency: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Next-session admission of a reconciled intraday bar (SD 6.4 step 3)."""
+    params = (strategy_artifact or {}).get("parameters") or {}
+    # The grading horizon is the artifact's own holding horizon in bars (hold_bars, the
+    # factor-rule max_holding_bars parameter); one bar when the artifact declares none.
+    horizon = params.get("hold_bars") or binding.get("horizon_bars") or metadata.get("horizon_bars") or 1
+    try:
+        plan = plan_next_session_decision(
+            event_time=raw.get("event_time"),
+            bar_availability_ts=raw.get("observed_at"),
+            decision_time=now_iso,
+            bar_frequency=frequency,
+            horizon_bars=horizon,
+        )
+    except IntradayWindowError as exc:
+        raise SignalDecisionUnavailable(exc.reason, exc.detail) from exc
+    return plan.to_dict()
 
 
 def _market_input_policy(
@@ -1321,7 +1899,11 @@ def _strategy_symbol(
         )
 
     # 2. Raw symbol membership check against approved artifact parameters.symbols
-    if isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
+    screened = "screen" in (strategy_artifact.get("strategy_logic") or {})
+    from services.registry.portfolio_envelope import uses_target_positions, is_portfolio, is_screened
+    screened_portfolio = is_portfolio(strategy_artifact) and any(
+        is_screened(m["artifact"]) for m in strategy_artifact["strategy_logic"]["members"])
+    if not screened and not screened_portfolio and not uses_target_positions(strategy_artifact) and isinstance(symbols, Sequence) and not isinstance(symbols, (str, bytes)):
         if symbol not in symbols:
             raise SignalDecisionUnavailable(
                 "market_input_invalid",
@@ -1532,6 +2114,54 @@ def _grading_attempt_id(decision_id: str, bar_day: "date") -> str:
     return f"{decision_id}#grading-attempt@{bar_day.isoformat()}"
 
 
+def _grading_carry_id(decision_id: str, bar_day: "date") -> str:
+    """Immutable record: this parked decision (on ``bar_day``) carries the rows of ``decision_id``."""
+    return f"{decision_id}#grading-carry@{bar_day.isoformat()}"
+
+
+def _carrier_still_holds(store: Any, carrier_id: str, graded_id: str) -> bool:
+    """True while a parked carrier can still release ``graded_id``'s rows to grading.
+
+    A carrier that has no pending record (dropped before the park completed or
+    superseded), whose settlement expired, or whose pending record no longer lists
+    the row, has released it back to grading.
+    """
+    from services.execution.lean_runtime.intraday_settlement import (
+        ENQUEUED_RECORD_SUFFIX,
+        PENDING_RECORD_SUFFIX,
+        SETTLEMENT_RECORD_SUFFIX,
+        STATUS_EXPIRED,
+    )
+
+    get = store.get_decision_record
+    if get(carrier_id + ENQUEUED_RECORD_SUFFIX) is not None:
+        return True  # the carrying order was admitted; its release marks the row
+    pending = get(carrier_id + PENDING_RECORD_SUFFIX)
+    if not isinstance(pending, Mapping):
+        return False
+    if not any(str(m[0]) == graded_id for m in pending.get("grading_marks") or ()):
+        return False
+    settled = get(carrier_id + SETTLEMENT_RECORD_SUFFIX)
+    return not (isinstance(settled, Mapping) and settled.get("status") == STATUS_EXPIRED)
+
+
+def _carried_by_parked_decision(
+    store: Any, graded_id: str, *, bar_day: "date", grading_day: "date", carrier_decision_id: str
+) -> bool:
+    """Whether an earlier parked decision (not this one) still carries ``graded_id``'s rows."""
+    from services.execution.lean_runtime.instrument_candidates import is_trading_day
+
+    day = grading_day
+    while day <= bar_day:
+        if is_trading_day(day):
+            record = store.get_decision_record(_grading_carry_id(graded_id, day))
+            carrier = str(record.get("carrier_decision_id") or "") if isinstance(record, Mapping) else ""
+            if carrier and carrier != carrier_decision_id and _carrier_still_holds(store, carrier, graded_id):
+                return True
+        day += timedelta(days=1)
+    return False
+
+
 def _bar_date(event_time: Any) -> "date | None":
     """Calendar date of an admitted bar's ``event_time`` in its own offset."""
     text = str(event_time or "").strip()
@@ -1661,7 +2291,10 @@ def _grade_one_decision(
         )
     ):
         return GRADING_NOT_GRADABLE, "replay_diverged_from_recorded_decision", []
-    return GRADING_DONE, None, expression_replay.counterfactual_rows(record, result)
+    rows = expression_replay.counterfactual_rows(record, result)
+    # Deterministic per decision: the event time of a row is its grading session, never the
+    # time of whichever signal happens to carry it.
+    return GRADING_DONE, None, [{**row, "graded_session": grading_day.isoformat()} for row in rows]
 
 
 def collect_counterfactual_grading(
@@ -1672,6 +2305,7 @@ def collect_counterfactual_grading(
     symbol_underlying: str,
     now_iso: str,
     decision_id_for_bar: Callable[[str], str],
+    carrier_decision_id: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[tuple[str, dict[str, Any]]]]:
     """Rows for every recorded decision that becomes gradable on this bar.
 
@@ -1710,6 +2344,13 @@ def collect_counterfactual_grading(
         stored = getter(decision_id)
         if not isinstance(stored, Mapping):
             continue
+        # Rows parked on an earlier decision are graded once: they are collected again only if
+        # that decision was dropped, expired or superseded without releasing them.
+        if _carried_by_parked_decision(
+            store, decision_id, bar_day=bar_day, grading_day=earlier,
+            carrier_decision_id=carrier_decision_id,
+        ):
+            continue
         try:
             status, reason, decision_rows = _grade_one_decision(
                 decision_id,
@@ -1740,6 +2381,89 @@ def collect_counterfactual_grading(
     return rows, diagnostics, to_mark
 
 
+def reconciled_intraday_bar_reader(
+    symbol: str, session_date: str, bar_frequency: str, now: datetime
+) -> Sequence[Any]:
+    """Reconciled-only bars of one session; missing/quarantined/unreconciled days -> [].
+
+    Built on ``intraday_bars.load_bars`` over the governed ``IntradayStore``; an
+    unconfigured store raises (the decision stays pending, it is not expired by a
+    deployment fault).
+    """
+    from services.research.intraday_bars import InsufficientCleanHistory, load_bars
+    from services.source_ingestion.intraday_store import IntradayStore
+
+    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+    store = IntradayStore.from_env()
+    # The store is keyed by the native code (2330); the execution identity (2330.TW) is
+    # normalised for the read and restored on every returned bar.
+    native = normalize_underlying_code(symbol)
+    try:
+        bars = load_bars(store, native, [session_date], bar_frequency, decision_time=now)
+    except InsufficientCleanHistory:
+        return []
+    return [{**bar.to_dict(), "symbol": symbol} for bar in bars]
+
+
+def official_daily_open_reader(symbol: str, session_date: str, now: datetime) -> Sequence[Any]:
+    """The official daily bar (with its open) of one session from Source's stored snapshot.
+
+    Only an official point that states its open is returned; a missing session, a missing open
+    or a provisional collector close yields ``[]`` (the decision stays pending, then expires).
+    A transport fault raises so the decision stays pending instead of expiring.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from services.execution.lean_runtime.instrument_candidates import session_bounds
+
+    base = (
+        os.getenv("PANTHEON_SOURCE_INGEST_URL") or os.getenv("PANTHEON_SOURCE_INGEST_API_URL") or ""
+    ).rstrip("/")
+    if not base:
+        raise RuntimeError("PANTHEON_SOURCE_INGEST_URL is required to read the next-session open")
+    url = f"{base}/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(symbol, safe='')}"
+    try:
+        with urllib.request.urlopen(
+            urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET"), timeout=5
+        ) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        raise
+    if not isinstance(payload, Mapping):
+        return []
+    opens = payload.get("opens")
+    if not isinstance(opens, Sequence) or isinstance(opens, (str, bytes)):
+        return []
+    for entry in opens:
+        if not isinstance(entry, Mapping):
+            continue
+        stamp = parse_ts(entry.get("event_time"), field="event_time")
+        if stamp.astimezone(TAIPEI_TZ).date().isoformat() != session_date:
+            continue
+        opened, _ = session_bounds(date.fromisoformat(session_date))
+        return [{
+            "symbol": symbol,
+            "bar_start": opened.isoformat(),
+            "bar_frequency": DAILY_FREQUENCY,
+            "bar_availability_ts": payload.get("observed_at"),
+            "open": entry.get("open"),
+        }]
+    return []
+
+
+def _decision_bar_open(features: Any) -> Any:
+    """The decision session's own open from the feature map (scalar or the series' last element)."""
+    value = features.get("open") if isinstance(features, Mapping) else None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        value = value[-1] if value else None
+    return value
+
+
 class PaperSignalProducer:
     """Generate signals for paper bindings and enqueue them onto their queues.
 
@@ -1747,10 +2471,20 @@ class PaperSignalProducer:
     keys and validation per binding.
     """
 
-    def __init__(self, store_for: Callable[[Any], Any], strategy: Any) -> None:
+    def __init__(
+        self,
+        store_for: Callable[[Any], Any],
+        strategy: Any,
+        intraday_bar_reader: Callable[[str, str, str, datetime], Sequence[Any]] | None = None,
+        daily_bar_reader: Callable[[str, str, datetime], Sequence[Any]] | None = None,
+    ) -> None:
         self._store_for = store_for
         self._strategy = strategy
         self._degraded_by_binding: dict[str, str] = {}
+        # (symbol, session_date, bar_frequency, now) -> reconciled-only bars of that session.
+        self._intraday_bar_reader = intraday_bar_reader or reconciled_intraday_bar_reader
+        # (symbol, session_date, now) -> the official daily bar of that session (with its open).
+        self._daily_bar_reader = daily_bar_reader or official_daily_open_reader
 
     @property
     def degraded_bindings(self) -> dict[str, str]:
@@ -1758,10 +2492,159 @@ class PaperSignalProducer:
 
         return dict(self._degraded_by_binding)
 
+    def _park_pending_intraday(
+        self,
+        store: Any,
+        binding_id: str,
+        decision_id: str,
+        pending: Mapping[str, Any],
+        out: Mapping[str, Any],
+        grading_marks: Sequence[tuple[str, Mapping[str, Any]]] = (),
+    ) -> int:
+        putter = getattr(store, "put_decision_record", None)
+        getter = getattr(store, "get_decision_record", None)
+        if not callable(putter) or not callable(getter) or not decision_id:
+            self._degraded_by_binding[binding_id] = "intraday_settlement_store_unsupported"
+            return 0
+        if isinstance(out.get("expression"), Mapping):
+            self._degraded_by_binding[binding_id] = "intraday_expression_unsupported"
+            return 0
+        try:
+            record = {**dict(pending), "binding_id": binding_id, "decision_out": json.loads(json.dumps(out))}
+            if grading_marks:
+                # Counterfactual rows ride in decision_out; they are marked graded only once the
+                # carrying order is really released, exactly as the immediate path marks on enqueue.
+                record["grading_marks"] = json.loads(json.dumps([[gid, dict(state)] for gid, state in grading_marks]))
+        except (TypeError, ValueError):
+            self._degraded_by_binding[binding_id] = "intraday_decision_not_serialisable"
+            return 0
+        # Index first, pending second: an interruption between the two leaves a discoverable
+        # index entry with no pending record (settlement skips it), never an undiscoverable
+        # pending record.  Both steps are idempotent so a restart/retry completes them, and a
+        # retry after the submission cutoff (which never reaches here) cannot strand a record.
+        existing_pending = getter(decision_id + PENDING_RECORD_SUFFIX)
+        day = str((existing_pending if isinstance(existing_pending, Mapping) else pending)["plan"]["decision_day"])
+        slot = 0
+        while True:
+            existing = getter(index_slot_id(binding_id, day, slot))
+            if existing is None:
+                putter(index_slot_id(binding_id, day, slot), {"decision_id": decision_id})
+                break
+            if existing.get("decision_id") == decision_id:
+                break
+            slot += 1
+        if existing_pending is None:
+            # Carry first, pending second: a carry without a pending record holds nothing.
+            bar_day = _bar_date((out.get("metadata") or {}).get("market_input_event_time"))
+            for graded_id, _state in grading_marks:
+                if bar_day is not None:
+                    putter(_grading_carry_id(graded_id, bar_day), {"carrier_decision_id": decision_id})
+            putter(decision_id + PENDING_RECORD_SUFFIX, record)
+        log.info("intraday decision %s parked as pending_settlement for %s", decision_id, binding_id)
+        return 0
+
+    def settle_pending_intraday(self, binding: Any, now_iso: str) -> int:
+        """Advance parked intraday decisions; enqueue only those whose fill is real.
+
+        Reads the per-binding pending index, asks the reconciled-only reader for the D+1
+        bars, writes the immutable settlement/grade records through ``advance_decision``
+        and only then releases a settled decision into the ordinary execution queue with
+        the real first-bar open.  Expired (missing/quarantined/late data) decisions are
+        closed ``expired_no_price`` and never enqueued.
+        """
+        b_dict = _binding_dict_from_obj(binding)
+        binding_id = b_dict["binding_id"]
+        store = self._store_for(binding)
+        getter = getattr(store, "get_decision_record", None)
+        if not callable(getter) or not callable(getattr(store, "put_decision_record", None)):
+            return 0
+        now = parse_ts(now_iso, field="now")
+        today = now.astimezone(TAIPEI_TZ).date()
+        released = 0
+
+        def reader(symbol: str, session_date: str, frequency: str) -> Sequence[Any]:
+            if frequency == DAILY_FREQUENCY:
+                return self._daily_bar_reader(symbol, session_date, now)
+            return self._intraday_bar_reader(symbol, session_date, frequency, now)
+
+        # Discover every outstanding decision over the whole record-retention window (not a
+        # calendar-age guess): a decision whose D+1 is after a long holiday stays discoverable
+        # until settlement/grading is terminal or the store itself retires the record.
+        for back in range(0, PENDING_DISCOVERY_DAYS):
+            day = (today - timedelta(days=back)).isoformat()
+            slot = 0
+            while True:
+                entry = getter(index_slot_id(binding_id, day, slot))
+                slot += 1
+                if entry is None:
+                    break
+                decision_id = str(entry["decision_id"])
+                already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
+                try:
+                    advance_decision(store, decision_id, reader, now=now)
+                except Exception as exc:  # noqa: BLE001 - a reader fault leaves the decision pending
+                    self._degraded_by_binding[binding_id] = f"intraday_settlement_unavailable: {exc}"
+                    continue
+                if already_enqueued:
+                    # Order already admitted; advance_decision above still graded it (deferred grading).
+                    continue
+                settled = getter(decision_id + SETTLEMENT_RECORD_SUFFIX)
+                if not isinstance(settled, Mapping) or settled.get("status") != STATUS_SETTLED:
+                    continue
+                pending = getter(decision_id + PENDING_RECORD_SUFFIX) or {}
+                decision_out = pending.get("decision_out")
+                if not isinstance(decision_out, Mapping):
+                    continue
+                release_out = json.loads(json.dumps(decision_out))
+                self._drop_already_graded_rows(store, release_out)
+                count = self._enqueue_output(
+                    binding, now_iso, release_out, settled_fill=settled["fill"]
+                )
+                if count:
+                    for graded_id, graded_state in pending.get("grading_marks") or ():
+                        store.put_decision_record(
+                            _grading_record_id(graded_id),
+                            {**graded_state, "carried_by_signal_id": decision_out.get("signal_id")},
+                        )
+                # Marked even when dedup skipped the enqueue: the order is already admitted.
+                store.put_decision_record(
+                    decision_id + ENQUEUED_RECORD_SUFFIX, {"decision_id": decision_id, "enqueued": count}
+                )
+                released += count
+        return released
+
+    @staticmethod
+    def _drop_already_graded_rows(store: Any, out: dict[str, Any]) -> None:
+        """Strip counterfactual rows another signal already carried (rows parked before the carry fix)."""
+        metadata = out.get("metadata")
+        rows = metadata.get(COUNTERFACTUAL_ROWS_KEY) if isinstance(metadata, dict) else None
+        if not isinstance(rows, list):
+            return
+        kept = []
+        for row in rows:
+            done = store.get_decision_record(_grading_record_id(str(row.get("decision_id") or ""))) \
+                if isinstance(row, Mapping) else None
+            carried_by = done.get("carried_by_signal_id") if isinstance(done, Mapping) else None
+            if carried_by and carried_by != out.get("signal_id"):
+                continue
+            kept.append(row)
+        if kept:
+            metadata[COUNTERFACTUAL_ROWS_KEY] = kept
+        else:
+            metadata.pop(COUNTERFACTUAL_ROWS_KEY, None)
+
     def produce(self, binding: Any, now_iso: str) -> int:
         """Emit + enqueue signals for one binding; return the count enqueued."""
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        try:
+            released = self.settle_pending_intraday(binding, now_iso)
+        except Exception as exc:  # noqa: BLE001 - a settlement-index fault must not block daily production
+            log.warning("intraday settlement pass failed for %s: %s", binding_id, exc)
+            released = 0
+        return released + self._produce_current(binding, binding_id, now_iso)
+
+    def _produce_current(self, binding: Any, binding_id: str, now_iso: str) -> int:
 
         # Generate strategy output
         try:
@@ -1776,6 +2659,21 @@ class PaperSignalProducer:
             return 0
 
         self._degraded_by_binding.pop(binding_id, None)
+        if isinstance(out, dict) and "portfolio_decisions" in out:
+            return sum(self._enqueue_output(binding, now_iso, decision)
+                       for decision in out["portfolio_decisions"])
+        return self._enqueue_output(binding, now_iso, out)
+
+    def _enqueue_output(
+        self,
+        binding: Any,
+        now_iso: str,
+        out: Any,
+        *,
+        settled_fill: Mapping[str, Any] | None = None,
+    ) -> int:
+        b_dict = _binding_dict_from_obj(binding)
+        binding_id = b_dict["binding_id"]
         store = self._store_for(binding)
 
         enqueued = 0
@@ -1825,6 +2723,32 @@ class PaperSignalProducer:
             )
             dsp = DecisionSignalProducer(store)
 
+            # A released daily decision was parked after its expression was resolved and applied,
+            # so the missing expression is expected there and must not downgrade it to HOLD.
+            if (
+                settled_fill is None
+                and (out.get("metadata") or {}).get("target_expression_required")
+                and not out.get("expression")
+            ):
+                out["action"] = "HOLD"
+                out["metadata"]["reason_code"] = "candidates_unavailable"
+                out["metadata"]["detail"] = "target_position_v1 requires expression layer"
+            for mid, snapshot in (out.get("metadata") or {}).get("member_candidate_pool_snapshots", {}).items():
+                putter = getattr(store, "put_decision_record", None)
+                if not callable(putter):
+                    self._degraded_by_binding[binding_id] = "candidate_pool_store_unsupported"
+                    return 0
+                putter(f"candidate-pool-{binding_id}-{mid}-{snapshot['digest']}", snapshot)
+            pool_snapshot = (out.get("metadata") or {}).get("candidate_pool_snapshot")
+            if pool_snapshot is not None:
+                putter = getattr(store, "put_decision_record", None)
+                if not callable(putter):
+                    self._degraded_by_binding[binding_id] = "candidate_pool_store_unsupported"
+                    return 0
+                # Store HOLD days as well as trades, before deduplication or
+                # expression selection can return early.
+                putter(f"candidate-pool-{binding_id}-{pool_snapshot['digest']}", pool_snapshot)
+
             # An explicit signal_id marks a decision whose identity is already
             # deterministic; reuse the store's processed or execution-fence record
             # instead of rebuilding and re-enqueueing an already-admitted decision.
@@ -1836,6 +2760,25 @@ class PaperSignalProducer:
                     binding_id,
                 )
                 return 0
+
+            intraday_pending = out.pop("intraday_settlement", None)
+            daily_pending = None
+            if (
+                isinstance(intraday_pending, Mapping)
+                and settled_fill is None
+                and intraday_pending["plan"]["bar_frequency"] == DAILY_FREQUENCY
+            ):
+                # Daily: park only after the expression and grading inputs are resolved so the
+                # parked decision carries them and is released unchanged at the next open.
+                daily_pending, intraday_pending = intraday_pending, None
+            if isinstance(intraday_pending, Mapping) and settled_fill is None:
+                # Step 4: the decision is only a durable pending_settlement record.  It is
+                # NOT enqueued: no order may reach the consumer before the D+1 first bar
+                # is reconciled and the delayed settlement fills it (see
+                # ``settle_pending_intraday``).
+                return self._park_pending_intraday(
+                    store, binding_id, str(out.get("decision_id") or ""), intraday_pending, out
+                )
 
             expression = out.pop("expression", None)
             if isinstance(expression, Mapping):
@@ -1861,6 +2804,11 @@ class PaperSignalProducer:
                             "kind": expression_view.get("kind"),
                             "multiplier": expression_view.get("multiplier"),
                             "replay_input": evaluated.get("replay_input"),
+                            **(
+                                {"pre_trade_sizing": evaluated["pre_trade_sizing"]}
+                                if isinstance(evaluated.get("pre_trade_sizing"), Mapping)
+                                else {}
+                            ),
                         },
                     )
                 apply_expression_record(out, expression_view, stored)
@@ -1901,6 +2849,25 @@ class PaperSignalProducer:
                     "environment", str(environment).strip().lower()
                 )
 
+            if settled_fill is not None and isinstance(out.get("metadata"), dict):
+                # Delayed settlement: the only price is the real, reconciled D+1 first-bar
+                # open (never D's close); the stale decision-bar market_data is replaced.
+                fill_price = float(settled_fill["price"])
+                out["metadata"].pop("close", None)
+                out["metadata"]["market_price"] = fill_price
+                out["metadata"]["market_data"] = {
+                    "price": fill_price,
+                    "event_time": settled_fill.get("bar_start"),
+                    "source_ref": out["metadata"].get("market_input_ref"),
+                    "price_observed_at": settled_fill.get("price_observed_at"),
+                    "settlement_mode": "delayed_simulated",
+                }
+                out["metadata"]["settlement_status"] = STATUS_SETTLED
+                out["metadata"]["settlement_mode"] = "delayed_simulated"
+                out["metadata"]["price_observed_at"] = settled_fill.get("price_observed_at")
+                out["metadata"]["is_live_fill_evidence"] = False
+                out["timestamp"] = now_iso
+
             grading_to_mark: list[tuple[str, dict[str, Any]]] = []
             grading_input = expression.get("grading") if isinstance(expression, Mapping) else None
             if isinstance(grading_input, Mapping) and isinstance(out.get("metadata"), dict):
@@ -1919,11 +2886,23 @@ class PaperSignalProducer:
                     symbol_underlying=grading_underlying,
                     now_iso=now_iso,
                     decision_id_for_bar=grading_input["decision_id_for_bar"],
+                    carrier_decision_id=str(out.get("decision_id") or ""),
                 )
                 if grading_rows:
                     out["metadata"][COUNTERFACTUAL_ROWS_KEY] = grading_rows
                 if grading_diagnostics:
                     out["metadata"][COUNTERFACTUAL_GRADING_KEY] = grading_diagnostics
+
+            if daily_pending is not None:
+                return self._park_pending_intraday(
+                    store, binding_id, str(out.get("decision_id") or ""), daily_pending, out,
+                    grading_marks=grading_to_mark,
+                )
+
+            if isinstance(out.get("metadata"), dict):
+                # Declared leg count: the consumer executes a complete batch in the same drain
+                # instead of waiting for the legacy three-tick rebalance timeout.
+                out["metadata"].setdefault("rebalance_batch_size", _decision_leg_count(out))
 
             batch = dsp.produce(
                 out,
@@ -1972,8 +2951,9 @@ class PaperSignalProducer:
 
 def fetch_eligible_paper_bindings(
     runtime_manager_url: str,
-    token: str | None = None,
+    token: str | RuntimeManagerAuthConfig | None = None,
     *,
+    auth: RuntimeManagerAuthConfig | None = None,
     raise_on_error: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch active paper bindings from runtime-manager desired state."""
@@ -1984,13 +2964,24 @@ def fetch_eligible_paper_bindings(
     if not runtime_manager_url:
         return []
 
-    url = f"{runtime_manager_url.rstrip('/')}/api/runtime-fleet/desired-state?stage=paper"
-    headers = {"Accept": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if auth is not None:
+        resolved_auth = auth
+    elif isinstance(token, RuntimeManagerAuthConfig):
+        resolved_auth = token
+    elif token is not None and str(token).strip():
+        resolved_auth = resolve_runtime_manager_auth(token=token)
+    else:
+        resolved_auth = resolve_runtime_manager_auth()
 
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    def _request_headers() -> dict[str, str]:
+        hdrs = {"Accept": "application/json"}
+        if resolved_auth.configured or resolved_auth.source == "token_file":
+            hdrs.update(resolved_auth.headers())
+        return hdrs
+
+    url = f"{runtime_manager_url.rstrip('/')}/api/runtime-fleet/desired-state?stage=paper"
     try:
+        req = urllib.request.Request(url, headers=_request_headers(), method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         bindings = [
@@ -2009,7 +3000,7 @@ def fetch_eligible_paper_bindings(
             )
             detail_req = urllib.request.Request(
                 detail_url,
-                headers=headers,
+                headers=_request_headers(),
                 method="GET",
             )
             with urllib.request.urlopen(detail_req, timeout=10) as detail_resp:
@@ -2171,7 +3162,7 @@ def main() -> int:  # pragma: no cover
         raise SystemExit("SIGNAL_STORE_URL is required (redis://signal-store:6379)")
 
     runtime_manager_url = os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip()
-    runtime_manager_token = os.getenv("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip()
+    runtime_manager_auth = resolve_runtime_manager_auth()
 
     interval = float(os.getenv("PAPER_PRODUCER_INTERVAL_SECONDS", "60"))
     max_ticks = int(os.getenv("PAPER_PRODUCER_MAX_TICKS", "0"))
@@ -2221,7 +3212,7 @@ def main() -> int:  # pragma: no cover
             if runtime_manager_url:
                 bindings = fetch_eligible_paper_bindings(
                     runtime_manager_url,
-                    runtime_manager_token,
+                    runtime_manager_auth,
                     raise_on_error=True,
                 )
                 log.info(

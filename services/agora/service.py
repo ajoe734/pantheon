@@ -9,8 +9,76 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from .store import AgoraStore, DictRecord, build_agora_store
-from .write_authority import assert_authorized
+from .store import AgoraEvidenceStore, AgoraStore, DictRecord, build_agora_store
+from .write_authority import assert_authorized, is_authorized
+
+
+class AgoraEvidenceWriteService:
+    """Human teaching writes owned by Agora; Observe/Learn authority only."""
+
+    TYPES = {
+        "signal_feedback": ("AgoraSignalFeedback", "record", "feedback"),
+        "note": ("AgoraNote", "create", "note"),
+        "insight": ("AgoraInsight", "create", "insight"),
+        "training_example": ("AgoraTrainingExample", "create", "training_example"),
+    }
+
+    def __init__(self, store: AgoraEvidenceStore) -> None:
+        self.store = store
+
+    def submit(self, evidence_type: str, body: Any, *, scope: Any, idempotency_key: str, admitted_at: str) -> Any:
+        from services.control_plane.bff.agora.dataset_extraction.models import AgoraInteractionEvidenceRequest
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            evidence_request_digest, sanitize_content_payload,
+        )
+        resource, operation, kind = self.TYPES[evidence_type]
+        assert_authorized(resource, operation, scope.roles)
+        content, _ = sanitize_content_payload(body.content)
+        content["agora_human_evidence"] = {
+            "type": evidence_type, "subject_ref": body.subject_ref,
+            "actor_id": scope.operator_id, "environment_ceiling": "paper",
+            "runtime_effect": "none",
+        }
+        evidence = AgoraInteractionEvidenceRequest(
+            evidence_id=body.evidence_id, interaction_kind=kind,
+            persona_id=body.persona_id, content=content,
+            source_refs=list(dict.fromkeys([body.subject_ref, *body.source_refs])),
+            captured_at=body.captured_at.isoformat(),
+            consent_granted=body.consent_granted, retention_days=body.retention_days,
+            learning_eligible=body.learning_eligible,
+        )
+        return self.store.admit(
+            evidence, tenant_id=scope.tenant_id, user_id=scope.user_id,
+            idempotency_key=idempotency_key,
+            request_digest=evidence_request_digest(evidence), admitted_at=admitted_at,
+        )
+
+    @staticmethod
+    def public_record(entry: Any) -> Any:
+        if entry is None or "agora_human_evidence" not in entry.get("content", {}):
+            return None
+        from datetime import datetime, timedelta, timezone
+        created = datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
+        if not entry.get("consent_granted") or created + timedelta(days=entry["retention_days"]) <= datetime.now(timezone.utc):
+            return None
+        return {key: entry.get(key) for key in (
+            "evidence_id", "tenant_id", "user_id", "persona_id", "interaction_kind",
+            "content", "source_refs", "captured_at", "created_at", "status", "error_message",
+        )}
+
+    def get(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Any:
+        return self.public_record(self.store.get(evidence_id, tenant_id=tenant_id, user_id=user_id))
+
+    def observe(self, *, tenant_id: str, user_id: str, persona_id: str, since: Any = None) -> Any:
+        from datetime import datetime
+        items = []
+        for entry in self.store.list_persona(tenant_id=tenant_id, user_id=user_id, persona_id=persona_id):
+            item = self.public_record(entry)
+            created = datetime.fromisoformat(str(entry["created_at"]).replace("Z", "+00:00"))
+            if item:
+                if since is None or created > since:
+                    items.append(item)
+        return sorted(items, key=lambda item: (str(item["created_at"]), item["evidence_id"]))
 
 
 class AgoraWriteService:
@@ -433,6 +501,54 @@ class AgoraWriteService:
             interaction_id=interaction_id,
             created_at=created_at,
         )
+
+    # -------------------------------------------------------------------------
+    # Shadow-mode decision locks (design A4). Insert-only; reads are scoped.
+    # -------------------------------------------------------------------------
+    def create_decision_lock(
+        self,
+        lock: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+    ) -> DictRecord:
+        assert_authorized("AgoraDecisionLock", "create", actor_roles)
+        return self.store.create_decision_lock(lock)
+
+    def _lock_readable(
+        self, lock: Optional[DictRecord], tenant_id: str, user_id: str, roles: Union[Sequence[str], str]
+    ) -> bool:
+        if lock is None or str(lock.get("tenant_id")) != str(tenant_id):
+            return False
+        if is_authorized("AgoraDecisionLock", "read_all", roles):
+            return True
+        return str(lock.get("user_id")) == str(user_id) and is_authorized(
+            "AgoraDecisionLock", "create", roles
+        )
+
+    def get_decision_lock_for_event(
+        self,
+        decision_event_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+        actor_roles: Union[Sequence[str], str],
+    ) -> Optional[DictRecord]:
+        lock = self.store.get_decision_lock(
+            self.store.decision_lock_id(tenant_id, decision_event_id)
+        )
+        return lock if self._lock_readable(lock, tenant_id, user_id, actor_roles) else None
+
+    def list_decision_locks(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        actor_roles: Union[Sequence[str], str],
+    ) -> List[DictRecord]:
+        return [
+            lock
+            for lock in self.store.list_decision_locks()
+            if self._lock_readable(lock, tenant_id, user_id, actor_roles)
+        ]
 
 
 def build_agora_write_service(

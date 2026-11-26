@@ -474,5 +474,153 @@
     "validation": "test_bootstrap_sudo_env_reset_still_delivers_release_and_images_to_first_stateful_compose uses a fake sudo that resets env unless -E; confirmed failing without the fix, passing with it; focused bootstrap tests pass locally. Local only, not hosted acceptance.",
     "hosted_status": "pending: root publishes a new controller after review/CI/merge; no healthy Prod baseline, drills or RPO/RTO claimed.",
     "release_complete_claimed": false
+  },
+  "prod_docker_auth_home_repair_20261111": {
+    "diagnosis": "Production run 43071238060 attempt1/job130704707433 failed IMAGE_PULL_FAILED in prod_ops prepull_images after bootstrap succeeded. Existing sudo -E retained OS Login HOME with no Docker config, while nested bootstrap sudo login used root HOME. Root reproduced the same qualified BFF digest pull failing in the outer context and succeeding with the existing root Docker config.",
+    "source_evidence": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-captures/ENV-PROD-CONTROL-IMPL-001/Root01a11-20261111-stage111112/same-ENV-docker-auth-context-repair/actual-auth-context-reproduction.json",
+    "original_job_log_sha256": "49a8b73aec5a8ce86defc63de152ba3a42d70fe97619aee59dc3a120412905ec",
+    "repair": "Add -H to all four existing sudo -E env workflow entrypoints: bootstrap, pre-pull, migrate and atomic switch. Preserve -E so release/image environment survives. All use the existing root HOME and Docker authentication context.",
+    "unchanged": "bootstrap run_priv_env; scripts and compose; release manifests 111/112 and immutable FE/BFF/24-owner pins; credentials, IAM and production approval policy.",
+    "regression": {
+      "test": "BootstrapTests.test_workflow_privileged_entrypoints_share_bootstrap_docker_auth_home",
+      "before": "FAILED (exit 1): actual workflow pre-pull returned IMAGE_PULL_FAILED with old sudo -E prefix after bootstrap nested login succeeded.",
+      "after": "PASS: bootstrap login and real prod_ops pre-pull share a temporary root Docker auth marker; legacy sudo -E control still fails. Each of the four workflow prefixes preserves root HOME and PROD_ROOT. Synthetic local binaries only; no real credentials or Docker daemon.",
+      "command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.BootstrapTests",
+      "result": "10 tests OK; exit 0"
+    },
+    "hosted_status": "external_wait: protected Prod execution, two actual rollback drills, RPO/RTO proof, exact hosted identities and observation remain owned by the existing Ops lane. This source worker did not dispatch, approve, rerun or switch Prod.",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false,
+    "additional_validation": {
+      "command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests",
+      "result": "16 tests OK; exit 0; git diff --check passed"
+    }
+  },
+  "prod_switch_container_of_profile_repair_20261119": {
+    "diagnosis": "Production Release run 43130573352 (pantheon-20261108-111 bootstrap) failed activate_singletons: product owner agora-interaction-worker not running exactly once. prod_ops.sh container_of ran compose ps -q without profiles; singleton-profile worker depends on core-profile services so compose returned no such service: persona, swallowed as empty.",
+    "change": "container_of, singleton_count, worker_count and workers_each_single now pass \"${CORE_PROFILES[@]}\" to compose ps. No other behavior or gate change.",
+    "regression": "tests/deployment/test_production_release.py::StaticContractTests::test_compose_ps_helpers_pass_core_profiles_so_singleton_workers_resolve",
+    "local_validation": "python3 -m unittest tests.deployment.test_production_release: 104 run; only 2 errors, both ModuleNotFoundError fastapi (environmental), unrelated.",
+    "hosted_pass_claim": false,
+    "residual_finding": "loop lease agora_interaction_evidence held by previous controller instance; out of scope.",
+    "next": "After merge a fresh Production Release for pantheon-20261108-111 is dispatched and operator-approved by the Claude chat session."
+  },
+  "prod_post_identity_release_env_repair_20261119": {
+    "trigger": "Production Release run 44485045441 (pantheon-20261108-111 bootstrap) failed at post_identity: IDENTITY 'active container not found on green'; compensation restored 503.",
+    "root_cause": "post_identity was the only compose-using case branch not calling release_env; bootstrap compose.env lacks the ':?' release keys; container_of swallowed compose stderr.",
+    "fix": "post_identity calls release_env; compose_ps_ids makes container_of/singleton_count/worker_count/workers_each_single fail with COMPOSE_ERROR + compose text. No gate or identity criterion changed.",
+    "tests": [
+      "test_fake_compose_enforces_the_compose_file_required_variable_contract",
+      "test_post_identity_with_bootstrap_shaped_compose_env_loads_release_env_and_passes",
+      "test_compose_failure_is_reported_with_compose_text_not_as_not_found_or_zero",
+      "test_every_compose_using_case_branch_supplies_the_release_env"
+    ],
+    "local_validation": "python3 -m unittest tests.deployment.test_production_release: 108 run; only 2 errors, ModuleNotFoundError pydantic/fastapi (environmental). New tests verified failing on pre-fix prod_ops.sh.",
+    "hosted_pass_claim": false,
+    "review_independence_exception": "Reviewer Claude shares model family with author; no different-family reviewer assigned.",
+    "next": "After merge the Claude chat session dispatches a fresh Production Release for pantheon-20261108-111; operator approves. Root01a11 must not dispatch."
+  },
+  "prod_runtime_manager_caller_token_repair_20261119": {
+    "cause": "Production Release 44546522009 reported prod_active while paper-fleet-reconciler/paper-signal-producer got 403 AUTH_TOKEN_FORMAT: prod bootstrap never derived the HS256 runtime-manager caller JWT that staging bootstrap derives.",
+    "changes": [
+      "deploy/production/bootstrap.sh derives PANTHEON_RUNTIME_MANAGER_TOKEN on every run (HS256, iss/aud = effective PROD_JWT_ISSUER/AUDIENCE, ttl default and max 604800 s, atomic single-line replace, no token/secret output)",
+      "scripts/deploy/prod_ops.sh activate_singletons: in-container desired-state credential check (HTTP 200 required) for reconciler and producer; worker Docker health recorded as reporting only (<=60 s wait)",
+      "scripts/deploy/prod_atomic_switch.sh: product_worker_health in prod_active JSON",
+      "docs/deployment/production-control-runbook.md: derived token, lifetime, non-printing verification"
+    ],
+    "hosted_acceptance": "external_wait",
+    "register_row": "RC5 Two bootstrap copies (PR #7635)",
+    "release_complete_claimed": false,
+    "runtime_budget": "Only writer: one line rewritten in the existing secrets env file per dispatch; constant size (<1 KB), no growth; atomic temp file removed on success and failure.",
+    "staging_bootstrap_changed": false,
+    "validation": "python3 -m unittest tests.deployment.test_production_release: 113 run, 2 errors, both ModuleNotFoundError (pydantic, fastapi) in the local venv for pre-existing static contract tests; all new and other tests pass. Local mocked tests prove controller behavior only; no hosted evidence."
+  },
+  "prod_protected_rollback_and_journal_per_dispatch_20261120": {
+    "hosted_drill_evidence": "none; mocked/local tests prove controller behavior only",
+    "journal": "prod_atomic_switch.sh archives journal/<release_id> to .archived-<UTC> at start (renamed back on pre-journal refusal); newest 10 per release id kept; ~50 KB per dispatch",
+    "register_rows": [
+      "production journal is keyed by release id",
+      "no protected rollback mode"
+    ],
+    "review_independence_exception": "owner Claude2 and reviewer Claude are both Claude family; Codex/Antigravity capacity not available at dispatch",
+    "rollback_operation": "production-release.yml input operation=release|rollback (8 inputs total); scripts/deploy/prod_rollback.sh --protected refusal codes 10-14, post-check prod_ops.sh verify_rollback, one JSON result line",
+    "scope": "source only; no hosted run, no dispatch, no cloud or GitHub setting change",
+    "tests": "tests/deployment/test_production_release.py: 121 run, 2 env-only errors (fastapi/pydantic not installed locally); new tests for stale-bootstrap redispatch (exit 2 not 4), refusals, cred-check failure, over budget, archive retention, workflow contract"
+  },
+  "prod_snapshot_schedule_and_restore_drill_20261120": {
+    "scope": "source only; no hosted run, no dispatch, no cloud or GitHub setting change",
+    "scripts": [
+      "scripts/deploy/prod_ops.sh snapshot_schedule ensure|check",
+      "scripts/deploy/prod_ops.sh restore_drill"
+    ],
+    "budget": "hourly incremental snapshots, 72 kept, ~200 MB used, 3-day cap; restore drill leaves no resources (cleanup readback in output)",
+    "hosted_drill_evidence": "none; mocked/local tests prove controller behavior only",
+    "hosted_acceptance": "external_wait",
+    "release_complete_claimed": false,
+    "tests": "tests/deployment/test_production_release.py: 126 pass, 2 env-only errors (fastapi/pydantic not installed locally); 7 new tests",
+    "runbook": "docs/deployment/production-control-runbook.md section 5"
+  },
+  "prod_snapshot_flags_and_restore_privileges_repair_20261121": {
+    "task_generation": 76,
+    "register_class": "RC5; existing ENV-PROD-CONTROL-IMPL-001 g73 PR #7694 repair",
+    "scope": "source and local validation only; no cloud operations, deployment dispatch, secrets access or GitHub settings changes",
+    "changes": [
+      "snapshot_schedule ensure uses --snapshot-labels=environment=production,managed_by=pantheon; disk-create --labels is unchanged",
+      "restore_drill routes every Docker operation, including cleanup/readback and live PostgreSQL queries, through priv; gcloud retains the OSLogin caller's credential context",
+      "owner-directory traversal and hashes run through priv with pipeline errors propagated to the verify stage",
+      "after attach-disk, wait at most 15 one-second polls for the real VM device symlink; GCLOUD_BIN test seam bypasses this wait",
+      "correct g73 evidence references to the existing prod_ops.sh subcommands",
+      "static store-wiring test also mocks Registry index bootstrap, matching its existing database-bootstrap mocks; runtime code and wiring assertions are unchanged"
+    ],
+    "regression": {
+      "before": "Legacy source: strict fake gcloud rejects --labels with POLICY_CREATE_FAILED; sudo-required Docker causes restore_drill to fail at start_postgres. Both regression tests failed before repair.",
+      "focused_command": "python3 -m unittest tests.deployment.test_production_release.SnapshotDrillHarness",
+      "focused_result": "9 tests passed, exit 0; includes sudo-required Docker and owner-store reads, expected nonempty content hash, successful cleanup and failure cleanup. Nonroot-specific cases require a nonroot test caller.",
+      "provisioned_command": ".venv-pantheon/bin/python3 -m unittest tests.deployment.test_production_release.StaticContractTests tests.deployment.test_production_release.SnapshotDrillHarness",
+      "provisioned_result": "27 tests passed, exit 0; provisioned with python3 scripts/dev/provision_python_distribution.py using supervisor-provided PANTHEON_DEPENDENCY_PYTHON",
+      "full_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_result": "130 tests passed in 208.279s, terminal exit 0; log /tmp/ENV-PROD-CONTROL-IMPL-001-final-production-tests.log",
+      "device_wait_check": "Executed the actual wait block against a temporary by-id directory with synthetic sleep: device appears after 3 polls -> exit 0; absent after 15 polls -> exit 3; GCLOUD_BIN set or by-id absent -> 0 polls. All four checks passed, exit 0; no real device/cloud access.",
+      "other_checks": "bash -n scripts/deploy/prod_ops.sh; JSON parse; git diff origin/dev --check; scripts/git/diff_budget.py --base origin/dev --head HEAD all passed",
+      "earlier_attempts_not_passed": "System-Python full attempt timed out (exit 124; dependencies missing). First provisioned full attempt before the fixture repair ran 130 tests with one Registry index-bootstrap connection error (exit 1). Both were superseded by the final provisioned 130-test pass, not counted as passed.",
+      "proof_limit": "Fake local binaries prove controller behavior only; no hosted RPO/RTO or restore success is claimed."
+    },
+    "runtime_budget": {
+      "change": "unchanged from g73; no new recurring job or persistent writer",
+      "snapshots": "one incremental snapshot/hour on pantheon-prod-control-data; 24 deltas/day; retention 3 days / approximately 72 hourly snapshots; cloud retention cleans expired snapshots. Existing ~200 MB used estimate is inherited, not remeasured; byte growth depends on actual changed blocks.",
+      "restore_drill": "on demand; one scratch disk, container, internal network, mount and temporary copy of PostgreSQL plus four owner directories per invocation; copy size equals restored content. Exit trap removes resources and reads back cleanup; zero retained daily growth after successful cleanup."
+    },
+    "residual_findings": [
+      "Existing cleanup Docker/gcloud readback pipelines use wc -l without checking the command status, so a failed empty readback can appear as zero resources. The pre-fix sudo-denied regression returned cleanup.clean=true despite unreadable Docker counts. This patch restores required privileges; general readback failure handling remains with the same RC5/g73 owning chain."
+    ],
+    "hosted_acceptance": "external_wait: coordinator runs snapshot_schedule ensure/check and restore_drill on pantheon-prod-control after the hourly auto-snapshot is available",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "prod_boot_disk_decoupling_and_template_size_gate_20261125": {
+    "task_generation": 77,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, or production/staging workflow dispatch",
+    "changes": [
+      "deploy/production/bootstrap.sh, scripts/deploy/prod_atomic_switch.sh, scripts/deploy/prod_rollback.sh, and scripts/deploy/prod_ops.sh decouple durable control state from the boot disk by storing secrets, state (active_manifest.json, baseline.json, journals, snapshots), manifests, fe (releases, artifacts, current), config (compose.env, runtime-config.js), and proxy (bff_upstream.caddy) on PROD_DATA_MOUNT and symlinking PROD_ROOT/{secrets,state,manifests,fe,config,proxy} -> PROD_DATA_MOUNT/{secrets,state,manifests,fe,config,proxy}, migrating any pre-existing boot-disk directories without data loss",
+      "scripts/deploy/prod_ops.sh adds restore_active_release <release_id> for fresh-boot VM recovery from PROD_DATA_MOUNT and ensures resume_baseline_singletons restores the baseline BFF container on PROD_ACTIVE_PORT when rolling back after a VM replacement",
+      "scripts/deploy/prod_preflight.py adds check_control_vm_machine_type, check_instance_template, check_boot_disk_decoupling, vm-size --machine-type/--instance-template, and boot-disk --prod-root/--data-mount CLI subcommands enforcing >= e2-standard-8 (>= 8 vCPUs, non-preemptible STANDARD scheduling) and data-disk symlinks",
+      "deploy/staging/instance-template.json upgrades properties.machineType from e2-standard-2 to e2-standard-8; .github/workflows/staging-ephemeral-deploy.yml, scripts/deploy/staging_ops.sh, and deploy/staging/bootstrap.sh fail closed with VM_SIZE_BELOW_GATE when machineType or template is below e2-standard-8",
+      ".github/workflows/production-release.yml passes --machine-type to prod_preflight.py vm-size, verifies boot-disk decoupling via prod_preflight.py boot-disk after bootstrap.sh, and points secrets/compose.env/snapshot paths at PROD_DATA_MOUNT"
+    ],
+    "runtime_budget": {
+      "change": "no new recurring job, emitter, or persistent writer added; existing control-plane files (secrets, state/baseline.json, state/active_manifest.json, state/journal/*, manifests/*, config/compose.env, config/runtime-config.js, proxy/bff_upstream.caddy, fe/releases/*, fe/artifacts/*) are relocated from boot disk PROD_ROOT to persistent data disk PROD_DATA_MOUNT with identical per-dispatch cadence, size, and 10-archive journal cap"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh deploy/staging/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/staging_ops.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py tests/deployment/test_staging_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "134 tests passed in 406.970s, terminal exit 0 (including test_machine_type_and_instance_template_gate, test_boot_disk_decoupling_check_and_cli, test_bootstrap_enforces_e2_standard_8_gate_and_migrates_boot_disk_dirs_to_data_mount, and test_fresh_boot_vm_replacement_retains_all_data_disk_state_restores_active_release_and_rolls_back)",
+      "staging_contract_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_staging_release.WorkflowAndTemplateContractTests",
+      "staging_contract_result": "7 tests passed, terminal exit 0 (including e2-standard-8 instance template and staging_ops.sh / bootstrap.sh VM_SIZE_BELOW_GATE rejection of e2-standard-2 and e2-standard-4)"
+    },
+    "hosted_acceptance": "external_wait: live VM replacement, template recreation in GCP, and production workflow dispatch remain operator-gated",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

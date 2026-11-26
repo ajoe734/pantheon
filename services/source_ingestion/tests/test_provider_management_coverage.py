@@ -433,13 +433,14 @@ def test_tdcc_and_taifex_publication_pit_watermark_and_canary_evidence() -> None
     assert taifex_records[0].metadata["normalized_row"]["net_open_interest"] == -5000
 
 
-def test_stocktwits_and_alpha_db_evidence_and_search_canary_readback(tmp_path) -> None:
+def test_stocktwits_and_alpha_db_evidence_and_search_canary_readback(tmp_path, monkeypatch) -> None:
     """Verify durable source->evidence->search canary readback for StockTwits and External Alpha DB."""
     from services.knowledge.evidence import (
         EvidenceBundleBuilder,
         EvidenceItem,
         JsonlEvidenceRepository,
     )
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app as create_search_app
     from fastapi.testclient import TestClient
 

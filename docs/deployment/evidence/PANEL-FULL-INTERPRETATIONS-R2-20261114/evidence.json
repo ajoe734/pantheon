@@ -1,0 +1,23 @@
+{
+  "task_id": "PANEL-FULL-INTERPRETATIONS-R2-20261114",
+  "hosted_behavior_claimed": false,
+  "base": "dev cbe907ff2",
+  "commands": [
+    {"cmd": "pytest services/consultation/tests", "result": "79 passed, 0 failed"},
+    {"cmd": "pytest services/openclaw-gateway-adapter/test_persona_tool_broker.py -k 'not stack and not layered'", "result": "26 passed, 4 skipped (broker unchanged by this task)"}
+  ],
+  "acceptance": {
+    "1": "test_panel_full_interpretations.py::test_interpretation_mode_passes_full_text_with_checked_citations: the persona's own agent runs a broker-registered panel_interpretation turn, recalls through persona_memory_recall, and its full text (400-token tail, not truncated) and cited canonical ids reach the meeting prompt",
+    "2": "run_panel_interpretation_turn checks citations against the broker's per-run record; test_fallback_mode...[stranger_citation] shows an id the turn never received is rejected and recorded as rejected_citations",
+    "3": "one interpretation per participant, at most 12 citations (adapter and workflow_executor._interpretation_rejection; test_interpretation_record_is_required_and_bounded); case-file budgets untouched",
+    "4": "test_fallback_mode...[turn_fails]: gateway failure falls back to committee-visible entries in full and the record states mode=fallback with a reason",
+    "5": "meeting calls still go to deny-all consult- agents (asserted); private sentinel absent from every recall result, prompt and record; test_private_memory_in_case_file_is_still_refused",
+    "6": "each interpretation record (mode, text, citations, run_ref / reason) is stored in the persona_contribution transcript event; consultation_outcome writeback code unchanged",
+    "7": "test_panel_full_interpretations.py runs the real executor tick, real adapter route, real PersonaToolBroker and real memory service app under strict JWT"
+  },
+  "limitations": [
+    "Only the OpenClaw gateway/persona agent is a test double; no real Hindsight/Postgres containers were run for this task, so the 'real containers' standing rule is not met here and hosted behaviour is not claimed.",
+    "Numeric values (12 citations, 120s turn timeout) are coordinator proposals.",
+    "The adapter engages the interpretation turn only when the broker is enabled; otherwise panels record mode=fallback reason=broker_disabled."
+  ]
+}

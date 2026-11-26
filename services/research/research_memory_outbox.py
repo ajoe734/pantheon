@@ -19,6 +19,25 @@ class ResearchMemoryEligibilityError(ValueError):
     """Raised when research memory writeback quality, license, or review gates fail."""
 
 
+def resolve_memory_sponsor(*contexts: Dict[str, Any], requested: Optional[str] = None) -> str:
+    """Demand/member attribution is required; an API argument cannot invent an owner."""
+    owners = set()
+    for context in contexts:
+        for source in [context, context.get("research_demand") or {}, context.get("pool_member") or {}]:
+            for key in ("persona_id", "sponsor_persona_id"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    owners.add(value)
+    if len(owners) > 1:
+        raise ResearchMemoryEligibilityError("Conflicting demand/pool member persona attribution")
+    owner = next(iter(owners), None)
+    if owner and requested and requested != owner:
+        raise ResearchMemoryEligibilityError("Requested sponsor differs from the demand/pool member owner")
+    if not owner:
+        raise ResearchMemoryEligibilityError("Missing demand/pool member persona attribution")
+    return owner
+
+
 STUB_ADAPTERS = {"stub", "handoff_only", "manual"}
 PROHIBITED_LICENSE_TERMS = {"prohibited", "no_derivative", "no_derivatives"}
 PROHIBITED_ALLOWED_USE_TERMS = {"no_derivative", "no_derivatives", "no_memory", "raw_only"}
@@ -229,6 +248,7 @@ class ResearchMemoryOutboxStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "research_memory_outbox.json"
         self._lock = threading.Lock()
+        self.delivery_lock = threading.RLock()
         self._records: Dict[str, ResearchMemoryOutboxRecord] = {}
         self._load()
 
@@ -244,12 +264,14 @@ class ResearchMemoryOutboxStore:
                 for k, v in raw.items():
                     if isinstance(v, dict):
                         self._records[k] = ResearchMemoryOutboxRecord.from_dict(v)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ValueError(f"Cannot load research memory outbox: {self.path}") from exc
 
     def _save(self) -> None:
         payload = {k: v.to_dict() for k, v in self._records.items()}
-        self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        temporary.replace(self.path)
 
     def create_record(self, record: ResearchMemoryOutboxRecord) -> ResearchMemoryOutboxRecord:
         with self._lock:

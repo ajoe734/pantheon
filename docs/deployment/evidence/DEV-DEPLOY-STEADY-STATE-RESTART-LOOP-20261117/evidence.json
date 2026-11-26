@@ -1,0 +1,13 @@
+{
+  "task_id": "DEV-DEPLOY-STEADY-STATE-RESTART-LOOP-20261117",
+  "tests": {
+    "command": "pytest scripts/test_compensation_restores_steady_services.py scripts/test_dev_steady_state_rows.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_environment_lease_deploy_contract.py",
+    "result": "551 passed"
+  },
+  "runtime_budget": {"sample_gap_seconds_min": 90, "added_seconds_per_deploy": 92, "added_seconds_per_restore": 92, "limit_seconds": 100, "recurring_job": false},
+  "evidence_bytes_per_release_estimate": 4096,
+  "workflow_dispatch_inputs_added": 0,
+  "functional_gate_added": false,
+  "deploy_nonprod_vm_sh_changed": false,
+  "residual_findings": ["Hosted run not exercised in this task; behaviour proven by fixtures only (including the 2026-11-17 adapter replay)."]
+}

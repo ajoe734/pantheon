@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 import sys
+import re
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -32,45 +34,176 @@ CLOSEOUT_REPORT_PATHS = frozenset({
 })
 
 
-def closeout_reports_only(backend, base_sha, head_sha):
-    if not base_sha or not head_sha or base_sha == head_sha:
+# The one rule for "this path is not a release build input". Conservative on purpose:
+# every Dockerfile does `COPY . ...` (build context is the repo root), so a path only
+# qualifies when it is in .dockerignore or when no runtime code, compose file or deploy
+# script reads it. docs/ as a whole does NOT qualify: services read docs/contracts,
+# docs/deployment/loop-catalog.registry.json, docs/deployment/evidence/**, docs/04,
+# docs/research/notes and more. See docs/deployment/evidence/DEV-DEPLOY-SKIP-NON-RUNTIME-CHANGES-20261117.
+NON_BUILD_INPUT_PREFIXES = (".orchestrator/", "ai-task-archive/")  # both in .dockerignore
+NON_BUILD_INPUT_MARKDOWN_PREFIXES = ("docs/operations/", "docs/reviews/")  # referenced as strings only
+
+
+def is_non_build_input(path):
+    if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
         return False
+    if path in CLOSEOUT_REPORT_PATHS or path.startswith(NON_BUILD_INPUT_PREFIXES):
+        return True
+    if path.endswith(".md") and ("/" not in path or path.startswith(NON_BUILD_INPUT_MARKDOWN_PREFIXES)):
+        return True
+    return False
+
+
+def non_runtime_change_count(backend, base_sha, head_sha):
+    """Number of changed files when every one is outside the release build inputs, else None
+    (fail open: any doubt returns None so the release is dispatched as before)."""
+    if not base_sha or not head_sha or base_sha == head_sha:
+        return None
     try:
         comparison = backend.request("GET", f"/repos/{backend.repository}/compare/{base_sha}...{head_sha}")
     except Exception:
-        return False
+        return None
     if not isinstance(comparison, dict) or comparison.get("truncated"):
-        return False
+        return None
     if comparison.get("status") != "ahead" or comparison.get("behind_by", 0) != 0:
-        return False
+        return None
     ahead_by = comparison.get("ahead_by", comparison.get("total_commits"))
     total_commits = comparison.get("total_commits", ahead_by)
     if (type(ahead_by) is not int or type(total_commits) is not int
             or ahead_by <= 0 or total_commits != ahead_by):
-        return False
+        return None
     commits = comparison.get("commits")
     if commits is not None and (not isinstance(commits, list) or len(commits) != total_commits):
-        return False
+        return None
     files = comparison.get("files")
     if not isinstance(files, list) or not (1 <= len(files) < 300):
-        return False
+        return None
     if comparison.get("total_files") not in (None, len(files)):
-        return False
+        return None
     for item in files:
         if not isinstance(item, dict) or item.get("truncated"):
-            return False
+            return None
         status = item.get("status")
         if status not in {"added", "modified", "removed", "renamed"}:
-            return False
+            return None
         filename = item.get("filename")
         previous = item.get("previous_filename")
-        if filename not in CLOSEOUT_REPORT_PATHS:
-            return False
+        if not is_non_build_input(filename):
+            return None
         if status == "renamed" and not previous:
-            return False
-        if previous is not None and previous not in CLOSEOUT_REPORT_PATHS:
-            return False
-    return True
+            return None
+        if previous is not None and not is_non_build_input(previous):
+            return None
+    return len(files)
+
+
+def closeout_reports_only(backend, base_sha, head_sha):
+    return non_runtime_change_count(backend, base_sha, head_sha) is not None
+
+
+# ---- quiet windows (DEV-DEPLOY-QUIET-WINDOWS-20261118) ----
+# No release is dispatched while a window is open, nor when its backend switch would land in
+# one. Measured: backend containers are recreated about 17 minutes after dispatch and a
+# rollback follows about 12 minutes later (29 minutes after dispatch); only the switch lead
+# is held, a rollback is not predicted. A running release is never cancelled (busy() wins).
+BACKEND_SWITCH_LEAD_MINUTES = 17
+DEFAULT_QUIET_WINDOWS = "mon-fri 00:30-05:30; daily 09:05-10:45"  # UTC: Taiwan session; persona daily cycle
+QUIET_WINDOWS_VARIABLE = "DEV_DEPLOY_QUIET_WINDOWS"
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _parse_days(text):
+    days = set()
+    for part in text.split(","):
+        part = part.strip().lower()
+        if part == "daily":
+            days.update(range(7))
+        elif "-" in part:
+            first, _, last = part.partition("-")
+            if first not in _DAYS or last not in _DAYS or _DAYS.index(first) > _DAYS.index(last):
+                raise ValueError(f"bad day range {part!r}")
+            days.update(range(_DAYS.index(first), _DAYS.index(last) + 1))
+        elif part in _DAYS:
+            days.add(_DAYS.index(part))
+        else:
+            raise ValueError(f"bad day {part!r}")
+    return frozenset(days)
+
+
+def _parse_minute(text):
+    match = _TIME.match(text.strip())
+    if not match:
+        raise ValueError(f"bad time {text!r}")
+    return int(match.group(1)) * 60 + int(match.group(2))
+
+
+def parse_quiet_windows(text):
+    """'<days> HH:MM-HH:MM; ...' in UTC, days = daily | mon-fri | mon,wed. Raises ValueError.
+    Returns [(days, start_minute, end_minute, label)]; a window never crosses midnight."""
+    windows = []
+    for entry in text.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        days_text, _, span = entry.rpartition(" ")
+        start_text, _, end_text = span.partition("-")
+        if not days_text or not end_text:
+            raise ValueError(f"bad window {entry!r}")
+        start, end = _parse_minute(start_text), _parse_minute(end_text)
+        if start >= end:
+            raise ValueError(f"window {entry!r} must end after it starts (UTC, no midnight crossing)")
+        windows.append((_parse_days(days_text), start, end, entry))
+    if not windows:
+        raise ValueError("no windows")
+    return windows
+
+
+def load_quiet_windows(value):
+    """(windows, source). Unset or blank -> defaults; malformed -> defaults, flagged (fail closed)."""
+    if value is None or not value.strip():
+        return parse_quiet_windows(DEFAULT_QUIET_WINDOWS), "default"
+    try:
+        return parse_quiet_windows(value), "variable"
+    except ValueError as exc:
+        return parse_quiet_windows(DEFAULT_QUIET_WINDOWS), f"malformed_defaults_used: {exc}"
+
+
+def _open_window(windows, instant):
+    minute = instant.hour * 60 + instant.minute
+    for days, start, end, label in windows:
+        if instant.weekday() in days and start <= minute < end:
+            return label, instant.replace(hour=end // 60, minute=end % 60, second=0, microsecond=0)
+    return None
+
+
+def quiet_window_hold(windows, now, lead_minutes=BACKEND_SWITCH_LEAD_MINUTES):
+    """None when a dispatch at `now` is allowed; else why it is held and the first allowed minute."""
+    now = now.astimezone(timezone.utc).replace(second=0, microsecond=0) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+
+    def blocking(at):
+        # Dispatch instant, and every minute up to the backend switch, must be outside windows.
+        for offset in range(lead_minutes + 1):
+            hit = _open_window(windows, at + timedelta(minutes=offset))
+            if hit:
+                return offset, hit
+        return None
+
+    first = blocking(now)
+    if not first:
+        return None
+    offset, (label, ends) = first
+    resume = now
+    for _ in range(8 * 24 * 60):
+        resume += timedelta(minutes=1)
+        if not blocking(resume):
+            break
+    return {
+        "reason": "dispatch_inside_window" if offset == 0 else "backend_switch_inside_window",
+        "window": label, "window_ends_at": ends.strftime("%Y-%m-%dT%H:%MZ"),
+        "dispatch_allowed_from": resume.strftime("%Y-%m-%dT%H:%MZ"),
+        "backend_switch_lead_minutes": lead_minutes,
+    }
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -104,9 +237,51 @@ def ci_passed(client, sha):
     if not candidates:
         return False
     run = max(candidates, key=lambda item: item["id"])
-    return (run.get("head_sha") == sha and run.get("head_branch") == "dev"
-            and run.get("event") == "push" and run.get("status") == "completed"
-            and run.get("conclusion") == "success")
+    return _green(run, sha)
+
+
+def _green(run, sha=None):
+    return (run.get("head_branch") == "dev" and run.get("event") == "push"
+            and run.get("status") == "completed" and run.get("conclusion") == "success"
+            and bool(run.get("head_sha")) and (sha is None or run.get("head_sha") == sha))
+
+
+def _compare_status(client, base, head):
+    try:
+        payload = client.request("GET", f"/repos/{client.repository}/compare/{base}...{head}")
+    except Exception:
+        return None
+    return payload.get("status") if isinstance(payload, dict) else None
+
+
+def on_dev(client, sha, tip):
+    """sha is the tip or an ancestor of it (never a commit that is not on dev)."""
+    return sha == tip or _compare_status(client, sha, tip) in {"identical", "ahead"}
+
+
+MAX_CANDIDATES = 30
+
+
+def newest_green_candidate(client, tip, served):
+    """Newest commit with a successful dev push Branch CI run that is on dev and ahead of served.
+
+    Returns None when no such commit exists (including when served is already the newest).
+    """
+    green = [run for run in runs(client, "branch-ci.yml", event="push") if _green(run)]
+    seen = set()
+    for run in sorted(green, key=lambda item: item["id"], reverse=True)[:MAX_CANDIDATES]:
+        sha = run["head_sha"]
+        if sha in seen:
+            continue
+        seen.add(sha)
+        if sha == served:
+            return None  # everything older than the served commit is not ahead of it
+        if not on_dev(client, sha, tip):
+            continue
+        if sha != tip and served and _compare_status(client, served, sha) != "ahead":
+            continue
+        return sha
+    return None
 
 
 def lost_lease_race(backend, run_id):
@@ -118,7 +293,7 @@ def lost_lease_race(backend, run_id):
 
 
 def failed_pair_run(backend, backend_sha, frontend_sha):
-    attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch", head_sha=backend_sha)
+    attempts = [run for run in runs(backend, DEPLOY, event="workflow_dispatch")
                 if run.get("display_title") == pair_title(backend_sha, frontend_sha)
                 and run.get("status") == "completed"]
     if not attempts:
@@ -138,6 +313,7 @@ def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
         return {"state": "deployment_in_progress", "run_url": active_url}
     backend_sha, frontend_sha = backend.get_ref("dev"), frontend.get_ref("dev")
     result = {"backend_sha": backend_sha, "frontend_sha": frontend_sha}
+    # backend_sha/frontend_sha are replaced by the selected candidates below.
     manifest = fetch(f"{fe_url.rstrip('/')}/deployment.json")
     version = fetch(f"{bff_url.rstrip('/')}/bff/version")
     if (manifest.get("app") != "execute-plans"
@@ -168,33 +344,73 @@ def inspect_pair(backend, frontend, *, fe_url, bff_url, fetch=fetch_url_json):
         and (manifest["releaseAdmission"].get("backend") or {}).get("commitSha") == served_backend
         and (manifest["releaseAdmission"].get("frontend") or {}).get("commitSha") == served_frontend
     )
-    if coherent_served and served_frontend == frontend_sha and served_backend == backend_sha:
-        return {**result, "state": "up_to_date"}
-    if (coherent_served and served_frontend == frontend_sha
-            and closeout_reports_only(backend, served_backend, backend_sha)):
+    candidates = select_pair(backend, frontend, backend_sha, frontend_sha,
+                             served_backend if coherent_served else None,
+                             served_frontend if coherent_served else None)
+    candidate_backend, candidate_frontend = candidates
+    result["tip_backend_sha"], result["tip_frontend_sha"] = backend_sha, frontend_sha
+    pending = [client.repository for client, cand in ((backend, candidate_backend), (frontend, candidate_frontend))
+               if not cand]
+    if pending:
+        return {**result, "state": "waiting_for_ci", "repositories": pending}
+    result["backend_sha"], result["frontend_sha"] = candidate_backend, candidate_frontend
+    result["served_backend"] = served_backend if coherent_served else None
+    result["served_frontend"] = served_frontend if coherent_served else None
+    if coherent_served and served_frontend == candidate_frontend and served_backend == candidate_backend:
+        if candidate_backend == backend_sha and candidate_frontend == frontend_sha:
+            return {**result, "state": "up_to_date"}
+        # Nothing green is newer than what is served; the tips are still being tested.
+        return {**result, "state": "waiting_for_ci", "repositories": [
+            client.repository for client, cand, tip in (
+                (backend, candidate_backend, backend_sha), (frontend, candidate_frontend, frontend_sha))
+            if cand != tip]}
+    if (coherent_served and served_frontend == candidate_frontend
+            and (skipped := non_runtime_change_count(backend, served_backend, candidate_backend)) is not None):
         return {
             **result,
             "served_backend_sha": served_backend,
+            "changed_file_count": skipped,
             "state": "report_only_no_deploy",
         }
-    failed_url = failed_pair_run(backend, backend_sha, frontend_sha)
+    failed_url = failed_pair_run(backend, candidate_backend, candidate_frontend)
     if failed_url:
         return {**result, "state": "failed_pair_not_retried", "run_url": failed_url}
-    pending = [client.repository for client, sha in ((backend, backend_sha), (frontend, frontend_sha))
-               if not ci_passed(client, sha)]
-    if pending:
-        return {**result, "state": "waiting_for_ci", "repositories": pending}
     return {**result, "state": "ready"}
 
 
-def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_url_json, sleep=time.sleep):
+def select_pair(backend, frontend, backend_tip, frontend_tip, served_backend, served_frontend):
+    """Per repository: the newest green commit ahead of served, else the served commit itself
+    while it is still on dev (so the other repository can move alone), else None."""
+    picked = []
+    for client, tip, served in ((backend, backend_tip, served_backend), (frontend, frontend_tip, served_frontend)):
+        cand = newest_green_candidate(client, tip, served)
+        if cand is None and served and on_dev(client, served, tip) and served != tip:
+            cand = served
+        if cand is None and served == tip and served:
+            cand = served
+        picked.append(cand)
+    return tuple(picked)
+
+
+def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_url_json, sleep=time.sleep,
+              quiet_windows=None, now=None):
     result = inspect_pair(backend, frontend, fe_url=fe_url, bff_url=bff_url, fetch=fetch)
     if result["state"] != "ready" or not apply:
         return result
+    if quiet_windows:
+        hold = quiet_window_hold(quiet_windows, now or datetime.now(timezone.utc))
+        if hold:
+            # Nothing is queued: the next trigger or the fallback cron re-selects the newest green pair.
+            return {**result, "state": "held_quiet_window", **hold}
     # A fresh read catches merges during CI/host checks. Admission in the child
     # checks again before any mutation; later merges belong to the next tick.
-    if (backend.get_ref("dev") != result["backend_sha"]
-            or frontend.get_ref("dev") != result["frontend_sha"]):
+    # Re-select against the current tips: only a different (newer) selected pair, or a
+    # candidate that is no longer on dev, supersedes; a tip moving past an unchanged
+    # candidate does not.
+    now_backend, now_frontend = backend.get_ref("dev"), frontend.get_ref("dev")
+    reselected = select_pair(backend, frontend, now_backend, now_frontend,
+                             result.get("served_backend"), result.get("served_frontend"))
+    if reselected != (result["backend_sha"], result["frontend_sha"]):
         return {**result, "state": "superseded_before_dispatch"}
     active_url = busy(backend, frontend)
     if active_url:
@@ -204,16 +420,36 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
         "environment": "dev", "component": "root", "ref": result["backend_sha"],
         "frontend_sha": result["frontend_sha"], "frontend_ref": "dev",
         "frontend_profile": result["frontend_profile"], "dev_auth_profile": "strict",
-        "allow_dirty": "false", "run_loop_prod_tel_002_probe": "true",
+        "allow_dirty": "false",
     }, ref="dev")
     expected_title = pair_title(result["backend_sha"], result["frontend_sha"])
     for _ in range(20):
         for run in runs(backend, DEPLOY, event="workflow_dispatch"):
-            if (run["id"] not in previous_ids and run.get("head_sha") == result["backend_sha"]
-                    and run.get("display_title") == expected_title):
+            # workflow_dispatch head_sha is the dev tip at dispatch time, not the selected
+            # backend, so the full-pair title and an unseen run id identify this dispatch.
+            if run["id"] not in previous_ids and run.get("display_title") == expected_title:
                 return {**result, "state": "dispatched", "run_url": run["html_url"]}
         sleep(3)
     raise ControllerError("dispatch sent but run could not be correlated; inspect Nonprod Deploy before retrying")
+
+
+def summary_lines(result):
+    """Deployed and acceptance are reported separately; acceptance is the verdict of the run's
+    dev-acceptance-stage job, and a release is 'accepted' only when that verdict is 'passed'."""
+    if result.get("state") == "report_only_no_deploy":
+        return (f"- skipped: no release build input changed ({result.get('changed_file_count')} file(s) between "
+                f"served {result.get('served_backend_sha')} and {result.get('backend_sha')}); "
+                "the commits stay merged and ride the next release that changes a build input\n")
+    if result.get("state") == "held_quiet_window":
+        return (f"- held: quiet window `{result.get('window')}` ({result.get('reason')}); no release dispatched, "
+                f"window ends {result.get('window_ends_at')}, dispatch allowed from {result.get('dispatch_allowed_from')} "
+                f"(backend switch lead {result.get('backend_switch_lead_minutes')} min); "
+                "the next trigger or hourly fallback dispatches the newest green commit; this is not a broken trigger\n")
+    if result.get("state") != "dispatched":
+        return ""
+    return ("- deployed: pending (follow run_url)\n"
+            "- acceptance: pending (verdict of the run's `dev-acceptance-stage` job; "
+            "never rolls back, never fails the run)\n")
 
 
 def main():
@@ -227,15 +463,22 @@ def main():
         parser.error("GH_TOKEN is required")
     clients = [GitHubClient(api_url="https://api.github.com", token=token, repository=repo)
                for repo in (BACKEND, FRONTEND)]
+    windows, windows_source = load_quiet_windows(os.environ.get(QUIET_WINDOWS_VARIABLE))
     try:
-        result = reconcile(*clients, fe_url=args.fe_url, bff_url=args.bff_url, apply=args.apply)
+        result = reconcile(*clients, fe_url=args.fe_url, bff_url=args.bff_url, apply=args.apply,
+                           quiet_windows=windows)
     except Exception as exc:
         result = {"state": "inspection_or_dispatch_failed", "reason": str(exc)}
+    result["quiet_windows_source"] = windows_source
     print(json.dumps(result, indent=2))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as handle:
             handle.write("\n## Automatic dev pair check\n\n```json\n" + json.dumps(result, indent=2) + "\n```\n")
-            handle.write("A dispatched run is pending deployment and acceptance; follow its run_url.\n")
+            handle.write(f"- state: {result['state']}\n")
+            if windows_source.startswith("malformed"):
+                handle.write(f"- WARNING: {QUIET_WINDOWS_VARIABLE} is malformed; default windows "
+                             f"({DEFAULT_QUIET_WINDOWS}) are in force ({windows_source})\n")
+            handle.write(summary_lines(result))
     return 1 if result["state"] == "inspection_or_dispatch_failed" else 0
 
 

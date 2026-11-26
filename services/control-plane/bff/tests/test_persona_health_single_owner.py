@@ -378,3 +378,53 @@ def test_v5_execution_persona_health_returns_top_level_owner_and_preserves_prece
     assert by_id["persona-meta-owner-id"]["owner"] == "metadata-owner-id-wins"
     assert by_id["persona-default-owner"]["owner"] == "pathreon-management"
 
+
+
+def test_persona_health_rows_use_thin_source_health_overlay_and_stay_under_1mb() -> None:
+    """BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114: four personas that each
+    carry ~1 MB of required-source health must not bloat persona-health."""
+    import json as _json
+
+    read_store = _fake_read_store()
+    pad = "x" * 250_000
+    base_registry = read_store.get_source_connector_registry
+
+    def _heavy_registry() -> Dict[str, Any]:
+        registry = base_registry()
+        for connector in registry["connectors"]:
+            connector["schedule"] = {"blob": pad}
+        return registry
+
+    read_store.get_source_connector_registry = _heavy_registry  # type: ignore[method-assign]
+
+    def _list_personas(**kwargs: Any) -> List[Dict[str, Any]]:
+        rows = []
+        for index in range(4):
+            rows.append(
+                {
+                    "persona_id": f"persona-heavy-{index}",
+                    "id": f"persona-heavy-{index}",
+                    "name": f"Heavy {index}",
+                    "lifecycle_state": "active",
+                    "metadata": {},
+                    "required_data_sources": [
+                        {
+                            "source_key": f"src-{index}-{part}",
+                            "connector_candidates": ["tw-twse-tpex-official-market"],
+                        }
+                        for part in range(4)
+                    ],
+                }
+            )
+        return rows
+
+    read_store.list_personas = _list_personas  # type: ignore[method-assign]
+    service = _make_persona_service(read_store=read_store)
+    items = service.build_persona_health_items("2026-09-14T00:00:00Z")
+    assert len(items) == 4
+    assert len(_json.dumps(items, default=str)) < 1_000_000
+    for item in items:
+        status = item.get("data_source_status") or {}
+        assert "required_source_health" not in status
+        assert "requiredSourceHealth" not in status
+        assert item["source_health_bindings"] == []

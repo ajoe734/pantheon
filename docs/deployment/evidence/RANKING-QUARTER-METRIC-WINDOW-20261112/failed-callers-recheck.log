@@ -1,0 +1,169 @@
+FF.F....                                                                 [100%]
+=================================== FAILURES ===================================
+_______ test_human_inbox_degrades_cleanly_when_persona_readiness_blocks ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7dad6dc05130>
+
+    def test_human_inbox_degrades_cleanly_when_persona_readiness_blocks(monkeypatch) -> None:
+        """A genuinely *blocked* (not raising) ``store.list_personas`` read is
+        not individually timed -- ``_StoreTimeoutProxy`` only wraps
+        ``list_governance_review_queue_items``/``list_approval_queue_items``/
+        ``list_approval_records`` (``management_read_models/router.py``), and
+        ``ManagementService.get_human_inbox`` has no internal timeout of its
+        own for the persona-readiness section (``management_read_models/
+        service.py``, "5. Persona Readiness"). So the whole synchronous
+        aggregate just runs long, and once it exceeds the outer
+        ``run_management_read`` wait budget the router discards the entire
+        in-flight result and returns the generic degraded envelope -- confirmed
+        by direct read of both modules and by independent reproduction (a
+        blocked contributor across repeated sequential calls each returns this
+        same degraded envelope, with the contributor call count rising once per
+        call, proving each request is genuinely retried rather than cached or
+        hung). This is the real, currently-guaranteed contract for a merely
+        slow persona-readiness read: the route degrades cleanly (200, bounded
+        wait, well-formed envelope) instead of hanging or 5xx-ing; it does not
+        preserve durable items composed after persona readiness in
+        ``get_human_inbox`` (see the docstring on
+        ``test_human_inbox_keeps_durable_promotion_review_visible_despite_persona_readiness_timeout``
+        above for why).
+        """
+        monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.2")
+        with _isolated_client() as (client, store, command_store):
+
+            def blocked_list_personas(*_args, **_kwargs):
+                time.sleep(1.0)
+                return []
+
+            monkeypatch.setattr(store, "list_personas", blocked_list_personas)
+            started_at = time.monotonic()
+            inbox = client.get(
+                "/bff/management/human-inbox",
+                headers=OPERATOR_HEADERS,
+                params={"page_size": 20},
+            )
+            elapsed = time.monotonic() - started_at
+
+            assert inbox.status_code == 200, inbox.text
+>           assert elapsed < 1.0, "the route must return once its own wait budget elapses"
+E           AssertionError: the route must return once its own wait budget elapses
+E           assert 1.2688993039773777 < 1.0
+
+services/control-plane/bff/test_bff_promotion_review_governance.py:750: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  services.control_plane.bff.management_read_models.service:service.py:4351 bff.human_inbox contributor incidents failed: RuntimeError
+____ test_human_inbox_capacity_bound_rejects_late_submission_while_occupied ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7dad6dc04800>
+
+    def test_human_inbox_capacity_bound_rejects_late_submission_while_occupied(
+        monkeypatch,
+    ) -> None:
+        """``run_management_read`` (``personas/routes/common.py``) accepts a
+        real ``capacity``/``executor`` pair that makes a bounded read raise
+        ``ManagementReadSaturated`` -- rejected before it is even submitted to
+        the worker pool -- instead of queuing a second call while the first
+        worker thread is still occupied (MGMT-LOAD-005). The
+        ``management_read_models`` router never supplies that pair for
+        ``/bff/management/human-inbox`` or ``/bff/management/cockpit`` today
+        (confirmed by grep: no ``capacity=`` call site in
+        ``management_read_models/router.py``); the only live ``capacity=``
+        caller is the unrelated ``/bff/management/data-sources`` contributor in
+        ``main.py``, whose ``"read_capacity_saturated"`` reason string
+        (``ManagementService.get_human_inbox_degraded_payload`` /
+        ``get_management_cockpit_degraded_payload`` in
+        ``management_read_models/router.py`` both hardcode
+        ``"reason": "read_timeout"`` for every exception, including
+        ``ManagementReadSaturated``, confirmed by direct read) is not reachable
+        from these routes without a production change, out of scope for this
+        test-only migration. This test wires the same real ``run_management_read``
+        function with a real bounded semaphore/executor pair the way ``main.py``
+        already does for data-sources -- exercising real extracted code, not a
+        fake -- and proves the genuine, currently-available guarantee: a
+        concurrent submission while capacity is occupied is rejected before
+        running (no late/duplicate contributor call, confirmed by call count),
+        both human-inbox and cockpit degrade cleanly instead of queuing behind
+        the occupied slot, and the contributor is called again -- and succeeds
+        -- once released. ``/bff/management/hiq-backlog`` reads
+        ``store.list_personas`` directly with no isolation wrapper at all
+        (confirmed by grep), so calling it concurrently with a blocked
+        contributor blocks the single test-client event loop instead of
+        degrading; it is exercised separately, after release, documenting that
+        confirmed, out-of-scope gap rather than faking a degraded response for
+        it or hanging the suite.
+        """
+        monkeypatch.setenv("PANTHEON_BFF_MANAGEMENT_READ_TIMEOUT_SECONDS", "0.1")
+        capacity = threading.BoundedSemaphore(1)
+        executor = ThreadPoolExecutor(max_workers=2)
+
+        def bounded_run_management_read(func, *args, **kwargs):
+            return _real_run_management_read(
+                func, *args, capacity=capacity, executor=executor, **kwargs
+            )
+
+        try:
+            with _isolated_client(run_management_read=bounded_run_management_read) as (
+                client,
+                store,
+                command_store,
+            ):
+                release_worker = threading.Event()
+                worker_finished = threading.Event()
+                calls = 0
+
+                def blocked_list_personas(*_args, **_kwargs):
+                    nonlocal calls
+                    calls += 1
+                    release_worker.wait(timeout=10)
+                    worker_finished.set()
+                    return []
+
+                monkeypatch.setattr(store, "list_personas", blocked_list_personas)
+
+                first = client.get(
+                    "/bff/management/human-inbox",
+                    headers=OPERATOR_HEADERS,
+                    params={"source_type": "readiness_blocker"},
+                )
+                assert first.status_code == 200, first.text
+>               assert first.json()["meta"]["surfaces"]["human_inbox"]["reason"] == "read_timeout"
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               KeyError: 'reason'
+
+services/control-plane/bff/test_bff_promotion_review_governance.py:924: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  services.control_plane.bff.management_read_models.service:service.py:4351 bff.human_inbox contributor incidents failed: RuntimeError
+_________________ test_nl_ask_tenant_scopes_portfolio_summary __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-chloe_ong_dev_cctech_support_com/pytest-1205/test_nl_ask_tenant_scopes_port0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7dad6c56e420>
+
+    def test_nl_ask_tenant_scopes_portfolio_summary(tmp_path, monkeypatch) -> None:
+        with _seeded_client(tmp_path, monkeypatch) as client:
+            resp = client.post(
+                "/bff/management/nl/ask",
+                json={"question": "What is the scoped portfolio?", "focus": "portfolio"},
+                headers={**OPERATOR_HEADERS, "Idempotency-Key": "bff-b6-sec-tenant-portfolio"},
+            )
+
+        assert resp.status_code == 202, resp.text
+        portfolio = resp.json()["data"]["summary_context"]["portfolio"]
+>       assert portfolio["total_pnl"] == 1.25
+E       assert None == 1.25
+
+services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py:251: AssertionError
+=============================== warnings summary ===============================
+services/research/strategy_spec/normalizer.py:21
+services/research/strategy_spec/normalizer.py:21
+  /tmp/pantheon-worker-worktrees/pantheon/ranking-quarter-metric-window-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks
+FAILED services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied
+FAILED services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary
+3 failed, 5 passed, 3 warnings in 14.07s

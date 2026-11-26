@@ -1,0 +1,88 @@
+{
+  "task_id": "TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120",
+  "owner": "Claude",
+  "reproduction": {
+    "source": "coordinator hosted read-only reads 2026-11-19/20, quoted from the task brief (not re-read by the worker)",
+    "findings": [
+      "tw-official-twse-margin-balances, tw-official-tpex-margin-balances, tw-official-tpex-institutional-flow stored exactly 500 rows per run (TWSE margin symbols 00400A..2330; TPEx institutional 00411A..5468)",
+      "TWSE margin rows carry metadata date '' and event_time ''; they were partitioned by fetch date (11/18 session stored under date=2026-11-19)",
+      "provider rows recorded in chip_publication_schedule.MEASURED_CHIP_PROVIDER_PROBES: TWSE MI_MARGN returned 1309-1310 rows (> 500)"
+    ],
+    "places_that_cut_rows": [
+      "connector_definitions.py TW_CHIP_REFRESH_PROFILES default_limits max_records 500",
+      "persona_source_reconciler.chip_profile_provider builds the adapter with max_records=500 -> fetch.max_records (outside this task's artifact contract: lifted inside TaiwanOfficialMarketDatasetAdapter.__post_init__ instead)",
+      "taiwan_official.TaiwanOfficialMarketDatasetAdapter._records_from_normalized_rows normalized_rows[:limit]",
+      "provider_adapters.execute_provider_owned_adapter records[:max_records] (outside contract, unchanged: never cuts because the adapter itself fails closed above the same 3000 budget)",
+      "configured.py provider_owned_adapter fetch.max_records bound 1000",
+      "scripts/deploy_nonprod_vm.sh SOURCE_INGEST_MAX_RECORDS <= 500 check and SOURCE_REFRESH_MAX_RECORDS default 100 (runtime MAX_RECORDS_PER_JOB)",
+      "deploy_nonprod_vm.sh max_records=500 at ~3430 is the FinMind fundamentals adapter, not a TWSE/TPEx chip profile: unchanged"
+    ]
+  },
+  "changes": {
+    "full_market_budget": "3 TWSE/TPEx chip profiles: max_records 3000 (profile key full_market=true). configured.py bound 5000 (named PROVIDER_OWNED_ADAPTER_MAX_RECORDS); FinMind keeps its own 1000 per-job guard in the deploy script.",
+    "session_date": "taiwan_official._stamp_full_market_sessions: provider row date wins; a date-less row gets chip_publication_schedule.resolve_chip_row_session -> latest_published_chip_session(connector, fetch_time). The caller trade_date/run_date (fetch date) is ignored for these profiles; only provider response dates count. Undecidable session raises SourceEvidenceError naming the profile; fetch date is never used.",
+    "listing": "existing ListingFilter (security_listing) now also applied to these chip rows when present; rows are never invented for symbols the provider did not return.",
+    "no_silent_truncation": "the adapter raises 'refusing to truncate' when a full-market chip response exceeds max_records.",
+    "batching": "single run, no cursor: one provider response is ~1310 rows (TWSE margin) / ~1000 (TPEx), budget 3000 holds the whole session in one refresh; batching not needed, over-budget fails closed.",
+    "coverage_readback": "records carry provider_listed_count; deploy readback calls chip_publication_schedule.evaluate_chip_row_coverage (complete | partial with missing_count | session_mismatch) against receipt.normalized_count and fails the refresh unless complete.",
+    "unchanged": "six chip publication schedules and TAIFEX schedule values; only chip profile entries/limits changed in connector_definitions.py (no INTRADAY-KBAR-CONNECTOR-20261111 areas touched)."
+  },
+  "dedupe_writer": {
+    "writer": "SOURCE-DATASETS-KEYED-WRITE-20261119 / PR 7509 (market_data_storage keyed store, daily_bars_store.KEYED_DATASETS)",
+    "declared_for_these_datasets": {
+      "tw_institutional_flow": "keys (symbol, trade_date, investor_class), budget 0.3 MB",
+      "tw_margin_short_balance": "keys (symbol, trade_date), budget 0.2 MB"
+    },
+    "note": "default PANTHEON_KEYED_DATASETS_WRITE=dual; hosted re-run behaviour (nothing new when unchanged, replace when changed) is the keyed store contract and still needs the coordinator's hosted measurement. tw_institutional_flow official rows are one wide row per symbol (foreign/trust/dealer columns), not three rows per class."
+  },
+  "rollback_reader": "same metadata keys, same schema_hash (v1), ISO string date; only the date value changes from '' to the session and partitions follow the session date. test_rollback_reader_reads_new_rows.",
+  "runtime_budget": {
+    "measured_locally_with_synthetic_rows": {
+      "tw_margin_short_balance_1310_rows_normalized_row_json_MB": 1.05,
+      "tw_institutional_flow_1000_rows_normalized_row_json_MB": 0.74
+    },
+    "bounds_section_6A_columnar_MB": {
+      "tw_institutional_flow": 0.3,
+      "tw_margin_short_balance": 0.2
+    },
+    "retention_days": 2555,
+    "caveat": "row JSON includes raw_row and is not the columnar size; the columnar per-day bytes and expired-partition deletion must be measured on hosted by the coordinator (acceptance 8/9). Not claimed as passed here."
+  },
+  "pending_hosted_verification": [
+    "acceptance 9: coordinator measures one refresh after deploy (row counts = provider listed counts, session dates, each chip profile inside 300 s)",
+    "acceptance 8 columnar size and partition deletion"
+  ],
+  "validation": {
+    "services/source_ingestion/tests/test_tw_official_chip_full_market.py": "12 passed",
+    "scripts/test_deploy_nonprod_vm.py": "211 passed, 2 skipped (python -m pytest, 257 s)",
+    "scripts/test_dev_tw_market_refresh.py": "132 passed (272 s)",
+    "services/source_ingestion/tests/test_chip_publication_schedule.py": "67 passed",
+    "services/source_ingestion/tests/test_taiwan_official_connectors.py": "58 passed, 1 skipped (one test expectation updated: date-less MI_MARGN rows now carry the published session)",
+    "services/source_ingestion/test_service.py": "42 passed"
+  },
+  "session_chain_verification": {
+    "rule": "For undated MI_MARGN/TPEx margin rows, margin_previous_balance and short_previous_balance of every symbol present in the payload and in the stored previous session must equal that session's margin_balance and short_balance. Mismatch or missing previous session fails the run naming the profile with matched/mismatched counts; first-ever load only with accept_first_load, recorded in row session_chain evidence.",
+    "code": "chip_publication_schedule.verify_margin_session_chain + TaiwanOfficialMarketDatasetAdapter.previous_session_lookup/accept_first_load",
+    "tests": [
+      "test_correct_chain_is_stored_under_inferred_session",
+      "test_early_publication_next_session_is_refused",
+      "test_late_publication_previous_session_is_refused",
+      "test_partial_mismatch_counts_matched_and_mismatched",
+      "test_missing_previous_session_fails_closed_unless_first_load_flagged"
+    ],
+    "open_gap": "The adapter hook is not wired to the hosted record store: that needs provider_adapters.py/persona_source_reconciler.py, outside this contract. Until a lookup is supplied the verification is inactive (rows are stamped by inference as before). Handed to coordinator."
+  },
+  "readback_image_independence": {
+    "change": "chip_row_coverage_outcome and FULL_MARKET_CHIP_CONNECTOR_IDS are emitted by emit_taiwan_refresh_shared_helpers; readback no longer imports evaluate_chip_row_coverage or requires provider_listed_count.",
+    "old_image_outcome": "coverage_unverified_image_predates_full_market (warning on stderr, is_failure false, stored count logged)",
+    "test": "test_readback_coverage_helper_handles_old_image_record_shape (500 rows, no provider_listed_count)"
+  },
+  "validation_round2": {
+    "test_tw_official_chip_full_market.py": "19 passed",
+    "test_chip_publication_schedule.py": "67 passed",
+    "test_taiwan_official_connectors.py": "58 passed, 1 skipped",
+    "scripts/test_deploy_nonprod_vm.py": "22 + 189 passed, 2 skipped (two -k batches, full coverage)",
+    "scripts/test_dev_tw_market_refresh.py": "64 + 68 passed (two -k batches, full coverage)"
+  },
+  "trailer_correction": "trailer of the post-reassignment commit corrected to the current owner by operator-approved force-push; content unchanged; old head a1acf176e new head 1ab07a519133dd5c85833807a9bb9ca27c68ccef (merge) plus this evidence commit"
+}

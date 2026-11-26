@@ -1,0 +1,13 @@
+{
+  "task_id": "FINMIND-BROKER-READBACK-PROVENANCE-20261112",
+  "scope": "source-only; not a hosted market refresh PASS, no deploy/provider/credential operation",
+  "root_cause": "records_from_daily_report_payload persisted source_url (actual quota_meta.request_url) but never api_endpoint, so controller terminal readback failed provenance_missing[api_endpoint]",
+  "fix": "broker record metadata carries api_endpoint = actual transport request URL only; no derived fallback. A non-empty source_url with token/api_key/userinfo or non-http(s) scheme is rejected (FinMindFetchError) before any record is built, so no secret-bearing URL survives in source_url/api_endpoint/body/readback. Controller required_provenance unchanged.",
+  "regression": "services/source_ingestion/tests/test_finmind_broker_readback_provenance.py: local transport fixture -> execute_provider_owned_adapter -> pipeline.persist_source_evidence_refs (real normalization, InMemoryEvidenceRepository) -> runtime._source_record_readback -> controller_worker._validate_terminal_readback with source_ingest_run_id; negatives: missing request url, contradictory run id (record_run_mismatch), token/userinfo/ftp urls rejected without secret in error",
+  "old_base_check": "with finmind_taiwan.py reverted to HEAD~1, test_live_request_url_survives_persist_and_terminal_readback fails: ControllerTickError provenance_missing[api_endpoint]; fixed head passes",
+  "commands": [
+    {"cmd": "pytest test_finmind_broker_readback_provenance.py test_finmind_taiwan_connectors.py test_finmind_broker_backfill.py (venv with pyarrow)", "result": "57 passed, exit 0"},
+    {"cmd": "pytest test_finmind_broker_readback_provenance.py test_controller_worker.py -k 'provenance or terminal_readback and not collector'", "result": "58 passed, exit 0"}
+  ],
+  "notes": "test_finmind_broker_backfill needs pyarrow; in a venv without it 6 backfill tests fail independent of this change."
+}

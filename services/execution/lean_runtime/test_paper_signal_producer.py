@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 import json
 import io
 
+from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+from services.execution.lean_runtime import paper_signal_producer as _psp
 from services.execution.lean_runtime.paper_signal_producer import (
     BindingRef,
-    PaperSignalProducer,
+    PaperSignalProducer as _RealPaperSignalProducer,
     SmokeStrategy,
     BoundedPaperStrategy,
     build_smoke_signal,
@@ -23,8 +25,98 @@ from services.execution.lean_runtime.pending_signal_store import InMemoryPending
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
 from services.trade_journey.correlation_envelope import validate_envelope
 
+class PaperSignalProducer(_RealPaperSignalProducer):
+    """Real producer that also plays the next session for daily decisions.
+
+    A daily paper decision is parked (PAPER-DAILY-FILL-TIMING-AND-FLUSH-20261115) and only released
+    at the official open of D+1.  The tests in this module cover expression, grading and queue
+    behaviour that does not depend on the fill price, so after each produce the helper settles the
+    parked decisions at D+1 with an official open equal to the decision close.  Fill timing itself
+    is covered by test_daily_settlement_integration.py.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._opens: dict[str, float] = {}
+        self._parked_days: list[str] = []
+        self._daily_bar_reader = self._next_open_bar
+
+    def _next_open_bar(self, symbol, session_date, now):
+        if symbol not in self._opens:
+            return []
+        opened = datetime.fromisoformat(f"{session_date}T09:00:00+08:00")
+        return [{
+            "symbol": symbol,
+            "bar_start": opened.isoformat(),
+            "bar_frequency": "1d",
+            "bar_availability_ts": f"{session_date}T16:00:00+08:00",
+            "open": self._opens[symbol],
+        }]
+
+    def _park_pending_intraday(self, store, binding_id, decision_id, pending, out, **kwargs):
+        if pending["plan"]["bar_frequency"] == "1d":
+            self._opens[str(out["symbol"])] = float(out["metadata"]["market_data"]["close"])
+            self._parked_days.append(pending["plan"]["target_day"])
+        return super()._park_pending_intraday(store, binding_id, decision_id, pending, out, **kwargs)
+
+    def produce(self, binding, now_iso):
+        before = len(self._parked_days)
+        count = super().produce(binding, now_iso)
+        if len(self._parked_days) > before:
+            count += self.settle_pending_intraday(binding, f"{self._parked_days[-1]}T16:30:00+08:00")
+        return count
+
+
 _NOW = "2026-06-14T10:30:00Z"
 _BINDING = BindingRef(binding_id="rb-test-001", strategy_id="strategy-test-001", symbol="AAPL.US")
+
+
+def test_screen_production_path_rejects_partial_market_without_queueing():
+    from services.research.tests.test_candidate_pool_parity import paper_binding
+    from services.registry.test_candidate_pool import recorded_market, screen_artifact
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+    binding = paper_binding(screen_artifact(), recorded_market(), "2026-09-02")
+    binding["market_inputs"].pop("2317.TW")
+    store = InMemoryPendingSignalStore()
+    producer = PaperSignalProducer(store_for=lambda _: store, strategy=CurrentArtifactStrategy())
+    assert producer.produce(binding, "2026-09-02T12:00:00Z") == 0
+    assert store.queue_depth() == 0
+    assert "complete governed market" in producer.degraded_bindings[binding["binding_id"]]
+
+
+def test_pool_removal_expression_must_close_a_held_instrument():
+    from services.registry.test_candidate_pool import recorded_market, screen_artifact
+    from services.registry.test_strategy_artifact import _artifact_with_expression_policy
+    from services.research.tests.test_candidate_pool_parity import paper_binding
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+
+    artifact = screen_artifact()
+    policy_artifact = _artifact_with_expression_policy()
+    artifact["expression_policy"] = policy_artifact["expression_policy"]
+    artifact["mutation_surface"]["controls"].extend(
+        c for c in policy_artifact["mutation_surface"]["controls"]
+        if c["parameter_key"] in {"lever_min_strength", "notional_fraction_at_full_strength"}
+    )
+    market = recorded_market()
+    binding = paper_binding(artifact, market, "2026-09-02",
+                            {"2330.TW": {"current_direction": "LONG", "holding_bars": 1}})
+    budget = {"available_cash": 100000.0, "gross_limit": 200000.0, "gross_used": 0.0}
+
+    def decide(book):
+        strategy = CurrentArtifactStrategy(expression_layer=True,
+            candidates_builder=_expression_candidates(),
+            expression_inputs=lambda _: {"persona_book": book, "risk_budget": budget})
+        outputs = strategy(binding, "2026-09-02T12:00:00Z")["portfolio_decisions"]
+        [removed] = [o for o in outputs if o["symbol"] == "2330.TW"]
+        return removed["expression"]["evaluate"]()["decision"]
+
+    empty = decide({})
+    assert empty["reason_code"] == "candidates_unavailable"
+    held = decide({"positions": [{"underlying": "2330", "instrument_id": "eq:2330",
+                                  "direction": "LONG", "units": 10}]})
+    assert held["reason_code"] == "close_leg"
+    assert held["side"] == "sell" and held["units"] == 10
 
 
 class TestSmokeSignalContract(unittest.TestCase):
@@ -320,6 +412,32 @@ class TestPaperSignalProducer(unittest.TestCase):
             self.assertFalse(state["live_order_submission_enabled"])
 
     @patch("urllib.request.urlopen")
+    def test_min_closes_requested_and_history_insufficient_reason(self, mock_urlopen) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import (
+            SignalDecisionUnavailable, _market_input_for_binding,
+        )
+        policy = {"owner": "source-ingest", "contract": "latest_stored_normalized",
+                  "max_age_seconds": 300, "minimum_closes": 120}
+        binding = {"binding_id": "rb-120", "symbol": "AAPL.US", "market_data_policy": policy}
+        body = {"symbol": "AAPL.US", "closes": [], "reason": "history_insufficient", "requested": 120,
+                "available": 90, "first_available_date": "2026-03-02", "detail": "only 90 contiguous closes are stored"}
+        response = MagicMock()
+        response.read.return_value = json.dumps(body).encode("utf-8")
+        context = MagicMock()
+        context.__enter__.return_value = response
+        mock_urlopen.return_value = context
+        with patch.dict("os.environ", {"PANTHEON_SOURCE_INGEST_URL": "http://source-ingest:8080"}):
+            with self.assertRaises(SignalDecisionUnavailable) as err:
+                _market_input_for_binding(binding, {}, now_iso=_NOW)
+            self.assertEqual(err.exception.code if hasattr(err.exception, "code") else err.exception.args[0],
+                             "market_input_insufficient")
+            self.assertTrue(mock_urlopen.call_args.args[0].full_url.endswith("&min_closes=120"))
+            policy["minimum_closes"] = 60
+            with self.assertRaises(SignalDecisionUnavailable):
+                _market_input_for_binding(binding, {}, now_iso=_NOW)
+            self.assertNotIn("min_closes", mock_urlopen.call_args.args[0].full_url)
+
+    @patch("urllib.request.urlopen")
     def test_market_input_fetched_from_source_ingest_api(self, mock_urlopen) -> None:
         from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
         from services.execution.lean_runtime.test_current_artifact_signal import _artifact, _binding
@@ -507,9 +625,12 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(
             signal["metadata"]["market_data"],
             {
-                "close": 955.0,
-                "event_time": "2026-06-12T05:30:00Z",
+                # Daily decisions fill at the D+1 official open, never at the decision close.
+                "price": 955.0,
+                "event_time": "2026-06-15T09:00:00+08:00",
                 "source_ref": "source-ingest://snapshots/mss-official-twse-2330",
+                "price_observed_at": "2026-06-15T16:00:00+08:00",
+                "settlement_mode": "delayed_simulated",
             },
         )
 
@@ -1490,6 +1611,7 @@ class TestExecutableSymbolContract(unittest.TestCase):
             "closes": [100.0, 105.0],
             "source_ref": f"source-ingest://snapshots/{binding_id}",
             "observed_at": _NOW,
+            "event_time": "2026-06-12T00:00:00+08:00",
         }
 
         store = InMemoryPendingSignalStore()
@@ -2100,12 +2222,15 @@ class TestExpressionDecisionStep(unittest.TestCase):
         self.assertEqual(stored["record"]["instrument_id"], "ssf:SRF:202611")
         # The restarted producer would decide differently (futures now infeasible) ...
         restarted = self._producer(store, candidates_builder=_expression_candidates(short_ok=False))
-        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 1)
-        [second] = store.get_pending()
-        # ... but it reuses the persisted instrument and units.
-        self.assertEqual(second["metadata"]["instrument_id"], "ssf:SRF:202611")
-        self.assertEqual(second["metadata"]["units"], first["metadata"]["units"])
-        self.assertEqual(second["signal_id"], first["signal_id"])
+        # ... but the parked daily decision was released exactly once under its decision id (a lost
+        # queue claim is the store's reclaim job), so the restart creates no second order, and the
+        # persisted instrument decision is untouched.
+        self.assertEqual(restarted.produce(binding, "2026-11-09T10:31:00Z"), 0)
+        self.assertEqual(store.get_pending(), [])
+        self.assertEqual(
+            store.get_decision_record(first["metadata"]["decision_id"])["record"]["instrument_id"],
+            "ssf:SRF:202611",
+        )
 
     def test_decision_is_persisted_before_the_signal_is_enqueued(self) -> None:
         order: list[str] = []
@@ -2120,7 +2245,11 @@ class TestExpressionDecisionStep(unittest.TestCase):
                 return super().enqueue(payload)
 
         self._producer(Recording()).produce(self._binding(self._artifact()), self.NOW)
-        self.assertEqual(order, ["persist", "enqueue"])
+        # The daily decision is parked first (more records), but the instrument decision is
+        # always persisted before the order is released into the queue.
+        self.assertEqual(order[0], "persist")
+        self.assertEqual(order.count("enqueue"), 1)
+        self.assertLess(order.index("persist"), order.index("enqueue"))
 
     def test_restart_after_persist_before_enqueue_replays_without_builder_or_decider(self) -> None:
         class CrashOnce(InMemoryPendingSignalStore):
@@ -2307,6 +2436,8 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
     }
 
     def _pool(self, *, policy=True, budget=POOL_BUDGET):
+        from services.capital.risk_policy import capital_pool_approval_digest
+
         pool = {
             "pool_id": "pool-rb-expr",
             "tenant_id": "default",
@@ -2317,11 +2448,51 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             "currency": "TWD",
             "budget": budget,
             "single_runtime_enforced": True,
-            "metadata": {"internal": True, "execution_context": "paper"},
+            "metadata": {
+                "internal": True,
+                "execution_context": "paper",
+                "requested_risk_profile": "low",
+                "require_approved_profile_mapping": True,
+                "profile_mapping_approval_id": "apv-pool-rb-expr",
+            },
         }
         if policy is not False:
             pool["metadata"]["risk_policy"] = dict(self.POLICY if policy is True else policy)
-        return pool
+        pool["approval_digest"] = capital_pool_approval_digest(pool)
+        return json.loads(json.dumps(pool))
+
+    def _approval_json_for_pool(self, pool):
+        from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+        from services.governance.test_approval_authority import approval_snapshot
+
+        meta = dict(pool.get("metadata") or {})
+        policy = dict(meta.get("risk_policy") or self.POLICY)
+        return json.loads(
+            json.dumps(
+                approval_snapshot(
+                    decision_id=str(meta.get("profile_mapping_approval_id") or "apv-pool-rb-expr"),
+                    tenant_id=str(pool.get("tenant_id") or "default"),
+                    owner_user_id="proposer-1",
+                    target_type="capital_pool_activation",
+                    target_id=str(pool.get("pool_id") or "pool-rb-expr"),
+                    target_version=str(pool.get("approval_digest") or capital_pool_approval_digest(pool)),
+                    metadata={
+                        "subject": {
+                            "pool_id": str(pool.get("pool_id") or "pool-rb-expr"),
+                            "risk_direction": "increase",
+                            "risk_policy_id": str(policy.get("risk_policy_id") or "rp-pool-rb-expr"),
+                            "risk_policy_version": str(policy.get("version") or "1.0"),
+                            "risk_policy_digest": risk_policy_digest(policy),
+                            "requested_risk": str(meta.get("requested_risk_profile") or "low"),
+                        },
+                        "approvals": [
+                            {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                            {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                        ],
+                    },
+                )
+            )
+        )
 
     @staticmethod
     def _fresh_summary():
@@ -2352,19 +2523,29 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             raise AssertionError(url)
 
         fetch.calls = calls
+        fetch.pool = pool
         return fetch
 
     def _decide(self, symbol, price, *, fetch, env=None):
         import urllib.parse  # noqa: F401
+        from services.capital import risk_policy as _rp_mod
         from services.execution.lean_runtime import expression_inputs, paper_signal_producer
 
         art = self._artifact()
         art["parameters"]["symbols"] = [symbol]
         binding = self._binding(art, closes=(price * 0.9552, price), symbol=symbol)
         store = InMemoryPendingSignalStore()
+        active_pool = getattr(fetch, "pool", None) or self._pool()
+
+        def fetch_owner_approval(url, headers, timeout):
+            assert headers["Authorization"] == "Bearer capital-reader"
+            assert headers["X-Pantheon-Service"] == "runtime-manager"
+            assert url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr")
+            return self._approval_json_for_pool(active_pool)
+
         with patch.dict("os.environ", env or self.ENV, clear=True), patch.object(
             expression_inputs, "_http_get_json", fetch
-        ):
+        ), patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval):
             strategy = paper_signal_producer._runner_strategy()
             producer = PaperSignalProducer(store_for=lambda _: store, strategy=strategy)
             self.assertEqual(producer.produce(binding, self.NOW), 1)
@@ -2420,6 +2601,12 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
                     max(int((target / Decimal(str(price))).quantize(Decimal(1), rounding=ROUND_HALF_UP)), 1),
                     max_units,
                 )
+                # Commission-aware sizing: shrink until notional + buy commission
+                # (taiwan_cash_costs) fits the target and the available cash.
+                while expected > 1 and buy_cash_required(code, expected, price) > float(
+                    min(target, Decimal(str(self.POOL_BUDGET)))
+                ):
+                    expected -= 1
                 self.assertEqual(meta["instrument_id"], f"eq:{code}")
                 self.assertEqual(meta["units"], expected)
                 self.assertEqual(signal["quantity"], expected)
@@ -2567,7 +2754,7 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             self.assertEqual(meta_2330["reason_code"], "long_cash")
 
             # 3. 2317: DHF candidate has max_units_by_risk=0 because one contract's notional 450,000
-            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 444 (long_cash).
+            #    exceeds the 200,000 gross limit; unchanged policy chooses eq:2317 x 443 (long_cash; was 444 before commission-aware sizing).
             sig_2317 = self._decide("2317.TWSE", 225.0, fetch=self._fetch(), env=env)
             meta_2317 = sig_2317["metadata"]
             cands_2317 = {c["instrument_id"]: c for c in meta_2317["expression_replay_input"]["candidates"]}
@@ -2576,7 +2763,7 @@ class TestExpressionInputsProductionWiring(unittest.TestCase):
             self.assertEqual(cands_2317["ssf:DHF:202611"]["price"] * cands_2317["ssf:DHF:202611"]["unit"], 450000.0)
             self.assertEqual(meta_2317["instrument_id"], "eq:2317")
             self.assertEqual(meta_2317["kind"], "cash_share")
-            self.assertEqual(meta_2317["units"], 444)
+            self.assertEqual(meta_2317["units"], 443)
             self.assertEqual(meta_2317["reason_code"], "long_cash")
 
             # 4. Unset, unreadable, tombstone, and stale dataset roots all offer cash share and record
@@ -2718,6 +2905,7 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
     POLICY = TestExpressionInputsProductionWiring.POLICY
     ENV = TestExpressionInputsProductionWiring.ENV
     _pool = TestExpressionInputsProductionWiring._pool
+    _approval_json_for_pool = TestExpressionInputsProductionWiring._approval_json_for_pool
     _fresh_summary = staticmethod(TestExpressionInputsProductionWiring._fresh_summary)
     _fetch = TestExpressionInputsProductionWiring._fetch
 
@@ -2779,6 +2967,7 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
         return {**self.ENV, "PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT": str(self.root)}
 
     def _produce(self, store, *, bar, now, close, previous, earlier=()):
+        from services.capital import risk_policy as _rp_mod
         from services.execution.lean_runtime import expression_inputs, paper_signal_producer
 
         art = self._artifact()
@@ -2786,9 +2975,17 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
         binding = self._binding(art, closes=(*earlier, previous, close), symbol="0050.TWSE")
         binding["market_input"]["event_time"] = bar
         binding["market_input"]["observed_at"] = now
+        fetch = self._fetch()
+
+        def fetch_owner_approval(url, headers, timeout):
+            assert headers["Authorization"] == "Bearer capital-reader"
+            assert headers["X-Pantheon-Service"] == "runtime-manager"
+            assert url.endswith("/api/capital-pools/pool-rb-expr/approvals/apv-pool-rb-expr")
+            return self._approval_json_for_pool(fetch.pool)
+
         with patch.dict("os.environ", self._env(), clear=True), patch.object(
-            expression_inputs, "_http_get_json", self._fetch()
-        ):
+            expression_inputs, "_http_get_json", fetch
+        ), patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval):
             producer = PaperSignalProducer(
                 store_for=lambda _: store, strategy=paper_signal_producer._runner_strategy()
             )
@@ -3095,8 +3292,9 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
             store, bar=self.DECISION_BAR, now=self.GRADING_NOW,
             close=self.CASH_ENTRY, previous=self.CASH_ENTRY / 1.0448,
         )
-        [again] = store.get_pending()
-        self.assertNotIn("instrument_counterfactual_rows", again["metadata"])
+        # The decision of this bar was already parked and released once: it is not re-offered, and
+        # a repeat of the entry bar grades nothing.
+        self.assertEqual(store.get_pending(), [])
         self.assertIsNone(self._terminal(store, first["metadata"]["decision_id"]))
 
     def test_restart_on_a_later_bar_grades_from_the_recorded_metadata(self) -> None:
@@ -3343,3 +3541,304 @@ class TestFactorRulePaperSignalProducer(unittest.TestCase):
             strategy(self._factor_rule_binding_with_features({"rev_yoy": [ok]}), "2026-05-15T06:05:00Z")
         except SignalDecisionUnavailable as exc:
             self.assertNotEqual(exc.code, "feature_not_in_catalogue")
+
+    def test_producer_attaches_pre_trade_sizing_and_resolved_policy_version(self) -> None:
+        """PAPER-SIZING-BOUND-RISK-POLICY-20261121: producer attaches compact pre_trade_sizing derived from the single normal decision, respects injected decider and exit_reason override, and does not recompute on legacy envelope reads."""
+        from services.execution.lean_runtime import expression_policy
+        from services.execution.lean_runtime.paper_signal_producer import apply_expression_record
+        from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+
+        helper = TestExpressionDecisionStep()
+        store = InMemoryPendingSignalStore()
+        budget_with_policy = {
+            **helper.INPUTS["risk_budget"],
+            "equity": 100000.0,
+            "raw_cash": 100000.0,
+            "risk_policy_id": "fixture-single-name-25pct",
+            "risk_policy_version": "fixture-1.0",
+            "risk_policy_digest": "digest-1",
+            "max_single_name_weight": 0.25,
+            "max_single_name_notional": 25000.0,
+        }
+        decider_calls: list[str] = []
+
+        def tracking_decider(view, candidates, book, budget, params):
+            decider_calls.append(view["decision_id"])
+            return expression_policy.decide(view, candidates, book, budget, params)
+
+        producer = helper._producer(
+            store,
+            decider=tracking_decider,
+            expression_inputs=lambda _b: {
+                "persona_book": {"positions": [], "gross_notional": 0.0},
+                "risk_budget": budget_with_policy,
+            },
+        )
+        binding = helper._binding(helper._artifact(bearish=False), closes=(100.0, 102.0))
+        self.assertEqual(producer.produce(binding, helper.NOW), 1)
+        # Single normal calculation: decider runs once and evaluate_pre_trade_sizing reuses its record.
+        self.assertEqual(len(decider_calls), 1)
+        [signal] = store.get_pending()
+        meta = signal["metadata"]
+        self.assertIn("pre_trade_sizing", meta)
+        sizing = meta["pre_trade_sizing"]
+        self.assertEqual(sizing["risk_policy_id"], "fixture-single-name-25pct")
+        self.assertEqual(sizing["risk_policy_version"], "fixture-1.0")
+        self.assertEqual(sizing["binding_limit"], "max_single_name_weight")
+        self.assertEqual(meta["risk_policy_id"], "fixture-single-name-25pct")
+        self.assertEqual(meta["risk_policy_version"], "fixture-1.0")
+        self.assertEqual(meta["risk_policy_digest"], "digest-1")
+        self.assertEqual(signal["quantity"], sizing["permitted_units"])
+        self.assertLessEqual(sizing["after_trade_concentration"], 0.25)
+        self.assertNotIn("decision", sizing)
+        self.assertNotIn("constraint_unit_caps", sizing)
+
+        # Candidate pool exit override: view with exit_reason and no held close_leg overrides to held_position NoTrade,
+        # and pre_trade_sizing derives from that exact overridden NoTrade record rather than recomputing decide_for_policy.
+        strategy = helper._strategy(
+            decider=tracking_decider,
+            expression_inputs=lambda _b: {
+                "persona_book": {"positions": [], "gross_notional": 0.0},
+                "risk_budget": budget_with_policy,
+            },
+        )
+        exit_eval = strategy._expression_step(
+            view={"direction": "SHORT", "strength": 1.0, "exit_reason": "removed_from_candidate_pool"},
+            decision_id="dec-exit-override",
+            symbol="0050.TWSE",
+            closes=(100.0, 99.0),
+            market_input={"event_time": helper.BAR, "closes": [100.0, 99.0], "symbol": "0050.TWSE"},
+            strategy_artifact=helper._artifact(bearish=True),
+            b_dict=binding,
+            metadata={},
+            now_iso=helper.NOW,
+        )
+        self.assertEqual(len(decider_calls), 2)
+        self.assertEqual(exit_eval["decision"]["reason_code"], "candidates_unavailable")
+        self.assertIn("held_position", exit_eval["decision"]["detail"])
+        self.assertEqual(exit_eval["pre_trade_sizing"]["permitted_units"], 0)
+        self.assertEqual(exit_eval["pre_trade_sizing"]["binding_limit"], exit_eval["decision"]["detail"])
+
+        # Legacy stored envelope without pre_trade_sizing does not silently recompute during apply_expression_record.
+        legacy_decision: dict = {"decision_id": "dec-legacy", "metadata": {}}
+        apply_expression_record(
+            legacy_decision,
+            {"direction": "LONG", "strength": 1.0},
+            {
+                "record": exit_eval["decision"],
+                "kind": None,
+                "multiplier": None,
+                "replay_input": exit_eval["replay_input"],
+            },
+        )
+        self.assertNotIn("pre_trade_sizing", legacy_decision["metadata"])
+        self.assertEqual(legacy_decision["metadata"]["risk_policy_id"], "fixture-single-name-25pct")
+
+
+class TestPaperSignalProducerDynamicRuntimeManagerBearer(unittest.TestCase):
+    """PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125: dynamic HS256 JWT minting and token_file re-reads."""
+
+    def test_fetch_eligible_paper_bindings_mints_fresh_hs256_tokens_across_clock_advances_past_ttl(
+        self,
+    ) -> None:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+        secret = "producer-dynamic-bearer-test-secret-2026!"
+        issuer = "pantheon-dev-control-plane"
+        audience = "pantheon-runtime-manager"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+            "PANTHEON_RUNTIME_JWT_ISSUER": issuer,
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": audience,
+        }
+        clock_now = [1_700_500_000.0]
+        captured_headers: list[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            auth_hdr = req.get_header("Authorization") or ""
+            captured_headers.append(auth_hdr)
+            validate_request_auth(
+                authorization=auth_hdr,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            if "/api/runtime-fleet/desired-state" in req.full_url:
+                body = {
+                    "bindings": [
+                        {
+                            "binding_id": "rb-dyn-1",
+                            "status": "active",
+                            "deployment_mode": "paper",
+                        }
+                    ],
+                    "excluded": [],
+                }
+            else:
+                body = {
+                    "binding_id": "rb-dyn-1",
+                    "status": "active",
+                    "artifact_id": "art-1",
+                    "artifact_version": "1.0.0",
+                    "metadata": {"strategy_id": "strat-1"},
+                }
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return json.dumps(body).encode("utf-8")
+
+            return _Resp()
+
+        producer_env = {
+            **strict_env,
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+            "PANTHEON_RUNTIME_MANAGER_ACTOR_ID": "paper-signal-producer",
+            "PANTHEON_RUNTIME_MANAGER_ROLES": "operator",
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "PANTHEON_RUNTIME_MANAGER_JWT_TTL_SECONDS": "30",
+        }
+        with patch.dict("os.environ", producer_env, clear=False), patch(
+            "time.time", side_effect=lambda: clock_now[0]
+        ), patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            auth = resolve_runtime_manager_auth()
+            bindings_t0 = fetch_eligible_paper_bindings(
+                "http://runtime-manager:8081",
+                auth,
+                raise_on_error=True,
+            )
+            self.assertEqual(len(bindings_t0), 1)
+            self.assertEqual(bindings_t0[0]["binding_id"], "rb-dyn-1")
+            self.assertEqual(len(captured_headers), 2)
+            t0_header = captured_headers[-1]
+
+            # Advance simulated clock past initial 30s TTL.
+            clock_now[0] = 1_700_500_045.0
+            with self.assertRaises(AuthError) as expired:
+                validate_request_auth(
+                    authorization=t0_header,
+                    required_roles=("operator",),
+                    env=strict_env,
+                    allow_shared_secret=True,
+                )
+            self.assertEqual(expired.exception.code, "AUTH_JWT_EXPIRED")
+
+            # Subsequent tick using the same long-lived auth object mints fresh tokens and succeeds.
+            bindings_t1 = fetch_eligible_paper_bindings(
+                "http://runtime-manager:8081",
+                auth,
+                raise_on_error=True,
+            )
+            self.assertEqual(len(bindings_t1), 1)
+            self.assertEqual(len(captured_headers), 4)
+            t1_header = captured_headers[-1]
+            self.assertNotEqual(t1_header, t0_header)
+            ctx = validate_request_auth(
+                authorization=t1_header,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            self.assertEqual(ctx.actor_id, "paper-signal-producer")
+
+    def test_fetch_eligible_paper_bindings_rereads_rotated_token_file_across_clock_advances(
+        self,
+    ) -> None:
+        from services.runtime_auth import resolve_runtime_manager_auth
+        from services.runtime_auth_inbound import (
+            AuthError,
+            encode_jwt_hs256,
+            validate_request_auth,
+        )
+
+        secret = "producer-token-file-rotation-secret-2026!"
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": secret,
+        }
+        clock_now = [1_700_550_000.0]
+
+        def _mint(sub: str, issued: int) -> str:
+            return encode_jwt_hs256(
+                {
+                    "sub": sub,
+                    "roles": ["operator"],
+                    "iat": issued,
+                    "nbf": issued - 5,
+                    "exp": issued + 30,
+                },
+                secret=secret,
+            )
+
+        seen_actors: list[str] = []
+
+        def _fake_urlopen(req, timeout=10):
+            ctx = validate_request_auth(
+                authorization=req.get_header("Authorization") or "",
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            seen_actors.append(ctx.actor_id)
+
+            class _Resp:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return json.dumps({"bindings": [], "excluded": []}).encode("utf-8")
+
+            return _Resp()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            token_file = Path(tmp_dir) / "rm-producer.token"
+            tok1 = _mint("producer-file-v1", int(clock_now[0]))
+            token_file.write_text(tok1, encoding="utf-8")
+
+            with patch.dict(
+                "os.environ",
+                {"PANTHEON_RUNTIME_MANAGER_TOKEN_FILE": str(token_file)},
+                clear=False,
+            ), patch("time.time", side_effect=lambda: clock_now[0]), patch(
+                "urllib.request.urlopen", side_effect=_fake_urlopen
+            ):
+                auth = resolve_runtime_manager_auth()
+                self.assertEqual(
+                    fetch_eligible_paper_bindings(
+                        "http://runtime-manager:8081", auth, raise_on_error=True
+                    ),
+                    [],
+                )
+                self.assertEqual(seen_actors, ["producer-file-v1"])
+
+                clock_now[0] = 1_700_550_045.0
+                with self.assertRaises(AuthError):
+                    validate_request_auth(
+                        authorization=f"Bearer {tok1}",
+                        required_roles=("operator",),
+                        env=strict_env,
+                        allow_shared_secret=True,
+                    )
+                tok2 = _mint("producer-file-v2", int(clock_now[0]))
+                token_file.write_text(tok2, encoding="utf-8")
+
+                self.assertEqual(
+                    fetch_eligible_paper_bindings(
+                        "http://runtime-manager:8081", auth, raise_on_error=True
+                    ),
+                    [],
+                )
+                self.assertEqual(seen_actors, ["producer-file-v1", "producer-file-v2"])
+
+

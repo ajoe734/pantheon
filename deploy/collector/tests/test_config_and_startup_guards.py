@@ -189,3 +189,161 @@ def test_dropped_tpex_flows_and_disabled_by_build_sources_are_refused() -> None:
     raw["sources"]["collector-yahoo-news"]["source_id"] = "collector-yahoo-news"
     with pytest.raises(CollectorConfigError, match="DISABLED_BY_BUILD"):
         validate_collector_config(raw, env={})
+
+
+@pytest.mark.parametrize("sid", ["collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"])
+@pytest.mark.parametrize("terms", [None, [], "momentum", ["not-in-fixed-vocabulary"], ["momentum", "momentum"], ['momentum OR site:evil']])
+def test_query_terms_fail_closed_at_startup(sid, terms):
+    raw = _raw_policy()
+    raw["sources"][sid]["query_terms"] = terms
+    with pytest.raises(CollectorConfigError, match="fixed vocabulary"):
+        validate_collector_config(raw, env={})
+
+
+def test_missing_vocabulary_and_social_steering_fail_closed(tmp_path, monkeypatch):
+    from collector_stack import config as module
+    raw = _raw_policy()
+    raw["sources"]["collector-tw-threads"]["query_terms"] = ["momentum"]
+    with pytest.raises(CollectorConfigError, match="cannot be steered"):
+        validate_collector_config(raw, env={})
+    monkeypatch.setattr(module, "QUERY_VOCABULARY_PATH", tmp_path / "missing.json")
+    with pytest.raises(CollectorConfigError, match="missing or invalid fixed query vocabulary"):
+        validate_collector_config(_raw_policy(), env={})
+
+
+@pytest.mark.parametrize("override", [
+    {"base_urls": ["https://api.gdeltproject.org/api/v2/doc/doc"]},
+    {"index_url": "https://other.invalid/lastupdate.txt"},
+    {"feed_type": "gkg"}, {"cadence_seconds": 900}, {"max_records_per_call": 250},
+    {"fetcher": "api"}, {"max_requests_per_run": 5}, {"min_interval_seconds": 0},
+])
+def test_gdelt_requires_single_official_hourly_raw_feed(override):
+    data = _raw_policy()
+    data["sources"]["collector-gdelt"].update(override)
+    with pytest.raises(CollectorConfigError, match="official hourly export feed"):
+        validate_collector_config(data, env={})
+
+
+@pytest.mark.parametrize('sid', ['collector-tw-twse-index-breadth', 'collector-tw-twse-taiex-history'])
+@pytest.mark.parametrize('field,value', [('min_interval_seconds', 1.0), ('max_connections', 2)])
+def test_regime_sources_refuse_unsafe_policy_before_fetch(tmp_path, test_hasher, sid, field, value):
+    raw = _raw_policy()
+    raw['sources'][sid][field] = value
+    config = validate_collector_config(raw, env={})
+    transport = FixtureTransport()
+    runner = CollectorRunner(config, root_dir=tmp_path, hasher=test_hasher, transport=transport)
+    with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
+        runner.run_source(sid, run_id='unsafe')
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize('field,value', [('min_interval_seconds', 1.0), ('max_connections', 2)])
+def test_taifex_vix_refuses_unsafe_policy_before_fetch(tmp_path, test_hasher, field, value):
+    raw = _raw_policy()
+    raw['sources']['collector-tw-taifex-vix'][field] = value
+    transport = FixtureTransport()
+    runner = CollectorRunner(validate_collector_config(raw, env={}), root_dir=tmp_path, hasher=test_hasher,
+                             transport=transport)
+    with pytest.raises(CollectorConfigError, match='max_connections=1.*min_interval_seconds >= 5.0'):
+        runner.run_source('collector-tw-taifex-vix', run_id='unsafe')
+    assert transport.calls == []
+
+
+def test_news_rss_policy_uses_finance_and_securities_routes_within_source_limits() -> None:
+    from collector_stack.pollers import RssHubNewsPoller
+
+    config = load_collector_config(DEFAULT_POLICY_PATH, env={})
+    news = config.get_source("collector-news-rss")
+    routes = news.raw_config["routes"]
+    assert "/cna/aall" not in routes
+    assert routes == [
+        "/cna/aie",
+        "/cna/asc",
+        "/udn/news/breakingnews/6",
+        "/udn/news/breakingnews/11",
+    ]
+    assert RssHubNewsPoller.VERIFIED_ROUTES == frozenset(routes)
+    assert RssHubNewsPoller.VERIFIED_ROUTES.isdisjoint(
+        {
+            "/cna/aall",
+            "/udn/news/breakingnews/2",
+            "/ltn/news/business",
+            "/chinatimes/realtimenews/260410",
+            "/cw/master",
+            "/chinatimes/money",
+            "/cw/master/8",
+        }
+    )
+    assert len(routes) == 4 <= news.max_requests_per_run == 10
+    assert news.cadence == "hourly"
+    assert news.cadence_seconds == 3600
+    assert news.min_interval_seconds == 1.0
+    assert news.fetcher == "http"
+    assert news.respect_robots is True
+    assert news.robots_decision == "not_applicable_api"
+    assert news.terms_ref == "https://github.com/DIYgod/RSSHub (read 2026-11-10)"
+    assert news.attribution_required is False
+    assert news.logged_in is False
+    assert news.enabled is True
+    assert news.raw_config["rsshub_image"] == "diygod/rsshub:chromium-bundled-2026-11-01"
+    served = news.raw_config["served_categories"]
+    assert set(served) == set(routes)
+    assert "產經" in served["/cna/aie"]
+    assert "證券" in served["/cna/asc"]
+    assert "財經" in served["/udn/news/breakingnews/6"]
+    assert "股市" in served["/udn/news/breakingnews/11"]
+    disabled = news.raw_config["disabled_routes"]
+    assert set(disabled) == {
+        "/chinatimes/money",
+        "/cw/master/8",
+        "/ltn/news/business",
+        "/chinatimes/realtimenews/260410",
+        "/cw/master",
+    }
+    assert set(disabled).isdisjoint(routes)
+    assert "503" in disabled["/chinatimes/money"]
+    assert "503" in disabled["/cw/master/8"]
+    assert "404" in disabled["/ltn/news/business"]
+    assert "404" in disabled["/chinatimes/realtimenews/260410"]
+    assert "404" in disabled["/cw/master"]
+    dropped = news.raw_config["dropped_routes"]
+    assert set(dropped) == {
+        "/cna/aall",
+        "/udn/news/breakingnews/2",
+        "/ltn/news/business",
+        "/chinatimes/realtimenews/260410",
+        "/cw/master",
+    }
+    compose_text = (DEFAULT_POLICY_PATH.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    assert news.raw_config["rsshub_image"] in compose_text
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_match"),
+    [
+        (lambda s: s.pop("routes", None), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=None), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=[]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=[""]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=["/"]), "requires a non-empty routes list"),
+        (lambda s: s.update(routes=["/cna/aie", "/cna/aie"]), "must not contain duplicates"),
+        (
+            lambda s: s.update(routes=[f"/cna/r{i}" for i in range(11)]),
+            "exceeds max_requests_per_run=10",
+        ),
+        (lambda s: s.update(routes=["/yahoo/finance"]), "DISABLED_BY_BUILD"),
+        (lambda s: s.update(routes=["/ptt/Stock"]), "cannot use /ptt route"),
+        (
+            lambda s: s.update(routes=["/cna/aie", "/chinatimes/money"]),
+            "active routes cannot include disabled_routes",
+        ),
+    ],
+)
+def test_news_rss_policy_without_routes_or_with_invalid_routes_fails_validation(
+    mutator, expected_match: str
+) -> None:
+    raw = _raw_policy()
+    mutator(raw["sources"]["collector-news-rss"])
+    with pytest.raises(CollectorConfigError, match=expected_match):
+        validate_collector_config(raw, env={})
+

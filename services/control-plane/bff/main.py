@@ -2688,6 +2688,13 @@ def _build_management_ep5_readiness_payload() -> Dict[str, Any]:
             "strict_publish": f"/bff{_MANAGEMENT_READINESS_BASE_ROUTE}/strict-publish",
         },
     )
+# Healthy dev registry reads were measured at ~0.7-1.25s; the evidence-owner
+# HTTP timeout is 4s, so the dev budget stays below it. Stage/Prod keep 0.75s.
+_MANAGEMENT_DATA_SOURCES_DEFAULT_READ_TIMEOUT_SECONDS = 0.75
+_MANAGEMENT_DATA_SOURCES_DEV_READ_TIMEOUT_SECONDS = 2.5
+_MANAGEMENT_DATA_SOURCES_DEV_ENVIRONMENTS = frozenset({"dev", "development", "local"})
+
+
 def _management_data_sources_read_timeout_seconds() -> float:
     """Bound the one Source Ingest registry read used by Management.
 
@@ -2695,11 +2702,18 @@ def _management_data_sources_read_timeout_seconds() -> float:
     registry must therefore yield a typed unavailable envelope rather than
     make the Management event loop wait for the downstream HTTP timeout.
     """
-    raw = os.getenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "0.75").strip()
+    default = (
+        _MANAGEMENT_DATA_SOURCES_DEV_READ_TIMEOUT_SECONDS
+        if os.getenv("PANTHEON_ENV", "").strip().lower() in _MANAGEMENT_DATA_SOURCES_DEV_ENVIRONMENTS
+        else _MANAGEMENT_DATA_SOURCES_DEFAULT_READ_TIMEOUT_SECONDS
+    )
+    raw = os.getenv("PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return default
     try:
         return max(0.05, float(raw))
     except (TypeError, ValueError):
-        return 0.75
+        return default
 _MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT = 2
 _MANAGEMENT_DATA_SOURCES_READ_SLOTS = threading.BoundedSemaphore(
     _MANAGEMENT_DATA_SOURCES_READ_SLOT_COUNT

@@ -9,3 +9,6 @@ quantlib==1.43
 vectorbt==1.1.1
 pandas==3.0.6
 cryptography==50.0.1
+statsmodels==0.15.0
+ruptures==1.1.10
+pyarrow==26.0.1  # governed market dataset reads the daily_bars store (DailyBarsReader)

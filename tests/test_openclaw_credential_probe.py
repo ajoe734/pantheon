@@ -53,7 +53,7 @@ def test_authoritative_check_is_not_a_bare_openclaw_agent_call() -> None:
     """A bare `openclaw agent` call is easier to satisfy than the guarded path.
 
     Unpinned, the gateway answers from its own fallback chain (observed: it
-    replied via openai/gpt-5.6-sol while the Claude credential was expired),
+    replied via a fallback chain model while the Claude credential was expired),
     whereas the adapter pins each candidate model with its own per-candidate
     budget. A probe greener than what it guards is the defect this file prevents.
     """

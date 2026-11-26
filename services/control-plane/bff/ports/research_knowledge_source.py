@@ -8,21 +8,82 @@ monkey patches, experiment overlays, and fixture-pack loading.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import copy
+from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import hashlib
 import logging
 import os
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 log = logging.getLogger(__name__)
 
+# A small owner-page memo absorbs repeated concurrent dashboard reads. It
+# stores validated pages only, never the full catalog or projected BFF DTOs.
+STRATEGY_SUMMARY_MEMO_SECONDS = 5.0
+STRATEGY_SUMMARY_MEMO_MAX_KEYS = 64
+
+
+class _StrategySummaryPageMemo:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values: OrderedDict[Any, Tuple[float, Dict[str, Any]]] = OrderedDict()
+        self._pending: Dict[Any, Future] = {}
+
+    def read(self, key: Any, fetch: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+        from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
+
+        leader = False
+        with self._lock:
+            now = time.monotonic()
+            for expired in [k for k, (deadline, _) in self._values.items() if deadline <= now]:
+                del self._values[expired]
+            hit = self._values.get(key)
+            if hit is not None:
+                self._values.move_to_end(key)
+                return copy.deepcopy(hit[1])
+            pending = self._pending.get(key)
+            if pending is None and len(self._pending) < STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                pending = self._pending[key] = Future()
+                leader = True
+        if pending is None:
+            # Key churn cannot create an unbounded in-flight map or serialize
+            # unrelated tenants behind a slow Registry read.
+            return fetch()
+        if not leader:
+            return copy.deepcopy(pending.result(timeout=remaining_management_read_budget()))
+        try:
+            value = fetch()
+            saved = copy.deepcopy(value)
+            with self._lock:
+                self._values[key] = (time.monotonic() + STRATEGY_SUMMARY_MEMO_SECONDS, saved)
+                while len(self._values) > STRATEGY_SUMMARY_MEMO_MAX_KEYS:
+                    self._values.popitem(last=False)
+            pending.set_result(saved)
+            return value
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
+
 
 class _EvidenceOwnerReadError(RuntimeError):
     """The evidence owner read failed or timed out."""
+
+
+class _EvidenceOwnerHintsUnsupported(_EvidenceOwnerReadError):
+    """The owner did not confirm the requested population hints."""
 
 
 class ResearchWriteOwnerUnavailableError(RuntimeError):
@@ -86,6 +147,7 @@ class EvidenceReadResult:
     next_page_token: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
     summary_unavailable: bool = False
+    owner_hints_applied: bool = True
 
     @property
     def available(self) -> bool:
@@ -98,13 +160,6 @@ def _normalize_owner_evidence_summary(
     default_total: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     if not isinstance(raw_summary, Mapping):
-        return None
-    verified_raw = (
-        raw_summary.get("verified_count")
-        if raw_summary.get("verified_count") is not None
-        else raw_summary.get("verified_evidence")
-    )
-    if not isinstance(verified_raw, int) or isinstance(verified_raw, bool) or verified_raw < 0:
         return None
     buckets: Dict[str, Dict[str, int]] = {}
     for key in ("by_source_type", "by_link_type", "by_credibility_tier"):
@@ -126,8 +181,6 @@ def _normalize_owner_evidence_summary(
     )
     return {
         "total": total_val,
-        "verified_count": int(verified_raw),
-        "verified_evidence": int(verified_raw),
         "by_source_type": buckets["by_source_type"],
         "by_link_type": buckets["by_link_type"],
         "by_credibility_tier": buckets["by_credibility_tier"],
@@ -142,6 +195,63 @@ class ArtifactOwnerReadResult:
     status: str  # "ok" | "failed" | "unconfigured"
     source: str  # "typed_store" | "service_client" | "unavailable" | "missing"
     error: Optional[str] = None
+
+
+@dataclass
+class ArtifactOwnerPageResult(ArtifactOwnerReadResult):
+    """One bounded ordered owner page: exact owner ``total`` and an opaque keyset ``next_page_token``."""
+
+    total: Optional[int] = None
+    next_page_token: Optional[str] = None
+
+
+_ARTIFACT_OWNER_TOKEN_PREFIX = "k1:"
+
+
+def artifact_catalog_key(row: Mapping[str, Any]) -> Tuple[str, str]:
+    """Owner order key of a normalized catalog row: ``(created_at, id)`` as strings, NULL as ''."""
+    return (str(row.get("updatedAt") or ""), str(row.get("id") or ""))
+
+
+def encode_artifact_owner_token(key: Tuple[str, str]) -> str:
+    import base64
+
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_OWNER_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_artifact_owner_token(token: Optional[str]) -> Optional[Tuple[str, str]]:
+    import base64
+
+    text = str(token).strip() if token is not None else ""
+    if not text.startswith(_ARTIFACT_OWNER_TOKEN_PREFIX):
+        return None
+    body = text[len(_ARTIFACT_OWNER_TOKEN_PREFIX):]
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+    except (ValueError, UnicodeError):
+        return None
+    if isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded):
+        return (decoded[0], decoded[1])
+    return None
+
+
+def page_artifact_catalog_items(
+    items: Sequence[Dict[str, Any]], page_size: int, page_token: Optional[str],
+) -> ArtifactOwnerPageResult:
+    """Page already-normalized rows held in memory with the owners' ordering and token (typed-store twin)."""
+    ordered = sorted(items, key=artifact_catalog_key, reverse=True)
+    anchor = decode_artifact_owner_token(page_token)
+    start = 0 if anchor is None else next(
+        (i for i, r in enumerate(ordered) if artifact_catalog_key(r) < anchor), len(ordered)
+    )
+    page = ordered[start:start + page_size]
+    more = start + len(page) < len(ordered) and bool(page)
+    return ArtifactOwnerPageResult(
+        page, "ok", "typed_store",
+        total=len(ordered),
+        next_page_token=encode_artifact_owner_token(artifact_catalog_key(page[-1])) if more else None,
+    )
 
 
 def normalize_registry_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
@@ -237,37 +347,77 @@ def normalize_research_catalog_row(row: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _evidence_resolved_link(content_ref: Any, label: Any) -> Dict[str, Any]:
+    """External only for a recorded public http(s) URL; every other scheme stays unavailable."""
+    from urllib.parse import urlsplit
+
+    ref = str(content_ref or "").strip()
+    try:
+        parts = urlsplit(ref)
+    except ValueError:
+        parts = None
+    if parts is not None and parts.scheme.lower() in ("http", "https") and parts.netloc and not parts.username and not parts.password:
+        return {"availability": "external", "route_href": ref, "display_label": label or ref, "open_in_new_tab": True}
+    return {"availability": "unavailable", "route_href": None, "display_label": "Source unavailable", "open_in_new_tab": False}
+
+
 def normalize_source_ingest_evidence_item(item: Mapping[str, Any]) -> Dict[str, Any]:
     """The one mapping from a source-ingest evidence item to a BFF evidence ref.
 
     Never fills a field with the current time: ``captured_at`` is
     ``available_time`` then ``event_time`` and stays ``None`` when neither
-    exists.
+    exists. ``credibility.verified`` is ``None`` (unknown) unless a verification
+    record with a method and a time exists; the connector confidence is shown
+    as a number and never decides verification.
     """
+    from services.knowledge.evidence.models import evidence_verification_record
+
     metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
     ref_id = item.get("evidence_item_id") or item.get("ref_id")
     label = item.get("citation_label") or ref_id
-    try:
-        confidence = float(item.get("confidence") if item.get("confidence") is not None else 0.0)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    verified = confidence >= 0.8
+    raw_conf = item.get("confidence")
+    confidence: Optional[float]
+    if isinstance(raw_conf, bool) or raw_conf is None:
+        confidence = None
+    else:
+        try:
+            confidence = float(raw_conf)
+        except (TypeError, ValueError):
+            confidence = None
+    record = evidence_verification_record(metadata)
+    credibility: Dict[str, Any] = {
+        "tier": str(metadata.get("credibility_tier") or "").strip() or ("verified" if record else "unverified"),
+        "verified": True if record else None,
+        "confidence": confidence,
+    }
+    if record:
+        credibility["verification_method"] = str(record.get("method")).strip()
+        credibility["last_verified_at"] = str(record.get("verified_at") or record.get("time")).strip()
     body = item.get("body") or None
+    source_class = str(metadata.get("source_class") or "").strip() or None
+    linked_decisions = [
+        {"entity_type": d.get("entity_type") or d.get("type"), "entity_ref": d.get("entity_ref") or d.get("ref") or d.get("id")}
+        for d in (metadata.get("linked_decisions") if isinstance(metadata.get("linked_decisions"), list) else [])
+        if isinstance(d, Mapping)
+    ]
     return {
         "ref_id": ref_id,
         "evidence_origin": "source_ingest",
         "evidence_type": item.get("item_type") or None,
         "display_label": label,
         "summary": body,
+        "source_class": source_class,
         "source_document": {
             "title": label,
-            "source_type": metadata.get("source_class") or item.get("item_type") or "internal",
+            "source_type": source_class or item.get("item_type") or "internal",
             "source_ref": item.get("content_ref"),
             "captured_at": item.get("available_time") or item.get("event_time") or None,
             "excerpt": body,
         },
         "link_type": "supporting",
-        "credibility": {"tier": "verified" if verified else "unverified", "verified": verified},
+        "credibility": credibility,
+        "resolved_link": _evidence_resolved_link(item.get("content_ref"), label),
+        "linked_decisions": linked_decisions,
         "metadata": dict(metadata),
     }
 
@@ -296,6 +446,15 @@ def _naive_utc(dt: Optional[datetime]) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def evidence_ref_sort_key(ref: Mapping[str, Any]) -> Tuple[datetime, str]:
+    """Newest-first ordering key shared by the full evidence read and callers
+    that reassemble owner pages, so both produce identical row order."""
+    return (
+        _naive_utc(_parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))),
+        str(ref.get("ref_id") or ""),
+    )
 
 
 def _is_valid_health_usage_envelope(payload: Any) -> bool:
@@ -404,13 +563,20 @@ class ResearchKnowledgeSourcePort:
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
     def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
         """``{strategy_id: {"title", "name"}}`` of bound strategies' current versions, without spec bodies."""
+        raise NotImplementedError
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        """``{strategy_id: [persona_id, ...]}`` of bound strategies' current versions, without spec bodies."""
         raise NotImplementedError
 
     def count_strategy_persona_bindings(self) -> Dict[str, int]:
@@ -577,6 +743,16 @@ class ResearchKnowledgeSourcePort:
     def read_research_artifact_catalog_rows(self) -> ArtifactOwnerReadResult:
         raise NotImplementedError
 
+    def read_registry_strategy_artifacts_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> "ArtifactOwnerPageResult":
+        raise NotImplementedError
+
+    def read_research_artifact_catalog_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> "ArtifactOwnerPageResult":
+        raise NotImplementedError
+
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -689,6 +865,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         http_post_fn: Optional[Callable[[str, str, Dict[str, Any]], Tuple[bool, Any]]] = None,
     ) -> None:
         self._evidence_repo = evidence_repository
+        self._strategy_summary_memo = _StrategySummaryPageMemo()
         self._institutional_memory_store = institutional_memory_store
         self._search_gateway = search_gateway
         self._search_index_store = search_index_store
@@ -760,6 +937,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 return True, json.loads(raw.decode("utf-8")) if (raw := resp.read()) else None
         except Exception:
             return False, None
+
+    def _owner_item_get(self, path: str) -> Tuple[str, Any]:
+        """One owner item read -> ``("ok"|"absent"|"unavailable", payload)``.
+
+        ``absent`` only when the owner itself answered 404. Timeout, 401, 5xx and
+        transport failure are ``unavailable``. An injected getter has no status
+        line: ``(False, {"status_code": 404})`` is its way to say absent.
+        """
+        base = self._source_ingest_service_url
+        if self._has_custom_http_get:
+            avail, payload = self._http_get(base, path)
+            if avail:
+                return "ok", payload
+            if isinstance(payload, Mapping) and payload.get("status_code") == 404:
+                return "absent", None
+            return "unavailable", None
+        import urllib.error
+        import urllib.request
+        from ..core.owner_reads import authorization, remaining_management_read_budget, selected_tenant
+
+        timeout = evidence_owner_read_timeout_seconds()
+        budget = remaining_management_read_budget(timeout)
+        if budget is not None:
+            if budget <= 0.0:
+                return "unavailable", None
+            timeout = max(0.05, float(budget))
+        h = {k: v for k, v in (("Authorization", authorization.get()), ("X-Tenant-Id", selected_tenant.get())) if v}
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(f"{base.rstrip('/')}/{path.lstrip('/')}", headers=h), timeout=timeout
+            ) as resp:
+                raw = resp.read()
+                return "ok", (json.loads(raw.decode("utf-8")) if raw else None)
+        except urllib.error.HTTPError as exc:
+            return ("absent" if exc.code == 404 else "unavailable"), None
+        except Exception:
+            return "unavailable", None
 
     @staticmethod
     def _default_http_post(base_url: str, path: str, body: Dict[str, Any]) -> Tuple[bool, Any]:
@@ -973,10 +1187,13 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     @staticmethod
     def _kw03_normalize_credibility(raw: Any, *, include_detail: bool) -> Dict[str, Any]:
         credibility = raw if isinstance(raw, dict) else {}
+        verified = credibility.get("verified")
         payload: Dict[str, Any] = {
             "tier": credibility.get("tier") or "unverified",
-            "verified": bool(credibility.get("verified")),
+            "verified": None if verified is None else bool(verified),
         }
+        if "confidence" in credibility:
+            payload["confidence"] = credibility.get("confidence")
         if include_detail:
             payload["last_verified_at"] = credibility.get("last_verified_at")
             payload["verification_method"] = credibility.get("verification_method")
@@ -1169,6 +1386,9 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "evidence_type": evidence_ref.get("evidence_type") or evidence_ref.get("type") or None,
             "display_label": evidence_ref.get("display_label") or source_document.get("title") or linked_display_label or ref_id,
             "route_href": route_href,
+            "source_class": evidence_ref.get("source_class")
+            or (evidence_ref.get("metadata") or {}).get("source_class")
+            or source_document.get("source_class"),
             "source_document": {
                 "title": source_document.get("title") or evidence_ref.get("display_label") or ref_id,
                 "source_type": source_document.get("source_type"),
@@ -1259,6 +1479,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "evidence_type": projected.get("evidence_type"),
             "display_label": projected.get("display_label"),
             "route_href": projected.get("route_href"),
+            "source_class": projected.get("source_class"),
             "source_document": {
                 "title": projected["source_document"].get("title"),
                 "source_type": projected["source_document"].get("source_type"),
@@ -1291,7 +1512,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         return detail
 
     def _read_owner_evidence_page(
-        self, *, start: int = 0, page_size: int = EVIDENCE_OWNER_PAGE_SIZE
+        self,
+        *,
+        start: int = 0,
+        page_size: int = EVIDENCE_OWNER_PAGE_SIZE,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[Dict[str, Any]]]:
         """Read one bounded page and its tenant summary from the owner service."""
         try:
@@ -1304,16 +1532,35 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             raise
         except Exception:
             pass
+        path = f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}"
+        if captured_from is not None:
+            path += f"&captured_from={quote(str(captured_from), safe='')}"
+        if captured_before is not None:
+            path += f"&captured_before={quote(str(captured_before), safe='')}"
+        expected_filters: Dict[str, Any] = {}
+        if linked_entity_types is not None:
+            types = sorted(set(linked_entity_types))
+            path += f"&linked_entity_types={quote(','.join(types), safe='')}"
+            expected_filters["linked_entity_types"] = types
+        if not include_summary:
+            path += "&include_summary=false"
+            expected_filters["include_summary"] = False
         try:
-            avail, payload = self._http_get(
-                self._source_ingest_service_url,
-                f"/api/source-ingest/evidence/items?page_size={page_size}&page_token={start}",
-            )
+            avail, payload = self._http_get(self._source_ingest_service_url, path)
         except Exception as exc:  # noqa: BLE001 - any transport failure means unavailable
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed") from exc
         items = payload.get("items") if avail and isinstance(payload, dict) else None
         if not isinstance(items, list):
             raise _EvidenceOwnerReadError("source-ingest evidence owner read failed")
+        filters = payload.get("filters") or {}
+        if expected_filters and (
+            not isinstance(filters, dict)
+            or any(filters.get(k) != v for k, v in expected_filters.items())
+        ):
+            # A mixed-version owner may implement only part of the hints. Retry
+            # the complete legacy population, never trust a partially filtered
+            # total or retain per-instance capability state across requests.
+            raise _EvidenceOwnerHintsUnsupported("source-ingest owner did not echo read hints")
         total = payload.get("total")
         total = int(total) if isinstance(total, int) and not isinstance(total, bool) else start + len(items)
         summary = _normalize_owner_evidence_summary(payload.get("summary"), default_total=total)
@@ -1339,10 +1586,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_scope_metadata: bool = False,
         page_token: Optional[str] = None,
         page_size: Optional[int] = None,
+        captured_from: Optional[str] = None,
+        captured_before: Optional[str] = None,
+        linked_entity_types: Optional[tuple[str, ...]] = None,
+        include_summary: bool = True,
     ) -> EvidenceReadResult:
         """One evidence read. With ``page_size`` and no scope filter against the
         owner service, exactly one owner page is fetched; otherwise every owner
-        page is streamed and filtered so totals stay correct."""
+        page is streamed and filtered so totals stay correct.
+
+        ``captured_from`` / ``captured_before`` ask the owner to page only items
+        captured in ``[captured_from, captured_before)`` (a population hint for
+        the paged branches). An older owner ignores them and returns the
+        unfiltered population, so callers must still apply the window to rows."""
         from services.knowledge.evidence.models import summarize_evidence_items_collection
 
         unscoped = not linked_entities and not source_types
@@ -1367,19 +1623,31 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             except ValueError:
                 start = 0
             try:
+                repo_kwargs: Dict[str, Any] = {"limit": page_size, "offset": start}
                 if effective_tenant is not None:
+                    repo_kwargs["tenant_id"] = effective_tenant
+                window_kwargs = {
+                    k: v
+                    for k, v in (("captured_from", captured_from), ("captured_before", captured_before))
+                    if v is not None
+                }
+                if linked_entity_types is not None:
+                    window_kwargs["linked_entity_types"] = linked_entity_types
+                try:
                     repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        tenant_id=effective_tenant, limit=page_size, offset=start
+                        **repo_kwargs, **window_kwargs
                     )
-                else:
-                    repo_items, total = self._evidence_repo.list_evidence_items_page(
-                        limit=page_size, offset=start
-                    )
+                except TypeError:
+                    if not window_kwargs:
+                        raise
+                    # Repository without window support: unfiltered page, the
+                    # caller applies the window to rows.
+                    repo_items, total = self._evidence_repo.list_evidence_items_page(**repo_kwargs)
             except Exception:
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             repo_summary: Optional[Dict[str, Any]] = None
             summarize_fn = getattr(self._evidence_repo, "summarize_evidence_items", None)
-            if callable(summarize_fn):
+            if include_summary and callable(summarize_fn):
                 try:
                     raw_summary = (
                         summarize_fn(tenant_id=effective_tenant)
@@ -1427,8 +1695,23 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                         tenant_tok = selected_tenant.set(effective_tenant)
                 except Exception:
                     tenant_tok = None
+            owner_hints_applied = True
             try:
-                items, total, owner_summary = self._read_owner_evidence_page(start=start, page_size=page_size)
+                try:
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                        captured_from=captured_from,
+                        captured_before=captured_before,
+                        linked_entity_types=linked_entity_types,
+                        include_summary=include_summary,
+                    )
+                except _EvidenceOwnerHintsUnsupported:
+                    owner_hints_applied = False
+                    items, total, owner_summary = self._read_owner_evidence_page(
+                        start=start,
+                        page_size=page_size,
+                    )
             except (_EvidenceOwnerReadError, StopIteration):
                 return EvidenceReadResult([], None, "unavailable", "unavailable", summary_unavailable=True)
             finally:
@@ -1455,6 +1738,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 str(nxt) if nxt < total else None,
                 summary=owner_summary,
                 summary_unavailable=owner_summary is None,
+                owner_hints_applied=owner_hints_applied,
             )
 
         tenant_tok = None
@@ -1484,15 +1768,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if self._record_matches_tenant(ref, effective_tenant, include_tenant_agnostic=include_tenant_agnostic)
             and self._evidence_matches_scope(ref, linked_entities=linked_entities, source_types=source_types)
         ]
-        filtered.sort(
-            key=lambda ref: (
-                _naive_utc(
-                    _parse_rfc3339(((ref.get("source_document") or {}).get("captured_at")) or ref.get("created_at"))
-                ),
-                str(ref.get("ref_id") or ""),
-            ),
-            reverse=True,
-        )
+        filtered.sort(key=evidence_ref_sort_key, reverse=True)
         total = len(filtered)
         nxt_token: Optional[str] = None
         if page_size:
@@ -1601,25 +1877,17 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if self._source_ingest_service_url:
             from urllib.parse import quote
 
-            try:
-                avail, payload = self._http_get(
-                    self._source_ingest_service_url, f"/api/source-ingest/evidence/items/{quote(clean, safe='')}"
-                )
-            except Exception:  # noqa: BLE001
+            state, payload = self._owner_item_get(f"/api/source-ingest/evidence/items/{quote(clean, safe='')}")
+            if state == "unavailable":
                 return None, "unavailable", "unavailable"
-            record = payload.get("item") if avail and isinstance(payload, dict) else None
+            record = payload.get("item") if state == "ok" and isinstance(payload, dict) else None
             if isinstance(record, dict):
                 raw = normalize_source_ingest_evidence_item(record)
                 if not self._record_matches_tenant(raw, effective_tenant, include_tenant_agnostic=True):
                     return None, "ok", "service_client"
                 return raw, "ok", "service_client"
-            if avail:
-                return None, "ok", "service_client"
-            # The helper reports 404 and transport failure alike; a one-row
-            # list probe tells "absent" apart from "owner down".
-            try:
-                next(self._iter_owner_evidence_pages(page_size=1))
-            except (_EvidenceOwnerReadError, StopIteration):
+            if state == "ok":
+                # 200 without an item is a malformed owner answer, not "absent".
                 return None, "unavailable", "unavailable"
             return None, "ok", "service_client"
         return None, "unavailable", "missing"
@@ -1632,7 +1900,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         raw, status, source = self._read_raw_evidence_ref_checked(ref_id)
         if status != "ok":
             return EvidenceReadResult([], None, "unavailable", source)
-        rows = [self._project_evidence_ref_list_item(raw)] if raw else []
+        rows = [self._project_evidence_ref_detail(raw)] if raw else []
         return EvidenceReadResult(rows, len(rows), "ok", source)
 
     def read_evidence_ref_detail(
@@ -2463,8 +2731,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2489,6 +2760,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
+                **({"query": query} if query is not None else {}),
+                **(
+                    {"hide_stubs": True, "hide_persona_ids": hide_persona_ids}
+                    if hide_stubs
+                    else {}
+                ),
             )
 
         offset = 0
@@ -2515,10 +2792,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             effective_tenant = None
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        norm_query = (
+            str(query).strip().lower()
+            if query is not None and str(query).strip() != ""
+            else None
+        )
         state_counts: Optional[Dict[str, int]] = {
             k: 0 for k in self._STRATEGY_DEFAULT_STATE_COUNT_KEYS
         }
-        items: List[Dict[str, Any]] = []
+        matched_candidates: List[Tuple[Any, ...]] = []
         for strategy_spec in self._strategy_specs.values():
             if not isinstance(strategy_spec, dict):
                 continue
@@ -2605,6 +2887,68 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 if isinstance(raw_current.get("provenance"), dict)
                 else {}
             )
+            if norm_query is not None:
+                candidate_title = str(
+                    raw_current.get("title")
+                    or raw_current.get("name")
+                    or strategy_spec.get("title")
+                    or strategy_spec.get("name")
+                    or raw_meta.get("title")
+                    or raw_meta.get("name")
+                    or spec_meta.get("title")
+                    or spec_meta.get("name")
+                    or strategy_id
+                )
+                if (
+                    norm_query not in strategy_id.lower()
+                    and norm_query not in candidate_title.lower()
+                ):
+                    continue
+            last_mod = str(
+                raw_current.get("updated_at")
+                or raw_current.get("last_modified_at")
+                or raw_current.get("created_at")
+                or provenance.get("created_at")
+                or strategy_spec.get("updated_at")
+                or strategy_spec.get("last_modified_at")
+                or strategy_spec.get("created_at")
+                or ""
+            ) or None
+            matched_candidates.append(
+                (
+                    _naive_utc(_parse_rfc3339(last_mod)),
+                    str(strategy_id or ""),
+                    strategy_spec,
+                    raw_current,
+                    raw_meta,
+                    spec_meta,
+                    selected_index,
+                    candidate_count,
+                    version_count,
+                    raw_lifecycle,
+                    persona_list,
+                    provenance,
+                )
+            )
+
+        matched_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        total = len(matched_candidates)
+        page_candidates = matched_candidates[offset : offset + page_size]
+        sliced: List[Dict[str, Any]] = []
+        for (
+            _sort_dt,
+            strategy_id,
+            strategy_spec,
+            raw_current,
+            raw_meta,
+            spec_meta,
+            selected_index,
+            candidate_count,
+            version_count,
+            raw_lifecycle,
+            persona_list,
+            provenance,
+        ) in page_candidates:
             current_source_kind = str(
                 raw_current.get("source_kind")
                 or provenance.get("source_kind")
@@ -2619,12 +2963,25 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 candidate_count=candidate_count,
                 include_detail_bundles=False,
             )
+            gov = (
+                current_version.get("governance")
+                if isinstance(current_version.get("governance"), dict)
+                else {}
+            )
+            owner = (
+                raw_current.get("owner")
+                or strategy_spec.get("owner")
+                or raw_meta.get("owner")
+                or spec_meta.get("owner")
+                or gov.get("owner")
+            )
             item_dict: Dict[str, Any] = {
                 "object_ref": dict(current_version.get("object_ref") or {}),
                 "strategy_id": strategy_id,
                 "current_spec_version_id": current_version.get("spec_version_id"),
                 "current_spec_version": current_version.get("spec_version"),
                 "title": current_version.get("title"),
+                "name": current_version.get("title"),
                 "lifecycle_state": raw_lifecycle,
                 "source_kind": current_source_kind,
                 "hypothesis_excerpt": self._kw05_hypothesis_excerpt(
@@ -2645,21 +3002,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     "strategy_spec_registry_id"
                 ),
             }
+            if owner:
+                item_dict["owner"] = owner
             if current_version.get("capital_pool_id"):
                 item_dict["capital_pool_id"] = current_version.get("capital_pool_id")
             if current_version.get("metadata"):
                 item_dict["metadata"] = current_version.get("metadata")
-            items.append(item_dict)
+            sliced.append(item_dict)
 
-        items.sort(
-            key=lambda item: (
-                _naive_utc(_parse_rfc3339(item.get("last_modified_at"))),
-                str(item.get("strategy_id") or ""),
-            ),
-            reverse=True,
-        )
-        total = len(items)
-        sliced = items[offset : offset + page_size]
         next_token = str(offset + page_size) if (offset + page_size) < total else None
         return {
             "items": sliced,
@@ -2772,6 +3122,89 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 labels[strategy_id] = {"title": str(title), "name": str(title)}
         return labels
 
+    def _persona_bindings_from_persona_binding_rows(self, raw: Any) -> Dict[str, List[str]]:
+        """Current-version persona_ids per family from flat registry ``persona_binding`` rows."""
+        def invalid() -> Any:
+            return self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Invalid strategy registry binding payload", "strategy_store_unavailable")
+
+        if not isinstance(raw, list):
+            raise invalid()
+        best: Dict[str, Tuple[Any, List[str]]] = {}
+        for item in raw:
+            entry = item.get("entry") if isinstance(item, dict) and isinstance(item.get("entry"), dict) else item
+            if not isinstance(entry, dict) or entry.get("artifact_type") not in (None, "strategy_spec"):
+                raise invalid()
+            meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+            inner = meta.get("strategy_spec") if isinstance(meta.get("strategy_spec"), dict) else {}
+            inner_meta = inner.get("metadata") if isinstance(inner.get("metadata"), dict) else {}
+            sid = str(entry.get("strategy_id") or inner.get("strategy_id") or "").strip()
+            reg_id = str(entry.get("registry_id") or meta.get("spec_version_id") or "").strip()
+            semver = str(entry.get("version") or inner.get("spec_version") or meta.get("spec_version") or meta.get("version") or "").strip()
+            if not sid or not reg_id or not semver:
+                raise invalid()
+            prov = inner.get("provenance") if isinstance(inner.get("provenance"), dict) else (meta.get("provenance") if isinstance(meta.get("provenance"), dict) else {})
+            key = self._kw05_version_sort_key(
+                spec_version=semver,
+                created_at=entry.get("created_at") or prov.get("created_at"),
+                spec_version_id=reg_id,
+            )
+            raw_ids = (
+                inner.get("persona_ids")
+                or meta.get("personaIds")
+                or meta.get("persona_ids")
+                or ([meta["persona_id"]] if meta.get("persona_id") else (
+                    [inner_meta["persona_id"]] if inner_meta.get("persona_id") else []
+                ))
+                or entry.get("persona_ids")
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            if sid not in best or key > best[sid][0]:
+                best[sid] = (key, list(dict.fromkeys(persona_ids)))
+        return {sid: pids for sid, (_key, pids) in best.items()}
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        if not (self._has_injected_strategy_specs and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))):
+            return self._persona_bindings_from_persona_binding_rows(
+                self._fetch_canonical_persona_binding_view("persona_binding")
+            )
+        bindings: Dict[str, List[str]] = {}
+        for strategy_spec in list(self._strategy_specs.values()):
+            if not isinstance(strategy_spec, dict):
+                continue
+            selected = self._kw05_select_current_version_candidate(strategy_spec)
+            if selected is None:
+                continue
+            strategy_id, _index, raw_current, _candidates, _versions = selected
+            raw_meta = raw_current.get("metadata") if isinstance(raw_current.get("metadata"), dict) else {}
+            spec_meta = strategy_spec.get("metadata") if isinstance(strategy_spec.get("metadata"), dict) else {}
+            raw_ids = (
+                raw_current.get("persona_ids")
+                or strategy_spec.get("persona_ids")
+                or raw_meta.get("personaIds")
+                or raw_meta.get("persona_ids")
+                or ([raw_meta["persona_id"]] if raw_meta.get("persona_id") else [])
+                or spec_meta.get("personaIds")
+                or spec_meta.get("persona_ids")
+                or ([spec_meta["persona_id"]] if spec_meta.get("persona_id") else [])
+                or []
+            )
+            if isinstance(raw_ids, (str, bytes)):
+                raw_ids = [raw_ids]
+            persona_ids = [
+                clean
+                for v in (raw_ids if isinstance(raw_ids, list) else [])
+                if (clean := str(v).strip())
+            ]
+            bindings[str(strategy_id)] = list(dict.fromkeys(persona_ids))
+        return bindings
+
     def get_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
         d = self.get_strategy_spec_detail(strategy_id, version_selector="current")
         if not d:
@@ -2808,14 +3241,19 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         """Registry flat owner view (counts / labels): caller authorization and selected tenant forwarded as-is."""
         import urllib.error
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
-        from services.control_plane.bff.core.owner_reads import authorization, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
 
         auth = authorization.get()
         if not auth:
             raise self._strategy_owner_error(503, "DEPENDENCY_UNAVAILABLE", "Canonical strategy registry readback requires caller authorization", "strategy_store_unavailable")
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
-            raw = http_request_json(registry_url(f"/api/registry/strategy-specs?view={view}"), auth_token=auth.removeprefix("Bearer ").strip(), tenant_id=caller_tenant)
+            target_url = registry_url(f"/api/registry/strategy-specs?view={view}")
+            token = auth.removeprefix("Bearer ").strip()
+            raw = cached_owner_call(
+                ("registry_persona_binding_view", id(self), view, target_url, caller_tenant, token),
+                lambda: http_request_json(target_url, auth_token=token, tenant_id=caller_tenant),
+            )
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise self._strategy_owner_error(403, "FORBIDDEN", "Strategy reference is outside the caller tenant audience", "strategy_audience_mismatch") from exc
@@ -2834,10 +3272,14 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        from services.control_plane.bff.core.owner_reads import cached_owner_call, selected_tenant
+        from services.control_plane.bff.core.owner_reads import authorization, cached_owner_call, selected_tenant, verified_caller_tenant
+        from services.control_plane.bff.command_adapters.base import ActionUnavailableError, registry_url
 
         norm_state = str(state).strip().lower() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -2863,7 +3305,44 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 ) from exc
 
         norm_persona = str(persona_id).strip() if persona_id and str(persona_id).strip() else None
+        norm_query = str(query).strip() if query is not None and str(query).strip() != "" else None
         norm_token = str(page_token).strip() if page_token is not None and str(page_token).strip() != "" else None
+        norm_hide_ids: Optional[tuple] = (
+            tuple(sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()}))
+            if hide_stubs
+            else None
+        )
+
+        def read_page() -> Dict[str, Any]:
+            def fetch() -> Dict[str, Any]:
+                return self._fetch_canonical_strategy_specs_page_uncached(
+                    state=norm_state, exclude_state=norm_exclude_state,
+                    persona_id=norm_persona, page_token=norm_token, page_size=int(page_size),
+                    **({"query": norm_query} if norm_query is not None else {}),
+                    **(
+                        {"hide_stubs": True, "hide_persona_ids": list(norm_hide_ids or ())}
+                        if hide_stubs
+                        else {}
+                    ),
+                )
+
+            auth = authorization.get()
+            if not auth:
+                return fetch()  # Preserve the canonical missing-auth error.
+            try:
+                tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
+            except ActionUnavailableError:
+                return fetch()  # Preserve the canonical forbidden envelope.
+            return self._strategy_summary_memo.read(
+                (
+                    tenant, hashlib.sha256(auth.encode()).digest(),
+                    registry_url("/api/registry/strategy-specs"),
+                    norm_state, norm_exclude_state, norm_persona, norm_query, norm_token, int(page_size),
+                    norm_hide_ids,
+                ),
+                fetch,
+            )
+
         return cached_owner_call(
             (
                 "rks_canonical_strategy_specs_page",
@@ -2872,16 +3351,12 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 norm_state,
                 norm_exclude_state,
                 norm_persona,
+                norm_query,
                 norm_token,
                 int(page_size),
+                norm_hide_ids,
             ),
-            lambda: self._fetch_canonical_strategy_specs_page_uncached(
-                state=norm_state,
-                exclude_state=norm_exclude_state,
-                persona_id=norm_persona,
-                page_token=norm_token,
-                page_size=int(page_size),
-            ),
+            read_page,
         )
 
     def _fetch_canonical_strategy_specs_page_uncached(
@@ -2890,8 +3365,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         import urllib.error, urllib.parse
         from services.control_plane.bff.command_adapters.base import ActionUnavailableError, http_request_json, registry_url
@@ -2915,8 +3393,15 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             query_params.append(("exclude_state", exclude_state))
         if persona_id:
             query_params.append(("persona_id", persona_id))
+        if query:
+            query_params.append(("query", query))
         if page_token:
             query_params.append(("page_token", page_token))
+        if hide_stubs:
+            query_params.append(("hide_stubs", "true"))
+            hide_ids = sorted({str(p).strip() for p in (hide_persona_ids or ()) if str(p).strip()})
+            if hide_ids:
+                query_params.append(("hide_persona_ids", ",".join(hide_ids)))
         path = "/api/registry/strategy-specs?" + urllib.parse.urlencode(query_params)
         try:
             caller_tenant = verified_caller_tenant(tenant_id=selected_tenant.get())
@@ -3029,12 +3514,43 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             validated_state_counts = {
                 str(k).strip(): int(v) for k, v in raw_state_counts.items()
             }
-        return {
+        page_out: Dict[str, Any] = {
             "items": validated_items,
             "total": total,
             "next_page_token": next_page_token,
             "state_counts": validated_state_counts,
         }
+        if hide_stubs:
+            # Owner-side hide answer. A missing or malformed answer is carried
+            # as ``None`` (never as zeros): the caller treats the owner as one
+            # that did not hide and falls back to its own classification.
+            raw_visible = raw.get("visible_state_counts")
+            raw_hidden = raw.get("hidden")
+            by_reason = raw_hidden.get("by_reason") if isinstance(raw_hidden, dict) else None
+
+            def _counts_ok(value: Any) -> bool:
+                return (
+                    isinstance(value, dict)
+                    and bool(value)
+                    and all(
+                        isinstance(k, str)
+                        and k.strip()
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v >= 0
+                        for k, v in value.items()
+                    )
+                )
+
+            if _counts_ok(raw_visible) and _counts_ok(by_reason):
+                page_out["visible_state_counts"] = {
+                    str(k).strip(): int(v) for k, v in raw_visible.items()
+                }
+                page_out["hidden"] = {
+                    "by_reason": {str(k).strip(): int(v) for k, v in by_reason.items()},
+                    "total": sum(int(v) for v in by_reason.values()),
+                }
+        return page_out
 
     def _fetch_canonical_strategy_specs(self, strategy_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sid = str(strategy_id).strip() if strategy_id is not None else ""
@@ -3108,6 +3624,16 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     **meta["traits"],
                     **{k: v for k, v in inner_meta["traits"].items() if v is not None},
                 }
+            # Replication-gate admission-time mechanism record: stored on the entry's
+            # replication_proof (and entry top level), projected so candidate readers see it.
+            proof = entry.get("replication_proof") if isinstance(entry.get("replication_proof"), dict) else {}
+            for mkey in ("mechanism", "mechanism_status", "mechanism_support"):
+                if merged_meta.get(mkey) is not None:
+                    continue
+                for holder in (entry, proof):
+                    if holder.get(mkey) is not None:
+                        merged_meta[mkey] = holder[mkey]
+                        break
             ver_dict: Dict[str, Any] = {
                 **inner, "strategy_id": entry_sid, "tenant_id": entry_tenant or caller_tenant,
                 "strategy_spec_registry_id": reg_id, "spec_version_id": reg_id,
@@ -3404,6 +3930,33 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "allowedActions": cls._research_ticket_allowed_actions(ticket.get("status")),
         }
 
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        source = self._get_research_write_owner()
+        if source is None or not hasattr(source, "list_research_ticket_page"):
+            raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+        return source.list_research_ticket_page(
+            statuses=statuses, owner=owner,
+            meeting_type=meeting_type, subject_ref=subject_ref,
+            action_state=action_state, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after,
+            human_actionable=human_actionable, page_token=page_token,
+            page_size=page_size
+        )
+
     def list_research_tickets(
         self,
         *,
@@ -3460,6 +4013,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             created_at=created_at,
         )
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
@@ -3479,6 +4034,8 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             )
         result = write_owner.patch_research_ticket(ticket_id, patch=patch, actor_id=actor_id, updated_at=updated_at)
         if isinstance(result, dict) and "ticket_id" in result:
+            if result.get("meeting_action"):
+                return result  # Owner readback; no BFF action cache or field loss.
             self._tickets[str(result["ticket_id"])] = dict(result)
             return self._project_research_ticket_detail(result)
         return result
@@ -4024,6 +4581,82 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             if isinstance(r, Mapping)
         ]
         return ArtifactOwnerReadResult(items, "ok", "service_client")
+
+    def read_registry_strategy_artifacts_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> ArtifactOwnerPageResult:
+        """One bounded Registry page; the owner orders, counts and tokenizes (no full-population read)."""
+        base_url = self._resolve_registry_base_url()
+        if self._has_injected_registry_strategy_artifacts and not base_url:
+            full = self.read_registry_strategy_artifacts()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        if not base_url:
+            return ArtifactOwnerPageResult([], "unconfigured", "missing")
+        from urllib.parse import quote
+
+        path = f"/api/registry/strategy-artifacts?page_size={int(page_size)}"
+        if page_token:
+            path += f"&page_token={quote(str(page_token), safe='')}"
+        status_code, payload = self._registry_http_get(base_url, path)
+        if status_code != 200 or not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            return ArtifactOwnerPageResult(
+                [], "failed", "unavailable", f"Registry strategy-artifacts read failed (status={status_code})",
+            )
+        items: List[Dict[str, Any]] = []
+        for raw_item in payload["items"]:
+            if not isinstance(raw_item, Mapping):
+                continue
+            entry = raw_item.get("entry") if isinstance(raw_item.get("entry"), Mapping) else raw_item
+            if entry.get("artifact_type") not in (None, "execution_bundle"):
+                continue
+            items.append(normalize_registry_catalog_row(entry))
+        info = payload.get("page_info") if isinstance(payload.get("page_info"), Mapping) else {}
+        total = payload.get("total") if payload.get("total") is not None else info.get("total")
+        nxt = payload.get("next_page_token") if payload.get("next_page_token") is not None else info.get("next_page_token")
+        return ArtifactOwnerPageResult(
+            items, "ok", "service_client",
+            total=int(total) if isinstance(total, int) else None,
+            next_page_token=str(nxt) if nxt else None,
+        )
+
+    def read_research_artifact_catalog_page(
+        self, *, page_size: int, page_token: Optional[str] = None
+    ) -> ArtifactOwnerPageResult:
+        if self._artifacts:
+            full = self.read_research_artifact_catalog_rows()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        owner = self._get_research_write_owner()
+        if owner is None or not hasattr(owner, "list_research_artifacts"):
+            return ArtifactOwnerPageResult([], "unconfigured", "missing")
+        try:
+            if hasattr(owner, "list_research_artifacts_page"):
+                page = owner.list_research_artifacts_page(page_size=page_size, page_token=page_token)
+            else:
+                # An owner without the page call keeps the full read, paged here with the same order and token.
+                raw_rows = owner.list_research_artifacts()
+                if not isinstance(raw_rows, list):
+                    raise ValueError("invalid research artifact list")
+                page = None
+        except Exception as exc:
+            return ArtifactOwnerPageResult([], "failed", "unavailable", str(exc))
+        if page is None:
+            full = self.read_research_artifact_catalog_rows()
+            return page_artifact_catalog_items(full.items, page_size, page_token)
+        raw_items = [r for r in page.get("items", []) if isinstance(r, Mapping)]
+        items = [
+            normalize_research_catalog_row(
+                self._saved_output_artifact(r) if ("title" in r or "run" in r or "created_by" in r) else r
+            )
+            for r in raw_items
+        ]
+        info = page.get("page_info") if isinstance(page.get("page_info"), Mapping) else {}
+        total = page.get("total") if page.get("total") is not None else info.get("total")
+        nxt = page.get("next_page_token") if page.get("next_page_token") is not None else info.get("next_page_token")
+        return ArtifactOwnerPageResult(
+            items, "ok", "service_client",
+            total=int(total) if isinstance(total, int) else None,
+            next_page_token=str(nxt) if nxt else None,
+        )
 
     @staticmethod
     def _rw05_field_value(artifact: Dict[str, Any], field_key: str) -> Any:

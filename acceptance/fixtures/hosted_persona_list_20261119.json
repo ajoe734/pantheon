@@ -1,0 +1,40 @@
+{
+  "recorded_at": "2026-11-19",
+  "source": "shape of hosted GET /bff/personas?page_size=200 (first page all retired, live personas on a later page); ids abbreviated",
+  "pages": {
+    "page1": {
+      "data": [
+        {
+          "id": "persona-retired-0",
+          "lifecycle_state": "retired"
+        },
+        {
+          "id": "persona-retired-1",
+          "lifecycle_state": "retired"
+        },
+        {
+          "id": "persona-retired-2",
+          "lifecycle_state": "retired"
+        }
+      ],
+      "next_page_token": "tok-2"
+    },
+    "page2": {
+      "data": [
+        {
+          "id": "persona-2448c7053e33ea48da47",
+          "lifecycle_state": "paper_running"
+        },
+        {
+          "id": "persona-nopool",
+          "lifecycle_state": "paper_running"
+        },
+        {
+          "id": "persona-archived",
+          "state": "archived"
+        }
+      ],
+      "next_page_token": null
+    }
+  }
+}

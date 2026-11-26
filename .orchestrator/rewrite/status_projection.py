@@ -159,6 +159,19 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def actor_runs_auto_workers(actor: Any, max_parallel_by_agent: Mapping[str, int]) -> bool:
+    """True when the dispatcher can start an auto-worker for this actor.
+
+    Human/Ops and zero-capacity agents never get one, so an in-progress task
+    they own is not missing a worker. Without an agent capacity table every
+    actor is treated as dispatchable, which keeps the previous behavior.
+    """
+    if not max_parallel_by_agent:
+        return True
+    key = str(actor or "").strip().lower()
+    return int(max_parallel_by_agent.get(key, 0) or 0) > 0
+
+
 def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
     if not threshold_iso:
         return (0, 0)
@@ -869,9 +882,9 @@ def detect_truth_mismatches(
     orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     ai_status = _ai_status_module()
-    review_bridge_is_required = ai_status.github_review_bridge_required(
-        ai_status.load_config()
-    )
+    config = ai_status.load_config()
+    review_bridge_is_required = ai_status.github_review_bridge_required(config)
+    agent_worker_caps = build_dispatch_policy_summary(config)["max_parallel_by_agent"]
     task_map = {task["id"]: task for task in state.get("tasks", [])}
     del orchestrator_state
     live_workers = [
@@ -1055,6 +1068,8 @@ def detect_truth_mismatches(
         if str(task.get("id") or "").strip() in pending_approval_task_ids:
             continue
         if live_workers_by_task.get(task["id"]):
+            continue
+        if not actor_runs_auto_workers(expected_actor, agent_worker_caps):
             continue
         push(
             {

@@ -1,0 +1,123 @@
+{
+  "task_id": "CARD-ADMISSION-PRODUCTION-WIRING-20261115",
+  "status": "implemented_awaiting_review",
+  "blocker": {
+    "file": "services/governance/main.py",
+    "why": "ApprovalDecision.validate() requires authorization_scope whenever the paper gate subject is the actor or owner. Governance stamps the scope only in the persona-lifecycle branch of _approval_command (main.py, 'if is_persona_lifecycle_decision(current)'). A research-owned card decision takes the 'else' branch, which cannot stamp it, so the real gate gets HTTP 400 'authorization_scope is required whenever the dedicated dev paper subject is the actor or owner of a decision'. paper_approval_scope.py cannot stamp it: require_paper_owned_decision receives decision.to_dict(), a copy.",
+    "required_patch": [
+      "import: add require_card_admission_decision to the paper_approval_scope import list",
+      "in the 'else:' branch after require_paper_owned_decision(current, grant=grant, now=now):",
+      "    if current.get('owner_user_id') != grant.subject:",
+      "        decision.authorization_scope = grant.authorization_scope",
+      "        lifecycle_evidence = require_card_admission_decision(current, grant=grant, now=now)"
+    ],
+    "verified_with_patch": "all 5 integration tests in services/research/tests/test_card_admission_production_integration.py passed with this 6-line patch applied; reverted because the file is not in the artifact list",
+    "without_patch": "2 of the 5 integration tests fail (matched spec admitted+gated; pass registers pool candidate); the 3 others pass (unmatched stays draft; grant without widening denies with a readable reason; missing credential disables the path)",
+    "resolution": "2026-11-15 reopen: services/governance/main.py patched (stamp authorization_scope + card admission evidence only when the widened grant names the decision owner as card proposer); tests in services/governance/test_paper_approval_scope.py cover the stamp, a grant without widening, and another target type."
+  },
+  "criterion_1_reproduction": {
+    "dev_head": "32fc7da61",
+    "file_lines": "services/research/alpha_replication/replication_controller.py:462 main() builds ReplicationControllerConfig() with defaults; :238 card_enabled = all((card_registrar, card_matcher, demands_provider))",
+    "real_entry_point_run": "main() of the dev-head file run with ALPHA_REPLICATION_CONTROLLER_MAX_TICKS=1 printed: card_registrar=None card_matcher=None demands_provider=None dataset_resolver=None card_enabled=False",
+    "test": "services/research/alpha_replication/test_replication_controller.py::test_bare_config_has_no_card_collaborators_and_production_config_builds_them_per_tick"
+  },
+  "criterion_2_production_entry_point": {
+    "module": "services/research/alpha_replication/card_production_wiring.py",
+    "entry": "replication_controller.build_production_config() used by main(); collaborators rebuilt each tick (refresh_card_wiring)",
+    "registrar": "TemplateCandidateRegistrar (template path) with owner_call over the worker's mounted credentials",
+    "matcher": "services.control_plane.persona.persona_strategy_discovery.discover_for_demand (existing scorer) on the persona read from the persona owner",
+    "demands_provider": "GET RESEARCH_API_URL/api/research/persona-demands?status=open (research owner)",
+    "dataset_resolver": "training-session evaluation_authority.load_evaluation_authority(RESEARCH_RETRAIN_CANONICAL_DATASET_PATH, RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH).vectorbt_dataset",
+    "disabled_reason": "a missing/unreadable address, id, credential or dataset file sets reconcile.card_path = {enabled:false, reason:'card_path_disabled:unconfigured:<names>'} on the worker health file (controller_state.json); no fallback. A card owner outage is recorded as card_path.error and never stops the queue.",
+    "limitation": "A persona that references route_policy_id without carrying the policy inline cannot be matched: the matcher fails closed with route_policy_unavailable:<id>. Route policies are BFF dataset records the worker has no owner read for."
+  },
+  "criterion_3_governance": {
+    "real_grant_denies_today": "test_baseline_and_lifecycle_only_grants_deny_a_research_owned_card_decision (unit) and test_a_grant_without_the_card_widening_leaves_the_spec_unadmitted_with_a_readable_reason (real Governance app: HTTP 403, spec stays candidate, no admission)",
+    "widening": "grant content 'card_admission=paper_research;card_proposer=<subject>' (explicit, parsed with the lifecycle clause; plain 'enabled' and malformed content widen nothing). The issued grant names pantheon-dev-research-card-proposer.",
+    "limits": "paper environment only; owner must be the named proposer and not the gate; target_type registry_entry; risk low; persona_id, proposal_id (the open demand) and digest required; expiry bounded to 72h+1min (the research owner proposes 72h; baseline grant keeps 24h); candidate must be the gate-ready card StrategySpec or the pool bundle it produced (checksum, paper signal interface, paper/zero capital metadata bound to the same persona and demand, verified replication proof)",
+    "governance_does_not": "read the research demand itself: 'matched to an open persona demand' is enforced by the research owner (CardSpecAdmissionOwner) and recorded as proposal_id on the Governance decision",
+    "registry_side": "paper_candidate_usage_context routes a scoped approval owned by another principal to the card verification (spec or bundle)"
+  },
+  "criterion_4_compose": {
+    "service": "alpha-replication-worker",
+    "new_env": [
+      "PANTHEON_GOVERNANCE_URL",
+      "RESEARCH_API_URL",
+      "PERSONA_API_URL",
+      "RESEARCH_GOVERNANCE_PROPOSER_ID",
+      "RESEARCH_GOVERNANCE_GATE_ID",
+      "RESEARCH_GOVERNANCE_PROPOSER_TOKEN(_FILE)",
+      "RESEARCH_GOVERNANCE_GATE_TOKEN(_FILE)",
+      "RESEARCH_REGISTRY_SERVICE_TOKEN(_FILE)",
+      "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN(_FILE)",
+      "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN(_FILE)",
+      "RESEARCH_RETRAIN_CANONICAL_DATASET_PATH",
+      "RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"
+    ],
+    "volume_added": "bff-data:/data/bff:ro (canonical dataset pointer, same as research-orchestrator-svc)",
+    "contract_test": "scripts/test_persona_cycle_owner_ports_compose_contract.py area card_admission_path (13 names in card_production_wiring.py, 2 in candidate_registration.py)",
+    "issuer": "new principals: research card proposer (approval_proposer, propose-only), gate token for the worker (same paper gate subject), two read-only viewers; all withdrawn by revoked_environment"
+  },
+  "criterion_5_integration": {
+    "file": "services/research/tests/test_card_admission_production_integration.py",
+    "how": "controller.main() (the compose entry point) with the real Governance app (issued grant file + issued principals), real Registry app, real Research app and real Persona owner app over one in-process HTTP transport; neighbours are not faked. Only the Governance decision store is the in-memory mirror of execute_command used by existing operator tests (no database in the sandbox), and the gate backtest protocol is the recorded governed evaluation the other card tests use.",
+    "results": "matched spec admitted by the real Governance decision and gated; pool candidate registered on pass (artifact approved, replication_success true, second decision proposer=research principal decider=paper gate); unmatched spec stays draft with no admission and no Governance decision. The two tests that need the Governance stamping pass only with the blocker patch."
+  },
+  "criterion_6_dataset_attestation": {
+    "resolver_supplies": "vectorbt_dataset of the governed authority snapshot: dataset_id (= dataset_version_id), source_dataset_refs (= normalized_dataset_refs), data_frequency daily, records",
+    "includes_delisted": "not supplied; no such field in the authority snapshot",
+    "includes_suspended": "not supplied; no such field in the authority snapshot",
+    "where_it_would_come_from": "candidate_pool_market.includes_delisted / includes_suspended produced only by services/source_ingestion/candidate_pool_market_feed.build_candidate_pool_market via survivorship_attestation.attest_survivorship",
+    "missing_data_named": "tw_trading_suspension (official per-session suspended / non-traded security list for TWSE and TPEx, currently dropped by the collector price-history spiders) and tw_trading_holidays (official TWSE/TPEx holiday schedule); includes_delisted additionally needs dated all-market TWSE MI_INDEX and TPEx captures for every session of the window",
+    "observed_gate_result_with_production_resolver": "real_backtest_validation fails with status screen_contribution_unavailable / reason screen_contribution_inputs_missing (the candidate has a screen and the dataset carries no candidate_pool_market); a market that is supplied without both flags true is refused as survivorship_limited by the same criterion. Nothing is guessed or defaulted.",
+    "test_only": "the pass-path test injects the attested market recorded by the card gate test; production code adds none"
+  },
+  "validation": [
+    {
+      "command": "pytest services/governance/test_paper_approval_scope.py",
+      "result": "264 passed"
+    },
+    {
+      "command": "pytest services/research/alpha_replication/test_card_production_wiring.py",
+      "result": "22 passed"
+    },
+    {
+      "command": "pytest services/research/alpha_replication/test_replication_controller.py",
+      "result": "13 passed"
+    },
+    {
+      "command": "pytest test_admission, test_card_production_wiring, test_replication_controller, test_hypothesis_card_gate_candidate, test_candidate_registration",
+      "result": "48 passed"
+    },
+    {
+      "command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/governance/tests/test_paper_grant_persona_lifecycle_integration.py",
+      "result": "115 passed, 1 failed: test_telemetry_ingest_accepts_issued_health_principal_and_rejects_others needs flask, absent in this sandbox (unrelated to this task)"
+    },
+    {
+      "command": "pytest services/research/tests/test_card_admission_production_integration.py",
+      "result": "3 passed, 2 failed without the services/governance/main.py patch; 5 passed with it (patch reverted)"
+    },
+    {
+      "command": "pytest services/governance/test_governance_api.py",
+      "result": "needs a database; errors before and after this change"
+    }
+  ],
+  "findings_for_followup": [
+    "Card artifacts built by services/source_ingestion/replication_bridge.py set lineage.source_strategy_spec_id to the spec strategy_id, which Registry cannot read as an entry id, so Governance's existing paper bundle verification (_verify_paper_bundle_payload) cannot resolve the parent spec for a card bundle. The card bundle check therefore binds to persona, demand and replication proof instead of re-reading the parent.",
+    "The worker authority call POST /api/research-orchestrator/runs/<id>/complete returned 409 'rejected research run cannot be completed' in the integration run; existing behaviour, not changed here."
+  ],
+  "final_validation_2026_11_15": [
+    {
+      "command": "pytest services/research/tests/test_card_admission_production_integration.py",
+      "result": "5 passed"
+    },
+    {
+      "command": "pytest services/governance/test_paper_approval_scope.py",
+      "result": "all passed incl. 3 new stamping tests"
+    },
+    {
+      "command": "pytest governance test_governance_api test_approval_targets scripts issuer+compose contract, services/research/alpha_replication, integration",
+      "result": "592 passed; test_approval_targets shows 4 errors that are identical on the base without this change (pre-existing; 48 when run in the combined order)"
+    }
+  ]
+}

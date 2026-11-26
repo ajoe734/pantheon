@@ -1,0 +1,32 @@
+{
+  "task": "TW-FINMIND-VALUATION-CONTRACT-CONFLICT-20261125",
+  "class": "RC2",
+  "hypothesis_confirmed": true,
+  "reproduction": {
+    "method": "real SourceIngestionRuntime, real SourceProvisioningReconciler, real PREPARE_DATASET_PY payload; order: register, reconcile, register",
+    "connectors": ["tw-finmind-valuation", "tw-finmind-quarterly-statements", "tw-finmind-monthly-revenue"],
+    "before": {
+      "second_register": "SourceEvidenceError: Connector already registered with different contract",
+      "differing_top_level_keys": ["metadata"],
+      "differing_metadata_keys": ["approval_status", "approval_authority", "persona_source_reconciliation"],
+      "cause": "deploy script and persona source reconciler both wrote the reconciliation marker (different desired_state; reconciler adds desired_state_sha256 and policy_gate_results) and the script wrote approval metadata the reconciler dropped on repair"
+    },
+    "after": "second and later registrations succeed in both orders; stored contract and reconciler marker unchanged between runs"
+  },
+  "change": {
+    "single_marker_writer": "persona_source_provisioning_reconciler (fundamentals connectors)",
+    "deploy_script": "prepare payload for the three fundamentals connectors carries no marker and no approval metadata",
+    "runtime": "_register_or_validate_connector compares a marker-less registration with the stored contract minus the reconciler marker; any other difference, or a registration carrying a marker, is compared strictly",
+    "reconciler": "adopts a marker-less connector of its own provider ids that differs from desired only in the run-bounded request/max_records (same mode/adapter/adapter_config)"
+  },
+  "policy_gates": "require_connector_approved passes from the reconciler provider allowlist before and after; no approval marker is written or forged",
+  "tests": {
+    "new": "services/source_ingestion/tests/test_refresh_connector_reregistration.py (40 passed)",
+    "regression": ["test_persona_source_reconciler.py", "test_reconcile_tolerates_newer_state.py", "test_finmind_fundamentals.py", "scripts/test_deploy_nonprod_vm.py (322 passed, 2 skipped in total)", "scripts/test_dev_tw_market_refresh.py + test_bounded_ingestion.py + test_external_source_connectors.py (146 passed)"]
+  },
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family",
+  "residual_findings": [
+    "tw-finmind-broker-daily-report and TAIFEX prepare payloads still write their own marker (outside this task's three connectors)"
+  ],
+  "hosted_verification": "pending: coordinator verifies two consecutive hosted bounded refresh runs after deploy"
+}

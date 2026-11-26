@@ -55,6 +55,36 @@
       "type": "number",
       "minimum": 0
     },
+    "filled_quantity": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "persona_name": {
+      "type": ["string", "null"]
+    },
+    "persona_is_probe": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["normal", "no_trade", "rejected", "reconciliation_deferred", "variance", "open"]
+        },
+        "reason_code": {"type": ["string", "null"]},
+        "reason_detail": {}
+      }
+    },
+    "next_step": {
+      "type": ["object", "null"],
+      "required": ["action_needed", "href"],
+      "properties": {
+        "action_needed": {"type": "string"},
+        "href": {"type": "string"}
+      }
+    },
     "price": {
       "type": "number",
       "minimum": 0

@@ -2,6 +2,7 @@
 Subject: metadata['subject']; approving deciders: metadata['approvals']."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, List, Mapping, Optional
 
@@ -12,8 +13,14 @@ SUBJECT_FIELDS = {
     'capital_pool_activation': ('pool_id', 'risk_direction'),
     'capital_binding_activation': ('binding_id', 'persona_id', 'capital_pool_id', 'risk_direction'),
     'persona_lifecycle_transition': ('persona_id', 'from_state', 'to_state'),
+    'paper_canary_candidacy': ('persona_id', 'from_stage', 'to_stage', 'quarter',
+                              'ranking_snapshot_id', 'proposal_content_digest'),
     'evolution_execute': ('proposal_id', 'proposal_content_digest'),
 }
+# The dedicated dev paper gate subject (services/governance/paper_approval_scope.DEV_PAPER_PROVISIONER_SUBJECT).
+# Its authority is bound to dev/paper/capital scale 0 by authorization_scope, so a pool risk decision decided
+# by it alone (the P-4 paper automated gate) is complete without a second human decider.
+PAPER_GATE_SUBJECT = 'pantheon-dev-paper-provisioner'
 RISK_DIRECTIONS = frozenset({'increase', 'reduce', 'neutral'})
 
 
@@ -61,6 +68,11 @@ def required_deciders(target_type: Any, metadata: Optional[Mapping[str, Any]]) -
     """A risk-increasing capital or rebalance target needs two distinct deciders."""
     if target_name(target_type) in ('capital_pool_activation', 'capital_binding_activation', 'rebalance_apply') \
             and subject_of(metadata).get('risk_direction') == 'increase':
+        if target_name(target_type) == 'capital_pool_activation':
+            votes = [a for a in approvals(metadata) if isinstance(a, Mapping)]
+            if votes and all(v.get('actor_id') == PAPER_GATE_SUBJECT and v.get('actor_role') == 'automated_gate'
+                             for v in votes):
+                return 1
         return 2
     return 1
 
@@ -71,6 +83,13 @@ def subject_errors(target_type: Any, metadata: Optional[Mapping[str, Any]]) -> L
               if not isinstance(subject.get(name), str) or not subject[name].strip()]
     if 'risk_direction' in subject and subject['risk_direction'] not in RISK_DIRECTIONS:
         errors.append('subject.risk_direction must be increase, reduce or neutral')
+    if target_name(target_type) == 'paper_canary_candidacy':
+        if subject.get('from_stage') != 'paper' or subject.get('to_stage') != 'canary_candidate':
+            errors.append('subject stages must be paper -> canary_candidate')
+        if not re.fullmatch(r'\d{4}-Q[1-4]', str(subject.get('quarter') or '')):
+            errors.append('subject.quarter must be YYYY-Q1..Q4')
+        if not re.fullmatch(r'[0-9a-f]{64}', str(subject.get('proposal_content_digest') or '')):
+            errors.append('subject.proposal_content_digest must be SHA256')
     return errors
 
 

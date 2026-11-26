@@ -1,26 +1,7 @@
-"""Automatic evolution consumer for discovery persona artifacts (design §12.2).
+"""Paper evolution gate. Automatic retire removes a pool member only.
 
-The consumer moves a ``proposed`` EvolutionDecision to ``reviewed`` and
-``approved`` as the ``automated_gate`` actor **only** when every check below
-holds, and records the evidence of each check. Everything else is left
-untouched for the operator:
-
-* the action is one of ``retrain`` / ``mutate`` / ``revalidate`` / ``retire``;
-* the decision's risk level is ``low`` (the decision model grants that to a
-  paper-stage discovery retire only when it carries the discovery marker; every
-  other retire stays ``high`` and needs the committee);
-* the target resolves, through the persona/registry owners (never through the
-  decision's own say-so), to a discovery persona's artifact that is paper-only
-  and tenant-owned; ``mutate`` additionally needs a ``factor_rule_v1`` artifact;
-* the decision was created by the evolution controller, in the same tenant.
-
-Approved ``retrain`` / ``mutate`` / ``revalidate`` decisions reach research
-through the existing dispatch worker. An approved ``retire`` is executed here
-through the governed persona lifecycle (``paper_owner -> frozen -> retired``)
-and its receipt is recorded as evidence; nothing in this module grants
-capital, touches a live runtime, or changes any other action's owner.
-
-All I/O goes through small ports so the module is deterministic under test.
+Persona lifecycle transitions remain operator-owned. Research actions use the
+existing governed dispatch; pool mutation always publishes an immutable envelope.
 """
 
 from __future__ import annotations
@@ -38,7 +19,6 @@ GATE_VERSION = "discovery-auto-gate/1"
 AUTO_ACTIONS = frozenset({"retrain", "mutate", "revalidate", "retire"})
 DISCOVERY_AUTO_SCOPE_KEY = "discovery_auto_scope"
 PAPER_STAGE = "paper"
-RETIRE_PATH = ("frozen", "retired")  # from paper_owner; frozen -> retired is governance-owned
 FACTOR_RULE_KIND = "factor_rule_v1"
 
 
@@ -145,8 +125,8 @@ def auto_approval_id(decision_id: str) -> str:
 def expected_binding_id(decision: Mapping[str, Any]) -> str:
     """The governance approval id this decision must carry once the gate has acted.
 
-    A retire is carried out by the persona lifecycle's own governed steps and keeps
-    the gate's evidence id.  Research work (retrain / mutate / revalidate) is run by
+    A retire removes a pool member through the pool owner and keeps the gate's
+    evidence id. Research work (retrain / mutate / revalidate) is run by
     the dispatch worker, which only accepts the real, deterministic Governance
     ``evolution_execute`` request bound to the immutable proposal content.
     """
@@ -219,21 +199,10 @@ def evaluate_gate(
     if not check("scope_tenant_matches_decision", _text(scope.get("tenant_id")) == tenant and bool(tenant), scope.get("tenant_id")):
         return refuse("tenant_mismatch", scope)
     scope_stage = _text(scope.get("stage"))
-    if scope_stage == "frozen":
-        # Only a *resume* of this exact decision's own paper_owner->frozen step; any other
-        # frozen persona (external freeze, live-origin) stays operator-owned.
-        from services.evolution.governed_persona_lifecycle import transition_approval_id
-
-        own_freeze = transition_approval_id(decision_id, _text(scope.get("persona_id")), "paper_owner", "frozen")
-        if not check(
-            "frozen_resume_proves_own_freeze",
-            action == "retire" and state != "proposed"
-            and _text(scope.get("last_lifecycle_governance_decision_id")) == own_freeze,
-            scope.get("last_lifecycle_governance_decision_id"),
-        ):
-            return refuse("artifact_not_paper_only", scope)
-    elif not check("scope_stage_is_paper", scope_stage == PAPER_STAGE, scope.get("stage")):
+    if not check("scope_stage_is_paper", scope_stage == PAPER_STAGE, scope.get("stage")):
         return refuse("artifact_not_paper_only", scope)
+    if action == "retire" and not check("target_is_pool_member", bool(scope.get("pool_member"))):
+        return refuse("retire_requires_pool_member", scope)
     target_id = _text(decision.get("target_id"))
     if not check(
         "target_is_the_resolved_artifact_or_persona",
@@ -269,20 +238,22 @@ class AutoConsumer:
         scope: DiscoveryScopePort,
         evidence: EvidenceSink,
         personas: PersonaLifecyclePort | None = None,
+        pool_actions: Any = None,
         execution_approvals: ExecutionApprovalPort | None = None,
         clock: Callable[[], str] = _now,
     ) -> None:
         self.decisions = decisions
         self.scope = scope
         self.evidence = evidence
-        self.personas = personas
+        self.personas = personas  # compatibility only; never called by automatic actions
+        self.pool_actions = pool_actions
         self.execution_approvals = execution_approvals
         self.clock = clock
 
     def tick(self) -> ConsumerReport:
         """Advance every decision one resumable step at a time.
 
-        ``proposed -> reviewed -> approved`` and the retire's persona steps are
+        ``proposed -> reviewed -> approved`` and pool removal/publication are
         each durable; a later tick resumes from whatever state a failure left
         behind, using the original governance binding.
         """
@@ -336,50 +307,17 @@ class AutoConsumer:
             report.approved.append(decision_id)
             state = "approved"
         if state == "approved" and _text(decision.get("action_type")).lower() == "retire":
-            if self.retire_persona(decision, verdict, approval_id):
+            if self.remove_pool_member(decision, verdict, approval_id):
                 report.retired.append(decision_id)
 
-    def retire_persona(self, decision: Mapping[str, Any], verdict: GateVerdict, approval_id: str) -> list[str]:
-        """Governed persona retire: ``paper_owner -> frozen -> retired`` (idempotent)."""
-        if self.personas is None:
-            raise RuntimeError("no persona lifecycle port configured for retire")
-        scope = verdict.scope or {}
-        persona_id = _text(scope.get("persona_id"))
-        tenant = _text(decision.get("tenant_id"))
-        state = self.personas.get_state(persona_id, tenant)
-        steps: list[str] = []
-        if state not in ("paper_owner", "frozen", "retired"):
-            raise RuntimeError(f"persona {persona_id} is {state!r}; only a paper-stage persona is retired automatically")
-        if state == "paper_owner":
-            state = self.personas.advance(persona_id, tenant, "frozen", approval_id,
-                                          expected_source="paper_owner")
-            steps.append("frozen")
-        if state == "frozen":
-            # Every frozen->retired needs this decision's own decided paper_owner->frozen proof,
-            # including the same-tick path: a re-read may show a freeze someone else made.
-            if not self.personas.verify_freeze(_text(decision.get("decision_id")), persona_id, tenant):
-                raise RuntimeError(f"persona {persona_id} is frozen without proof this decision froze it")
-            state = self.personas.advance(persona_id, tenant, "retired", approval_id,
-                                      expected_source="frozen")
-            steps.append("retired")
-        if state != "retired":
-            raise RuntimeError(f"persona {persona_id} ended {state!r}, expected 'retired'")
-        if not steps:
-            return steps  # already retired by an earlier tick: nothing new to record
-        self.evidence.record(
-            {
-                "event": "persona_retired",
-                "decision_id": _text(decision.get("decision_id")),
-                "persona_id": persona_id,
-                "artifact_id": scope.get("artifact_id"),
-                "tenant_id": tenant,
-                "governance_decision_id": approval_id,
-                "transitions": steps,
-                "final_state": state,
-                "at": self.clock(),
-            }
-        )
-        return steps
+    def remove_pool_member(self, decision: Mapping[str, Any], verdict: GateVerdict, approval_id: str) -> bool:
+        if self.pool_actions is None:
+            raise RuntimeError("no pool member action port configured")
+        receipt = self.pool_actions.retire(decision, verdict.scope or {})
+        self.evidence.record({"event": "pool_member_removed", "decision_id": decision["decision_id"],
+                              "tenant_id": decision["tenant_id"], "receipt": receipt,
+                              "governance_decision_id": approval_id, "at": self.clock()})
+        return bool(receipt) and not receipt.get("already_removed")
 
 
 # --------------------------------------------------------------- paper decay -> retire

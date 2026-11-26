@@ -1,0 +1,29 @@
+timeout: failed to run command ‘pytest’: No such file or directory
+
+Command exit status: 127
+
+Retry using provisioned interpreter: PYTHONPATH=deploy/collector .venv-pantheon/bin/python -m pytest deploy/collector/tests
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0
+rootdir: /tmp/pantheon-worker-worktrees/pantheon/collector-hourly-timer-cadence-20261113
+configfile: pytest.ini
+plugins: anyio-4.16.0
+collected 178 items
+
+deploy/collector/tests/test_auto_pause.py ....                           [  2%]
+deploy/collector/tests/test_backfill.py ............                     [  8%]
+deploy/collector/tests/test_bundle_and_manifest.py ..                    [ 10%]
+deploy/collector/tests/test_bundle_server_auth.py ....                   [ 12%]
+deploy/collector/tests/test_compose_and_docs.py ...                      [ 14%]
+deploy/collector/tests/test_config_and_startup_guards.py ............... [ 22%]
+...........................................                              [ 46%]
+deploy/collector/tests/test_privacy_and_hmac.py ....                     [ 48%]
+deploy/collector/tests/test_real_source_repair.py ...................... [ 61%]
+.............                                                            [ 68%]
+deploy/collector/tests/test_scrapling_backend.py ...s.s                  [ 71%]
+deploy/collector/tests/test_spiders_and_pollers.py ..................... [ 83%]
+.............................                                            [100%]
+
+======================= 176 passed, 2 skipped in 11.87s ========================
+
+Command exit status: 0

@@ -1,0 +1,78 @@
+{
+  "task_id": "CONSULT-POLICY-PERSONA-PANEL-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Claude2",
+  "assigned_reviewer": "Codex",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md (6.4 / D6 / D7 / D8)",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_trigger_engine": [
+      "services/persona/test_consult_triggers.py::test_every_gated_decision_requires_risk_persona",
+      "services/persona/test_consult_triggers.py::test_patch_touching_guardrails_or_consult_policy_adds_red_team",
+      "services/persona/test_consult_triggers.py::test_red_team_only_for_patches_and_only_for_those_scopes"
+    ],
+    "2_persona_opens_and_independent_panel": [
+      "services/consultation/tests/test_persona_panel_integration.py::test_panel_open_requires_persona_service_caller_and_policy_complete_panel",
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (3 separate provider asks, distinct idempotency keys, no peer answer in any ask, one synthesis memo with Agreements/Disagreements, no vote)"
+    ],
+    "3_risk_veto": [
+      "services/persona/test_consult_triggers.py::test_risk_oppose_vetoes_even_when_everyone_else_approves",
+      "services/persona/test_consult_triggers.py::test_missing_required_answer_fails_closed",
+      "services/consultation/tests/test_persona_panel_integration.py::test_risk_oppose_blocks_auto_adoption_and_becomes_operator_decision",
+      "services/consultation/tests/test_persona_panel_integration.py::test_memory_outage_after_risk_veto_still_holds_adoption_then_retry_adopts (hold persisted before memory; automated decide 409 during memory outage; retry adopts same handoff, no duplicate)",
+      "services/consultation/tests/test_persona_panel_integration.py::test_unrelated_target_type_cannot_consume_or_clear_veto",
+      "services/consultation/tests/test_persona_panel_integration.py::test_veto_bound_to_candidate_version"
+    ],
+    "4_idempotent_bootstrap": [
+      "services/persona/test_consult_triggers.py::test_bootstrap_creates_both_non_trading_personas_once",
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (real Persona owner POST /api/personas; second run creates nothing)",
+      "services/consultation/tests/test_persona_panel_integration.py::test_bootstrap_personas_resolve_consultable_and_non_trading_and_idempotent (real Persona owner + real PersonaPolicyResolver: consultable=True, no tools/workflows, draft, trading=false; second run creates nothing)",
+      "services/persona/test_consult_triggers.py::test_bootstrap_sets_consult_policy_and_repairs_half_provisioned_persona"
+    ],
+    "5_memo_evidence_and_memory": [
+      "services/consultation/tests/test_persona_panel_integration.py::test_trigger_to_three_persona_panel_to_memo_and_memory (memo listed under the gated decision target; real governance handoff acknowledged with memo evidence ref; real memory service strict-auth writes initiator consultation_outcome + institutional cross_persona_observation)"
+    ],
+    "6_deployed_addresses": [
+      "services/consultation/tests/test_panel_deployed_config.py::test_root_compose_wires_consultation_panel_addresses (governance sink, memory, evolution addresses; memory/governance start order; no compose depends_on cycle)"
+    ],
+    "7_protocol_document": [
+      "CONSULTATION_SESSION_PROTOCOL.md"
+    ],
+    "8_integration_real_entry_points": [
+      "services/consultation/tests/test_persona_panel_integration.py (real consultation-svc + executor, Persona owner, governance, evolution health, memory; only the provider HTTP is faked)"
+    ]
+  },
+  "verification": {
+    "command": ".venv-pantheon/bin/python -m pytest services/consultation services/persona/test_consult_triggers.py; .venv-pantheon/bin/python -m pytest services/control-plane/persona -k policy",
+    "result": "122 passed (consultation + triggers); 43 passed (persona policy selection). services/governance approval PostgreSQL tests error without a database in this env (pre-existing, unrelated); governance consult/veto/handoff selection 39 passed before that error."
+  },
+  "not_claimed": [
+    "Hosted/deployed run: no real hosted cycle or consultation was executed.",
+    "Own-agent routing (rework): services/openclaw-gateway-adapter/consultation_provider.py now routes participant.agent=persona_own_agent to provider.invoke(agent_id=<persona_id>), refuses output whose agent_id is not that persona, tool calls, or attribution other than the asked persona (test_persona_own_agent_routing.py). Not proven against a hosted gateway with provisioned persona agents; hosted/private-memory backfill obligations remain open. The adapter and governance edits sit outside the originally listed scoped artifacts and need owner-boundary acknowledgement at review.",
+    "Governance ingress persists the handoff (target_gate, memo_ids, evidence_refs) and the gated_decision/gate fields (including target_version/candidate_digest); the memo is also linked to the decision via the request target and the handoff evidence ref.",
+    "Risk and red team personas are created in draft; advancing to consultable is a governed lifecycle step, not automated.",
+    "The three-persona hosted backfill / private-memory obligation and real P1-fix hosted evidence stay outstanding.",
+    "Env: no source-level change to evolution; it is an address plus health probe only."
+  ],
+  "rework_20261112": {
+    "risk_veto_dedup": "required_consultation merges may_veto onto the initiator entry when the risk persona initiates; unit + e2e regressions",
+    "gated_decision_wiring": "governance consultation-handoffs stores gated_decision/gate/operator_decision for consultation.panel.* handoffs; the existing approval decide command (POST /api/governance/approvals/{id}/decide) refuses (409) approved outcomes on a target with a pending risk veto unless a human operator principal decides, and then durably records operator_decision=decided on the handoff; e2e test attempts real adoption after risk reject (storage double replaces PostgreSQL only; no DB available in this env)",
+    "panel_admission_boundary": "consultation_provider.admit_panel_agent runs before any persona dispatch: persona_id must be an admissible persona id (never main / structured-extraction / the provider default / a consult- id); the turn runs on a tenant+persona bound consultation-only agent consult-<digest>-<persona_id> that must be live in the gateway registry and whose live config.get policy is deny-all (tools.deny=['*'], empty allow, exec denied, no skills, memorySearch off, contextInjection never). A persona trading agent with read/persona_proposal_submit is refused (403). Tests: services/consultation/tests/test_persona_own_agent_routing.py",
+    "committee_memory_boundary": "the consultation agent has no private cache; the provider retrieves memory itself and injects only institutional hits plus same-persona hits scoped persona_and_committee; persona_private and other-persona hits are dropped (sentinel tests). The daily/private workspace cache is not touched. Memory fetch failure degrades to empty committee context.",
+    "open_obligations": "hosted provisioning of the consult-<digest>-<persona_id> agents (agents.list entries with deny-all policy; adapter ensure route in main.py is outside this task's scoped artifacts) and backfill remain separate hosted obligations; until provisioned, panel turns fail closed with 403.",
+    "target_binding": "panel.gated_decision type/id must equal request target_type/target_id at consultation entry (422) and in executor (WorkflowBlocked)"
+  },
+  "rework_20261112_r2": {
+    "veto_version_digest_binding": "governance intake persists gated_decision.target_version/candidate_digest; v1 operator approval cannot clear a v2/digest-b veto (services/consultation/tests/test_panel_veto_version_binding.py, test_intake_persists_version_and_digest_bindings)",
+    "memory_outage_hold": "workflow_executor persists + dispatches + acknowledges the gate handoff (installing the operator-decision hold at governance) BEFORE the memory writeback; panel claims no longer short-circuit on an acknowledged handoff, so a retry after memory failure still writes memory",
+    "veto_binding": "governance CONSULT_GATED_APPROVAL_TARGETS maps trial_admission->{registry_entry,paper_canary_candidacy}, envelope_publication->{allocation_policy,registry_entry}, harness_patch->{persona_training_target,evolution_proposal,evolution_execute}; veto lookup/resolution requires mapped target_type, same id, and the panel-bound target_version/candidate_digest when present (required_consultation accepts them). Mapping is an explicit owner-boundary choice for reviewer confirmation.",
+    "bootstrap_provisioning": "bootstrap creates personas with consult_policy_id=consult-panel.non-trading (built into PersonaPolicyResolver: consultable, no skills; no tool/route policy so no trading authority) and repairs existing ones via the owner PATCH path; lifecycle stays draft (governed)."
+  },
+  "review_r5_rework": {
+    "p1": "committee memory hits are tenant-bound before injection (persona entries must equal requested tenant; institutional may be unscoped but never another tenant); default-reader HTTP tests: services/consultation/tests/test_panel_memory_tenant_binding.py",
+    "p2": "openclaw-gateway-adapter in docker-compose.yml now has PANTHEON_MEMORY_API_URL/AUTH_TOKEN(_FILE)/ACTOR_ID/ACTOR_ROLES; token resolved via resolve_runtime_manager_auth (file or env)",
+    "verification": "pytest services/consultation services/persona/test_consult_triggers.py services/control-plane/persona -k 'not postgres' => 306 passed, 4 deselected, exit 0",
+    "not_claimed": "hosted deployment, provisioning and backfill remain separate obligations"
+  }
+}

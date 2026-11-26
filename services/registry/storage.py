@@ -10,16 +10,22 @@ needs no changes to select between them.
 """
 from __future__ import annotations
 
+import base64
+import copy
 import dataclasses
+import hashlib
+import heapq
+import json
 from functools import lru_cache
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Collection, Mapping, Optional, Sequence
 
 from .models import (
     DeploymentStage,
     DeploymentSummary,
+    Lineage,
     RegistryEntry,
     RegistryEntryCreate,
     utc_now_iso,
@@ -45,6 +51,66 @@ PERSONA_BINDING_ROW_KEYS = (
     "registry_id", "artifact_type", "artifact_state", "strategy_id", "version",
     "owner_tenant", "created_at", "updated_at",
 )
+
+
+# REGISTRY-DISCOVERY-SPEC-PAGE-20261125: ``view=discovery_candidates`` keyset page.
+DISCOVERY_CANDIDATES_VIEW = "discovery_candidates"
+DISCOVERY_EXCLUDED_STATES = ("retired", "rejected")
+DISCOVERY_MAX_PAGE_SIZE = 50
+DISCOVERY_ENTRY_KEYS = ("registry_id", "strategy_id", "artifact_state", "lineage", "metadata")
+
+
+def discovery_candidate_from_payload(payload: Mapping[str, Any]) -> dict:
+    """The five discovery fields, shaped exactly as the unpaged list serialises them."""
+    return {
+        "registry_id": payload["registry_id"],
+        "strategy_id": payload["strategy_id"],
+        "artifact_state": payload["artifact_state"],
+        "lineage": dataclasses.asdict(Lineage.from_dict(payload.get("lineage"))),
+        "metadata": payload.get("metadata"),
+    }
+
+
+def discovery_candidate_projection(entry: RegistryEntry) -> dict:
+    """Copy only the discovery fields of one in-page entry (never the whole entry)."""
+    return discovery_candidate_from_payload({
+        "registry_id": entry.registry_id,
+        "strategy_id": entry.strategy_id,
+        "artifact_state": getattr(entry.artifact_state, "value", entry.artifact_state),
+        "lineage": entry.lineage.to_dict() if entry.lineage is not None else None,
+        "metadata": copy.deepcopy(entry.metadata),
+    })
+
+
+def _discovery_scope_digest(tenant_id: str) -> str:
+    return hashlib.sha256(f"{DISCOVERY_CANDIDATES_VIEW}\x00{tenant_id}".encode()).hexdigest()[:24]
+
+
+def encode_discovery_page_token(tenant_id: str, after_registry_id: str) -> str:
+    """Opaque keyset token bound to view and tenant by digest; carries no tenant identifier."""
+    raw = json.dumps(
+        {"v": DISCOVERY_CANDIDATES_VIEW, "s": _discovery_scope_digest(tenant_id), "k": after_registry_id},
+        separators=(",", ":"), sort_keys=True,
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_discovery_page_token(token: str, tenant_id: str) -> str:
+    """The keyset ``registry_id`` of a token minted for this view and tenant; ``ValueError`` otherwise."""
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+    except Exception as exc:
+        raise ValueError("Invalid page_token for view=discovery_candidates") from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("v") != DISCOVERY_CANDIDATES_VIEW
+        or data.get("s") != _discovery_scope_digest(tenant_id)
+        or not isinstance(data.get("k"), str)
+        or not data["k"]
+    ):
+        raise ValueError("Invalid page_token for view=discovery_candidates")
+    return data["k"]
 
 
 def persona_binding_entry(entry: RegistryEntry) -> RegistryEntry:
@@ -182,6 +248,72 @@ def strategy_artifact_row(entry: RegistryEntry) -> dict:
     return row
 
 
+# Stable keyset page token for the execution-bundle catalog (ARTIFACT-CATALOG-INDEXED-PAGING-20261115).
+# Order is ``(created_at, registry_id)`` descending over code-point (``"C"``) string order, NULL as ''.
+# A bare non-negative integer token stays accepted as a legacy offset so a previous-release caller still pages.
+_ARTIFACT_PAGE_TOKEN_PREFIX = "k1:"
+
+
+def strategy_artifact_sort_key(row: dict) -> tuple[str, str]:
+    return (str(row.get("created_at") or ""), str(row.get("registry_id") or ""))
+
+
+def encode_strategy_artifact_page_token(key: tuple[str, str]) -> str:
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_PAGE_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_strategy_artifact_page_token(token: Optional[str]) -> Optional[tuple[str, tuple]]:
+    """``None`` for no token, ``("offset", (n,))`` legacy, or ``("after", (created_at, registry_id))``; ValueError if invalid."""
+    text = str(token).strip() if token is not None else ""
+    if not text:
+        return None
+    if text.startswith(_ARTIFACT_PAGE_TOKEN_PREFIX):
+        body = text[len(_ARTIFACT_PAGE_TOKEN_PREFIX):]
+        try:
+            decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError("Invalid page_token") from exc
+        if not (isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded)):
+            raise ValueError("Invalid page_token")
+        return ("after", (decoded[0], decoded[1]))
+    try:
+        offset = int(text)
+    except ValueError as exc:
+        raise ValueError("Invalid page_token") from exc
+    if offset < 0:
+        raise ValueError("Invalid page_token")
+    return ("offset", (offset,))
+
+
+def page_strategy_artifact_rows(
+    rows: list[dict],
+    *,
+    artifact_state: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    limit: int,
+    cursor: Optional[tuple[str, tuple]] = None,
+) -> tuple[list[dict], int, Optional[str]]:
+    """In-memory twin of the SQL page: ``(items, exact_total, next_page_token)``."""
+    filtered = [
+        dict(r) for r in rows
+        if (artifact_state is None or r.get("artifact_state") == artifact_state)
+        and (strategy_id is None or r.get("strategy_id") == strategy_id)
+    ]
+    filtered.sort(key=strategy_artifact_sort_key, reverse=True)
+    total = len(filtered)
+    start = 0
+    if cursor is not None:
+        kind, value = cursor
+        if kind == "offset":
+            start = value[0]
+        else:
+            start = next((i for i, r in enumerate(filtered) if strategy_artifact_sort_key(r) < value), total)
+    items = filtered[start:start + limit]
+    more = start + len(items) < total and bool(items)
+    return items, total, (encode_strategy_artifact_page_token(strategy_artifact_sort_key(items[-1])) if more else None)
+
+
 def _lineage_ids(value: Any) -> list[str]:
     """Non-empty string ids of a lineage list; JSON null / non-list yields none."""
     if not isinstance(value, list):
@@ -205,7 +337,7 @@ def build_lineage_graph(
     Edges come only from ``lineage.parent_registry_ids`` / ``source_strategy_spec_id``
     / ``source_dataset_refs`` / ``source_run_ids`` and ``metadata.persona_id`` /
     ``capital_pool_id``; an absent or JSON-null field yields no edge. ``root_id`` may be
-    a registry id, a strategy id or a persona id. Without a root the traversal starts
+    a registry id, a strategy id, a persona id or a capital pool id. Without a root the traversal starts
     from the most recent ``execution_bundle`` rows, never the whole population.
     Traversal is breadth-first over ``depth`` hops (nearest edges win the ``limit`` cap).
     """
@@ -311,6 +443,12 @@ def build_lineage_graph(
                 node["type"] = ntype
             if r.get("artifact_state"):
                 node["state"] = r["artifact_state"]
+            sid = _lineage_id(r.get("strategy_id"))
+            if sid:
+                node["strategy_id"] = sid
+            ver = _lineage_id(r.get("version"))
+            if ver:
+                node["version"] = ver
             risk = _lineage_id(r.get("risk_level"))
             if risk:
                 node["risk"] = risk
@@ -471,6 +609,70 @@ STRATEGY_SUMMARY_INDEX_INNER_META_KEYS = (
     "persona_id", "lifecycle_state", "state", "status",
 )
 STRATEGY_SUMMARY_INDEX_PROV_KEYS = ("created_at",)
+STRATEGY_SUMMARY_INDEX_TITLE_KEYS = ("title", "name")
+# Projected only when an owner-side hide input is present (``include_scope``).
+STRATEGY_SUMMARY_INDEX_SCOPE_KEYS = ("data_scope", "dataScope")
+
+# Owner-side hide rule: the one strategy_stub_reason rule the BFF applies,
+# evaluated here over the candidate-index row so a hidden row is excluded and
+# counted in the same pass. Kept identical to
+# ``services/control-plane/bff/strategies/routes/common.py::strategy_stub_reason``
+# (shared vectors in test_strategy_summary_page_bounded.py).
+STRATEGY_STUB_RAW_MARKET_SEED = "raw_market_seed_without_rules"
+STRATEGY_STUB_SIMULATION_FIXTURE = "simulation_fixture"
+STRATEGY_STUB_TEST_PERSONA_PROBE = "test_persona_probe"
+STRATEGY_STUB_REASONS = (
+    STRATEGY_STUB_TEST_PERSONA_PROBE,
+    STRATEGY_STUB_RAW_MARKET_SEED,
+    STRATEGY_STUB_SIMULATION_FIXTURE,
+)
+_STRATEGY_TEST_DATA_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
+
+
+def strategy_stub_reason_for_fields(
+    *,
+    strategy_id: str,
+    title: str,
+    persona_ids: Sequence[str],
+    data_scope: str,
+    test_persona_ids: Collection[str],
+) -> Optional[str]:
+    """Why a strategy is a synthetic or raw-seed stub, or None for a real one."""
+    scope = str(data_scope or "").strip().lower()
+    if scope in _STRATEGY_TEST_DATA_SCOPES:
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    ids = [str(p) for p in persona_ids if str(p).strip()]
+    if ids and test_persona_ids and all(pid in test_persona_ids for pid in ids):
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    sid = str(strategy_id or "").strip()
+    name = str(title or "").strip()
+    # Title text is a fallback for pre-2026-11-03 release probes that carry no
+    # data_scope; a row that declares a scope is classified by the scope alone.
+    if not scope and name.startswith("Pantheon Dev Paper Release ") and " Attempt " in name:
+        return STRATEGY_STUB_TEST_PERSONA_PROBE
+    if ids:
+        return None
+    if sid.startswith("strat-tw-official") or name.startswith("TW official "):
+        return STRATEGY_STUB_RAW_MARKET_SEED
+    if name.startswith("SIMULATION "):
+        return STRATEGY_STUB_SIMULATION_FIXTURE
+    return None
+
+
+def _extract_strategy_summary_data_scope(row: dict) -> str:
+    meta = _binding_dict(row.get("metadata"))
+    for key in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS:
+        value = row.get(key)
+        if value is None:
+            value = meta.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    inner_meta = _binding_dict(_binding_dict(meta.get("strategy_spec")).get("metadata"))
+    for key in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS:
+        value = inner_meta.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP: dict[str, str] = {
     "draft": "draft",
@@ -621,12 +823,19 @@ def strategy_spec_summary_row(entry: RegistryEntry) -> dict:
     return row
 
 
-def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
+def strategy_spec_summary_index_row(
+    entry: RegistryEntry,
+    *,
+    include_title: bool = False,
+    include_scope: bool = False,
+) -> dict:
     """Minimal candidate-index row for StrategySpec summary selection, counts, filtering, and sorting.
 
     Extracts only the fields read before page slicing; heavy summary fields
     (titles, governance, market_scope, execution_profile, evaluation_summary,
     full metadata) are deferred to Phase 2 for the returned page slice alone.
+    When ``include_title`` is True (for owner-side ``query`` search), the four
+    compact scalar title/name leaves are also projected into the candidate row.
     """
     row: dict[str, Any] = {
         "registry_id": entry.registry_id,
@@ -647,8 +856,13 @@ def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
     }
     meta = entry.metadata
     if isinstance(meta, dict):
+        meta_keys = STRATEGY_SUMMARY_INDEX_META_KEYS
+        if include_title:
+            meta_keys = meta_keys + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+        if include_scope:
+            meta_keys = meta_keys + STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
         light_meta: dict[str, Any] = {
-            k: meta[k] for k in STRATEGY_SUMMARY_INDEX_META_KEYS if k in meta
+            k: meta[k] for k in meta_keys if k in meta
         }
         meta_prov = meta.get("provenance")
         if isinstance(meta_prov, dict):
@@ -657,8 +871,13 @@ def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
             }
         inner = meta.get("strategy_spec")
         if isinstance(inner, dict):
+            spec_keys = (
+                STRATEGY_SUMMARY_INDEX_SPEC_KEYS + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+                if include_title
+                else STRATEGY_SUMMARY_INDEX_SPEC_KEYS
+            )
             light_inner: dict[str, Any] = {
-                k: inner[k] for k in STRATEGY_SUMMARY_INDEX_SPEC_KEYS if k in inner
+                k: inner[k] for k in spec_keys if k in inner
             }
             inner_prov = inner.get("provenance")
             if isinstance(inner_prov, dict):
@@ -669,7 +888,10 @@ def strategy_spec_summary_index_row(entry: RegistryEntry) -> dict:
             if isinstance(inner_meta, dict):
                 light_inner["metadata"] = {
                     k: inner_meta[k]
-                    for k in STRATEGY_SUMMARY_INDEX_INNER_META_KEYS
+                    for k in (
+                        STRATEGY_SUMMARY_INDEX_INNER_META_KEYS
+                        + (STRATEGY_SUMMARY_INDEX_SCOPE_KEYS if include_scope else ())
+                    )
                     if k in inner_meta
                 }
             light_meta["strategy_spec"] = light_inner
@@ -861,6 +1083,19 @@ def _extract_strategy_summary_persona_ids(row: dict) -> list[str]:
     return [str(v) for v in raw if str(v).strip()]
 
 
+def _extract_strategy_summary_title(sid: str, row: dict) -> str:
+    meta = _binding_dict(row.get("metadata"))
+    inner = _binding_dict(meta.get("strategy_spec"))
+    val = (
+        inner.get("title")
+        or inner.get("name")
+        or meta.get("title")
+        or meta.get("name")
+        or sid
+    )
+    return str(val or sid)
+
+
 def project_strategy_spec_summary_page(
     rows: list[dict],
     *,
@@ -868,11 +1103,21 @@ def project_strategy_spec_summary_page(
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
+    query: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = 20,
     full_row_loader: Optional[Callable[[list[str]], Mapping[str, dict]]] = None,
+    hide_stubs: bool = False,
+    hide_persona_ids: Optional[Collection[str]] = None,
 ) -> dict[str, Any]:
-    """Owner-side current-version selection, filtering, sorting, and pagination over summary rows."""
+    """Owner-side current-version selection, filtering, sorting, and pagination over summary rows.
+
+    ``hide_stubs`` applies the strategy stub rule (unbound stubs plus rows whose
+    personas are all in ``hide_persona_ids``) to the same candidate pass: hidden
+    rows are excluded from ``items``/``total`` and counted by reason, and
+    ``visible_state_counts`` counts every current version that is not hidden.
+    Without it the answer is unchanged.
+    """
     (
         has_state_filter,
         has_exclude_state_filter,
@@ -944,6 +1189,15 @@ def project_strategy_spec_summary_page(
         if persona_id is not None and str(persona_id).strip() != ""
         else None
     )
+    wanted_query = (
+        str(query).strip().lower()
+        if query is not None and str(query).strip() != ""
+        else None
+    )
+
+    hide_ids: frozenset = frozenset(str(p) for p in (hide_persona_ids or ()) if str(p).strip())
+    visible_state_counts: dict[str, int] = {k: 0 for k in STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS}
+    hidden_by_reason: dict[str, int] = {k: 0 for k in STRATEGY_STUB_REASONS}
 
     matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
     for sid, row in winning_row.items():
@@ -952,6 +1206,17 @@ def project_strategy_spec_summary_page(
         is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
         dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
         state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+        stub_reason: Optional[str] = None
+        if hide_stubs:
+            stub_reason = strategy_stub_reason_for_fields(
+                strategy_id=sid,
+                title=_extract_strategy_summary_title(sid, row),
+                persona_ids=_extract_strategy_summary_persona_ids(row),
+                data_scope=_extract_strategy_summary_data_scope(row),
+                test_persona_ids=hide_ids,
+            )
+            if stub_reason is None:
+                visible_state_counts[dto_state] = visible_state_counts.get(dto_state, 0) + 1
         is_true_draft = (not raw_clean) or (raw_clean == "draft")
 
         if has_state_filter and wanted_dto_state == "retired":
@@ -975,6 +1240,15 @@ def project_strategy_spec_summary_page(
 
         persona_list = _extract_strategy_summary_persona_ids(row)
         if wanted_persona is not None and wanted_persona not in persona_list:
+            continue
+        if wanted_query is not None:
+            if (
+                wanted_query not in sid.lower()
+                and wanted_query not in _extract_strategy_summary_title(sid, row).lower()
+            ):
+                continue
+        if stub_reason is not None:
+            hidden_by_reason[stub_reason] += 1
             continue
         last_mod = _strategy_summary_last_modified_at(row)
         matched.append(
@@ -1017,7 +1291,7 @@ def project_strategy_spec_summary_page(
         )
         for (_dt, sid, row, vcount, current_state, persona_list, last_mod) in page_rows
     ]
-    return {
+    result: dict[str, Any] = {
         "items": items,
         "total": total,
         "page_size": effective_page_size,
@@ -1029,6 +1303,13 @@ def project_strategy_spec_summary_page(
             "next_page_token": next_page_token,
         },
     }
+    if hide_stubs:
+        result["visible_state_counts"] = visible_state_counts
+        result["hidden"] = {
+            "total": sum(hidden_by_reason.values()),
+            "by_reason": hidden_by_reason,
+        }
+    return result
 
 
 class RegistryUniqueViolationError(ValueError):
@@ -1117,6 +1398,8 @@ class RegistryStore:
             evaluation_summary=payload.evaluation_summary,
             rollback_target=payload.rollback_target,
             metadata=payload.metadata,
+            replication_success=payload.replication_success,
+            replication_proof=payload.replication_proof,
             created_at=now,
             updated_at=now,
             last_actor=actor,
@@ -1249,6 +1532,70 @@ class RegistryStore:
                 for entry in self._entries.values()
             ]
 
+    def list_by_artifact_type(self, artifact_type: str) -> list[RegistryEntry]:
+        """Only entries of one artifact type; other types are never copied."""
+        wanted = getattr(artifact_type, "value", artifact_type)
+        with self._lock:
+            return [
+                RegistryEntry.from_dict(entry.to_dict())
+                for entry in self._entries.values()
+                if getattr(entry.artifact_type, "value", entry.artifact_type) == wanted
+            ]
+
+    def list_card_admission_drafts(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[RegistryEntry]:
+        """At most ``limit`` gate-ready card drafts of one tenant; only matches are copied."""
+        with self._lock:
+            matches = []
+            for entry in self._entries.values():
+                if getattr(entry.artifact_type, "value", entry.artifact_type) != "strategy_spec":
+                    continue
+                if getattr(entry.artifact_state, "value", entry.artifact_state) != "draft":
+                    continue
+                if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
+                    continue
+                meta = entry.metadata or {}
+                if meta.get("tenant_id") != tenant_id:
+                    continue
+                wiring = (((meta.get("strategy_spec") or {}).get("metadata") or {}).get("card_wiring") or {})
+                if wiring.get("status") != "gate_ready":
+                    continue
+                if after_registry_id and not entry.registry_id > after_registry_id:
+                    continue
+                matches.append(entry)
+            matches.sort(key=lambda e: e.registry_id)
+            return [RegistryEntry.from_dict(e.to_dict()) for e in matches[: int(limit)]]
+
+    def list_discovery_candidates(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[dict]:
+        """At most ``limit`` discovery rows (non-retired/rejected StrategySpecs), keyset by registry_id.
+
+        Same keyset contract as :meth:`list_card_admission_drafts`; only the
+        page's rows are projected (``discovery_candidate_projection``), every
+        other entry is compared but never copied.
+        """
+        with self._lock:
+            matches = [
+                entry for entry in self._entries.values()
+                if getattr(entry.artifact_type, "value", entry.artifact_type) == "strategy_spec"
+                and getattr(entry.artifact_state, "value", entry.artifact_state) not in DISCOVERY_EXCLUDED_STATES
+                and (visible_tenants is None or entry.owner_tenant in visible_tenants)
+                and (not after_registry_id or entry.registry_id > after_registry_id)
+            ]
+            page = heapq.nsmallest(int(limit), matches, key=lambda e: e.registry_id)
+            return [discovery_candidate_projection(e) for e in page]
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:
@@ -1271,6 +1618,20 @@ class RegistryStore:
                 entry.to_dict(), visible_tenants, "execution_bundle"
             )
         ]
+
+    def list_strategy_artifact_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_state: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        limit: int,
+        cursor: Optional[tuple[str, tuple]] = None,
+    ) -> tuple[list[dict], int, Optional[str]]:
+        return page_strategy_artifact_rows(
+            self.list_strategy_artifact_rows(visible_tenants=visible_tenants),
+            artifact_state=artifact_state, strategy_id=strategy_id, limit=limit, cursor=cursor,
+        )
 
     def list_strategy_spec_summary_rows(
         self,
@@ -1299,6 +1660,8 @@ class RegistryStore:
         *,
         visible_tenants: Optional[frozenset] = None,
         artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Return lightweight candidate-index rows for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -1312,7 +1675,11 @@ class RegistryStore:
                 continue
             if visible_tenants is not None and entry.owner_tenant not in visible_tenants:
                 continue
-            rows.append(strategy_spec_summary_index_row(entry))
+            rows.append(
+                strategy_spec_summary_index_row(
+                    entry, include_title=include_title, include_scope=include_scope
+                )
+            )
         return rows
 
     def get_strategy_spec_summary_rows_by_ids(
@@ -1847,3 +2214,6 @@ def reset_store() -> None:
     global _default_store
     with _store_lock:
         _default_store = None
+    from .regime.store import reset_regime_store
+
+    reset_regime_store()

@@ -1,0 +1,15 @@
+[Unit]
+Description=Pantheon Collector Same-Day Taiwan Close Capture
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pantheon-collector
+ExecStartPre=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json validate-config
+# Exit 2 = a source is not captured yet; the next timer tick retries until 17:00 Taipei.
+SuccessExitStatus=2
+ExecStart=/usr/bin/docker compose run --rm collector-worker --policy-file /app/fetch-policy.json --root-dir /data capture-close
+User=root
+Group=root
+NoNewPrivileges=true

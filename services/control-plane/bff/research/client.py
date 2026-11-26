@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from services.control_plane.bff.core.owner_reads import authorization, verified_caller_tenant, remaining_management_read_budget
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -49,11 +51,22 @@ def default_http_request(
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
     try:
         timeout = float(os.getenv("RESEARCH_ORCHESTRATOR_TIMEOUT_SECONDS", "3.0"))
+        budget = remaining_management_read_budget(timeout)
+        if budget is not None:
+            if budget <= 0:
+                return 503, {"detail": "Research owner read_timeout"}
+            timeout = min(timeout, budget)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
+            # Ticket pages contain bounded summaries; reject oversized replies
+            # rather than materializing an unpaged/archive response in the BFF.
+            raw = resp.read(4 * 1024 * 1024 + 1) if "/api/research/tickets" in url else resp.read()
+            if "/api/research/tickets" in url and len(raw) > 4 * 1024 * 1024:
+                return 502, {"detail": "Research ticket response exceeds 4 MiB"}
             return resp.status, json.loads(raw.decode("utf-8")) if raw else None
     except urllib.error.HTTPError as exc:
-        raw = exc.read()
+        raw = exc.read(4 * 1024 * 1024 + 1) if "/api/research/tickets" in url else exc.read()
+        if "/api/research/tickets" in url and len(raw) > 4 * 1024 * 1024:
+            return 502, {"detail": "Research ticket response exceeds 4 MiB"}
         try:
             body = json.loads(raw.decode("utf-8")) if raw else None
         except Exception:
@@ -92,18 +105,68 @@ class ResearchServiceClient:
         raise ResearchCommandError(detail or f"Research command failed (HTTP {code})", status_code=code)
 
     # Tickets (RW-01)
+    def _ticket_headers(self) -> Dict[str, str]:
+        # Forward the authenticated caller; a body actor or service identity is
+        # never a substitute for the owner's tenant/role/transition checks.
+        auth = authorization.get()
+        if not auth:
+            raise ResearchCommandError("Research tickets require caller authorization", 401)
+        try:
+            tenant = verified_caller_tenant()
+        except ActionUnavailableError as exc:
+            raise ResearchCommandError("Research ticket tenant mismatch", 403) from exc
+        return {"Authorization": auth, "X-Tenant-Id": tenant}
+
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        filters = {
+            "statuses": statuses, "owner": owner, "meeting_type": meeting_type,
+            "subject_ref": subject_ref, "action_state": action_state,
+            "due_before": due_before, "submitted_after": submitted_after,
+            "updated_after": updated_after, "human_actionable": human_actionable,
+            "page_token": page_token, "page_size": page_size,
+        }
+        params = {k: v for k, v in filters.items() if v is not None}
+        params["meeting_linked"] = "true"
+        if "human_actionable" in params:
+            params["human_actionable"] = str(params["human_actionable"]).lower()
+        statuses = params.pop("statuses", None)
+        if statuses:
+            params["status"] = ",".join(statuses)
+        raw = self._call("GET", "/api/research/tickets?" + urllib.parse.urlencode(params), headers=self._ticket_headers())
+        if not isinstance(raw, dict) or not isinstance(raw.get("data"), list) or not isinstance(raw.get("page_info"), dict):
+            raise ResearchCommandUnavailableError("Invalid paged Research ticket response")
+        if len(raw["data"]) > int(params.get("page_size", 100)):
+            raise ResearchCommandUnavailableError("Research ticket owner exceeded requested page size")
+        return raw
+
     def create_research_ticket(self, **kwargs: Any) -> Dict[str, Any]:
-        return self._call("POST", "/api/research/tickets", kwargs) or {}
+        return self._call("POST", "/api/research/tickets", kwargs, headers=self._ticket_headers()) or {}
     def patch_research_ticket(self, ticket_id: str, *, patch: Dict[str, Any], **kw: Any) -> Optional[Dict[str, Any]]:
-        return self._call("PATCH", f"/api/research/tickets/{ticket_id}", {"patch": patch, **kw}, allow_none=(404,))
+        return self._call("PATCH", f"/api/research/tickets/{urllib.parse.quote(ticket_id, safe='')}", {"patch": patch, **kw}, allow_none=(404,), headers=self._ticket_headers())
     def get_research_ticket(self, ticket_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        return self._call("GET", f"/api/research/tickets/{ticket_id}", allow_none=(404,)) if ticket_id else None
+        return self._call("GET", f"/api/research/tickets/{urllib.parse.quote(ticket_id, safe='')}", allow_none=(404,), headers=self._ticket_headers()) if ticket_id else None
     def list_research_tickets(self, *, statuses: Optional[Any] = None, owner: Optional[str] = None) -> List[Dict[str, Any]]:
-        params = [f"status={','.join(str(s) for s in statuses) if isinstance(statuses, (list, tuple, set)) else statuses}"] if statuses else []
+        params = {}
+        if statuses:
+            params["status"] = ",".join(str(s) for s in statuses) if isinstance(statuses, (list, tuple, set)) else statuses
         if owner:
-            params.append(f"owner={owner}")
-        query = f"?{'&'.join(params)}" if params else ""
-        res = self._call("GET", f"/api/research/tickets{query}", allow_none=(404,))
+            params["owner"] = owner
+        query = "?" + urllib.parse.urlencode(params) if params else ""
+        res = self._call("GET", f"/api/research/tickets{query}", allow_none=(404,), headers=self._ticket_headers())
         return res if isinstance(res, list) else []
 
     # Experiments (RW-04)
@@ -155,6 +218,16 @@ class ResearchServiceClient:
         res = self._call("GET", "/api/research/artifacts", headers=self._caller_headers())
         if not isinstance(res, list):
             raise ResearchCommandError("Research artifact collection response was not a list", status_code=502)
+        return res
+    def list_research_artifacts_page(self, *, page_size: int, page_token: Optional[str] = None) -> Dict[str, Any]:
+        """One bounded ordered page of the caller's saved outputs (``items``/``total``/``next_page_token``)."""
+        path = f"/api/research/artifacts?page_size={int(page_size)}"
+        if page_token:
+            path += f"&page_token={urllib.parse.quote(str(page_token), safe='')}"
+        res = self._call("GET", path, headers=self._caller_headers())
+        # A previous-release owner answers a bare list; that is not a page and must not be mistaken for one.
+        if not isinstance(res, dict) or not isinstance(res.get("items"), list):
+            raise ResearchCommandError("Research artifact page response was not a page", status_code=502)
         return res
     def get_research_artifact(self, artifact_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not artifact_id:

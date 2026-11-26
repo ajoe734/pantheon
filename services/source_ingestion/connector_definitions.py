@@ -11,7 +11,7 @@ Every definition is stable-sorted, validated, and fingerprinted with a SHA-256 h
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import hashlib
 import json
@@ -22,6 +22,14 @@ from .provider_adapters import (
     ALLOWED_PROVIDER_ADAPTERS,
     PROVIDER_ADAPTER_ALIASES,
     is_provider_adapter_allowed,
+)
+from .connectors.agora_owner import (
+    AGORA_OWNER_ADAPTER_TOKEN,
+    AGORA_PLATFORM_SOURCE_CONNECTOR_ID,
+    AGORA_PLATFORM_SOURCE_DATASET,
+    AGORA_PLATFORM_SOURCE_SCHEMA_HASH,
+    AGORA_PLATFORM_SOURCE_TOKEN_ENV,
+    register_agora_provider_adapter,
 )
 from .connectors.collector_bundle import (
     COLLECTOR_BUNDLE_ADAPTER_TOKEN,
@@ -35,6 +43,8 @@ from .source_management_models import (
     SourceManagementContractError,
     assert_no_raw_secrets,
 )
+
+register_agora_provider_adapter()
 
 CONNECTOR_DEFINITION_SCHEMA_VERSION = "connector_definition.v1"
 DEFAULT_DEPLOYMENT_SHA = os.environ.get("PANTHEON_DEPLOYMENT_SHA", "40de8fcb1c69fad0bf5e54d4c0bd6e508c9162e0")
@@ -323,17 +333,29 @@ def calculate_source_allowed_actions(
 # no collector-tw-tpex-flows.
 # ==============================================================================
 
+# O-6 (counsel review of §6.4 is open): community sources stay at test volume, i.e. a small per-pull
+# record cap, until the operator records the review outcome.
+COLLECTOR_COMMUNITY_TEST_VOLUME = 50
+
 COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
+    {"id": "collector-macro-dbnomics", "provider": "DBnomics (collector host)", "type": "macro", "class": "macro",
+     "dataset": "collector_macro_series", "cadence": 86400},
+    {"id": "collector-paper-arxiv", "provider": "arXiv (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
+    {"id": "collector-paper-openalex", "provider": "OpenAlex (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
+    {"id": "collector-paper-nber-rss", "provider": "NBER RSS (collector host)", "type": "paper", "class": ("news", "paper"),
+     "dataset": "strategy_seed_metadata", "cadence": 86400},
     {"id": "collector-tw-threads", "provider": "Threads (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "threads", "trust": 0.25, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-instagram-popular", "provider": "Instagram popular tags (web, collector host)", "type": "social",
-     "class": "social", "dataset": "collector_social_posts", "platform": "instagram", "trust": 0.2, "cadence": 86400},
+     "class": "social", "dataset": "collector_social_posts", "platform": "instagram", "trust": 0.2, "cadence": 86400, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-cmoney-forum", "provider": "CMoney forum (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "cmoney", "trust": 0.3, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "cmoney", "trust": 0.3, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-tw-ptt-stock", "provider": "PTT Stock (web, collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "ptt", "trust": 0.3, "cadence": 21600},
+     "dataset": "collector_social_posts", "platform": "ptt", "trust": 0.3, "cadence": 21600, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-youtube-finance", "provider": "YouTube Data API (collector host)", "type": "social", "class": "social",
-     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.4, "cadence": 86400},
+     "dataset": "collector_social_posts", "platform": "youtube", "trust": 0.4, "cadence": 86400, "max_records": COLLECTOR_COMMUNITY_TEST_VOLUME},
     {"id": "collector-news-rss", "provider": "RSSHub news feeds (collector host)", "type": "news", "class": "news",
      "dataset": "collector_news_articles", "publisher": "rss", "cadence": 3600},
     {"id": "collector-gdelt", "provider": "GDELT DOC 2.0 (collector host)", "type": "news", "class": "news",
@@ -347,9 +369,20 @@ COLLECTOR_SOURCE_SPECS: tuple[dict[str, Any], ...] = (
     {"id": "collector-tw-twse-t86", "provider": "TWSE T86 institutional flows (web, collector host)", "type": "market",
      "class": "taiwan_chip", "dataset": "tw_institutional_flow", "attribution": True, "cadence": 86400},
     {"id": "collector-tw-twse-price-history", "provider": "TWSE daily price history MI_INDEX (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
     {"id": "collector-tw-tpex-price-history", "provider": "TPEx daily price history dailyQuotes (web, collector host)", "type": "market",
-     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 86400},
+     "class": "market_daily", "dataset": "tw_price_daily", "attribution": True, "cadence": 600,
+     "max_records": 1000},
+    {"id": "collector-tw-twse-index-breadth", "provider": "TWSE MI_INDEX price indices and market breadth (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_index_daily",
+     "extra_datasets": ("tw_market_breadth_daily",), "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-trading-holidays", "provider": "TWSE and TPEx official trading holiday schedule (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_trading_holidays", "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-trading-suspension", "provider": "TWSE TWTAWU and TPEx sprcHis official trading suspension records (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_trading_suspension", "attribution": True, "cadence": 86400},
+    {"id": "collector-tw-twse-taiex-history", "provider": "TWSE MI_5MINS_HIST TAIEX daily OHLC history (web, collector host)",
+     "type": "market", "class": "market_daily", "dataset": "tw_index_daily", "attribution": True, "cadence": 86400},
     {"id": "collector-library-books", "provider": "Operator book library (collector host)", "type": "paper", "class": ("news", "book"),
      "dataset": "collector_book_sections", "cadence": 2678400},
 )
@@ -372,7 +405,7 @@ def _collector_feature_routing(raw_dataset: str) -> dict[str, Any]:
         "normalized_datasets": (derived, raw_dataset),
         "feature_targets": (derived,),
         "raw_only_datasets": (raw_dataset,),
-        "storage_targets": (f"normalized/{derived}", f"features/{derived}"),
+        "storage_targets": (f"normalized/{derived}",),
     }
 
 
@@ -390,6 +423,7 @@ def _collector_definition(
     trust_score: float = 0.3,
     attribution_required: bool = False,
     cadence_seconds: int = 86400,
+    max_records: int = 500,
     extra_config: Mapping[str, Any] | None = None,
 ) -> ConnectorDefinition:
     host = collector_host()
@@ -413,7 +447,7 @@ def _collector_definition(
         },
         secret_fields=(),
         required_pit_fields=("event_time", "available_time", "ingest_time"),
-        default_limits={"max_records": 500, "max_bytes": 33554432, "timeout_seconds": 30, "max_rate_per_second": 1.0},
+        default_limits={"max_records": max_records, "max_bytes": 33554432, "timeout_seconds": 30, "max_rate_per_second": 1.0},
         allowed_host_patterns=(host,),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref=f"evidence://connector-definition/{definition_id}",
@@ -442,6 +476,7 @@ def _collector_definition(
 
 # Governed TWSE/TPEx OpenAPI fundamentals (feature catalogue datasets).
 GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS: tuple[str, ...] = (
+    "tw_industry_classification",
     "tw_monthly_revenue",
     "tw_financial_statement",
     "tw_valuation_bwibbu",
@@ -481,7 +516,6 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
             "feature_targets": ("returns",),
             "storage_targets": (
                 "normalized/tw_price_daily",
-                "features/returns",
                 *(f"normalized/{ds}" for ds in GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
             ),
             "normalized_datasets": ("tw_price_daily", *GOVERNED_OFFICIAL_FUNDAMENTAL_DATASETS),
@@ -521,6 +555,34 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         test_manifest_ref="evidence://connector-definition/tw-finmind-datasets",
     ),
     ConnectorDefinition(
+        definition_id="tw-finmind-fundamentals",
+        adapter_token="FinMindTaiwanFundamentalsAdapter.records_from_rows",
+        adapter_version="1.0.0",
+        provider="FinMind",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("financial_fundamental",),
+        datasets=("tw_monthly_revenue", "tw_financial_statement", "tw_valuation_bwibbu"),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+                "dataset": {"type": "string"},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "max_records": {"type": "integer", "minimum": 1},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 500, "max_bytes": 4194304, "timeout_seconds": 20, "max_rate_per_second": 10.0},
+        allowed_host_patterns=("api.finmindtrade.com",),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://TW-FUNDAMENTAL-FEATURES-HOSTED-20261114",
+    ),
+    ConnectorDefinition(
         definition_id="tw-finmind-broker-daily-report",
         adapter_token="FinMindTaiwanBrokerDailyReportAdapter.records_from_daily_report_payload",
         adapter_version="1.0.0",
@@ -546,6 +608,37 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         allowed_host_patterns=("api.finmindtrade.com",),
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/tw-finmind-broker-daily-report",
+    ),
+    ConnectorDefinition(
+        definition_id="tw-finmind-kbar-1m",
+        adapter_token="FinMindTaiwanKBarAdapter.records_from_kbar_payload",
+        adapter_version="1.0.0",
+        provider="FinMind",
+        source_kinds=("data_source",),
+        source_types=("market",),
+        source_classes=("market_intraday",),
+        datasets=("tw_price_1m",),
+        auth_modes=("api_key",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("time_watermark",),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "secret_ref_id": {"type": "string"},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 400, "max_bytes": 2097152, "timeout_seconds": 30, "max_rate_per_second": 1.0},
+        allowed_host_patterns=("api.finmindtrade.com",),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://connector-definition/tw-finmind-kbar-1m",
+        metadata={
+            "normalized_dataset": "tw_price_1m",
+            "storage_targets": ["normalized/tw_price_1m"],
+            "daily_truth_dataset": "tw_price_daily",
+            "hourly_self_limit": 4500,
+        },
     ),
     ConnectorDefinition(
         definition_id="tw-finmind-broker-bulk-parquet",
@@ -1016,7 +1109,7 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         source_kinds=("data_source",),
         source_types=("market",),
         source_classes=("taiwan_chip",),
-        datasets=("taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts"),
+        datasets=("taifex_futures_chip", "taifex_options_chip", "taifex_ssf_contracts", "taifex_tx_daily"),
         auth_modes=("none",),
         fetch_modes=("provider_owned_adapter",),
         cursor_modes=("time_watermark",),
@@ -1100,6 +1193,54 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         definition_state=DefinitionState.SUPPORTED,
         test_manifest_ref="evidence://connector-definition/alpha-db-vendor-signals",
     ),
+    # ------------------------------------------------------------------
+    # 19. Agora Governed Platform Source (decision locks, settled arms, journals, insights)
+    # ------------------------------------------------------------------
+    ConnectorDefinition(
+        definition_id=AGORA_PLATFORM_SOURCE_CONNECTOR_ID,
+        adapter_token=AGORA_OWNER_ADAPTER_TOKEN,
+        adapter_version="1.0.0",
+        provider="Agora Owner",
+        source_kinds=("data_source", "strategy_seed_source"),
+        source_types=("internal_note",),
+        source_classes=("internal_agora",),
+        datasets=(AGORA_PLATFORM_SOURCE_DATASET,),
+        auth_modes=("bearer_token",),
+        fetch_modes=("provider_owned_adapter",),
+        cursor_modes=("id_watermark", "time_watermark"),
+        output_schema_versions=(AGORA_PLATFORM_SOURCE_SCHEMA_HASH,),
+        config_schema={
+            "type": "object",
+            "properties": {
+                "api_url": {"type": "string"},
+                "secret_ref_id": {"type": "string", "default": f"env://{AGORA_PLATFORM_SOURCE_TOKEN_ENV}"},
+                "service_actor": {"type": "string", "default": "source-ingest"},
+                "tenant_id": {"type": "string", "default": "default"},
+                "max_records": {"type": "integer", "minimum": 1, "maximum": 500},
+                "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 60},
+                "cursor_state_path": {"type": "string"},
+            },
+        },
+        secret_fields=("secret_ref_id",),
+        required_pit_fields=("event_time", "available_time", "ingest_time"),
+        default_limits={"max_records": 200, "max_bytes": 16777216, "timeout_seconds": 15, "max_rate_per_second": 2.0},
+        allowed_host_patterns=("operator-bff", "127.0.0.1", "localhost"),
+        definition_state=DefinitionState.SUPPORTED,
+        test_manifest_ref="evidence://AGORA-PLATFORM-SOURCE-20261116",
+        metadata={
+            "provenance": "agora",
+            "facts_only": True,
+            "canonical_sink": "SourceRecord/EvidenceBundle",
+            "validation_gates_required": True,
+            "direct_execution_allowed": False,
+            "record_kinds": [
+                "decision_lock",
+                "settled_arm",
+                "decision_journal",
+                "servant_insight",
+            ],
+        },
+    ),
 )
 
 _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
@@ -1108,16 +1249,88 @@ _CANONICAL_DEFINITIONS = _CANONICAL_DEFINITIONS + tuple(
         provider=spec["provider"],
         source_type=spec["type"],
         source_class=spec["class"],
-        datasets=(spec["dataset"],),
+        datasets=(spec["dataset"], *spec.get("extra_datasets", ())),
         platform=spec.get("platform"),
         publisher=spec.get("publisher"),
         trust_score=spec.get("trust", 0.3),
         attribution_required=spec.get("attribution", False),
         cadence_seconds=spec["cadence"],
+        max_records=spec.get("max_records", 500),
         collector_source_id=spec["id"],
     )
     for spec in COLLECTOR_SOURCE_SPECS
 )
+
+# Separate configured instances keep each daily requirement's watermark and schedule
+# independent; these reuse the existing adapters, never the TWSE collector flow path.
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three TWSE/TPEx official chip profiles store every
+# listed share and ETF of the session. One provider response holds ~1310 (TWSE margin) or ~1000 (TPEx) rows, so
+# the per-run budget is 3000 and a larger response FAILS the run instead of being cut (no silent truncation).
+TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS = 3000
+DEFAULT_CHIP_PROFILE_MAX_RECORDS = 500
+
+TW_CHIP_REFRESH_PROFILES = {
+    "tw-official-twse-margin-balances": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
+        "schema_hash": "tw_margin_short_balance.v1",
+        "venues": ["TWSE"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
+    },
+    "tw-official-tpex-margin-balances": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_margin_short_balance",
+        "schema_hash": "tw_margin_short_balance.v1",
+        "venues": ["TPEx"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
+    },
+    "tw-official-tpex-institutional-flow": {
+        "base": "tw-twse-tpex-official-market", "dataset": "tw_institutional_flow",
+        "schema_hash": "tw_institutional_flow.v1",
+        "venues": ["TPEx"],
+        "max_records": TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS, "full_market": True,
+    },
+    "tw-taifex-institutional-positions": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_futures_chip",
+        "schema_hash": "tw_taifex_futures_chip.v1",
+        "contracts": ["TX", "MTX"],
+    },
+    "tw-taifex-put-call": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_options_chip",
+        "schema_hash": "tw_taifex_options_chip.v1",
+        "contracts": ["TXO"],
+    },
+    "tw-taifex-tx-daily": {
+        "base": "tw-taifex-futures-options-chip", "dataset": "taifex_tx_daily",
+        "schema_hash": "tw_taifex_tx_daily.v1",
+        "contracts": ["TX", "MTX"],
+    },
+    "tw-finmind-monthly-revenue": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_monthly_revenue",
+        "schema_hash": "tw_monthly_revenue.v1",
+    },
+    "tw-finmind-quarterly-statements": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_financial_statement",
+        "schema_hash": "tw_financial_statement.v1",
+    },
+    "tw-finmind-valuation": {
+        "base": "tw-finmind-fundamentals", "dataset": "tw_valuation_bwibbu",
+        "schema_hash": "tw_valuation_bwibbu.v1",
+    },
+}
+_BASE_DEFINITIONS = {d.definition_id: d for d in _CANONICAL_DEFINITIONS}
+_CANONICAL_DEFINITIONS += tuple(
+    replace(_BASE_DEFINITIONS[profile["base"]], definition_id=connector_id,
+            datasets=(profile["dataset"],),
+            default_limits={**_BASE_DEFINITIONS[profile["base"]].default_limits,
+                            "max_records": int(profile.get("max_records") or DEFAULT_CHIP_PROFILE_MAX_RECORDS)},
+            test_manifest_ref=(
+                "evidence://TW-FUNDAMENTAL-FEATURES-HOSTED-20261114" if profile["base"] == "tw-finmind-fundamentals"
+                else "evidence://REGIME-DATA-TAIFEX-TX-DAILY-20261114" if profile["dataset"] == "taifex_tx_daily"
+                else "evidence://REGIME-DATA-TW-CHIP-SCHEDULE-20261114"),
+            metadata={**_BASE_DEFINITIONS[profile["base"]].metadata,
+                      "refresh_profile": profile})
+    for connector_id, profile in TW_CHIP_REFRESH_PROFILES.items()
+)
+
 
 DEPLOYED_CONNECTOR_DEFINITIONS: tuple[ConnectorDefinition, ...] = _CANONICAL_DEFINITIONS
 
@@ -1142,6 +1355,7 @@ _DEFINITIONS_BY_ADAPTER: dict[str, ConnectorDefinition] = {
     defn.adapter_token: defn
     for defn in _CANONICAL_DEFINITIONS
     if defn.adapter_token != COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    and defn.definition_id not in TW_CHIP_REFRESH_PROFILES
 }
 
 # Verify at import time that no definition duplicates exist

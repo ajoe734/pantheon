@@ -293,19 +293,27 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         self.assertEqual(entry["retry_at"], "2026-09-22T08:30:00Z")
 
     def test_relative_reset_horizon_is_recorded_from_worker_failure(self) -> None:
-        snapshot = provider_health.apply_failure(
-            provider_health.empty_delivery_health(),
-            endpoint_id="antigravity",
-            account_id="antigravity",
-            failure_kind="quota_terminal",
-            observed_at=self.now,
-            detail="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+        cases = (
+            ("39h", timedelta(hours=39)),
+            ("1h44m10s", timedelta(hours=1, minutes=44, seconds=10)),
+            ("1h 44m 10s", timedelta(hours=1, minutes=44, seconds=10)),
+            ("10s", timedelta(seconds=10)),
+            ("1 day 2 hours 3 minutes 4 seconds", timedelta(days=1, hours=2, minutes=3, seconds=4)),
         )
-
-        entry = snapshot["accounts"]["antigravity"]
-        expected = (self.now + timedelta(hours=39)).isoformat().replace("+00:00", "Z")
-        self.assertEqual(entry["quota_reset_at"], expected)
-        self.assertEqual(entry["retry_at"], expected)
+        for duration, offset in cases:
+            with self.subTest(duration=duration):
+                snapshot = provider_health.apply_failure(
+                    provider_health.empty_delivery_health(),
+                    endpoint_id="antigravity",
+                    account_id="antigravity",
+                    failure_kind="quota_terminal",
+                    observed_at=self.now,
+                    detail=f"RESOURCE_EXHAUSTED: Individual quota reached. Resets in {duration}.",
+                )
+                entry = snapshot["accounts"]["antigravity"]
+                expected = (self.now + offset).isoformat().replace("+00:00", "Z")
+                self.assertEqual(entry["quota_reset_at"], expected)
+                self.assertEqual(entry["retry_at"], expected)
 
     def test_generic_capacity_probe_keeps_prior_reset_horizon(self) -> None:
         snapshot = provider_health.apply_failure(
@@ -314,7 +322,7 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
             account_id="antigravity",
             failure_kind="quota_terminal",
             observed_at=self.now,
-            detail="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 39h.",
+            detail="RESOURCE_EXHAUSTED: Individual quota reached. Resets in 1h44m10s.",
         )
 
         post_probe = provider_health.apply_probe(
@@ -331,7 +339,7 @@ class DeliveryHealthSnapshotTests(unittest.TestCase):
         )
 
         entry = post_probe["accounts"]["antigravity"]
-        expected = (self.now + timedelta(hours=39)).isoformat().replace("+00:00", "Z")
+        expected = (self.now + timedelta(hours=1, minutes=44, seconds=10)).isoformat().replace("+00:00", "Z")
         self.assertEqual(entry["reason_kind"], "quota_terminal")
         self.assertEqual(entry["quota_reset_at"], expected)
         self.assertEqual(entry["retry_at"], expected)

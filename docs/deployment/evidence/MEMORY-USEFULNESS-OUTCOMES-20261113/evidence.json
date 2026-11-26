@@ -1,0 +1,90 @@
+{
+  "task_id": "MEMORY-USEFULNESS-OUTCOMES-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "evidence_level": "local_source_integration",
+  "review_status": "pending_independent_review",
+  "implementation": {
+    "citation_owner": "Persona metadata.case_file_outcomes; captures all cited item IDs from persisted terminal paper cycle decisions and retains case-file identity, criterion, frozen owner pool versions, checks and outcome evidence",
+    "outcome_rule": "Compare the sum of net-of-costs daily paper returns at frozen before/after pool weights over the first ten distinct owner-reported trading dates after the decision; positive=helped, negative=hurt, zero=no_effect; missing or confounded paired facts=confounded",
+    "window_policy": {
+      "trading_days": 10,
+      "missing_outcome_deadline_calendar_days": 30,
+      "authority": "coordinator starting values frozen in the owner, not agent-selected thresholds",
+      "criterion": "frozen_pool_net_of_costs_daily_return_sum"
+    },
+    "writeback": "Existing POST /api/memory/writebacks/learn-feedback, source_event_type=case_file_usefulness, requires existing persona-svc JWT role and an exact verified tenant; no new route or credential issuance",
+    "ranking": "5 * (helped - hurt) / (2 + helped + hurt + no_effect), bounded in [-5,5]; confounded contributes no evidence of improvement; reuse_count remains a read audit counter with no ranking influence",
+    "review_queue": "Three distinct hurt decision IDs persist memory_review.status=pending on the original canonical lesson; existing authorized GET /api/memory/retrieve?review_required=true exposes this queue in institutional/persona scopes",
+    "replay": "Stable per-persona/packet/decision IDs, immutable outcome marks, Persona CAS outbox before network I/O, receipt binding validation, and per-entry PostgreSQL CAS for marks and read counters; multiple agent proposals citing one pool action cannot multiply harmful outcome counts",
+    "entrypoint": "Enabled Persona lifespan instantiates OutcomeTrackingController on the existing cron reconciliation loop; it captures/evaluates persisted decisions even on a poll with no new terminal cron run"
+  },
+  "acceptance_evidence": [
+    {
+      "acceptance": "Cited IDs and helped/hurt/no_effect/confounded after the outcome window",
+      "tests": "services/persona/test_case_file_outcomes.py::test_real_pool_removal_routes_mark_cited_lesson_and_change_ranking; test_unresolved_outcomes_never_claim_improvement",
+      "method": "Authenticated real Persona pool version/decision routes remove a member under existing drawdown policy; real case composer reads real Memory retrieval routes; owner evaluates subsequent fixture paper books and sends marks through the real authenticated Memory writeback route"
+    },
+    {
+      "acceptance": "Bounded usefulness ranking and three-harm memory review",
+      "tests": "services/memory/test_usefulness.py::test_persisted_marks_are_bounded_replay_safe_and_three_hurts_queue_review; test_backend_reranks_all_candidates_before_limit_and_read_counts_never_boost; test_missing_confounded_does_not_boost_and_review_queue_uses_existing_retrieve"
+    },
+    {
+      "acceptance": "Missing outcomes never claim improvement",
+      "tests": "services/persona/test_case_file_outcomes.py::test_unresolved_outcomes_never_claim_improvement",
+      "cases": [
+        "missing book",
+        "wrong checksum",
+        "confounder",
+        "changed harness",
+        "unavailable incident owner",
+        "missing trading calendar",
+        "wrong tenant",
+        "wrong case digest"
+      ]
+    },
+    {
+      "acceptance": "Production entry point and persistence/retry boundaries",
+      "tests": "services/persona/test_case_file_outcomes.py::test_production_lifespan_wires_owner_reconciliation_and_routes; test_delivery_retry_repairs_lost_receipt_without_double_counting; test_repeated_proposals_for_one_owner_action_do_not_multiply_harm; services/memory/test_usefulness.py::test_postgres_marks_and_read_counters_compose_across_instances"
+    }
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory services/persona/test_case_file_outcomes.py services/persona/test_persona_cycle_controller.py services/persona/test_pool_autonomy_cycle.py services/control-plane/persona/test_persona_strategy_pool.py --tb=short",
+      "result": "228 passed, 2 skipped, 2 subtests passed",
+      "exit_code": 0,
+      "note": "Before final PostgreSQL read-counter CAS and repeated-proposal safeguards; focused follow-up covers those changes. Skips were optional PostgreSQL retrieval integrations without their configured DSNs."
+    },
+    {
+      "command": "PANTHEON_USEFULNESS_TEST_DSN=<local test database, supplied without logging credentials> .venv-pantheon/bin/python3 -m pytest -q services/memory/test_usefulness.py --tb=short",
+      "result": "9 passed; both persona and institutional stores exercised production CAS against real PostgreSQL",
+      "exit_code": 0,
+      "isolation": "Unique per-test tables in the existing local test database; only those tables dropped in finally"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py services/memory/test_persona_memory_store.py services/memory/test_institutional_memory_store.py --tb=short",
+      "result": "55 passed; after PostgreSQL counter CAS, packet-independent persisted binding, and repeated-proposal safeguards",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/memory services/persona/test_case_file_outcomes.py services/persona/test_persona_cycle_controller.py --tb=short",
+      "result": "172 passed, 4 skipped, 2 subtests passed after rebase to current dev; optional real PostgreSQL tests are separately proven in the DSN-enabled run",
+      "exit_code": 0
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_case_file_outcomes.py --tb=short",
+      "result": "14 passed after final finite-utility guard and type annotation cleanup",
+      "exit_code": 0
+    }
+  ],
+  "boundaries_and_limits": [
+    "Paper only; no execution publication, model call, live/capital action or execution memory read.",
+    "This evaluates an applied pool decision associated with a citation, not causal credit for an individual lesson.",
+    "Only applied deterministic pool removal/reweight decisions have paired outcome evaluation today; staged and other decision kinds are recorded and become confounded with an explicit missing applied-decision reason rather than a fabricated improvement.",
+    "Missing owner books/calendar/incident state, changed harness, or confounders fail closed. If no full trading-date window arrives, the 30-day deadline records confounded.",
+    "Private marks stay on the cited persona's original entry. No private lesson is copied to institutional memory or a fabricated trade reflection.",
+    "Pending review is a durable queryable flag on the original lesson. This task does not grant an agent endorsement, rule-promotion, quarantine, or deletion authority.",
+    "Registry, provider/cron responses and paper outcomes in tests are fixtures. No hosted deployment, model-quality, trading-performance or live economic improvement claim is made.",
+    "Independent reviewer approval and supervisor integration remain required before done."
+  ]
+}

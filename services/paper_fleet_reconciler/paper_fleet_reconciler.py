@@ -57,6 +57,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -67,6 +70,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import fcntl
 
 from services.execution.lean_runtime.paper_runtime import _extract_verified_bridge
+from services.foundation.reliable_delivery import atomic_write_text, sweep_stale_temp_siblings
+from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
 
 from services.execution.market_snapshot_admission import (
     SnapshotAdmissionDecision,
@@ -98,6 +103,11 @@ _LOOP_ACTUAL_SOURCE = "paper-fleet-reconciler.worker_inventory"
 # Env that must never reach a paper_runtime worker subprocess.
 _LOOP_WRITER_ENV_KEY = "RECONCILER_LOOP_CONTROLLER_DSN"
 _CONTROLLER_ENV_PREFIX = "PANTHEON_CONTROLLER_"
+_REGISTRY_READ_ENV_KEYS = (
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN",
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE",
+    "PERSONA_REGISTRY_BASE_URL",
+)
 
 
 def _build_loop_writer(
@@ -173,6 +183,18 @@ def build_loop_truth(
         "evidence_refs": evidence,
         "backlog": len(unconverged),
     }
+
+
+def _pool_market_symbols(binding: Dict[str, Any]) -> "list[str]":
+    """Symbols a multi-underlying pool binding needs; empty for a single-symbol binding."""
+    metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
+    if _clean_text(binding.get("symbol") or metadata.get("symbol") or ""):
+        return []
+    raw = binding.get("symbols") or metadata.get("symbols")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    symbols = [_clean_text(s) for s in raw]
+    return symbols if len(symbols) > 1 and all(symbols) and len(set(symbols)) == len(symbols) else []
 
 
 def _is_official_calendar_correction(
@@ -442,6 +464,7 @@ class FileFencedLeaderStore:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._lock_path = self._path.with_name(f"{self._path.name}.lock")
+        sweep_stale_temp_siblings(self._path)
 
     def _read(self) -> Dict[str, Any]:
         try:
@@ -452,14 +475,7 @@ class FileFencedLeaderStore:
 
     def _write(self, payload: Dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._path.with_name(
-            f".{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-        )
-        with temporary.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self._path)
+        atomic_write_text(self._path, json.dumps(payload, sort_keys=True))
 
     def _locked(self):
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,6 +660,15 @@ class WorkerEntry:
 # Reconciler
 # ---------------------------------------------------------------------------
 
+class SourceSnapshotUnavailable(Exception):
+    """Source snapshot read failed in transport (not 'no snapshot')."""
+
+    def __init__(self, symbol: str, cause: BaseException) -> None:
+        super().__init__(f"{symbol}: {type(cause).__name__}: {cause}")
+        self.symbol = symbol
+        self.cause = cause
+
+
 class PaperFleetReconciler:
     """Maintain one worker subprocess per active paper RuntimeBinding."""
 
@@ -679,8 +704,13 @@ class PaperFleetReconciler:
             runtime_manager_url
             or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")
         ).rstrip("/")
-        self._token = runtime_manager_token or os.getenv(
-            "PANTHEON_RUNTIME_MANAGER_TOKEN", ""
+        self._explicit_runtime_manager_token = (
+            str(runtime_manager_token).strip()
+            if runtime_manager_token is not None and str(runtime_manager_token).strip()
+            else None
+        )
+        self._runtime_manager_auth: RuntimeManagerAuthConfig = (
+            resolve_runtime_manager_auth(token=self._explicit_runtime_manager_token)
         )
         self._poll_interval = poll_interval_seconds or _as_float(
             os.getenv("RECONCILER_POLL_INTERVAL_SECONDS"), 15.0
@@ -751,6 +781,8 @@ class PaperFleetReconciler:
             or os.getenv("PAPER_RUNTIME_MONITORING_SESSION_STORE", "")
         )
         self._monitoring_session_store_path = Path(store_path) if store_path else None
+        if self._monitoring_session_store_path is not None:
+            sweep_stale_temp_siblings(self._monitoring_session_store_path)
         stale_after = (
             monitoring_heartbeat_stale_after_seconds
             if monitoring_heartbeat_stale_after_seconds is not None
@@ -795,6 +827,12 @@ class PaperFleetReconciler:
         self._cycle_count = 0
         self._last_reconcile_at: Optional[str] = None
         self._last_error: Optional[str] = None
+        # Last successfully read Source snapshot per symbol, and consecutive
+        # transport-failure counts (read unavailable != no snapshot).
+        self._source_snapshot_cache: Dict[str, Dict[str, Any]] = {}
+        self._source_unavailable_counts: Dict[str, int] = {}
+        self._source_unavailable_errors: Dict[str, str] = {}
+        self._last_resolve_unavailable = False
         self._monitoring_last_error: Optional[str] = None
         self._load_monitoring_sessions()
 
@@ -1127,7 +1165,11 @@ class PaperFleetReconciler:
                                 continue
                             paused_snap_id = session_adm.get("source_snapshot_id")
                             paused_time_str = session_adm.get("source_event_time")
+                            self._last_resolve_unavailable = False
                             resume_snapshot = self._resolve_market_snapshot(eb)
+                            if self._last_resolve_unavailable:
+                                # Never resume on an unavailable read.
+                                continue
                             decision = self._check_market_admission(eb, snapshot=resume_snapshot)
                             if decision is not None and decision.admitted:
                                 paused_dt, _ = _admission_parse_rfc3339(paused_time_str, field_name="paused_event_time")
@@ -1232,12 +1274,77 @@ class PaperFleetReconciler:
                             reason="binding no longer in fleet desired state",
                         )
 
+                self._cleanup_retired_state_files(
+                    raw_excluded, desired_ids=set(desired), active_ids={
+                        bid for bid, w in self._workers.items()
+                        if w.status != "stopped"
+                        and (w.process is None or w.process.poll() is None)
+                    },
+                )
                 self._last_error = None
                 self._publish_loop_truth(desired)
 
             self._cycle_count += 1
             self._last_reconcile_at = _iso_now()
             return self._snapshot()
+
+    @staticmethod
+    def _json_file_has_pending(path: Path, keys: tuple[str, ...]) -> bool:
+        """True when the file is absent-of-pending proof is impossible (unreadable)
+        or any of ``keys`` holds work; a missing file has nothing pending."""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError):
+            return True
+        if not isinstance(payload, dict):
+            return True
+        return any(payload.get(key) for key in keys)
+
+    def _cleanup_retired_state_files(
+        self,
+        excluded: List[Dict[str, Any]],
+        *,
+        desired_ids: Set[str],
+        active_ids: Set[str],
+    ) -> List[str]:
+        """Remove state/outbox/temp files of retired bindings with nothing pending.
+
+        Only bindings the runtime-manager reports as ``retired`` (the retirement
+        acknowledgement) whose worker is gone are touched; a binding that is
+        desired or still has a worker keeps every file, and unreadable or
+        non-empty pending state keeps the files for diagnosis.
+        """
+        removed_for: List[str] = []
+        root = self._performance_state_root
+        for binding in excluded or []:
+            if not isinstance(binding, dict) or binding.get("status") != "retired":
+                continue
+            binding_id = str(binding.get("binding_id") or "")
+            if not binding_id or binding_id in desired_ids or binding_id in active_ids:
+                continue
+            state = root / _binding_state_filename(binding_id)
+            outbox = state.with_name(f"{state.name}.lifecycle-outbox.json")
+            books = outbox.with_name(f"{outbox.name}.member-books.json")
+            if self._json_file_has_pending(
+                state, ("pending_fill_publications", "pending_performance_pair")
+            ) or self._json_file_has_pending(outbox, ("pending",)):
+                continue
+            targets = [state, outbox, books]
+            for target in targets:
+                sweep_stale_temp_siblings(target)
+                for extra in (
+                    target,
+                    target.with_name(f".{target.name}.lock"),
+                    target.with_name(f"{target.name}.lock"),
+                ):
+                    try:
+                        extra.unlink(missing_ok=True)
+                    except OSError:
+                        log.warning("retired state cleanup failed for %s", extra)
+            removed_for.append(binding_id)
+        return removed_for
 
     def _run_loop(self) -> None:
         while not self._shutdown.is_set():
@@ -1290,10 +1397,32 @@ class PaperFleetReconciler:
         persona_id = _binding_persona_id(binding)
         if persona_id:
             env["PANTHEON_PERSONA_ID"] = persona_id
+        else:
+            # Only a persona-scoped worker has member books to compare; others get no registry read.
+            for key in _REGISTRY_READ_ENV_KEYS:
+                env.pop(key, None)
         if self._url:
             env["PANTHEON_RUNTIME_MANAGER_URL"] = self._url
-        if self._token:
-            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = self._token
+        explicit_rm_token = getattr(self, "_explicit_runtime_manager_token", None)
+        rm_auth = getattr(self, "_runtime_manager_auth", None)
+        if explicit_rm_token:
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = explicit_rm_token
+        elif (
+            rm_auth is not None
+            and rm_auth.source == "token_file"
+            and rm_auth.token_file_path
+        ):
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN_FILE"] = (
+                rm_auth.token_file_path
+            )
+        elif (
+            rm_auth is not None
+            and rm_auth.source in ("env", "default")
+            and rm_auth.token
+        ):
+            env["PANTHEON_RUNTIME_MANAGER_TOKEN"] = str(
+                rm_auth.token
+            )
         if self._source_ingest_url:
             env["PANTHEON_SOURCE_INGEST_URL"] = self._source_ingest_url
         env["PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS"] = str(
@@ -1509,9 +1638,7 @@ class PaperFleetReconciler:
             ),
         )
         payload = {"monitoring_sessions": records}
-        tmp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_path, path)
+        atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
 
     def _prune_ended_monitoring_sessions(self, max_ended: int = 20) -> None:
         ended = [
@@ -1761,6 +1888,49 @@ class PaperFleetReconciler:
     # Runtime-manager polling
     # ------------------------------------------------------------------
 
+    @property
+    def _token(self) -> str:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            return str(getattr(self, "_explicit_runtime_manager_token", None) or "")
+        try:
+            return auth.token
+        except OSError:
+            return ""
+
+    @_token.setter
+    def _token(self, value: Optional[str | RuntimeManagerAuthConfig]) -> None:
+        if isinstance(value, RuntimeManagerAuthConfig):
+            self._explicit_runtime_manager_token = None
+            self._runtime_manager_auth = value
+            return
+        cleaned = (
+            str(value).strip()
+            if value is not None and str(value).strip()
+            else None
+        )
+        self._explicit_runtime_manager_token = cleaned
+        if cleaned is not None:
+            self._runtime_manager_auth = resolve_runtime_manager_auth(token=cleaned)
+        else:
+            self._runtime_manager_auth = RuntimeManagerAuthConfig(
+                token="",
+                source="argument",
+                used_default=False,
+            )
+
+    def _runtime_manager_headers(self) -> Dict[str, str]:
+        auth = getattr(self, "_runtime_manager_auth", None)
+        if auth is None:
+            tok = getattr(self, "_explicit_runtime_manager_token", None)
+            return {"Authorization": f"Bearer {tok}"} if tok else {}
+        if (
+            not auth.configured
+            and auth.source != "token_file"
+        ):
+            return {}
+        return auth.headers()
+
     def _fetch_fleet_state(
         self,
     ) -> Optional[Tuple[List[Dict[str, Any]], Set[str], List[Dict[str, Any]]]]:
@@ -1806,9 +1976,10 @@ class PaperFleetReconciler:
         try:
             import urllib.request
 
-            headers: Dict[str, str] = {"Accept": "application/json"}
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
+            headers: Dict[str, str] = {
+                "Accept": "application/json",
+                **self._runtime_manager_headers(),
+            }
             req = urllib.request.Request(
                 f"{self._url}/api/runtime-fleet/desired-state"
                 "?stage=paper&include_excluded=true",
@@ -1855,15 +2026,16 @@ class PaperFleetReconciler:
     def _fetch_source_snapshot(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Fetch latest stored normalized snapshot from Source Ingest.
 
+        Returns None only for a successful response without a snapshot.
+        Raises SourceSnapshotUnavailable on transport failure (timeout,
+        connection error, HTTP 5xx, invalid JSON).
+
         Zero recurring pull: only reads from the local Source Ingest read-only
         snapshot endpoint; never pulls from an external provider.
         """
         if not self._source_ingest_url or not symbol:
             return None
         try:
-            import urllib.parse
-            import urllib.request
-
             url = (
                 f"{self._source_ingest_url}/api/source-ingest/snapshots/latest"
                 f"?symbol={urllib.parse.quote(symbol, safe='')}"
@@ -1876,22 +2048,63 @@ class PaperFleetReconciler:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             return payload if isinstance(payload, dict) else None
+        except urllib.error.HTTPError as exc:
+            # 4xx (e.g. 404 market_snapshot_not_found) is Source's real
+            # "no snapshot" answer; only 5xx is a transport failure.
+            if 400 <= exc.code < 500:
+                log.info(
+                    "Source has no stored snapshot for %s (HTTP %s)", symbol, exc.code
+                )
+                return None
+            log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
+            raise SourceSnapshotUnavailable(symbol, exc) from exc
         except Exception as exc:  # noqa: BLE001
             log.warning("could not fetch Source stored snapshot for %s: %s", symbol, exc)
-            return None
+            raise SourceSnapshotUnavailable(symbol, exc) from exc
 
     def _resolve_market_snapshot(self, binding: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Resolve the latest market snapshot for a binding."""
+        """Resolve the latest market snapshot, falling back to the last
+        successfully read snapshot for the symbol when the read is unavailable."""
+        snapshot, unavailable = self._resolve_market_snapshot_ex(binding)
+        self._last_resolve_unavailable = unavailable
+        if unavailable:
+            symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
+            return self._source_snapshot_cache.get(symbol)
+        return snapshot
+
+    def _resolve_market_snapshot_ex(
+        self, binding: Dict[str, Any]
+    ) -> "tuple[Optional[Dict[str, Any]], bool]":
+        """Resolve the latest snapshot; returns (snapshot, unavailable)."""
         raw = binding.get("market_input")
         if not isinstance(raw, dict):
             metadata = binding.get("metadata") if isinstance(binding.get("metadata"), dict) else {}
             raw = metadata.get("market_input")
         if isinstance(raw, dict):
-            return raw
+            return raw, False
         symbol = _clean_text(binding.get("symbol") or (binding.get("metadata") or {}).get("symbol") or "")
         if self._source_ingest_url and symbol:
-            return self._fetch_source_snapshot(symbol)
-        return None
+            try:
+                snap = self._fetch_source_snapshot(symbol)
+            except SourceSnapshotUnavailable as exc:
+                count = self._source_unavailable_counts.get(symbol, 0) + 1
+                self._source_unavailable_counts[symbol] = count
+                has_cache = symbol in self._source_snapshot_cache
+                log.warning(
+                    "market input unavailable for %s (%s, consecutive=%d, cached_snapshot=%s)",
+                    symbol,
+                    type(exc.cause).__name__,
+                    count,
+                    has_cache,
+                )
+                self._source_unavailable_errors[symbol] = type(exc.cause).__name__
+                return None, True
+            self._source_unavailable_counts.pop(symbol, None)
+            self._source_unavailable_errors.pop(symbol, None)
+            if isinstance(snap, dict):
+                self._source_snapshot_cache[symbol] = snap
+            return snap, False
+        return None, False
 
     def _check_market_admission(
         self,
@@ -1923,6 +2136,12 @@ class PaperFleetReconciler:
         symbol = _clean_text(binding.get("symbol") or metadata.get("symbol") or "")
         binding_id = _clean_text(binding.get("binding_id") or "")
 
+        pool_symbols = _pool_market_symbols(binding)
+        if pool_symbols:
+            return self._check_pool_market_admission(
+                binding, pool_symbols, max_age=max_age, min_closes=min_closes, binding_id=binding_id,
+            )
+
         if snapshot is None:
             snapshot = self._resolve_market_snapshot(binding)
 
@@ -1934,6 +2153,47 @@ class PaperFleetReconciler:
             now_iso=_iso_now(),
             binding_id=binding_id,
         )
+
+    def _check_pool_market_admission(
+        self,
+        binding: Dict[str, Any],
+        symbols: "list[str]",
+        *,
+        max_age: int,
+        min_closes: int,
+        binding_id: str,
+    ) -> SnapshotAdmissionDecision:
+        """Admit a pool only when every symbol the envelope needs is admitted at one bar.
+
+        One failing symbol pauses (or keeps paused) the whole pool; a transport
+        failure for any symbol is a rejection, never an admission off a cache.
+        """
+        now_iso = _iso_now()
+        first: Optional[SnapshotAdmissionDecision] = None
+        bars: Dict[str, Any] = {}
+        for symbol in symbols:
+            per_symbol = {**binding, "symbol": symbol, "metadata": {
+                k: v for k, v in (binding.get("metadata") or {}).items() if k != "symbol"}}
+            per_symbol.pop("market_input", None)
+            # Same read-failure rule as a single-symbol binding: an unavailable read falls
+            # back to that symbol's last read snapshot, which admission then judges by age.
+            snap = self._resolve_market_snapshot(per_symbol)
+            decision = admit_market_snapshot(
+                snap, expected_symbol=symbol, max_age_seconds=max_age, minimum_closes=min_closes,
+                now_iso=now_iso, binding_id=binding_id,
+            )
+            if not decision.admitted:
+                return decision
+            bars[symbol] = decision.event_time
+            first = first or decision
+        if len(set(bars.values())) != 1:
+            return SnapshotAdmissionDecision(
+                admitted=False,
+                reason_code="market_input_bar_mismatch",
+                detail="pool symbols are not at one common bar: "
+                + ", ".join(f"{s}={bars[s]}" for s in symbols),
+            )
+        return first  # type: ignore[return-value]
 
     def _transition_binding(
         self,
@@ -1964,9 +2224,8 @@ class PaperFleetReconciler:
             headers: Dict[str, str] = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
+                **self._runtime_manager_headers(),
             }
-            if self._token:
-                headers["Authorization"] = f"Bearer {self._token}"
             body_dict: Dict[str, Any] = {"new_status": new_status}
             if metadata_patch:
                 body_dict["metadata_patch"] = metadata_patch
@@ -2004,6 +2263,14 @@ class PaperFleetReconciler:
             return self._snapshot(
                 include_ended_monitoring_sessions=include_ended_monitoring_sessions
             )
+
+    def _unavailable_summary(self) -> Optional[str]:
+        if not self._source_unavailable_counts:
+            return None
+        return "market input unavailable: " + ", ".join(
+            f"{sym} error={self._source_unavailable_errors.get(sym, 'unknown')} consecutive={n}"
+            for sym, n in sorted(self._source_unavailable_counts.items())
+        )
 
     def _snapshot(self, *, include_ended_monitoring_sessions: bool = True) -> Dict[str, Any]:
         workers = []
@@ -2050,7 +2317,8 @@ class PaperFleetReconciler:
             "started_at": self._started_at,
             "last_reconcile_at": self._last_reconcile_at,
             "cycle_count": self._cycle_count,
-            "last_error": self._last_error,
+            "last_error": self._last_error or self._unavailable_summary(),
+            "market_input_unavailable_counts": dict(self._source_unavailable_counts),
             "monitoring_last_error": self._monitoring_last_error,
             "poll_interval_seconds": self._poll_interval,
             "runtime_manager_url": self._url or None,

@@ -1,0 +1,36 @@
+{
+  "task": "DEV-ORIGINAL-PAIRED-READONLY-QA-CALLER-20261112",
+  "scope": "source-only caller; no real VM/SSH/hosted/provider/secret access; no CLI execution",
+  "cli_input_contract_sha256": "dedf42e580da8855a94ad93426162196c305b4beb5f18097d14a1d2f6aaf0727",
+  "files": [
+    ".github/workflows/nonprod-deploy.yml (three post-Root steps: FE checkout, credential-free npm ci+playwright prepare, caller; all continue-on-error, not read by the Root outcome gate)",
+    "scripts/run_dev_paired_readonly_qa.py",
+    "scripts/test_run_dev_paired_readonly_qa.py",
+    "scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py (secret-reference counts +1 for the new step)"
+  ],
+  "local_verification": "caller fixtures + strict-auth contract: 70 passed; workflow YAML parses; git diff --check clean; no real CLI/VM/SSH/secret access",
+  "remaining_for_actual_execution": [
+    "merged qualified CLI + this caller + reviewed transport in one exact accepted pair",
+    "repo/env vars DEV_ORIGINAL_QA_TENANT_ID, _PERSONA_ID, _EXPECTED_ROLES_JSON, _BASELINE_PATH, _BASELINE_SHA256 (missing => outcome unproven, never pass)",
+    "original Ops publisher executes the sole sequential 4-role/13-raw run"
+  ],
+  "review_rejection_fixes": {
+    "root_identity": "--root-run-id is GITHUB_RUN_ID only (matches release controller runId); --run-attempt recorded separately in evidence",
+    "cli_readiness": "credential-free prepare step (npm ci --ignore-scripts, playwright install chromium) + caller preflight probe before any credential use; failure => cli_not_ready unproven",
+    "evidence_retention": "COMPLETE redacted CLI result dir (result, full-baseline-differences with before/after, current-responses) written byte-complete to the existing private acceptance-capture tree on the dev VM via the existing SSH transport with remote sha256 readback; local tree never deleted; public evidence keeps only hashes/counts/<=500 pointers per group plus differences_total and full-diff sha256; retention failure or missing result dir => unproven. Regression: 13 groups/1020 differences survive cleanup, public summary value-free",
+    "owner_inventory": "ORIGINAL SCOPE CLARIFICATION: real BFF dev-login (OPERATOR_A, RAM only) validated against /bff/me tenant; only X-Tenant-Id sent to the fixed owner GETs over the pinned SSH stdin via curl -H @- (bearer is NOT forwarded to the owner service); no anonymous probe; rows stating a different tenant_id => unproven (owner_tenant_mismatch), rows without tenant_id are not claimed tenant-owned; unavailable/missing/duplicate/count-mismatch => unproven. Evidence records owner_http_auth_enforced=unknown, owner_http_jwt_verified=false.",
+    "runtime_errors": "any exception yields structured unproven evidence retaining expected baseline metadata and completed child exit/artifacts; missing node => exit 127"
+  },
+  "owner_blocker_ac8": {
+    "status": "withdrawn",
+    "note": "Assistant-added per-hop owner JWT/tenant-verifier prerequisite (old AC5 same-bearer wording) withdrawn by explicit native clarification; old AC text retained for audit, not a silent waiver. Owner HTTP auth is reported as unknown/not verified; deployment-wide internal inventory scope is separate from BFF identity. Actual hosted QA prerequisites (private baseline copy, real run) remain blocked/unproven."
+  },
+  "ci_failure_correction": {
+    "failed_check": "Smoke 131376871877: scripts/test_cross_repo_release_controller.py::test_nonprod_workflow_outputs_candidate_auto_binding_contract",
+    "cause": "test banned --pair-id across the whole coordinate-dev-release job; the post-switch readonly QA caller legitimately passes the controller-bound pair id",
+    "fix": "ban scoped to the release-controller invocation step only; controller still receives no caller-supplied pair id; required QA expected-pair argument unchanged",
+    "commit": "150d83219",
+    "local_verification": "3 scoped test files: 167 passed",
+    "not_claimed": "no real VM/SSH/hosted/secret access; acceptance capture still not executed"
+  }
+}

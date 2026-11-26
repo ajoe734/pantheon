@@ -1,0 +1,13 @@
+{
+  "task": "CI-GUARD-RESULT-READ-RACE-20261112",
+  "source_failure": {"pr": 7203, "ci_job": 130928505863, "log_time_utc": "02:39:42", "assertion": "result.read_text() == 'EOF-before-mutation' saw '' (test line ~379)"},
+  "root_cause": "child opens result with open(...,'w') (creates empty file) then writes; parent wait_until(result.exists) returns before contents are written",
+  "fix": "wait_until(lambda: result.exists() and result.read_text()) in the existing test; same 4s bound, same exact assertion, no production change",
+  "isolated_reproduction": "/tmp harness, child creates file then writes after 0.3s delay: old predicate read '' ; new predicate read 'EOF-before-mutation'",
+  "validation": {
+    "affected_test_repeats": "30/30 passed (local)",
+    "full_suite_local": "51 passed, 18 failed; identical 18 failures on unmodified baseline (sandbox environment, none in the affected test); hosted CI is authoritative",
+    "network_vm_docker_provider_calls": "none"
+  },
+  "not_covered": "independent exact-head review, required CI and dev integration are separate and not yet performed"
+}

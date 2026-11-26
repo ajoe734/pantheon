@@ -1,0 +1,104 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "POOL-ADMISSION-AND-WEIGHTS-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "review": {
+    "status": "pending_independent_review"
+  },
+  "base_commit": "f9b9da399",
+  "source_anchors": [
+    "9784c5f00",
+    "6e263b9a6"
+  ],
+  "scope": "Paper pool health, admission and virtual-book weight decisions through the persona service, versioned by the existing pool record writer.",
+  "validation": [
+    {
+      "command": "/tmp/persona-portfolio-venv/bin/python -m pytest services/control-plane/persona services/research/tests/test_pool_admission.py services/evolution/test_approved_baselines.py services/registry/test_portfolio_envelope.py services/execution/lean_runtime/test_member_virtual_book.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "208 passed, 34 subtests passed",
+      "log": "docs/deployment/evidence/POOL-ADMISSION-AND-WEIGHTS-20261112/validation.log",
+      "note": "Full regression before the final drawdown-cap hardening; only pool_policy.py and its focused test changed afterward."
+    },
+    {
+      "command": "/tmp/persona-portfolio-venv/bin/python -m pytest services/control-plane/persona/test_pool_policy.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "9 passed",
+      "log": "docs/deployment/evidence/POOL-ADMISSION-AND-WEIGHTS-20261112/policy-final.log",
+      "note": "Verifies the final policy including 100% loss removal, persistent haircut and direct risk-reduction preservation."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
+  "acceptance": {
+    "1": [
+      "test_health_window_utilisation_idle_days_and_correlation_spectrum",
+      "test_each_missing_measure_is_unknown_and_alignment_is_by_date"
+    ],
+    "2": [
+      "test_recorded_backtest_uses_identical_oos_window_and_pins_artifacts",
+      "test_admission_requires_candidates_own_owner_verified_gate_proof"
+    ],
+    "3": [
+      "test_idle_budget_never_loosens_gate_and_persona_trials_survive_refusals",
+      "test_no_candidate_records_idle_budget_without_inventing_trials"
+    ],
+    "4": [
+      "test_risk_parity_tilt_trial_cap_and_haircuts_leave_idle_budget",
+      "test_reweight_haircut_is_persisted_and_idempotent"
+    ],
+    "5": [
+      "test_risk_parity_tilt_trial_cap_and_haircuts_leave_idle_budget",
+      "test_full_budget_rejects_candidate_that_is_not_stronger_and_ceiling_is_tunable",
+      "test_admission_missing_budget_data_does_not_assume_spare_capacity"
+    ],
+    "6": [
+      "services/control-plane/persona/config/pool_policy.json",
+      "test_safety_ceiling_enforced_by_existing_record_route",
+      "test_full_budget_rejects_candidate_that_is_not_stronger_and_ceiling_is_tunable"
+    ],
+    "7": [
+      "test_decision_routes_admit_reweight_replace_refuse_and_read_version_history"
+    ]
+  },
+  "recorded_market_data": {
+    "fixture": "services/research/tests/fixtures/pool_admission_tw_recorded.json",
+    "source": "TWSE STOCK_DAY",
+    "symbols": [
+      "2330",
+      "2317"
+    ],
+    "months": [
+      "202409",
+      "202410",
+      "202411",
+      "202412"
+    ],
+    "oos_start": "2024-11-27",
+    "oos_end": "2024-12-31",
+    "return_observations": 24,
+    "observed_momentum_result": "refused; correlated and below the candidate Sharpe threshold"
+  },
+  "boundaries": [
+    "No runtime bindings, capital, orders, persona lifecycle or deployments are changed. R6 envelope approval and binding remain mandatory.",
+    "Source/API evidence only; daily persona-cycle wiring and natural hosted acceptance belong to downstream tasks.",
+    "Caller is an authenticated tenant mutation principal supplying source-referenced observed books and governed dataset inputs; there is no production synthetic-data fallback.",
+    "HTTP state-transition testing uses a FakeRegistry owner boundary and a clearly test-only constant-long approval-shaped entry plus schematic virtual books. It does not claim a genuine approval for that variant or hosted evidence.",
+    "Admission stays inside the current pool approved symbol union until separate permitted-universe owner integration.",
+    "Effective bets use the named correlation spectral participation ratio, and weights use inverse-volatility risk parity with bounded pre-normalisation performance factors.",
+    "Backtest returns are exposure-fraction net Taiwan costs and are explicitly separate from the approved gate share-sized baseline basis."
+  ],
+  "artifact_sha256": {
+    "services/control-plane/persona/config/pool_policy.json": "b5ac6397366bbf3ff97b77c437f6f9a69bc846121bf7abde7d167e8362c259ba",
+    "services/control-plane/persona/pool_policy.py": "2de4f671c7ad63977091a3e10b71b9e0351e50766b130af87bce8e0a47d4694e",
+    "services/control-plane/persona/persona_strategy_pool.py": "457ef82b193e37fe606ca8963796198f46664f00d66383408f3615a01d498622",
+    "services/control-plane/persona/main.py": "7eb06b16038e5d390db55066ec82000e2cb0e9e9cd1fce00ce06ba845421af4d",
+    "services/research/pool_admission.py": "9aead13be585a3133afd7c4d70e8b987b4961fa50e2f33102ce21ff617695484",
+    "services/research/tests/fixtures/pool_admission_tw_recorded.json": "8108807c99ae2d6b9aba26b75fc761263842375b8518136eb0250ef3652474d1",
+    "docs/deployment/evidence/POOL-ADMISSION-AND-WEIGHTS-20261112/validation.log": "b40ea3c28a92cd94e87eaa8ef69c3e6f3cfc66636b4286e8b196aa755696758a",
+    "docs/deployment/evidence/POOL-ADMISSION-AND-WEIGHTS-20261112/policy-final.log": "74d7a209fd8baf93be2e5e9d8e56a1f9328017a131c3c2fe1c4d3f1f40c452d7"
+  }
+}

@@ -1111,10 +1111,433 @@ def test_strategy_summary_page_preserves_error_statuses_for_invalid_tokens_confl
         updated_at="2026-10-01T00:00:00Z",
         owner_tenant="tenant-a",
     )
-    resp_owner_err = strict_client.get(
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+    try:
+        resp_owner_err = strict_client.get(
+            "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+            headers=_bearer(token_a),
+        )
+        assert resp_owner_err.status_code == 503
+        assert "Invalid strategy registry entry" in resp_owner_err.json()["detail"]
+        assert store.full_summary_rows_extracted == 0
+    finally:
+        store._entries.pop("reg-corrupt-entry", None)
+
+
+def test_strategy_summary_page_query_search_bounds_phase2_to_matching_page_and_respects_current_version_and_tenant(
+    strict_client,
+):
+    """Owner-side query filtering on strategy_summary_page matches current winning
+    versions by strategy_id or title/name (case-insensitive), ignores superseded
+    versions, retired families, and foreign tenants, and extracts Phase 2 full
+    summary rows only for the returned matching page slice.
+    """
+    from .pg_store import _strategy_spec_summary_index_single_pass_sql
+    from .storage import get_store
+
+    token_a = _jwt(subject="search-a", tenant="tenant-a")
+    store = get_store()
+    store._entries.clear()
+
+    # Populate 60 non-matching strategies plus multi-version, retired, and foreign-tenant strategies
+    for i in range(60):
+        sid = f"strat-bulk-{i:04d}"
+        rid = f"reg-{sid}-v1"
+        spec = _realistic_strategy_spec_payload(sid, version="1.0.0", lifecycle_state="approved")
+        store._entries[rid] = RegistryEntry(
+            registry_id=rid,
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=sid,
+            version="1.0.0",
+            artifact_state=ArtifactState.APPROVED,
+            lineage=Lineage(source_run_ids=[f"run-{rid}"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum=f"sha256:{rid}",
+            metadata={"strategy_spec": spec, "title": spec["title"]},
+            created_at="2026-10-01T00:00:00Z",
+            updated_at=f"2026-10-02T{(i % 24):02d}:00:00Z",
+            owner_tenant="tenant-a",
+        )
+
+    # Multi-version family: v1.0.0 had "Superseded Legacy Title", v1.2.0 has "Quantum Horizon Alpha"
+    spec_v1 = _realistic_strategy_spec_payload("strat-quantum-target", version="1.0.0", lifecycle_state="draft")
+    spec_v1["title"] = "Superseded Legacy Title"
+    spec_v1["name"] = "Superseded Legacy Title"
+    store._entries["reg-quantum-v1"] = RegistryEntry(
+        registry_id="reg-quantum-v1",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-target",
+        version="1.0.0",
+        artifact_state=ArtifactState.DRAFT,
+        lineage=Lineage(source_run_ids=["run-q-v1"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-v1",
+        metadata={"strategy_spec": spec_v1, "title": "Superseded Legacy Title"},
+        created_at="2026-09-01T00:00:00Z",
+        updated_at="2026-09-01T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+    spec_v2 = _realistic_strategy_spec_payload("strat-quantum-target", version="1.2.0", lifecycle_state="approved")
+    spec_v2["title"] = "Quantum Horizon Alpha"
+    spec_v2["name"] = "Quantum Horizon Alpha"
+    store._entries["reg-quantum-v2"] = RegistryEntry(
+        registry_id="reg-quantum-v2",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-target",
+        version="1.2.0",
+        artifact_state=ArtifactState.APPROVED,
+        lineage=Lineage(source_run_ids=["run-q-v2"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-v2",
+        metadata={"strategy_spec": spec_v2, "title": "Quantum Horizon Alpha", "owner": "desk-quantum"},
+        created_at="2026-09-02T00:00:00Z",
+        updated_at="2026-09-02T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+
+    # Retired strategy with "Quantum Horizon" in title (must be excluded)
+    spec_ret = _realistic_strategy_spec_payload("strat-quantum-retired", version="1.0.0", lifecycle_state="retired")
+    spec_ret["title"] = "Quantum Horizon Retired"
+    store._entries["reg-quantum-ret"] = RegistryEntry(
+        registry_id="reg-quantum-ret",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-retired",
+        version="1.0.0",
+        artifact_state=ArtifactState.RETIRED,
+        lineage=Lineage(source_run_ids=["run-q-ret"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-ret",
+        metadata={"strategy_spec": spec_ret, "title": "Quantum Horizon Retired"},
+        created_at="2026-09-03T00:00:00Z",
+        updated_at="2026-09-03T00:00:00Z",
+        owner_tenant="tenant-a",
+    )
+
+    # Foreign tenant strategy with "Quantum Horizon" in title (must be excluded)
+    spec_foreign = _realistic_strategy_spec_payload("strat-quantum-foreign", version="1.0.0", lifecycle_state="approved")
+    spec_foreign["title"] = "Quantum Horizon Foreign"
+    store._entries["reg-quantum-foreign"] = RegistryEntry(
+        registry_id="reg-quantum-foreign",
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-quantum-foreign",
+        version="1.0.0",
+        artifact_state=ArtifactState.APPROVED,
+        lineage=Lineage(source_run_ids=["run-q-foreign"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:q-foreign",
+        metadata={"strategy_spec": spec_foreign, "title": "Quantum Horizon Foreign"},
+        created_at="2026-09-04T00:00:00Z",
+        updated_at="2026-09-04T00:00:00Z",
+        owner_tenant="tenant-b",
+    )
+
+    # 1. Superseded v1 title does not match
+    resp_superseded = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&query=Superseded+Legacy&page_size=20",
         headers=_bearer(token_a),
     )
-    assert resp_owner_err.status_code == 503
-    assert "Invalid strategy registry entry" in resp_owner_err.json()["detail"]
+    assert resp_superseded.status_code == 200
+    assert resp_superseded.json()["total"] == 0
+    assert resp_superseded.json()["items"] == []
     assert store.full_summary_rows_extracted == 0
+
+    # 2. Current version title matches (even though updated_at places it beyond the first 20 rows)
+    resp_match = strict_client.get(
+        "/api/registry/strategy-specs?view=strategy_summary_page&query=quantum+horizon&page_size=20",
+        headers=_bearer(token_a),
+    )
+    assert resp_match.status_code == 200
+    body = resp_match.json()
+    assert body["total"] == 1
+    assert body["next_page_token"] is None
+    assert len(body["items"]) == 1
+    assert body["items"][0]["strategy_id"] == "strat-quantum-target"
+    assert body["items"][0]["current_spec_version"] == "1.2.0"
+    assert body["items"][0]["title"] == "Quantum Horizon Alpha"
+    assert body["items"][0]["owner"] == "desk-quantum"
+    assert store.full_summary_rows_extracted == 1
+    assert store.full_summary_row_ids_extracted == ("reg-quantum-v2",)
+
+    # 3. Verify Postgres single-pass index SQL with include_title=True projects only compact title/name leaves
+    sql_with_title = _strategy_spec_summary_index_single_pass_sql("registry.entries", "TRUE", include_title=True)
+    assert "(m -> 'title')::text AS mt0" in sql_with_title
+    assert "(s -> 'title')::text AS st0" in sql_with_title
+    for heavy_leaf in ("market_scope", "execution_profile", "governance", "capital_pool_id", "source_kind"):
+        assert heavy_leaf not in sql_with_title
+
+
+# --- REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125 -------------------------------
+#
+# One hide rule (``strategy_stub_reason``) classifies stubs in both the BFF and
+# the Registry. These vectors are shared: the BFF test
+# ``test_strategy_synthetic_stubs.py`` imports ``STUB_RULE_VECTORS`` and asserts
+# the BFF answers identically.
+
+STUB_RULE_VECTORS: list[dict[str, Any]] = [
+    {"id": "scope-test", "strategy_id": "s", "title": "Plain", "persona_ids": ["p-live"], "data_scope": "test", "expected": "test_persona_probe"},
+    {"id": "scope-acceptance-upper", "strategy_id": "s", "title": "Plain", "persona_ids": [], "data_scope": "ACCEPTANCE", "expected": "test_persona_probe"},
+    {"id": "scope-fixture", "strategy_id": "s", "title": "Plain", "persona_ids": [], "data_scope": "fixture", "expected": "test_persona_probe"},
+    {"id": "scope-synthetic", "strategy_id": "s", "title": "Plain", "persona_ids": [], "data_scope": "synthetic", "expected": "test_persona_probe"},
+    {"id": "scope-production-real", "strategy_id": "s", "title": "Plain", "persona_ids": [], "data_scope": "production", "expected": None},
+    {"id": "all-test-personas", "strategy_id": "s", "title": "Plain", "persona_ids": ["p-test"], "data_scope": "", "expected": "test_persona_probe"},
+    {"id": "all-test-personas-many", "strategy_id": "s", "title": "Plain", "persona_ids": ["p-test", "p-test-2"], "data_scope": "", "expected": "test_persona_probe"},
+    {"id": "mixed-personas", "strategy_id": "s", "title": "Plain", "persona_ids": ["p-test", "p-live"], "data_scope": "", "expected": None},
+    {"id": "raw-seed-unbound-id", "strategy_id": "strat-tw-official:x", "title": "Plain", "persona_ids": [], "data_scope": "", "expected": "raw_market_seed_without_rules"},
+    {"id": "raw-seed-unbound-title", "strategy_id": "s", "title": "TW official momentum", "persona_ids": [], "data_scope": "", "expected": "raw_market_seed_without_rules"},
+    {"id": "raw-seed-bound-is-real", "strategy_id": "strat-tw-official:x", "title": "Plain", "persona_ids": ["p-live"], "data_scope": "", "expected": None},
+    {"id": "simulation-unbound", "strategy_id": "s", "title": "SIMULATION alpha", "persona_ids": [], "data_scope": "", "expected": "simulation_fixture"},
+    {"id": "simulation-bound-is-real", "strategy_id": "s", "title": "SIMULATION alpha", "persona_ids": ["p-live"], "data_scope": "", "expected": None},
+    {"id": "release-probe-no-scope", "strategy_id": "s", "title": "Pantheon Dev Paper Release 43688794313 Attempt 1", "persona_ids": ["p-live"], "data_scope": "", "expected": "test_persona_probe"},
+    {"id": "release-probe-with-real-scope", "strategy_id": "s", "title": "Pantheon Dev Paper Release 43688794313 Attempt 1", "persona_ids": ["p-live"], "data_scope": "production", "expected": None},
+    {"id": "release-title-without-attempt", "strategy_id": "s", "title": "Pantheon Dev Paper Release 1", "persona_ids": [], "data_scope": "", "expected": None},
+    {"id": "plain-real", "strategy_id": "strat-real", "title": "Real momentum", "persona_ids": ["p-live"], "data_scope": "", "expected": None},
+]
+STUB_RULE_TEST_PERSONA_IDS = frozenset({"p-test", "p-test-2"})
+
+
+@pytest.mark.parametrize("vector", STUB_RULE_VECTORS, ids=lambda v: v["id"])
+def test_registry_stub_rule_matches_shared_vectors(vector):
+    from .storage import strategy_stub_reason_for_fields
+
+    assert (
+        strategy_stub_reason_for_fields(
+            strategy_id=vector["strategy_id"],
+            title=vector["title"],
+            persona_ids=vector["persona_ids"],
+            data_scope=vector["data_scope"],
+            test_persona_ids=STUB_RULE_TEST_PERSONA_IDS,
+        )
+        == vector["expected"]
+    )
+
+
+def _hosted_index_row(sid, *, state="draft", personas=(), title=None, data_scope=None, idx=0):
+    meta: dict[str, Any] = {
+        "spec_version_id": f"reg-{sid}",
+        "persona_ids": list(personas),
+        "lifecycle_state": state,
+        "title": title or f"Draft {sid}",
+    }
+    if data_scope:
+        meta["data_scope"] = data_scope
+    return {
+        "registry_id": f"reg-{sid}",
+        "artifact_type": "strategy_spec",
+        "artifact_state": "draft",
+        "strategy_id": sid,
+        "version": "1.0.0",
+        "created_at": "2026-10-01T00:00:00Z",
+        "updated_at": f"2026-10-{1 + idx % 28:02d}T00:00:{idx % 60:02d}Z",
+        "metadata": meta,
+    }
+
+
+def _hosted_shape_index_rows():
+    """Real row shapes at the hosted proportions: 4205 visible drafts, 3216
+    hidden drafts, approved, review and retired rows."""
+    rows, n = [], 0
+    for _ in range(4205):
+        rows.append(_hosted_index_row(f"s-real-{n:05d}", personas=["p-live"], idx=n)); n += 1
+    for _ in range(1500):
+        rows.append(_hosted_index_row(f"strat-tw-official:{n}", idx=n)); n += 1
+    for _ in range(100):
+        rows.append(_hosted_index_row(f"s-sim-{n}", title="SIMULATION x", idx=n)); n += 1
+    for _ in range(1200):
+        rows.append(_hosted_index_row(f"s-tp-{n}", personas=["p-test"], idx=n)); n += 1
+    for _ in range(416):
+        rows.append(_hosted_index_row(f"s-ds-{n}", data_scope="test", idx=n)); n += 1
+    for st, count in (("approved", 170), ("review", 1), ("retired", 1556)):
+        for _ in range(count):
+            rows.append(_hosted_index_row(f"s-{st}-{n}", state=st, personas=["p-live"], idx=n)); n += 1
+    return rows
+
+
+def test_hide_returns_exact_visible_total_visible_counts_and_hidden_by_reason():
+    rows = _hosted_shape_index_rows()
+    plain = project_strategy_spec_summary_page(rows, state="draft", page_size=200)
+    hidden = project_strategy_spec_summary_page(
+        rows, state="draft", page_size=200, hide_stubs=True, hide_persona_ids=["p-test"]
+    )
+    assert plain["total"] == 7421
+    assert hidden["total"] == 4205
+    assert hidden["page_info"]["total"] == hidden["visible_state_counts"]["draft"] == 4205
+    assert hidden["hidden"]["by_reason"] == {
+        "test_persona_probe": 1200 + 416,
+        "raw_market_seed_without_rules": 1500,
+        "simulation_fixture": 100,
+    }
+    assert hidden["hidden"]["total"] == 3216
+    assert plain["total"] == hidden["total"] + hidden["hidden"]["total"]
+    # state_counts keeps its meaning: every current version, hidden or not
+    assert hidden["state_counts"] == plain["state_counts"]
+    assert hidden["state_counts"]["draft"] == 7421
+    assert hidden["state_counts"]["retired"] == 1556
+    assert hidden["visible_state_counts"]["approved"] == 170
+    assert hidden["visible_state_counts"]["review"] == 1
+    assert hidden["visible_state_counts"]["retired"] == 1556
+    # the same filter family: every state filter is exact against visible counts
+    for flt, expected in (
+        ({}, 4205 + 170 + 1),
+        ({"exclude_state": "draft"}, 171),
+        ({"state": "approved"}, 170),
+        ({"state": "review"}, 1),
+        ({"state": "retired"}, 1556),
+        ({"persona_id": "p-live"}, 4205 + 170 + 1),
+    ):
+        got = project_strategy_spec_summary_page(
+            rows, page_size=200, hide_stubs=True, hide_persona_ids=["p-test"], **flt
+        )
+        assert got["total"] == expected, flt
+
+
+def test_hide_orders_and_pages_visible_rows_only_by_last_modified_then_strategy_id_desc():
+    rows = _hosted_shape_index_rows()
+    kwargs = dict(page_size=50, hide_stubs=True, hide_persona_ids=["p-test"], state="draft")
+    seen: list[str] = []
+    token = None
+    while True:
+        page = project_strategy_spec_summary_page(rows, page_token=token, **kwargs)
+        seen.extend(item["strategy_id"] for item in page["items"])
+        token = page["next_page_token"]
+        if token is None:
+            break
+    assert len(seen) == len(set(seen)) == 4205
+    assert all(sid.startswith("s-real-") for sid in seen)
+    full = project_strategy_spec_summary_page(
+        [r for r in rows if r["strategy_id"].startswith("s-real-")], page_size=200, state="draft"
+    )
+    first_200 = [i["strategy_id"] for i in full["items"]]
+    assert seen[:200] == first_200
+
+
+def test_without_hide_input_the_answer_is_unchanged_and_has_no_new_keys():
+    rows = _hosted_shape_index_rows()
+    a = project_strategy_spec_summary_page(rows, state="draft", page_size=20)
+    b = project_strategy_spec_summary_page(
+        rows, state="draft", page_size=20, hide_stubs=False, hide_persona_ids=["p-test"]
+    )
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    assert set(a) == {"items", "total", "page_size", "next_page_token", "state_counts", "page_info"}
+
+
+def test_hide_with_no_test_personas_still_applies_scope_and_unbound_rules():
+    rows = _hosted_shape_index_rows()
+    got = project_strategy_spec_summary_page(rows, state="draft", page_size=1, hide_stubs=True)
+    # without ids the 1200 test-persona rows stay visible; scope + seeds + sims hide
+    assert got["total"] == 4205 + 1200
+    assert got["hidden"]["by_reason"]["test_persona_probe"] == 416
+
+
+def test_hide_peak_memory_with_9000_hosted_shape_rows_stays_bounded():
+    import tracemalloc
+
+    store = RegistryStore()
+    n = 0
+    for _ in range(9300):
+        sid = f"strat-mem-{n:05d}"
+        spec = _realistic_strategy_spec_payload(sid, lifecycle_state="draft", persona_ids=["p-live"] if n % 2 else [])
+        if n % 3 == 0:
+            spec["title"] = f"TW official {sid}"
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version="1.0.0",
+                artifact_state=ArtifactState.DRAFT,
+                lineage=Lineage(source_run_ids=["run"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{sid}",
+                metadata={"strategy_spec": spec, "persona_ids": spec.get("persona_ids", [])},
+            ),
+            f"reg-{sid}",
+            actor={"tenant": "tenant-dev"},
+        )
+        n += 1
+    service = RegistryService(store=store)
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    base = tracemalloc.get_traced_memory()[0]
+    page = service.strategy_spec_summary_page(
+        visible_tenants=frozenset({"tenant-dev"}),
+        artifact_type="strategy_spec",
+        state="draft",
+        page_size=20,
+        hide_stubs=True,
+        hide_persona_ids=["p-test"],
+    )
+    peak = tracemalloc.get_traced_memory()[1] - base
+    tracemalloc.stop()
+    assert page["total"] + page["hidden"]["total"] == 9300
+    assert page["hidden"]["by_reason"]["raw_market_seed_without_rules"] == 1550  # n % 6 == 0: titled seed and unbound
+    assert len(page["items"]) == 20
+    # the 256 MiB container limit: the whole candidate pass stays far below it
+    assert peak < 64 * 1024 * 1024, peak
+    print(f"HIDE_PEAK_BYTES rows=9300 peak={peak}")
+
+
+def test_postgres_phase1_sql_filters_type_and_tenant_before_payload_expressions():
+    from .pg_store import _strategy_spec_summary_index_single_pass_sql, persona_binding_family_keep_sql
+
+    visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(
+        frozenset({"tenant-dev"}), "strategy_spec"
+    )
+    sql = _strategy_spec_summary_index_single_pass_sql(
+        "registry.entries", visible_sql, include_title=True, include_scope=True
+    )
+    scan = f"FROM registry.entries WHERE jsonb_typeof(payload) <> 'object' OR ({visible_sql}) OFFSET 0"
+    assert scan in sql
+    # the scan predicate is evaluated on the stored payload, before the copy
+    # ``payload || '{}'`` is projected, so other artifact types are never copied
+    assert sql.index("payload || '{}'::jsonb AS u") < sql.index(scan)  # projection text precedes FROM
+    assert sql.count("%s") == 2 * visible_sql.count("%s") == 2 * len(params)
+    assert "ds0" in sql and "dsm1" in sql
+
+
+def test_postgres_index_columns_carry_data_scope_for_the_hide_rule():
+    from .pg_store import strategy_spec_summary_index_rows_from_columns
+
+    cols = (
+        '"reg-1"', '"strategy_spec"', '"draft"', '"s-1"', '"1.0.0"', '"2026-10-01T00:00:00Z"', '"2026-10-02T00:00:00Z"',
+        None, None, None, None, None, None, None, None, None,  # meta m0..m8
+        None,  # mp0
+        None, None, None, None, None, None, None, None, None,  # s0..s8
+        None,  # sp0
+        None, None, None, None,  # sm0..sm3
+        '"Title"', None, None, None,  # mt0 mt1 st0 st1
+        None, None, None, None,  # t0..t3
+        '"test"', None, None, '"fixture"',  # data_scope / dataScope; spec metadata (none object -> ignored)
+    )
+    rows = strategy_spec_summary_index_rows_from_columns([cols], include_title=True, include_scope=True)
+    assert rows[0]["metadata"]["data_scope"] == "test"
+    assert rows[0]["metadata"]["title"] == "Title"
+
+
+def test_endpoint_hide_input_round_trips_and_leaves_default_answer_unchanged(strict_client):
+    from .storage import get_store
+
+    token = _jwt(subject="hide-ep", tenant="tenant-hide")
+    store = get_store()
+    for sid, title in (("strat-hide-real", "Real"), ("strat-tw-official:hide", "TW official seed")):
+        spec = _valid_spec(sid)
+        spec["title"] = title
+        spec["lifecycle_state"] = "draft"
+        store.create(
+            RegistryEntryCreate(
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version="1.0.0",
+                artifact_state=ArtifactState.DRAFT,
+                lineage=Lineage(source_run_ids=["run-hide"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{sid}",
+                metadata={"strategy_spec": spec},
+            ),
+            f"reg-{sid}",
+            actor={"tenant": "tenant-hide"},
+        )
+    base = "/api/registry/strategy-specs?view=strategy_summary_page&state=draft"
+    plain = strict_client.get(base, headers=_bearer(token)).json()
+    hidden = strict_client.get(base + "&hide_stubs=true&hide_persona_ids=p-a,p-b", headers=_bearer(token)).json()
+    assert plain["total"] == 2 and "hidden" not in plain
+    assert hidden["total"] == 1
+    assert hidden["hidden"]["by_reason"]["raw_market_seed_without_rules"] == 1
+    assert hidden["visible_state_counts"]["draft"] == 1

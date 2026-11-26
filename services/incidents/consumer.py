@@ -6,14 +6,18 @@ writes through the IncidentStore owned by the incident service.
 """
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import uuid
+from contextlib import contextmanager
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from services.foundation.reliable_delivery import atomic_temp_path, sweep_stale_temp_siblings
 from services.incident.evidence_collector import (
     EvidenceCollectionError,
     PostmortemEvidenceCollector,
@@ -26,6 +30,11 @@ from services.incident.incident import (
     IncidentError,
     IncidentStore,
     ORPHAN_RECOVERED_RESOLUTION_REASON,
+    _CANONICAL_KEY_KV_RE,
+    _FINGERPRINT_KV_RE,
+    _INFRA_FAILURE_PROBE_RE,
+    _coerce_numeric_or_value,
+    canonical_monitor_agent_finding_key,
     extract_infrastructure_incident_component,
     is_infrastructure_health_incident,
 )
@@ -78,12 +87,45 @@ class InfrastructureHealthIncidentResult:
     created: bool
 
 
+def _write_json_under_lock(file_path: Path, payload: Any, *, indent: int | None, swept: set) -> None:
+    """Replace ``file_path`` through its one deterministic temp under an exclusive flock.
+
+    The first write per store sweeps this file's legacy temp siblings (and the old
+    ``with_suffix('.tmp')`` name); a temp newer than the real file is kept.
+    """
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(
+        str(file_path.with_name(f".{file_path.name}.lock")), os.O_CREAT | os.O_RDWR, 0o644
+    )
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    try:
+        if file_path not in swept:
+            swept.add(file_path)
+            sweep_stale_temp_siblings(
+                file_path,
+                keep_newer=True,
+                legacy_names=(file_path.with_suffix(".tmp").name,),
+            )
+        temp_path = atomic_temp_path(file_path)
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=indent)
+            temp_path.replace(file_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
 class DurableDeliveredIncidentsStore:
     """Persistent on-disk set for delivered incident IDs."""
 
     def __init__(self, file_path: Path | str) -> None:
         self.file_path = Path(file_path)
         self._ids: set[str] = set()
+        self._swept: set = set()
         self.reload()
 
     def reload(self) -> None:
@@ -98,11 +140,9 @@ class DurableDeliveredIncidentsStore:
 
     def _save(self) -> None:
         try:
-            self.file_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.file_path.with_suffix(".tmp")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(sorted(list(self._ids)), f, indent=2)
-            temp_path.replace(self.file_path)
+            _write_json_under_lock(
+                self.file_path, sorted(list(self._ids)), indent=2, swept=self._swept
+            )
         except Exception:
             pass
 
@@ -142,6 +182,7 @@ class DurableDownstreamWorkStore:
 
     def __init__(self, file_path: Path | str) -> None:
         self.file_path = Path(file_path)
+        self._swept: set = set()
 
     def get_pending_work(self) -> List[Dict[str, Any]]:
         if not self.file_path.exists():
@@ -171,11 +212,7 @@ class DurableDownstreamWorkStore:
 
     def _save(self, items: List[Dict[str, Any]]) -> None:
         try:
-            self.file_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.file_path.with_suffix(".tmp")
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(items, f, indent=2)
-            temp_path.replace(self.file_path)
+            _write_json_under_lock(self.file_path, items, indent=2, swept=self._swept)
         except Exception:
             pass
 
@@ -582,12 +619,9 @@ class InfrastructureHealthIncidentConsumer:
             if existing is not None:
                 return InfrastructureHealthIncidentResult(incident=existing, created=False)
         comp_norm = _safe_component(service_name)
-        for candidate in reversed(self._store.list_incidents()):
-            if (
-                is_infrastructure_health_incident(candidate)
-                and extract_infrastructure_incident_component(candidate) == comp_norm
-            ):
-                return InfrastructureHealthIncidentResult(incident=candidate, created=False)
+        candidate = self._store.find_latest_infrastructure_incident_for_component(comp_norm)
+        if candidate is not None:
+            return InfrastructureHealthIncidentResult(incident=candidate, created=False)
         raise IncidentConsumerError(
             f"No infrastructure incident found to resolve for component {service_name!r}"
         )
@@ -727,7 +761,7 @@ def build_incident_from_threshold_payload(
         extra_notes=notes,
     )
 
-    return (collector or PostmortemEvidenceCollector()).create_incident(
+    base_incident = (collector or PostmortemEvidenceCollector()).create_incident(
         bundle=bundle,
         title=_title(payload, event, metric_name),
         severity=_severity(payload, event, threshold),
@@ -735,6 +769,86 @@ def build_incident_from_threshold_payload(
         created_at=_created_at(payload, event),
         threshold_identity=_threshold_identity(threshold),
     )
+    return IncidentCase(
+        **{
+            **base_incident.to_dict(),
+            "kind": "threshold",
+            "metric": metric_name,
+            "observed": _coerce_numeric_or_value(threshold.get("observed_value")),
+            "threshold": _coerce_numeric_or_value(threshold.get("threshold_value")),
+            "comparator": comparator_val,
+            "occurrence_count": 1,
+            "first_seen_at": base_incident.created_at,
+            "last_seen_at": base_incident.created_at,
+        }
+    )
+
+
+def build_incident_from_agent_finding_payload(
+    payload: Mapping[str, Any],
+    *,
+    incident_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+) -> IncidentCase:
+    """Build an IncidentCase from a monitor-agent finding payload."""
+    if not isinstance(payload, Mapping):
+        raise IncidentConsumerError("agent finding payload must be an object")
+    if payload.get("schema_version") == "pantheon.infrastructure-incident/1":
+        merged_payload = dict(payload)
+        if incident_id:
+            merged_payload["incident_id"] = incident_id
+        return build_incident_from_infrastructure_health_payload(merged_payload)
+
+    fingerprint = str(payload.get("fingerprint") or "").strip()
+    snapshot_ref = str(payload.get("snapshot_ref") or payload.get("source_event_id") or "").strip()
+    rationale = str(payload.get("rationale") or "").strip()
+    title = str(payload.get("title") or "").strip()
+    observed_at = str(payload.get("observed_at") or payload.get("created_at") or _utc_now()).strip()
+    if not (fingerprint and snapshot_ref and rationale and title):
+        raise IncidentConsumerError("fingerprint, snapshot_ref, rationale and title are required")
+
+    canonical_key = str(
+        payload.get("canonical_key")
+        or canonical_monitor_agent_finding_key(fingerprint, title, rationale)
+    ).strip()
+    digest = uuid.uuid5(uuid.NAMESPACE_URL, canonical_key).hex[:12]
+    resolved_incident_id = str(incident_id or payload.get("incident_id") or f"agent-{digest}-0000").strip()
+    resolved_tenant = str(tenant_id or payload.get("tenant_id") or "default").strip() or "default"
+
+    infra_payload: Dict[str, Any] = {
+        "schema_version": "pantheon.infrastructure-incident/1",
+        "incident_id": resolved_incident_id,
+        "source_event_id": snapshot_ref,
+        "tenant_id": resolved_tenant,
+        "producer": "monitor-agent",
+        "created_at": observed_at,
+        "observed_at": observed_at,
+        "component": {
+            "service_name": f"agent-finding-{digest}",
+            "component_kind": "monitor-agent-finding",
+            "endpoint": f"monitor-agent://{digest}",
+        },
+        "title": title[:200],
+        "severity": payload.get("severity"),
+        "kind": "agent_finding",
+        "metric": str(payload.get("metric") or canonical_key),
+        "observed": payload.get("observed") if payload.get("observed") is not None else 1,
+        "threshold": (
+            payload.get("threshold")
+            if payload.get("threshold") is not None
+            else (payload.get("threshold_value") if payload.get("threshold_value") is not None else 0)
+        ),
+        "comparator": str(payload.get("comparator") or "gt"),
+        "occurrence_count": int(payload.get("occurrence_count") or 1),
+        "first_seen_at": str(payload.get("first_seen_at") or observed_at),
+        "last_seen_at": str(payload.get("last_seen_at") or observed_at),
+        "evidence_summary": (
+            f"fingerprint={fingerprint}; canonical_key={canonical_key}; "
+            f"observed_at={observed_at}; snapshot_ref={snapshot_ref}; "
+            f"rationale={rationale[:1500]}"
+        ),
+    }
+    return build_incident_from_infrastructure_health_payload(infra_payload)
 
 
 def build_incident_from_infrastructure_health_payload(payload: Mapping[str, Any]) -> IncidentCase:
@@ -796,12 +910,75 @@ def build_incident_from_infrastructure_health_payload(payload: Mapping[str, Any]
         endpoint=endpoint,
         source_event_id=source_event_id,
     )
+    created_at = str(payload.get("created_at") or payload.get("observed_at") or _utc_now())
+    is_agent_finding = (
+        component_kind == "monitor-agent-finding"
+        or producer == "monitor-agent"
+        or incident_id.startswith("agent-")
+    )
+    if is_agent_finding:
+        kind = "agent_finding"
+        ck_matches = _CANONICAL_KEY_KV_RE.findall(evidence_summary)
+        fp_matches = _FINGERPRINT_KV_RE.findall(evidence_summary)
+        metric = str(
+            payload.get("metric")
+            or payload.get("canonical_key")
+            or (ck_matches[-1] if ck_matches else "")
+            or (fp_matches[-1] if fp_matches else "")
+            or service_name
+        ).strip()
+        observed = (
+            _coerce_numeric_or_value(payload.get("observed"))
+            if payload.get("observed") is not None
+            else 1
+        )
+        raw_thresh = (
+            payload.get("threshold")
+            if payload.get("threshold") is not None
+            else payload.get("threshold_value")
+        )
+        threshold = _coerce_numeric_or_value(raw_thresh) if raw_thresh is not None else 0
+        comparator = str(payload.get("comparator") or "gt").strip()
+    else:
+        kind = str(payload.get("kind") or "infrastructure").strip() or "infrastructure"
+        probe_matches = list(_INFRA_FAILURE_PROBE_RE.finditer(evidence_summary))
+        probe_match = probe_matches[-1] if probe_matches else None
+        metric = str(
+            payload.get("metric")
+            or payload.get("probe_kind")
+            or (probe_match.group("probe") if probe_match else "")
+            or service_name
+        ).strip()
+        observed = (
+            _coerce_numeric_or_value(payload.get("observed"))
+            if payload.get("observed") is not None
+            else (int(probe_match.group("obs")) if probe_match else 1)
+        )
+        raw_thresh = (
+            payload.get("threshold")
+            if payload.get("threshold") is not None
+            else payload.get("threshold_value")
+        )
+        threshold = (
+            _coerce_numeric_or_value(raw_thresh)
+            if raw_thresh is not None
+            else (int(probe_match.group("thresh")) if probe_match else 0)
+        )
+        comparator = str(
+            payload.get("comparator") or ("gte" if probe_match else "gt")
+        ).strip()
+
+    raw_occ = payload.get("occurrence_count")
+    occurrence_count = int(raw_occ) if isinstance(raw_occ, int) and raw_occ >= 1 else 1
+    first_seen_at = str(payload.get("first_seen_at") or created_at)
+    last_seen_at = str(payload.get("last_seen_at") or payload.get("observed_at") or created_at)
+
     return IncidentCase(
         incident_id=incident_id,
         title=str(payload.get("title") or f"Infrastructure degradation: {service_name}").strip(),
         status=status,
         severity=_infrastructure_incident_severity(payload.get("severity")),
-        created_at=str(payload.get("created_at") or payload.get("observed_at") or _utc_now()),
+        created_at=created_at,
         binding_id=f"infra-subject-{namespace}",
         deployment_stage="paper",
         deployment_plan_id=f"infra-plan-{_safe_component(producer)}",
@@ -815,6 +992,14 @@ def build_incident_from_infrastructure_health_payload(payload: Mapping[str, Any]
         incident_cluster_id=_infrastructure_cluster_id(tenant_id, producer, service_name),
         evidence_summary=evidence_summary,
         lineage_ref=f"{artifact_id}@{artifact_version}",
+        kind=kind,
+        metric=metric,
+        observed=observed,
+        threshold=threshold,
+        comparator=comparator,
+        occurrence_count=occurrence_count,
+        first_seen_at=first_seen_at,
+        last_seen_at=last_seen_at,
     )
 
 
@@ -864,6 +1049,13 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
     if threshold_notes:
         evidence_summary = f"{evidence_summary}; {threshold_notes}"
 
+    created_at = str(payload.get("generated_at") or payload.get("created_at") or _utc_now())
+    summary_fields = _drift_summary_fields(payload, cluster_id=cluster_id, worst_metric=worst_metric)
+    raw_occ = payload.get("occurrence_count")
+    occurrence_count = int(raw_occ) if isinstance(raw_occ, int) and raw_occ >= 1 else 1
+    first_seen_at = str(payload.get("first_seen_at") or created_at)
+    last_seen_at = str(payload.get("last_seen_at") or created_at)
+
     return IncidentCase(
         incident_id=_drift_incident_id(payload, binding_id, runtime_id, cluster_id),
         title=str(
@@ -872,7 +1064,7 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
         ),
         status="open",
         severity=severity,
-        created_at=str(payload.get("generated_at") or payload.get("created_at") or _utc_now()),
+        created_at=created_at,
         binding_id=binding_id,
         deployment_stage=_required_str(
             "deployment_stage",
@@ -896,6 +1088,14 @@ def build_incident_from_drift_report(payload: Mapping[str, Any]) -> IncidentCase
         incident_cluster_id=cluster_id,
         evidence_summary=evidence_summary,
         lineage_ref=f"{artifact_id}@{artifact_version}",
+        kind="drift",
+        metric=summary_fields["metric"],
+        observed=summary_fields["observed"],
+        threshold=summary_fields["threshold"],
+        comparator=summary_fields["comparator"],
+        occurrence_count=occurrence_count,
+        first_seen_at=first_seen_at,
+        last_seen_at=last_seen_at,
     )
 
 
@@ -1037,6 +1237,97 @@ def _drift_metric(payload: Mapping[str, Any]) -> str:
     return ""
 
 
+def _drift_summary_fields(
+    payload: Mapping[str, Any],
+    *,
+    cluster_id: str,
+    worst_metric: str,
+) -> Dict[str, Any]:
+    snapshot = _mapping(payload.get("threshold_snapshot")) or {}
+    metrics = _mapping(payload.get("metrics")) or {}
+    worst_check: Mapping[str, Any] = {}
+    drift_checks = metrics.get("drift_checks")
+    if isinstance(drift_checks, Sequence) and not isinstance(drift_checks, (str, bytes, bytearray)):
+        for item in drift_checks:
+            mapping = _mapping(item)
+            if mapping is None:
+                continue
+            if worst_metric and str(mapping.get("metric") or mapping.get("check") or "") == worst_metric:
+                worst_check = mapping
+                break
+            if not worst_check and mapping.get("threshold_metric"):
+                worst_check = mapping
+
+    threshold_metric = _first_value(
+        payload,
+        metrics,
+        snapshot,
+        worst_check,
+        keys=("threshold_metric", "metric_name", "metric"),
+    )
+    cluster_suffix = (
+        cluster_id.split(":", 1)[1].strip()
+        if cluster_id.startswith("drift:") and ":" in cluster_id
+        else cluster_id
+    )
+    metric = str(threshold_metric or worst_metric or cluster_suffix or "drift").strip()
+
+    raw_observed = next(
+        (
+            candidate
+            for candidate in (
+                payload.get("observed"),
+                payload.get("observed_value"),
+                payload.get("observed_multiple"),
+                metrics.get("observed"),
+                metrics.get("observed_value"),
+                metrics.get("observed_multiple"),
+                snapshot.get("observed_value"),
+                snapshot.get("observed"),
+                worst_check.get("observed"),
+                worst_check.get("observed_value"),
+                worst_check.get("observed_multiple"),
+            )
+            if candidate not in (None, "")
+        ),
+        None,
+    )
+    raw_threshold = next(
+        (
+            candidate
+            for candidate in (
+                payload.get("threshold_value"),
+                payload.get("threshold"),
+                metrics.get("threshold_value"),
+                metrics.get("threshold"),
+                snapshot.get("threshold_value"),
+                snapshot.get("threshold"),
+                worst_check.get("threshold_value"),
+                worst_check.get("threshold"),
+            )
+            if candidate not in (None, "")
+        ),
+        None,
+    )
+    comparator = _first_value(
+        payload,
+        metrics,
+        snapshot,
+        worst_check,
+        keys=("comparator",),
+    )
+    observed = _coerce_numeric_or_value(raw_observed)
+    threshold = _coerce_numeric_or_value(raw_threshold)
+    if not comparator and (observed is not None or threshold is not None):
+        comparator = "gt"
+    return {
+        "metric": metric,
+        "observed": observed,
+        "threshold": threshold,
+        "comparator": comparator or "gt",
+    }
+
+
 def _drift_threshold_notes(payload: Mapping[str, Any]) -> str:
     snapshot = _mapping(payload.get("threshold_snapshot")) or {}
     metrics = _mapping(payload.get("metrics")) or {}
@@ -1056,35 +1347,45 @@ def _drift_threshold_notes(payload: Mapping[str, Any]) -> str:
 
     threshold_metric = _first_value(
         payload,
+        metrics,
         snapshot,
         worst_check,
         keys=("threshold_metric", "metric_name"),
     )
-    if not threshold_metric:
-        return ""
 
     observed = next(
         (
             candidate
             for candidate in (
                 payload.get("observed"),
+                payload.get("observed_value"),
                 payload.get("observed_multiple"),
+                metrics.get("observed"),
+                metrics.get("observed_value"),
+                metrics.get("observed_multiple"),
                 snapshot.get("observed_value"),
                 snapshot.get("observed"),
+                worst_check.get("observed"),
+                worst_check.get("observed_value"),
                 worst_check.get("observed_multiple"),
             )
             if candidate not in (None, "")
         ),
         None,
     )
-    comparator = _first_value(payload, snapshot, worst_check, keys=("comparator",))
+    comparator = _first_value(payload, metrics, snapshot, worst_check, keys=("comparator",))
     threshold_value = next(
         (
             candidate
             for candidate in (
                 payload.get("threshold_value"),
+                payload.get("threshold"),
+                metrics.get("threshold_value"),
+                metrics.get("threshold"),
                 snapshot.get("threshold_value"),
+                snapshot.get("threshold"),
                 worst_check.get("threshold_value"),
+                worst_check.get("threshold"),
             )
             if candidate not in (None, "")
         ),
@@ -1092,11 +1393,30 @@ def _drift_threshold_notes(payload: Mapping[str, Any]) -> str:
     )
     threshold_window = _first_value(
         payload,
+        metrics,
         snapshot,
         worst_check,
         keys=("threshold_window", "window"),
     )
-    policy_source = _first_value(payload, snapshot, worst_check, keys=("policy_source",))
+    policy_source = _first_value(payload, metrics, snapshot, worst_check, keys=("policy_source",))
+
+    if not threshold_metric:
+        if any(
+            val not in (None, "")
+            for val in (observed, comparator, threshold_value, threshold_window, policy_source)
+        ):
+            cluster_id = _drift_incident_cluster_id(payload)
+            cluster_suffix = (
+                cluster_id.split(":", 1)[1].strip()
+                if cluster_id.startswith("drift:") and ":" in cluster_id
+                else cluster_id
+            )
+            threshold_metric = worst_name or cluster_suffix or "drift"
+        else:
+            return ""
+
+    if not comparator and observed not in (None, "") and threshold_value not in (None, ""):
+        comparator = "gt"
 
     parts = [f"threshold_metric={threshold_metric}"]
     for label, value in (

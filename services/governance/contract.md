@@ -65,11 +65,25 @@ Propose a new ApprovalDecision.
 - `409 Conflict` — `decision_id` already exists
 - `422 Unprocessable Entity` — structural validation failure
 
+**Lesson-derived rule proposals (LESSON-RULE-PROPOSALS-20261113)**: `target_type` may also be
+`lesson_gate_check_proposal` (a validation-gate check for the research gate owner) or
+`pool_policy_parameter_proposal` (a pool-policy parameter). They are pending decision records only:
+approving one never changes a gate, pool policy, execution, risk limit or capital limit; the owning
+service applies an approved decision through its own route. Propose-time rules (`422` otherwise):
+`risk_level` is `high` or `critical` (so an `automated_gate` cannot decide), `persona_id` is set, and
+`subject` carries `proposal_kind` (`gate_check` or `pool_policy`, matching the target type),
+`lesson_ids` (comma-joined endorsed lesson ids), `case_file_id` and `proposal_digest`. The persona owner
+route `POST /api/personas/{persona_id}/lesson-rule-proposals` is the only producer; harness patches
+from the same route go through the existing harness pipeline instead.
+
 ---
 
 ### `GET /api/governance/approvals`
 List decisions.  Supports filters: `target_type`, `target_id`,
 `decision_state`, `risk_level`.  Returns most-recent first.
+Returns every decision of the target, including expired, rejected, revoked and
+superseded ones (history is never deleted).  Consumers that bound a candidate
+read count only current decisions; see `approval_authority.bound_candidate_history`.
 
 ---
 
@@ -408,12 +422,13 @@ By local operator decision (2026-10-06), existing governance approval semantics 
 ### 1. Current Approval Policy Scope
 
 - **Proposer self-decision blocking**:
-  Proposer self-decision (`decider must not be the proposer`, verified by comparing the effective actor ID against `owner_user_id` in `approval_decision.py` ~406-408) is enforced **only** for the 5 listed action targets in `services/governance/approval_targets.py` (`SUBJECT_FIELDS`):
+  Proposer self-decision (`decider must not be the proposer`, verified by comparing the effective actor ID against `owner_user_id` in `approval_decision.py` ~406-408) is enforced **only** for the 6 listed subject-bound targets in `services/governance/approval_targets.py` (`SUBJECT_FIELDS`):
   1. `rebalance_apply`
   2. `capital_pool_activation`
   3. `capital_binding_activation`
   4. `persona_lifecycle_transition`
   5. `evolution_execute`
+  6. `paper_canary_candidacy` (record-only nomination added 2026-11-12)
   Non-action target types (such as general artifacts, registry entries, or review objects) do not enforce proposer self-decision blocking at the governance decision layer.
 
 - **Multi-decider requirements**:
@@ -441,3 +456,91 @@ By local operator decision (2026-10-06), existing governance approval semantics 
 - **Revoke route namespace mismatch**:
   BFF's governance command adapter (`services/control_plane/bff/command_adapters/governance_adapter.py` ~167) forwards revoke commands by sending `POST` to `/api/governance/human-gates/{target_gate_id}/revoke` (under the deprecated `human-gates` namespace). The canonical governance approval revoke route hosted by the Governance service is `POST /api/governance/approvals/{decision_id}/revoke` (`services/governance/main.py` ~1588).
 
+
+## Paper → canary candidacy (PAPER-CANARY-PROMOTION-PROPOSAL-20261112)
+
+`paper_canary_candidacy` is a record-only target. The evaluator proposes it at
+quarter close; the existing Human Inbox shows a pending approval and
+`POST /bff/approvals/{decision_id}/decide` records the human decision. It needs
+one authorized decider distinct from the proposer. The subject binds
+`persona_id`, `from_stage=paper`, `to_stage=canary_candidate`, `quarter`,
+`ranking_snapshot_id`, and `proposal_content_digest` (SHA256), with the factual
+rule summary and optional agent rationale. Target ID, target version and digest
+must match the subject even at proposal admission.
+
+The producer persists its full request before submission. Decision identity and
+idempotency key bind tenant + quarter, independent of agent text or a later
+snapshot, so retry, catch-up, rejection and restart cannot create a second
+proposal for that quarter. Content drift on replay fails closed.
+
+No lifecycle, Capital, rebalance or runtime consumer accepts this target.
+Approval grants candidacy only and rejection records the refusal. Real-capital
+canary entry remains a separate future delivery after production opens.
+
+## Paper-ladder persona lifecycle grant (GOVERNANCE-PAPER-GRANT-PERSONA-LIFECYCLE-20261115)
+
+Operator decision 2026-11-15 (transcript
+`/home/chloe_ong_dev_cctech_support_com/.claude/projects/-home-chloe-ong-dev-cctech-support-com-code-pantheon/b1134a03-3943-4f96-86d7-19e3d4aab6a5.jsonl`
+line 11873, 10:25:40.843Z, uuid `6a795cd3-bb88-461f-9d9b-441be81526a7`, answer 「paper 自動核准」):
+the dedicated dev paper automated gate (`pantheon-dev-paper-provisioner`) may review and decide
+`persona_lifecycle_transition` decisions for exactly `research_only → consultable` and
+`consultable → paper_owner`.
+
+* **Explicit grant content.** Only a mounted `GOVERNANCE_DEV_PAPER_GRANT_FILE` whose whole content is
+  `enabled;persona_lifecycle=paper_ladder;proposer=<subject>` widens the grant. Plain `enabled` and an unmounted
+  grant behave exactly as before (the gate still denies every lifecycle decision); a malformed content, an
+  unsafe file or the gate's own subject as proposer disables the principal (fail closed).
+* **Every review/decide rechecks** (inside the owner CAS): environment is `dev` (paper), tenant, low risk,
+  the decision owner equals the named proposer and differs from the gate, the subject names the persona and one
+  of the two transitions, expiry is within 24h, and the persona has exactly one active paper capital binding
+  (Capital `GET /api/bindings`) and exactly one active paper runtime binding (Runtime Manager
+  `GET /api/runtime-bindings`) with matching persona, tenant, pool and binding identities. Owner reads use
+  `GOVERNANCE_CAPITAL_BASE_URL`/`GOVERNANCE_CAPITAL_SERVICE_TOKEN[_FILE]` and
+  `GOVERNANCE_RUNTIME_MANAGER_BASE_URL`/`GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN[_FILE]`; an unreadable owner is
+  `503`, a missing or inconsistent binding is `403` with a readable reason. No role bypass exists.
+* **Evidence.** The decision record carries an `audit_log_entry` evidence ref whose `ref_id` is the grant id
+  (`dev-paper-grant:persona-lifecycle-paper-ladder:<digest>`) and whose note lists the verified capital binding,
+  pool, runtime binding and deployment plan. The decision is stamped with the exact dev paper
+  `authorization_scope`, so a consumer must present the paper usage context.
+* **Limit.** The paper ladder only. `live_owner`, canary, live, `frozen`, `retired` and every other transition stay
+  with the operator; registry, capital, canary and live behaviour of the existing grant is unchanged.
+
+### Paper pool risk-policy widening (PAPER-RISK-POLICY-GATE-PER-PLAN-20261124)
+
+Operator decision P-4 (「paper 自動核准」) applied to pool risk policy. The grant content may add
+`;risk_policy=paper_pool;risk_proposer=<subject>` (a half pair, another value or the gate's own subject widens
+nothing and disables the principal). When present the gate may review and decide a `capital_pool_activation`
+proposal owned by the named proposer: dev only, tenant, low risk, pool identity consistent, expiry within 24h,
+stamped with the dev paper `authorization_scope` (paper, capital scale 0). Approval additionally requires the
+proposal subject to carry a risk-officer draft (policy and provenance) whose gross, net, leverage, single-name and
+cash-reserve limits are finite, positive and inside the operator outer bounds (`PANTHEON_PAPER_RISK_PROFILE_BOUNDS`,
+default `low`: gross_limit <= 2.0 and max_leverage <= 2.0 (operator decision 2026-11-07), single name <= 0.20 and cash reserve >= 0.10 (operator decision 2026-11-23); a `gross_limit` or `max_leverage` above its bound is refused naming field, value and bound; the Capital default and this mirror are identical); otherwise `422` names the failing field and only a
+rejection can be recorded. The gate alone is a complete decider for a paper pool activation whatever its
+`risk_direction`; any other decider set keeps the two-distinct-decider rule, so canary and live are unchanged.
+The absent clause means no widening.
+
+**Subject value type (PAPER-RISK-PROPOSAL-GOVERNANCE-CONTRACT-20261124).** `ProposeApprovalRequest.subject` is
+`Dict[str, Any]`, widened from `Dict[str, str]` because the risk-policy proposal carries nested objects
+(`risk_comparison`, `risk_officer_draft`); with string-only values every such proposal failed `422` on hosted dev.
+Required subject fields (`approval_targets.SUBJECT_FIELDS`) must still be non-empty strings, so action-bound targets
+are not loosened; stored string-only subjects (v1.0 proposals) read back unchanged. The paper gate is confined to
+`risk_level=low` decisions: the three stored v1.0 proposals (`risk_level=medium`, no draft) answer `403` to the
+gate's review and stay `proposed`; they are closed by the close-only route below (PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125),
+never by a gate decision.
+
+### `POST /api/governance/approvals/{decision_id}/close-superseded` (PAPER-RISK-SUPERSEDED-PROPOSAL-CLOSE-20261125)
+
+Close-only authority for the paper automated gate (grant clause `risk_policy=paper_pool`). Body: `actor_role`
+(`automated_gate`), `actor_id` (the verified subject), `expected_version`; no outcome, reason or superseding id is
+accepted (`422`). Governance reads its own records and closes only when all hold: dev environment; the target is an
+open (`proposed`/`under_review`) `capital_pool_activation` in the gate's tenant, proposed by the named risk proposer,
+with `target_id == capital_pool_id` and no stage marker other than paper; and a decision on the same tenant and
+pool is `decided` + `approved`, unconditional, unexpired, not revoked or superseded, decided by the gate with the
+dev paper scope, owned by the same proposer, carrying a risk-officer draft with provenance, created after the
+target and binding a different policy digest. Any failure is `403` (`409` when the target is not open); the route can
+never approve, never touches a decided decision (so never the decision bound to the pool), and never changes limits,
+bounds, TTL or who may approve. Result: `decision_state=superseded`, `superseded_by=<superseding decision id>`,
+`rationale` names that id, `actor_id`/`actor_role` are the gate, existing votes (`metadata.approvals`) are kept
+unchanged and nothing is deleted. The audit event is the generic `approval_decision_state_changed` (actor = the gate; the command carries `close_superseded`). The
+coordinator calls it on repair/redraft/renewal and in the hourly reconcile pass (`renew_paper_risk_policy_approval`),
+reporting a failed close without raising it.

@@ -18,13 +18,26 @@ from jsonschema import Draft7Validator
 
 from .configured import JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .connectors import SourceConnector, SourceConnectorProvider, SourceEvidenceError
-from .connectors.finmind_taiwan import FINMIND_TAIWAN_DATASETS, FinMindLiveFetcher, FinMindTaiwanDatasetAdapter
+from .connectors.finmind_taiwan import (
+    FINMIND_TAIWAN_DATASETS, FinMindLiveFetcher, FinMindTaiwanDatasetAdapter, FinMindTaiwanFundamentalsAdapter,
+)
 from .connectors.taiwan_official import (
     TAIWAN_OFFICIAL_ENDPOINTS,
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
+    TaifexDerivativesChipAdapter,
+)
+from .chip_publication_schedule import margin_chain_wiring
+from .connector_definitions import (
+    ConnectorDefinition, get_connector_definition, list_connector_definitions, TW_CHIP_REFRESH_PROFILES,
+)
+from .connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN,
+    COLLECTOR_HOST_ENV,
+    CollectorBundleAdapter,
 )
 from .ingest_manager import IngestManager
+from .provider_adapters import is_provider_adapter_allowed
 
 
 class _RequirementLike(Protocol):
@@ -57,6 +70,12 @@ SUPPORTED_POLICY_GATES = frozenset(
     }
 )
 
+# Actions that mean "a record or requirement written by a newer release was left alone".
+# They are status "skipped" (never conflict/unsupported), carry the reason in details, and are
+# reported by the runtime as skipped items instead of failing the whole reconcile tick.
+CONNECTOR_NOT_DEFINED_ACTION = "connector_not_defined_by_release"
+UNDEFINED_BY_RELEASE_ACTIONS = frozenset({CONNECTOR_NOT_DEFINED_ACTION})
+
 CADENCE_INTERVAL_SECONDS: dict[str, int] = {
     "realtime": 60,
     "minutely": 60,
@@ -75,7 +94,8 @@ _FINMIND_DATASET_BY_NORMALIZED = {
 _OFFICIAL_TW_DATASETS = {
     str(endpoint["dataset"])
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS
-    if endpoint.get("dataset") and str(endpoint.get("status") or "").startswith("implemented")
+    if endpoint.get("dataset") and endpoint.get("venue") in {"TWSE", "TPEx"}
+    and str(endpoint.get("status") or "").startswith("implemented")
 }
 
 
@@ -186,6 +206,109 @@ class SourceProvisioningResult:
 
 ProviderFactory = Callable[[str], SourceConnectorProvider]
 
+COLLECTOR_HOST_UNSET_REASON = (
+    f"{COLLECTOR_HOST_ENV} is not set; Collector bundle connectors are not provisioned without the collector host"
+)
+
+
+def collector_definition(connector_id: str) -> ConnectorDefinition | None:
+    """The deployed Collector bundle ConnectorDefinition for a candidate id, else None."""
+
+    definition = get_connector_definition(connector_id)
+    if definition is not None and definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+        return definition
+    return None
+
+
+def deployed_collector_definitions() -> list[ConnectorDefinition]:
+    return [d for d in list_connector_definitions() if d.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN]
+
+
+def collector_host_configured() -> bool:
+    import os
+
+    return bool((os.environ.get(COLLECTOR_HOST_ENV) or "").strip())
+
+
+class CollectorDefinitionProvider:
+    """Provision one Collector source straight from its deployed ConnectorDefinition.
+
+    There is no second registry: source id, type, platform, publisher, trust, attribution,
+    dataset, per-pull cap and cadence all come from the definition; the host comes from
+    PANTHEON_COLLECTOR_HOST. The connector id is the definition id, so sources that share
+    one dataset (five social platforms on collector_social_posts) stay separate connectors.
+    """
+
+    def __init__(self, connector_id: str) -> None:
+        definition = collector_definition(connector_id)
+        if definition is None:
+            raise SourceEvidenceError(f"{connector_id} is not a deployed Collector bundle definition")
+        if not collector_host_configured():
+            raise SourceEvidenceError(COLLECTOR_HOST_UNSET_REASON)
+        self.definition = definition
+        collector = dict(definition.metadata.get("collector") or {})
+        self.cadence_seconds = int(collector.get("cadence_seconds") or 86400)
+        self.adapter = CollectorBundleAdapter(
+            connector_id=connector_id,
+            source_id=str(collector["source_id"]),
+            source_type=str(collector["source_type"]),
+            platform=collector.get("platform"),
+            publisher=collector.get("publisher"),
+            trust_score=float(collector.get("trust_score") or 0.3),
+            attribution_required=bool(collector.get("attribution_required")),
+            license_scope=str(collector.get("license_scope") or "collector_public_web"),
+            cadence_seconds=self.cadence_seconds,
+            dataset=str(collector.get("dataset") or "collector_bundle_items"),
+            max_records=int(definition.default_limits.get("max_records") or 500),
+        )
+
+    def connector(self) -> SourceConnector:
+        payload = self.adapter.connector().to_dict()
+        metadata = dict(payload.get("metadata") or {})
+        metadata["definition_id"] = self.definition.definition_id
+        payload["metadata"] = metadata
+        return SourceConnector.from_dict(payload)
+
+    def fetch_config(self) -> Mapping[str, Any]:
+        from .connectors.collector_bundle import collector_host
+
+        adapter = self.adapter
+        fetch = dict(adapter.fetch_config())
+        config = {
+            "source_id": adapter.source_id,
+            "source_type": adapter.source_type,
+            "platform": adapter.platform,
+            "publisher": adapter.publisher,
+            "trust_score": adapter.trust_score,
+            "attribution_required": adapter.attribution_required,
+            "license_scope": adapter.license_scope,
+            "cadence_seconds": adapter.cadence_seconds,
+            "dataset": adapter.dataset,
+            "host": collector_host(),
+            "max_records": adapter.max_records,
+        }
+        fetch["adapter_config"] = {key: value for key, value in config.items() if value is not None}
+        return fetch
+
+
+def chip_profile_provider(connector_id: str) -> SourceConnectorProvider:
+    """Existing official adapters with a dedicated, bounded configured identity."""
+    profile = TW_CHIP_REFRESH_PROFILES[connector_id]
+    metadata = {"definition_id": connector_id, "refresh_profile": profile}
+    if profile["base"] == TW_OFFICIAL_CONNECTOR_ID:
+        return TaiwanOfficialMarketDatasetAdapter(
+            connector_id=connector_id, max_records=500, connector_metadata=metadata,
+            **margin_chain_wiring(connector_id),
+        )
+    if profile["base"] == "tw-finmind-fundamentals":
+        return FinMindTaiwanFundamentalsAdapter(
+            connector_id=connector_id, max_records=500, connector_metadata=metadata,
+        )
+    return TaifexDerivativesChipAdapter(
+        connector_id=connector_id, dataset=profile["dataset"],
+        contracts=profile["contracts"], max_records=500, connector_metadata=metadata,
+    )
+
 
 class SourceProvisioningReconciler:
     """Idempotent controller for Persona.required_data_sources."""
@@ -205,10 +328,56 @@ class SourceProvisioningReconciler:
         self.controller_name = controller_name
         self.provider_factories: dict[str, ProviderFactory] = {
             "tw-finmind-datasets": lambda connector_id: FinMindTaiwanDatasetAdapter(connector_id=connector_id),
-            TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(connector_id=connector_id),
+            TW_OFFICIAL_CONNECTOR_ID: lambda connector_id: TaiwanOfficialMarketDatasetAdapter(
+                connector_id=connector_id, **margin_chain_wiring(connector_id)
+            ),
         }
+        for connector_id in TW_CHIP_REFRESH_PROFILES:
+            self.provider_factories[connector_id] = chip_profile_provider
+        # Every deployed Collector definition is an allowlisted provider; whether it can be
+        # provisioned right now (collector host configured) is decided per requirement.
+        for defn in deployed_collector_definitions():
+            self.provider_factories[defn.definition_id] = CollectorDefinitionProvider
         if provider_factories:
             self.provider_factories.update(provider_factories)
+
+    def undefined_reason(self, config: Any) -> str | None:
+        """Why this release cannot interpret a stored connector record, else None.
+
+        A record is undefined when its provider-owned adapter, its connector definition or its
+        dataset is not something this release defines (state written by a newer release).
+        A record that this release defines but that is malformed is NOT undefined here: it keeps
+        failing closed through the existing validation.
+        """
+
+        connector = config.connector
+        connector_id = connector.connector_id
+        fetch = getattr(config, "fetch", None)
+        fetch = fetch if isinstance(fetch, Mapping) else {}
+        metadata = getattr(connector, "metadata", None)
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if str(fetch.get("mode") or "") == "provider_owned_adapter":
+            token = str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "").strip()
+            if token and not is_provider_adapter_allowed(token):
+                return f"adapter-not-defined: {token}"
+        factory_known = connector_id in self.provider_factories
+        definition_id = str(metadata.get("definition_id") or "").strip()
+        if definition_id and not factory_known and get_connector_definition(definition_id) is None:
+            return f"connector-definition-not-defined: {definition_id}"
+        marker = metadata.get(RECONCILIATION_METADATA_KEY)
+        desired = marker.get("desired_state") if isinstance(marker, Mapping) else None
+        dataset = str(desired.get("dataset") or "").strip() if isinstance(desired, Mapping) else ""
+        cadence = str(desired.get("cadence") or "").strip() if isinstance(desired, Mapping) else ""
+        if cadence and cadence not in CADENCE_INTERVAL_SECONDS:
+            return f"cadence-not-defined: {cadence}"
+        if dataset:
+            definition = collector_definition(connector_id)
+            profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+            if definition is not None and dataset not in definition.datasets:
+                return f"dataset-not-defined: {dataset}"
+            if profile is not None and profile.get("dataset") and dataset != profile["dataset"]:
+                return f"dataset-not-defined: {dataset}"
+        return None
 
     def reconcile_persona(self, persona: Mapping[str, Any] | Any, *, dry_run: bool = False) -> SourceProvisioningResult:
         persona_id = _persona_id(persona)
@@ -273,6 +442,39 @@ class SourceProvisioningReconciler:
                 details={"reason": "default supervised source controller currently requires scheduled live_pull"},
             )
 
+        collector_candidates = [c for c in requirement.connector_candidates if collector_definition(c) is not None]
+        if collector_candidates and not collector_host_configured():
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=collector_candidates[0],
+                # Skipped, not unsupported: a deployment without a collector host is a valid posture,
+                # and must not fail the whole controller tick closed. The reason stays in the readback.
+                status="skipped",
+                connector_action="collector_host_not_configured",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"reason": COLLECTOR_HOST_UNSET_REASON, "collector_host_env": COLLECTOR_HOST_ENV},
+            )
+
+        finmind_candidates = [
+            c for c in requirement.connector_candidates
+            if (TW_CHIP_REFRESH_PROFILES.get(c) or {}).get("base") == "tw-finmind-fundamentals"
+        ]
+        if finmind_candidates and not (FinMindLiveFetcher().resolve_token() or "").strip():
+            return SourceProvisioningAction(
+                persona_id=requirement.persona_id,
+                dataset=requirement.dataset,
+                connector_id=finmind_candidates[0],
+                # Skipped, not unsupported: a posture without the FinMind credential is valid and
+                # must not fail the whole controller tick closed; nothing is provisioned or fetched.
+                status="skipped",
+                connector_action="finmind_credential_not_configured",
+                schedule_action="not_attempted",
+                idempotency_key=requirement.idempotency_key,
+                details={"reason": "finmind_credential_not_configured", "secret_ref_id": "env://FINMIND_API_TOKEN"},
+            )
+
         connector_id = self._select_connector_id(requirement)
         if connector_id is None:
             return SourceProvisioningAction(
@@ -289,6 +491,19 @@ class SourceProvisioningReconciler:
         plan = self._build_plan(connector_id, requirement)
         if plan is None:
             existing = self.connector_store.get_config(connector_id)
+            undefined = self.undefined_reason(existing) if existing is not None else None
+            if undefined is not None:
+                # Written by a newer release: leave the record alone, never adopt or retire it.
+                return SourceProvisioningAction(
+                    persona_id=requirement.persona_id,
+                    dataset=requirement.dataset,
+                    connector_id=connector_id,
+                    status="skipped",
+                    connector_action=CONNECTOR_NOT_DEFINED_ACTION,
+                    schedule_action="not_attempted",
+                    idempotency_key=requirement.idempotency_key,
+                    details={"reason": undefined, "skipped_kind": "requirement"},
+                )
             if existing is not None:
                 gate_results = self._policy_gate_results(existing.connector, requirement)
                 failed_gates = sorted(gate for gate, result in gate_results.items() if not result["passed"])
@@ -405,6 +620,8 @@ class SourceProvisioningReconciler:
                 continue
             existing = self.connector_store.get_config(candidate)
             factory = self.provider_factories.get(candidate)
+            if existing is not None and len(candidates) > 1 and self.undefined_reason(existing) is not None:
+                continue  # prefer a candidate this release can interpret
             if existing is not None:
                 connector = existing.connector
             elif factory is not None:
@@ -412,7 +629,10 @@ class SourceProvisioningReconciler:
             else:
                 continue
             # Configuration availability is not proof of live provider health.
-            if candidate == "tw-finmind-datasets" and not (
+            if (
+                candidate == "tw-finmind-datasets"
+                or (TW_CHIP_REFRESH_PROFILES.get(candidate) or {}).get("base") == "tw-finmind-fundamentals"
+            ) and not (
                 FinMindLiveFetcher(secret_ref_id=connector.secret_ref_id or "").resolve_token() or ""
             ).strip():
                 continue
@@ -432,6 +652,12 @@ class SourceProvisioningReconciler:
         return []
 
     def _provider_supports(self, connector_id: str, requirement: PersonaDataSourceRequirement) -> bool:
+        profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+        if profile is not None:
+            return requirement.market.upper() == "TW" and requirement.dataset == profile["dataset"]
+        definition = collector_definition(connector_id)
+        if definition is not None:
+            return collector_host_configured() and requirement.dataset in definition.datasets
         if connector_id == "tw-finmind-datasets":
             return requirement.market.upper() == "TW" and requirement.dataset in _FINMIND_DATASET_BY_NORMALIZED
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
@@ -464,7 +690,18 @@ class SourceProvisioningReconciler:
         requirement: PersonaDataSourceRequirement,
     ) -> dict[str, Any]:
         payload = dict(fetch)
+        if collector_definition(connector_id) is not None:
+            # The Collector adapter pulls real bundles; an empty pull must not be masked.
+            return payload
         request = dict(payload.get("request") or {})
+        profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+        if profile is not None:
+            request.update({k: v for k, v in profile.items() if k in {"dataset", "venues", "contracts"}})
+            payload["request"] = request
+            # Empty or changed tables are provider failures, never provisioning success.
+            payload["allow_empty"] = False
+            payload.pop("empty_reason", None)
+            return payload
         if connector_id == TW_OFFICIAL_CONNECTOR_ID:
             request["dataset"] = requirement.dataset
         elif connector_id == "tw-finmind-datasets":
@@ -539,7 +776,15 @@ class SourceProvisioningReconciler:
         legacy_adoptable = existing_owner is None and _without_reconciliation(existing.connector) == _without_reconciliation(
             plan.connector
         )
-        if existing_owner == self.controller_name or (legacy_adoptable and fetch_matches):
+        # A bounded refresh registers the bare contract of a connector this reconciler provisions;
+        # it differs only in the run-bounded request window and record budget, never in the
+        # provider adapter. That is the same connector, so the reconciler adopts and repairs it.
+        refresh_bounded = (
+            legacy_adoptable
+            and connector_id in self.provider_factories
+            and _same_fetch_adapter(existing.fetch, desired_fetch)
+        )
+        if existing_owner == self.controller_name or (legacy_adoptable and fetch_matches) or refresh_bounded:
             if dry_run:
                 return "would_repair", {
                     "connector_id": connector_id,
@@ -568,6 +813,10 @@ class SourceProvisioningReconciler:
         interval_seconds = CADENCE_INTERVAL_SECONDS.get(requirement.cadence)
         if interval_seconds is None:
             raise SourceEvidenceError(f"Unsupported persona data source cadence: {requirement.cadence}")
+        definition = collector_definition(connector_id)
+        if definition is not None:
+            # The definition owns a Collector source's cadence; the requirement cadence is a label.
+            interval_seconds = int((definition.metadata.get("collector") or {}).get("cadence_seconds") or interval_seconds)
         enabled = interval_seconds > 0
         existing = self.schedule_store.get_schedule(connector_id)
         desired = {
@@ -619,6 +868,11 @@ def _reconciliation_owner(connector: SourceConnector) -> str | None:
         return None
     owner = str(marker.get("managed_by") or "").strip()
     return owner or None
+
+
+def _same_fetch_adapter(stored: Mapping[str, Any], desired: Mapping[str, Any]) -> bool:
+    keys = ("mode", "adapter", "adapter_config")
+    return all(stored.get(key) == desired.get(key) for key in keys) and bool(stored.get("adapter"))
 
 
 def _without_reconciliation(connector: SourceConnector) -> dict[str, Any]:

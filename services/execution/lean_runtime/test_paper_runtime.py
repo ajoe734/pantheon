@@ -19,8 +19,8 @@ from services.execution.lean_runtime.paper_runtime import (
     LifecycleTelemetryOutboxError,
     OrderEvent,
     _LifecycleBatch,
-    PaperExecutionAlgorithm,
-    PaperRuntimeService,
+    PaperExecutionAlgorithm as _RealPaperExecutionAlgorithm,
+    PaperRuntimeService as _RealPaperRuntimeService,
     RuntimeBindingResolver,
     RuntimeTelemetryEmitter,
     _extract_verified_bridge,
@@ -32,6 +32,52 @@ from services.execution.lean_runtime.runtime_context import (
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.performance_telemetry import MarketMark
 from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+
+# Fixture defaults. Production has no default starting cash and no policy-free mode, so
+# tests that are not about those behaviours must say so explicitly; this is the one place.
+TEST_POOL_BUDGET = 100_000.0
+TEST_POOL_RECORD = {
+    "pool_id": "pool-test",
+    "budget": TEST_POOL_BUDGET,
+    "risk_policy": {"risk_policy_id": "rp-test", "status": "active", "gross_limit": 10.0,
+                    "net_limit": 10.0, "max_leverage": 10.0},
+}
+
+
+PaperExecutionAlgorithm = _RealPaperExecutionAlgorithm
+_real_algo_init = _RealPaperExecutionAlgorithm.__init__
+
+
+def _fixture_algo_init(self, *args, **kwargs):
+    unfunded = kwargs.pop("unfunded", False)
+    unbound = kwargs.pop("unbound", False)
+    if not args:
+        if "initial_cash" not in kwargs and not kwargs.get("state_path") and not unfunded:
+            kwargs["initial_cash"] = TEST_POOL_BUDGET
+        if not unbound and not any(
+            k in kwargs for k in ("risk_policy", "risk_policy_ref", "capital_pool_reader", "capital_pool_id")
+        ):
+            kwargs["risk_policy"] = TEST_POOL_RECORD["risk_policy"]
+    _real_algo_init(self, *args, **kwargs)
+
+
+def setUpModule():
+    _RealPaperExecutionAlgorithm.__init__ = _fixture_algo_init
+
+
+def tearDownModule():
+    _RealPaperExecutionAlgorithm.__init__ = _real_algo_init
+
+
+class PaperRuntimeService(_RealPaperRuntimeService):
+    def __init__(self, *args, **kwargs):
+        unbound = kwargs.pop("unbound", False)
+        if "capital_pool_reader" not in kwargs and not unbound:
+            kwargs["capital_pool_reader"] = lambda _pool_id: dict(TEST_POOL_RECORD)
+        super().__init__(*args, **kwargs)
+        if not unbound and not self._algo._capital_pool_id:
+            self._algo._capital_pool_id = "pool-test"
 from services.trade_journey.correlation_envelope import propagate_envelope
 
 
@@ -374,6 +420,29 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         service._consumer.flush_rebalance(signal["run_id"], service._algo)
         return {event["event_type"]: event for event in telemetry.events}
 
+    def test_empty_pool_envelope_tick_holds_no_position_and_does_not_raise(self):
+        # A pool with no live member publishes a flat envelope: no member views, no virtual book write,
+        # no order, and the runtime keeps running (POOL-EMPTY-POOL-OPERATION-20261116).
+        binding = self._binding()
+        signal = self._expression_signal(
+            binding, "empty-pool", action="HOLD", direction="FLAT",
+            metadata={"strength": 0.0, "view_direction": "FLAT", "portfolio_member_views": {}},
+        )
+        telemetry = _FakeTelemetryEmitter()
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([signal]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]), telemetry_emitter=telemetry,
+            poll_interval_seconds=3600, max_batch_size=10,
+        )
+        service.drain_once()
+        service._consumer.flush_rebalance(signal["run_id"], service._algo)
+        events = {event["event_type"]: event for event in telemetry.events}
+        generation = events["signal_generation"]["metadata"]
+        self.assertEqual(generation["view_direction"], "FLAT")
+        self.assertNotIn("member_virtual_books", generation)
+        self.assertFalse(service._member_virtual_books.books)
+        self.assertEqual(service._algo.instrument_positions, {})
+
     def test_no_trade_expression_is_a_noop_with_view_and_record_metadata(self):
         binding = self._binding()
         record = {
@@ -595,9 +664,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(snapshot["paper_state"]["processed_signal_count"], 1)
         self.assertEqual(snapshot["paper_state"]["execution_event_count"], 1)
         self.assertEqual(snapshot["paper_state"]["positions"][0]["symbol"], "AAPL")
-        self.assertEqual(len(telemetry.events), 2)
-        self.assertEqual(telemetry.events[0]["event_type"], "paper_fill_simulated")
-        self.assertEqual(telemetry.events[1]["event_type"], "heartbeat")
+        self.assertEqual(
+            [e["event_type"] for e in telemetry.events],
+            ["paper_fill_simulated", "heartbeat", "runtime_state_snapshot"],
+        )
+        self.assertNotIn("performance_telemetry", telemetry.events[1]["metadata"])
+        self.assertNotIn("member_virtual_books", telemetry.events[1]["metadata"])
         self.assertEqual(
             snapshot["paper_state"]["performance_telemetry"]["code"],
             "missing_market_marks",
@@ -629,9 +701,12 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             self.assertEqual(diagnostic["status"], "invalid_ledger")
             self.assertEqual(diagnostic["code"], "performance_ledger_load_failed")
             self.assertIn("must be an object", diagnostic["detail"])
-            self.assertEqual([event["event_type"] for event in telemetry.events], ["heartbeat"])
             self.assertEqual(
-                telemetry.events[0]["metadata"]["performance_telemetry"]["code"],
+                [event["event_type"] for event in telemetry.events],
+                ["heartbeat", "runtime_state_snapshot"],
+            )
+            self.assertEqual(
+                telemetry.events[1]["metadata"]["performance_telemetry"]["code"],
                 "performance_ledger_load_failed",
             )
 
@@ -701,6 +776,8 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(pnl_events), 1)
         self.assertEqual(len(drawdown_events), 1)
         self.assertAlmostEqual(pnl_events[0]["metrics"]["pnl"], 50.0)
+        self.assertGreater(pnl_events[0]["metrics"]["initial_cash"], 0)
+        self.assertTrue(pnl_events[0]["metrics"]["pnl_period_start_at"])
         self.assertEqual(pnl_events[0]["pnl_as_of"], mark_provider.as_of)
         self.assertNotIn("pnl_as_of", pnl_events[0]["metrics"])
         self.assertNotIn("drawdown_pct", pnl_events[0]["metrics"])
@@ -1172,7 +1249,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         self.assertEqual(len(noop_events), 1)
         self.assertEqual(fill_events, [])
         self.assertEqual(noop_events[0]["metrics"]["noop_count"], 1)
-        self.assertEqual(noop_events[0]["metrics"]["fill_rate"], 0.0)
+        self.assertNotIn("fill_rate", noop_events[0]["metrics"])
         self.assertEqual(noop_events[0]["metadata"]["alpha_source"], "llm_riskoff_agent")
         self.assertEqual(pnl_events, [])
         self.assertEqual(snapshot["paper_state"]["performance_telemetry"]["code"], "performance_no_fills")
@@ -2278,6 +2355,256 @@ class PaperRuntimeServiceTest(unittest.TestCase):
 
         self.assertGreaterEqual(heartbeat_count, 2)
 
+    def _cadence_service(self, telemetry):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore(),
+            identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([self._binding()]),
+            telemetry_emitter=telemetry,
+            poll_interval_seconds=1,
+            max_batch_size=10,
+        )
+        clock = {"t": 1000.0}
+        service._heartbeat_clock = lambda: clock["t"]
+        return service, clock
+
+    def test_heartbeat_cadence_follows_interval_not_poll(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        stamps = []
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for _ in range(301):  # five idle minutes, 1 s poll, first call at t=0
+                before = len(telemetry.events)
+                service._maybe_emit_heartbeat()
+                if len(telemetry.events) > before:
+                    stamps.append(clock["t"])
+                clock["t"] += 1.0
+        self.assertIn(len(stamps), (20, 21))
+        self.assertEqual(stamps[0], 1000.0)
+        gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+        self.assertLessEqual(max(gaps), 15.0 + 1.0)
+        # many callers in the same instant still emit once
+        n = len(telemetry.events)
+        service._maybe_emit_heartbeat()
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(telemetry.events), n)
+
+    def test_failed_heartbeat_emit_does_not_advance_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        calls = []
+
+        def emit_heartbeat(metadata=None, extra_metrics=None):
+            calls.append(clock["t"])
+            return results.pop(0)
+
+        telemetry.emit_heartbeat = emit_heartbeat
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 1.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(calls), 2)
+
+    def _types(self, telemetry):
+        return [e["event_type"] for e in telemetry.events]
+
+    def test_heartbeat_is_liveness_only_and_state_snapshot_sent_on_change(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry), ["heartbeat", "runtime_state_snapshot"])
+        hb = telemetry.events[0]["metadata"]
+        self.assertNotIn("performance_telemetry", hb)
+        self.assertNotIn("member_virtual_books", hb)
+        self.assertIn("runtime_heartbeat", hb)
+        # Unchanged state: heartbeat only.
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(
+            self._types(telemetry),
+            ["heartbeat", "runtime_state_snapshot", "heartbeat"],
+        )
+        # Changed state: one new snapshot carrying it.
+        service._performance_telemetry = {"status": "changed", "code": "x"}
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry)[-2:], ["heartbeat", "runtime_state_snapshot"])
+        self.assertEqual(
+            telemetry.events[-1]["metadata"]["performance_telemetry"]["status"], "changed"
+        )
+
+    def test_failed_state_snapshot_is_retried_next_tick(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        results = [False, True]
+        sent = []
+
+        def emit_snapshot(metadata=None):
+            sent.append(metadata["state_digest"])
+            return results.pop(0)
+
+        telemetry.emit_runtime_state_snapshot = emit_snapshot
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0], sent[1])
+
+    # --- PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118 ---
+
+    def _count(self, telemetry, event_type):
+        return self._types(telemetry).count(event_type)
+
+    def _hosted_perf(self, tick, **over):
+        # hosted-shaped: attempted_at / pair_id differ on every tick
+        base = {
+            "status": "emitted",
+            "code": "performance_snapshots_emitted",
+            "attempted_at": f"2026-11-18T09:{tick // 240:02d}:{(tick % 240) // 4:02d}Z",
+            "pair_id": f"pair-{tick}",
+            "as_of": "2026-11-17T21:00:00Z",
+            "pnl": 0.0,
+            "drawdown_pct": 0.0,
+            "fill_count": 0,
+            "pnl_snapshot_sent": True,
+            "drawdown_snapshot_sent": True,
+        }
+        base.update(over)
+        return base
+
+    def test_attempted_at_only_difference_emits_no_snapshot(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._performance_telemetry = self._hosted_perf(0)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(1)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        self.assertEqual(self._count(telemetry, "heartbeat"), 2)
+
+    def test_pre_open_hour_replay_one_snapshot_and_heartbeats_within_240(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for tick in range(3600):  # one full hour, 1 s poll
+                service._performance_telemetry = self._hosted_perf(tick)
+                service._maybe_emit_heartbeat()
+                clock["t"] += 1.0
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+        self.assertLessEqual(self._count(telemetry, "heartbeat"), 240)
+        self.assertGreaterEqual(self._count(telemetry, "heartbeat"), 239)
+
+    def test_real_changes_are_sent_at_next_tick(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._performance_telemetry = self._hosted_perf(0)
+        service._maybe_emit_heartbeat()
+        n = self._count(telemetry, "runtime_state_snapshot")
+        # fill
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(1, fill_count=1)
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 1)
+        # position change
+        clock["t"] += 15.0
+        service._performance_telemetry = self._hosted_perf(2, fill_count=1, positions={"AAPL.US": 5})
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 2)
+        # member book change (new fill in a member book)
+        clock["t"] += 15.0
+        book = {"member_id": "m1", "binding_id": "b", "fills": [{"price": 1.0}], "fill_gaps": [], "underlyings": []}
+        with patch.object(service, "_member_book_snapshot", return_value=[book]):
+            service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), n + 3)
+        self.assertEqual(telemetry.events[-1]["metadata"]["member_virtual_books"][0]["member_id"], "m1")
+
+    def test_mark_to_market_only_changes_are_rate_limited_per_hour(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        with patch.dict(os.environ, {"PANTHEON_RUNTIME_HEARTBEAT_INTERVAL_SECONDS": "15"}):
+            for tick in range(3600):
+                service._performance_telemetry = self._hosted_perf(tick, pnl=float(tick), drawdown_pct=tick / 1e4)
+                service._maybe_emit_heartbeat()
+                clock["t"] += 1.0
+        # start snapshot plus at most STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT per hour
+        self.assertLessEqual(self._count(telemetry, "runtime_state_snapshot"), 4)
+        self.assertGreaterEqual(self._count(telemetry, "runtime_state_snapshot"), 2)
+
+    def test_concurrent_heartbeat_callers_emit_once_per_interval(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        real_emit = telemetry.emit_heartbeat
+
+        def slow_emit(metadata=None, extra_metrics=None):
+            time.sleep(0.15)  # a slow ingest POST: the window in which a second caller used to pass the gate
+            return real_emit(metadata=metadata)
+
+        telemetry.emit_heartbeat = slow_emit
+        threads = [threading.Thread(target=service._maybe_emit_heartbeat) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self._count(telemetry, "heartbeat"), 1)
+
+    def test_runtime_state_snapshot_carries_account_and_policy_facts_under_change_digest(self):
+        telemetry = _FakeTelemetryEmitter()
+        service, clock = self._cadence_service(telemetry)
+        service._algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=service._on_order_event,
+            deployment_stage="paper",
+            capital_pool_id="pool-paper-001",
+            binding_resolver=service._binding_resolver,
+            risk_policy={
+                "risk_policy_id": "rp-low-v2",
+                "version": "2.0",
+                "status": "active",
+                "gross_limit": 0.10,
+                "net_limit": 0.10,
+                "max_leverage": 1.0,
+                "max_single_name_weight": 0.10,
+                "min_cash_reserve_pct": 0.25,
+                "drawdown_actions": {"warn": 0.05, "risk_off": 0.10},
+            },
+        )
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._types(telemetry), ["heartbeat", "runtime_state_snapshot"])
+        first_meta = telemetry.events[-1]["metadata"]
+        self.assertEqual(
+            first_meta["account_facts"],
+            {"initial_cash": 100_000.0, "cash": 100_000.0, "fill_count": 0},
+        )
+        self.assertEqual(first_meta["risk_policy_facts"]["risk_policy_id"], "rp-low-v2")
+        self.assertEqual(first_meta["risk_policy_facts"]["risk_policy_version"], "2.0")
+        self.assertEqual(first_meta["risk_policy_facts"]["gross_limit"], 0.10)
+        self.assertEqual(first_meta["risk_policy_facts"]["drawdown_risk_off"], 0.10)
+        self.assertTrue(first_meta["risk_policy_facts"]["risk_policy_digest"])
+        first_digest = first_meta["state_digest"]
+
+        # Unchanged account and policy: digest does not change and no second snapshot is emitted.
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 1)
+
+        # Unresolvable policy is reported with its exception type, never defaulted, and triggers a new snapshot.
+        service._algo.SetRiskPolicy(None)
+        clock["t"] += 15.0
+        service._maybe_emit_heartbeat()
+        self.assertEqual(self._count(telemetry, "runtime_state_snapshot"), 2)
+        second_meta = telemetry.events[-1]["metadata"]
+        self.assertEqual(
+            second_meta["risk_policy_facts"],
+            {"unavailable_reason": "RiskPolicyError"},
+        )
+        self.assertNotEqual(second_meta["state_digest"], first_digest)
+
     def test_lifecycle_replay_batches_remote_acks_into_one_durable_write(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
             def emit_payload(self, payload):
@@ -2330,6 +2657,80 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             4,
         )
         self.assertEqual(write_state.call_count, 1)
+
+    def test_lifecycle_outbox_prunes_only_idle_chains_without_pending(self):
+        from datetime import datetime, timedelta, timezone
+
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        def chain(age_days, journey):
+            when = (datetime.now(timezone.utc) - timedelta(days=age_days)).isoformat()
+            event_id = str(uuid.uuid4())
+            return {
+                "sequence_no": 3,
+                "event_id": event_id,
+                "correlation_envelope": {"journey_id": journey, "event_id": event_id, "event_time": when},
+            }
+
+        state = {
+            "schema_version": "paper_lifecycle_telemetry_outbox.v1",
+            "next_admission_no": 1,
+            "chains": {"old": chain(60, "old"), "recent": chain(1, "recent"),
+                       "old-pending": chain(60, "old-pending")},
+            "pending": [{"journey_id": "old-pending"}],
+        }
+        self.assertEqual(LifecycleTelemetryOutbox._prune_expired_chains(state), 1)
+        self.assertEqual(sorted(state["chains"]), ["old-pending", "recent"])
+
+    def test_lifecycle_outbox_growth_bound_on_hosted_shape(self):
+        # Hosted shape: 156 outbox files, 538 MB total -> ~3.4 MB mean, 41 MB max.
+        # One chain checkpoint is ~0.6 KB; with a 35 day window the file is
+        # bounded by journeys-in-window x bytes, not by binding age.
+        from datetime import datetime, timedelta, timezone
+
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        now = datetime.now(timezone.utc)
+        chains = {}
+        for i in range(20000):
+            event_id = str(uuid.uuid4())
+            age = 100 if i < 15000 else 2
+            chains[f"j{i}"] = {
+                "sequence_no": 7,
+                "event_id": event_id,
+                "correlation_envelope": {
+                    "journey_id": f"j{i}", "event_id": event_id,
+                    "event_time": (now - timedelta(days=age)).isoformat(),
+                },
+            }
+        state = {"chains": chains, "pending": []}
+        self.assertEqual(LifecycleTelemetryOutbox._prune_expired_chains(state), 15000)
+        self.assertEqual(len(state["chains"]), 5000)
+
+    def test_state_writers_leave_no_temp_and_startup_sweeps_own_orphans(self):
+        from services.execution.lean_runtime.paper_runtime import (
+            LifecycleTelemetryOutbox,
+        )
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            path = root / "b.json.lifecycle-outbox.json"
+            orphan = root / f"b.json.lifecycle-outbox.json.{uuid.uuid4().hex}.tmp"
+            sibling = root / f"c.json.lifecycle-outbox.json.{uuid.uuid4().hex}.tmp"
+            orphan.write_text("x" * 1024)
+            sibling.write_text("y")
+            outbox = LifecycleTelemetryOutbox(path)
+            self.assertFalse(orphan.exists())
+            self.assertTrue(sibling.exists())
+            outbox.verify_writable()
+            self.assertEqual(
+                sorted(p.name for p in root.iterdir() if p.name.endswith(".tmp")),
+                [sibling.name],
+            )
 
     def test_lifecycle_outbox_exact_pending_readmission_is_idempotent(self):
         class PendingTelemetry(_FakeTelemetryEmitter):
@@ -2670,7 +3071,7 @@ class PaperExecutionInputHardeningTest(unittest.TestCase):
             self.assertTrue(algo.BindPerformanceBinding("binding-a"))
             persisted_before = state_path.read_text(encoding="utf-8")
 
-            with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            with patch("services.execution.lean_runtime.paper_runtime.atomic_write_text", side_effect=OSError("disk full")):
                 with self.assertRaisesRegex(RuntimeError, "persistence failed"):
                     algo.MarketOrder("AAPL", 2.0)
 
@@ -2808,7 +3209,7 @@ class PaperLedgerLoadHardeningTest(unittest.TestCase):
     def test_nonfinite_performance_window_is_not_written_as_json_extension(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             state_path = Path(temporary_dir) / "paper-ledger.json"
-            algo = PaperExecutionAlgorithm(state_path=str(state_path))
+            algo = PaperExecutionAlgorithm(state_path=str(state_path), initial_cash=100_000.0)
             self.assertTrue(algo.BindPerformanceBinding("binding-a"))
             original = state_path.read_text(encoding="utf-8")
 
@@ -4065,7 +4466,8 @@ class TestCommittedCloseLifecycleRecovery(unittest.TestCase):
         self._run(service, "b", "SELL", "SHORT", 2385.0, self.BROKER_ORDER_ID)
         ledger = service._algo.performance_ledger()
         self.assertEqual(ledger["fill_count"], 2)
-        self.assertEqual(ledger["cash"], 99985.0)
+        # 2400 buy and 2385 sell, less commission on both sides and 0.3% tax on the sell.
+        self.assertAlmostEqual(ledger["cash"], 99985.0 - (2400 * .001425 + 2385 * (.001425 + .003)))
         self.assertEqual(ledger["positions"], [])
         # Nothing partial reached the outbox and the signal was not DLQ'd.
         self.assertEqual(self._types("sb"), ["signal_generation", "trade_decision"])
@@ -4376,7 +4778,10 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         self.assertEqual(sell_fill.metadata.get("clamped_quantity"), 3.0)
         self.assertEqual(algo._holding("2330.TW").Quantity, 0.0)
         self.assertEqual(algo.positions(), [])
-        self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+        paid = sum(e.metadata["fee"] + e.metadata["tax"] for e in events)
+        self.assertGreater(paid, 0)
+        self.assertAlmostEqual(algo.performance_ledger()["cash"], 100_000.0 - paid)
+        self.assertAlmostEqual(algo.performance_ledger()["total_costs"], paid)
 
     def test_tw_and_twse_aliases_resolve_to_one_underlying_holding(self):
         events = []
@@ -4434,7 +4839,9 @@ class TestTaiwanPaperLedgerNoNegativeShares(unittest.TestCase):
         ])
         self.assertEqual(events[2].metadata.get("reason"), "sell_without_holdings")
         self.assertEqual(algo.positions(), [])
-        self.assertEqual(algo.performance_ledger()["cash"], 100_020.0)
+        paid = sum(e.metadata["fee"] + e.metadata["tax"] for e in events if e.event_type == "paper_fill_simulated")
+        self.assertGreater(paid, 0)
+        self.assertAlmostEqual(algo.performance_ledger()["cash"], 100_020.0 - paid)
 
     def test_ledger_never_holds_negative_shares_across_any_buy_sell_sequence(self):
         algo = PaperExecutionAlgorithm(initial_cash=500_000.0)
@@ -4988,7 +5395,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 2330 E1, E2, E3
         r_2330_e1_l = replay_case("2330", "E1", "buy")
         self.assertAlmostEqual(r_2330_e1_l["pnl_last"], -235.0)
-        self.assertAlmostEqual(r_2330_e1_l["worst_equity"], 99_765.0)
+        # the one-share entry also pays the 0.1425% cash-share commission on 2370
+        self.assertAlmostEqual(r_2330_e1_l["worst_equity"], 99_765.0 - 2370.0 * 0.001425)
 
         r_2330_e2_l = replay_case("2330", "E2", "buy")
         r_2330_e2_s = replay_case("2330", "E2", "sell")
@@ -5009,7 +5417,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 2317 E1, E2, E3
         r_2317_e1_l = replay_case("2317", "E1", "buy")
         self.assertAlmostEqual(r_2317_e1_l["pnl_last"], -21.0)
-        self.assertAlmostEqual(r_2317_e1_l["worst_equity"], 99_979.0)
+        # less the cash-share commission on the 245.5 entry
+        self.assertAlmostEqual(r_2317_e1_l["worst_equity"], 99_979.0 - 245.5 * 0.001425)
 
         r_2317_e2_l = replay_case("2317", "E2", "buy")
         r_2317_e2_s = replay_case("2317", "E2", "sell")
@@ -5060,7 +5469,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
         # Verify 0050 E1, E2, E3
         r_0050_e1_l = replay_case("0050", "E1", "buy")
         self.assertAlmostEqual(r_0050_e1_l["pnl_last"], -12.45, places=2)
-        self.assertAlmostEqual(r_0050_e1_l["worst_equity"], 99_987.55, places=2)
+        self.assertAlmostEqual(r_0050_e1_l["worst_equity"], 99_987.55 - 104.95 * 0.001425, places=2)
 
         r_0050_e2_l = replay_case("0050", "E2", "buy")
         r_0050_e2_s = replay_case("0050", "E2", "sell")
@@ -5621,6 +6030,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             initial_cash=500_000.0,
             event_sink=events.append,
             capital_pool_id="pool-tw-futures-paper",
+            risk_policy=TEST_POOL_RECORD["risk_policy"],
             in_process_broker=True,
         )
         # 1. Missing price_basis and only market_price supplied -> rejected with price_stale
@@ -5919,7 +6329,8 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             self.assertIsNotNone(restored.get_instrument_position("ssf:QFF:202611"))
             self.assertEqual(restored.get_instrument_position("ssf:QFF:202611")["quantity"], -1.0)
             restored_snap = restored.assert_ledger_reconciliation()
-            self.assertAlmostEqual(restored_snap["costs"], 9.494, places=6)
+            # futures 9.494 plus the 0.1425% commission on the 100,000 cash-share buy
+            self.assertAlmostEqual(restored_snap["costs"], 9.494 + 142.5, places=6)
 
             # 4. Value mixed portfolio with authoritative marks (2330.TW @ 1010 -> +1000, QFF @ 2237 -> +1000)
             ledger = restored.performance_ledger()
@@ -5951,7 +6362,7 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
                 now=datetime(2026, 11, 6, 6, 5, 0, tzinfo=timezone.utc),
             )
             self.assertEqual(valuation.status, "valued")
-            self.assertAlmostEqual(valuation.sample.pnl, 2000.0 - 9.494, places=4)
+            self.assertAlmostEqual(valuation.sample.pnl, 2000.0 - 9.494 - 142.5, places=4)
 
             # 5. Legacy cash-only ledger migration: remove instrument_positions from JSON and reload
             legacy_path = Path(tmpdir) / "legacy-cash-ledger.json"
@@ -5998,7 +6409,202 @@ class TestPaperFuturesLedgerAndRiskGate(unittest.TestCase):
             )
             mig_snap = migrated.assert_ledger_reconciliation()
             self.assertAlmostEqual(mig_snap["realized_pnl"], 1000.0, places=4)
-            self.assertAlmostEqual(mig_snap["equity"], 101_000.0, places=4)
+            # 50 sold at 1020: commission 0.1425% plus 0.3% tax
+            self.assertAlmostEqual(mig_snap["equity"], 101_000.0 - 51_000.0 * (0.001425 + 0.003), places=4)
+
+
+class PaperLedgerCapitalCostsLimitsTest(unittest.TestCase):
+    """Starting cash from the pool budget, statutory costs, fail-closed policy, cash check.
+
+    Neighbouring owners are the real ones: services.capital.risk_policy loads the pool
+    record and the policy file from disk, and the in-process broker fills the order.
+    """
+
+    @staticmethod
+    def _ctx(algo, price):
+        algo.SetCurrentSignalContext({
+            "market_price": price,
+            "market_price_as_of": "2026-11-06T05:30:00Z",
+            "market_price_source": "source-ingest://snapshots/mss-2330",
+        })
+
+    def _stores(self, tmpdir, *, budget=100_000.0, policy_status="active", with_policy=True):
+        policy_dir = Path(tmpdir) / "risk_policies"
+        policy_dir.mkdir()
+        if with_policy:
+            (policy_dir / "rp-1.json").write_text(json.dumps({
+                "risk_policy_id": "rp-1", "version": "1.0", "status": policy_status,
+                "allowed_stages": ["paper"], "allowed_asset_classes": ["equity"],
+                "exposure_limits": {"gross_limit": 2.0, "net_limit": 2.0, "max_leverage": 2.0},
+            }), encoding="utf-8")
+        pool = {"pool_id": "pool-1", "risk_policy_ref": "rp-1", "status": "active"}
+        if budget is not None:
+            pool["budget"] = budget
+        store = Path(tmpdir) / "capital_pools.json"
+        store.write_text(json.dumps({"pools": [pool]}), encoding="utf-8")
+        return patch.dict(os.environ, {
+            "CAPITAL_RISK_POLICY_DIR": str(policy_dir),
+            "PANTHEON_CAPITAL_POOL_STORE_PATH": str(store),
+        })
+
+    def _algo(self, events, **kwargs):
+        return PaperExecutionAlgorithm(
+            event_sink=events.append, capital_pool_id="pool-1", in_process_broker=True,
+            unfunded=True, unbound=True, **kwargs,
+        )
+
+    def _order(self, algo, side, qty, signal_id):
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW", signal_id=signal_id, side=side, quantity=qty,
+            quantity_type="SHARES", action=side.upper(),
+        )
+
+    def test_ledger_starts_from_pool_budget_and_pays_costs_through_real_owners(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=250_000.0):
+            events = []
+            algo = self._algo(events, state_path=str(Path(tmpdir) / "ledger.json"))
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 100, "b1")
+            self.assertEqual(events[0].event_type, "paper_fill_simulated")
+            self.assertEqual(algo.performance_ledger()["initial_cash"], 250_000.0)
+            buy_cost = 100_000.0 * 0.001425
+            self.assertAlmostEqual(events[0].metadata["fee"], buy_cost)
+            self.assertEqual(events[0].metadata["tax"], 0.0)
+            self._ctx(algo, 1100.0)
+            self._order(algo, "sell", 100, "s1")
+            sell_fee, sell_tax = 110_000.0 * 0.001425, 110_000.0 * 0.003
+            snap = algo.assert_ledger_reconciliation()
+            self.assertAlmostEqual(snap["costs"], buy_cost + sell_fee + sell_tax)
+            self.assertAlmostEqual(snap["cash"], 250_000.0 + 10_000.0 - snap["costs"])
+            self.assertAlmostEqual(snap["equity"] - 250_000.0, 10_000.0 - snap["costs"])
+
+    def test_missing_pool_budget_fails_closed_without_default_amount(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=None):
+            events = []
+            algo = self._algo(events, state_path=str(Path(tmpdir) / "ledger.json"))
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 1, "b1")
+            self.assertEqual([e.event_type for e in events], ["order_rejection"])
+            self.assertEqual(events[0].metadata["reason"], "starting_cash_unavailable")
+            self.assertIn("no budget", events[0].metadata["available"])
+            self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+            self.assertIn("no budget", algo.starting_cash_error)
+            self.assertFalse((Path(tmpdir) / "ledger.json").exists())
+
+    def test_unfunded_ledger_without_any_pool_never_uses_a_default(self):
+        algo = PaperExecutionAlgorithm(unfunded=True, unbound=True)
+        self.assertFalse(algo.resolve_starting_cash())
+        self.assertIn("no capital pool id", algo.starting_cash_error)
+
+    def test_existing_ledger_keeps_recorded_starting_cash_when_budget_differs(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=999_999.0):
+            path = Path(tmpdir) / "ledger.json"
+            first = PaperExecutionAlgorithm(initial_cash=100_000.0, state_path=str(path))
+            self.assertTrue(first.BindPerformanceBinding("binding-1"))
+            events = []
+            restored = self._algo(events, state_path=str(path))
+            self.assertTrue(restored.BindPerformanceBinding("binding-1"))
+            self.assertEqual(restored.performance_ledger()["initial_cash"], 100_000.0)
+            self.assertEqual(restored.performance_ledger()["cash"], 100_000.0)
+
+    def test_unreadable_risk_policy_rejects_instead_of_running_without_limits(self):
+        for kwargs in ({"with_policy": False}, {"policy_status": "draft"}):
+            with self.subTest(kwargs), tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, **kwargs):
+                events = []
+                algo = self._algo(events)
+                self._ctx(algo, 1000.0)
+                self._order(algo, "buy", 1, "b1")
+                self.assertEqual([e.event_type for e in events], ["order_rejection"])
+                self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
+                self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+
+    def test_gate_and_expression_inputs_agree_on_unbound_policy(self):
+        from services.execution.lean_runtime.expression_inputs import (
+            ExpressionInputsProvider, ExpressionInputsUnavailable,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, with_policy=False):
+            pool = {"pool_id": "pool-1", "risk_policy_ref": "rp-1", "budget": 100_000.0}
+            provider = ExpressionInputsProvider(
+                capital_pool_reader=lambda _id: pool, runtime_summary_reader=lambda _id: {})
+            with self.assertRaises(ExpressionInputsUnavailable) as raised:
+                provider({"capital_pool_id": "pool-1", "runtime_id": "rt"})
+            self.assertEqual(raised.exception.missing, "risk_policy")
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 1, "b1")
+            self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
+
+    def test_buy_beyond_cash_is_rejected_with_insufficient_cash(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=100_000.0):
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 100, "all-cash")  # costs 100,142.5: more than cash
+            self.assertEqual(events[0].metadata["reason"], "insufficient_cash")
+            self.assertAlmostEqual(events[0].metadata["required"], 100_142.5)
+            self.assertEqual(algo.performance_ledger()["cash"], 100_000.0)
+            self.assertEqual(algo.performance_ledger()["fill_count"], 0)
+            self._order(algo, "buy", 99, "fits")
+            self.assertEqual(events[1].event_type, "paper_fill_simulated")
+            self.assertGreaterEqual(algo.performance_ledger()["cash"], 0.0)
+
+    def test_hosted_shape_ledger_loads_and_new_ledger_adds_no_keys(self):
+        hosted = {
+            "schema_version": "paper_performance_ledger.v1", "binding_id": "rb-1",
+            "initial_cash": 100000.0, "cash": 100015.0, "fill_count": 3,
+            "ledger_started_at": "2026-11-08T12:20:00Z", "first_fill_at": "2026-11-10T07:01:47Z",
+            "last_fill_at": "2026-11-14T07:45:09Z", "performance_window": {},
+            "pending_performance_pair": None, "pending_fill_publications": [],
+            "holdings": {"2330.TWSE": 1.0}, "open_episodes": {"2330.TWSE": "ep-1"},
+            "execution_prices": {"2330.TWSE": 2350.0, "eq:2330": 2285.0},
+            "realized_pnl": 2365.0, "total_costs": 0.0, "injected_equity_capital": 0.0,
+            "instrument_positions": [{
+                "persona_binding_id": "rb-1", "normalised_underlying": "2330", "instrument_id": "eq:2330",
+                "symbol": "2330.TWSE", "kind": "cash_share", "contract": None, "contract_month": None,
+                "quantity": 1.0, "multiplier": 1.0, "average_entry_price": 2350.0, "mark_price": 2350.0,
+                "initial_margin_reserved": 0.0, "maintenance_margin_required": 0.0,
+                "unrealized_pnl": 0.0, "realized_pnl": 2365.0, "costs": 0.0, "status": "open"}],
+            "margin_call_active": False, "margin_call_since": None,
+            "last_futures_mark_session_date": None, "futures_mark_diagnostic": None,
+            "settled_futures_contracts": [],
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir, budget=5.0):
+            path = Path(tmpdir) / "ledger.json"
+            path.write_text(json.dumps(hosted), encoding="utf-8")
+            algo = self._algo([], state_path=str(path))
+            self.assertTrue(algo.BindPerformanceBinding("rb-1"))
+            ledger = algo.performance_ledger()
+            self.assertEqual((ledger["initial_cash"], ledger["cash"], ledger["fill_count"]),
+                             (100000.0, 100015.0, 3))
+            algo._persist_state()
+            written = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(set(written) - set(hosted), set())
+            self.assertEqual(written["initial_cash"], 100000.0)
+
+    def test_valuation_method_name_is_unchanged_for_ranking_observations(self):
+        with tempfile.TemporaryDirectory() as tmpdir, self._stores(tmpdir):
+            events = []
+            algo = self._algo(events)
+            self._ctx(algo, 1000.0)
+            self._order(algo, "buy", 10, "b1")
+            self.assertEqual(events[0].event_type, "paper_fill_simulated")
+            from services.execution.lean_runtime.performance_telemetry import value_portfolio
+            ledger = algo.performance_ledger()
+            result = value_portfolio(
+                initial_cash=ledger["initial_cash"], cash=ledger["cash"],
+                positions=ledger["positions"],
+                marks={"2330.TW": MarketMark(symbol="2330.TW", price=1000.0,
+                                             as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                             source_ref="source-ingest://snapshots/mss-2330")},
+                fill_count=ledger["fill_count"], last_fill_at=ledger["last_fill_at"],
+            )
+            self.assertEqual(result.diagnostic["valuation_method"], "fill_cash_ledger_mark_to_market")
+            # Same fill, marked at the fill price: the only change is the statutory cost.
+            snap = algo.assert_ledger_reconciliation()
+            self.assertAlmostEqual(snap["equity"] - snap["initial_cash"], -10 * 1000.0 * 0.001425)
+            self.assertEqual(ledger["total_costs"], 10 * 1000.0 * 0.001425)
 
 
 class TestPaperFuturesFillEpisode(unittest.TestCase):
@@ -6135,5 +6741,1600 @@ class TestPaperFuturesFillEpisode(unittest.TestCase):
         self.assertEqual(algo.open_episodes, {})
 
 
+class PoolMemberBaselineRuntimeTest(unittest.TestCase):
+    """Production snapshot path: each member carries its own baseline/comparison."""
+
+    _identity = PaperRuntimeServiceTest._identity
+
+    def _outbox(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return Path(directory.name) / "lifecycle.json"
+
+    def test_snapshot_attributes_genuine_gate_baseline_per_member_not_combined_account(self):
+        """Recorded Taiwan gate proof -> registry entries -> runtime snapshot, per member."""
+        from services.evolution.test_approved_baselines import genuine_entry
+        from services.execution.lean_runtime.member_virtual_book import virtual_book_metrics
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        decay = genuine_entry(tenant="default")
+        good = genuine_entry("recorded_backtest_tw_2330_2317", ("2330.TW", "2317.TW"), tenant="default")
+        entries = {decay["registry_id"]: decay, good["registry_id"]: good}
+        service._member_entry_reader = lambda ref, tenant: entries.get(ref)
+        def member(entry, count):
+            return {entry["registry_id"]: {
+                "artifact_id": entry["registry_id"], "version": "1.0.0", "checksum": entry["checksum"],
+                "virtual_only": False, "underlying_count": count,
+                "view": {"direction": "LONG", "strength": 1}}}
+        decaying = (100, 97, 96, 92, 91)
+        steady = (100, 104, 108, 112, 120)
+        for day in range(5):
+            at = f"2024-10-0{day + 1}T05:30:00Z"
+            for symbol, price, members in (
+                ("2330.TW", decaying[day], member(decay, 1)),
+                ("2330.TW", steady[day], member(good, 2)),
+                ("2317.TW", steady[day], member(good, 2)),
+            ):
+                service._member_virtual_books.observe(
+                    binding_id="b", envelope_checksum="sha256:env", symbol=symbol, event_time=at,
+                    price=price, open_price=price, source_ref="recorded-twse", members=members, bar_frequency="1d")
+        books = {b["member_id"]: b for b in service.snapshot()["paper_state"]["member_virtual_books"]}
+        self.assertEqual(set(books), {decay["registry_id"], good["registry_id"]})
+        for entry in (decay, good):
+            book = books[entry["registry_id"]]
+            self.assertEqual(book["baseline"]["status"], "approved")
+            self.assertEqual(book["baseline"]["checksum"], book["checksum"])
+            self.assertEqual(book["baseline"]["oos_sharpe"],
+                             entry["evaluation_summary"]["out_of_sample_sharpe_ratio"])
+            # The member is scored on the gate's own share-sized return basis.
+            self.assertEqual(book["gate_basis"]["basis"], book["baseline"]["return_basis"])
+            self.assertEqual(book["baseline_comparison"]["status"], "compared")
+            self.assertAlmostEqual(
+                book["baseline_comparison"]["sharpe_delta"],
+                book["gate_basis"]["sharpe_ratio"] - book["baseline"]["oos_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline"]["backtest_run_id"],
+                            books[good["registry_id"]]["baseline"]["backtest_run_id"])
+        weak = books[decay["registry_id"]]
+        # A combined account of both members would look healthy and hide the decaying member.
+        combined = virtual_book_metrics(
+            [(a + b) / 2 for a, b in zip(weak["net_of_costs"]["return_series"],
+                                         books[good["registry_id"]]["net_of_costs"]["return_series"])],
+            basis=weak["net_of_costs"]["basis"])
+        self.assertGreater(combined["sharpe_ratio"], 0)
+        self.assertGreater(combined["sharpe_ratio"], weak["net_of_costs"]["sharpe_ratio"])
+        self.assertTrue(books[decay["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertFalse(books[good["registry_id"]]["baseline_comparison"]["below_baseline_sharpe"])
+        self.assertNotEqual(books[decay["registry_id"]]["baseline_comparison"]["sharpe_delta"],
+                            books[good["registry_id"]]["baseline_comparison"]["sharpe_delta"])
+        self.assertTrue(all(not b["is_real_order"] for b in books.values()))
+
+    def test_member_without_its_own_approved_proof_does_not_borrow_a_sibling_baseline(self):
+        from services.evolution.test_approved_baselines import genuine_entry
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        parent = genuine_entry(tenant="default")
+        service._member_entry_reader = lambda ref, tenant: parent if ref == parent["registry_id"] else {}
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
+                members={"child": {"artifact_id": "child", "version": "1", "checksum": parent["checksum"],
+                                   "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_entry_missing")
+        self.assertNotIn("oos_sharpe", book["baseline"])
+
+    def test_without_registry_reader_each_member_reports_missing_reason(self):
+        service = PaperRuntimeService(
+            store=InMemoryPendingSignalStore([]), identity=self._identity(),
+            runtime_manager_client=_FakeRuntimeManagerClient([]),
+            telemetry_emitter=_FakeTelemetryEmitter(), poll_interval_seconds=3600,
+            lifecycle_outbox_path=self._outbox())
+        for day, price in ((1, 100), (2, 110)):
+            service._member_virtual_books.observe(
+                binding_id="b", envelope_checksum="sha256:env", symbol="2330.TW",
+                event_time=f"2024-10-0{day}T05:30:00Z", price=price, open_price=price, source_ref="r",
+                members={"m": {"artifact_id": "m", "version": "1", "checksum": "sha256:m",
+                               "virtual_only": True, "view": {"direction": "LONG", "strength": 1}}},
+                bar_frequency="1d")
+        [book] = service.snapshot()["paper_state"]["member_virtual_books"]
+        self.assertEqual(book["baseline"]["reason"], "registry_read_unavailable:RuntimeError")
+        self.assertEqual(book["baseline_comparison"]["status"], "no_approved_baseline")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+def _fill_rate_runtime_scenario(tmp_path, monkeypatch):
+    """Real signal consumer/runtime/emitter -> durable telemetry projection."""
+    from services.execution.lean_runtime import paper_runtime, signal_consumer
+    from services.execution.lean_runtime.signal_producer import build_decision_signals
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    class QuarterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 11, 12, 4, 10, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+    # Freeze both execution event time and signal admission time. The HTTP
+    # test must continue proving Q4 after the wall clock enters a new quarter.
+    monkeypatch.setattr(paper_runtime, "datetime", QuarterClock)
+    monkeypatch.setattr(signal_consumer, "datetime", QuarterClock)
+    binding_id = str(uuid.uuid4())
+    runtime_id = "return-runtime-0"
+    binding = {
+        "binding_id": binding_id, "runtime_id": runtime_id,
+        "capital_pool_id": "pool-fill-rate", "artifact_id": "artifact-fill-rate",
+        "artifact_version": "1", "plan_id": "plan-fill-rate",
+        "persona_capital_binding_id": "pcb-fill-rate", "status": "active",
+        "deployment_mode": "paper", "execution_mode": "paper",
+    }
+    monkeypatch.setenv("PANTHEON_PERFORMANCE_STATE_PATH", str(tmp_path / "ledger.json"))
+    monkeypatch.setenv("PANTHEON_LIFECYCLE_OUTBOX_PATH", str(tmp_path / "outbox.json"))
+    projection_path = str(tmp_path / "projection.json")
+    events = []
+
+    class Emitter(RuntimeTelemetryEmitter):
+        def emit_payload(self, payload):
+            events.append(payload)
+            RuntimeSummaryProjectionStore(path=projection_path).project_event(payload)
+            return True
+
+    identity = RuntimeIdentity.from_env({
+        "PANTHEON_RUNTIME_ROLE": "paper", "PANTHEON_RUNTIME_MODE": "paper",
+        "PANTHEON_RUNTIME_ID": runtime_id, "PANTHEON_WORKSPACE_REF": "w",
+        "PANTHEON_AUTH_PROFILE_REF": "p", "PANTHEON_PERSONA_ID": "fill-persona",
+        "PANTHEON_SESSION_ID": "s", "PANTHEON_TRACE_ID": str(uuid.uuid4()),
+        "PANTHEON_REQUEST_ID": "r", "PANTHEON_TENANT_ID": "pantheon-dev",
+    })
+    queue = InMemoryPendingSignalStore()
+
+    def service():
+        return PaperRuntimeService(
+            store=queue, identity=identity,
+            runtime_manager_client=_FakeRuntimeManagerClient([binding]),
+            telemetry_emitter=Emitter(identity, _FakeBindingResolver(binding)),
+            poll_interval_seconds=3600,
+        )
+
+    def run(runtime, suffix, quantity, action="BUY"):
+        now = QuarterClock.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        [signal] = build_decision_signals({
+            "decision_id": f"decision-{suffix}", "signal_id": f"signal-{suffix}",
+            "strategy_id": "strategy-fill-rate", "timestamp": now,
+            "tenant_id": "pantheon-dev", "environment": "paper", "symbol": "2330.TW",
+            "action": action, "direction": "LONG", "quantity": quantity,
+            "quantity_type": "SHARES", "run_id": f"run-{suffix}", "order_type": "MARKET",
+            "metadata": {"market_data": {"close": 100.0, "event_time": now,
+                                         "source_ref": "local-test-owner://quote"}},
+        }, binding_id=binding_id, runtime_id=runtime_id)
+        queue.enqueue(signal)
+        runtime.drain_once()
+        runtime._consumer.flush_rebalance(signal["run_id"], runtime._algo)
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(
+        lambda url, payload: {"order_id": "partial-order", "fill_price": 100.0, "fill_qty": 4, "side": "buy"}
+    ))
+    first = service()
+    run(first, "partial", 10)
+    partial = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    restarted = service()
+    assert restarted._processed_signal_count == 0
+    assert restarted._algo.performance_ledger()["fill_count"] == 1
+
+    def reject(url, payload):
+        raise RuntimeError("test broker rejection")
+
+    monkeypatch.setattr(PaperExecutionAlgorithm, "_post_broker_paper_order", staticmethod(reject))
+    run(restarted, "reject", 6)
+    run(restarted, "noop", 0, "HOLD")
+    # Duplicated delivery and projection restarts must not multiply quantities.
+    for event in events:
+        RuntimeSummaryProjectionStore(path=projection_path).project_event(event)
+    summary = RuntimeSummaryProjectionStore(path=projection_path).get(runtime_id)
+    return summary, partial, events, restarted
+
+
+def test_fill_rate_runtime_partial_fill_rejection_noop_and_restart(tmp_path, monkeypatch):
+    summary, partial, events, runtime = _fill_rate_runtime_scenario(tmp_path, monkeypatch)
+    assert partial["fill_rate"] == 0.4
+    assert summary["fill_rate"] == 0.25
+    details = summary["fill_rate_details"]
+    assert details["numerator"] == 4.0 and details["denominator"] == 16.0
+    assert details["window"]["timezone"] == "UTC"
+    rejection = next(e for e in events if e["event_type"] == "order_rejection")
+    noop = next(e for e in events if e["event_type"] == "paper_order_simulated")
+    assert "test broker rejection" in rejection["metadata"]["execution_error_message"]
+    assert noop["metadata"]["noop_reason"]
+    assert "fill_rate" not in runtime._performance_snapshot_metrics()
+    assert all("fill_rate" not in e["metrics"] for e in events)
+
+
+def test_set_holdings_records_native_order_quantity_not_percent():
+    events = []
+    algo = PaperExecutionAlgorithm(event_sink=events.append)
+    algo.SetCurrentSignalContext({"requested_quantity": 0.1, "quantity_type": "PERCENT_PORTFOLIO"})
+    algo.SetHoldings("TEST.US", 0.1)
+    assert events[0].quantity == 100.0
+    assert events[0].metadata["requested_quantity"] == 100.0
+
+
+class TestPaperSizingBoundRiskPolicySubmissionRecheck(unittest.TestCase):
+    """PAPER-SIZING-BOUND-RISK-POLICY-20261121 AC2 & AC3: submission re-evaluation, resize, no-trade, rejection, retry & exits.
+
+    Note: On hosted dev, pool-persona-paper-039ad01f8bcd2b4aa466 carries the observed historical inline v1.0
+    policy rp-pool-persona-paper-039ad01f8bcd2b4aa466 with requested_risk_profile='low' and unresolved owner
+    profile-mapping approval (PAPER-RISK-POLICY-PROVENANCE-20261121 / PAPER-RISK-POLICY-BINDING-20261121).
+    `_make_2317_algo` injects a synthetic local test fixture approval reader (`with_synthetic_approval=True`)
+    to test post-approval submission re-evaluation mechanics, while `with_synthetic_approval=False` verifies
+    fail-closed rejection of unapproved opening orders on the observed hosted inline state.
+    """
+
+    TJ_2317_DECISION_ID = "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-7ed048e23fd14b14546cfb09"
+
+    def _observed_historical_inline_v1_policy_dict(self, **overrides):
+        base = {
+            "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "allowed_asset_classes": ["equity", "future"],
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+        }
+        base.update(overrides)
+        return base
+
+    def _make_2317_algo(self, events, *, policy_dict=None, initial_cash=100_000.0, with_synthetic_approval=True):
+        from services.capital.risk_policy import capital_pool_approval_digest, risk_policy_digest
+        from services.governance.test_approval_authority import (
+            SnapshotApprovalReader,
+            approval_snapshot,
+        )
+
+        pol = self._observed_historical_inline_v1_policy_dict(**(policy_dict or {}))
+        pool_id = "pool-persona-paper-039ad01f8bcd2b4aa466"
+        pool_record = {
+            "pool_id": pool_id,
+            "tenant_id": "tenant-dev",
+            "owner_id": "tenant-dev",
+            "owner_type": "org",
+            "currency": "TWD",
+            "budget": initial_cash,
+            "single_runtime_enforced": True,
+            "metadata": {
+                "tenant_id": "tenant-dev",
+                "requested_risk_profile": "low",
+                **(
+                    {"profile_mapping_approval_id": "apv-synthetic-fixture-2317"}
+                    if with_synthetic_approval
+                    else {}
+                ),
+                "risk_policy": pol,
+            },
+        }
+
+        class _SyntheticFixtureApprovalReader:
+            def get(self, decision_id: str, **_kwargs):
+                if not with_synthetic_approval:
+                    return None
+                cur_pol = pool_record["metadata"]["risk_policy"]
+                pool_record["approval_digest"] = capital_pool_approval_digest(pool_record)
+                snap = approval_snapshot(
+                    decision_id=decision_id,
+                    tenant_id="tenant-dev",
+                    target_type="capital_pool_activation",
+                    target_id=pool_id,
+                    target_version=pool_record["approval_digest"],
+                    owner_user_id="proposer-1",
+                    risk_level="low",
+                    metadata={
+                        "subject": {
+                            "pool_id": pool_id,
+                            "risk_direction": "increase",
+                            "risk_policy_id": str(cur_pol["risk_policy_id"]),
+                            "risk_policy_version": str(cur_pol["version"]),
+                            "risk_policy_digest": risk_policy_digest(cur_pol),
+                            "requested_risk": "low",
+                        },
+                        "approvals": [
+                            {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                            {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                        ],
+                    },
+                )
+                return SnapshotApprovalReader(snap).get(decision_id)
+
+        from services.capital import risk_policy as _rp_mod
+        reader_inst = _SyntheticFixtureApprovalReader()
+        self.addCleanup(
+            setattr,
+            _rp_mod,
+            "configured_capital_owner_approval_reader",
+            _rp_mod.configured_capital_owner_approval_reader,
+        )
+        _rp_mod.configured_capital_owner_approval_reader = lambda *a, **kw: reader_inst
+        return PaperExecutionAlgorithm(
+            initial_cash=initial_cash,
+            event_sink=events.append,
+            capital_pool_id=pool_id,
+            capital_pool_reader=lambda _pid: {
+                **pool_record,
+                "approval_digest": capital_pool_approval_digest(pool_record),
+            },
+            in_process_broker=True,
+        ), pool_record
+
+    def _set_2317_signal_context(self, algo, price=221.0, **extra):
+        ctx = {
+            "decision_id": self.TJ_2317_DECISION_ID,
+            "instrument_id": "eq:2317",
+            "kind": "cash_share",
+            "underlying": "2317",
+            "market_price": float(price),
+            "market_price_as_of": "2026-11-19T01:00:00Z",
+            "market_price_source": "source-ingest://snapshots/2317",
+            "expression_decision": {
+                "decision_id": self.TJ_2317_DECISION_ID,
+                "instrument_id": "eq:2317",
+                "side": "buy",
+                "units": 451,
+                "reason_code": "long_cash",
+                "strength": 0.91324200913242,
+                "target_notional": 182648.401826484,
+            },
+            "pre_trade_sizing": {
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
+                "dated_price": 221.0,
+                "capital": 100000.0,
+                "target_notional": 182648.401826,
+                "permitted_units": 451,
+                "binding_limit": "available_cash_after_fees",
+                "fee_inclusive_required_cash": 99813.031175,
+                "remaining_cash": 186.968825,
+                "after_trade_concentration": 0.998128,
+            },
+        }
+        ctx.update(extra)
+        algo.SetCurrentSignalContext(ctx)
+
+    def test_observed_unapproved_inline_v1_pool_fails_closed_for_opening_orders(self):
+        events = []
+        algo, _ = self._make_2317_algo(events, with_synthetic_approval=False)
+        self._set_2317_signal_context(algo, price=221.0)
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-2317-unapproved-profile-mapping",
+                side="buy",
+                quantity=451,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].event_type, "order_rejection")
+        self.assertFalse(events[0].submitted_to_broker)
+        self.assertEqual(events[0].metadata["reason"], "risk_policy_unavailable")
+
+    def test_baseline_451_share_2317_fills_and_retry_is_idempotent(self):
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-baseline",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        fill = events[0]
+        self.assertEqual(fill.event_type, "paper_fill_simulated")
+        self.assertEqual(fill.metadata["fill_quantity"], 451.0)
+        self.assertAlmostEqual(fill.metadata["cash_after"], 186.968825, places=5)
+        ev = fill.metadata["submission_sizing_evidence"]
+        self.assertEqual(ev["permitted_units"], 451)
+        self.assertEqual(ev["binding_limit"], "available_cash_after_fees")
+        self.assertAlmostEqual(ev["fee_inclusive_required_cash"], 99813.031175, places=5)
+        self.assertAlmostEqual(ev["remaining_cash"], 186.968825, places=5)
+        self.assertAlmostEqual(ev["after_trade_concentration"], 0.998128, places=5)
+        self.assertNotIn("constraint_unit_caps", ev)
+        self.assertLessEqual(
+            len(json.dumps(ev, sort_keys=True, separators=(",", ":")).encode("utf-8")),
+            PaperExecutionAlgorithm.SUBMISSION_SIZING_EVIDENCE_MAX_BYTES,
+        )
+
+        # Retry with the same signal_id must not create a duplicate reservation or fill
+        res_retry = algo.reserve_order(
+            "sig-2317-baseline",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(res_retry["duplicate_retry"])
+        self.assertFalse(res_retry["reserved"])
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-baseline",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 2)
+        dup_ev = events[1]
+        self.assertEqual(dup_ev.event_type, "paper_order_simulated")
+        self.assertFalse(dup_ev.submitted_to_broker)
+        self.assertTrue(dup_ev.metadata["duplicate_retry"])
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 451.0)
+
+    def test_submission_resizes_on_changed_price_changed_policy_holdings_and_competing_reservation(self):
+        # 1. Changed price at submission (D+1 open rose from 221.0 to 225.0 -> 451 resizes to 443)
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=225.0)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-price-up",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["original_quantity"], 451.0)
+        self.assertEqual(events[-1].metadata["fill_quantity"], 443.0)
+        self.assertEqual(events[-1].metadata["binding_limit"], "available_cash_after_fees")
+
+        # 2. Changed policy at submission (tightened to v1.1 with fixture max_single_name_weight=0.25 -> 451 resizes to 113)
+        events_pol = []
+        algo_pol, pool_pol = self._make_2317_algo(events_pol)
+        pool_pol["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
+            version="1.1",
+            max_single_name_weight=0.25,
+        )
+        self._set_2317_signal_context(algo_pol, price=221.0)
+        algo_pol.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-policy-tightened",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_pol[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_pol[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_pol[-1].metadata["fill_quantity"], 113.0)
+        self.assertEqual(events_pol[-1].metadata["risk_policy_version"], "1.1")
+        self.assertEqual(events_pol[-1].metadata["binding_limit"], "max_single_name_weight")
+        self.assertLessEqual(
+            events_pol[-1].metadata["submission_sizing_evidence"]["after_trade_concentration"],
+            0.25,
+        )
+
+        # 3. Competing order reservation at submission (reserves 40 shares of 2330 @ 1000 = 40,057 cash -> 2317 resizes to 270 shares)
+        events_res = []
+        algo_res, _ = self._make_2317_algo(events_res)
+        r1 = algo_res.reserve_order(
+            "res-competing-2330",
+            symbol="2330.TW",
+            side="buy",
+            quantity=40,
+            price=1000.0,
+        )
+        self.assertTrue(r1["reserved"])
+        self.assertFalse(r1["duplicate_retry"])
+        # Idempotent retry of the same reservation must not double-count reserved cash
+        r1_retry = algo_res.reserve_order(
+            "res-competing-2330",
+            symbol="2330.TW",
+            side="buy",
+            quantity=40,
+            price=1000.0,
+        )
+        self.assertTrue(r1_retry["idempotent_reservation"])
+        self.assertEqual(len(algo_res.active_order_reservations()), 1)
+
+        self._set_2317_signal_context(algo_res, price=221.0)
+        algo_res.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-with-competing-res",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_res[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_res[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_res[-1].metadata["fill_quantity"], 270.0)
+        self.assertEqual(events_res[-1].metadata["binding_limit"], "competing_reservation")
+        self.assertEqual(
+            events_res[-1].metadata["submission_sizing_evidence"]["reservations_applied"],
+            1,
+        )
+
+        # 4. Changed holdings at submission: holdings already reached target -> clean no-trade without broker call
+        events_hold = []
+        algo_hold, _ = self._make_2317_algo(events_hold)
+        self._set_2317_signal_context(algo_hold, price=221.0, target_notional=50000.0)
+        # First order fills 226 shares (~49,946 TWD)
+        algo_hold.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-first-fill",
+            side="buy",
+            quantity=226,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_hold[-1].event_type, "paper_fill_simulated")
+        # Second competing order targeting 40,000 TWD when 49,946 TWD is already held -> no_trade_at_submission
+        self._set_2317_signal_context(algo_hold, price=221.0, target_notional=40000.0)
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo_hold.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-2317-already-satisfied",
+                side="buy",
+                quantity=180,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(events_hold[-1].event_type, "paper_order_simulated")
+        self.assertFalse(events_hold[-1].submitted_to_broker)
+        self.assertTrue(events_hold[-1].metadata["no_trade_at_submission"])
+        self.assertEqual(events_hold[-1].metadata["reason_code"], "already_at_target")
+
+    def test_risk_reducing_exits_are_preserved_and_resized_or_no_traded_when_holdings_change(self):
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-open-200",
+            side="buy",
+            quantity=200,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(algo._holding("2317.TW").Quantity, 200.0)
+
+        # Competing close reservation reserves 120 shares of the 200 held shares
+        algo.reserve_order(
+            "res-close-120",
+            symbol="2317.TW",
+            side="sell",
+            quantity=120,
+            price=221.0,
+            is_risk_reducing=True,
+        )
+        # Second close_leg requesting 200 shares resizes down to the 80 unreserved shares
+        self._set_2317_signal_context(
+            algo,
+            price=221.0,
+            reason_code="close_leg",
+            expression_decision={
+                "decision_id": "dec-close-1",
+                "instrument_id": "eq:2317",
+                "side": "sell",
+                "units": 200,
+                "reason_code": "close_leg",
+            },
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-close-remaining-80",
+            side="sell",
+            quantity=200,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["fill_quantity"], 80.0)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 120.0)
+
+        # Now execute the reserved 120-share close
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="res-close-120",
+            side="sell",
+            quantity=120,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(algo._holding("2317.TW").Quantity, 0.0)
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # A third close_leg arriving after the position is already 0 records a clean no-trade
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-close-already-flat",
+                side="sell",
+                quantity=50,
+                quantity_type="SHARES",
+                action="SELL",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(events[-1].event_type, "paper_order_simulated")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertTrue(events[-1].metadata["no_trade_at_submission"])
+        self.assertEqual(events[-1].metadata["reason_code"], "position_already_closed")
+
+    def test_target_notional_rechecks_remaining_target_at_submission_price_for_zero_and_unchanged_holdings(self):
+        # 1. Exact review reproduction: zero holdings, target_position_v1 target=10000 consistently in
+        # metadata/pre_trade_sizing/expression_decision, pretrade price=221 and units=45, submission price=300
+        # must resize from 45 down to 33 shares (notional=9900 <= 10000; required cash=9920; binding=target_notional).
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(
+            algo,
+            price=300.0,
+            policy_kind="target_position_v1",
+            target_notional=10000.0,
+            expression_decision={
+                "decision_id": "dec-target-10k-zero-holdings",
+                "policy_kind": "target_position_v1",
+                "instrument_id": "eq:2317",
+                "side": "buy",
+                "units": 45,
+                "reason_code": "long_cash",
+                "target_notional": 10000.0,
+            },
+            pre_trade_sizing={
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
+                "policy_kind": "target_position_v1",
+                "dated_price": 221.0,
+                "capital": 100000.0,
+                "target_notional": 10000.0,
+                "existing_underlying_exposure": 0.0,
+                "permitted_units": 45,
+                "binding_limit": "target_notional",
+                "fee_inclusive_required_cash": 9965.0,
+                "remaining_cash": 90035.0,
+                "after_trade_concentration": 0.09947,
+            },
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-target-10k-price-300",
+            side="buy",
+            quantity=45,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["original_quantity"], 45.0)
+        self.assertEqual(events[-1].metadata["fill_quantity"], 33.0)
+        self.assertEqual(events[-1].metadata["binding_limit"], "target_notional")
+        ev_zero = events[-1].metadata["submission_sizing_evidence"]
+        self.assertEqual(ev_zero["requested_units"], 45)
+        self.assertEqual(ev_zero["permitted_units"], 33)
+        self.assertEqual(ev_zero["binding_limit"], "target_notional")
+        self.assertAlmostEqual(ev_zero["fee_inclusive_required_cash"], 9914.1075, places=5)
+
+        # 2. Unchanged non-zero share holdings (20 shares held at pretrade price=221 -> 4420 existing exposure;
+        # pretrade delta=5580 -> 25 shares). At submission price=300, the unchanged 20 shares are worth 6000,
+        # leaving 4000 remaining target -> resizes 25 down to 13 shares (total 33 shares * 300 = 9900 <= 10000).
+        events_unchanged = []
+        algo_unchanged, _ = self._make_2317_algo(events_unchanged)
+        self._set_2317_signal_context(algo_unchanged, price=221.0, target_notional=10000.0)
+        algo_unchanged.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-seed-20-shares",
+            side="buy",
+            quantity=20,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(algo_unchanged._holding("2317.TW").Quantity, 20.0)
+
+        self._set_2317_signal_context(
+            algo_unchanged,
+            price=300.0,
+            policy_kind="target_position_v1",
+            target_notional=10000.0,
+            expression_decision={
+                "decision_id": "dec-target-10k-unchanged-20",
+                "policy_kind": "target_position_v1",
+                "instrument_id": "eq:2317",
+                "side": "buy",
+                "units": 25,
+                "reason_code": "long_cash",
+                "target_notional": 10000.0,
+            },
+            pre_trade_sizing={
+                "risk_policy_id": "rp-pool-persona-paper-039ad01f8bcd2b4aa466",
+                "risk_policy_version": "1.0",
+                "policy_kind": "target_position_v1",
+                "dated_price": 221.0,
+                "capital": 100000.0,
+                "target_notional": 10000.0,
+                "existing_underlying_exposure": 6000.0,
+                "permitted_units": 25,
+                "binding_limit": "target_notional",
+                "fee_inclusive_required_cash": 5545.0,
+                "remaining_cash": 90015.0,
+                "after_trade_concentration": 0.09945,
+            },
+        )
+        algo_unchanged.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-target-10k-unchanged-holdings-price-300",
+            side="buy",
+            quantity=25,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_unchanged[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_unchanged[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_unchanged[-1].metadata["fill_quantity"], 13.0)
+        self.assertEqual(algo_unchanged._holding("2317.TW").Quantity, 33.0)
+
+    def test_partial_risk_reducing_exits_succeed_when_existing_exposure_exceeds_tightened_limits(self):
+        # Exact review reproduction: buy 200 shares at 221 (~44,200 TWD, concentration ~0.4423),
+        # tighten approved synthetic policy v1.1 max_single_name_weight=0.25, then close_leg sell 20:
+        # partial reducing exit must succeed and reduce holdings from 200 to 180.
+        events = []
+        algo, pool_rec = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-buy-200-before-tighten",
+            side="buy",
+            quantity=200,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(algo._holding("2317.TW").Quantity, 200.0)
+
+        tightened_cases = (
+            ("single_name", {"version": "1.1", "max_single_name_weight": 0.25}, 180.0, "single_name_limit"),
+            ("gross", {"version": "1.2", "gross_limit": 0.25}, 160.0, "gross_limit"),
+            ("net", {"version": "1.3", "net_limit": 0.25}, 140.0, "net_limit"),
+            ("leverage", {"version": "1.4", "max_leverage": 0.25}, 120.0, "leverage_limit"),
+        )
+        for label, pol_overrides, expected_qty_after, expected_buy_reject_reason in tightened_cases:
+            with self.subTest(limit=label):
+                pool_rec["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(**pol_overrides)
+                # Exposure-increasing buy while over the tightened limit must be rejected (with zero permitted)
+                self._set_2317_signal_context(algo, price=221.0, recheck_sizing_at_submission=False)
+                algo.SubmitTaiwanBrokerOrder(
+                    "2317.TW",
+                    signal_id=f"sig-inc-blocked-{label}",
+                    side="buy",
+                    quantity=10,
+                    quantity_type="SHARES",
+                    action="BUY",
+                )
+                self.assertEqual(events[-1].event_type, "order_rejection")
+                self.assertEqual(events[-1].metadata["reason"], expected_buy_reject_reason)
+
+                # Reversal attempt (selling 350 against <=200 held -> flips sign to <=-150 shares, >0.25 limit)
+                # must NOT be treated as a reducing exit even when |q_after| < |q_before|
+                rev_gate = algo.EvaluateOrderRiskGate(
+                    symbol="2317.TW",
+                    side="sell",
+                    quantity=350,
+                    price=221.0,
+                    instrument_id="eq:2317",
+                    kind="cash_share",
+                )
+                self.assertFalse(rev_gate["accepted"])
+                self.assertEqual(rev_gate["reason"], expected_buy_reject_reason)
+
+                # Partial risk-reducing close_leg sell 20 must succeed and reduce holdings by 20
+                self._set_2317_signal_context(
+                    algo,
+                    price=221.0,
+                    reason_code="close_leg",
+                    expression_decision={
+                        "decision_id": f"dec-partial-close-{label}",
+                        "instrument_id": "eq:2317",
+                        "side": "sell",
+                        "units": 20,
+                        "reason_code": "close_leg",
+                    },
+                )
+                algo.SubmitTaiwanBrokerOrder(
+                    "2317.TW",
+                    signal_id=f"sig-partial-close-20-{label}",
+                    side="sell",
+                    quantity=20,
+                    quantity_type="SHARES",
+                    action="SELL",
+                )
+                self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+                self.assertEqual(events[-1].metadata["fill_quantity"], 20.0)
+                self.assertEqual(algo._holding("2317.TW").Quantity, expected_qty_after)
+                self.assertTrue(algo._last_risk_gate_result.get("risk_reducing_exit_preserved"))
+
+        # Unrelated safety checks (e.g. asset_class_not_allowed) must NEVER be bypassed on a close_leg exit
+        pool_rec["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
+            version="1.5",
+            max_single_name_weight=0.25,
+            allowed_asset_classes=["future"],
+        )
+        self._set_2317_signal_context(
+            algo,
+            price=221.0,
+            reason_code="close_leg",
+            expression_decision={
+                "decision_id": "dec-close-blocked-by-asset-class",
+                "instrument_id": "eq:2317",
+                "side": "sell",
+                "units": 20,
+                "reason_code": "close_leg",
+            },
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-close-blocked-by-asset-class",
+            side="sell",
+            quantity=20,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "asset_class_not_allowed")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 120.0)
+
+    def test_reservation_cleanup_on_all_definitive_rejections_and_reconciliation_for_uncertain_broker_outcomes(self):
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=221.0)
+
+        # 1. Exact review reproduction: reserve_order(signal_id, 10 shares at 221) -> 2213.14925 reserved cash,
+        # then submit same signal with quantity_type="INVALID" -> pre-broker order_rejection must release reservation.
+        res_qtype = algo.reserve_order(
+            "sig-prebroker-bad-qtype",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertAlmostEqual(res_qtype["cash_reserved"], 2213.14925, places=5)
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qtype",
+            side="buy",
+            quantity=10,
+            quantity_type="INVALID",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(events[-1].broker_submission_status, "tw_unsupported_quantity_type")
+        self.assertTrue(events[-1].metadata["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify invalid order input (negative quantity) releases reservation
+        algo.reserve_order(
+            "sig-prebroker-bad-qty",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qty",
+            side="buy",
+            quantity=-5,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(events[-1].broker_submission_status, "tw_invalid_order_input")
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify sell_without_holdings releases reservation
+        algo.reserve_order(
+            "sig-prebroker-no-holdings",
+            symbol="2317.TW",
+            side="sell",
+            quantity=10,
+            price=221.0,
+            is_risk_reducing=True,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-no-holdings",
+            side="sell",
+            quantity=10,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].broker_submission_status, "sell_without_holdings")
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Also verify definitive broker rejection (HTTP 403) releases reservation
+        algo.reserve_order(
+            "sig-broker-definitive-403",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: (_ for _ in ()).throw(RuntimeError("broker HTTP 403: forbidden"))),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-definitive-403",
+                side="buy",
+                quantity=10,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["broker_outcome"], "definitive_rejection")
+        self.assertTrue(events[-1].metadata["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # After pre-broker rejection, a corrected retry of sig-prebroker-bad-qtype can reserve and fill cleanly
+        algo.reserve_order(
+            "sig-prebroker-bad-qtype",
+            symbol="2317.TW",
+            side="buy",
+            quantity=10,
+            price=221.0,
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-prebroker-bad-qtype",
+            side="buy",
+            quantity=10,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 10.0)
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # 2. Uncertain broker outcome (timeout): reservation stays held and duplicate retry is blocked until reconciled
+        algo.reserve_order(
+            "sig-broker-uncertain-timeout",
+            symbol="2317.TW",
+            side="buy",
+            quantity=20,
+            price=221.0,
+        )
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: (_ for _ in ()).throw(TimeoutError("broker HTTP 504 gateway timeout"))),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-timeout",
+                side="buy",
+                quantity=20,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["broker_outcome"], "uncertain")
+        self.assertTrue(events[-1].metadata["reconciliation_required"])
+        self.assertFalse(events[-1].metadata["reservation_released"])
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        # Blind retry while uncertain outcome is pending reconciliation must not call broker again
+        with patch.object(PaperExecutionAlgorithm, "_post_broker_paper_order") as mock_broker:
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-timeout",
+                side="buy",
+                quantity=20,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+            mock_broker.assert_not_called()
+        self.assertEqual(
+            events[-1].broker_submission_status,
+            "uncertain_broker_outcome_pending_reconciliation",
+        )
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        # Reconcile uncertain timeout as rejected -> reservation is released and retry can now succeed
+        rec_rej = algo.reconcile_uncertain_broker_order(
+            "sig-broker-uncertain-timeout",
+            outcome="rejected",
+        )
+        self.assertEqual(rec_rej["status"], "reconciled_rejected")
+        self.assertTrue(rec_rej["reservation_released"])
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-broker-uncertain-timeout",
+            side="buy",
+            quantity=20,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 30.0)
+
+        # 3. Uncertain broker outcome (malformed fill) reconciled as filled -> books fill, releases reservation,
+        # and makes subsequent retry idempotent.
+        algo.reserve_order(
+            "sig-broker-uncertain-fill",
+            symbol="2317.TW",
+            side="buy",
+            quantity=15,
+            price=221.0,
+        )
+        with patch.object(
+            PaperExecutionAlgorithm,
+            "_post_broker_paper_order",
+            staticmethod(lambda url, payload: {"order_id": "ord-unc-15", "fill_price": 0.0, "fill_qty": 15}),
+        ):
+            algo.SubmitTaiwanBrokerOrder(
+                "2317.TW",
+                signal_id="sig-broker-uncertain-fill",
+                side="buy",
+                quantity=15,
+                quantity_type="SHARES",
+                action="BUY",
+            )
+        self.assertEqual(events[-1].broker_submission_status, "tw_invalid_broker_fill")
+        self.assertTrue(events[-1].metadata["reconciliation_required"])
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+
+        rec_fill = algo.reconcile_uncertain_broker_order(
+            "sig-broker-uncertain-fill",
+            outcome="filled",
+            fill_price=221.0,
+            fill_qty=15.0,
+            order_id="ord-unc-15",
+        )
+        self.assertEqual(rec_fill["status"], "filled")
+        self.assertTrue(rec_fill["reconciled"])
+        self.assertEqual(algo.active_order_reservations(), [])
+        self.assertEqual(algo._holding("2317.TW").Quantity, 45.0)
+
+        # Subsequent retry after reconciled fill is idempotently skipped
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-broker-uncertain-fill",
+            side="buy",
+            quantity=15,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertEqual(algo._holding("2317.TW").Quantity, 45.0)
+
+    def test_transport_level_malformed_json_non_object_and_read_failure_preserve_reservation_and_block_retry(self):
+        # Transport-level regression through the real HTTP adapter (_post_broker_paper_order with in_process_broker=False)
+        # and mocked urllib.request.urlopen: malformed JSON, non-object JSON, stream read failures, and missing-order
+        # responses must preserve the reservation as uncertain_broker_outcome and block a second POST on retry.
+        class _FakeResp:
+            def __init__(self, body_bytes=None, read_exc=None):
+                self._body_bytes = body_bytes
+                self._read_exc = read_exc
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                if self._read_exc is not None:
+                    raise self._read_exc
+                return self._body_bytes
+
+        ambiguous_cases = (
+            ("malformed_json", _FakeResp(body_bytes=b"{broken")),
+            ("non_object_list", _FakeResp(body_bytes=b'["not","an","object"]')),
+            ("non_object_scalar", _FakeResp(body_bytes=b"123")),
+            ("read_failure", _FakeResp(read_exc=OSError("socket read interrupted after POST"))),
+            ("missing_order_key", _FakeResp(body_bytes=b'{"status":"accepted_without_order"}')),
+        )
+        for case_name, fake_resp in ambiguous_cases:
+            with self.subTest(case=case_name):
+                events = []
+                algo, _ = self._make_2317_algo(events)
+                algo._in_process_broker = False
+                self._set_2317_signal_context(algo, price=221.0)
+                sig_id = f"sig-http-{case_name}"
+                algo.reserve_order(sig_id, symbol="2317.TW", side="buy", quantity=10, price=221.0)
+                self.assertEqual(len(algo.active_order_reservations()), 1)
+
+                with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+                    algo.SubmitTaiwanBrokerOrder(
+                        "2317.TW",
+                        signal_id=sig_id,
+                        side="buy",
+                        quantity=10,
+                        quantity_type="SHARES",
+                        action="BUY",
+                    )
+                    self.assertEqual(mock_urlopen.call_count, 1)
+                    self.assertEqual(events[-1].event_type, "order_rejection")
+                    self.assertEqual(events[-1].metadata["broker_outcome"], "uncertain")
+                    self.assertFalse(events[-1].metadata["reservation_released"])
+                    self.assertTrue(events[-1].metadata["reconciliation_required"])
+                    self.assertEqual(len(algo._uncertain_broker_submissions), 1)
+                    self.assertEqual(len(algo.active_order_reservations()), 1)
+
+                    # Repeating the same signal must NOT make a second HTTP POST
+                    algo.SubmitTaiwanBrokerOrder(
+                        "2317.TW",
+                        signal_id=sig_id,
+                        side="buy",
+                        quantity=10,
+                        quantity_type="SHARES",
+                        action="BUY",
+                    )
+                    self.assertEqual(mock_urlopen.call_count, 1)
+                    self.assertEqual(
+                        events[-1].broker_submission_status,
+                        "uncertain_broker_outcome_pending_reconciliation",
+                    )
+                    self.assertFalse(events[-1].submitted_to_broker)
+                    self.assertFalse(events[-1].metadata["reservation_released"])
+                    self.assertEqual(len(algo.active_order_reservations()), 1)
+
+    def test_own_reservation_excluded_across_every_submission_resize_recheck_without_context_signal_id(self):
+        # 1. Exact Codex2 review reproduction: own reservation for 451 shares @ 221.0 (99813.031175 cash),
+        # then SubmitTaiwanBrokerOrder at changed price 225.0 with signal_id="self-resize" and NO signal_id
+        # duplicated in _current_signal_metadata. Both the initial and post-resize EvaluateOrderRiskGate calls
+        # must exclude "self-resize", fill 443 shares once, release the reservation, and deduplicate retries.
+        events = []
+        algo, _ = self._make_2317_algo(events)
+        self._set_2317_signal_context(algo, price=225.0)
+        self.assertNotIn("signal_id", algo._current_signal_metadata)
+
+        own_res = algo.reserve_order(
+            "self-resize",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(own_res["reserved"])
+        self.assertAlmostEqual(own_res["cash_reserved"], 99813.031175, places=5)
+        self.assertEqual(len(algo.active_order_reservations()), 1)
+        self.assertEqual(algo.active_order_reservations(exclude_id="self-resize"), [])
+
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-resize",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["original_quantity"], 451.0)
+        self.assertEqual(events[-1].metadata["fill_quantity"], 443.0)
+        self.assertEqual(events[-1].metadata["binding_limit"], "available_cash_after_fees")
+        self.assertEqual(
+            events[-1].metadata["submission_sizing_evidence"]["permitted_units"],
+            443,
+        )
+        self.assertEqual(
+            events[-1].metadata["submission_sizing_evidence"]["binding_limit"],
+            "available_cash_after_fees",
+        )
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 443.0)
+        self.assertEqual(algo.active_order_reservations(), [])
+
+        # Retry deduplication for both reserve_order and SubmitTaiwanBrokerOrder on "self-resize"
+        retry_res = algo.reserve_order(
+            "self-resize",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(retry_res["duplicate_retry"])
+        self.assertFalse(retry_res["reserved"])
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-resize",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[-1].event_type, "paper_order_simulated")
+        self.assertEqual(events[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertFalse(events[-1].submitted_to_broker)
+        self.assertEqual(algo.performance_ledger()["fill_count"], 1)
+        self.assertEqual(algo._holding("2317.TW").Quantity, 443.0)
+
+        # 2. Own reservation + changed policy at submission (tightened to v1.1 max_single_name_weight=0.25 -> 113 shares)
+        # with distinct reservation_id and signal_id, without signal_id or reservation_id in _current_signal_metadata.
+        events_pol = []
+        algo_pol, pool_pol = self._make_2317_algo(events_pol)
+        own_pol_res = algo_pol.reserve_order(
+            "res-self-policy",
+            signal_id="sig-self-policy",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertTrue(own_pol_res["reserved"])
+        self.assertAlmostEqual(own_pol_res["cash_reserved"], 99813.031175, places=5)
+        pool_pol["metadata"]["risk_policy"] = self._observed_historical_inline_v1_policy_dict(
+            version="1.1",
+            max_single_name_weight=0.25,
+        )
+        self._set_2317_signal_context(algo_pol, price=221.0)
+        self.assertNotIn("signal_id", algo_pol._current_signal_metadata)
+        algo_pol.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-self-policy",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_pol[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_pol[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_pol[-1].metadata["fill_quantity"], 113.0)
+        self.assertEqual(events_pol[-1].metadata["binding_limit"], "max_single_name_weight")
+        self.assertEqual(algo_pol.active_order_reservations(), [])
+        # Retrying under either reservation_id or signal_id is deduplicated
+        self.assertTrue(
+            algo_pol.reserve_order(
+                "res-self-policy",
+                symbol="2317.TW",
+                side="buy",
+                quantity=451,
+                price=221.0,
+            )["duplicate_retry"]
+        )
+        algo_pol.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="res-self-policy",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_pol[-1].broker_submission_status, "duplicate_signal_retry")
+        self.assertEqual(algo_pol.performance_ledger()["fill_count"], 1)
+
+        # 3. Own reservation + independent competing reservation + changed price (225.0) without signal_id in context:
+        # own reservation (99813.031175) is excluded in both risk gate calls while the competing 2330 reservation
+        # (40 shares @ 1000 = 40057.0 cash) is retained across both rechecks and stays active after fill.
+        events_both = []
+        algo_both, _ = self._make_2317_algo(events_both)
+        comp_res = algo_both.reserve_order(
+            "competing-2330",
+            symbol="2330.TW",
+            side="buy",
+            quantity=40,
+            price=1000.0,
+        )
+        self_res = algo_both.reserve_order(
+            "self-with-competing",
+            symbol="2317.TW",
+            side="buy",
+            quantity=451,
+            price=221.0,
+        )
+        self.assertAlmostEqual(comp_res["cash_reserved"], 40057.0, places=5)
+        self.assertAlmostEqual(self_res["cash_reserved"], 99813.031175, places=5)
+        self.assertEqual(len(algo_both.active_order_reservations()), 2)
+
+        self._set_2317_signal_context(algo_both, price=225.0)
+        self.assertNotIn("signal_id", algo_both._current_signal_metadata)
+        algo_both.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="self-with-competing",
+            side="buy",
+            quantity=451,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events_both[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events_both[-1].metadata["resized_at_submission"])
+        self.assertEqual(events_both[-1].metadata["fill_quantity"], 266.0)
+        self.assertEqual(events_both[-1].metadata["binding_limit"], "competing_reservation")
+        self.assertEqual(
+            events_both[-1].metadata["submission_sizing_evidence"]["reservations_applied"],
+            1,
+        )
+        remaining_res = algo_both.active_order_reservations()
+        self.assertEqual(len(remaining_res), 1)
+        self.assertEqual(remaining_res[0]["reservation_id"], "competing-2330")
+        self.assertAlmostEqual(remaining_res[0]["cash_reserved"], 40057.0, places=5)
+
+    def test_blueprint_limits_enforced_on_real_hosted_shaped_data_and_reduce_only(self) -> None:
+        """RISK-POLICY-BLUEPRINT-LIMITS-ENFORCED-20261124: hosted-shaped regression for sector, turnover, liquidity & reduce-only."""
+        from services.execution.lean_runtime.instrument_candidates import clear_market_fact_cache
+
+        clear_market_fact_cache()
+        tmp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_dir.cleanup)
+        root = Path(tmp_dir.name)
+
+        # Write real hosted-shaped tw_industry_classification and 20-day tw_price_daily bars
+        ind_dir = root / "normalized" / "tw_industry_classification" / "date=2026-11-24"
+        ind_dir.mkdir(parents=True)
+        with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+            for sym, code_int, code_raw in (("2330", 24, "24"), ("2303", 24, "24"), ("2317", 25, "25")):
+                handle.write(
+                    json.dumps(
+                        {
+                            "source_id": "tw_official_industry_classification",
+                            "symbol": sym,
+                            "metadata": {
+                                "normalized_row": {
+                                    "symbol": sym,
+                                    "industry_code": code_int,
+                                    "industry_code_raw": code_raw,
+                                    "market": "TWSE",
+                                }
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+        price_dir = root / "normalized" / "tw_price_daily" / "date=2026-11-24"
+        price_dir.mkdir(parents=True)
+        with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+            for day_idx in range(1, 21):
+                d_str = f"2026-11-{day_idx:02d}"
+                for sym, vol in (("2330", 1_000.0), ("2303", 50_000.0), ("2317", 10_000.0)):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_price_daily",
+                                "symbol": sym,
+                                "event_time": f"{d_str}T06:00:00Z",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": sym,
+                                        "trade_date": d_str,
+                                        "close": 200.0,
+                                        "volume": vol,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+
+        pool_id = "pool-persona-paper-06d4775a9b6a8f63b311"
+        blueprint_policy = {
+            "risk_policy_id": "rp-blueprint-explicit-v2",
+            "version": "2.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "allowed_asset_classes": ["equity", "future"],
+            "gross_limit": 1.6,
+            "net_limit": 1.0,
+            "max_leverage": 1.6,
+            "max_single_name_weight": 0.20,
+            "min_cash_reserve_pct": 0.10,
+            "max_sector_exposure": {"24": 0.25, "25": 0.25},
+            "turnover_limit": 0.45,
+            "liquidity_constraints": {
+                "min_avg_daily_volume": 500.0,
+                "max_order_pct_adv": 0.05,
+            },
+            "metadata": {"tenant_id": "tenant-dev", "explicit_policy": True},
+        }
+        pool_record = {
+            "pool_id": pool_id,
+            "tenant_id": "tenant-dev",
+            "status": "active",
+            "currency": "TWD",
+            "budget": 100_000.0,
+            "single_runtime_enforced": True,
+            "metadata": {"tenant_id": "tenant-dev", "risk_policy": blueprint_policy, "risk_policy_explicit": True},
+        }
+        events: list[Any] = []
+        algo = PaperExecutionAlgorithm(
+            initial_cash=100_000.0,
+            event_sink=events.append,
+            persona_binding_id="pcb-blueprint-1",
+            capital_pool_id=pool_id,
+            capital_pool_reader=lambda _pid: pool_record,
+            risk_policy=blueprint_policy,
+            in_process_broker=True,
+        )
+
+        # 1. Buy 95 shares of 2303.TW @ 200 TWD = 19,000 TWD (sector "24" exposure = 19%, turnover = 19%, order_pct_adv = 95/50000 = 0.19%).
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:30:00Z",
+                "market_price_source": "source-ingest://snapshots/2303",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2303.TW",
+            signal_id="sig-2303-open",
+            side="buy",
+            quantity=95.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 95.0)
+        # Verify the Capital evaluator recorded passed checks for sector_exposure, turnover, and liquidity
+        last_checks = {c["check_name"]: c["status"] for c in algo._last_risk_gate_result["evaluation"]["checks"]}
+        self.assertEqual(last_checks.get("sector_exposure"), "passed")
+        self.assertEqual(last_checks.get("turnover"), "passed")
+        self.assertEqual(last_checks.get("liquidity"), "passed")
+
+        # 2. Sector over the cap is reduced with max_sector_exposure named:
+        # Sector "24" has 19,000 TWD used against 25% cap (~24,993 TWD). Requesting 45 shares of 2330.TW @ 200 TWD (9,000 TWD, <= 5% of 1,000 ADV = 50 shares)
+        # is reduced to 29 shares (5,800 TWD) so sector "24" stays within 25% post-fee equity, naming binding_limit="max_sector_exposure".
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:31:00Z",
+                "market_price_source": "source-ingest://snapshots/2330",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-sector-reduced",
+            side="buy",
+            quantity=45.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertTrue(events[-1].metadata["resized_at_submission"])
+        self.assertEqual(events[-1].metadata["fill_quantity"], 29.0)
+        self.assertEqual(events[-1].metadata["resize_reason"], "max_sector_exposure")
+        self.assertEqual(events[-1].metadata["binding_limit"], "max_sector_exposure")
+
+        # 3. Sector over the cap with 0 room remaining is refused with max_sector_exposure named:
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-sector-refused",
+            side="buy",
+            quantity=10.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "max_sector_exposure")
+        self.assertEqual(events[-1].metadata["binding_limit"], "max_sector_exposure")
+
+        # 4. Illiquid order (> configured 5% share of ADV: 600 shares of 2317.TW vs 10,000 ADV = 6% > 5%, priced at 30 TWD so notional 18,000 <= 20% single-name)
+        # is refused with liquidity_order_pct_adv_breach.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 30.0,
+                "market_price_as_of": "2026-11-24T01:32:00Z",
+                "market_price_source": "source-ingest://snapshots/2317",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-illiquid",
+            side="buy",
+            quantity=600.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "liquidity_order_pct_adv_breach")
+
+        # 5. Turnover breach (24,800 TWD already traded in window; buying 105 shares of 2317.TW @ 200 TWD = 21,000 TWD -> 45,800 / ~100,000 > 0.45 turnover_limit,
+        # even when single-name cap is 0.25) is refused with turnover_limit.
+        algo.SetRiskPolicy({**blueprint_policy, "max_single_name_weight": 0.25})
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:33:00Z",
+                "market_price_source": "source-ingest://snapshots/2317",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2317.TW",
+            signal_id="sig-2317-turnover-breach",
+            side="buy",
+            quantity=105.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "turnover_limit")
+
+        # 6. Missing fact on order increase fails closed naming the missing fact with Capital evaluator message.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:34:00Z",
+                "market_price_source": "source-ingest://snapshots/9999",
+                "as_of_trading_day": "2026-11-24",
+                "normalized_root": str(root),
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "9999.TW",
+            signal_id="sig-9999-missing-facts",
+            side="buy",
+            quantity=10.0,
+            quantity_type="SHARES",
+            action="BUY",
+        )
+        self.assertEqual(events[-1].event_type, "order_rejection")
+        self.assertEqual(events[-1].metadata["reason"], "sector_exposures_unavailable")
+        self.assertEqual(
+            events[-1].metadata["diagnostic"],
+            "Risk policy limit max_sector_exposure cannot be evaluated: sector_exposures unavailable",
+        )
+
+        # 7. Reduce-only order (selling 29 held shares of 2330.TW) passes even when sector is at cap, turnover is high, and facts are marked unavailable.
+        algo.SetCurrentSignalContext(
+            {
+                "market_price": 200.0,
+                "market_price_as_of": "2026-11-24T01:35:00Z",
+                "market_price_source": "source-ingest://snapshots/2330",
+                "as_of_trading_day": "2026-11-24",
+                "close_leg": True,
+                "reason_code": "close_leg",
+                "sector_exposures_unavailable": True,
+                "turnover_unavailable": True,
+                "liquidity_unavailable": True,
+            }
+        )
+        algo.SubmitTaiwanBrokerOrder(
+            "2330.TW",
+            signal_id="sig-2330-reduce-only",
+            side="sell",
+            quantity=29.0,
+            quantity_type="SHARES",
+            action="SELL",
+        )
+        self.assertEqual(events[-1].event_type, "paper_fill_simulated")
+        self.assertEqual(events[-1].metadata["fill_quantity"], 29.0)
+
+
+
+
+

@@ -23,6 +23,20 @@ from unittest import mock
 
 import pytest
 
+
+def test_quarter_snapshot_identity_binds_window_and_coverage_diagnostics():
+    from services.rankings.snapshots import snapshot_record
+    item = {"persona_id": "quarter-owner", "formula_version": "pm12-return-on-capital-v2",
+            "quarter": "2026-Q4", "quarter_window": {"start_at": "2026-10-01T00:00:00Z", "timezone": "UTC"},
+            "metrics": {"drawdown": 0.2, "drawdown_basis": "quarter_maximum_equity_drawdown",
+                        "runtime_coverage": {"ratio": 1.0},
+                        "temporal_observation_coverage": {"observed_utc_days": 3}}}
+    first = snapshot_record([item], surface="quarterly", period="2026-Q4")
+    changed_window = {**item, "quarter_window": {**item["quarter_window"], "timezone": "Asia/Taipei"}}
+    changed_coverage = {**item, "metrics": {**item["metrics"], "temporal_observation_coverage": {"observed_utc_days": 4}}}
+    for changed in (changed_window, changed_coverage):
+        assert snapshot_record([changed], surface="quarterly", period="2026-Q4").content_digest != first.content_digest
+
 from services.rankings.store import (
     AllocationEvaluationRecord,
     RankingConflictError,

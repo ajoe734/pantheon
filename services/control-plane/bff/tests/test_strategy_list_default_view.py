@@ -422,7 +422,7 @@ def test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_
     default_body = resp_default.json()
     assert len(owner_http_calls) == 1
     assert owner_http_calls[0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=20&hide_stubs=true",
         20,
     )
     assert default_body["page_info"]["total"] == 4852
@@ -458,7 +458,7 @@ def test_strategy_list_5000_rows_default_exclude_draft_state_counts_retired_and_
     p1_body = resp_no_draft_p1.json()
     assert len(owner_http_calls) == 1
     assert owner_http_calls[0] == (
-        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=100&exclude_state=draft",
+        "/api/registry/strategy-specs?view=strategy_summary_page&page_size=100&exclude_state=draft&hide_stubs=true",
         100,
     )
     assert p1_body["page_info"]["total"] == 217
@@ -765,3 +765,231 @@ def test_postgres_summary_projection_carries_risk_to_bff_list(monkeypatch: pytes
     rows = {r["id"]: r for r in listing.json()["items"]}
     assert rows[RISK_TRUTH_SID]["risk"] == "low"
     assert rows["strategy-persona-nolevel"]["risk"] == "medium"
+
+
+# --- BFF-STRATEGY-DEFAULT-VIEW-COUNTS-20261125 -------------------------------
+#
+# Hosted read-only 2026-11-25 18:45Z (BFF b3f93d448): the default view
+# (exclude_state=draft&hide_retired_personas=true) returned total 3 with
+# meta.visible_state_counts null, while state=approved returned total 14 and
+# visible {draft 4305, review 0, approved 14, retired 2}; state=draft total
+# 4305; no filter total 4319. The owner walk of collection.py did not send the
+# owner hide input. The worlds below reproduce that shape with the provisioning
+# coordinator's StrategySpec rows and the real Registry summary page.
+
+_DV_DEFAULT = "exclude_state=draft&hide_retired_personas=true&page_size=20"
+_DV_HOSTED_VISIBLE_DRAFTS = 4305
+_DV_HOSTED_APPROVED = 14
+_DV_HOSTED_VISIBLE_APPROVED_ROWS = 3
+_DV_HOSTED_RETIRED_PERSONA_ROWS = 11
+_DV_HOSTED_RETIRED = 2
+_DV_RAW_SEED_DRAFTS = 300
+_DV_TEST_PERSONA_DRAFTS = 120
+
+
+def _dv_world(
+    *,
+    approved_running: int = _DV_HOSTED_VISIBLE_APPROVED_ROWS,
+    approved_retired_persona: int = _DV_HOSTED_RETIRED_PERSONA_ROWS,
+    visible_drafts: int = _DV_HOSTED_VISIBLE_DRAFTS,
+    retired: int = _DV_HOSTED_RETIRED,
+    non_draft_test_persona: int = 0,
+    non_draft_raw_seed: int = 0,
+):
+    import dataclasses
+
+    from services.control_plane.bff.tests.test_strategy_operational_status import (
+        _World,
+        _persona_record,
+        _spec_entry,
+    )
+
+    world = _World()
+    world.entries.clear()
+    world.persona_records.clear()
+    world.running_strategy_ids.clear()
+    world.unbound_strategy_ids.clear()
+    world.retired_strategy_ids.clear()
+    world.persona_records["persona-dv-real"] = _persona_record(
+        "persona-dv-real", lifecycle_state="paper_running"
+    )
+    world.persona_records["persona-dv-test"] = {
+        **_persona_record("persona-dv-test", lifecycle_state="paper_running"),
+        "metadata": {"data_scope": "test"},
+    }
+    n = 0
+
+    def _ts() -> str:
+        return f"2026-11-{1 + (n % 24):02d}T{(n // 24) % 24:02d}:{n % 60:02d}:00Z"
+
+    def _add(sid: str, title: str, persona_ids: list, lifecycle: str) -> None:
+        nonlocal n
+        entry = _spec_entry(strategy_id=sid, title=title, persona_ids=persona_ids, updated_at=_ts())
+        entry.metadata["strategy_spec"]["lifecycle_state"] = lifecycle
+        state = {
+            "draft": ArtifactState.DRAFT,
+            "retired": ArtifactState.RETIRED,
+        }.get(lifecycle, ArtifactState.APPROVED)
+        world.entries.append(dataclasses.replace(entry, artifact_state=state))
+        n += 1
+
+    for i in range(approved_running):
+        pid = f"persona-dv-run-{i:05d}"
+        world.persona_records[pid] = _persona_record(pid, lifecycle_state="paper_running")
+        sid = f"strategy-dv-run-{i:05d}"
+        world.running_strategy_ids.append(sid)
+        _add(sid, f"Pantheon Dev Paper Release {i}", [pid], "approved")
+    for i in range(approved_retired_persona):
+        pid = f"persona-dv-ret-{i:05d}"
+        world.persona_records[pid] = _persona_record(pid, lifecycle_state="retired")
+        sid = f"strategy-dv-ret-{i:05d}"
+        world.retired_strategy_ids.append(sid)
+        _add(sid, f"Retired persona release {i}", [pid], "approved")
+    for i in range(non_draft_test_persona):
+        _add(f"strategy-dv-probe-{i:05d}", f"Probe {i}", ["persona-dv-test"], "approved")
+    for i in range(non_draft_raw_seed):
+        _add(f"strat-tw-official:{i:05d}", f"TW official seed {i}", [], "approved")
+    for i in range(retired):
+        _add(f"strategy-dv-retired-{i:05d}", f"Retired {i}", ["persona-dv-real"], "retired")
+    for i in range(visible_drafts):
+        _add(f"strategy-dv-draft-{i:05d}", f"Real draft {i}", ["persona-dv-real"], "draft")
+    for i in range(_DV_RAW_SEED_DRAFTS):
+        _add(f"strat-tw-official:d{i:05d}", f"TW official seed draft {i}", [], "draft")
+    for i in range(_DV_TEST_PERSONA_DRAFTS):
+        _add(f"strategy-dv-testdraft-{i:05d}", f"Probe draft {i}", ["persona-dv-test"], "draft")
+    return world
+
+
+def _dv_get(monkeypatch: pytest.MonkeyPatch, world: Any, query: str, *, legacy_owner: bool = False):
+    """One cold app per read so the owner call count is not absorbed by a memo."""
+    from services.control_plane.bff.tests.test_strategy_operational_status import (
+        HEADERS,
+        _build_app,
+    )
+
+    app, _ = _build_app(monkeypatch, world)
+    if legacy_owner:
+        owner_http = adapter_base.http_request_json
+
+        def _legacy_owner(url: str, **kwargs: Any) -> Any:
+            # An older Registry ignores the hide query parameters: it neither
+            # filters nor answers them.
+            parsed = urllib.parse.urlparse(url)
+            kept = [
+                (k, v)
+                for k, v in urllib.parse.parse_qsl(parsed.query)
+                if k not in ("hide_stubs", "hide_persona_ids")
+            ]
+            out = owner_http(
+                parsed._replace(query=urllib.parse.urlencode(kept)).geturl(), **kwargs
+            )
+            if isinstance(out, dict):
+                out = {k: v for k, v in out.items() if k not in ("visible_state_counts", "hidden")}
+            return out
+
+        monkeypatch.setattr(adapter_base, "http_request_json", _legacy_owner)
+    world.owner_summary_calls.clear()
+    resp = TestClient(app).get(f"/bff/strategies?{query}", headers=HEADERS)
+    assert resp.status_code == 200, (query, resp.text)
+    return resp.json(), list(world.owner_summary_calls)
+
+
+def test_default_view_returns_visible_state_counts_equal_to_state_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _dv_world()
+    body, calls = _dv_get(monkeypatch, world, _DV_DEFAULT)
+    vsc = body["meta"]["visible_state_counts"]
+    assert vsc is not None
+    assert vsc["draft"] == _DV_HOSTED_VISIBLE_DRAFTS
+    assert vsc["review"] == 0
+    assert vsc["approved"] == _DV_HOSTED_APPROVED
+    assert vsc["retired"] == _DV_HOSTED_RETIRED
+    # the counts the state= filters return
+    for query in ("state=approved&page_size=20", "state=draft&page_size=20", "page_size=20"):
+        other, _ = _dv_get(monkeypatch, world, query)
+        assert other["meta"]["visible_state_counts"] == vsc, query
+    approved, _ = _dv_get(monkeypatch, world, "state=approved&page_size=20")
+    assert approved["page_info"]["total"] == _DV_HOSTED_APPROVED
+    drafts, _ = _dv_get(monkeypatch, world, "state=draft&page_size=20")
+    assert drafts["page_info"]["total"] == _DV_HOSTED_VISIBLE_DRAFTS
+    unfiltered, _ = _dv_get(monkeypatch, world, "page_size=20")
+    assert unfiltered["page_info"]["total"] == _DV_HOSTED_VISIBLE_DRAFTS + _DV_HOSTED_APPROVED
+    # one owner call: the walk of the 14 non-draft rows, with the hide input
+    assert calls == [
+        (
+            "/api/registry/strategy-specs?view=strategy_summary_page&page_size=200"
+            "&exclude_state=draft&hide_stubs=true&hide_persona_ids=persona-dv-test",
+            _DV_HOSTED_APPROVED,
+        )
+    ]
+
+
+def test_default_view_rows_totals_and_hidden_counts_unchanged_and_legacy_owner_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    world = _dv_world()
+    body, calls = _dv_get(monkeypatch, world, _DV_DEFAULT)
+    # The pre-change answer: an owner without the hide answer, classified by the BFF.
+    legacy, legacy_calls = _dv_get(monkeypatch, world, _DV_DEFAULT, legacy_owner=True)
+    assert [r["id"] for r in body["items"]] == [r["id"] for r in legacy["items"]]
+    assert sorted(r["id"] for r in body["items"]) == sorted(world.running_strategy_ids)
+    assert body["page_info"] == legacy["page_info"] == {"next_page_token": None, "total": 3}
+    assert body["meta"]["total"] == legacy["meta"]["total"] == 3
+    for key in (
+        "hidden_test_persona_strategy_count",
+        "hidden_unbound_stub_strategy_count",
+        "hidden_retired_persona_count",
+        "operational_counts",
+        "state_counts",
+    ):
+        assert body["meta"][key] == legacy["meta"][key], key
+    assert body["meta"]["hidden_retired_persona_count"] == _DV_HOSTED_RETIRED_PERSONA_ROWS
+    assert body["meta"]["hidden_test_persona_strategy_count"] == 0
+    assert body["meta"]["hidden_unbound_stub_strategy_count"] == 0
+    # The older owner keeps null counts (never zeros) and no extra owner call.
+    assert legacy["meta"]["visible_state_counts"] is None
+    assert len(calls) == len(legacy_calls) == 1
+
+
+def test_default_view_walks_many_owner_pages_with_hide_input_and_first_page_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1728 non-draft rows (9 owner pages of 200) including test-persona probes
+    and raw seeds that the owner hides; the walk makes the same number of owner
+    calls as before and every page carries the hide input."""
+    probes, seeds = 40, 25
+    running, retired_persona = 63, 1600  # 63 + 1600 + 40 + 25 = 1728
+    world = _dv_world(
+        approved_running=running,
+        approved_retired_persona=retired_persona,
+        visible_drafts=50,
+        non_draft_test_persona=probes,
+        non_draft_raw_seed=seeds,
+    )
+    body, calls = _dv_get(monkeypatch, world, _DV_DEFAULT)
+    legacy, legacy_calls = _dv_get(monkeypatch, world, _DV_DEFAULT, legacy_owner=True)
+    visible_non_draft = running + retired_persona  # 1663 after the owner hides probes and seeds
+    assert len(calls) == -(-visible_non_draft // 200) == 9
+    # before: the walk without the hide input over all 1728 rows (9 pages too)
+    assert len(legacy_calls) == -(-1728 // 200) == 9
+    assert len(calls) <= len(legacy_calls)
+    assert all("hide_stubs=true" in c[0] and "page_size=200" in c[0] for c in calls)
+    meta = body["meta"]
+    assert body["page_info"]["total"] == legacy["page_info"]["total"] == running
+    assert [r["id"] for r in body["items"]] == [r["id"] for r in legacy["items"]]
+    assert meta["hidden_retired_persona_count"] == retired_persona
+    assert meta["hidden_test_persona_strategy_count"] == probes
+    assert meta["hidden_unbound_stub_strategy_count"] == seeds
+    for key in (
+        "hidden_test_persona_strategy_count",
+        "hidden_unbound_stub_strategy_count",
+        "hidden_retired_persona_count",
+        "operational_counts",
+        "state_counts",
+    ):
+        assert meta[key] == legacy["meta"][key], key
+    approved, _ = _dv_get(monkeypatch, world, "state=approved&page_size=20")
+    assert meta["visible_state_counts"] == approved["meta"]["visible_state_counts"]
+    assert meta["visible_state_counts"]["approved"] == visible_non_draft
+    assert legacy["meta"]["visible_state_counts"] is None

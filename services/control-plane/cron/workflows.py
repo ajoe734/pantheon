@@ -4,6 +4,24 @@ from .models import WorkflowDefinition
 
 
 PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
+PERSONA_DAILY_CYCLE_WORKFLOW_ID = "pantheon.persona.daily-cycle"
+
+PERSONA_DAILY_CYCLE_WORKFLOW = WorkflowDefinition(
+    workflow_id=PERSONA_DAILY_CYCLE_WORKFLOW_ID,
+    schedule="0 10 * * 1-5",
+    description="One persona-owned, proposal-only OODA turn after the Taiwan refresh.",
+    upstream_entrypoint="persona.daily-cycle",
+    handoff_type=None,
+    from_stage="persona_observe",
+    to_stage="persona_learn",
+    execution_context="paper",
+    policy_id="oc002.cron.persona-daily-cycle",
+    allowed_tool_classes=("monitoring", "status"),
+    artifact_type="ooda_packet",
+    initial_lifecycle_state="observing",
+    approval_required=False,
+    required_payload_keys=("persona_id",),
+)
 
 
 INGEST_WORKFLOW = WorkflowDefinition(
@@ -118,6 +136,7 @@ WORKFLOW_CATALOG = {
         RETRAIN_WORKFLOW,
         DEPLOY_WORKFLOW,
         PERSONA_FIRST_EVALUATION_WORKFLOW,
+        PERSONA_DAILY_CYCLE_WORKFLOW,
     )
 }
 

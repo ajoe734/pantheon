@@ -50,7 +50,10 @@ class TargetType(str, Enum):
     CAPITAL_BINDING_ACTIVATION = "capital_binding_activation"
     CAPITAL_POOL_ACTIVATION = "capital_pool_activation"
     PERSONA_LIFECYCLE_TRANSITION = "persona_lifecycle_transition"
+    PAPER_CANARY_CANDIDACY = "paper_canary_candidacy"
     EVOLUTION_EXECUTE = "evolution_execute"
+    LESSON_GATE_CHECK_PROPOSAL = "lesson_gate_check_proposal"
+    POOL_POLICY_PARAMETER_PROPOSAL = "pool_policy_parameter_proposal"
 
 
 class RiskLevel(str, Enum):
@@ -97,7 +100,7 @@ class ProposeApprovalRequest(ApprovalCommand):
     candidate_digest: Optional[str] = None
     proof_digest: Optional[str] = None
     expires_at: Optional[str] = None
-    subject: Optional[Dict[str, str]] = None  # binds one exact action for action-bound target types
+    subject: Optional[Dict[str, Any]] = None  # binds one exact action; risk-policy proposals also carry nested risk_comparison / risk_officer_draft objects
 
 
 class AcceptReviewRequest(ApprovalCommand):

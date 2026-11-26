@@ -1,0 +1,18 @@
+{
+  "task_id": "BFF-DECISION-CASE-FILE-VIEWS-20261113",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "owned_layer": "BFF read projection of owner-persisted decision case files",
+  "not_changed": ["case-file composition", "OODA packet store", "Consultation owner", "routes and OpenAPI paths"],
+  "new_routes": 0,
+  "changes": [
+    "bff/agora/committee/owner.py: pure projection (items, citations, rejections, private-memory filter)",
+    "GET /bff/ooda/packets/{id}: data.case_file_view; raw persona_cycle.case_files no longer returned",
+    "GET /bff/agora/committee/sessions/{id} and .../memos: case_file_view from the Consultation transcript"
+  ],
+  "verification": {
+    "tests/test_case_file_views.py": "7 passed (real memory service over HTTP transport, real Consultation store/API)",
+    "regression": "test_control_loops_router, evidence_redaction_sweep, agora_committee_memory_owners, persona_cycle_views: 110 passed, 1 failed",
+    "preexisting_failure": "test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay fails identically without this change"
+  }
+}

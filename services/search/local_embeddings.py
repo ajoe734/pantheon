@@ -12,12 +12,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import sys
+import threading
+import urllib.request
 from pathlib import Path
 from typing import Any, Sequence
 
 from services.search.filters import SearchCapabilityUnavailableError
 
 MANIFEST_PATH = Path(__file__).parent / "model-manifest.json"
+EMBEDDING_THREADS = 2
 
 
 class LocalEmbeddingEngine:
@@ -29,16 +34,20 @@ class LocalEmbeddingEngine:
         cache_dir: Path | str | None = None,
         local_files_only: bool = True,
     ) -> None:
+        self._load_lock = threading.Lock()
         self.manifest_path = Path(manifest_path or MANIFEST_PATH)
         self.manifest = self._load_manifest()
         self.model_name = str(self.manifest.get("model_name", "intfloat/multilingual-e5-large"))
         self.dimension = int(self.manifest.get("dimension", 1024))
         self.query_prefix = str(self.manifest.get("preprocessing", {}).get("query_prefix", "query: "))
         self.passage_prefix = str(self.manifest.get("preprocessing", {}).get("passage_prefix", "passage: "))
+        self.threads = EMBEDDING_THREADS
 
         explicit_cache = cache_dir or os.getenv("SEARCH_EMBEDDING_CACHE_DIR", "/tmp/fastembed_cache")
         self.cache_dir = Path(explicit_cache)
-        self.local_files_only = local_files_only
+        if not local_files_only:
+            raise SearchCapabilityUnavailableError("Online embedding model loading is forbidden")
+        self.local_files_only = True
         self._embedder: Any = None
         self._query_cache: dict[str, list[float]] = {}
         self._verified: bool | None = None
@@ -56,6 +65,10 @@ class LocalEmbeddingEngine:
             ) from exc
 
     def _find_snapshot_dir(self) -> Path | None:
+        # Offline image packaging uses a flat directory. FastEmbed must load
+        # this exact verified path rather than selecting a different HF cache.
+        if (self.cache_dir / "model.onnx").is_file():
+            return self.cache_dir
         if not self.cache_dir.exists():
             return None
         candidate_prefixes = [
@@ -69,18 +82,6 @@ class LocalEmbeddingEngine:
             if target.exists():
                 if expected_rev and (target / expected_rev).is_dir():
                     return target / expected_rev
-                snapshots = [s for s in target.iterdir() if s.is_dir()]
-                if snapshots:
-                    return sorted(snapshots)[-1]
-        for child in self.cache_dir.iterdir():
-            if child.is_dir() and "multilingual-e5-large" in child.name:
-                snap_dir = child / "snapshots"
-                if snap_dir.exists():
-                    if expected_rev and (snap_dir / expected_rev).is_dir():
-                        return snap_dir / expected_rev
-                    snaps = [s for s in snap_dir.iterdir() if s.is_dir()]
-                    if snaps:
-                        return sorted(snaps)[-1]
         return None
 
     def verify_integrity(self) -> bool:
@@ -89,12 +90,15 @@ class LocalEmbeddingEngine:
             return self._verified
 
         expected_rev = self.manifest.get("revision")
+        if self.manifest.get("validation_status") != "accepted" or not re.fullmatch(r"[0-9a-f]{40}", str(expected_rev)):
+            self._verified = False
+            return False
         target_dir = self._find_snapshot_dir()
         if target_dir is None:
             self._verified = False
             return False
 
-        if expected_rev and target_dir.name != expected_rev:
+        if target_dir != self.cache_dir and target_dir.name != expected_rev:
             self._verified = False
             return False
 
@@ -104,7 +108,7 @@ class LocalEmbeddingEngine:
             try:
                 cfg = json.loads(config_file.read_text(encoding="utf-8"))
                 hidden_size = cfg.get("hidden_size")
-                if hidden_size is not None and int(hidden_size) != self.dimension:
+                if hidden_size is None or int(hidden_size) != self.dimension:
                     self._verified = False
                     return False
             except Exception:
@@ -112,19 +116,23 @@ class LocalEmbeddingEngine:
                 return False
 
         files_spec = self.manifest.get("files", {})
-        if not files_spec:
-            self._verified = True
-            return True
+        if not {"model.onnx", "config.json", "tokenizer.json"}.issubset(files_spec):
+            self._verified = False
+            return False
 
         for filename, spec in files_spec.items():
             expected_sha = spec.get("sha256")
             fpath = target_dir / filename
+            if not re.fullmatch(r"[0-9a-f]{64}", str(expected_sha)) or not fpath.resolve().is_relative_to(target_dir.resolve()):
+                self._verified = False
+                return False
             if not fpath.exists():
                 self._verified = False
                 return False
             if expected_sha:
                 real_file = fpath.resolve()
-                computed = hashlib.sha256(real_file.read_bytes()).hexdigest()
+                with real_file.open("rb") as handle:
+                    computed = hashlib.file_digest(handle, "sha256").hexdigest()
                 if computed.lower() != expected_sha.lower():
                     self._verified = False
                     return False
@@ -134,7 +142,12 @@ class LocalEmbeddingEngine:
     def _ensure_loaded(self) -> Any:
         if self._embedder is not None:
             return self._embedder
+        with self._load_lock:
+            if self._embedder is not None:
+                return self._embedder
+            return self._load_embedder()
 
+    def _load_embedder(self) -> Any:
         if not self.verify_integrity():
             raise SearchCapabilityUnavailableError(
                 f"Embedding model integrity check failed for '{self.model_name}' at {self.cache_dir}"
@@ -152,6 +165,8 @@ class LocalEmbeddingEngine:
                 model_name=self.model_name,
                 cache_dir=str(self.cache_dir),
                 local_files_only=self.local_files_only,
+                specific_model_path=str(self._find_snapshot_dir()),
+                threads=self.threads,
             )
             return self._embedder
         except Exception as exc:
@@ -223,3 +238,27 @@ class LocalEmbeddingEngine:
     def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
         """VectorEmbeddingBackend interface compatibility."""
         return self.embed_documents(texts)
+
+
+def package_model(dest: Path) -> None:
+    """Build-time only: fetch manifest-pinned files into a flat dir and verify sha256.
+
+    python -m services.search.local_embeddings package /opt/search/models
+    """
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    dest.mkdir(parents=True, exist_ok=True)
+    for name, spec in manifest["files"].items():
+        url = manifest["source_url_template"].format(revision=manifest["revision"], source_path=spec["source_path"])
+        digest = hashlib.sha256()
+        target = dest / name
+        with urllib.request.urlopen(url, timeout=600) as resp, target.open("wb") as out:
+            while chunk := resp.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest() != spec["sha256"]:
+            target.unlink()
+            raise SystemExit(f"checksum mismatch for {name}")
+
+
+if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "package":
+    package_model(Path(sys.argv[2]))

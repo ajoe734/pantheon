@@ -1,0 +1,89 @@
+{
+  "task_id": "BFF-MGMT-COMPARE-INSTITUTIONAL-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Source-only Management Persona Compare eligibility, canonical inactive owner precedence, and immutable receipt admission",
+  "repair_plan": {
+    "path": "/tmp/persona-talk-compare-repairs-20261112.md",
+    "sha256": "14eae6f089ee6d03524259e77cd74ed5738b1b74042cd916bd6b2debc0d32b34",
+    "hosted_backend": "bee62bc2978618539984aff9db136b064adc14a0",
+    "hosted_frontend": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "observed_defect": "Qinghe Management Compare automatically selected persona-2448c7053e33ea48da47,agora-servant-4eef59cbdf80a6b9fea0. The second participant was a private Agora Servant, not an institutional trading peer.",
+    "additional_defect": "Hengyue's named participant panel listed three archived predecessors whose runtime was retired while stale flattened lifecycle metadata still said paper_running.",
+    "existing_operator_evidence": [
+      {
+        "path": "/tmp/persona-learning-acceptance-20261112/successors/navigation-summary.json",
+        "sha256": "9d9f6bff4051332adcaecb664bfc68d4029a2056df80e45a6594cbb80dbe3585"
+      },
+      {
+        "path": "/tmp/persona-learning-acceptance-20261112/successors/hengyue-reply-ui.txt",
+        "sha256": "e1303f0b87fe1d2ad1034409eae0c0cdcbddc19b90aa1a94144252b8d18d0d51"
+      }
+    ],
+    "implementation": [
+      "Use the scoped, durable resolver receipt to recognise canonical Management Persona origin for compare and legacy consult eligibility. No new request fields or caller-supplied origin authority.",
+      "Exclude private/Servant roles using canonical archetype, mandate, strategy_family, persona_class, owner_scope, visibility_scope and memory_scope, at both record and metadata levels. Names and ID prefixes carry no role authority.",
+      "Reject private selected peers while resolving Management Compare; at submit recheck against the matching immutable receipt rather than another tab's latest receipt.",
+      "Reject explicit inactive administrative owner statuses before operational lifecycle aliases, across all interaction modes. Active owners remain consultable when only the Paper runtime is safely paused.",
+      "Preserve ordinary Agora private interactions for the authenticated owner; private records with missing, different or conflicting user bindings fail closed at eligibility and context resolution. Tenant checks remain mandatory."
+    ]
+  },
+  "regression_evidence": {
+    "production_path": "Tests mount create_agora_router and call the actual context:resolve, participants:eligible and interaction submit routes using the real interaction lifecycle receipt store and participant admission builder.",
+    "before_fix": {
+      "router_revision": "5183cbf91",
+      "first_regression_batch": "10 failed, 19 deselected: private, archived and suspended participants were eligible; private Management Compare context resolution succeeded; another user's private Servant was eligible.",
+      "stale_receipt_replay": "The strengthened matching-receipt regression returned 202 queued with the unmodified router, despite a Management peer having changed to a private role and another tab publishing a newer Agora receipt. The repaired router returns 422 participant_eligibility_failed and stores no interaction.",
+      "baseline_method": "A separate Python process reads git show 5183cbf91:services/control-plane/bff/agora/interaction/router.py, execs the source into the imported router module before pytest.main, and runs the same regression. Repository files remain unchanged."
+    },
+    "coverage": [
+      "Same-tenant institutional peer included, including active Persona with paused runtime",
+      "Private Agora Servant excluded from compare and consult, with ordinary ID/name and every supported canonical role/privacy marker",
+      "Cross-tenant, retired and owner-archived/suspended/inactive/disabled records excluded despite stale paper_running aliases",
+      "No peer returns only the focused Persona, with explicit excluded reasons and no excluded participant snapshot",
+      "Own private Agora workshop remains usable; another user's private selection is denied",
+      "Missing/conflicting private ownership fails closed",
+      "Management Talk and Reflect submit exactly the focused Persona with execution_authority=none and broker_called=false",
+      "Private peer context freeze and legacy submission rejected",
+      "Matching frozen Management receipt enforced even after another tab saves an ordinary Agora receipt",
+      "Forged submit source route fails durable receipt validation"
+    ]
+  },
+  "validation": [
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_pint_013_durable_interactions.py",
+      "status": "passed",
+      "exit_status": 0,
+      "result": "85 passed, 4 warnings in 26.45s after rebase",
+      "tested_base": "4042386ef7b11cee46343ba2cad53033239c1ced",
+      "additional_checks": "git diff --check origin/dev...HEAD; manifest JSON parsed; current dev is an ancestor of HEAD"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/bff/tests/test_pint_013_durable_interactions.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+      "status": "failed_with_baseline_confirmation",
+      "exit_status": 1,
+      "result": "46 passed, 2 failed. Ordinary production HTTP-owner private Servant eligibility and submit both succeed; the E2E later fails an existing tenant_mismatch excluded-row assertion because tenant filtering already removes that record. A separate fleet/detail test fails because PANTHEON_EVOLUTION_API_URL is unconfigured.",
+      "baseline_confirmation": "Both exact failing tests also fail with the unmodified 5183cbf91 router: 2 failed, 8 deselected. No unrelated fixture or runtime changes made."
+    },
+    {
+      "command": "RANKING_STORE_DSN=postgresql://test:test@localhost:5432/test RANKING_STORE_BOOTSTRAP=0 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/control-plane/tests/agora/test_cross_user_isolation.py",
+      "status": "collection_failed",
+      "exit_status": 2,
+      "result": "Existing legacy main/agora import setup cannot import agora.dashboard. An initial standalone invocation without the BFF test conftest environment also lacked the Rankings DSN. Neither run is counted as passed; focused route-level user-isolation coverage is included in the 85 passing tests."
+    }
+  ],
+  "boundaries": {
+    "execution_authority": "none",
+    "paper_and_privacy_policy_changed": false,
+    "runtime_pause_overridden": false,
+    "retired_personas_reactivated": false,
+    "vm_or_deployment_performed": false,
+    "frontend_contract_changed": false,
+    "hosted_claim": false
+  },
+  "independent_review": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "required_delivery": "Exact frozen PR/head/manifest review, required CI, then supervisor MERGE into dev before owner done"
+  }
+}

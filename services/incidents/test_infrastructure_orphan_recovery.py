@@ -335,6 +335,9 @@ def test_hosted_dev_reproduction_end_to_end_within_one_probe_interval(tmp_path):
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=3,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         state_path=str(tmp_path / "bff-health-state.sqlite3"),
     )
     with monitor._store._connect() as conn:
@@ -543,6 +546,9 @@ def test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless(tmp_pa
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=1,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         delivery_max_attempts=5,
         delivery_backoff_seconds=0.1,
         state_path=str(tmp_path / "bff-dead-letter-hosted-20261104.sqlite3"),
@@ -623,12 +629,19 @@ def test_hosted_20261104_dead_letter_resolve_sequence_and_replay_harmless(tmp_pa
                     )
                 )
             )
-        for _ in range(4):
-            with monitor._store._connect() as conn:
-                conn.execute(
-                    "UPDATE delivery_outbox SET next_attempt_at=0 WHERE channel='incident_resolve'"
-                )
-            monitor._deliver_due_sync()
+        # Incident channel now retries network errors for >=900s (60s cap), so the
+        # historical 5/5 dead-letter state is seeded directly instead of by
+        # exhausting a short fake backoff; the 900s policy is not weakened.
+        with monitor._store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE delivery_outbox
+                   SET status='dead_letter', attempt_count=5, max_attempts=5,
+                       last_error='network_error', next_attempt_at=0,
+                       claim_owner=NULL, claim_token=NULL, claim_until=NULL
+                 WHERE channel='incident_resolve'
+                """
+            )
 
     # Verify all 7 are now in the exact hosted stuck state before the fix:
     # incident_mappings.status='resolving', probe ok=1 consecutive_failures=0,
@@ -721,6 +734,9 @@ def test_inflight_deliveries_and_unhealthy_targets_with_dead_letter_stay_open(tm
         tenant_id="default",
         probe_interval_seconds=60,
         failure_threshold=1,
+        recovery_successes=1,
+        recovery_min_seconds=0,
+        reopen_window_seconds=0,
         state_path=str(tmp_path / "bff-active-and-unhealthy.sqlite3"),
     )
 

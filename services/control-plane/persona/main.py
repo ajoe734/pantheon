@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import os
 import uuid
+import asyncio
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from integrations.openclaw.adapter import (
     OpenClawDockerGatewayRuntime,
@@ -37,13 +39,310 @@ from persona_registry import (
     SessionType,
     utc_now,
 )
+from persona_strategy_pool import (
+    AppendPoolVersionRequest,
+    PoolDecisionRequest,
+    PersonaStrategyPoolStore,
+    PoolError,
+    build_pool_store,
+)
+from services.persona.case_file_outcomes import OutcomeTrackingController
+from services.persona.owner_port_health import (
+    OwnerPortEnvView,
+    apply_owner_port_health_to_cycle_report,
+    evaluate_owner_ports,
+    has_owner_port_env_configured,
+    non_healthy_owner_ports,
+    sync_owner_port_env,
+)
 from services.persona.write_owner import (
+    _AUTHENTICATED_MUTATION_ROLES,
+    _AUTHENTICATED_READ_ROLES,
     PersonaAuthorityError,
     create_app as create_persona_owner_app,
     resolve_persona_tenant_scope,
 )
 
-app = FastAPI(title="Pantheon Persona Agent", version="0.2.0")
+_OWNER_READ_SURFACE = None
+_CANONICAL_DATASET_POINTER_FILENAME = "canonical-dataset-version.json"
+
+
+def _write_canonical_dataset_pointer(payload_bytes: bytes, output_root: Any) -> None:
+    from pathlib import Path
+
+    root = Path(output_root)
+    pointer_path = root / _CANONICAL_DATASET_POINTER_FILENAME
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        tmp_path = pointer_path.with_suffix(".json.tmp")
+        tmp_path.write_bytes(payload_bytes)
+        os.replace(tmp_path, pointer_path)
+    except OSError:
+        pass
+
+
+def _sync_existing_dataset_version_to_pointer(output_root: Any = None) -> bool:
+    from pathlib import Path
+
+    root = Path(
+        output_root
+        or os.getenv("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT", "/data/bff/persona-pool-dataset-authority")
+    )
+    if not root.is_dir():
+        return False
+    candidates = sorted(
+        (p for p in root.glob("dataset-version-*.json") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return False
+    try:
+        _write_canonical_dataset_pointer(candidates[0].read_bytes(), root)
+        return True
+    except OSError:
+        return False
+
+
+def _sync_canonical_dataset_pointer(dataset_loader):
+    """Wrap governed_dataset_loader so canonical-dataset-version.json stays in sync for research."""
+    import json
+    from pathlib import Path
+    from typing import Mapping
+
+    def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        output_root = Path(
+            os.getenv("PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT", "/data/bff/persona-pool-dataset-authority")
+        )
+        record = dataset_loader(*args, **kwargs)
+        if isinstance(record, Mapping) and record.get("market_boundary"):
+            return record  # a governed market dataset is read from the daily bars; it is no DatasetVersion pointer
+        if not _sync_existing_dataset_version_to_pointer(output_root):
+            if isinstance(record, Mapping) and (
+                record.get("parquet_path")
+                or record.get("dataset_version_id")
+                or record.get("dataset_version")
+                or record.get("records")
+            ):
+                payload = (json.dumps(dict(record), indent=2, sort_keys=True) + "\n").encode("utf-8")
+                _write_canonical_dataset_pointer(payload, output_root)
+        return record
+
+    return _wrapped
+
+
+class _OwnerPortAwareCycleController(OutcomeTrackingController):
+    """Subclass OutcomeTrackingController so missing owner ports degrade the cycle heartbeat."""
+
+    def __init__(self, *args: Any, dataset_loader: Any = None, **kwargs: Any) -> None:
+        self._dataset_loader = dataset_loader
+        if (
+            len(args) == 1
+            and not kwargs
+            and hasattr(args[0], "reconcile_once")
+            and not hasattr(args[0], "reconcile_daily_cycles")
+        ):
+            self._inner = args[0]
+            self.registrar = getattr(args[0], "registrar", None)
+        else:
+            self._inner = None
+            super().__init__(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        inner = self.__dict__.get("_inner")
+        if inner is not None:
+            return getattr(inner, name)
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
+    def reconcile_once(self) -> dict[str, Any]:
+        if self._dataset_loader is not None:
+            try:
+                import inspect
+
+                sig = inspect.signature(self._dataset_loader)
+                required = [
+                    p
+                    for p in sig.parameters.values()
+                    if p.default is inspect.Parameter.empty
+                    and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                ]
+                if not required:
+                    self._dataset_loader()
+                else:
+                    _sync_existing_dataset_version_to_pointer()
+            except Exception:
+                pass
+        raw_report = self._inner.reconcile_once() if self._inner is not None else super().reconcile_once()
+        registrar = getattr(self, "registrar", None)
+        if (
+            self._inner is None
+            and registrar is not None
+            and callable(getattr(registrar, "_get_runtime", None))
+            and not raw_report.get("jobs")
+        ):
+            try:
+                if registrar._get_runtime() is None:
+                    return dict(raw_report)
+            except Exception:
+                pass
+        report = apply_owner_port_health_to_cycle_report(raw_report)
+        if registrar is not None and hasattr(registrar, "record_heartbeat"):
+            registrar.record_heartbeat("persona_daily_cycle", report)
+        return report
+
+
+def _bootstrap_panel_personas(app):
+    """Local startup uses the owner's normal create/CAS path, before HTTP listens."""
+    from services.persona.consult_triggers import bootstrap_consult_personas
+    from services.persona.write_owner import CreatePersonaRequest, PatchPersonaRequest, PersonaAlreadyExists
+    tenant = str(os.getenv("PERSONA_DEFAULT_TENANT_ID") or os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    try:
+        if not tenant or tenant == "*":
+            raise RuntimeError("deployment tenant is not configured")
+        owner = PERSONA_OWNER_API.state.persona_owner
+        def local_owner(method, url, body):
+            if method == "GET":
+                if "/api/personas/" in url:
+                    return owner.get(url.rsplit("/", 1)[1]).model_dump(mode="json")
+                return owner.list_json()
+            if method == "PATCH":
+                return owner.patch(url.rsplit("/", 1)[1], PatchPersonaRequest(**body)).model_dump(mode="json")
+            try:
+                return owner.create(CreatePersonaRequest(**body)).model_dump(mode="json")
+            except PersonaAlreadyExists:
+                return {"_conflict": True}
+        result = bootstrap_consult_personas(persona_url="local-owner:", tenant_id=tenant, http=local_owner)
+        app.state.panel_personas = {"status": "ready", "tenant_id": tenant, "personas": result}
+    except Exception as exc:
+        # Keep the owner available for diagnostics/repair; admission remains closed.
+        # Owner/store exceptions can carry connection details. Only our
+        # bootstrap validation messages are safe to expose on health.
+        reason = str(exc) if type(exc) is RuntimeError else type(exc).__name__
+        app.state.panel_personas = {"status": "blocked", "tenant_id": tenant,
+                                   "reason": f"panel persona bootstrap: {reason}"}
+    return app.state.panel_personas
+
+
+async def _retry_panel_bootstrap(app, stop):
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            if app.state.panel_personas["status"] != "ready":
+                await asyncio.to_thread(_bootstrap_panel_personas, app)
+
+
+@asynccontextmanager
+async def persona_lifespan(app):
+    stop = asyncio.Event()
+    await asyncio.to_thread(_bootstrap_panel_personas, app)
+    bootstrap_worker = asyncio.create_task(_retry_panel_bootstrap(app, stop))
+    worker = None
+    if os.getenv("PERSONA_DAILY_CYCLE_ENABLED", "false").lower() == "true":
+        from services.persona.persona_cycle_controller import CycleOwners, run_controller
+        from services.persona.case_file_outcomes import OutcomeTrackingController
+        from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+        from services.persona.pool_dataset_authority import governed_dataset_loader
+        from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
+        from services.persona.pool_autonomy_cycle import governed_discovery_loader
+
+        def _seed_store_reads(persona) -> list:
+            # Background-safe owner read: no request is in flight, so the persona's tenant and the
+            # persona service's own admitted source-ingest credential are bound for this read only.
+            from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+            from services.control_plane.bff.source_management_client import SourceManagementClient
+            from services.service_token_file import configured_service_token
+            # Bounded background read (own per-page and total budget, not the 2 s interactive limit).
+            client = SourceManagementClient(background_seed_read={
+                "page_size": int(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_SIZE", "100")),
+                "max_pages": int(os.getenv("PERSONA_DISCOVERY_SEED_MAX_PAGES", "50")),
+                "page_timeout_seconds": float(os.getenv("PERSONA_DISCOVERY_SEED_PAGE_TIMEOUT_SECONDS", "10")),
+                "budget_seconds": float(os.getenv("PERSONA_DISCOVERY_SEED_BUDGET_SECONDS", "60"))})
+            if not client.configured:
+                raise RuntimeError("seed_store_unconfigured")
+            token = configured_service_token("PERSONA_SOURCE_INGEST_SERVICE_TOKEN") or configured_service_token(
+                "PERSONA_POOL_SOURCE_READ_TOKEN"
+            )
+            if not token:
+                raise RuntimeError("seed_store_credential_unconfigured")
+            auth_mark = authorization.set("Bearer " + token)
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return client.list_all()
+            finally:
+                selected_tenant.reset(tenant_mark)
+                authorization.reset(auth_mark)
+
+        def _owner_surface_reads(persona, read):
+            # Same owners the operator discovery route uses (bff/personas/service.py), bound to the
+            # persona's tenant for this background read only.
+            from services.control_plane.bff.core.owner_reads import selected_tenant
+            global _OWNER_READ_SURFACE
+            if _OWNER_READ_SURFACE is None:
+                from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+                _OWNER_READ_SURFACE = ReadSurfacePorts()
+            tenant_mark = selected_tenant.set(persona["tenant_id"])
+            try:
+                return read(_OWNER_READ_SURFACE, str(persona.get("persona_id") or persona.get("id") or ""))
+            finally:
+                selected_tenant.reset(tenant_mark)
+
+        def _route_policy(persona):
+            inline = persona.get("route_policy")
+            if isinstance(inline, dict) and inline:
+                return inline
+            policy_id = str(persona.get("route_policy_id") or "").strip()
+            if not policy_id:
+                return {}
+            # Resolve the exact referenced policy from the owner catalog by its own identity; the
+            # persona-scoped lookup selects by persona_id and may return a stale, different policy.
+            policies = _owner_surface_reads(persona, lambda surface, pid: surface.list_route_policies())
+            for policy in policies or []:
+                if isinstance(policy, dict) and policy and policy_id in {
+                        str(policy.get("policy_id") or "").strip(), str(policy.get("id") or "").strip()} - {""}:
+                    return policy
+            # referenced policy unreadable/mismatched: never score without (or with other) constraints
+            raise RuntimeError(f"route_policy_unavailable:{policy_id}")
+
+        def _capability_snapshot(persona):
+            inline = persona.get("capability_snapshot")
+            if isinstance(inline, dict) and inline:
+                return inline
+            snapshot = _owner_surface_reads(persona, lambda surface, pid: surface.get_capability_snapshot_for_persona(pid))
+            snapshot_id = str(persona.get("capability_snapshot_id") or "").strip()
+            if not snapshot and snapshot_id:
+                raise RuntimeError(f"capability_snapshot_unavailable:{snapshot_id}")
+            return snapshot or {}
+
+        # StrategySpec candidates come from the registry owner through the cycle ports (specs=None).
+        env_view = OwnerPortEnvView()
+        dataset_loader = _sync_canonical_dataset_pointer(governed_dataset_loader(env_view))
+        discovery_loader = governed_discovery_loader(
+            seeds=_seed_store_reads, route_policy=_route_policy, capability_snapshot=_capability_snapshot)
+        controller = _OwnerPortAwareCycleController(
+            PersonaCronRegistrar(),
+            CycleOwners(PERSONA_OWNER_API.state.persona_owner, _pool_store(), env=env_view),
+            pool_cycle=PoolAutonomyCycle(
+                HttpPoolCyclePorts(
+                    pool_store=_pool_store(),
+                    dataset_loader=dataset_loader,
+                    discovery_loader=discovery_loader,
+                    env=env_view,
+                )
+            ),
+            dataset_loader=dataset_loader,
+        )
+        worker = asyncio.create_task(run_controller(controller, stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await bootstrap_worker
+        if worker is not None:
+            await worker
+
+
+app = FastAPI(title="Pantheon Persona Agent", version="0.2.0", lifespan=persona_lifespan)
 
 LLM_BACKEND = os.getenv("LLM_BACKEND", "openclaw")
 DEFAULT_PERSONA_ID = os.getenv("PERSONA_ID", "persona-default")
@@ -59,12 +358,14 @@ OPENCLAW_HEALTH_TIMEOUT_SECONDS = float(os.getenv("OPENCLAW_HEALTH_TIMEOUT_SECON
 
 
 def _standard_health_payload() -> dict[str, Any]:
+    owner_ports = evaluate_owner_ports()
     return {
         "status": "ok",
         "service": "persona-agent",
         "timestamp": utc_now(),
         "live": True,
         "ready": True,
+        "owner_ports": owner_ports,
         "dependencies": {
             "openclaw_gateway": {
                 "status": "ok",
@@ -74,6 +375,8 @@ def _standard_health_payload() -> dict[str, Any]:
         },
         "metrics": {"service_up": 1},
         "details": {
+            "panel_personas": getattr(app.state, "panel_personas", {"status": "unobserved"}),
+            "owner_ports": owner_ports,
             "llm_backend": LLM_BACKEND,
             "runtime_backend": "openclaw-gateway",
             "persona_id": DEFAULT_PERSONA_ID,
@@ -354,13 +657,29 @@ def _invoke_openclaw(req: InvokeRequest) -> tuple[str, RuntimeStatus]:
 
 @app.get("/health")
 async def health():
-    return {
+    payload: dict[str, Any] = {
         "status": "ok",
         "service": "persona-agent",
         "llm_backend": LLM_BACKEND,
         "runtime_backend": "openclaw-gateway",
         "persona_id": DEFAULT_PERSONA_ID,
         "agent_id": OPENCLAW_AGENT_ID,
+    }
+    if has_owner_port_env_configured():
+        owner_ports = evaluate_owner_ports()
+        if non_healthy_owner_ports(owner_ports):
+            payload["status"] = "degraded"
+        payload["owner_ports"] = owner_ports
+    return payload
+
+
+@app.get("/api/persona/health/owner-ports")
+async def persona_owner_ports_health():
+    owner_ports = evaluate_owner_ports()
+    return {
+        "status": "degraded" if non_healthy_owner_ports(owner_ports) else "ok",
+        "service": "persona-agent",
+        "owner_ports": owner_ports,
     }
 
 
@@ -433,6 +752,147 @@ def list_sessions(
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: str, tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"), authorization: str | None = Header(default=None)):
     return _session_for_tenant(session_id, _admitted_persona_tenant(authorization, tenant_id)).to_dict()
+
+
+POOL_STORE: PersonaStrategyPoolStore | None = None
+
+
+def _pool_store() -> PersonaStrategyPoolStore:
+    global POOL_STORE
+    if POOL_STORE is None:
+        POOL_STORE = build_pool_store()
+    return POOL_STORE
+
+
+# Dedicated read-only role for the consultation executor: accepted ONLY by the three strategy-pool
+# GET routes below (current / versions / one version). It is not in _AUTHENTICATED_READ_ROLES, so
+# every other persona route (and every pool write or POST) refuses it.
+_POOL_GET_ROLES = frozenset(_AUTHENTICATED_READ_ROLES) | {"persona_pool_reader"}
+
+
+def _pool_scope(persona_id: str, authorization: str | None, tenant_id: str | None, *, write: bool,
+                pool_get: bool = False):
+    """Authenticate, admit the tenant, and require the persona to belong to it.
+
+    A persona owned by another tenant is refused: 403 on write, 404 on read
+    (so a read never confirms the persona exists elsewhere).
+    """
+    try:
+        authority, admitted = resolve_persona_tenant_scope(
+            authorization, tenant_id,
+            *((_AUTHENTICATED_MUTATION_ROLES,) if write else (_POOL_GET_ROLES,) if pool_get else ())
+        )
+    except PersonaAuthorityError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+    raw = getattr(getattr(PERSONA_OWNER_API.state, "persona_owner", None), "_records", None)
+    record = raw.get(persona_id) if raw is not None else None
+    if record is None:
+        raise HTTPException(status_code=404, detail="persona not found")
+    if record.get("tenant_id") != admitted:
+        raise HTTPException(
+            status_code=403 if write else 404,
+            detail="TENANT_SCOPE_DENIED: persona belongs to another tenant" if write else "persona not found",
+        )
+    return authority, admitted
+
+
+def _pool_call(fn):
+    try:
+        return fn()
+    except PoolError as exc:
+        reason = getattr(exc, "reason", None)
+        raise HTTPException(status_code=exc.status_code, detail=reason or str(exc)) from exc
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool")
+def get_strategy_pool(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
+    return _pool_call(lambda: _pool_store().current(persona_id, admitted))
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool/versions")
+def list_strategy_pool_versions(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
+    store = _pool_store()
+    return _pool_call(
+        lambda: {
+            "versions": store.versions(persona_id, admitted),
+            "refusals": store.refusals(persona_id, admitted),
+        }
+    )
+
+
+@app.get("/api/personas/{persona_id}/strategy-pool/versions/{pool_version}")
+def get_strategy_pool_version(
+    persona_id: str,
+    pool_version: int,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False, pool_get=True)
+    return _pool_call(lambda: _pool_store().version(persona_id, admitted, pool_version))
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/versions", status_code=201)
+def append_strategy_pool_version(
+    persona_id: str,
+    body: AppendPoolVersionRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(
+        lambda: _pool_store().append(persona_id, admitted, body, actor_id=authority.actor_id)
+    )
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/seed", status_code=201)
+def seed_strategy_pool(
+    persona_id: str,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    """Create version 1 from the persona's approved paper artifact (owner records)."""
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(
+        lambda: _pool_store().seed_from_owner_records(persona_id, admitted, actor_id=authority.actor_id)
+    )
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/decisions", status_code=201)
+def decide_strategy_pool(
+    persona_id: str,
+    body: PoolDecisionRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    authority, admitted = _pool_scope(persona_id, authorization, tenant_id, write=True)
+    return _pool_call(lambda: _pool_store().decide(persona_id, admitted, body, actor_id=authority.actor_id))
+
+
+class PoolHealthRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    books: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@app.post("/api/personas/{persona_id}/strategy-pool/health")
+def strategy_pool_health(
+    persona_id: str,
+    body: PoolHealthRequest,
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    authorization: str | None = Header(default=None),
+):
+    _, admitted = _pool_scope(persona_id, authorization, tenant_id, write=False)
+    return _pool_call(lambda: _pool_store().health(persona_id, admitted, body.books, body.observations))
 
 
 # The deployed control-plane Persona process owns the durable Registry and

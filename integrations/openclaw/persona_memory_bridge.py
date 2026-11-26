@@ -6,6 +6,8 @@ used as an unaudited direct-write path back into memory.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import urllib.parse
 import urllib.request
@@ -33,6 +35,8 @@ class MemoryMaterializationResult:
     hit_count: int
     source_refs: List[Dict[str, str]] = field(default_factory=list)
     rejected_hits: List[Dict[str, str]] = field(default_factory=list)
+    retrieval: Dict[str, Any] = field(default_factory=dict)
+    missing_scopes: List[Dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -44,7 +48,31 @@ class MemoryMaterializationResult:
             "hit_count": self.hit_count,
             "source_refs": list(self.source_refs),
             "rejected_hits": list(self.rejected_hits),
+            "retrieval": dict(self.retrieval),
+            "missing_scopes": list(self.missing_scopes),
+            "partial": bool(self.missing_scopes),
         }
+
+
+def build_cycle_memory_query(
+    *,
+    shortfall: Iterable[str],
+    families: Iterable[str],
+    underlyings: Iterable[str],
+) -> tuple[str, List[str]]:
+    """Daily-cycle retrieval query from pool-health shortfall, member families and underlyings.
+
+    Fails closed: a query with no family and no underlying would be the generic
+    query this replaces, so it is refused instead of padded with a default.
+    """
+    fams = sorted({str(f).strip().lower() for f in families if str(f or "").strip()})
+    unds = sorted({str(u).strip() for u in underlyings if str(u or "").strip()})
+    short = sorted({str(s).strip() for s in shortfall if str(s or "").strip()})
+    if not fams and not unds:
+        raise ValueError("cycle_query_subject_missing: no member family or underlying")
+    terms = [*fams, *unds, *(s.replace("_", " ") for s in short)]
+    tags = [f"family:{f}" for f in fams] + [f"underlying:{u}" for u in unds] + [f"shortfall:{s}" for s in short]
+    return " ".join(terms), tags
 
 
 def utc_now() -> str:
@@ -63,6 +91,8 @@ def fetch_canonical_memory(
     limit: int = DEFAULT_MEMORY_LIMIT,
     timeout_seconds: float = 5.0,
     auth_token: Optional[str] = None,
+    tags: Iterable[str] = (),
+    session_persona_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call the canonical Memory Plane retrieval facade."""
     base = memory_api_url.rstrip("/")
@@ -75,6 +105,19 @@ def fetch_canonical_memory(
         "query": query,
         "limit": int(limit),
     }
+    clean_persona_id = str(persona_id or "").strip()
+    eff_session_persona_id = str(
+        session_persona_id if session_persona_id is not None else clean_persona_id
+    ).strip()
+    if (
+        str(scope or "").strip().lower() in {"persona", "both"}
+        and clean_persona_id
+        and eff_session_persona_id
+    ):
+        params["session_persona_id"] = eff_session_persona_id
+    tag_list = [str(t) for t in tags if str(t).strip()]
+    if tag_list:
+        params["tags"] = tag_list
     url = f"{base}/api/memory/retrieve?{urllib.parse.urlencode(params, doseq=True)}"
     headers = {"Accept": "application/json"}
     if auth_token:
@@ -98,20 +141,60 @@ def materialize_persona_memory_from_api(
     timeout_seconds: float = 5.0,
     auth_token: Optional[str] = None,
     generated_at: Optional[str] = None,
+    tags: Iterable[str] = (),
 ) -> MemoryMaterializationResult:
-    payload = fetch_canonical_memory(
-        memory_api_url,
-        persona_id=persona_id,
-        actor_id=actor_id,
-        actor_roles=actor_roles,
-        session_id=session_id or f"openclaw-memory-sync-{persona_id}",
-        scope=scope,
-        query=query,
-        limit=limit,
-        timeout_seconds=timeout_seconds,
-        auth_token=auth_token,
-    )
-    return materialize_openclaw_memory_context(
+    scopes = ["institutional", "persona"] if scope == "both" else [scope]
+
+    def _fetch(one_scope: str) -> Dict[str, Any]:
+        return fetch_canonical_memory(
+            memory_api_url,
+            persona_id=persona_id,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            session_id=session_id or f"openclaw-memory-sync-{persona_id}",
+            scope=one_scope,
+            query=query,
+            limit=limit,
+            timeout_seconds=timeout_seconds,
+            auth_token=auth_token,
+            tags=tags,
+            session_persona_id=persona_id if one_scope == "persona" else None,
+        )
+
+    # One call per scope: a slow or failed scope degrades to "missing" instead of
+    # discarding the scope that did answer.
+    payloads: List[Dict[str, Any]] = []
+    missing: List[Dict[str, str]] = []
+    if len(scopes) == 1:
+        payloads.append(_fetch(scopes[0]))
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(scopes), thread_name_prefix="persona-memory") as pool:
+            futures = {name: pool.submit(_fetch, name) for name in scopes}
+            for name, future in futures.items():
+                try:
+                    payloads.append(future.result())
+                except Exception as exc:  # noqa: BLE001
+                    missing.append({"scope": name, "reason": type(exc).__name__ + ":" + str(exc)[:120]})
+        if not payloads:
+            raise RuntimeError(
+                "memory_unavailable:" + ",".join(m["scope"] for m in missing)
+                + " (" + "; ".join(m["reason"] for m in missing) + ")")
+    hits: List[Any] = []
+    seen: set = set()
+    for part in payloads:
+        for hit in part.get("hits") or []:
+            entry = hit.get("entry") if isinstance(hit, dict) else None
+            entry = entry if isinstance(entry, dict) else {}
+            key = entry.get("memory_id") or entry.get("entry_id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            hits.append(hit)
+    hits.sort(key=lambda h: float((h or {}).get("relevance_score") or 0), reverse=True)
+    payload = {**payloads[0], "hits": hits[: int(limit)], "scope": scope}
+    result = materialize_openclaw_memory_context(
         persona_id=persona_id,
         workspace=workspace,
         retrieval_payload=payload,
@@ -119,7 +202,13 @@ def materialize_persona_memory_from_api(
         scope=scope,
         limit=limit,
         generated_at=generated_at,
+        tags=tags,
     )
+    if missing:
+        result = dataclasses.replace(
+            result, missing_scopes=missing,
+            retrieval={**result.retrieval, "missing_scopes": [m["scope"] for m in missing]})
+    return result
 
 
 def materialize_openclaw_memory_context(
@@ -131,6 +220,7 @@ def materialize_openclaw_memory_context(
     scope: str = DEFAULT_MEMORY_SCOPE,
     limit: int = DEFAULT_MEMORY_LIMIT,
     generated_at: Optional[str] = None,
+    tags: Iterable[str] = (),
 ) -> MemoryMaterializationResult:
     """Render canonical retrieval hits into OpenClaw workspace cache files."""
     generated = generated_at or utc_now()
@@ -139,6 +229,7 @@ def materialize_openclaw_memory_context(
     memory_dir.mkdir(parents=True, exist_ok=True)
 
     hits, rejected = normalize_retrieval_hits(retrieval_payload, persona_id=persona_id, max_hits=limit)
+    tag_list = [str(t) for t in tags if str(t).strip()]
     context = {
         "schema_version": MEMORY_CONTEXT_SCHEMA_VERSION,
         "persona_id": persona_id,
@@ -149,6 +240,7 @@ def materialize_openclaw_memory_context(
             "query": query,
             "limit": int(limit),
             "count": len(hits),
+            "tags": tag_list,
         },
         "mutation_policy": {
             "workspace_is_cache": True,
@@ -178,6 +270,7 @@ def materialize_openclaw_memory_context(
         hit_count=len(hits),
         source_refs=[{"type": hit["type"], "ref": hit["canonical_ref"]} for hit in hits],
         rejected_hits=rejected,
+        retrieval={"query": query, "tags": tag_list, "scope": scope, "limit": int(limit)},
     )
 
 

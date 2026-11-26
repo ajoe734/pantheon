@@ -192,6 +192,43 @@ class TestPromotionGate(unittest.TestCase):
             ["bt-promo-gate-001"],
         )
 
+        # The producer's own proof verifies; tampered/failed/unbound proofs do not.
+        proof, summary = draft_entry["replication_proof"], draft_entry["evaluation_summary"]
+        lineage = draft_entry["lineage"]
+        checksum = bt_eval["strategy_artifact"]["checksum"]
+        kw = {"backtest_evaluation": bt_eval, "artifact_checksum": checksum}
+        verified = PromotionGate.verify_admitted_replication_proof(proof, summary, lineage, **kw)
+        self.assertEqual({k: v for k, v in verified.items() if k != "owner_verified_binding"}, proof)
+        self.assertEqual(verified["owner_verified_binding"]["artifact_checksum"], checksum)
+        import copy as _copy
+        failed = _copy.deepcopy(proof)
+        for r in failed["replication_results"]:
+            if r.get("criterion_id") == "real_backtest_validation":
+                r["passed"] = False
+        for bad_proof, bad_summary, bad_lineage in (
+            (failed, summary, lineage),
+            ({}, summary, lineage),
+            (proof, {**summary, "out_of_sample_sharpe_ratio": 9.9}, lineage),
+            (proof, summary, {"source_run_ids": ["some-other-run"]}),
+            ({**proof, "admission_status": "rejected"}, summary, lineage),
+        ):
+            with self.assertRaises(PromotionError):
+                PromotionGate.verify_admitted_replication_proof(bad_proof, bad_summary, bad_lineage, **kw)
+
+        # Gate prerequisites beyond the six metric checks must also hold on the evaluation.
+        for mutate in (
+            lambda e: e["history_check"].update(sufficient=False, calendar_days=1, trading_days=1),
+            lambda e: e["protocol"].update(in_sample_ratio=1.0, out_of_sample_ratio=0.0),
+            lambda e: e["protocol"].update(walk_forward_folds=0),
+            lambda e: e["transaction_costs"].update(applied_on_every_fill=False, commission_rate=0.0),
+            lambda e: e["benchmarks"].pop("tw_0050"),
+        ):
+            weak = _copy.deepcopy(bt_eval)
+            mutate(weak)
+            with self.assertRaises(PromotionError):
+                PromotionGate.verify_admitted_replication_proof(
+                    proof, summary, lineage, backtest_evaluation=weak, artifact_checksum=checksum)
+
         candidate_entry = self.gate.promote(draft_entry, PromotionState.CANDIDATE)
         self.assertEqual(candidate_entry["lifecycle_state"], "candidate")
 

@@ -205,3 +205,77 @@ def test_scrub_inherited_task_state_env() -> None:
         assert "PANTHEON_TASK_STATE_EVENT_LOG" in scrubbed
         assert "PANTHEON_TASK_STATE_STORE_MODE" not in os.environ
         assert "PANTHEON_TASK_STATE_EVENT_LOG" not in os.environ
+
+
+def _mod(name: str, filename) -> types.ModuleType:
+    module = types.ModuleType(name)
+    module.__file__ = str(filename)
+    return module
+
+
+def test_stable_names_canonical_not_transient_poisoned_transient() -> None:
+    for pkg in ("services", "scripts", "integrations"):
+        canonical = _mod(pkg, ROOT / pkg / "__init__.py")
+        assert _is_transient_local_module(pkg, canonical) is False
+        assert _is_transient_local_module(f"{pkg}.sub", canonical) is False
+    for pkg, where in (
+        ("integrations", SERVICES_DIR / "control-plane" / "bff" / "integrations" / "__init__.py"),
+        ("services", TESTS_DIR / "services" / "__init__.py"),
+        ("scripts", SERVICES_DIR / "x" / "scripts" / "__init__.py"),
+    ):
+        assert _is_transient_local_module(pkg, _mod(pkg, where)) is True
+        assert _is_transient_local_module(f"{pkg}.sub", _mod(f"{pkg}.sub", where)) is True
+
+
+def test_containment_siblings_anchors_relative_and_outside() -> None:
+    # sibling directory sharing a prefix is not contained
+    assert _is_transient_local_module("m", _mod("m", str(SERVICES_DIR) + "_sibling/a.py")) is False
+    assert _is_transient_local_module("m", _mod("m", str(TESTS_DIR) + "x/a.py")) is False
+    # anchors themselves count as contained
+    assert _is_transient_local_module("m", _mod("m", SERVICES_DIR)) is True
+    assert _is_transient_local_module("m", _mod("m", SCRIPTS_DIR)) is True
+    # no __file__ / empty __file__ / outside repo
+    assert _is_transient_local_module("m", types.ModuleType("m")) is False
+    assert _is_transient_local_module("m", _mod("m", "")) is False
+    assert _is_transient_local_module("m", _mod("m", "/usr/lib/python3/json.py")) is False
+    assert _is_transient_local_module("m", _mod("m", ROOT / "other" / "a.py")) is False
+
+
+def test_relative_file_resolves_against_cwd(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(SERVICES_DIR)
+    assert _is_transient_local_module("m", _mod("m", "some_service/a.py")) is True
+    monkeypatch.chdir(tmp_path)
+    assert _is_transient_local_module("m", _mod("m", "some_service/a.py")) is False
+    assert _is_transient_local_module("m", _mod("m", "../x/../y.py")) is False
+
+
+def test_symlink_retarget_and_mutated_file_identity(tmp_path) -> None:
+    outside = tmp_path / "outside.py"
+    outside.write_text("")
+    link = tmp_path / "link.py"
+    link.symlink_to(outside)
+    module = _mod("m", link)
+    assert _is_transient_local_module("m", module) is False
+    link.unlink()
+    link.symlink_to(SERVICES_DIR / "svc" / "a.py")  # retarget: no stale cache
+    assert _is_transient_local_module("m", module) is True
+    # mutated __file__ on same module object is reclassified
+    module.__file__ = str(outside)
+    assert _is_transient_local_module("m", module) is False
+    module.__file__ = str(TESTS_DIR / "a.py")
+    assert _is_transient_local_module("m", module) is True
+
+
+def test_symlink_loop_preserves_path_resolve_semantics(tmp_path) -> None:
+    loop = tmp_path / "loop.py"
+    loop.symlink_to(loop)
+    module = _mod("m", loop)
+    try:
+        expected = conftest._module_file(module)
+    except RuntimeError:
+        with pytest.raises(RuntimeError):
+            _is_transient_local_module("m", module)
+    else:
+        assert _is_transient_local_module("m", module) is (
+            expected is not None and conftest._is_relative_to(expected, SERVICES_DIR)
+        )

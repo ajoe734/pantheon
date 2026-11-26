@@ -1,0 +1,66 @@
+{
+  "task_id": "PERSONA-HARNESS-ADOPT-REVIEW-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Codex",
+  "assigned_reviewer": "Claude",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#68-harness-self-optimisation-c8",
+  "implementation_base": "04947d53b",
+  "hosted_behavior_claimed": false,
+  "source_adoption_verifier_wired": true,
+  "acceptance_evidence": {
+    "paper_and_governance_boundary": [
+      "test_real_panel_and_authenticated_memory_and_governance_transport",
+      "test_missing_or_unbound_approval_never_adopts",
+      "test_outside_paper_is_governance_proposal_without_activation"
+    ],
+    "four_outcomes_and_memory": [
+      "test_production_entrypoints_record_four_outcomes_and_memory: helped/hurt/no_effect/confounded, with actual strict-auth Memory writeback and durable store reload"
+    ],
+    "rollback_and_experience_reuse": [
+      "test_production_entrypoints_record_four_outcomes_and_memory: hurt governance proposal, explicit rollback of observed current version, later component-relevant experience citations",
+      "test_real_panel_and_authenticated_memory_and_governance_transport: actual medium-risk Evolution proposal remains proposed"
+    ],
+    "experiment_and_cooldown": [
+      "services/persona/test_harness.py: existing concurrent activation coverage",
+      "test_versions_remain_append_only_after_rollback: cooldown rejection, then append-only version after test-clock advance",
+      "test_production_entrypoints_record_four_outcomes_and_memory: persistent component cooldown after review"
+    ],
+    "policy_and_memory_docs": [
+      "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 9.3.1",
+      "services/memory/MEMORY_LAYER_DESIGN_NOTE.md section 4.1.2"
+    ],
+    "entrypoint_integration_and_failure_recovery": [
+      "test_real_panel_and_authenticated_memory_and_governance_transport: owner propose/precheck routes, real shadow evaluator, actual Consultation panel workflow and published memo, owner activate/observe routes, authenticated Memory and Evolution HTTP",
+      "test_unavailable_observation_is_persisted_and_tenant_checked",
+      "test_delivery_failure_survives_restart_and_replays"
+    ]
+  },
+  "validation": [
+    {
+      "command": "timeout 180 /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/persona/test_harness_adoption.py services/persona/test_harness.py services/persona/test_harness_shadow_eval.py -q --tb=short",
+      "exit_code": 0,
+      "result": "82 passed, 1 deprecation warning in 25.37s"
+    },
+    {
+      "command": "timeout 240 /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest services/persona -q --tb=short",
+      "exit_code": 1,
+      "result": "251 passed, 1 skipped, 1 failed in 65.70s",
+      "failure": "test_lifecycle_approval_verifier.py::test_rendered_compose_gives_persona_the_bff_jwt_verifier_config: KeyError persona when reading rendered compose services",
+      "qualification": "This test and compose files are unchanged from origin/dev; the prerequisite PERSONA-HARNESS-SHADOW-EVAL-20261112 evidence records the same pre-existing compose-render failure. This is not a passed suite."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
+  ],
+  "limitations": [
+    "Source tests use fixture provider answers and paired book observations; none are production fallback data or hosted efficacy evidence.",
+    "Observation consumes real terminal owner packets containing harness_observation facts bound to the adopted version, the first ten distinct owner trading dates and fixed net-of-costs criterion. It does not implement a counterfactual book producer. A deployment without this source extension records a refusal and keeps the experiment active.",
+    "The inherited shadow evaluator still requires its dedicated deny-all replay provider and live isolation probe supplied by its caller.",
+    "Observation review and outbox recovery are Persona-owner operations; no new scheduler, credential, privileged cross-plane capability or deployment is introduced.",
+    "Missing service URL/token, failed delivery, or an unbound receipt leaves a pending durable intent with an error. Replay attempts at most four intents per owner call. Pending is not publication success.",
+    "Outside-paper and hurt outcomes only propose to governance. Operator approval and execution are not claimed; risk, capital, lifecycle, live and trade authority remain unchanged."
+  ]
+}

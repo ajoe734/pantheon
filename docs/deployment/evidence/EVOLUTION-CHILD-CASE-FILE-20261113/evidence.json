@@ -1,0 +1,62 @@
+{
+  "task_id": "EVOLUTION-CHILD-CASE-FILE-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "design": "SD_MEMORY_KNOWLEDGE_INTEGRATION_2026-11-13.md M4 (evolution children)",
+  "delivered": [
+    "services/research/alpha_replication/evolution_executor.py",
+    "services/research/alpha_replication/test_evolution_executor_case_file.py",
+    "services/research/main.py",
+    "services/research/tests/test_pool_evolution_integration.py"
+  ],
+  "scope_note": "main.py is the production caller for pool mutate/retrain and persists the case file and refusal receipts; the existing pool integration fixture now supplies an explicit proposer declaration. No changes to evolution_search.py or auto_consumer_runtime.py.",
+  "registration_review": {
+    "base": "Fetched origin/dev at 22a78e19e3d064669967b2c792e0ae1f7b95e4ec; git rebase origin/dev reported the task branch already up to date.",
+    "lineage_and_candidate": "test_retrain_child_keeps_context_in_registry_and_across_retry compares the full child against mutate_strategy_artifact with the same child id/version, parameter delta, direct-parent registry id and decision/session/proof source runs; asserts candidate state, persona metadata, OOS summary and retry preservation.",
+    "mutation_controls": "test_pool_retrain_full_registration_cannot_bypass_mutation_controls rejects immutable symbols and out-of-range entry_z before gate/registration/admission. Initial negative tests exposed an uncaught StrategyArtifactValidationError; main.py now records the existing retrain_child_invalid no_candidate outcome for that validation refusal.",
+    "oos_admission": "test_pool_child_with_valid_lesson_still_requires_passing_oos_gate covers both mutate and retrain: a valid declaration with a failed OOS verdict registers/admit nothing.",
+    "producer_proof": "Pool retrain calls the existing _producer_proof_registration with the exact child and its gate verdict before full registration. test_producer_registration_carries_real_proof_and_owner_authenticates_verdict separately exercises the real gate, producer fields, owner readback and Registry proof verifier. The case-file fixture controls gate outputs and does not itself create a genuine producer proof.",
+    "registry_admission": "Both registration routes call services.registry.service._register_strategy_artifact. The full route authenticates the Registry writer, validates the artifact, allows only draft/candidate, checks identity and immutable registration replay, and verifies any submitted replication proof against the Research owner. test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery covers real proof verification and refusal of altered proofs and owner disagreement. Registry implementation and admission policy are unchanged."
+  },
+  "acceptance": {
+    "member_child_case_file": "test_prior_failure_is_cited_by_real_mutate_dispatch: production task/run HTTP dispatch invokes the real evolution executor, real structural child construction and real knowledge case composer over owner HTTP. All 50 child records and Registry metadata carry the composed case_file_id/digest for the parent's family, underlyings, persona, tenant and registry reference.",
+    "declaration_and_refusal": "test_dispatch_refuses_invalid_declarations_with_a_recorded_reason and test_real_executor_checks_each_child_before_gate_or_registration: absent, empty, duplicate and unknown citations refuse before backtest/gate/registration; no_candidate and the specific reason are persisted on the run. Explicit none_applicable requires a nonblank reason.",
+    "citations_belong_to_attached_file": "Citations use case-file item_id values from lessons, similar_history or evidence. Facts alone are not lesson citations. The child proposal port receives deep copies and cannot mutate the authoritative attachment to introduce a citation.",
+    "prior_failure_cited": "test_prior_failure_is_cited_by_real_mutate_dispatch cites lessons:memory_institutional:prior-failure, whose owner-supplied finding records a child failing after costs in a weak revenue regime.",
+    "retrain_and_retry": "test_retrain_child_keeps_context_in_registry_and_across_retry exercises the real retrain orchestration and registration with controlled Training evaluation/search and gate ports; the child metadata, run and resumed attempt preserve the same attachment and declaration without duplicate registration.",
+    "privacy_and_availability": "Service caller configuration comes only from environment; the service never identifies as the subject persona. Private/foreign persona entries are excluded by the real composer. Missing caller roles or unavailable required owner reads refuse explicitly, including a none_applicable declaration during a memory outage."
+  },
+  "configuration": {
+    "owners": "Existing knowledge Owners.from_env PANTHEON_{REGISTRY,RESEARCH,PERSONA,TELEMETRY,MEMORY,SEARCH}_API_URL and corresponding service-token configuration; owner credentials are never taken from a proposal.",
+    "caller": "RESEARCH_CASE_FILE_ACTOR_ID and comma-separated RESEARCH_CASE_FILE_ACTOR_ROLES must be configured for the research service's actual verified owner tokens and governance permissions. No default role or persona impersonation is supplied; missing configuration refuses.",
+    "declaration": "parameters.addresses_lessons or parameters.pool_member.addresses_lessons: {lesson_ids: [case-file item ids]} OR {none_applicable: true, reason: nonblank text}. The existing evolution receipt adapter already forwards the pool_member envelope intact.",
+    "optional_sources": "The composer's expected exclusion of persona_private and its explicitly recorded telemetry omission when the optional capital binding is not supplied do not block. Other unavailability blocks child creation."
+  },
+  "verification": {
+    "core_batch": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/alpha_replication/test_evolution_executor_case_file.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py",
+      "result": "21 passed (before adding retrain-retry and privacy coverage)"
+    },
+    "final_batch": {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/alpha_replication/test_evolution_executor_case_file.py services/research/tests/test_evolution_gate_executor.py services/research/tests/test_pool_evolution_integration.py services/research/tests/test_retrain_executor_real_auth.py services/research/tests/test_retrain_oos_gate.py services/research/tests/test_retrain_search_update.py services/research/alpha_replication/test_evolution_search.py services/knowledge/test_case_file.py services/knowledge/test_case_file_integration.py",
+      "result": "Initial delivery: 84 passed, 302 warnings in 160.45s; exit 0. Resumed delivery after admission regression coverage and invalid-child receipt fix: 88 passed, 342 warnings in 164.86s; exit 0."
+    },
+    "resumed_case_file_batch": {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/alpha_replication/test_evolution_executor_case_file.py",
+      "result": "17 passed, 173 warnings in 18.50s; exit 0. The preceding negative-test discovery run was 15 passed/2 failed and is not counted as a passing batch."
+    },
+    "producer_and_registry_batch": {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q --disable-warnings services/research/tests/test_backtest_owner_readback.py services/registry/test_strategy_artifact.py::test_mutation_api_creates_real_child_delta_and_preserves_parent services/registry/test_service.py::test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery",
+      "result": "9 passed, 100 warnings in 6.86s; exit 0"
+    },
+    "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py using the supervisor dependency interpreter.",
+    "static_checks": "git diff --check and python -m json.tool for this manifest both exited 0."
+  },
+  "known_limits": [
+    "Source integration proof only; hosted activation/acceptance remains MEMORY-KNOWLEDGE-HOSTED-ACCEPTANCE-20261113.",
+    "The child case-file integration controls owner responses, gate verdicts, Training evaluation and pool admission ports. It does not claim that a random mutation is profitable or accepted on hosted dev.",
+    "An explicit proposer must supply the declaration. The existing scheduler has no lesson-addressing declaration and its undeclared children therefore refuse. This task does not invent a citation claim for its random mutations or modify the separately owned scheduler/search/auto-consumer policy.",
+    "The legacy non-pool evolution path and member revalidation do not create pool children and retain their current behavior.",
+    "Case contents persist in research records and references persist in Registry metadata. Execution artifacts, execution code, live trading and capital allocation are unchanged."
+  ]
+}

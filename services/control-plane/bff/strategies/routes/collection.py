@@ -1,6 +1,7 @@
 """Strategy collection routes (list, create)."""
 from __future__ import annotations
 
+from concurrent.futures import Future
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
@@ -12,16 +13,28 @@ from ..service import (
 from ..service import STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES
 from .common import (
     STATUS_RETIRED,
+    STUB_TEST_PERSONA_PROBE,
     StrategyRouteContext,
     _build_ranking_strategy_index,
     operational_counts,
+    strategy_stub_reason,
     summary_persona_ids,
 )
 
 try:
     from services.control_plane.bff.models import ErrorCode
+    from services.control_plane.bff.core.owner_reads import (
+        remaining_management_read_budget,
+        request_read_cache,
+        submit_owner_read,
+    )
 except (ImportError, ValueError):
     from models import ErrorCode
+    from core.owner_reads import (
+        remaining_management_read_budget,
+        request_read_cache,
+        submit_owner_read,
+    )
 
 
 def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
@@ -41,12 +54,70 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         page, next_token = ctx.page_slice(kept, page_token, page_size)
         return page, next_token, len(kept), len(summaries) - len(kept)
 
+    def _prefetch_independent_owner_reads(
+        *,
+        norm_state: Optional[str],
+        norm_exclude_state: Optional[str],
+        persona_id: Optional[str],
+        hide_retired_personas: bool,
+        hide_input_needed: bool,
+        page_token: Optional[str],
+        page_size: int,
+    ) -> Any:
+        """Overlap the independent owner reads with the Persona directory read.
+
+        The Persona directory, the registry summary page and the ranking
+        snapshot do not depend on each other, yet were awaited one after
+        another. Each prefetch runs in a copy of the request context and lands
+        in the per-request read cache, so the handler's own call below joins
+        the in-flight read (value or failure, under the request deadline). It
+        is only done when a request cache exists; without one a prefetch would
+        be a second, uncoordinated read.
+
+        The registry page port may be uncached, so the page read is not left to
+        the cache: its Future is returned and the handler consumes that single
+        result or failure (HTTPException included) instead of reading again.
+        """
+        service = ctx.service
+        if service is None:
+            return None
+        from services.control_plane.bff.personas.service import _PERSONA_FLEET_READ_EXECUTOR
+
+        if request_read_cache.get() is not None:
+            submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                service.get_latest_ranking_snapshot,
+                warm_key="strategy_list_ranking_snapshot",
+            )
+        if hide_retired_personas or hide_input_needed:
+            # The owner-side hide input carries the test Persona ids, which
+            # exist only after the Persona directory read; a page read sent
+            # earlier would be wasted, so none is prefetched.
+            return None
+        try:
+            return submit_owner_read(
+                _PERSONA_FLEET_READ_EXECUTOR,
+                lambda: service.list_strategy_summaries_page(
+                    state=norm_state,
+                    exclude_state=norm_exclude_state,
+                    persona_id=persona_id,
+                    page_token=page_token,
+                    page_size=page_size,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - submission failure is an owner failure
+            failed: Future = Future()
+            failed.set_exception(exc)
+            return failed
+
     @router.get("/bff/strategies")
     def bff_list_strategies(
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
         hide_retired_personas: bool = False,
+        include_test_personas: bool = False,
+        include_test: bool = False,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
@@ -71,9 +142,57 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         snapshot_at = ctx.utc_now()
         detail_by_id: Dict[str, Optional[Dict[str, Any]]] = {}
         state_counts: Optional[Dict[str, int]] = None
+        visible_state_counts: Optional[Dict[str, int]] = None
         # One Persona directory read for the whole request: every row's
         # personaStates, operationalStatus and the hide filter come from it.
+        include_test_personas = include_test_personas or include_test
+        hide_test = not include_test_personas
+        page_future = _prefetch_independent_owner_reads(
+            norm_state=norm_state,
+            norm_exclude_state=norm_exclude_state,
+            persona_id=persona_id,
+            hide_retired_personas=hide_retired_personas,
+            hide_input_needed=hide_test,
+            page_token=page_token,
+            page_size=page_size,
+        )
         persona_lookup = ctx.read_persona_state_lookup(identity, snapshot_at)
+        # Strategies whose personas are all test-scoped are hidden by default
+        # and counted in meta; include_test_personas=true returns them. Only
+        # needed when the one directory read found test-scoped personas.
+        # Unbound synthetic / raw-seed stubs are hidden under the same switch.
+        # The Registry owner excludes the unbound stubs and the rows whose
+        # Personas are all test-scoped in the same read that selects and counts
+        # the page, so hiding never forces a walk over the owner pages. Only
+        # hiding retired Personas still needs the whole candidate set.
+        owner_hide_kwargs: Dict[str, Any] = (
+            {
+                "hide_stubs": True,
+                "hide_persona_ids": sorted(persona_lookup.test_persona_ids)
+                if persona_lookup.available
+                else [],
+            }
+            if hide_test
+            else {}
+        )
+        walk_hide_test = False
+        hidden_test_persona_strategy_count = 0
+        hidden_unbound_stub_strategy_count = 0
+
+        def _hide_test_and_stubs(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            nonlocal hidden_test_persona_strategy_count, hidden_unbound_stub_strategy_count
+            visible: List[Dict[str, Any]] = []
+            for row in rows:
+                reason = strategy_stub_reason(row, persona_lookup)
+                if reason is None:
+                    visible.append(row)
+                elif reason == STUB_TEST_PERSONA_PROBE:
+                    hidden_test_persona_strategy_count += 1
+                else:
+                    hidden_unbound_stub_strategy_count += 1
+            return visible
+
+        walk_for_hiding = hide_retired_personas or walk_hide_test
         # Full candidate set selected by state / exclude_state / persona_id,
         # before the hide filter. None until a path has loaded it.
         candidates: Optional[List[Dict[str, Any]]] = None
@@ -81,6 +200,35 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         operational_counts_failed = False
         operational_counts_reason = "candidate set could not be read"
         hidden_retired_persona_count = 0
+        def _overlap_owner_read(fn: Any) -> Any:
+            from services.control_plane.bff.personas.service import (
+                _PERSONA_FLEET_READ_EXECUTOR,
+            )
+
+            fut = submit_owner_read(_PERSONA_FLEET_READ_EXECUTOR, fn)
+
+            def _join() -> Any:
+                try:
+                    return fut.result(timeout=remaining_management_read_budget())
+                except BaseException:
+                    fut.cancel()
+                    raise
+
+            _join.cancel = fut.cancel  # type: ignore[attr-defined]
+            return _join
+
+        def _join_prefetched_first_page() -> Any:
+            def _join() -> Any:
+                try:
+                    return page_future.result(
+                        timeout=remaining_management_read_budget()
+                    )
+                except BaseException:
+                    page_future.cancel()
+                    raise
+
+            return ctx.service._invoke_read_owner(_join)
+
         bounded_hide = (
             ctx.service.list_strategy_summaries_hide_retired_unfiltered_page(
                 persona_lookup=persona_lookup,
@@ -90,10 +238,22 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 page_slice_fn=ctx.page_slice,
                 page_token=page_token,
                 page_size=page_size,
+                hide_retired=hide_retired_personas,
+                stub_reason_fn=(
+                    (lambda row: strategy_stub_reason(row, persona_lookup))
+                    if hide_test
+                    else None
+                ),
+                test_probe_reason=STUB_TEST_PERSONA_PROBE,
+                owner_hide_kwargs=owner_hide_kwargs,
+                first_page_fn=(
+                    _join_prefetched_first_page if page_future is not None else None
+                ),
+                submit_overlap_fn=_overlap_owner_read,
             )
             if (
                 ctx.service
-                and hide_retired_personas
+                and (hide_retired_personas or walk_hide_test)
                 and norm_state is None
                 and norm_exclude_state is None
                 and persona_id is None
@@ -103,26 +263,69 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
             else None
         )
+        # The walk sends the same owner hide input as the page read, so the
+        # owner hides and counts test / stub rows and returns the visible
+        # counts on its first page (no extra owner call).
         owner_walk = (
             ctx.service.list_all_strategy_summary_pages(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
+                **owner_hide_kwargs,
             )
-            if (ctx.service and hide_retired_personas and bounded_hide is None)
+            if (ctx.service and walk_for_hiding and bounded_hide is None)
             else None
         )
-        owner_page = (
-            ctx.service.list_strategy_summaries_page(
+        if not (ctx.service and bounded_hide is None and owner_walk is None):
+            owner_page = None
+        elif page_future is not None:
+            def _join_page() -> Any:
+                # Bounded by the request deadline; a timeout is translated by
+                # the owner-error envelope and the owner read is not retried.
+                try:
+                    return page_future.result(
+                        timeout=remaining_management_read_budget()
+                    )
+                except BaseException:
+                    page_future.cancel()
+                    raise
+
+            owner_page = ctx.service._invoke_read_owner(_join_page)
+        else:
+            owner_page = ctx.service.list_strategy_summaries_page(
                 state=norm_state,
                 exclude_state=norm_exclude_state,
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
+                **owner_hide_kwargs,
             )
-            if (ctx.service and bounded_hide is None and owner_walk is None)
-            else None
+        # The owner answered the hide input when it returns the visible counts
+        # and the hidden counts by reason from the same read.
+        owner_hid = (
+            isinstance(owner_page, dict)
+            and isinstance(owner_page.get("hidden"), dict)
+            and isinstance(owner_page.get("visible_state_counts"), dict)
         )
+        if (
+            owner_page is not None
+            and hide_test
+            and not owner_hid
+            and persona_lookup.test_persona_ids
+        ):
+            # An owner that does not take the hide input (older Registry): the
+            # page it returned cannot be made exact, so classify the whole
+            # candidate set here as before.
+            owner_page = None
+            owner_walk = ctx.service.list_all_strategy_summary_pages(
+                state=norm_state,
+                exclude_state=norm_exclude_state,
+                persona_id=persona_id,
+            )
+        if bounded_hide is not None and page_future is not None:
+            # A prefetched page that the bounded read did not consume (offset
+            # > 0) is dropped; no-op once it has run.
+            page_future.cancel()
         if bounded_hide is not None:
             page_summaries = list(bounded_hide["page_summaries"])
             next_page_token = bounded_hide["next_page_token"]
@@ -130,18 +333,45 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             hidden_retired_persona_count = int(
                 bounded_hide["hidden_retired_persona_count"]
             )
+            hidden_test_persona_strategy_count = int(
+                bounded_hide.get("hidden_test_persona_strategy_count") or 0
+            )
+            hidden_unbound_stub_strategy_count = int(
+                bounded_hide.get("hidden_unbound_stub_strategy_count") or 0
+            )
             state_counts = bounded_hide["state_counts"]
+            visible_state_counts = bounded_hide.get("visible_state_counts")
             precomputed_operational_counts = bounded_hide["operational_counts"]
         elif owner_walk is not None:
             candidates = list(owner_walk["items"])
+            walk_hidden = owner_walk.get("hidden")
+            if hide_test and owner_walk.get("owner_hid") and isinstance(walk_hidden, dict):
+                # The owner already excluded and counted the test / stub rows
+                # over the whole candidate set.
+                by_reason = walk_hidden.get("by_reason") or {}
+                hidden_test_persona_strategy_count = int(
+                    by_reason.get(STUB_TEST_PERSONA_PROBE) or 0
+                )
+                hidden_unbound_stub_strategy_count = sum(
+                    int(v) for k, v in by_reason.items() if k != STUB_TEST_PERSONA_PROBE
+                )
+                visible_state_counts = owner_walk.get("visible_state_counts")
+            elif hide_test:
+                # Older owner without the hide answer: classify here, counts
+                # stay null (never fabricated).
+                candidates = _hide_test_and_stubs(candidates)
             for summary in candidates:
                 strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip() if isinstance(summary, dict) else ""
                 if not strategy_id:
                     raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy summary entry", "strategy_store_unavailable")
             state_counts = owner_walk["state_counts"]
-            page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
-                candidates, persona_lookup, page_token, page_size
-            )
+            if hide_retired_personas:
+                page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
+                    candidates, persona_lookup, page_token, page_size
+                )
+            else:
+                total = len(candidates)
+                page_summaries, next_page_token = ctx.page_slice(candidates, page_token, page_size)
         elif owner_page is not None:
             if not isinstance(owner_page, dict) or not isinstance(owner_page.get("items"), list):
                 raise ctx.bff_error(503, ErrorCode.DEPENDENCY_UNAVAILABLE, "Invalid strategy list payload", "strategy_store_unavailable")
@@ -154,6 +384,17 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             next_page_token = owner_page.get("next_page_token")
             if ctx.service and hasattr(ctx.service, "resolve_strategy_state_counts"):
                 state_counts = ctx.service.resolve_strategy_state_counts(
+                    owner_page=owner_page
+                )
+            if owner_hid:
+                by_reason = owner_page["hidden"].get("by_reason") or {}
+                hidden_test_persona_strategy_count = int(
+                    by_reason.get(STUB_TEST_PERSONA_PROBE) or 0
+                )
+                hidden_unbound_stub_strategy_count = sum(
+                    int(v) for k, v in by_reason.items() if k != STUB_TEST_PERSONA_PROBE
+                )
+                visible_state_counts = ctx.service.resolve_visible_state_counts(
                     owner_page=owner_page
                 )
             if not next_page_token and page_token in (None, ""):
@@ -172,6 +413,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                         state=norm_state,
                         exclude_state=norm_exclude_state,
                         persona_id=persona_id,
+                        **owner_hide_kwargs,
                     )
                 except Exception:  # noqa: BLE001 - counts degrade, the page itself is unaffected
                     walked = None
@@ -283,6 +525,8 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                         continue
                     filtered_summaries.append(summary)
                 summaries = filtered_summaries
+            if hide_test:
+                summaries = _hide_test_and_stubs(summaries)
             candidates = summaries
             if hide_retired_personas:
                 page_summaries, next_page_token, total, hidden_retired_persona_count = _hide_retired_and_slice(
@@ -291,12 +535,42 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             else:
                 total = len(summaries)
                 page_summaries, next_page_token = ctx.page_slice(summaries, page_token, page_size)
-        ranking_snapshot, ranking_read_failed = (
-            ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
-        )
+        if hide_test and (
+            (owner_page is not None and not owner_hid)
+            or (bounded_hide is not None and not bounded_hide.get("stubs_applied"))
+        ):
+            # Bounded owner page: hide stubs on the returned page and subtract
+            # the stubs found in the candidate set when it was read (exact),
+            # else on the page alone. Hidden counts are never silent.
+            basis = candidates if candidates is not None else page_summaries
+            visible_basis = _hide_test_and_stubs(list(basis))
+            hidden_here = len(basis) - len(visible_basis)
+            if hidden_here:
+                if candidates is not None and candidates is not page_summaries:
+                    page_summaries, next_page_token = ctx.page_slice(
+                        visible_basis, page_token, page_size
+                    )
+                    total = len(visible_basis)
+                else:
+                    page_summaries = [
+                        row for row in page_summaries if strategy_stub_reason(row, persona_lookup) is None
+                    ]
+                    total = max(0, total - hidden_here)
+                if candidates is not None:
+                    candidates = visible_basis
+        try:
+            ranking_snapshot, ranking_read_failed = (
+                ctx.service.get_latest_ranking_snapshot() if ctx.service else (None, False)
+            )
+        except TimeoutError:
+            # Joining the warmed ranking read ran out of request budget. Same
+            # truthful outcome as an owner read failure: telemetry missing,
+            # no retry and no second owner read.
+            ranking_snapshot, ranking_read_failed = None, True
         ranking_index = _build_ranking_strategy_index(
             ranking_snapshot if isinstance(ranking_snapshot, dict) else None
         )
+        runtime_truth = ctx.read_strategy_runtime_truth(snapshot_at, persona_lookup)
         page_items: List[Dict[str, Any]] = []
         for summary in page_summaries:
             strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
@@ -318,6 +592,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                     ranking_read_failed=ranking_read_failed,
                     ranking_index=ranking_index,
                     persona_lookup=persona_lookup,
+                    runtime_truth=runtime_truth,
                 )
             )
         meta = dict(
@@ -329,6 +604,10 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         )
         meta["state_counts"] = state_counts
+        if visible_state_counts is None and not hide_test:
+            # Nothing is hidden, so every counted row is visible.
+            visible_state_counts = state_counts
+        meta["visible_state_counts"] = visible_state_counts
         surfaces = dict(meta.get("surfaces") or {})
         surfaces["persona_states"] = persona_lookup.surface()
         if precomputed_operational_counts is not None and not operational_counts_failed:
@@ -347,6 +626,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             }
         meta["surfaces"] = surfaces
         meta["hidden_retired_persona_count"] = hidden_retired_persona_count
+        meta["hidden_test_persona_strategy_count"] = hidden_test_persona_strategy_count
+        meta["hidden_unbound_stub_strategy_count"] = hidden_unbound_stub_strategy_count
+        meta["include_test_personas"] = bool(include_test_personas)
         return {
             "data": page_items,
             "items": page_items,

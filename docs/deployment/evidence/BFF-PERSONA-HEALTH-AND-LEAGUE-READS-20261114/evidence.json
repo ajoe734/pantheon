@@ -1,0 +1,93 @@
+{
+ "task_id": "BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114",
+ "persona_health": {
+  "change": "_build_persona_health_items_impl calls overlay_source_health_truth(..., thin=True)",
+  "tests": [
+   "test_persona_health_rows_use_thin_source_health_overlay_and_stay_under_1mb (builder rows)",
+   "test_v5_persona_health_full_response_stays_under_1mb_with_heavy_source_health (GET via runtime router; serialized body incl. duplicated data+items; 4 personas x ~1MB source health; without thin the body is 96,353,977 bytes, with thin < 1,000,000)"
+  ],
+  "frontend_consumers_checked": {
+   "repository": "execute-plans (separate checkout /home/chloe_ong_dev_cctech_support_com/code/execute-plans, read via git show/grep only)",
+   "commit": "7a2f02e0bfdef2610f960ffb1fae87fe7ee98df5",
+   "chain": [
+    "src/lib/bff-v1/paths.ts:144 v5ExecutionPersonaHealth",
+    "src/lib/bff-v1/v5Client.ts:129-137 personas.health -> strictItemsFrom -> adaptBffPersonaHealth",
+    "src/lib/bff-v1/v5.ts:449-475 adaptBffPersonaHealth",
+    "src/management/pages/v5/ExecutionLoop.tsx:51 useV5Live(v5.personas.health) -> PersonaHealthMatrix"
+   ],
+   "other_references": "repo-wide grep at that commit finds only tests/mocks/e2e route stubs (src/lib/v5/__tests__/bff.test.ts, e2e/02,03,17,18,19 specs), probe scripts and docs; no other src consumer of the persona-health route",
+   "fields_read_by_adapter": [
+    "id/persona_id/personaId",
+    "name/persona_name/personaName",
+    "mode",
+    "status|health",
+    "score",
+    "suspendedReason/suspended_reason",
+    "routedStrategies/routed_strategies",
+    "openFindings/open_findings",
+    "updatedAt/updated_at"
+   ],
+   "removed_by_thin": "data_source_status.required_source_health/requiredSourceHealth/connector_health/connectorHealth and source_health_bindings (set to []). The adapter never reads any of them and builds a typed DTO, so no consumer field changes.",
+   "caveats": "personaFleetDataSources.ts reads connector_health on the different management persona-fleet surface; this change does not touch that surface. Thin clones existing data_source_status and does not overwrite heavy keys already present on a row; it removes only what the overlay itself adds."
+  }
+ },
+ "dominant_costs_167_personas": {
+  "method": "cProfile of the handler thread, 167 fixture-pack-shaped personas (cloned from B3 fixture records, 8 required sources each), reproduction_script with --cprofile <route>",
+  "persona_health": "Before: 7.7 MB response; per-persona required_source_health/source_health_bindings JSON build, clone and serialisation. Removed by thin=True (response 1.93 MB, handler 0.17 s).",
+  "persona_league": "~46% of handler time was _pm12_attach_ranking_snapshot -> snapshot_record, which built the full content twice, deep-froze every item (RankingSnapshotRecord.__post_init__) and hashed evidence assertions, only to keep ranking_snapshot_id. Removed: id now built from snapshot_content_digest alone (one content pass), asserted equal to snapshot_record().ranking_snapshot_id for several periods.",
+  "persona_league_rankings": "same snapshot cost (removed as above) plus N+1 per-persona get_route_policy_for_persona/get_persona_allowed_actions reads (340 calls for 167 personas), removed by passing include_route_policy/health/allowed_actions=False.",
+  "persona_fleet": "No single item dominates: _pm12_persona_league_rows 0.128 s, per-row projection (_project_persona_fleet_row_impl 0.109 s), quarterly ranking items 0.049 s; it also called _pm12_attach_ranking_snapshot (line 7204), so it gets the snapshot saving. Its before p95 above 2 s in the concurrent run was GIL contention with the 7.7 MB persona-health response.",
+  "not_reproduced": "Hosted store round-trip latency is not reproduced; local stores are in-process."
+ },
+ "parity": {
+  "rankings": "test_pm12_persona_league_rankings_skip_per_persona_summary_reads_with_parity (full serialised response, old vs new row flags)",
+  "snapshot_identity": "test_pm12_attach_ranking_snapshot_id_matches_snapshot_record_identity",
+  "fleet": "test_persona_fleet_rows_identical_with_digest_only_snapshot_identity (items and summary identical with previous full-record identity)",
+  "measurement_byte_sizes": "league 71,649 / rankings 319,585 / fleet 96,286 bytes identical before and after"
+ },
+ "concurrent_measurement_167_personas": {
+  "method": "4 endpoints requested concurrently (4 threads, one per endpoint) x 20 rounds, in-process TestClient, 167 personas; reproduce: save reproduction_script (below) as a file outside the repo and run it from repo root (before = same script against `git archive d7141eb45 services`)",
+  "before_base_d7141eb45": {
+   "persona_health": {
+    "p50_s": 1.946,
+    "p95_s": 2.199,
+    "bytes": 7736160
+   },
+   "persona_league": {
+    "p50_s": 0.65,
+    "p95_s": 1.783
+   },
+   "rankings": {
+    "p50_s": 0.739,
+    "p95_s": 1.931
+   },
+   "persona_fleet": {
+    "p50_s": 1.905,
+    "p95_s": 2.038
+   }
+  },
+  "after": {
+   "persona_health": {
+    "p50_s": 0.722,
+    "p95_s": 0.812,
+    "bytes": 1926772
+   },
+   "persona_league": {
+    "p50_s": 0.552,
+    "p95_s": 0.691
+   },
+   "rankings": {
+    "p50_s": 0.559,
+    "p95_s": 0.726
+   },
+   "persona_fleet": {
+    "p50_s": 0.615,
+    "p95_s": 0.735
+   }
+  },
+  "all_after_p95_under_2s": true,
+  "caveats": "Local in-process measurement on one host; hosted 68 MB / 12.5 s figures are not reproduced and hosted re-measurement remains the release proof. persona-health still returns 1.9 MB for 167 personas locally (other row fields), not changed."
+ },
+ "constraints": "No new cache, setting, endpoint or background job; response shapes unchanged. New tests were added to already registered test files, so bff_test_architecture_inventory.json needed no change (test_bff_test_architecture verified).",
+ "reproduction_script": "\"\"\"167-persona concurrent profile: persona-health, persona-league, rankings, persona-fleet.\nusage: prof.py [--cprofile ROUTE] ; env BEFORE=1 reverts the two read-path changes.\"\"\"\nimport sys, os, json, time, copy, statistics, tempfile, concurrent.futures as cf\nsys.path.insert(0, os.getcwd())\nsys.path.insert(0, os.path.join(os.getcwd(), 'services/control-plane/bff'))\nimport importlib; b3 = importlib.import_module('services.control_plane.bff.tests.test_bff_b3_persona_fleet')\nfrom fastapi.testclient import TestClient\nimport services.control_plane.bff.personas.service as svc\nif os.environ.get(\"BEFORE\"):\n    orig_rows = svc._pm12_persona_league_rows\n    def rows(*a, **k):\n        for x in (\"include_route_policy\",\"include_health\",\"include_allowed_actions\"): k.pop(x, None)\n        return orig_rows(*a, **k)\n    svc._pm12_persona_league_rows = rows\n    orig_ov = svc.overlay_source_health_truth if hasattr(svc, \"overlay_source_health_truth\") else None\n    if orig_ov:\n        def ov(*a, **k):\n            k.pop(\"thin\", None); return orig_ov(*a, **k)\n        svc.overlay_source_health_truth = ov\nN = 167\nwith tempfile.TemporaryDirectory() as td:\n    data = dict(b3._load_default_fixture_pack_datasets())\n    b3._admit_b3_fixture_personas(data)\n    personas = data[\"personas\"]\n    base = [copy.deepcopy(v) for k, v in personas.items() if isinstance(v, dict)]\n    i = 0\n    while len(personas) < N:\n        src = copy.deepcopy(base[i % len(base)]); i += 1\n        pid = f\"persona-prof-{i:03d}\"\n        src[\"persona_id\"] = src[\"id\"] = pid; src[\"name\"] = f\"Prof {i:03d}\"\n        src.setdefault(\"metadata\", {})[\"tenant_id\"] = src.get(\"tenant_id\")\n        # real-shaped heavy requirement list (~tens of KB each)\n        src[\"required_data_sources\"] = [{\"source_key\": f\"s{p}\", \"connector_candidates\": [\"tw-twse-tpex-official-market\"]} for p in range(8)]\n        personas[pid] = src\n    store = b3._PersonaFleetTestStore(data)\n    app = b3._create_app(store)\n    from services.control_plane.bff.runtime.router import create_runtime_router\n    service = app.state.service\n    app.include_router(create_runtime_router(read_surface=store, dependencies={\n        \"_extract_identity\": lambda a=None: type(\"I\",(),{\"operator_id\":\"op\",\"roles\":[\"operator\",\"viewer\"],\"claims\":{\"tenant_id\":b3.B3_ADMITTED_FIXTURE_TENANT_ID},\"mfa_verified\":True,\"__getitem__\":lambda s,k:getattr(s,k)})(),\n        \"_require_read_role\": lambda i: None,\n        \"_dataset_surface_status\": lambda n, snapshot_at=None: {\"status\":\"ok\"},\n        \"_composed_dataset_surface_status\": lambda n, i, snapshot_at=None, source=\"\": {\"status\":\"ok\"},\n        \"_build_persona_health_items\": service.build_persona_health_items,\n        \"utc_now\": lambda: \"2026-11-14T00:00:00Z\"}))\n    client = TestClient(app, raise_server_exceptions=False)\n    H = b3.OPERATOR_HEADERS\n    ROUTES = {\"persona-health\": \"/bff/v5/execution/persona-health\",\n              \"persona-league\": \"/bff/management/persona-league\",\n              \"rankings\": \"/bff/management/persona-league/rankings\",\n              \"persona-fleet\": \"/bff/management/persona-fleet\"}\n    if \"--cprofile\" in sys.argv:\n        import cProfile, pstats\n        r = ROUTES[sys.argv[sys.argv.index(\"--cprofile\")+1]]\n        client.get(r, headers=H)\n        import threading\n        profs = []\n        def mk(*a):\n            pr = cProfile.Profile(); profs.append(pr); pr.enable()\n        threading.setprofile(lambda *a: None)\n        import anyio.to_thread as tt, functools\n        orig = tt.run_sync\n        async def run_sync(func, *a, **k):\n            def wrapped(*x):\n                pr = cProfile.Profile(); pr.enable()\n                try: return func(*x)\n                finally: pr.disable(); profs.append(pr)\n            return await orig(wrapped, *a, **k)\n        tt.run_sync = run_sync\n        import starlette.concurrency as sc; sc.anyio.to_thread.run_sync = run_sync\n        resp = client.get(r, headers=H)\n        st = pstats.Stats(profs[0]); [st.add(x) for x in profs[1:]]\n        print(resp.status_code, len(resp.content), \"profiled threads\", len(profs)); st.strip_dirs().sort_stats(\"cumtime\").print_stats(22); sys.exit()\n    for k, r in ROUTES.items():\n        resp = client.get(r, headers=H); print(k, resp.status_code, len(resp.content), \"personas\", len(personas))\n    lat = {k: [] for k in ROUTES}\n    def one(k):\n        t = time.perf_counter(); resp = client.get(ROUTES[k], headers=H); lat[k].append(time.perf_counter()-t); assert resp.status_code == 200, (k, resp.status_code)\n    for rnd in range(int(os.environ.get(\"ROUNDS\", 10))):\n        with cf.ThreadPoolExecutor(4) as ex: list(ex.map(one, ROUTES))\n    out = {}\n    for k, v in lat.items():\n        v.sort(); out[k] = {\"n\": len(v), \"p50_s\": round(statistics.median(v), 3), \"p95_s\": round(v[max(0, int(len(v)*0.95+0.5)-1)], 3)}\n    print(json.dumps(out, indent=1))\n"
+}

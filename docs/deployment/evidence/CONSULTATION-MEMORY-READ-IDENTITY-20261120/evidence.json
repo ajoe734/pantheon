@@ -1,0 +1,18 @@
+{
+  "task_id": "CONSULTATION-MEMORY-READ-IDENTITY-20261120",
+  "owner": "Claude",
+  "assigned_reviewer": "Antigravity",
+  "delivered": [
+    "scripts/issue_dev_paper_principals.py: CONSULTATION_MEMORY_READ_TOKEN (sub pantheon-dev-consultation-memory-reader, role consultation_session) mounted for consultation-svc only; write principal stays roles [consultation-svc]",
+    "docker-compose.yml: CONSULTATION_MEMORY_READ_TOKEN_FILE, PANTHEON_MEMORY_READ_ACTOR_ID/ROLES; removed empty PANTHEON_MEMORY_ACTOR_ID/ROLES",
+    "services/consultation/workflow_executor.py: memory_read_identity() (token, actor_id, non-empty roles) used by panel case file and probe",
+    "services/consultation/meetings.py: pre-read uses read identity; refusal named in meeting.memory_read_refusals, never blocks, kept off the provider request so retry idempotency holds"
+  ],
+  "tests": {
+    "command": "pytest scripts/test_issue_dev_paper_principals.py services/consultation/test_workflow_executor.py services/consultation/tests/test_persona_meetings.py",
+    "result": "132 passed"
+  },
+  "token_handling": "No token value appears in this file, logs, or error text.",
+  "hosted_proof": "pending: after deploy, a new pool envelope publication must compose its panel case file with no caller_context_missing and no memory 403; the persona-loop owner records it",
+  "review_independence": "Reviewer Antigravity; if no other model family has capacity, record the exception."
+}

@@ -30,7 +30,20 @@ DEV_BFF_AUTH_READINESS_POLL_INTERVAL_SECONDS="${DEV_BFF_AUTH_READINESS_POLL_INTE
 DEV_DEPLOY_DEADLINE_SECONDS="${DEV_DEPLOY_DEADLINE_SECONDS:-${DEV_DEPLOY_TIMEOUT_SECONDS:-7200}}"
 DEV_ROLLBACK_BACKEND_SHA="${DEV_ROLLBACK_BACKEND_SHA:-${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-}}"
 DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
+# Dev functional checks are advisory by default (DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117);
+# --strict-functional-checks restores the legacy blocking/rollback behaviour.
+STRICT_FUNCTIONAL_CHECKS="${STRICT_FUNCTIONAL_CHECKS:-false}"
 PANTHEON_DEV_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER-${DEV_PAPER_EXPRESSION_LAYER-off}}"
+DEV_EVOLUTION_AUTO_CONSUMER_ENABLED="${DEV_EVOLUTION_AUTO_CONSUMER_ENABLED:-${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}}"
+DEV_L2_EXTRACTION_ENABLED="${DEV_L2_EXTRACTION_ENABLED:-false}"
+DEV_L2_EXTRACTION_DAILY_CALL_CAP="${DEV_L2_EXTRACTION_DAILY_CALL_CAP:-400}"
+DEV_MEMORY_LLM_BRIDGE_ENABLED="${DEV_MEMORY_LLM_BRIDGE_ENABLED:-false}"
+DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET="${DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}"
+DEV_PERSONA_EVALUATOR_PAPER_POOL_ID="${DEV_PERSONA_EVALUATOR_PAPER_POOL_ID:-${PERSONA_EVALUATOR_PAPER_POOL_ID:-pool-paper-default}}"
+DEV_PERSONA_RANKING_TOKEN_FILE="${DEV_PERSONA_RANKING_TOKEN_FILE:-${PERSONA_RANKING_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RANKING_TOKEN}}"
+DEV_PERSONA_ALLOCATION_TOKEN_FILE="${DEV_PERSONA_ALLOCATION_TOKEN_FILE:-${PERSONA_ALLOCATION_TOKEN_FILE:-/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN}}"
+DEV_SHADOW_REPLAY_AGENT_ID="${DEV_SHADOW_REPLAY_AGENT_ID:-${PANTHEON_SHADOW_REPLAY_AGENT_ID:-}}"
+DEV_SHADOW_REPLAY_POLICY_URL="${DEV_SHADOW_REPLAY_POLICY_URL:-${PANTHEON_SHADOW_REPLAY_POLICY_URL:-}}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
 # compose file defaults. When strict mode is requested without them, the
@@ -82,6 +95,8 @@ DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_
 # interactive-login session.
 DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}"
 DEV_OPENCLAW_ANTHROPIC_API_KEY="${DEV_OPENCLAW_ANTHROPIC_API_KEY:-}"
+DEV_OPENCLAW_OPENAI_API_KEY="${DEV_OPENCLAW_OPENAI_API_KEY:-}"
+DEV_OPENCLAW_OPENAI_API_KEY_2="${DEV_OPENCLAW_OPENAI_API_KEY_2:-}"
 DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}"
 DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
 DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
@@ -140,8 +155,18 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" ]]; then
   SOURCE_REFRESH_RESTART_POLICY="no"
 else
   # The default owner is a durable internal reconciler. Provider egress stays
-  # available only through the explicit bounded profile above.
-  SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  # available only through the explicit bounded profile above, or, when
+  # SOURCE_INGEST_STEADY_COLLECTOR_PULL=true is configured with exactly one
+  # PANTHEON_COLLECTOR_HOST, the continuous Collector-only pull.
+  if [[ "${SOURCE_INGEST_STEADY_COLLECTOR_PULL:-}" == "true" ]]; then
+    if [[ -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+      echo "[nonprod-deploy] ERROR: SOURCE_INGEST_STEADY_COLLECTOR_PULL=true requires PANTHEON_COLLECTOR_HOST" >&2
+      exit 1
+    fi
+    SOURCE_REFRESH_CONTROLLER_MODE="collector_steady_pull"
+  else
+    SOURCE_REFRESH_CONTROLLER_MODE="reconcile_only"
+  fi
   SOURCE_REFRESH_TRUTH_LEVEL="scheduled_tick"
   SOURCE_REFRESH_MAX_TICKS="0"
   SOURCE_REFRESH_RESTART_POLICY="unless-stopped"
@@ -150,6 +175,14 @@ SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
 SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-tw-twse-tpex-official-market}"
 SOURCE_REFRESH_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}"
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three TWSE/TPEx official chip profiles store the whole
+# session (~1310 rows) in one run; a smaller per-job cap would reject or cut it, so lift it to the profile budget.
+case "${SOURCE_REFRESH_CONNECTOR_ID}" in
+  tw-official-twse-margin-balances|tw-official-tpex-margin-balances|tw-official-tpex-institutional-flow)
+    if [[ "${SOURCE_REFRESH_MAX_RECORDS}" =~ ^[0-9]+$ ]] && (( SOURCE_REFRESH_MAX_RECORDS < 3000 )); then
+      SOURCE_REFRESH_MAX_RECORDS="3000"
+    fi ;;
+esac
 SOURCE_REFRESH_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-1800}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
@@ -397,6 +430,10 @@ Options:
   --output <path>        With --refresh-only: write JSON execution outcome to path.
   --preflight-only       With --refresh-only: run only the Taiwan closed-session preflight (no
                          refresh, no stack change) and write its JSON outcome to --output.
+  --strict-functional-checks
+                         dev root only: keep the in-script functional checks (paper fleet,
+                         evolution daily sweep, trade journey residual, bounded refresh
+                         readback) blocking with in-script rollback. Default: advisory.
   --help                 Show this message.
 
 Environment overrides:
@@ -443,6 +480,7 @@ Environment overrides:
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN
   DEV_OPENCLAW_ANTHROPIC_API_KEY DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID
+  DEV_OPENCLAW_OPENAI_API_KEY DEV_OPENCLAW_OPENAI_API_KEY_2
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
   DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
@@ -553,6 +591,8 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-$DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}"
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-$DEV_OPENCLAW_ANTHROPIC_API_KEY}"
+  PANTHEON_OPENCLAW_OPENAI_API_KEY="${PANTHEON_OPENCLAW_OPENAI_API_KEY:-$DEV_OPENCLAW_OPENAI_API_KEY}"
+  PANTHEON_OPENCLAW_OPENAI_API_KEY_2="${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-$DEV_OPENCLAW_OPENAI_API_KEY_2}"
   PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-$DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID}"
 }
 
@@ -611,8 +651,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --refresh-only) REFRESH_ONLY=true; shift ;;
     --non-blocking) NON_BLOCKING_REFRESH=true; shift ;;
+    --strict-functional-checks) STRICT_FUNCTIONAL_CHECKS=true; shift ;;
     --force) FORCE_REFRESH=true; shift ;;
     --preflight-only) PREFLIGHT_ONLY=true; shift ;;
+    --steady-check) STEADY_CHECK=true; shift ;;
+    # One bounded runtime per run: every profile call of the run passes the same union of hosts.
+    --bounded-runtime-run) export PANTHEON_BOUNDED_RUNTIME_RUN=true; shift ;;
+    --run-hosts) export PANTHEON_BOUNDED_RUNTIME_HOSTS="${2:-}"; shift 2 ;;
+    --run-finmind) export PANTHEON_BOUNDED_RUNTIME_FINMIND=true; shift ;;
+    --run-max-records) export PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS="${2:-}"; shift 2 ;;
     --output) REFRESH_OUTPUT_PATH="${2:-}"; shift 2 ;;
     --connector-id) export SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${2:-}"; SOURCE_REFRESH_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"; shift 2 ;;
     --allowed-hosts) export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${2:-}"; SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}"; shift 2 ;;
@@ -709,6 +756,13 @@ case "$PANTHEON_DEV_PAPER_EXPRESSION_LAYER" in
   *) error "PANTHEON_DEV_PAPER_EXPRESSION_LAYER must be on or off (got: ${PANTHEON_DEV_PAPER_EXPRESSION_LAYER})" ;;
 esac
 
+case "$DEV_L2_EXTRACTION_ENABLED" in
+  true|false) ;;
+  *) error "DEV_L2_EXTRACTION_ENABLED must be true or false" ;;
+esac
+[[ "$DEV_L2_EXTRACTION_DAILY_CALL_CAP" =~ ^[1-9][0-9]*$ ]] \
+  || error "DEV_L2_EXTRACTION_DAILY_CALL_CAP must be a positive integer"
+
 configure_management_ai_dev_env
 configure_management_ai_dev_kernel_env
 
@@ -751,6 +805,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_claude_code_oauth_token_configured=$([[ -n "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_openclaw_anthropic_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}" ]] && echo true || echo false)"
+  info "dev_openclaw_openai_api_key_configured=$([[ -n "${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}" ]] && echo true || echo false)"
+  info "dev_openclaw_openai_api_key_2_configured=$([[ -n "${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}" ]] && echo true || echo false)"
   info "dev_openclaw_anthropic_workspace_id_configured=$([[ -n "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
@@ -909,14 +965,50 @@ if [[ "${REFRESH_ONLY:-false}" == "true" && -n "${DEV_DEPLOY_SSH_HOST:-}" ]]; th
   DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
 fi
 
+# A copied-back refresh outcome must carry the call id this call generated. An outcome
+# that does not (another call, a left-over process, a stale file) is replaced by a failed
+# record naming the mismatch. A missing or empty file is left to the existing handling.
+verify_refresh_outcome_belongs_to_call() {
+  local path="$1" call_id="$2"
+  [[ -s "${path}" ]] || return 0
+  python3 - "${path}" "${call_id}" <<'CALL_ID_PY' || true
+import json, pathlib, sys
+path, expected = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    data = None
+actual = data.get("call_id") if isinstance(data, dict) else None
+if actual == expected:
+    raise SystemExit(0)
+payload = {
+    "call_id_expected": expected,
+    "call_id_found": actual if isinstance(actual, str) else "",
+    "log": "",
+    "reason": "outcome_call_mismatch: outcome file did not carry this call's id (expected %s, found %s)" % (expected, actual if isinstance(actual, str) and actual else "none"),
+    "status": "failed",
+}
+if isinstance(data, dict):
+    for key in ("connector_id", "dataset"):
+        if isinstance(data.get(key), str):
+            payload[key] = data[key]
+path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+CALL_ID_PY
+  return 0
+}
+
 ssh_bash() {
   local vm="$1"
   local zone="$2"
   local remote_dir="$3"
   local remote_component="$4"
-  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output=""
+  local command_prefix="" deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}" remote_command=() remote_output="" refresh_call_id=""
   if [[ "${remote_component}" == "refresh-only" ]]; then
-    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${GITHUB_RUN_ID:-$$}.json"
+    # Every call owns a unique remote outcome path. Steps of one run (and a refresh process
+    # left running after its step timed out) can therefore never write the file another call
+    # copies back. The run-id prefix lets the steady check of the same run clean leftovers.
+    refresh_call_id="${GITHUB_RUN_ID:-$$}-$(date -u +%s)-$$-${RANDOM}${RANDOM}"
+    [[ -z "${REFRESH_OUTPUT_PATH:-}" ]] || remote_output="/tmp/pantheon-refresh-outcome-${refresh_call_id}.json"
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=refresh-only"
     command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:+${PANTHEON_DEPLOY_WORKTREE_ROOT%/}/dev-root}")"
@@ -924,19 +1016,29 @@ ssh_bash() {
     command_prefix+=" FORCE_REFRESH=$(shell_quote "${FORCE_REFRESH:-false}")"
     command_prefix+=" NON_BLOCKING_REFRESH=$(shell_quote "${NON_BLOCKING_REFRESH:-false}")"
     command_prefix+=" PREFLIGHT_ONLY=$(shell_quote "${PREFLIGHT_ONLY:-false}")"
+    command_prefix+=" STEADY_CHECK=$(shell_quote "${STEADY_CHECK:-false}")"
     command_prefix+=" REFRESH_OUTPUT_PATH=$(shell_quote "${remote_output}")"
+    command_prefix+=" PANTHEON_REFRESH_CALL_ID=$(shell_quote "${refresh_call_id}")"
+    command_prefix+=" PANTHEON_REFRESH_RUN_ID=$(shell_quote "${GITHUB_RUN_ID:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_CONNECTOR_ID=$(shell_quote "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}")"
     command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}")"
     command_prefix+=" SOURCE_INGEST_BOUNDED_DATASET=$(shell_quote "${SOURCE_INGEST_BOUNDED_DATASET:-}")"
+    command_prefix+=" SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=$(shell_quote "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}")"
+    command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_INGEST_MAX_RECORDS:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_HOST=$(shell_quote "${PANTHEON_COLLECTOR_HOST:-}")"
     command_prefix+=" PANTHEON_COLLECTOR_BUNDLE_TOKEN=$(shell_quote "${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}")"
     command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
+    command_prefix+=" PANTHEON_BOUNDED_RUNTIME_RUN=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_RUN:-false}")"
+    command_prefix+=" PANTHEON_BOUNDED_RUNTIME_HOSTS=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}")"
+    command_prefix+=" PANTHEON_BOUNDED_RUNTIME_FINMIND=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}")"
+    command_prefix+=" PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS:-}")"
     command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
     command_prefix+=" PANTHEON_DEPLOY_COMPONENT=$(shell_quote "$remote_component")"
     command_prefix+=" PANTHEON_DEPLOY_SHA=$(shell_quote "$DEPLOY_SHA")"
     command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
+    command_prefix+=" DEV_DEPLOY_DEADLINE_SECONDS=$(shell_quote "${deadline_seconds}")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" FINMIND_API_TOKEN=$(shell_quote "${FINMIND_API_TOKEN:-}")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
@@ -981,10 +1083,21 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "${DEV_FE_STATIC_ROOT:-}")"
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=$(shell_quote "${STRICT_FUNCTIONAL_CHECKS:-false}")"
   command_prefix+=" PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED=$(shell_quote "$DEV_PAPER_PRINCIPALS_AUTHORIZED")"
   command_prefix+=" PANTHEON_DEV_CAPITAL_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
   command_prefix+=" PANTHEON_DEV_PAPER_EXPRESSION_LAYER=$(shell_quote "$PANTHEON_DEV_PAPER_EXPRESSION_LAYER")"
+  command_prefix+=" PANTHEON_DEV_EVOLUTION_AUTO_CONSUMER_ENABLED=$(shell_quote "$DEV_EVOLUTION_AUTO_CONSUMER_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_L2_EXTRACTION_ENABLED=$(shell_quote "$DEV_L2_EXTRACTION_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_L2_EXTRACTION_DAILY_CALL_CAP=$(shell_quote "$DEV_L2_EXTRACTION_DAILY_CALL_CAP")"
+  command_prefix+=" PANTHEON_DEV_MEMORY_LLM_BRIDGE_ENABLED=$(shell_quote "$DEV_MEMORY_LLM_BRIDGE_ENABLED")"
+  command_prefix+=" PANTHEON_DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET=$(shell_quote "$DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET")"
+  command_prefix+=" PANTHEON_DEV_PERSONA_EVALUATOR_PAPER_POOL_ID=$(shell_quote "$DEV_PERSONA_EVALUATOR_PAPER_POOL_ID")"
+  command_prefix+=" PANTHEON_DEV_PERSONA_RANKING_TOKEN_FILE=$(shell_quote "$DEV_PERSONA_RANKING_TOKEN_FILE")"
+  command_prefix+=" PANTHEON_DEV_PERSONA_ALLOCATION_TOKEN_FILE=$(shell_quote "$DEV_PERSONA_ALLOCATION_TOKEN_FILE")"
+  command_prefix+=" PANTHEON_DEV_SHADOW_REPLAY_AGENT_ID=$(shell_quote "$DEV_SHADOW_REPLAY_AGENT_ID")"
+  command_prefix+=" PANTHEON_DEV_SHADOW_REPLAY_POLICY_URL=$(shell_quote "$DEV_SHADOW_REPLAY_POLICY_URL")"
   command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "${DEV_BFF_PUBLIC_HOST:-}")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
@@ -1021,6 +1134,18 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
   command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
+  # Preserve an existing host .env when no override was supplied. Explicit
+  # memory-index secrets/settings use the same private transport as BFF auth.
+  local memory_index_env
+  for memory_index_env in MEMORY_INDEX_POSTGRES_PASSWORD HINDSIGHT_API_KEY \
+    HINDSIGHT_RETAIN_LLM_PROVIDER HINDSIGHT_RETAIN_LLM_MODEL HINDSIGHT_RETAIN_LLM_API_KEY \
+    HINDSIGHT_CONSOLIDATION_LLM_PROVIDER HINDSIGHT_CONSOLIDATION_LLM_MODEL HINDSIGHT_CONSOLIDATION_LLM_API_KEY \
+    HINDSIGHT_REFLECT_LLM_PROVIDER HINDSIGHT_REFLECT_LLM_MODEL HINDSIGHT_REFLECT_LLM_API_KEY \
+    HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_API_KEY; do
+    if [[ -v "$memory_index_env" ]]; then
+      command_prefix+=" ${memory_index_env}=$(shell_quote "${!memory_index_env}")"
+    fi
+  done
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}")"
@@ -1030,11 +1155,17 @@ ssh_bash() {
   command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_OPENAI_API_KEY=$(shell_quote "${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_OPENAI_API_KEY_2=$(shell_quote "${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}")"
   command_prefix+=" PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID=$(shell_quote "${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-false}")"
+  command_prefix+=" OPENCLAW_MODEL_CHAIN=$(shell_quote "${OPENCLAW_MODEL_CHAIN:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_DANGLING_IMAGE_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE=$(shell_quote "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE=$(shell_quote "${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}")"
+  command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}")"
   command_prefix+=" PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB=$(shell_quote "${PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB:-25}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED=$(shell_quote "${PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED:-3}")"
   command_prefix+=" PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN=$(shell_quote "${PANTHEON_DEV_ARTIFACT_RETENTION_DRY_RUN:-false}")"
@@ -1092,10 +1223,17 @@ ssh_bash() {
       FORCE_REFRESH="${FORCE_REFRESH:-false}" \
       NON_BLOCKING_REFRESH="${NON_BLOCKING_REFRESH:-false}" \
       PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-false}" \
+      STEADY_CHECK="${STEADY_CHECK:-false}" \
       REFRESH_OUTPUT_PATH="${REFRESH_OUTPUT_PATH:-}" \
       SOURCE_INGEST_BOUNDED_CONNECTOR_ID="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" \
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
       SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+      SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS:-}" \
+      SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-}" \
+      PANTHEON_BOUNDED_RUNTIME_RUN="${PANTHEON_BOUNDED_RUNTIME_RUN:-false}" \
+      PANTHEON_BOUNDED_RUNTIME_HOSTS="${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}" \
+      PANTHEON_BOUNDED_RUNTIME_FINMIND="${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}" \
+      PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS="${PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS:-}" \
       bash -s
       return $?
     fi
@@ -1160,6 +1298,7 @@ with os.fdopen(fd, "wb") as stream:
       fi
       if [[ "${remote_component}" == "refresh-only" && -n "${remote_output:-}" && -n "${REFRESH_OUTPUT_PATH:-}" ]]; then
         "$SCRIPT_DIR/dev_vm_ssh.sh" copy-from "${remote_output}" "${REFRESH_OUTPUT_PATH}" || true
+        verify_refresh_outcome_belongs_to_call "${REFRESH_OUTPUT_PATH}" "${refresh_call_id}"
         "$SCRIPT_DIR/dev_vm_ssh.sh" exec "rm -f $(shell_quote "${remote_output}")" >/dev/null 2>&1 || true
       fi
       if [[ "${remote_component}" == "refresh-only" && "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
@@ -1284,8 +1423,15 @@ validate_source_refresh_profile() {
       [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
         || error "external host allowlist requires the bounded source-ingest-scheduler profile"
     fi
-    [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
-      || error "default source-ingest owner must use reconcile_only mode"
+    if [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "collector_steady_pull" ]]; then
+      [[ -n "${PANTHEON_COLLECTOR_HOST:-}" \
+        && "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" \
+        && "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" == "${PANTHEON_COLLECTOR_HOST}" ]] \
+        || error "collector_steady_pull requires egress allowlist of exactly PANTHEON_COLLECTOR_HOST"
+    else
+      [[ "${SOURCE_INGEST_CONTROLLER_MODE:-}" == "reconcile_only" ]] \
+        || error "default source-ingest owner must use reconcile_only or collector_steady_pull mode"
+    fi
     [[ "${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-}" == "scheduled_tick" ]] \
       || error "default source-ingest owner must use scheduled_tick truth"
     [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" == "0" ]] \
@@ -1312,8 +1458,8 @@ validate_source_refresh_profile() {
     && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
     || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
   [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
-    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
-    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
+    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 5000 )) \
+    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 5000"
   [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
     || error "SOURCE_INGEST_BOUNDED_CONNECTOR_ID must contain one exact connector id"
   if [[ -n "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -1328,6 +1474,7 @@ validate_source_refresh_profile() {
 import sys
 
 from services.external_egress import allowed_hosts
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
 
 hosts = allowed_hosts(
     {
@@ -1338,7 +1485,17 @@ hosts = allowed_hosts(
 if not hosts:
     raise SystemExit("source refresh exact host allowlist is empty")
 dataset = sys.argv[3] if len(sys.argv) > 3 else ""
-if sys.argv[2] == "tw-twse-tpex-official-market":
+profile = TW_CHIP_REFRESH_PROFILES.get(sys.argv[2])
+if profile is not None:
+    required = ({"openapi.taifex.com.tw", "www.taifex.com.tw"}
+                if profile["base"] == "tw-taifex-futures-options-chip"
+                else {"api.finmindtrade.com"} if profile["base"] == "tw-finmind-fundamentals"
+                else {"openapi.twse.com.tw", "www.tpex.org.tw"})
+    if hosts != required:
+        raise SystemExit("chip refresh requires exact hosts: " + ",".join(sorted(required)))
+    if dataset != profile["dataset"]:
+        raise SystemExit(f"chip refresh dataset mismatch: {dataset!r} != {profile['dataset']!r}")
+elif sys.argv[2] == "tw-twse-tpex-official-market":
     required = {"openapi.twse.com.tw", "www.tpex.org.tw"}
     if hosts != required:
         raise SystemExit(
@@ -1377,7 +1534,7 @@ PY
   # Real official-source pulls plus durable/index readback can exceed the
   # controller's ordinary 30s RPC budget. Keep this dev proof finite and no
   # longer than its outer deadline; ordinary reconcile-only mode is unchanged.
-  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 120 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 120 ))"
+  export SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS="$(( SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS < 300 ? SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS : 300 ))"
   export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-taifex-futures-options-chip" && -z "${SOURCE_INGEST_BOUNDED_DATASET:-}" ]]; then
@@ -1433,8 +1590,12 @@ REQUIRED_LOOP_WORKERS=(
   operator-bff
   loop-run-projector-scheduler
   # shared search index behind source + agora reads
+  retrieval-postgres
   search-svc
   search-index-scheduler
+  # Rebuildable memory index; gate both before accepting a root release.
+  memory-index-postgres
+  hindsight
 )
 
 validate_required_loop_workers() {
@@ -1462,16 +1623,17 @@ curl_with_retry() {
   local url="$1"
   local attempts="${2:-12}"
   local delay="${3:-5}"
+  local curl_options=("${@:4}")
   local i
 
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "$url" >/dev/null; then
+    if curl -fsS "${curl_options[@]}" "$url" >/dev/null; then
       return 0
     fi
     sleep "$delay"
   done
 
-  curl -fsS "$url" >/dev/null
+  curl -fsS "${curl_options[@]}" "$url" >/dev/null
 }
 
 wait_for_exact_bff_lifecycle_readiness() {
@@ -1563,11 +1725,20 @@ wait_for_bounded_source_refresh_service() {
         sleep 5
         ;;
       *)
+        dump_bounded_refresh_container_logs "${service}" "${container_id}"
         error "bounded source refresh service ${service} has unexpected state ${state}"
         ;;
     esac
   done
 
+  if [[ -z "${container_id}" ]]; then
+    if [[ -n "${container_name}" ]]; then
+      container_id="$(docker ps -a -q --filter "name=^${container_name}\$" 2>/dev/null || true)"
+    else
+      container_id="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "$service" 2>/dev/null || true)"
+    fi
+  fi
+  dump_bounded_refresh_container_logs "${service}" "${container_id}"
   error "bounded source refresh service ${service} did not reach terminal state within ${timeout_seconds}s"
 }
 
@@ -1702,16 +1873,23 @@ verify_bounded_source_refresh_readback() {
   local finmind_records_file=""
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" == "tw-finmind-broker-daily-report" ]]; then
     finmind_records_file="$(mktemp)"
-    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+    fetch_finmind_source_records "${finmind_records_file}" "${deploy_started_at}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
   fi
-  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - \
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
+  local readback_verdict_file="" readback_err_file="" readback_py_rc=0
+  readback_verdict_file="$(mktemp)"
+  readback_err_file="$(mktemp)"
+  if ! FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    BOUNDED_REFRESH_VERDICT_PATH="${readback_verdict_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
+    python3 - \
     "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     "${deploy_started_at}" \
     "${evidence_dir}/receipts.json" \
     "${evidence_dir}/readback.json" \
     "${evidence_dir}/agora_watchlist.json" \
     "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
-    "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'PY'
+    "${SOURCE_INGEST_BOUNDED_DATASET:-}" 2>"${readback_err_file}" <<'PY'
 import json
 import math
 import os
@@ -1724,6 +1902,15 @@ from pathlib import Path
 from services.execution.market_snapshot_admission import (
     evaluate_taiwan_market_freshness,
     is_taiwan_symbol,
+)
+
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
 )
 
 
@@ -1745,6 +1932,13 @@ bounded_dataset = (
 expected_dataset = bounded_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip" else ""
 )
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+if profile is not None and expected_dataset != profile["dataset"]:
+    raise SystemExit(
+        f"bounded chip dataset is outside the governed profile: "
+        f"connector={connector_id!r} actual={expected_dataset!r} != expected={profile['dataset']!r}"
+    )
 started = timestamp(deploy_started_at)
 receipts = load(receipts_path).get("receipts") or []
 candidates = [
@@ -1761,7 +1955,10 @@ candidates = [
     )
 ]
 if not candidates:
-    raise SystemExit("bounded source refresh produced no new successful source-time-valid receipt")
+    raise SystemExit(
+        f"bounded source refresh produced no new successful source-time-valid receipt: "
+        f"connector={connector_id!r} deploy_started_at={started.isoformat()!r} total_receipts={len(receipts)}"
+    )
 receipt = max(candidates, key=lambda item: timestamp(item.get("finished_at") or item.get("created_at")))
 run_id = str(receipt["ingest_run_id"])
 
@@ -1771,7 +1968,11 @@ connector = next(
     None,
 )
 if connector is None:
-    raise SystemExit("bounded source refresh connector is absent from controller readback")
+    present_ids = [item.get("connector_id") for item in connectors if isinstance(item, dict)]
+    raise SystemExit(
+        f"bounded source refresh connector is absent from controller readback: "
+        f"expected={connector_id!r} present={present_ids!r}"
+    )
 freshness = connector.get("freshness") if isinstance(connector.get("freshness"), dict) else {}
 latest_receipt = freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), dict) else {}
 latest_record = connector.get("latest_source_record") if isinstance(connector.get("latest_source_record"), dict) else {}
@@ -1779,18 +1980,150 @@ provenance = latest_record.get("provenance") if isinstance(latest_record.get("pr
 record_metadata = latest_record.get("metadata") if isinstance(latest_record.get("metadata"), dict) else {}
 source_id = str(latest_record.get("source_id") or "")
 if latest_receipt.get("ingest_run_id") != run_id:
-    raise SystemExit("controller freshness does not bind the new ingest receipt")
+    raise SystemExit(
+        f"controller freshness does not bind the new ingest receipt: "
+        f"latest_receipt.ingest_run_id={latest_receipt.get('ingest_run_id')!r} != expected_run_id={run_id!r}"
+    )
 if freshness.get("source_timestamp_status") != "valid":
-    raise SystemExit("controller freshness does not report valid provider source time")
+    raise SystemExit(
+        f"controller freshness does not report valid provider source time: "
+        f"source_timestamp_status={freshness.get('source_timestamp_status')!r} != 'valid'"
+    )
 if provenance.get("source_ingest_run_id") != run_id or not source_id:
-    raise SystemExit("controller source record does not bind the new ingest run")
+    raise SystemExit(
+        f"controller source record does not bind the new ingest run: "
+        f"provenance.source_ingest_run_id={provenance.get('source_ingest_run_id')!r} expected_run_id={run_id!r} source_id={source_id!r}"
+    )
 actual_dataset = str(provenance.get("dataset") or record_metadata.get("dataset") or "").strip()
-if expected_dataset and (connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
+if expected_dataset and (profile is not None or connector_id == "tw-taifex-futures-options-chip" or actual_dataset):
     if actual_dataset != expected_dataset:
         raise SystemExit(
             f"controller source record dataset mismatch for {connector_id}: "
             f"{actual_dataset!r} != {expected_dataset!r}"
         )
+chip_verdict = None
+if profile is not None:
+    expected_schema = profile["schema_hash"]
+    actual_schema = provenance.get("schema_hash") or record_metadata.get("schema_hash")
+    if actual_schema != expected_schema:
+        raise SystemExit(
+            f"bounded chip schema mismatch: connector={connector_id!r} actual={actual_schema!r} != expected={expected_schema!r}"
+        )
+    if profile["base"] == "tw-finmind-fundamentals":
+        allowed_prefixes = (f"finmind:{expected_dataset}:", f"tw-official:{expected_dataset}:")
+        expected_prefix = allowed_prefixes[0]
+    else:
+        prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+        expected_prefix = f"{prefix}:{expected_dataset}:"
+        allowed_prefixes = (expected_prefix,)
+    if not source_id.startswith(allowed_prefixes):
+        raise SystemExit(
+            f"bounded chip source identity does not bind the dataset: "
+            f"source_id={source_id!r} expected_prefix={expected_prefix!r}"
+        )
+    if profile.get("venues") and record_metadata.get("venue") not in profile["venues"]:
+        raise SystemExit(
+            f"bounded chip venue is outside the governed profile: "
+            f"venue={record_metadata.get('venue')!r} allowed={profile['venues']!r}"
+        )
+    row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
+    from datetime import time as _time, timedelta
+    from services.source_ingestion.chip_publication_schedule import (
+        CHIP_PUBLICATION_SCHEDULES,
+        evaluate_chip_provider_session,
+        expected_finmind_fundamental_period_ends,
+        latest_published_chip_session,
+    )
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def _is_session_day(day):
+        calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
+
+    record_session_date, session_err = derive_chip_record_provider_session(
+        connector_id,
+        record_metadata,
+        provenance,
+        latest_receipt,
+        freshness,
+        is_session_day=_is_session_day,
+    )
+    record_date = record_session_date.isoformat() if record_session_date is not None else ""
+    if connector_id in CHIP_PUBLICATION_SCHEDULES:
+        if record_session_date is None:
+            raise SystemExit(session_err)
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_date,
+            now=started,
+            is_session_day=_is_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
+        coverage = (
+            chip_row_coverage_outcome(
+                connector_id,
+                record_metadata,
+                receipt.get("normalized_count"),
+                record_session_date,
+                chip_verdict.expected_session,
+            )
+            if chip_verdict.status == "published"
+            else None
+        )
+        if coverage is not None:
+            print("chip_coverage " + json.dumps(coverage, sort_keys=True))
+            if coverage["status"] == "coverage_unverified_image_predates_full_market":
+                print("WARNING " + coverage["status"] + ": " + coverage["detail"], file=sys.stderr)
+            elif coverage["is_failure"]:
+                raise SystemExit(f"{coverage['status']}: {coverage['detail']}")
+    elif profile["base"] == "tw-finmind-fundamentals":
+        from services.source_ingestion.connectors.finmind_taiwan import (
+            latest_published_broker_session,
+        )
+
+        expected_session = latest_published_broker_session(started, is_session_day=_is_session_day)
+        expected_period_ends = tuple(
+            d.isoformat() for d in expected_finmind_fundamental_period_ends(expected_dataset, expected_session)
+        )
+        run_session_raw = (
+            record_metadata.get("as_of_date")
+            or (record_metadata.get("ingest_job") or {}).get("run_date")
+            or (record_metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session = str(run_session_raw or "").strip()[:10]
+        if run_session and run_session != expected_session.isoformat():
+            raise SystemExit(
+                f"bounded FinMind fundamentals session {run_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+            )
+        if expected_dataset == "tw_valuation_bwibbu":
+            effective_session = record_date or run_session
+            if effective_session != expected_session.isoformat():
+                raise SystemExit(
+                    f"bounded FinMind fundamentals session {effective_session!r} != requested session {expected_session.isoformat()!r} for {connector_id}"
+                )
+        else:
+            if record_date not in expected_period_ends:
+                raise SystemExit(
+                    f"bounded FinMind fundamentals period_end {record_date!r} not in expected {expected_period_ends!r} "
+                    f"for session {expected_session.isoformat()!r} ({connector_id})"
+                )
+    else:
+        taipei = started.astimezone(timezone(timedelta(hours=8)))
+        cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+        for _ in range(20):
+            if _is_session_day(cursor):
+                break
+            cursor -= timedelta(days=1)
+        if record_date != cursor.isoformat():
+            raise SystemExit(f"bounded chip provider session {record_date!r} != requested {cursor.isoformat()!r}")
 if connector_id == "tw-taifex-futures-options-chip":
     req_ds = expected_dataset or "taifex_ssf_contracts"
     expected_source_prefix = f"tw-taifex:{req_ds}:"
@@ -1803,6 +2136,43 @@ if connector_id == "tw-taifex-futures-options-chip":
         raise SystemExit(
             f"controller source record schema_hash mismatch for {req_ds}: {schema_hash!r}"
         )
+    if req_ds == "taifex_ssf_contracts":
+        # Bind the proof to the latest published TAIFEX stock-futures contract session
+        # at refresh start (evaluate_chip_provider_session) and to the active underlyings.
+        from services.source_ingestion.chip_publication_schedule import evaluate_chip_provider_session
+        from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+        def _is_ssf_session_day(day):
+            _ev = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+            return day.weekday() < 5 and not (_ev and day.isoformat() in (_ev.get("holidays") or {}))
+
+        _row = record_metadata.get("normalized_row") if isinstance(record_metadata.get("normalized_row"), dict) else {}
+        _record_date = str(record_metadata.get("date") or _row.get("date") or provenance.get("trade_date") or "")[:10]
+        chip_verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=_record_date,
+            now=started,
+            is_session_day=_is_ssf_session_day,
+        )
+        verdict_path = os.environ.get("BOUNDED_REFRESH_VERDICT_PATH", "").strip()
+        if verdict_path and chip_verdict.status in {"not_yet_published", "provider_publication_late", "future_session"}:
+            Path(verdict_path).write_text(
+                json.dumps(chip_verdict.to_dict(), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if chip_verdict.is_failure:
+            raise SystemExit(chip_verdict.detail)
+        _active = {
+            item.strip().upper().split(".")[0]
+            for item in priority_csv.split(",")
+            if item.strip()
+        }
+        _underlying = str(record_metadata.get("underlying_code") or _row.get("underlying_code") or "").strip().upper()
+        _underlying = _underlying[3:].strip() if _underlying.startswith("EQ:") else _underlying.split(".")[0]
+        if _active and _underlying not in _active:
+            raise SystemExit(
+                f"controller source record underlying {_underlying!r} is outside active scope {sorted(_active)}"
+            )
 
 projection = load(projection_path)
 rows = projection.values() if isinstance(projection, dict) else []
@@ -1820,7 +2190,10 @@ projected = next(
     None,
 )
 if projected is None and connector_id == "tw-twse-tpex-official-market":
-    raise SystemExit("Agora projection does not bind the new receipt/run/source")
+    raise SystemExit(
+        f"Agora projection does not bind the new receipt/run/source: "
+        f"connector={connector_id!r} expected_run={run_id!r} expected_source={source_id!r}"
+    )
 if projected is not None:
     projected_freshness = projected.get("freshness") if isinstance(projected.get("freshness"), dict) else {}
     if (
@@ -1830,37 +2203,12 @@ if projected is not None:
         or projected_freshness.get("status") not in {"fresh", "stale"}
         or not isinstance(projected_freshness.get("stale"), bool)
     ):
-        raise SystemExit("Agora projection is missing explicit source-time/freshness truth")
+        raise SystemExit(
+            f"Agora projection is missing explicit source-time/freshness truth: "
+            f"asOf={projected.get('asOf')!r} freshness={projected_freshness!r}"
+        )
 else:
     projected_freshness = {"status": str(freshness.get("status") or "fresh")}
-
-
-def finmind_bare_symbol(value):
-    text = str(value).strip().upper()
-    for suffix in (".TWSE", ".TPEX", ".TWO", ".TW"):
-        if text.endswith(suffix):
-            return text[: -len(suffix)]
-    return text
-
-
-def finmind_coverage(records, expected, *, accept):
-    """Union refresh_coverage across every accepted batch record against the current symbols."""
-    covered = set()
-    partial_missing = set()
-    seen = False
-    for record in records:
-        if not isinstance(record, dict) or not accept(record):
-            continue
-        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-        cov = meta.get("refresh_coverage")
-        if not isinstance(cov, dict):
-            continue
-        seen = True
-        covered.update(finmind_bare_symbol(item) for item in (cov.get("covered_symbols") or []))
-        partial_missing.update(finmind_bare_symbol(item) for item in (cov.get("missing_symbols") or []))
-    wanted = [finmind_bare_symbol(item) for item in expected]
-    missing = [item for item in dict.fromkeys(wanted) if item not in covered]
-    return seen, missing, sorted(covered), sorted(partial_missing)
 
 
 if connector_id == "tw-finmind-broker-daily-report":
@@ -1883,7 +2231,7 @@ if connector_id == "tw-finmind-broker-daily-report":
         all_records,
         expected_symbols,
         accept=lambda rec: rec.get("connector_id") == connector_id
-        and str((rec.get("provenance") or {}).get("source_ingest_run_id") or "") in run_ids,
+        and finmind_record_run_id(rec) in run_ids,
     )
     if not seen or missing_syms:
         raise SystemExit(
@@ -1987,6 +2335,10 @@ for requested_symbol in spot_symbols:
         f"event_time={snapshot.get('event_time')} closes={len(closes)} "
         f"snapshot={snapshot.get('snapshot_id')}"
     )
+if chip_verdict is not None and chip_verdict.status == "not_yet_published":
+    print(chip_verdict.detail, file=sys.stderr)
+    print(chip_verdict.detail)
+    raise SystemExit(0)
 print(
     "bounded source refresh accepted "
     f"connector={connector_id} run={run_id} source={source_id} "
@@ -1994,12 +2346,35 @@ print(
 )
 PY
   then
+    readback_py_rc=1
+  fi
+  if [[ -s "${readback_verdict_file}" ]]; then
+    BOUNDED_REFRESH_READBACK_OUTCOME_JSON="$(cat "${readback_verdict_file}")"
+  fi
+  if [[ -s "${readback_err_file}" ]]; then
+    cat "${readback_err_file}" >&2
+    if [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" ]]; then
+      redact_bounded_refresh_log < "${readback_err_file}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
+    fi
+  fi
+  if (( readback_py_rc != 0 )); then
+    local readback_err_msg=""
+    if [[ -s "${readback_err_file}" ]]; then
+      readback_err_msg="$(tr '\n' ' ' < "${readback_err_file}" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+    fi
     rm -rf "${evidence_dir}"
+    rm -f "${readback_verdict_file}" "${readback_err_file}"
     [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
-    LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    if [[ -n "${readback_err_msg}" ]]; then
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed: ${readback_err_msg}"
+      echo "[remote-deploy] ERROR: ${LAST_REMOTE_DEPLOY_ERROR}" >&2
+    else
+      LAST_REMOTE_DEPLOY_ERROR="bounded_source_refresh_readback_failed"
+    fi
     return 1
   fi
   rm -rf "${evidence_dir}"
+  rm -f "${readback_verdict_file}" "${readback_err_file}"
   [[ -z "${finmind_records_file}" ]] || rm -f "${finmind_records_file}"
   info "bounded source refresh services exited zero and receipt/projection readback advanced"
 }
@@ -2046,57 +2421,136 @@ ensure_dev_caddy_ingress() (
   info "dev Caddy HTTPS ingress verified: ${bff_host}"
 )
 
-# Reads /api/source-ingest/source-records through the real strict JWT/tenant
-# boundary. A short-lived HS256 token is minted inside the source-ingest
-# container from its own runtime verifier env, so no secret reaches the host
-# command line, logs or this script's stdout. Writes the JSON body to $1.
-fetch_finmind_source_records() {
-  local out_path="$1" cid=""
-  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
-  [[ -n "${cid}" ]] || return 1
-  docker exec -i "${cid}" python3 - >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
-import json, os, time, urllib.request
-from services.runtime_auth_inbound import encode_jwt_hs256
+emit_taiwan_refresh_shared_helpers() {
+  cat <<'SHARED_TW_REFRESH_HELPERS_PY'
+# --- BEGIN_SHARED_TW_REFRESH_HELPERS ---
+from datetime import date as _shared_date, datetime as _shared_datetime, timedelta as _shared_timedelta, timezone as _shared_timezone
+from services.source_ingestion.chip_publication_schedule import (
+    CHIP_PUBLICATION_SCHEDULES as _SHARED_CHIP_SCHEDULES,
+    latest_published_chip_session as _shared_latest_published_chip_session,
+)
 
-secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
-tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
-if not secret or not tenant:
-    raise SystemExit(2)
-now = int(time.time())
-claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
-if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
-    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
-if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
-    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
-headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
-port = os.environ.get("PORT", "8097")
-req = urllib.request.Request(f"http://127.0.0.1:{port}/api/source-ingest/source-records", headers=headers)
-with urllib.request.urlopen(req, timeout=30) as resp:
-    print(resp.read().decode("utf-8"))
-FINMIND_RECORDS_PY
-}
+CHIP_RECORD_DATE_FIELDS = (
+    "metadata.date",
+    "metadata.normalized_row.date",
+    "provenance.trade_date",
+)
+CHIP_RECORD_EVENT_TIME_FIELDS = (
+    "provenance.event_time",
+    "metadata.event_time",
+    "provenance.available_time",
+    "metadata.available_time",
+    "latest_receipt.source_timestamp",
+    "freshness.source_timestamp",
+)
 
-check_taiwan_refresh_preflight() {
-  local force="${1:-false}" finmind_records_file=""
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
-    finmind_records_file="$(mktemp)"
-    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
-  fi
-  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" python3 - "${force}" <<'PREFLIGHT_PY'
-import json, os, sys, urllib.error, urllib.parse, urllib.request
-from datetime import date, datetime, time, timedelta, timezone
 
-tz = timezone(timedelta(hours=8))
-force = str(sys.argv[1]).lower() == "true"
-# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
-pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
-now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
-now_t = now_u.astimezone(tz)
-d_str = str(now_t.date())
-def emit(status, **kw):
-    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+def derive_chip_record_provider_session(
+    connector_id,
+    metadata,
+    provenance,
+    latest_receipt=None,
+    freshness=None,
+    *,
+    is_session_day,
+):
+    """Derive a chip record's provider session date identically across preflight and readback.
 
-from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+    An empty date string is treated like a missing date and falls back to the record's event/available
+    time via latest_published_chip_session. When both date and event_time are missing or invalid,
+    returns (None, message_naming_missing_fields).
+    """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    provenance = provenance if isinstance(provenance, dict) else {}
+    latest_receipt = latest_receipt if isinstance(latest_receipt, dict) else {}
+    freshness = freshness if isinstance(freshness, dict) else {}
+    row = metadata.get("normalized_row") if isinstance(metadata.get("normalized_row"), dict) else {}
+    date_raw = ""
+    for candidate in (metadata.get("date"), row.get("date"), provenance.get("trade_date")):
+        text = str(candidate or "").strip()
+        if text:
+            date_raw = text
+            break
+    ev_raw = ""
+    for candidate in (
+        provenance.get("event_time"),
+        metadata.get("event_time"),
+        provenance.get("available_time"),
+        metadata.get("available_time"),
+        latest_receipt.get("source_timestamp"),
+        freshness.get("source_timestamp"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            ev_raw = text
+            break
+    if not date_raw and not ev_raw:
+        return (
+            None,
+            f"bounded chip record for {connector_id} is missing both date "
+            f"({', '.join(CHIP_RECORD_DATE_FIELDS)}) and event_time "
+            f"({', '.join(CHIP_RECORD_EVENT_TIME_FIELDS)})",
+        )
+    record_session_date = None
+    if date_raw:
+        try:
+            record_session_date = _shared_date.fromisoformat(date_raw[:10])
+        except ValueError:
+            return None, f"bounded chip record for {connector_id} has invalid date {date_raw!r}"
+    if record_session_date is None and ev_raw:
+        try:
+            if "T" not in ev_raw and len(ev_raw) >= 10:
+                record_session_date = _shared_date.fromisoformat(ev_raw[:10])
+            else:
+                ev_dt = _shared_datetime.fromisoformat(ev_raw.replace("Z", "+00:00"))
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=_shared_timezone.utc)
+                if connector_id in _SHARED_CHIP_SCHEDULES:
+                    record_session_date = _shared_latest_published_chip_session(
+                        connector_id, ev_dt, is_session_day=is_session_day
+                    )
+                else:
+                    record_session_date = ev_dt.astimezone(_shared_timezone(_shared_timedelta(hours=8))).date()
+        except ValueError:
+            return None, f"bounded chip record for {connector_id} has invalid event_time {ev_raw!r}"
+    return record_session_date, None
+
+
+# Full-market chip coverage lives in these helpers (emitted by the running script), not imported from the hosted
+# image: an image that predates TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120 has neither the module
+# symbols nor record metadata provider_listed_count and must get one explicit non-crashing outcome.
+FULL_MARKET_CHIP_CONNECTOR_IDS = frozenset({
+    "tw-official-twse-margin-balances",
+    "tw-official-tpex-margin-balances",
+    "tw-official-tpex-institutional-flow",
+})
+
+
+def chip_row_coverage_outcome(connector_id, record_metadata, stored_count, record_session, expected_session):
+    """Coverage of one full-market chip run against the provider listed count; never raises."""
+    if connector_id not in FULL_MARKET_CHIP_CONNECTOR_IDS:
+        return None
+    listed = (record_metadata or {}).get("provider_listed_count")
+    stored = int(stored_count or 0)
+    expected = str(expected_session)[:10]
+    got = str(record_session or "")[:10]
+    base = {"connector_id": connector_id, "expected_session": expected, "stored_session": got,
+            "stored_count": stored, "provider_listed_count": listed}
+    if not isinstance(listed, int) or isinstance(listed, bool) or listed < 1:
+        return {**base, "status": "coverage_unverified_image_predates_full_market", "is_failure": False,
+                "missing_count": None,
+                "detail": f"{connector_id} record has no provider_listed_count (image predates full-market "
+                          f"chip storage); stored count {stored}; coverage not verified"}
+    if got != expected:
+        return {**base, "status": "session_mismatch", "is_failure": True, "missing_count": max(listed - stored, 0),
+                "detail": f"{connector_id} stored session {got!r} != expected {expected!r}"}
+    missing = max(listed - stored, 0)
+    if missing:
+        return {**base, "status": "partial", "is_failure": True, "missing_count": missing,
+                "detail": f"{connector_id} stored {stored} of {listed} provider rows; missing {missing}"}
+    return {**base, "status": "complete", "is_failure": False, "missing_count": 0,
+            "detail": f"{connector_id} stored all {listed} provider rows for {expected}"}
+
 
 def finmind_bare_symbol(value):
     text = str(value).strip().upper()
@@ -2104,6 +2558,14 @@ def finmind_bare_symbol(value):
         if text.endswith(suffix):
             return text[: -len(suffix)]
     return text
+
+
+def finmind_record_run_id(record):
+    if not isinstance(record, dict):
+        return ""
+    prov = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    return str(prov.get("source_ingest_run_id") or meta.get("source_ingest_run_id") or "").strip()
 
 
 def finmind_coverage(records, expected, *, accept):
@@ -2124,6 +2586,128 @@ def finmind_coverage(records, expected, *, accept):
     wanted = [finmind_bare_symbol(item) for item in expected]
     missing = [item for item in dict.fromkeys(wanted) if item not in covered]
     return seen, missing, sorted(covered), sorted(partial_missing)
+# --- END_SHARED_TW_REFRESH_HELPERS ---
+SHARED_TW_REFRESH_HELPERS_PY
+}
+
+# Reads FinMind broker coverage records through the real strict JWT/tenant
+# boundary using a bounded per-run bundle + source-record read instead of an
+# unbounded /api/source-ingest/source-records full-table scan. A short-lived
+# HS256 token is minted inside the source-ingest container from its own runtime
+# verifier env, so no secret reaches the host command line, logs or stdout.
+fetch_finmind_source_records() {
+  local out_path="$1" since="${2:-}" cid=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  [[ -n "${cid}" ]] || return 1
+  docker exec -i "${cid}" python3 - "${since}" >"${out_path}" 2>/dev/null <<'FINMIND_RECORDS_PY' || return 1
+import json, os, sys, time, urllib.parse, urllib.request
+from datetime import datetime, timezone
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+secret = os.environ.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+tenant = (os.environ.get("SOURCE_INGEST_DEFAULT_TENANT_ID") or os.environ.get("PANTHEON_TENANT_ID") or "").strip()
+if not secret or not tenant:
+    raise SystemExit(2)
+now = int(time.time())
+claims = {"sub": "deploy-finmind-coverage-readback", "roles": ["source_ingest_reader"], "tenant_id": tenant, "iat": now, "exp": now + 120}
+if os.environ.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip():
+    claims["iss"] = os.environ["PANTHEON_RUNTIME_JWT_ISSUER"].strip()
+if os.environ.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip():
+    claims["aud"] = os.environ["PANTHEON_RUNTIME_JWT_AUDIENCE"].strip()
+headers = {"Accept": "application/json", "Authorization": "Bearer " + encode_jwt_hs256(claims, secret=secret), "X-Tenant-Id": tenant}
+port = os.environ.get("PORT", "8097")
+
+def get_json(path):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def ts(val):
+    dt = datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+    return (dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+since_arg = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+first = get_json("/api/source-ingest/receipts?connector_id=tw-finmind-broker-daily-report")
+completed = [
+    r for r in (first.get("receipts") or [])
+    if isinstance(r, dict)
+    and r.get("connector_id") == "tw-finmind-broker-daily-report"
+    and r.get("status") == "completed"
+    and r.get("typed_failure") is None
+    and r.get("source_timestamp")
+    and r.get("source_timestamp_status") == "valid"
+    and (r.get("finished_at") or r.get("created_at"))
+    and ((r.get("evidence_refs") or {}).get("evidence_bundle_id"))
+]
+if since_arg:
+    since_dt = ts(since_arg)
+    completed = [r for r in completed if ts(r.get("finished_at") or r.get("created_at")) >= since_dt]
+completed.sort(key=lambda r: ts(r.get("finished_at") or r.get("created_at")), reverse=True)
+if completed:
+    target_trace = completed[0].get("trace_id")
+    if target_trace:
+        completed = [r for r in completed if r.get("trace_id") == target_trace]
+    else:
+        completed = completed[:1]
+records = []
+seen_symbols = set()
+for r in completed:
+    bundle_id = str((r.get("evidence_refs") or {}).get("evidence_bundle_id") or "").strip()
+    if not bundle_id:
+        continue
+    bundle = (get_json(f"/api/source-ingest/evidence/bundles/{urllib.parse.quote(bundle_id)}") or {}).get("bundle") or {}
+    source_ids = [str(s).strip() for s in (bundle.get("source_ids") or []) if str(s).strip()]
+    batch_sids = []
+    batch_syms = set()
+    for sid in source_ids:
+        parts = sid.split(":")
+        sym_key = parts[1] if len(parts) >= 3 and parts[0] == "finmind-broker-top" else sid
+        if sym_key not in seen_symbols and sym_key not in batch_syms:
+            batch_syms.add(sym_key)
+            batch_sids.append(sid)
+    if not batch_sids:
+        continue
+    seen_symbols.update(batch_syms)
+    for sid in batch_sids:
+        rec = (get_json(f"/api/source-ingest/source-records/{urllib.parse.quote(sid)}") or {}).get("source_record")
+        if isinstance(rec, dict):
+            records.append(rec)
+print(json.dumps({"source_records": records}))
+FINMIND_RECORDS_PY
+}
+
+check_taiwan_refresh_preflight() {
+  local force="${1:-false}" finmind_records_file=""
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
+    finmind_records_file="$(mktemp)"
+    fetch_finmind_source_records "${finmind_records_file}" || { rm -f "${finmind_records_file}"; finmind_records_file=""; }
+  fi
+  FINMIND_SOURCE_RECORDS_PATH="${finmind_records_file}" \
+    TW_REFRESH_SHARED_HELPERS_PY="$(emit_taiwan_refresh_shared_helpers)" \
+    python3 - "${force}" <<'PREFLIGHT_PY'
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+from datetime import date, datetime, time, timedelta, timezone
+
+tz = timezone(timedelta(hours=8))
+force = str(sys.argv[1]).lower() == "true"
+# PANTHEON_REFRESH_PREFLIGHT_NOW pins the clock so delayed scheduled runs can be reproduced.
+pinned_now = os.environ.get("PANTHEON_REFRESH_PREFLIGHT_NOW", "").strip()
+now_u = datetime.fromisoformat(pinned_now.replace("Z", "+00:00")) if pinned_now else datetime.now(timezone.utc)
+now_t = now_u.astimezone(tz)
+d_str = str(now_t.date())
+def emit(status, **kw):
+    sys.exit(print(json.dumps({"status": status, "taipei_date": d_str, **kw}, sort_keys=True)))
+
+from services.execution.market_snapshot_admission import evaluate_taiwan_market_freshness, validate_taiwan_calendar_evidence
+
+exec(
+    compile(
+        os.environ["TW_REFRESH_SHARED_HELPERS_PY"],
+        "<deploy_nonprod_vm.sh:SHARED_TW_REFRESH_HELPERS>",
+        "exec",
+    ),
+    globals(),
+)
 
 
 raw_connector = os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID", "").strip()
@@ -2131,7 +2715,8 @@ raw_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET", "").strip()
 connector_id = raw_connector or (
     "tw-taifex-futures-options-chip" if raw_dataset == "taifex_ssf_contracts" else "tw-twse-tpex-official-market"
 )
-CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report"}
+from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+CHIP_CONNECTORS = {"tw-taifex-futures-options-chip", "tw-finmind-broker-daily-report", *TW_CHIP_REFRESH_PROFILES}
 bounded_dataset = raw_dataset or (
     "taifex_ssf_contracts" if connector_id == "tw-taifex-futures-options-chip"
     else "tw_broker_top" if connector_id == "tw-finmind-broker-daily-report"
@@ -2151,12 +2736,32 @@ if not symbols:
     symbols = ["2330.TW"]
 
 api_url = os.environ.get("SOURCE_INGEST_API_URL", "http://127.0.0.1:18097")
+
+
+def _urlopen_waiting_for_source_ingest(request):
+    # source-ingest may still be warming up after its one recreate of the run: wait for it
+    # (bounded: attempts x (10s call + pause)) instead of failing on one 3 second call.
+    import http.client
+    import time
+    attempts = max(1, int(os.environ.get("PANTHEON_PREFLIGHT_API_ATTEMPTS") or "12"))
+    pause = float(os.environ.get("PANTHEON_PREFLIGHT_API_PAUSE_SECONDS") or "5")
+    for attempt in range(1, attempts + 1):
+        try:
+            return urllib.request.urlopen(request, timeout=10)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException):
+            if attempt == attempts:
+                raise
+            time.sleep(pause)
+
+
 snaps = []
 for symbol in symbols:
     try:
         url = f"{api_url}/api/source-ingest/snapshots/latest?symbol={urllib.parse.quote(symbol)}"
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with _urlopen_waiting_for_source_ingest(req) as resp:
             snaps.append((symbol, json.loads(resp.read().decode("utf-8"))))
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
@@ -2176,7 +2781,7 @@ holidays = {}
 calendars = {}
 if connector_id in CHIP_CONNECTORS and all(snap is None for _, snap in snaps):
     from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
-    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str, fetched_at=now_u.isoformat().replace("+00:00", "Z"))
+    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=d_str)
     c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
     if not c_ok:
         emit("proceed", reason="calendar_evidence_refresh_needed", detail=str(c_err), connector_id=connector_id, dataset=bounded_dataset)
@@ -2210,14 +2815,30 @@ for _ in range(20):
     cursor -= timedelta(days=1)
 session_date = cursor
 session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+from services.source_ingestion.chip_publication_schedule import (
+    CHIP_PUBLICATION_SCHEDULES,
+    evaluate_chip_provider_session,
+    expected_finmind_fundamental_period_ends,
+    latest_published_chip_session,
+)
+profile = TW_CHIP_REFRESH_PROFILES.get(connector_id)
+is_finmind_fundamental = profile is not None and profile.get("base") == "tw-finmind-fundamentals"
+if connector_id == "tw-finmind-broker-daily-report" or is_finmind_fundamental:
+    from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+    session_date = latest_published_broker_session(now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 18, 0, tzinfo=tz).astimezone(timezone.utc)
+elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+    session_date = latest_published_chip_session(connector_id, now_u, is_session_day=is_session_day)
+    session_close = datetime(session_date.year, session_date.month, session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
 
 if connector_id in CHIP_CONNECTORS:
     if now_t.weekday() >= 5:
         emit("skipped", reason="weekend", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
     if d_str in holidays:
         emit("skipped", reason="holiday", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
-    if now_t.time() < time(13, 30):
-        emit("skipped", reason="session_not_closed", connector_id=connector_id, dataset=bounded_dataset, checked_at=now_u.isoformat())
+    # Morning recovery checks the selected CLOSED/PUBLISHED session, not today's
+    # open session. Missing prior-session data must reach the bounded refresh;
+    # valid complete prior-session data can noop without fetching today's data.
     readback_payload = None
     try:
         rb_url = (
@@ -2225,7 +2846,7 @@ if connector_id in CHIP_CONNECTORS:
             f"connector_id={urllib.parse.quote(connector_id)}&dataset={urllib.parse.quote(bounded_dataset)}"
         )
         rb_req = urllib.request.Request(rb_url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(rb_req, timeout=3) as rb_resp:
+        with _urlopen_waiting_for_source_ingest(rb_req) as rb_resp:
             readback_payload = json.loads(rb_resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code != 404:
@@ -2252,6 +2873,16 @@ if connector_id in CHIP_CONNECTORS:
     source_id = str(latest_record.get("source_id") or "")
     record_dataset = str(provenance.get("dataset") or metadata.get("dataset") or "")
     schema_hash = str(provenance.get("schema_hash") or metadata.get("schema_hash") or "")
+    if profile is not None:
+        if is_finmind_fundamental:
+            allowed_prefixes = (f"finmind:{bounded_dataset}:", f"tw-official:{bounded_dataset}:")
+        else:
+            prefix = "tw-taifex" if profile["base"] == "tw-taifex-futures-options-chip" else "tw-official"
+            allowed_prefixes = (f"{prefix}:{bounded_dataset}:",)
+        if (schema_hash != profile["schema_hash"]
+                or not source_id.startswith(allowed_prefixes)
+                or (profile.get("venues") and metadata.get("venue") not in profile["venues"])):
+            emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if (
         not latest_record
         or latest_record.get("status") not in (None, "", "normalized", "valid")
@@ -2261,15 +2892,6 @@ if connector_id in CHIP_CONNECTORS:
     ):
         emit("proceed", reason="dataset_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
 
-    date_raw = metadata.get("date") or (metadata.get("normalized_row") or {}).get("date") or provenance.get("trade_date")
-    ev_raw = (
-        provenance.get("event_time")
-        or metadata.get("event_time")
-        or provenance.get("available_time")
-        or metadata.get("available_time")
-        or latest_receipt.get("source_timestamp")
-        or freshness.get("source_timestamp")
-    )
     obs_raw = (
         freshness.get("last_success_at")
         or latest_receipt.get("finished_at")
@@ -2277,24 +2899,62 @@ if connector_id in CHIP_CONNECTORS:
         or provenance.get("ingest_time")
         or metadata.get("ingest_time")
     )
-    record_session_date = None
-    if date_raw:
-        try:
-            record_session_date = date.fromisoformat(str(date_raw)[:10])
-        except ValueError:
-            record_session_date = None
-    if record_session_date is None and ev_raw:
-        try:
-            record_session_date = datetime.fromisoformat(str(ev_raw).replace("Z", "+00:00")).astimezone(tz).date()
-        except ValueError:
-            record_session_date = None
+    record_session_date, _session_err = derive_chip_record_provider_session(
+        connector_id,
+        metadata,
+        provenance,
+        latest_receipt,
+        freshness,
+        is_session_day=is_session_day,
+    )
     obs_dt = None
     if obs_raw:
         try:
             obs_dt = datetime.fromisoformat(str(obs_raw).replace("Z", "+00:00"))
         except ValueError:
             obs_dt = None
-    if record_session_date is None or record_session_date < session_date or obs_dt is None or obs_dt < session_close:
+    if is_finmind_fundamental:
+        expected_periods = set(expected_finmind_fundamental_period_ends(bounded_dataset, session_date))
+        run_session_raw = (
+            metadata.get("as_of_date")
+            or (metadata.get("ingest_job") or {}).get("run_date")
+            or (metadata.get("refresh_coverage") or {}).get("window_end")
+            or provenance.get("trade_date")
+        )
+        run_session_date = None
+        if run_session_raw:
+            try:
+                run_session_date = date.fromisoformat(str(run_session_raw)[:10])
+            except ValueError:
+                run_session_date = None
+        if bounded_dataset == "tw_valuation_bwibbu":
+            effective_session = record_session_date or run_session_date
+            session_ok = (
+                effective_session == session_date
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        else:
+            session_ok = (
+                record_session_date in expected_periods
+                and (run_session_date is None or run_session_date == session_date)
+            )
+        if not session_ok or obs_dt is None or obs_dt < session_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif connector_id in CHIP_PUBLICATION_SCHEDULES:
+        verdict = evaluate_chip_provider_session(
+            connector_id,
+            provider_session=record_session_date,
+            now=now_u,
+            is_session_day=is_session_day,
+        )
+        effective_close = (
+            datetime(record_session_date.year, record_session_date.month, record_session_date.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
+            if record_session_date is not None and verdict.status == "published_early"
+            else session_close
+        )
+        if verdict.status not in {"published", "published_early"} or obs_dt is None or obs_dt < effective_close:
+            emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
+    elif record_session_date != session_date or obs_dt is None or obs_dt < session_close:
         emit("proceed", reason="closed_session_missing", connector_id=connector_id, dataset=bounded_dataset, session_date=str(session_date))
     if connector_id == "tw-finmind-broker-daily-report":
         records_path = os.environ.get("FINMIND_SOURCE_RECORDS_PATH", "").strip()
@@ -2362,6 +3022,36 @@ if now_t.weekday() >= 5:
     emit("skipped", reason="weekend", checked_at=now_u.isoformat())
 if d_str in holidays:
     emit("skipped", reason="holiday", checked_at=now_u.isoformat())
+# TW-OFFICIAL-RECONCILE-AFTER-COLLECTOR-20261117: a session covered only by provisional collector
+# closes still lacks its official OpenAPI rows. Once the official next-morning publication time has
+# passed, proceed so the existing bounded official refresh ingests them and the snapshot store
+# reconciles collector vs official (official wins). A collector_close lineage entry exists only
+# while no official row replaced it, so a session already holding official rows never matches.
+OFFICIAL_PUBLISH_TIME = time(7, 0)  # Taipei, morning after the session; 07:30 refresh is past it
+OFFICIAL_PENDING_LOOKBACK_DAYS = 7
+pending_official = {}
+for symbol, snap in snaps:
+    for entry in ((snap.get("lineage") or {}).get("collector_close") or []):
+        try:
+            entry_date = date.fromisoformat(str(entry.get("trade_date"))[:10])
+        except (AttributeError, ValueError):
+            continue
+        published_at = datetime.combine(entry_date + timedelta(days=1), OFFICIAL_PUBLISH_TIME, tzinfo=tz)
+        if (
+            entry_date <= session_date
+            and (session_date - entry_date).days <= OFFICIAL_PENDING_LOOKBACK_DAYS
+            and now_u >= published_at.astimezone(timezone.utc)
+        ):
+            pending_official.setdefault(str(entry_date), set()).add(symbol)
+if pending_official:
+    emit(
+        "proceed",
+        reason="official_rows_missing_collector_only",
+        session_date=str(session_date),
+        pending_trade_dates=sorted(pending_official),
+        symbols=sorted({sym for syms in pending_official.values() for sym in syms}),
+        checked_at=now_u.isoformat(),
+    )
 if now_t.time() < time(13, 30):
     emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
 emit("noop", reason="already_fresh", session_date=str(session_date), snapshot_id=snaps[0][1].get("snapshot_id"), checked_at=now_u.isoformat())
@@ -2387,7 +3077,8 @@ for k in ("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS", "SOURCE_INGEST_CONTROLLER_
 cmd = ["docker", "compose", "-p", "pantheon", "-f", "docker-compose.yml"]
 if action == "bounded":
     allowed_hosts = os.environ.get("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS") or "openapi.twse.com.tw,www.tpex.org.tw"
-    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull"})
+    max_records = (os.environ.get("SOURCE_INGEST_MAX_RECORDS") or env.get("SOURCE_INGEST_MAX_RECORDS") or "100").strip()
+    env.update({"PANTHEON_EXTERNAL_EGRESS": "allowlist", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": allowed_hosts, "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_and_pull", "SOURCE_INGEST_MAX_RECORDS": max_records})
     if arg:
         env["SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS"] = arg
     bounded_dataset = os.environ.get("SOURCE_INGEST_BOUNDED_DATASET") or ""
@@ -2396,7 +3087,8 @@ if action == "bounded":
     # FinMind reads env://FINMIND_API_TOKEN; the recorded container env may carry
     # an old or empty value, so the supplied secret overrides it for this window only.
     # Restore rebuilds env from the recorded pre-environment, so the old value returns.
-    if os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") == "tw-finmind-broker-daily-report":
+    # One bounded runtime per run: the token is carried when the run has a FinMind profile.
+    if os.environ.get("PANTHEON_BOUNDED_RUNTIME_FINMIND_TOKEN") == "true" or os.environ.get("SOURCE_INGEST_BOUNDED_CONNECTOR_ID") in ("tw-finmind-broker-daily-report", "tw-finmind-monthly-revenue", "tw-finmind-quarterly-statements", "tw-finmind-valuation"):
         finmind_token = os.environ.get("FINMIND_API_TOKEN") or ""
         if not finmind_token:
             raise SystemExit("FINMIND_API_TOKEN is required for the FinMind bounded refresh")
@@ -2407,11 +3099,21 @@ elif action == "restore":
     steady_host = (env.get("PANTHEON_COLLECTOR_HOST") or os.environ.get("PANTHEON_COLLECTOR_HOST") or "").strip().lower()
     if steady_host and not (len(steady_host) <= 253 and re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", steady_host)):
         raise SystemExit("PANTHEON_COLLECTOR_HOST must be exactly one valid hostname; not restoring")
+    # Keep an explicitly configured continuous Collector pull; never reset it to
+    # reconcile_only. It is only valid with the exact collector host egress.
+    steady_mode = (os.environ.get("SOURCE_INGEST_RESTORE_CONTROLLER_MODE") or env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip()
+    if steady_mode != "collector_steady_pull" or not steady_host:
+        steady_mode = "reconcile_only"
     env.update({
         "PANTHEON_EXTERNAL_EGRESS": "allowlist" if steady_host else "deny",
         "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": steady_host,
-        "SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only",
+        "SOURCE_INGEST_CONTROLLER_MODE": steady_mode,
     })
+    # Replace the Compose environment, rather than merge today's defaults into
+    # yesterday's runtime. Keep host/process helper variables out of the container.
+    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
+    restored_env = dict(x.split("=", 1) for x in pre_list if "=" in x)
+    restored_env.update({k: env[k] for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in restored_env})
 # "compose up --no-build" starts whatever image the Compose name resolves to, and
 # a stale plain tag left by an earlier failed deploy once pointed at a rejected
 # candidate. Pin source-ingest to the recorded running image ID with a Compose
@@ -2423,8 +3125,18 @@ if expected_img:
     atexit.register(shutil.rmtree, pin_dir, ignore_errors=True)
     pin_file = os.path.join(pin_dir, "source-ingest-pin.json")
     with open(pin_file, "w", encoding="utf-8") as f:
+        os.chmod(pin_file, 0o600)
         json.dump({"services": {"source-ingest": {"image": expected_img, "pull_policy": "never"}}}, f)
     cmd += ["-f", pin_file]
+    if action == "restore":
+        env_file = os.path.join(pin_dir, "source-ingest-env.yml")
+        with open(env_file, "w", encoding="utf-8") as f:
+            os.chmod(env_file, 0o600)
+            # !override is already used by repository Compose files. $$ protects
+            # captured literal dollars (including secrets) from interpolation.
+            literal_env = {k: v.replace("$", "$$") for k, v in restored_env.items()}
+            f.write("services:\n  source-ingest:\n    environment: !override " + json.dumps(literal_env) + "\n")
+        cmd += ["-f", env_file]
     try:
         model = json.loads(subprocess.check_output(cmd + ["config", "--format", "json", "source-ingest"], env=env, text=True))
         ref = (model["services"]["source-ingest"].get("image") or "pantheon-source-ingest")
@@ -2445,7 +3157,6 @@ if action == "restore":
     post_list = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .Config.Env}}", cid], text=True).strip())
     # Compare against the intended restored environment: pre env with only the
     # restore-controlled keys replaced; image/other env invariants stay strict.
-    controlled = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
     intended = {x for x in pre_list if x.split("=", 1)[0] not in controlled}
     # SOURCE_INGEST_CONTROLLER_MODE is only passed to the scheduler service in
     # docker-compose.yml, never the source-ingest container, so it is expected
@@ -2453,8 +3164,18 @@ if action == "restore":
     pre_keys = {x.split("=", 1)[0] for x in pre_list}
     intended |= {f"{k}={env[k]}" for k in controlled if k != "SOURCE_INGEST_CONTROLLER_MODE" or k in pre_keys}
     if set(intended) != set(post_list):
-        raise SystemExit(f"restored container env mismatch: added={sorted(set(post_list) - intended)}, removed={sorted(intended - set(post_list))}")
+        # Report only key names, including keys whose value changed; never values.
+        added = sorted({x.split("=", 1)[0] for x in set(post_list) - intended})
+        removed = sorted({x.split("=", 1)[0] for x in intended - set(post_list)})
+        raise SystemExit(f"restored container env mismatch: added={added}, removed={removed}")
 PY
+  local runtime_rc=$?
+  (( runtime_rc == 0 )) || return "${runtime_rc}"
+  if [[ "${action}" == "bounded" || "${action}" == "restore" ]]; then
+    # A recreated process is not ready for dataset preparation or the next connector's preflight yet.
+    # Wait up to 180s (36 * 5s, matching docker-compose start_period 120s plus retries) with a 5s curl limit.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5
+  fi
 }
 
 recover_bounded_source_refresh_dlq() {
@@ -2643,8 +3364,18 @@ RECOVER_DLQ_PY
 
 prepare_bounded_source_refresh_dataset() {
   local connector_id="${1:-}" dataset="${2:-}" active_symbols_csv="${3:-}" cid="${4:-}"
+  case "${connector_id}:${dataset}" in
+    tw-official-twse-margin-balances:tw_margin_short_balance|tw-official-tpex-margin-balances:tw_margin_short_balance|tw-official-tpex-institutional-flow:tw_institutional_flow|tw-taifex-institutional-positions:taifex_futures_chip|tw-taifex-put-call:taifex_options_chip|tw-taifex-tx-daily:taifex_tx_daily)
+      return 0 ;;
+    tw-finmind-monthly-revenue:tw_monthly_revenue|tw-finmind-quarterly-statements:tw_financial_statement|tw-finmind-valuation:tw_valuation_bwibbu)
+      ;;
+    tw-finmind-monthly-revenue:*|tw-finmind-quarterly-statements:*|tw-finmind-valuation:*)
+      error "FinMind fundamentals bounded refresh got unsupported dataset '${dataset:-missing}' for ${connector_id}" ;;
+  esac
   if [[ "${connector_id}" == "tw-finmind-broker-daily-report" ]]; then
     [[ "${dataset}" == "tw_broker_top" ]] || error "FinMind bounded refresh requires dataset tw_broker_top, got '${dataset:-missing}'"
+  elif [[ "${connector_id}" == tw-finmind-monthly-revenue || "${connector_id}" == tw-finmind-quarterly-statements || "${connector_id}" == tw-finmind-valuation ]]; then
+    :
   elif [[ "${connector_id}" != "tw-taifex-futures-options-chip" ]]; then
     return 0
   elif [[ "${dataset}" != "taifex_ssf_contracts" ]]; then
@@ -2677,6 +3408,7 @@ prepare_bounded_source_refresh_dataset() {
   desired_state_json="$(
     SOURCE_INGEST_API_URL="${api_url}" \
     SOURCE_INGEST_CONTROLLER_TOKEN="${controller_token}" \
+    SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT:-${refresh_started_at:-}}" \
     PYTHONPATH="${PANTHEON_REMOTE_DIR:-$(pwd)}:${PYTHONPATH:-}" \
       python3 - "${connector_id}" "${dataset}" "${active_symbols_csv}" <<'PREPARE_DATASET_PY'
 import json
@@ -2692,7 +3424,11 @@ from services.source_ingestion.active_universe import (
     DEFAULT_SOURCE_UPDATE_RULES,
     build_active_universe_job_fanout,
 )
-from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+from services.source_ingestion.connectors.finmind_taiwan import (
+    FinMindTaiwanBrokerDailyReportAdapter,
+    latest_published_broker_session,
+)
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion.connectors.taiwan_official import TaifexDerivativesChipAdapter
 
 api_url = (os.environ.get("SOURCE_INGEST_API_URL") or "http://127.0.0.1:18097").rstrip("/")
@@ -2701,7 +3437,14 @@ dataset = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
 active_symbols_csv = (sys.argv[3] if len(sys.argv) > 3 else "").strip()
 controller_token = (os.environ.get("SOURCE_INGEST_CONTROLLER_TOKEN") or "").strip()
 
-is_finmind = connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top"
+FINMIND_FUNDAMENTAL_BOUNDED = {
+    "tw-finmind-monthly-revenue": "tw_monthly_revenue",
+    "tw-finmind-quarterly-statements": "tw_financial_statement",
+    "tw-finmind-valuation": "tw_valuation_bwibbu",
+}
+is_fund = FINMIND_FUNDAMENTAL_BOUNDED.get(connector_id) == dataset
+# is_finmind: symbol-keyed FinMind bounded refresh (broker top-N or governed fundamentals).
+is_finmind = is_fund or (connector_id == "tw-finmind-broker-daily-report" and dataset == "tw_broker_top")
 if not is_finmind and (connector_id != "tw-taifex-futures-options-chip" or dataset != "taifex_ssf_contracts"):
     raise SystemExit(f"Unsupported bounded dataset profile: connector_id={connector_id!r} dataset={dataset!r}")
 if not controller_token:
@@ -2711,7 +3454,44 @@ raw_symbols = [s.strip() for s in active_symbols_csv.split(",") if s.strip()]
 if not raw_symbols:
     raise SystemExit("No active Taiwan paper symbols available for the bounded refresh")
 
-run_date = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+def _twse_session_day(day):
+    # Governed TWSE calendar; dates outside its coverage fall back to weekday-only.
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+# Real aware current time only; no runtime clock override (tests inject clocks in isolation).
+_now = datetime.now(timezone.utc)
+# The requested session is selected once, at refresh start, and the terminal verifier
+# binds proof to that same instant; observation clocks stay real. Never a future time.
+_session_now = _now
+_selected_at = os.environ.get("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT", "").strip()
+if _selected_at:
+    try:
+        _parsed = datetime.fromisoformat(_selected_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(f"Invalid bounded session selection time: {_selected_at!r}")
+    if _parsed.tzinfo is None or _parsed > _now:
+        raise SystemExit(f"Bounded session selection time must be aware and not in the future: {_selected_at!r}")
+    _session_now = _parsed
+if is_finmind:
+    # Broker reports publish 18:00 Taipei: default to the latest genuinely published session.
+    run_date = latest_published_broker_session(_session_now, is_session_day=_twse_session_day).isoformat()
+    _explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
+    if _explicit:
+        # Explicit historical intent is preserved; unpublished (future) sessions are rejected.
+        if _explicit > run_date:
+            raise SystemExit(f"Requested broker trade date {_explicit} is not yet published (latest published: {run_date})")
+        run_date = _explicit
+else:
+    # Same rule as preflight: the latest CLOSED session (13:30 Taipei), never an open/future day.
+    from datetime import time as _time
+    _taipei = _session_now.astimezone(timezone(timedelta(hours=8)))
+    _cursor = _taipei.date() if _taipei.time() >= _time(13, 30) else _taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if _cursor.weekday() < 5 and _twse_session_day(_cursor):
+            break
+        _cursor -= timedelta(days=1)
+    run_date = _cursor.isoformat()
 members = [
     {
         "symbol": sym,
@@ -2729,7 +3509,7 @@ FINMIND_MAX_SYMBOLS_PER_JOB = 25
 FINMIND_FETCH_MAX_RECORDS_CAP = 1000
 fanout_rules = [
     dataclass_replace(rule, max_symbols_per_run=FINMIND_MAX_SYMBOLS_PER_JOB)
-    if is_finmind and rule.connector_id == connector_id and rule.dataset == dataset
+    if is_finmind and not is_fund and rule.connector_id == connector_id and rule.dataset == dataset
     else rule
     for rule in DEFAULT_SOURCE_UPDATE_RULES
 ]
@@ -2777,7 +3557,14 @@ if not contracts:
 interval_seconds = 86400
 priority = int(selected_rule.priority)
 
-if is_finmind:
+if is_fund:
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanFundamentalsAdapter
+    adapter = FinMindTaiwanFundamentalsAdapter(
+        connector_id=connector_id, max_records=500,
+        connector_metadata={"definition_id": connector_id, "refresh_profile": TW_CHIP_REFRESH_PROFILES[connector_id]},
+    )
+elif is_finmind:
     adapter = FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)
 else:
     adapter = TaifexDerivativesChipAdapter(
@@ -2793,8 +3580,10 @@ if is_finmind:
     # batch job carries its own symbols in job_parameters, which override request.symbols, so
     # all batches are processed. max_records is the per-job top-N buy+sell budget and must stay
     # within the generic provider_owned_adapter guard.
-    rows_per_symbol = int(adapter.max_rank) * 2
-    per_job_budget = rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
+    # Fundamentals jobs are bounded by the rule's max_symbols_per_run and the adapter's
+    # fail-closed 500-record cap (an over-cap window raises; it is never truncated).
+    rows_per_symbol = 1 if is_fund else int(adapter.max_rank) * 2
+    per_job_budget = 500 if is_fund else rows_per_symbol * FINMIND_MAX_SYMBOLS_PER_JOB
     if per_job_budget > FINMIND_FETCH_MAX_RECORDS_CAP:
         raise SystemExit(
             f"FinMind per-job row budget {per_job_budget} exceeds provider_owned_adapter cap {FINMIND_FETCH_MAX_RECORDS_CAP}"
@@ -2804,10 +3593,15 @@ if is_finmind:
         for job in (fanout.get("jobs") or [])
         if isinstance(job, dict) and job.get("connector_id") == connector_id and job.get("dataset") == dataset
     ]
-    if any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
+    if not is_fund and any(len(batch) * rows_per_symbol > FINMIND_FETCH_MAX_RECORDS_CAP for batch in finmind_batches):
         raise SystemExit("FinMind fanout produced a batch exceeding the fetch.max_records guard")
+    # The adapter's fetch_config() also carries provider-descriptive keys (base_url, endpoint,
+    # secret_ref_id, dataset, history_start, max_rank) that the strict ConfiguredFetchBody DTO
+    # forbids; their intent already lives in adapter_config (secret_ref_id, max_rank) and the
+    # registered adapter token. Keep only the typed fetch-body keys; DTO stays strict.
+    typed_fetch_keys = ("mode", "adapter", "adapter_config", "next_watermark")
     fetch_cfg = {
-        **fetch_cfg,
+        **{key: fetch_cfg[key] for key in typed_fetch_keys if key in fetch_cfg},
         "request": {"dataset": dataset, "symbols": list(finmind_batches[0])},
         "max_records": per_job_budget,
     }
@@ -2824,24 +3618,30 @@ desired_requirement = {
     "connector_id": connector_id,
     "provider": "FinMind" if is_finmind else "TAIFEX",
     "dataset": dataset,
-    "source_class": "taiwan_chip" if is_finmind else "derivatives_chip",
+    "source_class": "live_pull" if is_fund else "taiwan_chip" if is_finmind else "derivatives_chip",
     "cadence": "daily",
     "schedule_interval_seconds": interval_seconds,
     "priority": priority,
     "enabled": True,
 }
-conn_meta = dict(conn_dict.get("metadata") or {})
-if is_finmind:
-    # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
-    # metadata marker the persona reconciler's require_connector_approved gate reads for
-    # registered custom connectors (TAIFEX precedent). The gate stays enforced.
-    conn_meta["approval_status"] = "approved"
-    conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
-conn_meta["persona_source_reconciliation"] = {
-    "managed_by": "persona_source_provisioning_reconciler",
-    "desired_state": desired_requirement,
-}
-conn_dict["metadata"] = conn_meta
+if not is_fund:
+    conn_meta = dict(conn_dict.get("metadata") or {})
+    if is_finmind:
+        # Code-reviewed FinMind Sponsor Pro connector: mark it approved through the same connector
+        # metadata marker the persona reconciler's require_connector_approved gate reads for
+        # registered custom connectors (TAIFEX precedent). The gate stays enforced.
+        conn_meta["approval_status"] = "approved"
+        conn_meta["approval_authority"] = "code_reviewed_finmind_sponsorpro_connector"
+    conn_meta["persona_source_reconciliation"] = {
+        "managed_by": "persona_source_provisioning_reconciler",
+        "desired_state": desired_requirement,
+    }
+    conn_dict["metadata"] = conn_meta
+# FinMind fundamentals connectors (monthly revenue, quarterly statements, valuation) are provider
+# allowlisted in the persona source reconciler, which is the single writer of their
+# persona_source_reconciliation marker and decides require_connector_approved from that allowlist.
+# The refresh registers the bare adapter contract so a repeated run can never differ from what the
+# reconciler stored (RC2: "Connector already registered with different contract").
 
 
 def request_json(url: str, *, method: str = "GET", payload: dict | None = None, timeout: float = 30.0) -> dict:
@@ -2987,6 +3787,24 @@ PREPARE_DATASET_PY
   info "prepared bounded source refresh dataset ${dataset} for ${connector_id} (symbols=${active_symbols_csv})"
 }
 
+# Records the call id of this invocation in an outcome file this call just wrote.
+stamp_refresh_call_id() {
+  local path="${1:-}"
+  [[ -n "${path}" && -s "${path}" && -n "${PANTHEON_REFRESH_CALL_ID:-}" ]] || return 0
+  python3 - "${path}" "${PANTHEON_REFRESH_CALL_ID}" <<'STAMP_PY' || true
+import json, pathlib, sys
+path, call_id = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if isinstance(data, dict):
+    data["call_id"] = call_id
+    path.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+STAMP_PY
+  return 0
+}
+
 # Proves the latest closed Taiwan session without refreshing anything. The outcome is always
 # written to the output path (exit 0) so the caller can name it; it never changes the stack.
 execute_taiwan_refresh_preflight_only() {
@@ -3010,9 +3828,388 @@ execute_taiwan_refresh_preflight_only() {
   else
     preflight_output="$(check_taiwan_refresh_preflight false)" || error "preflight execution failed: ${preflight_output}"
   fi
-  [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+  if [[ -n "${output_path}" ]]; then printf '%s\n' "${preflight_output}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
   info "taiwan refresh preflight-only outcome: ${preflight_output}"
   return 0
+}
+
+# Compose services of the source-ingest family. Exactly one container must exist
+# for each after a restore.
+source_ingest_family_services() {
+  printf '%s\n' source-ingest source-ingest-scheduler source-ingest-agora-projector
+}
+
+# Removes only containers that were created and never started (the leftover of
+# an interrupted Compose recreate/rename). Running and exited steady containers
+# are never touched. Every removal is logged with its container id.
+remove_source_ingest_compose_leftovers() {
+  local service cid
+  for service in $(source_ingest_family_services); do
+    while read -r cid; do
+      [[ -n "${cid}" ]] || continue
+      info "removing never-started Compose leftover container ${cid} (service=${service}, status=created)"
+      docker rm -f "${cid}" >/dev/null 2>&1 || info "could not remove Compose leftover container ${cid}" >&2
+    done < <(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" \
+      --filter "label=com.docker.compose.service=${service}" --filter "status=created" 2>/dev/null || true)
+  done
+  return 0
+}
+
+verify_source_ingest_container_counts() {
+  local service count rc=0
+  for service in $(source_ingest_family_services); do
+    count="$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" \
+      --filter "label=com.docker.compose.service=${service}" 2>/dev/null | sed '/^$/d' | wc -l | tr -d ' ' || true)"
+    if [[ "${count:-0}" =~ ^[0-9]+$ ]] && (( count > 1 )); then
+      info "expected exactly one ${service} container after restore, found ${count}" >&2
+      rc=1
+    fi
+  done
+  return "${rc}"
+}
+
+# PIDs of refresh-only invocations of this run that are still alive on the host (a refresh
+# whose runner step timed out or was cancelled keeps running remotely). Matched by the run id
+# and call markers in the process environment; the steady check itself (STEADY_CHECK=true)
+# and this shell are never matched. STEADY_CHECK_PROC_ROOT exists for tests only.
+steady_check_find_refresh_orphans() {
+  local proc_root="${STEADY_CHECK_PROC_ROOT:-/proc}" run_id="${PANTHEON_REFRESH_RUN_ID:-}" d pid env_text
+  [[ -n "${run_id}" ]] || return 0
+  for d in "${proc_root}"/[0-9]*; do
+    pid="${d##*/}"
+    [[ "${pid}" != "$$" && "${pid}" != "${BASHPID:-$$}" && -r "${d}/environ" ]] || continue
+    env_text="$(tr '\0' '\n' < "${d}/environ" 2>/dev/null || true)"
+    grep -qx "PANTHEON_REFRESH_RUN_ID=${run_id}" <<< "${env_text}" || continue
+    grep -qx "PANTHEON_DEPLOY_COMPONENT=refresh-only" <<< "${env_text}" || continue
+    grep -qx "STEADY_CHECK=true" <<< "${env_text}" && continue
+    grep -qx "PREFLIGHT_ONLY=true" <<< "${env_text}" && continue
+    # Children of this very call carry its call id: only other calls of the run are left-overs.
+    [[ -n "${PANTHEON_REFRESH_CALL_ID:-}" ]] && grep -qx "PANTHEON_REFRESH_CALL_ID=${PANTHEON_REFRESH_CALL_ID}" <<< "${env_text}" && continue
+    printf '%s\n' "${pid}"
+  done
+  return 0
+}
+
+# Waits a bounded time for a left-over refresh of this run to end; stops it when it does not.
+# Sets STEADY_ORPHAN_ACTION (none|ended|stopped) and STEADY_ORPHAN_SECONDS and logs both.
+steady_check_settle_refresh_orphans() {
+  local wait_max="${STEADY_CHECK_ORPHAN_WAIT_SECONDS:-180}" poll="${STEADY_CHECK_ORPHAN_POLL_SECONDS:-5}"
+  local elapsed=0 pids pid
+  STEADY_ORPHAN_ACTION="none"; STEADY_ORPHAN_SECONDS=0; STEADY_ORPHAN_PIDS=""
+  pids="$(steady_check_find_refresh_orphans)"
+  [[ -n "${pids}" ]] || return 0
+  STEADY_ORPHAN_PIDS="$(tr '\n' ',' <<< "${pids}" | sed 's/,$//')"
+  info "left-over refresh process(es) of this run found: pids=${STEADY_ORPHAN_PIDS}; waiting up to ${wait_max}s"
+  while [[ -n "${pids}" ]] && (( elapsed < wait_max )); do
+    sleep "${poll}"; elapsed=$((elapsed + poll)); pids="$(steady_check_find_refresh_orphans)"
+  done
+  if [[ -z "${pids}" ]]; then
+    STEADY_ORPHAN_ACTION="ended"; STEADY_ORPHAN_SECONDS="${elapsed}"
+  else
+    info "left-over refresh still running after ${elapsed}s; stopping pids=$(tr '\n' ',' <<< "${pids}")"
+    # Its own signal handler restores the steady services; give that time to finish.
+    for pid in ${pids}; do kill -TERM "${pid}" 2>/dev/null || true; done
+    local grace_stop=0
+    while [[ -n "${pids}" ]] && (( grace_stop < ${STEADY_CHECK_ORPHAN_STOP_SECONDS:-60} )); do
+      sleep "${poll}"; grace_stop=$((grace_stop + poll)); elapsed=$((elapsed + poll)); pids="$(steady_check_find_refresh_orphans)"
+    done
+    for pid in ${pids}; do kill -KILL "${pid}" 2>/dev/null || true; done
+    STEADY_ORPHAN_ACTION="stopped"; STEADY_ORPHAN_SECONDS="${elapsed}"
+  fi
+  info "left-over refresh: action=${STEADY_ORPHAN_ACTION} seconds=${STEADY_ORPHAN_SECONDS}"
+  return 0
+}
+
+# Removes the outcome (and lock/temp) files that calls of this run left in /tmp, except this
+# call's own output. Sets STEADY_CLEANUP_COUNT and STEADY_CLEANUP_BYTES. STEADY_CHECK_TMP_DIR is for tests.
+steady_check_cleanup_call_files() {
+  local run_id="${PANTHEON_REFRESH_RUN_ID:-}" tmp="${STEADY_CHECK_TMP_DIR:-/tmp}" own="${1:-}" f size
+  STEADY_CLEANUP_COUNT=0; STEADY_CLEANUP_BYTES=0
+  [[ -n "${run_id}" && "${run_id}" =~ ^[0-9]+$ ]] || return 0
+  for f in "${tmp}/pantheon-refresh-outcome-${run_id}-"* "${tmp}/.pantheon-refresh-outcome-${run_id}-"*; do
+    [[ -f "${f}" && ! -L "${f}" && "${f}" != "${own}" ]] || continue
+    size="$(stat -c %s "${f}" 2>/dev/null || echo 0)"
+    rm -f "${f}" && { STEADY_CLEANUP_COUNT=$((STEADY_CLEANUP_COUNT + 1)); STEADY_CLEANUP_BYTES=$((STEADY_CLEANUP_BYTES + size)); }
+  done
+  info "removed ${STEADY_CLEANUP_COUNT} left-over refresh call file(s), ${STEADY_CLEANUP_BYTES} bytes"
+  return 0
+}
+
+# Seconds a service may stay in health "starting": its healthcheck start period plus one
+# interval (Docker defaults 0s/30s when unset; 90+30 when the container cannot be inspected).
+steady_check_health_bound_seconds() {
+  docker inspect --format '{{json .Config.Healthcheck}}' "$1" 2>/dev/null | python3 -c 'import json,sys
+try:
+    h=json.load(sys.stdin) or {}
+    print(int((int(h.get("StartPeriod") or 0)+int(h.get("Interval") or 30000000000))/1000000000))
+except Exception:
+    print(120)' 2>/dev/null || echo 120
+}
+
+# ---------------------------------------------------------------------------------------------
+# One bounded runtime per refresh run (TW-REFRESH-ONE-BOUNDED-RUNTIME-PER-RUN-20261120).
+# The first profile call of a run that needs a refresh records the steady posture in a state
+# directory on this host, stops the steady controller and recreates source-ingest ONCE into the
+# bounded runtime (egress = union of the hosts of the run; FinMind token only when the run has a
+# FinMind profile). Later profile calls reuse it and only start and remove their own one-shot
+# containers. The steady check of the same run restores the steady posture ONCE from that state.
+# BOUNDED_RUNTIME_STATE_ROOT exists for tests only.
+# ---------------------------------------------------------------------------------------------
+bounded_runtime_state_dir() {
+  printf '%s/pantheon-bounded-runtime-%s' "${BOUNDED_RUNTIME_STATE_ROOT:-/tmp}" "${PANTHEON_REFRESH_RUN_ID:-}"
+}
+
+bounded_runtime_list_state_dirs() {
+  local root="${BOUNDED_RUNTIME_STATE_ROOT:-/tmp}" d
+  for d in "${root}"/pantheon-bounded-runtime-[0-9]*; do
+    [[ -d "${d}" && ! -L "${d}" && -s "${d}/state.env" ]] && printf '%s\n' "${d}"
+  done
+  return 0
+}
+
+# Sets KEY=VALUE in the state file (values are shell-quoted; the file is only ever sourced by this script).
+bounded_runtime_state_set() {
+  local dir="$1" key="$2" value="$3" tmp
+  tmp="$(mktemp "${dir}/.state.XXXXXX")" || return 1
+  { grep -v "^${key}=" "${dir}/state.env" 2>/dev/null || true; printf '%s=%q\n' "${key}" "${value}"; } > "${tmp}" \
+    && mv -f "${tmp}" "${dir}/state.env"
+}
+
+# Reads memory.peak of the running source-ingest container and keeps the maximum in the state.
+# The limit is the container's own memory limit; a container killed for memory sets BR_OOM=true.
+bounded_runtime_record_memory() {
+  local dir="$1" cid="$2" peak limit oom old_peak
+  [[ -n "${cid}" && -s "${dir}/state.env" ]] || return 0
+  peak="$(docker exec "${cid}" cat /sys/fs/cgroup/memory.peak 2>/dev/null | tr -dc '0-9' || true)"
+  limit="$(docker inspect --format '{{.HostConfig.Memory}}' "${cid}" 2>/dev/null | tr -dc '0-9' || true)"
+  oom="$(docker inspect --format '{{.State.OOMKilled}}' "${cid}" 2>/dev/null | tr -dc 'a-z' || true)"
+  old_peak="$(sed -n 's/^BR_PEAK_BYTES=//p' "${dir}/state.env" | tail -n1 | tr -dc '0-9')"
+  [[ "${peak}" =~ ^[0-9]+$ ]] || peak=""
+  if [[ -n "${peak}" ]] && (( peak > ${old_peak:-0} )); then bounded_runtime_state_set "${dir}" BR_PEAK_BYTES "${peak}"; fi
+  [[ "${limit}" =~ ^[0-9]+$ ]] && (( limit > 0 )) && bounded_runtime_state_set "${dir}" BR_LIMIT_BYTES "${limit}"
+  [[ "${oom}" == "true" ]] && bounded_runtime_state_set "${dir}" BR_OOM true
+  info "source-ingest memory.peak=${peak:-unknown} bytes limit=${limit:-unknown} bytes oom_killed=${oom:-unknown}"
+  return 0
+}
+
+# Exit 0 when profiles must NOT start any more: on a Taiwan weekday the market opens at 00:55Z, so a
+# profile may only start while it (profile budget) and the restore (restore budget) still end before.
+bounded_runtime_market_open_guard() {
+  python3 - <<'GUARD_PY'
+import datetime, os, sys
+raw = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
+now = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")) if raw else datetime.datetime.now(datetime.timezone.utc)
+now = now.astimezone(datetime.timezone.utc)
+profile = int(os.environ.get("PANTHEON_REFRESH_PROFILE_BUDGET_SECONDS") or "900")
+restore = int(os.environ.get("PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS") or "300")
+open_minute = 55  # market open 09:00 Taipei = 01:00Z; steady posture must be back by 00:55Z
+close_minute = 5 * 60 + 30  # 13:30 Taipei close
+start_minute = open_minute - (profile + restore + 59) // 60
+minute = now.hour * 60 + now.minute
+if now.weekday() < 5 and start_minute <= minute < close_minute:
+    print(f"market_open_0055z: not run so the steady posture is restored before the Taiwan market opens at 00:55Z (now {now.strftime('%H:%MZ')}, last profile start {start_minute // 60:02d}:{start_minute % 60:02d}Z)")
+    sys.exit(0)
+sys.exit(1)
+GUARD_PY
+}
+
+# A profile must belong to the run's bounded runtime: its hosts are inside the union and a FinMind
+# profile only runs when the run carries the FinMind token.
+bounded_runtime_validate_profile() {
+  [[ -n "${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}" ]] || { info "bounded runtime run needs the union of run hosts" >&2; return 1; }
+  python3 - "${PANTHEON_BOUNDED_RUNTIME_HOSTS}" "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}" <<'VALIDATE_PY'
+import sys
+run_hosts = {h.strip().lower() for h in sys.argv[1].split(",") if h.strip()}
+profile_hosts = {h.strip().lower() for h in sys.argv[2].split(",") if h.strip()}
+connector, finmind = sys.argv[3], sys.argv[4] == "true"
+extra = sorted(profile_hosts - run_hosts)
+if extra:
+    raise SystemExit("bounded_runtime_hosts_not_in_run_union: " + ",".join(extra))
+if connector.startswith("tw-finmind-") and not finmind:
+    raise SystemExit("bounded_runtime_has_no_finmind_token_for_" + connector)
+VALIDATE_PY
+}
+
+# Restores the steady posture of ONE bounded runtime from its recorded state: the recorded
+# pre-environment (so neither the run egress union nor the FinMind token stays), the recorded image,
+# the stopped steady controller and projector, then removes created leftovers and checks the counts.
+# Sets BOUNDED_RUNTIME_SUMMARY_JSON. Removes the state directory only when everything succeeded.
+bounded_runtime_restore_from_state() {
+  local dir="$1" restore_rc=0 cid
+  BOUNDED_RUNTIME_SUMMARY_JSON=""
+  [[ -s "${dir}/state.env" && -s "${dir}/pre_env.json" ]] || { info "bounded runtime state ${dir} is incomplete; refusing unverified restore" >&2; return 1; }
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  bounded_runtime_record_memory "${dir}" "${cid}"
+  local BR_IMAGE_ID="" BR_STEADY_IDS="" BR_CONTROLLER_MODE="" BR_ENTER_COUNT=0 BR_PEAK_BYTES="" BR_LIMIT_BYTES="" BR_OOM="false" BR_HOSTS="" BR_FINMIND="false" BR_PHASE=""
+  # shellcheck disable=SC1091
+  source "${dir}/state.env" || return 1
+  local bounded
+  bounded="$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)"
+  # shellcheck disable=SC2086
+  [[ -z "${bounded}" ]] || docker rm -f ${bounded} >/dev/null 2>&1 || true
+  remove_source_ingest_compose_leftovers
+  unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
+  info "restoring steady collector-host egress posture and source controller to ${BR_CONTROLLER_MODE:-reconcile_only} (bounded runtime of run ${dir##*-}, once)"
+  SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${BR_CONTROLLER_MODE:-reconcile_only}" \
+    manage_source_ingest_refresh_runtime "${dir}/pre_env.json" restore "${BR_IMAGE_ID}" || restore_rc=$?
+  # shellcheck disable=SC2086
+  if [[ -n "${BR_STEADY_IDS}" ]]; then docker start ${BR_STEADY_IDS} >/dev/null 2>&1 || restore_rc=1; fi
+  remove_source_ingest_compose_leftovers
+  verify_source_ingest_container_counts || { restore_rc=1; LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
+  BOUNDED_RUNTIME_SUMMARY_JSON="$(python3 -c 'import json,sys
+a=sys.argv[1:]
+print(json.dumps({"enter_recreates": int(a[0] or 0), "restore_recreates": 1, "memory_peak_bytes": int(a[1]) if a[1].isdigit() else None, "memory_limit_bytes": int(a[2]) if a[2].isdigit() else None, "oom_killed": a[3] == "true", "hosts": a[4], "finmind_token": a[5] == "true"}, sort_keys=True))' \
+    "${BR_ENTER_COUNT}" "${BR_PEAK_BYTES}" "${BR_LIMIT_BYTES}" "${BR_OOM}" "${BR_HOSTS}" "${BR_FINMIND}")"
+  (( restore_rc == 0 )) && rm -rf "${dir}"
+  return "${restore_rc}"
+}
+
+# Restores every bounded runtime recorded on this host (this run's and any a dead run left).
+bounded_runtime_restore_all_states() {
+  local dir rc=0 own_dir own_summary=""
+  own_dir="$(bounded_runtime_state_dir)"
+  BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RESTORED=0
+  while read -r dir; do
+    [[ -n "${dir}" ]] || continue
+    bounded_runtime_restore_from_state "${dir}" || rc=1
+    BOUNDED_RUNTIME_RESTORED=$((BOUNDED_RUNTIME_RESTORED + 1))
+    [[ "${dir}" != "${own_dir}" ]] || own_summary="${BOUNDED_RUNTIME_SUMMARY_JSON}"
+  done < <(bounded_runtime_list_state_dirs)
+  [[ -z "${own_summary}" ]] || BOUNDED_RUNTIME_SUMMARY_JSON="${own_summary}"
+  return "${rc}"
+}
+
+# Probe and, when needed, repair the steady posture after a refresh run ended
+# (including by timeout or cancellation). Writes a small JSON outcome.
+# status: healthy | restored | failed.
+execute_steady_posture_check() {
+  local output_path="${1:-}" grace="${STEADY_CHECK_GRACE_SECONDS:-90}"
+  local reason="" status="healthy" attempt=0 svc cid state mode health waited_cids=" "
+  steady_check_settle_refresh_orphans
+  steady_check_cleanup_call_files "${output_path}"
+  # The one steady restore of the run: from the state the bounded runtime recorded when it was entered.
+  local br_restore_rc=0 br_restored="false"
+  BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RESTORED=0
+  if [[ -n "$(bounded_runtime_list_state_dirs)" ]]; then
+    bounded_runtime_restore_all_states || br_restore_rc=$?
+    br_restored="true"
+  fi
+  steady_posture_problem() {
+    reason=""
+    local s c st md hl bound waited poll="${STEADY_CHECK_HEALTH_POLL_SECONDS:-5}"
+    for s in source-ingest source-ingest-scheduler; do
+      c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${s}" 2>/dev/null | head -n1 || true)"
+      [[ -n "${c}" ]] || { reason="${s}_not_running"; return 0; }
+      hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+      # A service that was just started or recreated is still in its start period: wait for
+      # it to leave "starting" (at most start period + one interval) before judging it.
+      # An already healthy service is judged at once. Waited once per container.
+      if [[ "${hl}" == "starting" && "${waited_cids}" != *" ${c} "* ]]; then
+        waited_cids+="${c} "
+        bound="$(steady_check_health_bound_seconds "${c}")"; waited=0
+        info "${s} health is starting; waiting up to ${bound}s (start period + one interval)"
+        while [[ "${hl}" == "starting" ]] && (( waited < bound )); do
+          sleep "${poll}"; waited=$((waited + poll))
+          hl="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${c}" 2>/dev/null || true)"
+        done
+        info "${s} health=${hl:-none} after ${waited}s"
+      fi
+      if [[ -n "${hl}" && "${hl}" != "healthy" ]]; then reason="${s}_${hl}"; return 0; fi
+    done
+    c="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q source-ingest-scheduler 2>/dev/null | head -n1 || true)"
+    md="$(docker inspect --format '{{json .Config.Env}}' "${c}" 2>/dev/null | python3 -c 'import json,sys
+try:
+    env=dict(x.split("=",1) for x in json.load(sys.stdin) if "=" in x)
+except Exception:
+    env={}
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' || true)"
+    [[ "${md}" == "collector_steady_pull" ]] || { reason="scheduler_mode_${md:-unknown}"; return 0; }
+    if [[ -n "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]]; then
+      reason="bounded_refresh_containers_present"; return 0
+    fi
+    if [[ -n "$(docker ps -a -q --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=source-ingest" --filter status=created 2>/dev/null || true)" ]]; then
+      reason="created_leftover_present"; return 0
+    fi
+    verify_source_ingest_container_counts >/dev/null 2>&1 || reason="source_ingest_container_count"
+    return 0
+  }
+  if (( br_restore_rc != 0 )); then
+    reason="steady_restore_failed:bounded_runtime"
+  else
+    steady_posture_problem
+  fi
+  # An orphaned remote refresh may still be finishing its own restore: give it time.
+  while [[ -n "${reason}" ]] && (( br_restore_rc == 0 )) && (( attempt * 15 < grace )); do
+    sleep 15; attempt=$((attempt + 1)); steady_posture_problem
+  done
+  if [[ -n "${reason}" && ${br_restore_rc} -ne 0 ]]; then
+    status="failed"
+  elif [[ -n "${reason}" ]]; then
+    local first_reason="${reason}" restore_rc=0
+    info "steady posture check failed: ${first_reason}; running the steady restore"
+    local env_file; env_file="$(mktemp)"
+    local src_cid running_image
+    src_cid="$(docker compose -p pantheon -f docker-compose.yml ps -a -q source-ingest 2>/dev/null | head -n1 || true)"
+    if [[ -z "${src_cid}" ]]; then
+      restore_rc=1; reason="steady_service_missing"
+    else
+      docker inspect --format '{{json .Config.Env}}' "${src_cid}" 2>/dev/null | python3 -c 'import json,sys
+drop=("SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS","SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS","SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS","SOURCE_INGEST_BOUNDED_DATASET")
+env=[x for x in json.load(sys.stdin) if x.split("=",1)[0] not in drop]
+json.dump(env,sys.stdout)' > "${env_file}" || restore_rc=1
+      running_image="$(docker inspect --format '{{.Image}}' "${src_cid}" 2>/dev/null || true)"
+      local bounded; bounded="$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)"
+      # shellcheck disable=SC2086
+      [[ -z "${bounded}" ]] || docker rm -f ${bounded} >/dev/null 2>&1 || true
+      remove_source_ingest_compose_leftovers
+      export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="collector_steady_pull"
+      if (( restore_rc == 0 )); then
+        manage_source_ingest_refresh_runtime "${env_file}" restore "${running_image}" || restore_rc=$?
+      fi
+      for svc in source-ingest-scheduler source-ingest-agora-projector; do
+        cid="$(docker compose -p pantheon -f docker-compose.yml ps -a -q "${svc}" 2>/dev/null | head -n1 || true)"
+        [[ -n "${cid}" ]] && { docker start "${cid}" >/dev/null 2>&1 || restore_rc=1; }
+      done
+      remove_source_ingest_compose_leftovers
+      if (( restore_rc != 0 )); then
+        reason="steady_restore_failed:${first_reason}"
+      else
+        waited_cids=" "
+        steady_posture_problem
+        if [[ -n "${reason}" ]]; then restore_rc=1; reason="steady_restore_incomplete:${reason}"; fi
+      fi
+    fi
+    rm -f "${env_file}"
+    if (( restore_rc == 0 )); then status="restored"; reason="${first_reason}"; else status="failed"; fi
+  fi
+  if [[ "${br_restored}" == "true" && "${status}" == "healthy" ]]; then
+    # Restoring the bounded runtime is the normal end of a run; a stopped left-over process or a
+    # container killed for memory is not.
+    if [[ "${STEADY_ORPHAN_ACTION:-none}" == "stopped" ]]; then
+      status="restored"; reason="bounded_runtime_restored_after_left_over_process_stopped"
+    elif [[ "${BOUNDED_RUNTIME_SUMMARY_JSON}" == *'"oom_killed": true'* ]]; then
+      status="failed"; reason="source_ingest_killed_for_memory"
+    else
+      reason="bounded_runtime_restored_once"
+    fi
+  fi
+  [[ -n "${output_path}" ]] && BOUNDED_RUNTIME_SUMMARY_JSON="${BOUNDED_RUNTIME_SUMMARY_JSON:-}" STEADY_ORPHAN_ACTION="${STEADY_ORPHAN_ACTION:-none}" STEADY_ORPHAN_PIDS="${STEADY_ORPHAN_PIDS:-}" STEADY_ORPHAN_SECONDS="${STEADY_ORPHAN_SECONDS:-0}" STEADY_CLEANUP_COUNT="${STEADY_CLEANUP_COUNT:-0}" STEADY_CLEANUP_BYTES="${STEADY_CLEANUP_BYTES:-0}" python3 - "${output_path}" "${status}" "${reason}" <<'STEADY_PY'
+import json, os, sys
+path, status, reason = sys.argv[1:4]
+payload = {"mode": "collector_steady_pull", "reason": reason, "status": status}
+if os.environ.get("STEADY_ORPHAN_ACTION", "none") != "none":
+    payload["orphan"] = {"action": os.environ["STEADY_ORPHAN_ACTION"], "pids": os.environ.get("STEADY_ORPHAN_PIDS", ""), "seconds": int(os.environ.get("STEADY_ORPHAN_SECONDS") or 0)}
+if int(os.environ.get("STEADY_CLEANUP_COUNT") or 0):
+    payload["cleanup"] = {"bytes": int(os.environ.get("STEADY_CLEANUP_BYTES") or 0), "files": int(os.environ["STEADY_CLEANUP_COUNT"])}
+if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
+    payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
+if os.environ.get("BOUNDED_RUNTIME_SUMMARY_JSON"):
+    payload["bounded_runtime"] = json.loads(os.environ["BOUNDED_RUNTIME_SUMMARY_JSON"])
+with open(path, "w", encoding="utf-8") as f:
+    f.write(json.dumps(payload, sort_keys=True) + "\n")
+STEADY_PY
+  info "steady posture check: status=${status} reason=${reason:-none}"
+  [[ "${status}" != "failed" ]]
 }
 
 execute_bounded_source_refresh_entrypoint() {
@@ -3038,15 +4235,20 @@ execute_bounded_source_refresh_entrypoint() {
   SOURCE_INGEST_CONTROLLER_RESTART_POLICY="no" \
   SOURCE_INGEST_CONTROLLER_MAX_TICKS="1" \
   SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="1" \
-  SOURCE_INGEST_MAX_RECORDS="100"
-  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET
+  SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
+  export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS SOURCE_INGEST_BOUNDED_CONNECTOR_ID SOURCE_INGEST_BOUNDED_DATASET SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS SOURCE_INGEST_MAX_RECORDS
   validate_source_refresh_profile
+  # Deliberately not local: the restore/cleanup traps can run after this function returns.
+  BOUNDED_RUN_MODE=false
+  [[ "${PANTHEON_BOUNDED_RUNTIME_RUN:-false}" != "true" ]] || BOUNDED_RUN_MODE=true
   BOUNDED_REFRESH_CAPTURED_LOG_FILE="$(mktemp)"
+  BOUNDED_REFRESH_READBACK_OUTCOME_JSON=""
   write_bounded_refresh_outcome() {
     [[ -n "${output_path:-}" ]] || return 0
-    local out_status="$1" out_reason="$2" base_json="${3:-}"
+    local out_status="$1" out_reason="$2" base_json="${3:-${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}}"
+    PREVIOUS_PROFILE_ACTION="${PREVIOUS_PROFILE_ACTION:-none}" PREVIOUS_PROFILE_PIDS="${PREVIOUS_PROFILE_PIDS:-}" PREVIOUS_PROFILE_SECONDS="${PREVIOUS_PROFILE_SECONDS:-0}" \
     python3 - "${output_path}" "${out_status}" "${out_reason}" "${base_json}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" "${SOURCE_INGEST_BOUNDED_DATASET:-}" <<'OUTCOME_PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 out_path, status, reason, base_raw, log_file, connector_id, dataset = sys.argv[1:8]
 payload = {}
 if base_raw:
@@ -3066,6 +4268,10 @@ if connector_id and "connector_id" not in payload:
     payload["connector_id"] = connector_id
 if dataset and "dataset" not in payload:
     payload["dataset"] = dataset
+if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
+    payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
+if os.environ.get("PREVIOUS_PROFILE_ACTION", "none") != "none":
+    payload["previous_profile_process"] = {"action": os.environ["PREVIOUS_PROFILE_ACTION"], "pids": os.environ.get("PREVIOUS_PROFILE_PIDS", ""), "seconds": int(os.environ.get("PREVIOUS_PROFILE_SECONDS") or 0)}
 pathlib.Path(out_path).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 OUTCOME_PY
   }
@@ -3078,7 +4284,9 @@ OUTCOME_PY
       # requested output file (a no-op without --output), so a failed Taiwan
       # refresh keeps its own logs instead of an empty block.
       write_bounded_refresh_outcome "failed" "${fail_reason}" || true
-      rm -f "${steady_env:-}" "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      # In a run steady_env is the recorded pre-environment of the run's bounded runtime: never delete it here.
+      [[ "${BOUNDED_RUN_MODE:-false}" == "true" ]] || rm -f "${steady_env:-}"
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
       if [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
         info "non-blocking TAIFEX refresh failed before container mutation (rc=${rc}, reason=${fail_reason}); continuing without failing release"
         exit 0
@@ -3088,7 +4296,29 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
   }
   trap handle_pre_mutation_refresh_exit EXIT INT TERM
-  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}" ]]; then
+  if [[ "${BOUNDED_RUN_MODE}" == "true" ]]; then
+    [[ "${PANTHEON_REFRESH_RUN_ID:-}" =~ ^[0-9]+$ ]] || error "bounded runtime run needs the numeric PANTHEON_REFRESH_RUN_ID (bounded_runtime_run_id_missing)"
+    local guard_reason
+    # A previous profile of this run that timed out may still run on this host: wait a bounded time
+    # for it to end or stop it, and record which, before this profile may touch the stack.
+    steady_check_settle_refresh_orphans
+    PREVIOUS_PROFILE_ACTION="${STEADY_ORPHAN_ACTION:-none}"; PREVIOUS_PROFILE_PIDS="${STEADY_ORPHAN_PIDS:-}"; PREVIOUS_PROFILE_SECONDS="${STEADY_ORPHAN_SECONDS:-0}"
+    [[ "${PREVIOUS_PROFILE_ACTION}" == "none" ]] || printf 'previous profile process of this run: action=%s pids=%s seconds=%s\n' "${PREVIOUS_PROFILE_ACTION}" "${PREVIOUS_PROFILE_PIDS}" "${PREVIOUS_PROFILE_SECONDS}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}"
+    if guard_reason="$(bounded_runtime_market_open_guard)"; then
+      info "bounded source refresh not run: ${guard_reason}"
+      # Restore the steady posture now, even though profiles remain; the run ends failed through the summary step.
+      local guard_restore_rc=0
+      if [[ -n "$(bounded_runtime_list_state_dirs)" ]]; then bounded_runtime_restore_all_states || guard_restore_rc=$?; fi
+      write_bounded_refresh_outcome "not_run" "${guard_reason}" '{"status": "not_run"}'
+      (( guard_restore_rc == 0 )) || write_bounded_refresh_outcome "failed" "steady_restore_failed_at_market_open: ${guard_reason}" '{"status": "failed"}'
+      trap - EXIT INT TERM
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      return 1
+    fi
+    local validate_err
+    validate_err="$(bounded_runtime_validate_profile 2>&1)" || error "bounded runtime profile rejected: ${validate_err##*$'\n'}"
+  fi
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}" ]]; then
     # No credential: record the reason and leave the stack untouched.
     write_bounded_refresh_outcome "skipped" "missing_credential" '{"status": "skipped", "reason": "missing_credential"}'
     info "FinMind broker refresh skipped: missing_credential (no container mutation)"
@@ -3096,6 +4326,8 @@ OUTCOME_PY
     rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
+  curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
+    || error "source-ingest /readyz did not become ready before bounded refresh preflight"
   resolve_bounded_source_refresh_active_symbols
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
@@ -3116,7 +4348,7 @@ OUTCOME_PY
       if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ || "${NON_BLOCKING_REFRESH:-false}" == "true" ]]; then
         write_bounded_refresh_outcome "failed" "${err_reason}" "${preflight_output}"
       else
-        [[ -n "${output_path}" ]] && printf '%s\n' "${preflight_output}" > "${output_path}"
+        if [[ -n "${output_path}" ]]; then printf '%s\n' "${preflight_output}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
       fi
       info "bounded source refresh preflight error: ${preflight_output}" >&2
       trap - EXIT INT TERM
@@ -3136,7 +4368,9 @@ OUTCOME_PY
   esac
 
   local refresh_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  steady_env="$(mktemp)" running_image_id="" steady_ids=() bounded_containers=()
+  steady_env="" running_image_id="" steady_ids=() bounded_containers=()
+  # In a run, steady_env is the recorded pre-environment inside the state directory (never deleted here).
+  [[ "${BOUNDED_RUN_MODE}" == "true" ]] || steady_env="$(mktemp)"
   if [[ -z "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" ]]; then
     info "bounded source refresh skipped: no_active_taiwan_symbols"
     write_bounded_refresh_outcome "skipped" "no_active_taiwan_symbols" '{"status": "skipped", "reason": "no_active_taiwan_symbols"}'
@@ -3151,7 +4385,35 @@ OUTCOME_PY
     bounded_containers+=("${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}")
   done
 
-  local cid compose_image_id; running_image_id=""
+  local cid compose_image_id steady_id steady_scheduler_env deploy_key deploy_value steady_lease_seconds=0 br_dir="" br_entered=false br_loaded=false
+  running_image_id=""
+  if [[ "${BOUNDED_RUN_MODE}" == "true" ]]; then
+    br_dir="$(bounded_runtime_state_dir)"
+    if [[ -s "${br_dir}/state.env" ]]; then br_loaded=true; fi
+  fi
+  if [[ "${br_loaded}" == "true" ]]; then
+    # The run's bounded runtime already exists: reuse what its first call recorded.
+    local BR_IMAGE_ID="" BR_STEADY_IDS="" BR_CONTROLLER_MODE="" BR_LEASE_SECONDS=0 BR_PHASE="" BR_HOSTS="" BR_TENANT="" BR_ENV="" BR_GIT_SHA="" BR_IMAGE_DIGEST="" BR_BUILD_TIME=""
+    # shellcheck disable=SC1091
+    source "${br_dir}/state.env"
+    [[ "${BR_HOSTS}" == "${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}" ]] || error "bounded runtime hosts of this call differ from the run's runtime (bounded_runtime_hosts_changed_within_run)"
+    steady_env="${br_dir}/pre_env.json"
+    running_image_id="${BR_IMAGE_ID}"
+    # shellcheck disable=SC2206
+    steady_ids=(${BR_STEADY_IDS})
+    steady_controller_mode="${BR_CONTROLLER_MODE}"
+    steady_lease_seconds="${BR_LEASE_SECONDS}"
+    export PANTHEON_TENANT_ID="${BR_TENANT}" PANTHEON_ENV="${BR_ENV}" GIT_SHA="${BR_GIT_SHA}"
+    [[ -z "${BR_IMAGE_DIGEST}" ]] || export IMAGE_DIGEST="${BR_IMAGE_DIGEST}"
+    [[ -z "${BR_BUILD_TIME}" ]] || export BUILD_TIME="${BR_BUILD_TIME}"
+    [[ "${BR_PHASE}" != "entered" ]] || br_entered=true
+    export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${steady_controller_mode}"
+  else
+    # A dead earlier run may have left its bounded runtime: restore it from its record first.
+    if [[ "${BOUNDED_RUN_MODE}" == "true" && -n "$(bounded_runtime_list_state_dirs)" ]]; then
+      bounded_runtime_restore_all_states || error "could not restore the bounded runtime a previous run left (bounded_runtime_stale_restore_failed)"
+    fi
+  [[ -n "${steady_env}" ]] || steady_env="$(mktemp)"
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
   [[ -n "$cid" ]] || error "running source-ingest container not found"
   running_image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
@@ -3163,13 +4425,12 @@ OUTCOME_PY
   docker inspect --format '{{json .Config.Env}}' "$cid" > "${steady_env}"
 
   # Deploy-time values (tenant, GIT_SHA, ...) only exist on the steady scheduler container.
-  local steady_id steady_scheduler_env; steady_ids=()
+  steady_ids=()
   for bounded_service in "${bounded_services[@]}"; do
     steady_id="$(docker compose -p pantheon -f docker-compose.yml ps --status running -q "${bounded_service}" 2>/dev/null || true)"
     [[ -n "${steady_id}" ]] && steady_ids+=("${steady_id}")
   done
   steady_scheduler_env="$(docker inspect --format '{{json .Config.Env}}' "${steady_ids[0]:-}" 2>/dev/null || true)"
-  local deploy_key deploy_value
   for deploy_key in PANTHEON_TENANT_ID PANTHEON_ENV GIT_SHA IMAGE_DIGEST BUILD_TIME; do
     deploy_value="$(python3 -c 'import json,sys
 for item in json.loads(sys.argv[1] or "[]"):
@@ -3186,7 +4447,6 @@ for item in json.loads(sys.argv[1] or "[]"):
   # A stopped steady controller keeps its loop-control lease until it expires,
   # and the store has no release, so a bounded controller started earlier is
   # rejected as a foreign writer (refresh run 37754747898).
-  local steady_lease_seconds=0
   if (( ${#steady_ids[@]} )); then
     steady_lease_seconds="$(python3 -c 'import json,sys
 env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
@@ -3194,10 +4454,45 @@ lease = (env.get("SOURCE_INGEST_CONTROLLER_LEASE_SECONDS") or "").strip()
 print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS") or "60"))' "${steady_scheduler_env}")"
   fi
 
+  # Record the steady controller mode so every restore path (success, failure,
+  # interruption) returns to it instead of silently forcing reconcile_only.
+  # Deliberately not local: the EXIT trap can run after this function returns.
+  steady_controller_mode="$(python3 -c 'import json,sys
+env = dict(item.partition("=")[::2] for item in json.loads(sys.argv[1] or "[]"))
+print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' "${steady_scheduler_env}")"
+  if [[ "${steady_controller_mode}" != "collector_steady_pull" || -z "${PANTHEON_COLLECTOR_HOST:-}" ]]; then
+    steady_controller_mode="reconcile_only"
+  fi
+  export SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${steady_controller_mode}"
+    if [[ "${BOUNDED_RUN_MODE}" == "true" ]]; then
+      # Record the steady posture BEFORE the first mutation so any interruption can be restored from it.
+      ( umask 077; mkdir -p "${br_dir}" ) || error "could not create the bounded runtime state directory"
+      ( umask 077; cp "${steady_env}" "${br_dir}/pre_env.json" ) || error "could not record the steady source-ingest environment"
+      rm -f "${steady_env}"
+      steady_env="${br_dir}/pre_env.json"
+      ( umask 077; : > "${br_dir}/state.env" )
+      bounded_runtime_state_set "${br_dir}" BR_PHASE captured
+      bounded_runtime_state_set "${br_dir}" BR_IMAGE_ID "${running_image_id}"
+      bounded_runtime_state_set "${br_dir}" BR_STEADY_IDS "${steady_ids[*]:-}"
+      bounded_runtime_state_set "${br_dir}" BR_CONTROLLER_MODE "${steady_controller_mode}"
+      bounded_runtime_state_set "${br_dir}" BR_LEASE_SECONDS "${steady_lease_seconds}"
+      bounded_runtime_state_set "${br_dir}" BR_HOSTS "${PANTHEON_BOUNDED_RUNTIME_HOSTS}"
+      bounded_runtime_state_set "${br_dir}" BR_FINMIND "${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}"
+      bounded_runtime_state_set "${br_dir}" BR_ENTER_COUNT 0
+      bounded_runtime_state_set "${br_dir}" BR_TENANT "${PANTHEON_TENANT_ID:-}"
+      bounded_runtime_state_set "${br_dir}" BR_ENV "${PANTHEON_ENV:-}"
+      bounded_runtime_state_set "${br_dir}" BR_GIT_SHA "${GIT_SHA:-}"
+      bounded_runtime_state_set "${br_dir}" BR_IMAGE_DIGEST "${IMAGE_DIGEST:-}"
+      bounded_runtime_state_set "${br_dir}" BR_BUILD_TIME "${BUILD_TIME:-}"
+    fi
+  fi
+
   restore_bounded_source_refresh() {
     local rc="${1:-$?}" invoked_from_trap="false" restore_rc=0
     (( $# == 0 )) && invoked_from_trap="true"
-    trap - EXIT INT TERM
+    trap - EXIT INT TERM HUP PIPE
+    # A restore must finish even if the SSH session dies while it runs.
+    trap '' HUP PIPE
     if (( rc != 0 )) && [[ -n "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}" && ! -s "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" ]]; then
       local sched_cid="" sched_log=""
       sched_cid="$(docker ps -a -q --filter "name=^${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX:-pantheon-bounded-refresh}-source-ingest-scheduler\$" 2>/dev/null || true)"
@@ -3206,21 +4501,45 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
         [[ -z "${sched_log}" ]] || printf '%s\n' "${sched_log}" >> "${BOUNDED_REFRESH_CAPTURED_LOG_FILE}" || true
       fi
     fi
-    info "restoring steady collector-host egress posture and source controller to reconcile_only"
+    if [[ "${BOUNDED_RUN_MODE:-false}" == "true" ]]; then
+      # One bounded runtime per run: the profile ends here without recreating source-ingest. Only its own
+      # one-shot containers go; the single steady restore is the run's steady check.
+      (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
+      remove_source_ingest_compose_leftovers
+      local run_cid=""
+      run_cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+      bounded_runtime_record_memory "$(bounded_runtime_state_dir)" "${run_cid}"
+      verify_source_ingest_container_counts || { restore_rc=1; LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
+      (( restore_rc == 0 )) || rc="${restore_rc}"
+      if (( rc != 0 )); then
+        write_bounded_refresh_outcome "failed" "${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}" || true
+        rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+        if (( restore_rc == 0 )) && [[ "${NON_BLOCKING_REFRESH:-false}" == "true" && "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" =~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then
+          info "non-blocking TAIFEX refresh failed (rc=${rc}); continuing without failing release"
+          [[ "${invoked_from_trap}" == "true" ]] && exit 0
+          return 0
+        fi
+      fi
+      return "${rc}"
+    fi
+    info "restoring steady collector-host egress posture and source controller to ${steady_controller_mode:-reconcile_only}"
+    # An interrupted Compose recreate leaves a Created rename leftover that
+    # would make the recreate below (and later captures) see two containers.
+    remove_source_ingest_compose_leftovers
     unset SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS SOURCE_INGEST_BOUNDED_DATASET || true
     if [[ -n "${steady_env:-}" && -s "${steady_env}" ]]; then
       manage_source_ingest_refresh_runtime "${steady_env}" "restore" "${running_image_id:-}" || restore_rc=$?
     else
-      PANTHEON_EXTERNAL_EGRESS="${PANTHEON_COLLECTOR_HOST:+allowlist}" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_COLLECTOR_HOST:-}" \
-      SOURCE_INGEST_CONTROLLER_MODE=reconcile_only SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL=scheduled_tick \
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS=0 SOURCE_INGEST_CONTROLLER_RESTART_POLICY=unless-stopped \
-        docker compose -p pantheon -f docker-compose.yml up -d --no-deps --no-build source-ingest >/dev/null 2>&1 || true
+      info "captured source-ingest environment is missing; refusing unverified restore" >&2
+      restore_rc=1
     fi
     # Only the named one-shot containers are removed; steady scheduler/projector are never touched.
     (( ${#bounded_containers[@]} )) && docker rm -f "${bounded_containers[@]}" >/dev/null 2>&1 || true
     if (( ${#steady_ids[@]} )); then
       docker start "${steady_ids[@]}" >/dev/null 2>&1 || restore_rc=$?
     fi
+    remove_source_ingest_compose_leftovers
+    verify_source_ingest_container_counts || { restore_rc=1; LAST_REMOTE_DEPLOY_ERROR="source_ingest_container_count"; }
     (( restore_rc == 0 )) || rc="${restore_rc}"
     if (( rc != 0 )); then
       local fail_reason="${LAST_REMOTE_DEPLOY_ERROR:-bounded_refresh_failed}"
@@ -3240,19 +4559,64 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     fi
     return "${rc}"
   }
-  trap restore_bounded_source_refresh EXIT INT TERM
+  # A terminating signal must run the same restore, then really exit non-zero
+  # (128+signal) so the script never resumes into the projector launch or a
+  # later success outcome. restore clears the EXIT trap, so exit is not re-run.
+  handle_bounded_refresh_signal() {
+    local signal_rc="$1"
+    if (( signal_rc == 129 || signal_rc == 141 )); then
+      # The SSH peer is gone: a further write to it would raise SIGPIPE inside
+      # the restore itself. Ignore both and keep the restore log on the host.
+      trap '' HUP PIPE
+      exec >>"${PANTHEON_BOUNDED_REFRESH_RESTORE_LOG:-/tmp/pantheon-bounded-refresh-restore.log}" 2>&1 || exec >/dev/null 2>&1
+    fi
+    restore_bounded_source_refresh "${signal_rc}" || true
+    exit "${signal_rc}"
+  }
+  trap restore_bounded_source_refresh EXIT
+  trap 'handle_bounded_refresh_signal 130' INT
+  trap 'handle_bounded_refresh_signal 143' TERM
+  # A dropped or timed-out SSH session reaches the remote shell as HUP or as a
+  # broken pipe on its next write; both must run the same restore.
+  trap 'handle_bounded_refresh_signal 129' HUP
+  trap 'handle_bounded_refresh_signal 141' PIPE
 
-  # Stop (not remove) the steady controller/projector so only one controller owns the window.
-  (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
   local steady_stopped_at lease_wait
-  steady_stopped_at="$(date +%s)"
-  manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
-  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
-  [[ -n "${cid}" ]] || error "running source-ingest container not found after bounded runtime recreation"
-  lease_wait=$(( steady_lease_seconds + 1 - ($(date +%s) - steady_stopped_at) ))
-  if (( steady_lease_seconds > 0 && lease_wait > 0 )); then
-    info "waiting ${lease_wait}s for the stopped steady source controller lease to expire"
-    sleep "${lease_wait}"
+  if [[ "${br_entered}" != "true" ]]; then
+    # Stop (not remove) the steady controller/projector so only one controller owns the window.
+    (( ${#steady_ids[@]} )) && docker stop "${steady_ids[@]}" >/dev/null
+    steady_stopped_at="$(date +%s)"
+    if [[ "${BOUNDED_RUN_MODE}" == "true" ]]; then
+      # The one recreate into the bounded runtime of this run: egress is exactly the union of the
+      # hosts of the run's profiles and the FinMind token is carried only when the run has a FinMind profile.
+      PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_BOUNDED_RUNTIME_HOSTS}" \
+      PANTHEON_BOUNDED_RUNTIME_FINMIND_TOKEN="${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}" \
+      SOURCE_INGEST_MAX_RECORDS="${PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS:-${SOURCE_INGEST_MAX_RECORDS:-100}}" \
+        manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
+    else
+      manage_source_ingest_refresh_runtime "${steady_env}" "bounded" "${running_image_id}" "${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}"
+    fi
+    cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -n "${cid}" ]] || error "running source-ingest container not found after bounded runtime recreation"
+    lease_wait=$(( steady_lease_seconds + 1 - ($(date +%s) - steady_stopped_at) ))
+    if (( steady_lease_seconds > 0 && lease_wait > 0 )); then
+      info "waiting ${lease_wait}s for the stopped steady source controller lease to expire"
+      sleep "${lease_wait}"
+    fi
+    if [[ "${BOUNDED_RUN_MODE}" == "true" ]]; then
+      local enter_count
+      enter_count="$(sed -n 's/^BR_ENTER_COUNT=//p' "${br_dir}/state.env" | tail -n1 | tr -dc '0-9')"
+      bounded_runtime_state_set "${br_dir}" BR_ENTER_COUNT "$(( ${enter_count:-0} + 1 ))"
+      bounded_runtime_state_set "${br_dir}" BR_PHASE entered
+      info "bounded runtime of run ${PANTHEON_REFRESH_RUN_ID} entered once: hosts=${PANTHEON_BOUNDED_RUNTIME_HOSTS} finmind_token=${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}"
+    fi
+  else
+    # Already inside the run's bounded runtime: no stop, no recreate, no lease wait. Wait for its health.
+    curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
+      || error "source-ingest of the bounded runtime did not report ready (bounded_runtime_not_ready)"
+    cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null || true)"
+    [[ -n "${cid}" ]] || error "running source-ingest container not found inside the bounded runtime"
+    info "reusing the bounded runtime of run ${PANTHEON_REFRESH_RUN_ID}; source-ingest is not recreated"
   fi
 
   recover_bounded_source_refresh_dlq "${force}" "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" "${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
@@ -3308,11 +4672,12 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
     SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}" \
     SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
     SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${bounded_concurrency}" \
-    SOURCE_INGEST_MAX_RECORDS=100 \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS="${SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS:-}" \
       docker compose -p pantheon -f docker-compose.yml run -d --no-deps \
         -e SOURCE_INGEST_CONTROLLER_ALIVE_PATH=/data/source-ingest/bounded-refresh/controller_alive \
         -e SOURCE_INGEST_BOUNDED_DATASET="${SOURCE_INGEST_BOUNDED_DATASET:-}" \
+        -e SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${refresh_started_at}" \
         "${extra_bounded_env_args[@]}" \
         --name "${SOURCE_INGEST_BOUNDED_CONTAINER_PREFIX}-${bounded_service}" "${bounded_service}"
     wait_for_bounded_source_refresh_service "${bounded_service}"
@@ -3323,6 +4688,11 @@ print(int(lease) if lease else 2 * int(env.get("SOURCE_INGEST_CONTROLLER_INTERVA
   restore_bounded_source_refresh "${refresh_rc}" || post_restore_rc=$?
   (( post_restore_rc == 0 )) || return "${post_restore_rc}"
   if (( refresh_rc != 0 )); then
+    return 0
+  fi
+  if [[ -n "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON:-}" ]]; then
+    write_bounded_refresh_outcome "not_yet_published" "not_yet_published" "${BOUNDED_REFRESH_READBACK_OUTCOME_JSON}"
+    rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
     return 0
   fi
   write_bounded_refresh_outcome "completed" "refreshed" "{\"status\": \"completed\", \"refreshed_at\": \"${refresh_started_at}\"}"
@@ -4286,6 +5656,7 @@ REMOTE_DB
 dump_dev_root_failure_diagnostics() {
   local source_ingest_container_id=""
   local search_container_id=""
+  local search_scheduler_container_id=""
   local paper_signal_producer_container_id=""
 
   info "dev root compose ps after failure"
@@ -4311,6 +5682,57 @@ dump_dev_root_failure_diagnostics() {
     docker inspect --format \
       'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
       "$search_container_id" || true
+  fi
+  # The scheduler can fail while search-svc stays healthy. Capture its own
+  # evidence before compensation removes the candidate container. Successful
+  # ticks contain business snapshots: emit only failure structure, never their
+  # result bodies, traceback source lines, or arbitrary exception messages.
+  search_scheduler_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q search-index-scheduler 2>/dev/null || true
+  )"
+  if [[ -n "$search_scheduler_container_id" ]]; then
+    info "search-index-scheduler failure structure from last 200 log lines (redacted)"
+    # Non-TTY Docker logs preserves container stderr on CLI stderr. Merge both
+    # streams before redaction/selection so worker tracebacks are retained too.
+    { docker logs --tail 200 "$search_scheduler_container_id" 2>&1 || true; } \
+      | redact_bounded_refresh_log \
+      | python3 -c '
+import json
+import re
+import sys
+
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    try:
+        event = json.loads(line)
+    except ValueError:
+        event = None
+    if isinstance(event, dict):
+        if event.get("status") == "failed":
+            failure = {"status": "failed"}
+            tick = event.get("tick")
+            if type(tick) is int and 0 < tick <= 2147483647:
+                failure["tick"] = tick
+            error_type = event.get("error_type", "")
+            if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", error_type):
+                failure["error_type"] = error_type
+            print(json.dumps(failure, sort_keys=True))
+        continue
+    if line == "Traceback (most recent call last):":
+        print(line)
+        continue
+    frame = re.fullmatch(r"  File \"[^\"\n]*/services/search/scheduler_worker.py\", line ([0-9]{1,7}), in (main|run_tick|_post_json|<module>)", line)
+    if frame:
+        print("  File \"scheduler_worker.py\", line {}, in {}".format(frame[1], frame[2]))
+    elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,79}(?:Error|Exception|Interrupt|Exit)(?::.*)?", line):
+        print(line.split(":", 1)[0] + ": [details omitted]")
+' || true
+    info "search-index-scheduler container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}}' \
+      "$search_scheduler_container_id" 2>/dev/null | redact_bounded_refresh_log || true
+  else
+    info "search-index-scheduler container unavailable after failure"
   fi
   info "paper-signal-producer service logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-signal-producer || true
@@ -4386,6 +5808,7 @@ retire_dormant_and_one_off_profile_containers() {
     COMPOSE_PROFILES="lifecycle-capacity-benchmark" \
       docker compose -p pantheon -f docker-compose.yml rm -f -s lifecycle-projector-capacity-benchmark 2>/dev/null || true
   fi
+  if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
 }
 
 verify_dev_paper_fleet() {
@@ -4495,6 +5918,58 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+# Exact component check over the whole expected steady set of the selected
+# profiles (plus the required loop workers), not only the loop workers: every
+# service one container, running, healthy, on the compose image, revision label
+# equal to the release SHA when the image carries one.
+verify_steady_stack_complete() {
+  local -a stack_services=()
+  local service
+  mapfile -t stack_services < <(
+    { expected_steady_services; printf '%s\n' "${REQUIRED_LOOP_WORKERS[@]}"; } | sed '/^$/d' | sort -u
+  )
+  if (( ${#stack_services[@]} < ${#REQUIRED_LOOP_WORKERS[@]} )); then
+    info "unable to derive the expected steady service set; stack completeness not proven" >&2
+    return 1
+  fi
+  for service in "${REQUIRED_LOOP_WORKERS[@]}"; do
+    printf '%s\n' "${stack_services[@]}" | grep -qxF -- "${service}" || {
+      info "required loop worker ${service} is not in the expected steady set" >&2; return 1; }
+  done
+  verify_exact_component_deployment "${stack_services[@]}"
+}
+
+# Services whose image this release builds AND labels with the release SHA,
+# derived from docker-compose.yml (never a hand-kept list): a service with a
+# build section that passes GIT_SHA as a build arg or sets the
+# org.opencontainers.image.revision label. All profiles are rendered so the
+# bounded dev-paper-principals issuer is covered. A service on a prebuilt or
+# third-party image (e.g. openclaw-gateway, fixed tag, no GIT_SHA arg) is not
+# listed, so its older revision label is not a release mismatch. Prints nothing
+# when the Compose config cannot be rendered; callers then fail closed and
+# require the revision for every service.
+release_labelled_services() {
+  GIT_SHA="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}" \
+    docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    services = json.load(sys.stdin).get("services") or {}
+except Exception:
+    raise SystemExit(0)
+for name in sorted(services):
+    build = services[name].get("build")
+    if not isinstance(build, dict):
+        continue
+    args = build.get("args") or {}
+    labels = build.get("labels") or {}
+    if isinstance(labels, list):
+        labels = dict(item.split("=", 1) for item in labels if "=" in item)
+    if "GIT_SHA" in args or "org.opencontainers.image.revision" in labels:
+        print(name)
+' || true
+}
+
 verify_exact_component_deployment() {
   local target_services=("$@")
   local expected_sha="${GIT_SHA:-${PANTHEON_DEPLOY_SHA:-${DEPLOY_SHA:-}}}"
@@ -4541,6 +6016,18 @@ verify_exact_component_deployment() {
     fi
     seen_target_services["$service"]=1
   done
+
+  # Revision equality applies only to images this release builds and labels.
+  local revision_scope_derived=false
+  declare -A release_labelled=()
+  while IFS= read -r service; do
+    [[ -n "$service" ]] || continue
+    release_labelled["$service"]=1
+    revision_scope_derived=true
+  done < <(release_labelled_services)
+  if [[ "$revision_scope_derived" != true ]]; then
+    info "release-built service set not derivable; requiring the revision label for every component" >&2
+  fi
 
   info "verifying exact deployment and running state for ${#target_services[@]} component(s); expected_sha=${expected_sha}"
 
@@ -4598,8 +6085,13 @@ verify_exact_component_deployment() {
       if [[ "$compose_image_id" =~ ^[0-9a-f]{64}$ ]]; then
         compose_image_id="sha256:${compose_image_id}"
       fi
-      image_rev="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container_id" 2>/dev/null || true)"
+      image_rev="$(docker inspect --format '{{with .Config.Labels}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}' "$container_id" 2>/dev/null || true)"
       cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container_id" 2>/dev/null || true)"
+      if [[ -z "$cmd" || "$cmd" == "null" || "$cmd" == "[]" ]]; then
+        # Images that declare only an ENTRYPOINT (e.g. third-party stack services)
+        # still have a command identity.
+        cmd="$(docker inspect --format '{{json .Config.Entrypoint}}' "$container_id" 2>/dev/null || true)"
+      fi
       started_at="$(docker inspect --format '{{.State.StartedAt}}' "$container_id" 2>/dev/null || true)"
 
       if [[ "$status" != "running" ]]; then
@@ -4651,8 +6143,16 @@ verify_exact_component_deployment() {
       elif [[ "$image_id" != "$compose_image_id" ]]; then
         identity_errors+=("${service}: container image ID ${image_id:-missing} != Compose image ID ${compose_image_id}")
       fi
-      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]]; then
+      if [[ -n "$image_rev" && "$image_rev" != "<no value>" && "$image_rev" != "unknown" && "$image_rev" != "$expected_sha" ]] \
+        && { [[ "$revision_scope_derived" != true ]] || [[ -n "${release_labelled[$service]:-}" ]]; }; then
         wrong_sha+=("${service}: image_rev=${image_rev:-missing} != expected=${expected_sha}")
+      fi
+
+      # An image this release does not build carries no revision claim in the
+      # receipt (same contract as an unlabelled image).
+      local receipt_rev="$image_rev"
+      if [[ "$revision_scope_derived" == true && -z "${release_labelled[$service]:-}" ]]; then
+        receipt_rev=""
       fi
 
       if ! entry_json="$(python3 -c '
@@ -4716,7 +6216,7 @@ print(json.dumps({
         "stable": stable,
     },
 }))
-' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$image_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
+' "$service" "$container_id" "$image" "$image_id" "$compose_image_id" "$receipt_rev" "$status" "$restart_count" "$health" "$cmd" "$expected_sha" \
     "$started_at" "${observation_count[$service]}" "${baseline_container_id[$service]}" \
     "${baseline_image_id[$service]}" "${baseline_started_at[$service]}" \
     "${baseline_restart_count[$service]}" "${baseline_health[$service]}" "${service_bad_health[$service]:-0}")"; then
@@ -4904,12 +6404,119 @@ run_bounded_docker_prune() {
   fi
 
   info "running bounded Docker maintenance: ${label} (timeout=${timeout_seconds}s)"
-  if timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@"; then
+  local status=0
+  timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" || status=$?
+  if (( status == 0 )); then
+    return 0
+  fi
+  if (( status == 124 || status == 137 )); then
+    info "warning: ${label} timed out after ${timeout_seconds}s (status ${status}); continuing deployment"
+  else
+    info "warning: ${label} exited with status ${status}; continuing deployment"
+  fi
+  return 0
+}
+
+# Removes images with no tag that no container (running or stopped) references,
+# one at a time with a non-forced docker rmi so the daemon refuses in-use or
+# parent images. Tagged images (including pantheon-protect/*) are never
+# candidates. Each removal is persistent, so a budget cut keeps earlier progress.
+remove_dev_untagged_unreferenced_images_for_build() {
+  local budget="${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS:-900}"
+  if ! [[ "${budget}" =~ ^[0-9]+$ ]] || (( budget < 1 || budget > 3600 )); then
+    info "warning: invalid PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_BUDGET_SECONDS=${budget}; skipping untagged image removal"
+    return 0
+  fi
+  local deadline_total="${DEV_DEPLOY_DEADLINE_SECONDS:-}"
+  if [[ "${deadline_total}" =~ ^[0-9]+$ ]] && (( deadline_total >= 4 && budget > deadline_total / 4 )); then
+    budget=$((deadline_total / 4))
+  fi
+  if ! command -v timeout >/dev/null 2>&1; then
+    info "warning: timeout utility unavailable; skipping untagged image removal"
     return 0
   fi
 
-  local status=$?
-  info "warning: ${label} exited with status ${status}; continuing deployment"
+  # One elapsed-time budget covers discovery and removals. Every docker call is
+  # bounded by the remaining budget minus the kill-after grace, so a hung
+  # daemon cannot outlive the budget.
+  local grace=5 started="${SECONDS}" remaining call_timeout
+  local free_before="" free_after="" check_path="${PANTHEON_DEV_DEPLOY_DISK_CHECK_PATH:-$(pwd)}"
+  free_before="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_before}" =~ ^[0-9]+$ ]] || free_before="unknown"
+
+  local ids_out="" inspect_out="" rows=""
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! ids_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker ps -a -q --no-trunc 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  declare -A referenced=()
+  local ref
+  local -a cids=()
+  mapfile -t cids <<< "${ids_out}"
+  if (( ${#cids[@]} > 0 )) && [[ -n "${cids[0]}" ]]; then
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )) || ! inspect_out="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker inspect --format '{{.Image}}' "${cids[@]}" 2>/dev/null)"; then
+      info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=container_inspect_failed_or_timed_out"
+      return 0
+    fi
+    while IFS= read -r ref; do
+      ref="${ref#sha256:}"
+      [[ -n "${ref}" ]] && referenced["${ref:0:12}"]=1
+    done <<< "${inspect_out}"
+  fi
+
+  local row tag_ref img_id
+  local -a candidates=()
+  declare -A seen=()
+  remaining=$((budget - (SECONDS - started) - grace))
+  if (( remaining <= 0 )) || ! rows="$(timeout --signal=TERM --kill-after="${grace}s" "${remaining}s" docker image ls --all --no-trunc --format '{{.Repository}}:{{.Tag}}|{{.ID}}' 2>/dev/null)"; then
+    info "untagged image removal: candidates=0 removed=0 refused=0 not_attempted=0 free_bytes_before=${free_before} free_bytes_after=${free_before} budget_exhausted=true discovery=image_enumeration_failed_or_timed_out"
+    return 0
+  fi
+  # An image id with any tag row is tagged and never a candidate.
+  declare -A tagged=()
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || tagged["${img_id:0:12}"]=1
+  done <<< "${rows}"
+  while IFS= read -r row; do
+    [[ -n "${row}" ]] || continue
+    tag_ref="${row%%|*}"
+    img_id="${row#*|}"
+    img_id="${img_id#sha256:}"
+    [[ "${tag_ref}" == "<none>:<none>" ]] || continue
+    [[ -z "${tagged[${img_id:0:12}]:-}" && -z "${referenced[${img_id:0:12}]:-}" && -z "${seen[${img_id:0:12}]:-}" ]] || continue
+    seen["${img_id:0:12}"]=1
+    candidates+=("${img_id}")
+  done <<< "${rows}"
+
+  local removed=0 refused=0 skipped=0 per_call
+  info "removing untagged unreferenced dev Docker images one at a time (candidates=${#candidates[@]} budget=${budget}s)"
+  for img_id in "${candidates[@]}"; do
+    remaining=$((budget - (SECONDS - started) - grace))
+    if (( remaining <= 0 )); then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    per_call=$((remaining < 60 ? remaining : 60))
+    if timeout --signal=TERM --kill-after="${grace}s" "${per_call}s" docker rmi "${img_id}" >/dev/null 2>&1; then
+      removed=$((removed + 1))
+    else
+      refused=$((refused + 1))
+    fi
+  done
+
+  free_after="$(df -PB1 "${check_path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  [[ "${free_after}" =~ ^[0-9]+$ ]] || free_after="unknown"
+  local budget_note=""
+  if (( skipped > 0 )); then
+    budget_note=" budget_exhausted=true"
+  fi
+  info "untagged image removal: candidates=${#candidates[@]} removed=${removed} refused=${refused} not_attempted=${skipped} free_bytes_before=${free_before} free_bytes_after=${free_after}${budget_note}"
   return 0
 }
 
@@ -5094,6 +6701,12 @@ prune_dev_docker_storage_for_build() {
         # rollback restores from release-artifacts tars, not from these images.
         info "removing dangling dev Docker images before root build"
         run_bounded_docker_prune "dangling images" docker image prune -f
+        if [[ "${PANTHEON_DEV_DOCKER_UNTAGGED_IMAGE_REMOVE:-true}" != "false" ]]; then
+          # Guarded so harnesses that source only the older prune helpers keep working.
+          if declare -F remove_dev_untagged_unreferenced_images_for_build >/dev/null; then
+            remove_dev_untagged_unreferenced_images_for_build
+          fi
+        fi
       fi
     else
       info "skipped dev Docker builder cache and dangling-image prune because container image protection did not complete"
@@ -5113,6 +6726,145 @@ prune_dev_docker_storage_for_build() {
   run_bounded_docker_prune "unused images" docker image prune -af
   run_bounded_docker_prune "system cache" docker system prune -f --filter "label!=com.docker.compose.project=pantheon"
   docker_storage_diagnostics "after prune"
+}
+
+# Build cache size in bytes from `docker system df` ("Build Cache" row), or
+# "unknown". Docker prints decimal units (kB/MB/GB); the cap is parsed the way
+# Docker parses --reserved-space (binary), so the comparison errs permissive.
+dev_docker_builder_cache_bytes() {
+  local row
+  row="$(docker system df --format '{{.Type}}|{{.Size}}' 2>/dev/null | grep -i '^Build Cache|' | head -n1 || true)"
+  python3 -c '
+import re, sys
+m = re.match(r"^[^|]*\|\s*([0-9.]+)\s*([kKmMgGtTpP]?)[bB]?\s*$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1000, "m": 1000**2, "g": 1000**3, "t": 1000**4, "p": 1000**5}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "${row}"
+}
+
+dev_docker_size_to_bytes() {
+  python3 -c '
+import re, sys
+m = re.match(r"^([0-9.]+)\s*([kKmMgGtT]?)(?:[iI]?[bB])?$", sys.argv[1])
+if not m:
+    print("unknown"); raise SystemExit
+units = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+print(int(float(m.group(1)) * units[m.group(2).lower()]))
+' "$1"
+}
+
+# Brings the Docker build cache back under the cap after a build, on both the
+# root and bff component paths. Protection of every compose container image is
+# a precondition (skip when it fails); no `-a`/`-af` builder prune is ever used.
+# Never fails the deploy, but a skipped/timed-out/failed/over-cap prune is
+# reported as not done (with cache size before/after) in the log and, through an
+# ADVISORY_CHECK_RESULT line, in the workflow deploy summary.
+cap_dev_docker_builder_cache_after_build() {
+  local phase="${1:-after_build}"
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return 0
+  fi
+  local keep="${PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE:-20GB}"
+  local timeout_seconds="${PANTHEON_DEV_DOCKER_PRUNE_TIMEOUT_SECONDS:-45}"
+  local status="" reason="" flag="" before="unknown" after="unknown" cap_bytes="unknown" rc=0
+
+  if [[ ! "${keep}" =~ ^[0-9]+([.][0-9]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]] || [[ "${keep}" =~ ^0+([.][0]+)?([bBkKmMgGtT][bB]?|[kKmMgGtT][iI][bB])?$ ]]; then
+    status="not_done"; reason="invalid_keep_storage"
+  elif [[ "${PANTHEON_DEV_DOCKER_BUILDER_PRUNE:-true}" == "false" ]]; then
+    status="not_done"; reason="builder_prune_disabled"
+  elif ! [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 120 )); then
+    status="not_done"; reason="invalid_timeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    status="not_done"; reason="timeout_utility_unavailable"
+  fi
+  cap_bytes="$(dev_docker_size_to_bytes "${keep}" 2>/dev/null || echo unknown)"
+  before="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+
+  if [[ -z "${status}" ]]; then
+    local help_text
+    help_text="$(docker builder prune --help 2>&1 || true)"
+    if grep -q -- '--reserved-space' <<<"${help_text}"; then
+      flag="--reserved-space"
+    elif grep -q -- '--keep-storage' <<<"${help_text}"; then
+      flag="--keep-storage"
+    else
+      status="not_done"; reason="no_supported_cap_flag"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    if ! protect_dev_compose_container_images_for_builder_prune; then
+      status="not_done"; reason="image_protection_incomplete"
+    fi
+  fi
+  if [[ -z "${status}" ]]; then
+    info "capping dev Docker build cache ${phase} (${flag}=${keep}, timeout=${timeout_seconds}s, before=${before}B)"
+    timeout --signal=TERM --kill-after=10s "${timeout_seconds}s" docker builder prune -f "${flag}" "${keep}" || rc=$?
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+    if (( rc == 124 || rc == 137 )); then
+      status="not_done"; reason="prune_timeout_${timeout_seconds}s"
+    elif (( rc != 0 )); then
+      status="not_done"; reason="prune_exit_${rc}"
+    elif [[ "${after}" == "unknown" || "${cap_bytes}" == "unknown" ]]; then
+      status="not_done"; reason="cache_size_unverifiable"
+    elif (( after > cap_bytes )); then
+      status="not_done"; reason="still_over_cap"
+    else
+      status="done"
+    fi
+  else
+    after="$(dev_docker_builder_cache_bytes 2>/dev/null || echo unknown)"
+  fi
+
+  DEV_BUILDER_CACHE_CAP_STATUS="${status}"
+  info "dev_builder_cache_cap phase=${phase} status=${status} reason=${reason:-none} cap=${keep} before_bytes=${before} after_bytes=${after}"
+  python3 - "${status}" "${reason}" "${phase}" "${keep}" "${before}" "${after}" <<'CAP_PY' || true
+import json, sys
+status, reason, phase, cap, before, after = sys.argv[1:7]
+print("ADVISORY_CHECK_RESULT " + json.dumps({
+    "check": "docker_build_cache_cap",
+    "status": "passed" if status == "done" else "failed",
+    "reason": "" if status == "done" else f"{reason} cap={cap} before_bytes={before} after_bytes={after}",
+    "mode": "advisory",
+    "scope": "deploy_script",
+    "phase": phase,
+}, sort_keys=True), flush=True)
+CAP_PY
+  return 0
+}
+
+# One-shot compose services (restart: "no") whose profiles were not selected by
+# this deploy: remove their non-running containers (e.g. a Created container
+# left from an earlier attempt). Plain `docker rm` without -f so a running
+# container is never removed; running/restarting states are also skipped.
+# Entries: service:profile[,profile...]
+DEV_ONE_SHOT_PROFILE_SERVICES=(
+  "source-ingest-agora-projector:source-ingest-scheduler,workers"
+)
+retire_unselected_one_shot_service_containers() {
+  local active_profiles=",${PANTHEON_DEV_COMPOSE_PROFILES:-},"
+  local entry service profiles profile selected rows cid cstate cname
+  for entry in "${DEV_ONE_SHOT_PROFILE_SERVICES[@]}"; do
+    service="${entry%%:*}"
+    profiles="${entry#*:}"
+    selected=false
+    for profile in ${profiles//,/ }; do
+      [[ "${active_profiles}" == *",${profile},"* ]] && selected=true
+    done
+    [[ "${selected}" == "true" ]] && continue
+    rows="$(docker ps -a --filter "label=com.docker.compose.project=pantheon" --filter "label=com.docker.compose.service=${service}" --format '{{.ID}}|{{.State}}|{{.Names}}' 2>/dev/null || true)"
+    [[ -z "${rows}" ]] && continue
+    while IFS='|' read -r cid cstate cname; do
+      [[ -z "${cid}" ]] && continue
+      if [[ "${cstate}" == "running" || "${cstate}" == "restarting" || "${cstate}" == "paused" ]]; then
+        continue
+      fi
+      info "removing non-running container of unselected one-shot service ${service}: ${cname} (id=${cid}, state=${cstate})"
+      docker rm "${cid}" >/dev/null 2>&1 || info "warning: failed to remove ${cname} (id=${cid})"
+    done <<< "${rows}"
+  done
+  return 0
 }
 
 check_dev_deploy_disk_preflight() {
@@ -5219,10 +6971,40 @@ cleanup_stale_compose_replacement_containers() {
   fi
 }
 
+# Host-side bridge token: created (mode 600) or read, exported to compose only,
+# never echoed. Hindsight gets this token and nothing else; no provider key and
+# no gateway token are ever passed to it.
+memory_llm_bridge_env() {
+  if [[ "${PANTHEON_DEV_MEMORY_LLM_BRIDGE_ENABLED:-false}" != "true" ]]; then
+    printf '%s\n' "MEMORY_LLM_BRIDGE_ENABLED=false"
+    return 0
+  fi
+  local token_file="${PANTHEON_MEMORY_LLM_BRIDGE_TOKEN_FILE:-${HOME}/.pantheon/memory-llm-bridge.token}"
+  if [[ ! -s "${token_file}" ]]; then
+    mkdir -p "$(dirname "${token_file}")"
+    ( umask 077; python3 -c 'import secrets;print(secrets.token_urlsafe(48))' > "${token_file}" )
+  fi
+  chmod 600 "${token_file}"
+  printf '%s\n' \
+    "MEMORY_LLM_BRIDGE_ENABLED=true" \
+    "MEMORY_LLM_BRIDGE_TOKEN=$(tr -d '\n' < "${token_file}")" \
+    "MEMORY_LLM_BRIDGE_DAILY_BUDGET=${PANTHEON_DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}" \
+    "HINDSIGHT_LLM_BRIDGE_BASE_URL=http://openclaw-gateway-adapter:8104/internal/memory-llm/v1" \
+    "HINDSIGHT_LLM_PROVIDER=openai" "HINDSIGHT_LLM_MODEL=memory-index" \
+    "HINDSIGHT_RETAIN_LLM_PROVIDER=openai" "HINDSIGHT_RETAIN_LLM_MODEL=memory-index" \
+    "HINDSIGHT_CONSOLIDATION_LLM_PROVIDER=openai" "HINDSIGHT_CONSOLIDATION_LLM_MODEL=memory-index" \
+    "HINDSIGHT_REFLECT_LLM_PROVIDER=openai" "HINDSIGHT_REFLECT_LLM_MODEL=memory-index" \
+    "HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER=openai" "HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL=memory-index"
+}
+
 with_dev_bff_runtime_env() {
   local target_sha="$1"
   local proof_flag="$2"
   shift 2
+  local bridge_line
+  while IFS= read -r bridge_line; do
+    export "${bridge_line}"
+  done < <(memory_llm_bridge_env)
   # Preserve the caller's selection: root rollout supplies root profiles,
   # while the explicit BFF-only branch deliberately supplies an empty value.
   COMPOSE_BAKE=false \
@@ -5248,6 +7030,14 @@ with_dev_bff_runtime_env() {
   AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
   PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
   PANTHEON_PAPER_EXPRESSION_LAYER="${PANTHEON_DEV_PAPER_EXPRESSION_LAYER}" \
+  EVOLUTION_AUTO_CONSUMER_ENABLED="${PANTHEON_DEV_EVOLUTION_AUTO_CONSUMER_ENABLED:-false}" \
+  PANTHEON_L2_EXTRACTION_ENABLED="${PANTHEON_DEV_L2_EXTRACTION_ENABLED:-false}" \
+  PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP="${PANTHEON_DEV_L2_EXTRACTION_DAILY_CALL_CAP:-400}" \
+  PERSONA_EVALUATOR_PAPER_POOL_ID="${PANTHEON_DEV_PERSONA_EVALUATOR_PAPER_POOL_ID:-pool-paper-default}" \
+  PERSONA_RANKING_TOKEN_FILE="${PANTHEON_DEV_PERSONA_RANKING_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RANKING_TOKEN}" \
+  PERSONA_ALLOCATION_TOKEN_FILE="${PANTHEON_DEV_PERSONA_ALLOCATION_TOKEN_FILE:-/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN}" \
+  PANTHEON_SHADOW_REPLAY_AGENT_ID="${PANTHEON_DEV_SHADOW_REPLAY_AGENT_ID:-}" \
+  PANTHEON_SHADOW_REPLAY_POLICY_URL="${PANTHEON_DEV_SHADOW_REPLAY_POLICY_URL:-}" \
   PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
   PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
   PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${proof_flag}" \
@@ -5296,6 +7086,8 @@ with_dev_bff_runtime_env() {
   PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}" \
   PANTHEON_OPENCLAW_ANTHROPIC_API_KEY="${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY}" \
+  PANTHEON_OPENCLAW_OPENAI_API_KEY="${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}" \
+  PANTHEON_OPENCLAW_OPENAI_API_KEY_2="${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}" \
   PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID="${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID}" \
   MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
   MANAGEMENT_AI_STORE_SCHEMA="${MANAGEMENT_AI_STORE_SCHEMA}" \
@@ -5662,6 +7454,199 @@ run_dev_candidate_compose() {
     -f "${PANTHEON_DEV_ARTIFACT_CANDIDATE_IMAGE_OVERRIDE_PATH}" "$@"
 }
 
+# Steady services (restart policy unless-stopped/always, non one-off) that run
+# before a root rollout. A failed rollout's compensation must put each of them
+# back to running on the same image, or report them as incomplete by name; a
+# stopped steady service (e.g. source-ingest-scheduler) is never a success.
+STEADY_SERVICE_FORMAT='{{index .Config.Labels "com.docker.compose.service"}}|{{index .Config.Labels "com.docker.compose.oneoff"}}|{{.HostConfig.RestartPolicy.Name}}|{{.State.Status}}|{{.Image}}|{{.Id}}'
+
+steady_service_rows() {
+  local id
+  for id in $(docker ps -a -q --filter label=com.docker.compose.project=pantheon 2>/dev/null); do
+    docker inspect --format "${STEADY_SERVICE_FORMAT}" "${id}" 2>/dev/null || true
+  done
+}
+
+# The steady service set a profile must keep running, derived from
+# docker-compose.yml (never from what happens to be running): every service of
+# the selected profiles whose resolved restart policy is unless-stopped/always.
+# One-shot services (restart no / on-failure) and services outside the selected
+# profiles are not in the set; the bounded source refresh resolves the scheduler
+# to restart "no", so it is excluded only while that bounded policy is active.
+expected_steady_services() {
+  env COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    ${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:+SOURCE_INGEST_CONTROLLER_RESTART_POLICY="${SOURCE_INGEST_CONTROLLER_RESTART_POLICY}"} \
+    docker compose -p pantheon -f docker-compose.yml config --format json 2>/dev/null \
+    | python3 -c '
+import json, sys
+services = json.load(sys.stdin).get("services") or {}
+for name in sorted(services):
+    if str(services[name].get("restart") or "no") in ("unless-stopped", "always"):
+        print(name)
+'
+}
+
+# Baseline file: "service|image" for every expected steady service. A service
+# that was not running at capture is recorded with an empty image so a later
+# check still requires it running (it is not silently absent from the baseline).
+# Fails closed when the expected set cannot be derived.
+capture_steady_service_baseline() {
+  local out="$1" expected
+  expected="$(expected_steady_services)" || expected=""
+  [[ -n "${expected}" ]] || { info "unable to derive the expected steady service set from docker-compose.yml" >&2; return 1; }
+  steady_service_rows | EXPECTED_STEADY="${expected}" python3 -c '
+import os, sys
+seen = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) != 6:
+        continue
+    service, oneoff, restart, state, image, _cid = parts
+    if service and oneoff != "True" and restart in ("unless-stopped", "always") and state == "running":
+        seen[service] = image
+for service in os.environ["EXPECTED_STEADY"].split():
+    seen.setdefault(service, "")
+for service, image in sorted(seen.items()):
+    print(service + "|" + image)
+' > "${out}"
+}
+
+# Prints "service|container_id|problem" for each baseline steady service that is
+# not running on its baseline image. problem is stopped (image matches, can be
+# started), or missing/ambiguous/image-mismatch (needs a recreate).
+steady_service_problems() {
+  local baseline="$1"
+  steady_service_rows | python3 -c '
+import sys
+expected = {}
+for line in open(sys.argv[1]):
+    service, _, image = line.rstrip("\n").partition("|")
+    if service:
+        expected[service] = image
+live = {}
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("|")
+    if len(parts) == 6 and parts[1] != "True":
+        live.setdefault(parts[0], []).append(parts)
+for service, image in sorted(expected.items()):
+    rows = live.get(service, [])
+    if len(rows) != 1:
+        print(service + "||" + ("missing" if not rows else "ambiguous"))
+        continue
+    _s, _o, _r, state, current, cid = rows[0]
+    if image and current != image:
+        print(service + "|" + cid + "|image-mismatch")
+    elif state != "running":
+        print(service + "|" + cid + "|stopped")
+' "${baseline}"
+}
+
+# Recreates one steady service on the image recorded in the baseline. A service
+# the candidate rebuilt under the same tag (e.g. dev-paper-principal-issuer, which
+# is built and started by its own section) keeps the candidate image after the
+# sealed restore; the baseline image is still present by ID, so re-point the
+# Compose tag at it and recreate without building. Prints the failure reason and
+# returns 1 when the service cannot be brought back.
+recreate_steady_service_on_baseline_image() {
+  local service="$1" image_id="$2" ref
+  [[ -n "${image_id}" ]] || { echo "no baseline image recorded"; return 1; }
+  docker image inspect "${image_id}" >/dev/null 2>&1 || { echo "baseline image ${image_id} is not retained"; return 1; }
+  ref="$(docker compose -p pantheon -f docker-compose.yml --profile '*' config --format json 2>/dev/null \
+    | SERVICE="${service}" python3 -c '
+import json, os, sys
+try:
+    print((json.load(sys.stdin).get("services") or {}).get(os.environ["SERVICE"], {}).get("image") or "")
+except Exception:
+    print("")
+')" || ref=""
+  [[ -n "${ref}" ]] || { echo "compose image reference for ${service} is unavailable"; return 1; }
+  docker tag "${image_id}" "${ref}" >/dev/null 2>&1 || { echo "could not re-point ${ref} at the baseline image"; return 1; }
+  docker compose -p pantheon -f docker-compose.yml --profile '*' \
+    up -d --no-deps --force-recreate --no-build "${service}" >/dev/null 2>&1 \
+    || { echo "recreate on the baseline image failed"; return 1; }
+}
+
+verify_steady_services_restored() {
+  local baseline="${1:-}" problems line service cid problem attempt
+  [[ -n "${baseline}" && -s "${baseline}" ]] || { info "no steady service baseline recorded; steady services not verified"; return 0; }
+  problems="$(steady_service_problems "${baseline}")"
+  if grep -q '|stopped$' <<<"${problems}"; then
+    while IFS='|' read -r service cid problem; do
+      [[ "${problem}" == stopped ]] || continue
+      info "compensation: starting stopped steady service ${service} on its baseline image"
+      docker start "${cid}" >/dev/null 2>&1 || true
+    done <<<"${problems}"
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+  fi
+  [[ -z "${problems}" ]] && return 0
+  # A service on a non-baseline image (or gone) is recreated on its baseline image.
+  local base_image reason detail="" restored_any=false
+  declare -A restore_failure=()
+  while IFS='|' read -r service cid problem; do
+    [[ "${problem}" == image-mismatch || "${problem}" == missing ]] || continue
+    base_image="$(awk -F'|' -v s="${service}" '$1 == s { print $2; exit }' "${baseline}")"
+    info "compensation: recreating steady service ${service} on its baseline image"
+    if reason="$(recreate_steady_service_on_baseline_image "${service}" "${base_image}")"; then
+      restored_any=true
+    else
+      restore_failure["${service}"]="${reason}"
+    fi
+  done <<<"${problems}"
+  if [[ "${restored_any}" == true ]]; then
+    for attempt in $(seq 1 "${PANTHEON_STEADY_RESTORE_WAIT_SECONDS:-15}"); do
+      problems="$(steady_service_problems "${baseline}")"
+      [[ -z "${problems}" ]] && break
+      sleep 1
+    done
+    problems="$(steady_service_problems "${baseline}")"
+    [[ -z "${problems}" ]] && return 0
+  fi
+  local names
+  names="$(cut -d'|' -f1 <<<"${problems}" | paste -sd, -)"
+  while IFS='|' read -r service cid problem; do
+    [[ -n "${service}" ]] || continue
+    detail+="${detail:+;}${service}|${cid}|${problem}"
+    [[ -z "${restore_failure[${service}]:-}" ]] || detail+="|restore: ${restore_failure[${service}]}"
+  done <<<"${problems}"
+  info "steady_service_compensation_incomplete: ${names} (${detail})" >&2
+  return 1
+}
+
+# Advisory functional check (DEV-DEPLOY-FUNCTIONAL-CHECKS-ADVISORY-20261117).
+# Runs the check, prints one ADVISORY_CHECK_RESULT line with the real result for
+# the workflow to collect, and returns 0 so a failed functional check neither
+# rolls back nor makes the lease guard quarantine the lease. With
+# PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS=true a failure rolls back as before.
+run_dev_advisory_check() {
+  local check="$1" rollback_stage="$2" rc=0 strict=false
+  shift 2
+  "$@" || rc=$?
+  [[ "${PANTHEON_DEV_STRICT_FUNCTIONAL_CHECKS:-false}" == "true" ]] && strict=true
+  python3 - "${check}" "${rc}" "${strict}" <<'ADVISORY_PY' || true
+import json, sys
+check, rc, strict = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "true"
+print("ADVISORY_CHECK_RESULT " + json.dumps({
+    "check": check,
+    "status": "passed" if rc == 0 else "failed",
+    "reason": "" if rc == 0 else f"exit_{rc}",
+    "mode": "strict" if strict else "advisory",
+    "scope": "deploy_script",
+}, sort_keys=True), flush=True)
+ADVISORY_PY
+  if (( rc != 0 )); then
+    if [[ "${strict}" == "true" ]]; then
+      rollback_dev_bff_on_failure "${rollback_stage}"
+    fi
+    info "advisory check ${check} failed (exit ${rc}); recorded, deploy continues"
+  fi
+  return 0
+}
+
 rollback_dev_bff_on_failure() {
   local failed_stage="$1"
   dump_dev_root_failure_diagnostics
@@ -5675,7 +7660,11 @@ rollback_dev_bff_on_failure() {
     # producer file without a runner ACK is not authority to compensate.
     run_dev_artifact_driver verify || info "unchanged baseline verification failed"
   elif run_dev_artifact_driver restore; then
-    info "automatic BFF exact-artifact restore verified"
+    if verify_steady_services_restored "${DEV_STEADY_SERVICE_BASELINE_FILE:-}"; then
+      info "automatic BFF exact-artifact restore verified"
+    else
+      info "automatic BFF exact-artifact restore INCOMPLETE: baseline steady services are not running on their baseline image"
+    fi
   else
     info "automatic BFF exact-artifact restore failed; no source-build fallback"
   fi
@@ -5924,7 +7913,9 @@ if [[ "${PANTHEON_DEPLOY_COMPONENT}" == refresh-only ]]; then
     || error "no managed deploy worktree containing docker-compose.yml at '${PANTHEON_REMOTE_DIR:-}' (set DEV_DEPLOY_WORKTREE_ROOT)"
 fi
 cd "${PANTHEON_REMOTE_DIR:-$(pwd)}"
-git rev-parse --is-inside-work-tree >/dev/null
+if [[ "${PANTHEON_DEPLOY_COMPONENT}" != refresh-only ]]; then
+  git rev-parse --is-inside-work-tree >/dev/null
+fi
 
 case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
@@ -5983,10 +7974,15 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     resolve_bounded_source_refresh_active_symbols \
       || rollback_dev_bff_on_failure "source_refresh_active_symbols"
+    DEV_STEADY_SERVICE_BASELINE_FILE="$(mktemp)"
+    capture_steady_service_baseline "${DEV_STEADY_SERVICE_BASELINE_FILE}" \
+      || rollback_dev_bff_on_failure "steady_service_baseline"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Rollout persistent root runtime.
@@ -6017,15 +8013,22 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     run_dev_candidate_compose up -d --force-recreate --no-deps loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "projector_recreate"
     # Phase 4: Post-Deploy Bounded Verification
-    verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}" \
-      || rollback_dev_bff_on_failure "source_refresh_readback"
+    run_dev_advisory_check bounded_source_refresh_readback source_refresh_readback \
+      verify_bounded_source_refresh_readback "${source_refresh_deploy_started_at}"
+    # Exit 3 = the requested OPENCLAW_MODEL_CHAIN was refused (unregistered or
+    # CLI-runtime ref) and the previous chain was kept: advisory, never a
+    # rollback. Any other non-zero exit keeps the existing rollback behaviour.
+    model_pool_rc=0
     PANTHEON_DEV_REPO="$(pwd)" \
-      bash scripts/openclaw-configure-shared-model-pool.sh \
-      || rollback_dev_bff_on_failure "shared_model_pool"
+      bash scripts/openclaw-configure-shared-model-pool.sh || model_pool_rc=$?
+    if [[ "${model_pool_rc}" -eq 3 ]]; then
+      info "warning: advisory openclaw_model_chain_refused; previous chain kept (see configure output)"
+    elif [[ "${model_pool_rc}" -ne 0 ]]; then
+      rollback_dev_bff_on_failure "shared_model_pool"
+    fi
     retire_dormant_and_one_off_profile_containers \
       || rollback_dev_bff_on_failure "retire_dormant_profiles"
-    verify_dev_paper_fleet \
-      || rollback_dev_bff_on_failure "paper_fleet"
+    run_dev_advisory_check dev_paper_fleet paper_fleet verify_dev_paper_fleet
     # Root deployment replaces the lifecycle projector and BFF together. The
     # BFF can become HTTP-ready while /readyz still reports the prior projector
     # identity, so use the same exact-deployment, bounded recovery gate as the
@@ -6042,15 +8045,14 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"
     ensure_dev_caddy_ingress \
       || rollback_dev_bff_on_failure "caddy_ingress"
-    verify_dev_evolution_daily_sweep \
-      || rollback_dev_bff_on_failure "evolution_daily_sweep"
+    run_dev_advisory_check evolution_daily_sweep evolution_daily_sweep verify_dev_evolution_daily_sweep
     # Prove the Trade Journey action ledger is genuinely durable on the dev
     # PostgreSQL instance and that clock-drift diagnostics survive the built
     # runtime image. This intentionally restarts operator-bff and verifies
     # receipt replay before the workflow's public smokes run.
-    PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
-      || rollback_dev_bff_on_failure "trade_journey_residual"
-    verify_exact_component_deployment \
+    run_dev_advisory_check trade_journey_residual trade_journey_residual \
+      env PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh
+    verify_steady_stack_complete \
       || rollback_dev_bff_on_failure "exact_component_deployment"
     ;;
 
@@ -6072,12 +8074,15 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       docker compose -p pantheon -f docker-compose.yml build operator-bff agora-interaction-worker loop-run-projector-scheduler "${DEV_PAPER_ISSUER_BUILD_TARGETS[@]}" \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     seal_dev_candidate_images || rollback_dev_bff_on_failure "candidate_image_seal"
+    # Guarded so harnesses that source only older helpers keep working.
+    if declare -F cap_dev_docker_builder_cache_after_build >/dev/null; then cap_dev_docker_builder_cache_after_build "after_build"; fi
     bootstrap_dev_lifecycle_projection || rollback_dev_bff_on_failure "projection_bootstrap"
     start_dev_paper_principal_issuer || rollback_dev_bff_on_failure "paper_principal_issuer"
     DEV_PRE_DEPLOY_BFF_SHA="$(curl -fsS http://127.0.0.1:18001/bff/version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' 2>/dev/null || true)"
     PANTHEON_DEV_ROLLBACK_BACKEND_SHA="${PANTHEON_DEV_ROLLBACK_BACKEND_SHA:-${DEV_PRE_DEPLOY_BFF_SHA:-}}"
     # Phase 3: Recreate operator-bff and loop-run-projector-scheduler.
     cleanup_stale_compose_replacement_containers
+    if declare -F retire_unselected_one_shot_service_containers >/dev/null; then retire_unselected_one_shot_service_containers; fi
     with_dev_bff_runtime_env "${PANTHEON_DEPLOY_SHA}" "${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       run_dev_candidate_compose up -d --force-recreate --no-deps operator-bff agora-interaction-worker loop-run-projector-scheduler \
       || rollback_dev_bff_on_failure "bff_recreate"
@@ -6129,7 +8134,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ;;
 
   refresh-only)
-    if [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
+    if [[ "${STEADY_CHECK:-false}" == "true" ]]; then
+      execute_steady_posture_check "${REFRESH_OUTPUT_PATH:-}"
+    elif [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
       execute_taiwan_refresh_preflight_only "${REFRESH_OUTPUT_PATH:-}"
     else
       execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"

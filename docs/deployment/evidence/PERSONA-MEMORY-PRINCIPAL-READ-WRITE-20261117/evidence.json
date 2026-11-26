@@ -1,0 +1,18 @@
+{
+  "task": "PERSONA-MEMORY-PRINCIPAL-READ-WRITE-20261117",
+  "change": {
+    "memory_read_gate": "persona_session added to _MEMORY_READ_ROLES (read only). GET /api/memory/entries for persona_session requires contributing_persona_id and passes governance memory.retrieve (own persona only via session_persona_id); other persona refused 403",
+    "write_principal": "new PERSONA_MEMORY_WRITE_TOKEN (sub persona-svc, role persona-svc, scope dev-owner-write) issued by issue_dev_paper_principals.py, file-mounted in the existing persona token volume; PANTHEON_MEMORY_AUTH_TOKEN(_FILE) (harness adoption, learning feedback, pool autonomy writes) now resolves to it. PERSONA_MEMORY_SERVICE_TOKEN stays persona_session read-only. No write role granted to persona_session",
+    "pool_autonomy": "memory GET uses PANTHEON_MEMORY_SERVICE_TOKEN (reader) and sends session_persona_id; memory POST uses the write principal",
+    "lesson_cycle": "unchanged; already mints memory-writer service JWT",
+    "staging_production": "unchanged (docker-compose.yml dev baseline only)"
+  },
+  "tests": {
+    "integration": "services/persona/test_pool_autonomy_cycle.py::test_persona_memory_principals_are_admitted_or_refused_at_real_memory_gates and test_harness_and_feedback_bridge_writers_use_write_principal_at_real_route_gate (real memory routes, strict auth, only HTTP faked)",
+    "issuer": "scripts/test_issue_dev_paper_principals.py persona principal assertions",
+    "result": "243 passed, 1 skipped across issuer, compose contract, memory, persona cycle, knowledge suites"
+  },
+  "acceptance_pending_hosted": [
+    "AC6: after next hosted deploy record, for the three trading personas, case-file similar_history/lessons available and at least one natural persona memory write accepted"
+  ]
+}

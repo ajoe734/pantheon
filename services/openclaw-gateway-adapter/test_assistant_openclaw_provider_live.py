@@ -36,6 +36,17 @@ if _ADAPTER_DIR not in sys.path:
 from assistant_openclaw_provider import AssistantOpenClawProvider, OpenClawProviderError
 
 
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not os.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
+
 def _sse_bytes(events: list) -> list:
     lines = [("data: " + json.dumps(evt) + "\n").encode("utf-8") for evt in events]
     lines.append(b"data: [DONE]\n")
@@ -355,7 +366,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         """
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
             calls,
         )
         provider = AssistantOpenClawProvider(
@@ -388,7 +399,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_readiness_auth_probe_requires_bounded_agent_answer(self) -> None:
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
             calls,
         )
 
@@ -409,10 +420,10 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
-                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                "fx-a/model-1": lambda _t: (_ for _ in ()).throw(
                     urllib.error.URLError(TimeoutError("timed out"))
                 ),
-                "openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+                "fx-b/model-2": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
             },
             calls,
         )
@@ -424,20 +435,20 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[0]["model"], "fx-a/model-1")
         self.assertNotIn("fallback_used", info)
 
     def test_readiness_auth_probe_does_not_fallback_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
-                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                "fx-a/model-1": lambda _t: (_ for _ in ()).throw(
                     urllib.error.URLError(TimeoutError("timed out"))
                 ),
-                "openai/gpt-5.6-sol": lambda _t: (_ for _ in ()).throw(
+                "fx-b/model-2": lambda _t: (_ for _ in ()).throw(
                     urllib.error.URLError(TimeoutError("timed out"))
                 ),
-                "openai/gpt-5.5": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+                "fx-b/model-3": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
             },
             calls,
         )
@@ -449,7 +460,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[0]["model"], "fx-a/model-1")
         self.assertNotIn("fallback_used", info)
 
     def test_readiness_primary_candidate_gets_more_than_gateway_queue_wait_budget(self) -> None:
@@ -465,7 +476,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         """
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
             calls,
         )
 
@@ -474,7 +485,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
-        self.assertEqual(info["requested_model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["requested_model"], "fx-a/model-1")
         self.assertGreater(
             calls[0]["timeout"],
             1.5,
@@ -486,13 +497,13 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
-                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                "fx-a/model-1": lambda _t: (_ for _ in ()).throw(
                     urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
                 ),
-                "openai/gpt-5.6-sol": lambda _t: (_ for _ in ()).throw(
+                "fx-b/model-2": lambda _t: (_ for _ in ()).throw(
                     urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
                 ),
-                "openai/gpt-5.5": lambda _t: (_ for _ in ()).throw(
+                "fx-b/model-3": lambda _t: (_ for _ in ()).throw(
                     urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
                 ),
             },
@@ -506,7 +517,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(info["reason"], "OPENCLAW_RESPONSES_HTTP_ERROR")
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["model"], "fx-a/model-1")
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_RESPONSES_HTTP_ERROR")
         self.assertEqual(info["answer_probe"]["status"], "failed")
@@ -521,7 +532,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                         "url", 401, "error with token=sk-ant-secret-key-12345 login expired", {}, None
                     )
                 ))
-                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+                for model in ("fx-a/model-1", "fx-b/model-2", "fx-b/model-3")
             },
             calls,
         )
@@ -540,7 +551,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         fake_urlopen = _model_dispatch_urlopen(
             {
                 model: (lambda _t: _FakeSSEResponse(_answer_events("WRONG_SENTINEL")))
-                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+                for model in ("fx-a/model-1", "fx-b/model-2", "fx-b/model-3")
             },
             calls,
         )
@@ -552,7 +563,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(info["reason"], "openclaw_answer_probe_sentinel_mismatch")
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["model"], "fx-a/model-1")
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
@@ -562,8 +573,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
-                "anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("WRONG_SENTINEL")),
-                "openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+                "fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("WRONG_SENTINEL")),
+                "fx-b/model-2": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
             },
             calls,
         )
@@ -575,7 +586,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[0]["model"], "fx-a/model-1")
         self.assertNotIn("fallback_used", info)
 
     def test_readiness_auth_probe_fails_when_reply_is_empty(self) -> None:
@@ -587,7 +598,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         fake_urlopen = _model_dispatch_urlopen(
             {
                 model: (lambda _t: _FakeSSEResponse([{"type": "response.completed", "response": {"status": "completed"}}]))
-                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+                for model in ("fx-a/model-1", "fx-b/model-2", "fx-b/model-3")
             },
             calls,
         )
@@ -608,7 +619,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         fake_urlopen = _model_dispatch_urlopen(
             {
                 model: (lambda _t: _FakeSSEResponse(_answer_events("prefix PANTHEON_PROVIDER_READY suffix")))
-                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+                for model in ("fx-a/model-1", "fx-b/model-2", "fx-b/model-3")
             },
             calls,
         )
@@ -620,7 +631,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
         self.assertEqual(info["reason"], "openclaw_answer_probe_sentinel_mismatch")
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(info["primary_unavailable"]["model"], "fx-a/model-1")
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
@@ -711,7 +722,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         reply = "Hello from mock OpenClaw agent"
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events(reply))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events(reply))},
             calls,
         )
 
@@ -794,7 +805,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         calls = []
         fake = _model_dispatch_urlopen({
             "fixture/explicit": lambda _t: _FakeSSEResponse(_answer_events("answer")),
-            "anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("answer")),
+            "fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("answer")),
         }, calls)
         provider = self._make_provider()
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake):
@@ -802,7 +813,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             self.assertNotIn("fallback_used", explicit.output)
             provider.invoke("ordinary")
         self.assertEqual([c["model"] for c in calls],
-                         ["fixture/explicit", "anthropic/claude-opus-4-8"])
+                         ["fixture/explicit", "fx-a/model-1"])
 
     def test_management_primary_model_env_routes_main_agent_without_overriding_held_agents_and_readiness_stays_stateless(self) -> None:
         calls = []
@@ -820,7 +831,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             return _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))
 
         provider = self._make_provider()
-        with patch.dict(os.environ, {"OPENCLAW_PRIMARY_MODEL": "openai/gpt-5.6-sol"}, clear=False):
+        with patch.dict(os.environ, {"OPENCLAW_MODEL_CHAIN": "fx-b/model-2,fx-a/model-1"}, clear=False):
             with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
                 readiness_info = provider.readiness(auth_probe=True)
                 invoke_res = provider.invoke("Summarize portfolio", mode="user", operator_id="op-1")
@@ -833,23 +844,23 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 )
 
         self.assertTrue(readiness_info["ready"])
-        self.assertEqual(readiness_info["requested_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(readiness_info["requested_model"], "fx-b/model-2")
         self.assertEqual(calls[0]["agent_id"], "main")
-        self.assertEqual(calls[0]["model_header"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[0]["model_header"], "fx-b/model-2")
         self.assertNotIn("user", calls[0]["body"])
 
-        self.assertEqual(invoke_res.output["requested_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(invoke_res.output["requested_model"], "fx-b/model-2")
         self.assertEqual(calls[1]["agent_id"], "main")
-        self.assertEqual(calls[1]["model_header"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[1]["model_header"], "fx-b/model-2")
 
         done_events = [e for e in stream_events if e["type"] == "done"]
         self.assertEqual(len(done_events), 1)
-        self.assertEqual(done_events[0]["requested_model"], "openai/gpt-5.6-sol")
+        self.assertEqual(done_events[0]["requested_model"], "fx-b/model-2")
         self.assertNotIn("active_model", done_events[0])
         self.assertNotIn("active_model", invoke_res.output)
         self.assertNotIn("active_model", readiness_info)
         self.assertEqual(calls[2]["agent_id"], "main")
-        self.assertEqual(calls[2]["model_header"], "openai/gpt-5.6-sol")
+        self.assertEqual(calls[2]["model_header"], "fx-b/model-2")
 
         self.assertEqual(persona_res.output["agent_id"], "persona-opinion-a")
         self.assertNotIn("active_model", persona_res.output)
@@ -890,7 +901,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         prompt = "Reply with exactly: OPENCLAW_LIVE"
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("response"))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("response"))},
             calls,
         )
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
@@ -898,7 +909,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["body"]["input"], prompt)
-        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(calls[0]["model"], "fx-a/model-1")
 
     def test_invoke_oversized_prompt_behaves_identically_to_short_prompt(self) -> None:
         """A >96KiB prompt must use the exact same HTTP transport as a short one.
@@ -908,7 +919,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         """
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
-            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("large provider answer"))},
+            {"fx-a/model-1": lambda _t: _FakeSSEResponse(_answer_events("large provider answer"))},
             calls,
         )
 

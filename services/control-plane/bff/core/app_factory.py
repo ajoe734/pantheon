@@ -1024,6 +1024,8 @@ def mount_bff_routers(
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
             get_projection_reader=app_deps.read_surface.trade_journey_projection_reader,
+            list_personas=app_deps.read_surface.list_personas,
+            list_incidents=app_deps.read_surface.list_incidents,
         )
     )
 
@@ -1049,12 +1051,27 @@ def mount_bff_routers(
         utc_now=_dep("utc_now"),
         normalize_lifecycle_state=_dep("_normalize_lifecycle_state"),
     )
+    # Persona display names: the same persona directory read the research task list uses.
+    from ..research.routes.tasks import _default_persona_directory_snapshot as _alpha_persona_snapshot
+    from ..strategies.routes.common import read_persona_state_lookup as _alpha_persona_lookup
+
+    def _alpha_persona_names(tenant_id: str, snapshot_at: str):
+        lookup = _alpha_persona_lookup(
+            directory_snapshot=_alpha_persona_snapshot,
+            projected_state=lambda _record: "unknown",
+            operational_states=(),
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
+        return dict(lookup.display_names_by_id) if lookup.available else None
+
     app.include_router(
         create_alpha_factory_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             utc_now=_dep("utc_now"),
             read_strategy_state=lambda strategy_id: _alpha_strategies_service.get_strategy_registry_state(strategy_id),
+            read_persona_names=_alpha_persona_names,
         )
     )
 
@@ -1143,8 +1160,32 @@ def mount_bff_routers(
         )
     )
 
+    from ..personas.service import PersonaService
+    persona_service = _dep(
+        "persona_service",
+        lambda: PersonaService(
+            write_owner=app_deps.persona_write_owner,
+            read_store=app_deps.read_surface,
+            ranking_write_owner=app_deps.ranking_write_owner,
+            command_store=app_deps.command_store,
+        ),
+    )
+    from ..personas import service as _persona_service_module
+    _persona_service_module._composed_persona_service = persona_service
+    _persona_service_module._composed_command_adapter_service = command_adapter_service
+
     # 17: Research
     from ..research.router import create_research_router
+    from ..research.service import ResearchRouterService
+    research_service = ResearchRouterService(
+        port_getter=(lambda: app_deps.read_surface() if callable(app_deps.read_surface) else app_deps.read_surface),
+        utc_now=_dep("utc_now"),
+        snapshot_meta=_dep("_snapshot_meta"),
+        page_slice=_dep("_page_slice"),
+        bff_error=_dep("_bff_error"),
+        dataset_surface_status=_dep("_dataset_surface_status"),
+        persona_directory_snapshot=_dep("_get_persona_directory_snapshot"),
+    )
     app.include_router(
         create_research_router(
             read_surface=app_deps.read_surface,
@@ -1167,6 +1208,7 @@ def mount_bff_routers(
                 **context,
             ),
             include_prepared_subrouters=True,
+            service=research_service,
         )
     )
 
@@ -1185,19 +1227,6 @@ def mount_bff_routers(
     )
 
     # 19: Runtime router
-    from ..personas.service import PersonaService
-    persona_service = _dep(
-        "persona_service",
-        lambda: PersonaService(
-            write_owner=app_deps.persona_write_owner,
-            read_store=app_deps.read_surface,
-            ranking_write_owner=app_deps.ranking_write_owner,
-            command_store=app_deps.command_store,
-        ),
-    )
-    from ..personas import service as _persona_service_module
-    _persona_service_module._composed_persona_service = persona_service
-    _persona_service_module._composed_command_adapter_service = command_adapter_service
     from ..runtime.router import create_runtime_router
     runtime_router = create_runtime_router(
         read_surface=app_deps.read_surface,
@@ -1602,9 +1631,15 @@ def mount_bff_routers(
 
     # 37: Agora. Select once at composition; never silently build a different
     # local writer if the configured authority is absent or unreachable.
-    from ..agora.router import create_agora_router
+    from ..agora.router import _UNSET_DECISION_LOCK_OWNER, create_agora_router
     from ..models import ErrorCode
     journal_owner = app_deps.decision_journal_write_owner
+    if "decision_lock_owner" in dependencies:
+        _agora_owner_dep = dependencies["decision_lock_owner"]
+    elif "agora_owner" in dependencies:
+        _agora_owner_dep = dependencies["agora_owner"]
+    else:
+        _agora_owner_dep = _UNSET_DECISION_LOCK_OWNER
 
     def get_journal_write_owner() -> Any:
         if journal_owner is None or not journal_owner.is_storage_healthy:
@@ -1631,6 +1666,7 @@ def mount_bff_routers(
         get_trade_journey_store=app_deps.read_surface.trade_journey_projection_reader,
         sync_servant_agent=lambda p: _dep("_ensure_agora_servant_openclaw_agent", lambda: lambda p_: {})(dict(p)),
         canonical_context_ref_resolver=_dep("_resolve_agora_interaction_context_ref"),
+        decision_lock_owner=_agora_owner_dep,
         idempotency_store=_dep("_AGORA_CORE_BFF_IDEMPOTENCY"),
         sse_buffers=sse_buffers,
         sse_subscribers=sse_subscribers,
@@ -1644,6 +1680,55 @@ def mount_bff_routers(
         get_journal_write_owner=get_journal_write_owner,
     )
     app.include_router(agora_router)
+    mount_agora_review_routers(
+        app, extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"), utc_now=_dep("utc_now"),
+    )
+
+    from ..agora.persona_lab.router import create_persona_lab_router
+    app.include_router(create_persona_lab_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    ))
+
+    # 38: Meetings
+    from ..meetings.router import create_meetings_router
+    meetings_router = create_meetings_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_operator_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    )
+    app.include_router(meetings_router)
+
+    # 39: Attribution (outliers, records, shadow comparisons; forward-only)
+    from ..attribution.router import create_attribution_router
+
+    def _resolve_agora_decision_lock_owner() -> Any:
+        return getattr(agora_router, "decision_lock_owner", None)
+
+    def _read_agora_lock(decision_id, tenant_id, user_id, roles):
+        owner = _resolve_agora_decision_lock_owner()
+        if owner is None or not hasattr(owner, "get_decision_lock_for_event"):
+            raise RuntimeError("agora_owner_unconfigured")
+        return owner.get_decision_lock_for_event(
+            decision_id, tenant_id=tenant_id, user_id=user_id, actor_roles=roles
+        )
+
+    attribution_router = create_attribution_router(
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_operator_role=_dep("_require_operator_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+        lock_reader=_read_agora_lock,
+    )
+    app.include_router(attribution_router)
 
     # Attach shared instances onto app.state
     app.state.events_router = events_router
@@ -1654,8 +1739,32 @@ def mount_bff_routers(
     app.state.interaction_lifecycle = agora_router.interaction_lifecycle
     app.state.workshop_store = agora_router.workshop_store
     app.state.proposal_store = agora_router.proposal_store
+    app.state.trading_room_store = getattr(agora_router, "trading_room_store", None)
+    app.state.decision_lock_owner = getattr(agora_router, "decision_lock_owner", None)
     app.state.research_store = getattr(agora_router, "research_store", None)
     app.state.dataset_store = getattr(agora_router, "dataset_store", None)
+    from ..agora.evidence.router import create_human_evidence_router
+    from ..agora.evidence.worker import install_evidence_worker
+    app.include_router(create_human_evidence_router(
+        dataset_store=app.state.dataset_store,
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        require_write_role=_dep("_require_operator_role"),
+        utc_now=_dep("utc_now"),
+    ))
+    install_evidence_worker(app, app.state.dataset_store)
+    from ..agora.platform_source_router import create_platform_source_router
+    platform_source_router = create_platform_source_router(
+        agora_owner=_resolve_agora_decision_lock_owner,
+        dataset_store=app.state.dataset_store,
+        journal_write_owner=journal_owner,
+        extract_identity=_dep("_extract_identity"),
+        require_read_role=_dep("_require_read_role"),
+        bff_error=_dep("_bff_error"),
+        utc_now=_dep("utc_now"),
+    )
+    app.include_router(platform_source_router)
+    app.state.agora_platform_source_router = platform_source_router
     app.state.assistant_session_store = asst_session_store
     app.state.assistant_transcript_store = asst_transcript_store
     app.state.assistant_control_mode_store = asst_control_mode_store
@@ -1677,6 +1786,18 @@ def mount_bff_routers(
     app.state.auth_handlers = auth_handlers
     app.state.auth_facade_service = auth_facade_service
     app.state.core_handlers = core_handlers
+
+
+def mount_agora_review_routers(app: FastAPI, *, extract_identity, require_read_role, require_write_role, utc_now):
+    """Production mounting entry point shared by assembly and owner HTTP tests."""
+    from ..agora.committee.router import create_committee_router
+    from ..agora.memory_review.router import create_memory_review_router
+
+    for router_factory in (create_committee_router, create_memory_review_router):
+        app.include_router(router_factory(
+            extract_identity=extract_identity, require_read_role=require_read_role,
+            require_write_role=require_write_role, utc_now=utc_now,
+        ))
 
 
 def compose_bff_app(

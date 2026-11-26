@@ -1,0 +1,82 @@
+{
+  "schema_version": "pantheon.task_evidence.v1",
+  "task_id": "TELEMETRY-EVENTS-RETENTION-14D-20261125",
+  "title": "依操作者決策將 public.telemetry_events 設定 14 天分批保留清理並更新儲存清單",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "register_class": "RC3",
+  "operator_decision_date": "2026-11-25",
+  "delivery_state": "in_review",
+  "summary": "Extends services/telemetry/heartbeat_retention.py (HeartbeatRetentionJob) and scripts/telemetry_heartbeat_reclaim.py with PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS (default 14.0 days per 2026-11-25 operator decision) to prune unreferenced non-permanent public.telemetry_events rows older than 14 days in bounded batches alongside existing 3d heartbeat, 3d runtime_state_snapshot, and 7d infrastructure_health rules without adding a second scheduler, while preserving consumer watermarks, incident/postmortem references, latest per-runtime snapshot/valuation anchors, and canonical fill/governance/deploy/decision/episode rows.",
+  "acceptance_criteria": {
+    "ac1_14d_retention_in_single_scheduler": {
+      "status": "passed",
+      "env_var": "PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS",
+      "default_days": 14.0,
+      "files": [
+        "services/telemetry/heartbeat_retention.py",
+        "services/telemetry/main.py"
+      ],
+      "details": "Added DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS = 14.0, TELEMETRY_EVENTS_RETENTION_DAYS_ENV = 'PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS', parse_telemetry_events_retention_days, check_telemetry_events_readers_against_retention_window, and bounded 14-day batch pruning inside run_heartbeat_retention_on_connection and HeartbeatRetentionJob, wired in services/telemetry/main.py:_build_retention_job without introducing a second background scheduler."
+    },
+    "ac2_safety_invariants_and_projection_invariance": {
+      "status": "passed",
+      "invariants": {
+        "consumer_watermark_protection": "Never deletes rows when safe_ingested_seq <= 0 or ingested_seq > safe_ingested_seq (resolved from trade_journey_projection.controller.checkpoint_seq and extra_consumer_checkpoints).",
+        "incident_and_postmortem_reference_protection": "Protects all event_ids referenced by incident.incident_cases, incident.postmortems, on-disk incidents.json, and BFF downstream_health.sqlite3 across all event_types.",
+        "snapshot_and_valuation_anchors": "resolve_protected_telemetry_anchor_event_ids preserves oldest/newest event and newest lifecycle-identity event per (tenant_key, runtime_key, binding_key), latest pnl_snapshot/drawdown_snapshot/position_snapshot/position_snapshot_received/broker_position_snapshot (both by created_at/ingested_seq and by metric as-of), earliest pnl_snapshot per distinct (valuation_as_of, pnl, portfolio_value) quarter-equity observation, latest reconciliation_completed/reconciliation_failed, and latest member_virtual_books carrier per runtime binding.",
+        "canonical_permanent_rows": "Preserves PERMANENT_TELEMETRY_EVENT_TYPES (deploy_*, runtime_retired, rollback_*, pause_triggered, liquidate_triggered, governance_decision, approval_action, manual_override, kill_switch_action, persona_instrument_counterfactual, trade_episode.*, trade_reflection.*, trade_lesson.*), any row carrying trade_episode_id or reversal episode IDs, and (for non-tenant-capacity tenants) CANONICAL_FILL_AND_REJECTION_EVENT_TYPES, quantified order_submitted, broker-submitted paper_order_simulated, and canonical trade_decision rows."
+      },
+      "projection_invariance_verified": [
+        "RuntimeSummaryProjectionStore (summaries_after == summaries_before, _pm12_quarter_metrics, project_rankings)",
+        "CanonicalFillHistoryReader (fills_after == fills_before)",
+        "TradeEpisodeProjectionStore (episodes_after == episodes_before)"
+      ]
+    },
+    "ac3_reclaim_script_and_focused_tests": {
+      "status": "passed",
+      "files": [
+        "scripts/telemetry_heartbeat_reclaim.py",
+        "services/telemetry/test_heartbeat_retention.py",
+        "scripts/test_telemetry_heartbeat_reclaim.py",
+        "scripts/test_check_storage_manifest.py"
+      ],
+      "details": "Updated scripts/telemetry_heartbeat_reclaim.py (--telemetry-events-retention-days, _inspect_telemetry_events_plan, inspect_reclaim_plan, run_reclaim_on_connection, run_reclaim) to report and apply 14-day pruning consistently, and added focused tests covering 14-day pruning, consumer-watermark protection, incident/postmortem reference protection, projection invariance, reclaim dry-run/apply, and storage-manifest bound verification."
+    },
+    "ac4_runtime_budget_and_manifest": {
+      "status": "passed",
+      "runtime_budget": {
+        "scheduler": "Existing HeartbeatRetentionJob in services/telemetry/main.py (0 new background schedulers, 0 new persistent writers/tables/files)",
+        "cadence": "Every 300s (PANTHEON_TELEMETRY_HEARTBEAT_RETENTION_INTERVAL_SECONDS=300), <= 20 batches x 5000 rows per event class per run, 15000ms statement_timeout",
+        "hosted_scale_count_and_size": "4 dev paper runtimes / 3 enrolled dev paper personas (~20-40 MB/day raw telemetry after heartbeat and runtime_state_snapshot cadence fixes; steady-state <= 0.5 GB across 3d/7d/14d windows)",
+        "growth_per_day": "<= 100 MB/day gross (bounded at steady state by 3d heartbeat, 3d runtime_state_snapshot, 7d infrastructure_health, and 14d telemetry_events retention); permanent exempt canonical audit/fill/decision/episode rows < 15 KB/day (< 0.5 MB/month)",
+        "cap": "5 GB / <= 100 MB/day in scripts/measure_hosted_storage.py BUDGETS",
+        "cleanup": "services/telemetry/heartbeat_retention.py HeartbeatRetentionJob and scripts/telemetry_heartbeat_reclaim.py"
+      },
+      "manifest_and_register_files": [
+        "docs/operations/storage-manifest.json",
+        "docs/operations/storage-manifest.md",
+        "docs/operations/problem-register.md"
+      ]
+    }
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_heartbeat_retention.py scripts/test_telemetry_heartbeat_reclaim.py scripts/test_check_storage_manifest.py"
+    ],
+    "results": {
+      "check_storage_manifest": "passed (entries=375, bounded=20, unbounded=19, unreviewed=336, failures=[])",
+      "pytest_suite": "28 passed"
+    }
+  },
+  "residual_findings": [
+    {
+      "id": "RESIDUAL-HOSTED-14D-RECLAIM-APPLY",
+      "register_class": "RC3",
+      "scope": "Hosted dev post-deploy physical space reclaim",
+      "description": "After TELEMETRY-EVENTS-RETENTION-14D-20261125 is deployed to hosted dev and HeartbeatRetentionJob drains the ~1.21M historical >14d non-permanent rows from public.telemetry_events (5.55 GB post-2026-11-21 reclaim), an operator/release run of scripts/telemetry_heartbeat_reclaim.py --apply --tables public.telemetry_events (or VACUUM FULL during a maintenance window) is needed to return physical heap/index/TOAST pages to the OS filesystem so pg_total_relation_size('public.telemetry_events') drops below the 5 GB measure_hosted_storage.py cap.",
+      "tracked_in": "docs/operations/problem-register.md (RC3 WP3.2 row)"
+    }
+  ]
+}

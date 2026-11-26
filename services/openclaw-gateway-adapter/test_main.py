@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import sqlite3
 import threading
 import time
 import types
@@ -27,6 +28,17 @@ if str(_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # Minimal stubs so the module can be imported without installed deps
 # ---------------------------------------------------------------------------
+
+import pytest as _pytest_chain
+
+
+@_pytest_chain.fixture(autouse=True)
+def _fixture_model_chain(monkeypatch):
+    """The model chain is a deployment variable; tests only set fixture values."""
+    if not os.getenv("OPENCLAW_MODEL_CHAIN"):
+        monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2,fx-b/model-3")
+
+
 
 def _stub_foundation():
     """Inject a minimal services.foundation.health stub if not present."""
@@ -247,6 +259,11 @@ class TestAssistantServiceAuthentication(unittest.TestCase):
 
 class TestCronServiceAuthentication(unittest.TestCase):
     _CRON_CONTRACTS = {
+        "pantheon.persona.daily-cycle": {
+            "schedule": "0 10 * * 1-5",
+            "policy_id": "oc002.cron.persona-daily-cycle",
+            "upstream_entrypoint": "persona.daily-cycle",
+        },
         "pantheon.ingest": {
             "schedule": "0 */6 * * *",
             "policy_id": "oc002.cron.ingest",
@@ -513,7 +530,7 @@ class TestCronServiceAuthentication(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         gateway_call.assert_called_once_with("cron.add", params)
 
-    def test_cron_add_accepts_exact_five_workflow_catalog(self):
+    def test_cron_add_accepts_exact_workflow_catalog(self):
         self.assertEqual(adapter_main._PERSONA_CRON_CATALOG, self._CRON_CONTRACTS)
 
         for workflow_id in self._CRON_CONTRACTS:
@@ -814,6 +831,36 @@ class TestCronServiceAuthentication(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403, response.text)
         gateway_call.assert_not_called()
+
+    def test_cron_runs_reads_only_exact_daily_cycle_job_with_bounded_pagination(self):
+        daily = self._persona_job(workflow_id="pantheon.persona.daily-cycle")
+        for params, allowed in (({"id": daily["id"], "limit": 100}, True),
+                                ({"id": daily["id"], "limit": 101}, False),
+                                ({"id": daily["id"], "scope": "all"}, False),
+                                ({"id": "another-job", "limit": 10}, False)):
+            calls = []
+            def gateway(method, body):
+                calls.append(method)
+                return {"jobs": [daily]} if method == "cron.list" else {"entries": []}
+            with (self.subTest(params=params), self._auth_config(token="cron-secret"),
+                  patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_cron_call", side_effect=gateway)):
+                response = client.post("/api/openclaw-adapter/gateway/cron",
+                    json={"method": "cron.runs", "params": params},
+                    headers={"X-Pantheon-Service-Token": "cron-secret"})
+            self.assertEqual(response.status_code, 200 if allowed else 403, response.text)
+            self.assertEqual("cron.runs" in calls, allowed)
+
+    def test_cron_runs_refuses_legacy_workflow_and_drifted_daily_job(self):
+        for job in (self._persona_job(),
+                    {**self._persona_job(workflow_id="pantheon.persona.daily-cycle"), "enabled": False}):
+            with (self.subTest(job=job), self._auth_config(token="cron-secret"),
+                  patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_cron_call",
+                               return_value={"jobs": [job]}) as gateway):
+                response = client.post("/api/openclaw-adapter/gateway/cron",
+                    json={"method": "cron.runs", "params": {"id": job["id"], "limit": 100}},
+                    headers={"X-Pantheon-Service-Token": "cron-secret"})
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual(gateway.call_count, 1)
 
     def test_cron_remove_is_fenced_to_persona_owned_namespace(self):
         calls = []
@@ -1623,7 +1670,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             "status": "created",
             "agent_id": self._PERSONA_ID,
             "model_id": f"openclaw/{self._PERSONA_ID}",
-            "model": "anthropic/claude-opus-4-8",
+            "model": "fx-a/model-1",
             "workspace_ref": self._PAYLOAD["workspace_ref"],
         }
         with (
@@ -2337,7 +2384,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                     "metadata": {"allowed_tools": []},
                     "agent_id": payload["agent_id"],
                     "persona_admission": invocation_admission,
-                    "model": "anthropic/claude-opus-4-8",
+                    "model": "fx-a/model-1",
                 },
                 headers={
                     "X-Pantheon-Service-Token": "adapter-secret",
@@ -2351,7 +2398,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
         # The explicit override reaches the provider verbatim -- no
         # fallback candidate substituted in front of it.
-        self.assertEqual(invoke.call_args.kwargs["model"], "anthropic/claude-opus-4-8")
+        self.assertEqual(invoke.call_args.kwargs["model"], "fx-a/model-1")
 
     def test_admitted_invoke_and_stream_preserve_effective_model_over_http(self):
         from assistant_openclaw_provider import AssistantOpenClawProvider
@@ -2686,7 +2733,7 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         instead of being silently dropped."""
         resp = client.post(
             "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
-            json={"mode": "user", "prompt": "hi", "model": "anthropic/claude-opus-4-8"},
+            json={"mode": "user", "prompt": "hi", "model": "fx-a/model-1"},
             headers={"X-Operator-Id": "operator-1"},
         )
         self.assertEqual(resp.status_code, 422, resp.text)
@@ -2786,6 +2833,62 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                 invoke_fn=lambda: calls.append("must-not-run"),
             )
         self.assertNotIn("must-not-run", calls)
+
+    def test_slow_agent_ensure_does_not_block_other_persona_completion(self):
+        """A reconciling ensure must not hold the SQLite writer lock (real DB)."""
+        req = adapter_main.OpenClawAgentEnsureRequest.model_validate(self._PAYLOAD)
+        in_reconcile = threading.Event()
+        release = threading.Event()
+
+        def slow_reconcile(_req):
+            in_reconcile.set()
+            self.assertTrue(release.wait(timeout=30))
+            return {"status": "created", "agent_id": self._PERSONA_ID}
+
+        def other_persona_invocation():
+            # The claim ledger only fingerprints the request; skip admission.
+            provider = adapter_main.AssistantProviderInvokeRequest.model_construct(
+                mode="user", prompt="opinion", agent_id="persona-opinion-other",
+                metadata={"allowed_tools": []},
+            )
+            calls = []
+
+            def upstream():
+                calls.append("upstream")
+                return {"status": "ok", "data": {"status": "completed", "output": {}}}
+
+            # Short busy timeout proves completion does not wait on ensure.
+            real_connect = sqlite3.connect
+            with patch.object(
+                adapter_main.sqlite3, "connect",
+                side_effect=lambda *a, **k: real_connect(*a, **{**k, "timeout": 1.0}),
+            ):
+                first = adapter_main._invoke_persona_opinion_idempotently(
+                    provider, idempotency_key="other-invocation", invoke_fn=upstream,
+                )
+                replay = adapter_main._invoke_persona_opinion_idempotently(
+                    provider, idempotency_key="other-invocation", invoke_fn=upstream,
+                )
+            return first, replay, calls
+
+        with (
+            patch.object(adapter_main, "_sync_servant_agent", side_effect=slow_reconcile),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            ensure_future = executor.submit(
+                adapter_main._ensure_agent_idempotently,
+                req, idempotency_key="slow-ensure", request_id="request-slow",
+            )
+            self.assertTrue(in_reconcile.wait(timeout=10))
+            try:
+                first, replay, calls = other_persona_invocation()
+            finally:
+                release.set()
+            status, _payload = ensure_future.result(timeout=30)
+
+        self.assertEqual(status, 201)
+        self.assertEqual(first, replay)
+        self.assertEqual(calls, ["upstream"])
 
 
 class TestSessions(unittest.TestCase):

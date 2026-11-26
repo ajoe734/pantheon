@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Request
 from services.runtime_auth_inbound import AuthContext, validate_request_auth
 
 from ..api_models import SourceCommandRequestBody
+from ..discovery_summary import read_discovery_summary
 from ..connector_definitions import get_connector_definition, list_connector_definitions
 from ..source_management_commands import AdapterNotSupportedError, CommandPreconditionError
 from ..source_management_models import SourceManagementCommand
@@ -71,6 +73,55 @@ def _seed_belongs_to_tenant(runtime: SourceIngestionRuntime, seed: StrategySpecS
         or bool(seed.evidence_bundle_id and repo.get_bundle(seed.evidence_bundle_id, tenant_id=tenant_id) is not None)
         or any(eid and repo.get_evidence_item(eid, tenant_id=tenant_id) is not None for eid in seed.evidence_item_ids)
     )
+
+
+SEED_PAGE_SIZE_MAX = 200
+SEED_PAGE_SCAN_MAX = 1000
+"""Records examined per request, however sparse the caller's tenant is in the store."""
+
+_MATCH_METADATA_KEYS = (
+    "strategy_family", "strategy_families", "family", "markets", "market_scope", "asset_classes", "asset_class",
+    "holding_period", "allowed_use", "access_scope", "backend_hint", "backend", "risk_profile", "risk_level",
+    "entitlement_tags", "source_license_scope", "license_scope", "source_status", "source_lifecycle_state",
+    "execution_route", "execution_mode_hint", "negative_memory_match", "source_disabled",
+    "discovery_requires_execution_access", "data_backfill_available", "mechanism", "mechanism_status",
+    "mechanism_support", "tenant_id", "tenant",
+)
+_MATCH_FIELDS = (
+    "seed_id", "source_id", "source_ids", "evidence_bundle_id", "evidence_item_ids", "hypothesis", "asset_class",
+    "market_scope", "holding_period", "required_data", "backend_hint", "feature_hints", "risk_notes", "confidence",
+    "status", "negative_memory_match", "citation_refs", "trace_refs", "license_scope", "allowed_use",
+    "entitlement_tags",
+)
+
+
+def _raw_seed_belongs_to_tenant(repo: Any, raw: Mapping[str, Any], tenant_id: str) -> bool:
+    """Tenant rule of ``_seed_belongs_to_tenant`` on a stored record, with per-seed point reads only."""
+    meta, lineage = raw.get("metadata"), raw.get("lineage")
+    meta_tenant = str(
+        (meta.get("tenant_id") or meta.get("tenant") if isinstance(meta, Mapping) else "")
+        or (lineage.get("tenant_id") or lineage.get("tenant") if isinstance(lineage, Mapping) else "") or ""
+    ).strip()
+    if meta_tenant:
+        return meta_tenant == tenant_id
+    source_ids = dict.fromkeys([str(raw.get("source_id") or ""), *(raw.get("source_ids") or ())])
+    bundle_id = str(raw.get("evidence_bundle_id") or "")
+    return (
+        any(sid and repo.get_source_record(sid, tenant_id=tenant_id) is not None for sid in source_ids)
+        or bool(bundle_id and repo.get_bundle(bundle_id, tenant_id=tenant_id) is not None)
+        or any(eid and repo.get_evidence_item(eid, tenant_id=tenant_id) is not None for eid in (raw.get("evidence_item_ids") or ()))
+    )
+
+
+def _match_projection(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Only what the discovery scorer reads; nested metadata is cut to the keys it consults."""
+    out = {k: raw[k] for k in _MATCH_FIELDS if k in raw}
+    meta, lineage = raw.get("metadata"), raw.get("lineage")
+    if isinstance(meta, Mapping):
+        out["metadata"] = {k: meta[k] for k in _MATCH_METADATA_KEYS if k in meta}
+    if isinstance(lineage, Mapping):
+        out["lineage"] = {k: lineage[k] for k in ("execution_route", "tenant_id", "tenant") if k in lineage}
+    return out
 
 
 def _require_tenant_seed(runtime: SourceIngestionRuntime, seed_id: str, tenant_id: str, *, error_code: str = "seed_not_found") -> StrategySpecSeed:
@@ -245,9 +296,7 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
             "count": len(receipts),
         }
 
-    @router.get("/api/source-ingest/management/strategy-seeds")
-    def list_management_strategy_seeds(request: Request) -> dict[str, Any]:
-        _, tenant_id = _require_seed_caller(request)
+    def _list_all_tenant_seeds(tenant_id: str) -> dict[str, Any]:
         store = runtime.strategy_seed_store
         all_seeds = store.list_all()
         tenant_source_ids: set[str] | None = None
@@ -278,6 +327,57 @@ def create_management_router(runtime: SourceIngestionRuntime) -> APIRouter:
                 if any(eid and eid in tenant_item_ids for eid in s.evidence_item_ids):
                     items.append(s.to_dict())
         return {"items": items, "count": len(items), "store_path": str(store.path)}
+
+    @router.get("/api/source-ingest/management/discovery-summary")
+    def get_management_discovery_summary(request: Request) -> dict[str, Any]:
+        """Bounded tenant discovery summary; never reads seeds, evidence or source records."""
+        _, tenant_id = _require_seed_caller(request)
+        queue_path = getattr(runtime, "DISTILLATION_JOB_QUEUE_PATH", None)
+        if queue_path is None:
+            queue = getattr(runtime, "distillation_job_queue", None)
+            queue_path = getattr(queue, "path", None)
+        return read_discovery_summary(queue_path=Path(str(queue_path or "")), tenant_id=tenant_id)
+
+    @router.get("/api/source-ingest/management/strategy-seeds")
+    def list_management_strategy_seeds(
+        request: Request,
+        page_size: int | None = None,
+        page_token: str | None = None,
+        fields: str | None = None,
+    ) -> dict[str, Any]:
+        _, tenant_id = _require_seed_caller(request)
+        store = runtime.strategy_seed_store
+        if fields not in (None, "", "full", "match"):
+            raise HTTPException(status_code=422, detail="fields must be full or match")
+        if page_size is None and not page_token and fields in (None, "", "full"):
+            return _list_all_tenant_seeds(tenant_id)
+        size = min(max(1, page_size or SEED_PAGE_SIZE_MAX), SEED_PAGE_SIZE_MAX)
+        repo = runtime.evidence_repository
+        items: list[dict[str, Any]] = []
+        scanned = 0
+        token = page_token or None
+        # A page ends when full, when the store ends, or when the scan budget is spent; a
+        # budget-limited page may be short or empty and still carries next_page_token.
+        try:
+            while True:
+                window, token = store.read_window(page_token=token, max_scan=min(max(size - len(items), 25), SEED_PAGE_SCAN_MAX - scanned))
+                scanned += len(window)
+                for raw in window:
+                    if _raw_seed_belongs_to_tenant(repo, raw, tenant_id):
+                        items.append(raw)
+                        if len(items) >= size:
+                            token = store.cursor_after(str(raw.get("seed_id") or ""), fallback=token)
+                            break
+                if token is None or len(items) >= size or scanned >= SEED_PAGE_SCAN_MAX:
+                    break
+        except StrategySpecSeedStoreError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if fields == "match":
+            payload_items = [_match_projection(raw) for raw in items]
+        else:
+            payload_items = [StrategySpecSeed.from_dict(raw).to_dict() for raw in items]
+        return {"items": payload_items, "count": len(payload_items), "store_path": str(store.path),
+                "page_size": size, "next_page_token": token, "scanned": scanned, "fields": fields or "full"}
 
     @router.get("/api/source-ingest/management/strategy-seeds/{seed_id}")
     def get_management_strategy_seed(seed_id: str, request: Request) -> dict[str, Any]:

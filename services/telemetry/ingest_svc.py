@@ -67,10 +67,11 @@ try:  # POSIX advisory locking makes the admission ledger replica-safe.
 except ImportError:  # pragma: no cover - non-POSIX platforms
     fcntl = None  # type: ignore[assignment]
 
-from .buffer import DurableBuffer, create_buffer
+from .buffer import DurableBuffer, PutResult, create_buffer
 from .batch_writer import AsyncBatchWriter, WriteResult
 from .backpressure import BackpressureController, CRITICAL_EVENT_TYPES
 from .dead_letter import (
+    DeadLetterEntry,
     DeadLetterQueue,
     TAG_SCHEMA_VIOLATION,
     TAG_BINDING_MISMATCH,
@@ -143,6 +144,37 @@ TRADE_JOURNEY_FIXTURE_TENANT = "tenant-dev"
 
 class ConflictingTelemetryEventError(ValueError):
     """An event_id was reused for content other than the immutable original."""
+
+
+class ReplayResult(int):
+    """Integer count of genuinely enqueued replay events, with breakdown attributes.
+
+    Subclasses ``int`` so existing callers that compare or serialize the return
+    value of ``replay_dlq()`` as an integer count continue to work unchanged,
+    while callers inspecting ``.replayed``, ``.suppressed``, ``.refused``, or
+    ``.to_dict()`` get the separated replay accounting.
+    """
+
+    def __new__(
+        cls,
+        replayed: int,
+        *,
+        suppressed: int = 0,
+        refused: int = 0,
+    ) -> "ReplayResult":
+        obj = int.__new__(cls, int(replayed))
+        obj.replayed = int(replayed)
+        obj.enqueued = int(replayed)
+        obj.suppressed = int(suppressed)
+        obj.refused = int(refused)
+        return obj
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "replayed": self.replayed,
+            "suppressed": self.suppressed,
+            "refused": self.refused,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +874,8 @@ def build_postgres_write_fn(
     followed by an equality check against the committed immutable row:
 
     * exact duplicates are successful no-ops;
-    * conflicting duplicates fail the whole batch as non-retryable;
+    * conflicting duplicates are returned in WriteResult.rejected (batch index
+      and reason) and nothing else in the batch is affected;
     * new rows receive database-owned ingested_seq / ingested_at values.
 
     When at least one new row is inserted, pg_notify is invoked inside the
@@ -893,15 +926,15 @@ def build_postgres_write_fn(
     # One statement returns the event_ids of skipped rows that are not exact
     # duplicates of the committed immutable row.
     conflicting_duplicate_sql = (
-        f"SELECT t.event_id "
-        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[]) "
-        f"AS t(event_id, event_type, created_at, payload) "
+        f"SELECT t.event_id, t.ordinality "
+        f"FROM unnest($1::text[], $2::text[], $3::timestamptz[], $4::text[], $5::int[]) "
+        f"AS t(event_id, event_type, created_at, payload, ordinality) "
         f"LEFT JOIN {table} e ON e.event_id = t.event_id "
         f"WHERE e.event_id IS NULL "
         f"OR e.event_type IS DISTINCT FROM t.event_type "
         f"OR e.created_at IS DISTINCT FROM t.created_at "
         f"OR e.payload IS DISTINCT FROM t.payload::jsonb "
-        f"LIMIT 1"
+        f"ORDER BY t.ordinality"
     )
 
     async def _postgres_write(batch: list[dict[str, Any]]) -> WriteResult:
@@ -922,6 +955,7 @@ def build_postgres_write_fn(
                     for ev in batch
                 ]
                 inserted_sequences: list[int] = []
+                rejected: list[tuple[int, str]] = []
                 if not rows:
                     return WriteResult.ok(0)
                 insert_stmt = await conn.prepare(insert_sql)
@@ -942,19 +976,27 @@ def build_postgres_write_fn(
                     # any later in-batch copy is a skipped duplicate to verify.
                     pending_ids = {r["event_id"] for r in inserted_rows}
                     skipped = []
-                    for row in rows:
+                    skipped_index: list[int] = []
+                    for index, row in enumerate(rows):
                         if row[0] in pending_ids:
                             pending_ids.discard(row[0])
                         else:
                             skipped.append(row)
+                            skipped_index.append(index)
                     if skipped:
-                        conflict = await conn.fetchval(
+                        # Conflicting duplicates are isolated, not fatal: the
+                        # rows inserted above stay in this transaction.
+                        conflicts = await conn.fetch(
                             conflicting_duplicate_sql,
                             *(list(column) for column in zip(*skipped)),
+                            list(range(len(skipped))),
                         )
-                        if conflict is not None:
-                            raise ConflictingTelemetryEventError(
-                                f"conflicting duplicate event_id={conflict}"
+                        for conflict in conflicts:
+                            rejected.append(
+                                (
+                                    skipped_index[int(conflict["ordinality"])],
+                                    f"conflicting duplicate event_id={conflict['event_id']}",
+                                )
                             )
 
                     if inserted_sequences:
@@ -976,7 +1018,7 @@ def build_postgres_write_fn(
                         )
             finally:
                 await conn.close()
-            return WriteResult.ok(len(inserted_sequences))
+            return WriteResult.ok(len(inserted_sequences), rejected=rejected)
         except ConflictingTelemetryEventError as exc:
             return WriteResult.fail(str(exc), retryable=False)
         except Exception as exc:  # noqa: BLE001
@@ -1660,6 +1702,36 @@ class TelemetryIngestService:
 
         return True, None, None
 
+    async def _put_to_buffer(
+        self,
+        event: dict[str, Any],
+        *,
+        timeout: Optional[float] = None,
+        replay_key: Optional[str] = None,
+    ) -> PutResult:
+        if replay_key is not None:
+            try:
+                raw = await self._buffer.put(
+                    event,
+                    timeout=timeout,
+                    replay_key=replay_key,  # type: ignore[call-arg]
+                )
+            except TypeError:
+                raw = await self._buffer.put(event, timeout=timeout)
+        else:
+            raw = await self._buffer.put(event, timeout=timeout)
+        if isinstance(raw, PutResult):
+            return raw
+        accepted = bool(raw)
+        duplicate = bool(getattr(raw, "duplicate", False))
+        enqueued = bool(getattr(raw, "enqueued", accepted and not duplicate))
+        return PutResult(
+            accepted=accepted,
+            enqueued=enqueued,
+            duplicate=duplicate,
+            receipt_id=getattr(raw, "receipt_id", None),
+        )
+
     async def ingest(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
         """
         Ingest a single telemetry event.
@@ -1684,6 +1756,16 @@ class TelemetryIngestService:
         bool
             True if event was enqueued successfully (or was a known duplicate).
         """
+        outcome = await self._ingest_event(event, timeout=timeout)
+        return bool(outcome.accepted)
+
+    async def _ingest_event(
+        self,
+        event: dict[str, Any],
+        timeout: Optional[float] = None,
+        *,
+        replay_key: Optional[str] = None,
+    ) -> PutResult:
         # 0. Idempotent deduplication — prevent the same event_id from being
         #    counted or written more than once within this service instance.
         event_id = event.get("event_id")
@@ -1709,7 +1791,7 @@ class TelemetryIngestService:
                         reason=f"Schema validation failed on duplicate retry: {schema_err}",
                     )
                     log.warning(f"Ingest duplicate retry rejected (schema): {schema_err}")
-                    return False
+                    return PutResult(accepted=False)
 
                 # 0.b. Validate evidence contract on duplicate retry
                 valid_ev, ev_err, resolved_binding = await asyncio.to_thread(
@@ -1731,7 +1813,7 @@ class TelemetryIngestService:
                         reason=f"Evidence contract violation on duplicate retry: {ev_err}",
                     )
                     log.warning(f"Ingest duplicate retry rejected (evidence): {ev_err}")
-                    return False
+                    return PutResult(accepted=False)
 
                 # 0.c. Reject same-ID content mismatch
                 original_event = self._seen_event_ids[event_id]
@@ -1748,7 +1830,7 @@ class TelemetryIngestService:
                         reason=f"Content mismatch for duplicate event_id={event_id}",
                     )
                     log.warning(f"Ingest duplicate retry rejected (content mismatch for event_id={event_id})")
-                    return False
+                    return PutResult(accepted=False)
 
                 self._total_duplicates += 1
                 log.debug(f"Ingest skipped (duplicate event_id): {event_id}")
@@ -1758,7 +1840,7 @@ class TelemetryIngestService:
                         self._lineage_write_store.admit_telemetry_event(original_event, resolved_binding)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("Lineage live-write admission failed for duplicate event %s: %s", event_id, exc)
-                return True  # idempotent: already delivered, treat as success
+                return PutResult(accepted=True, enqueued=False, duplicate=True)
 
             # 1. Schema validation
             valid, error_msg = self._validate_event(event)
@@ -1770,7 +1852,7 @@ class TelemetryIngestService:
                     reason=f"Schema validation failed: {error_msg}",
                 )
                 log.warning(f"Ingest rejected (schema): {error_msg}")
-                return False
+                return PutResult(accepted=False)
 
             # 2. Evidence contract validation (field presence + RuntimeBinding cross-check)
             valid, error_msg, resolved_binding = await asyncio.to_thread(
@@ -1793,11 +1875,15 @@ class TelemetryIngestService:
                     reason=f"Evidence contract violation: {error_msg}",
                 )
                 log.warning(f"Ingest rejected (evidence): {error_msg}")
-                return False
+                return PutResult(accepted=False)
 
             # 3. Push to durable buffer
-            enqueued = await self._buffer.put(event, timeout=timeout)
-            if not enqueued:
+            put_result = await self._put_to_buffer(
+                event,
+                timeout=timeout,
+                replay_key=replay_key,
+            )
+            if not put_result.accepted:
                 self._total_rejected += 1
                 self._dlq.reject(
                     event=event,
@@ -1805,7 +1891,7 @@ class TelemetryIngestService:
                     reason="Buffer full — backpressure overflow to DLQ",
                 )
                 log.warning("Ingest rejected (buffer overflow): buffer at capacity")
-                return False
+                return PutResult(accepted=False)
 
             # Track event_id for idempotent dedup after successful enqueue
             if event_id:
@@ -1817,6 +1903,20 @@ class TelemetryIngestService:
                     evict = list(self._seen_event_ids.keys())[: self._dedup_max_size // 2]
                     for eid in evict:
                         self._seen_event_ids.pop(eid, None)
+
+            if put_result.duplicate or not put_result.enqueued:
+                self._total_duplicates += 1
+                log.debug("Ingest deduplicated by broker receipt: %s", event_id)
+                if self._lineage_write_store is not None:
+                    try:
+                        self._lineage_write_store.admit_telemetry_event(event, resolved_binding)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "Lineage live-write admission failed for duplicate event %s: %s",
+                            event_id,
+                            exc,
+                        )
+                return put_result
 
             self._total_ingested += 1
             if self._runtime_summary_store is not None:
@@ -1842,7 +1942,7 @@ class TelemetryIngestService:
                         self._trade_episode_projection_store.project_event(event)
                     except Exception as exc:  # noqa: BLE001
                         log.warning("Trade episode projection failed for event %s: %s", event_id, exc)
-            return True
+            return put_result
         finally:
             if lock is not None and event_id:
                 if acquired:
@@ -2763,12 +2863,84 @@ class TelemetryIngestService:
             deduplicated.append(event)
         return deduplicated
 
+    @staticmethod
+    def _is_self_conflict_entry(entry: DeadLetterEntry) -> bool:
+        event = entry.event
+        if not isinstance(event, dict):
+            return False
+        marker = "conflicting duplicate event_id="
+        reason = entry.reason or ""
+        if marker not in reason:
+            return False
+        conflict_id = reason.split(marker, 1)[1].strip()
+        return bool(conflict_id and conflict_id == str(event.get("event_id")))
+
+    def _replay_candidates(self, tag: str) -> list[dict[str, Any]]:
+        """Events of one tag, minus the conflicting rows themselves.
+
+        An entry whose reason says ``conflicting duplicate event_id=X`` is a
+        conflict only when X is its own event_id; other events dead-lettered
+        with the same reason (the old whole-batch behaviour) are replayed.
+        """
+        entries, _ = self._replay_candidate_entries(tag_filter=tag)
+        return [entry.event for entry in entries]
+
+    def _replay_candidate_entries(
+        self,
+        tag_filter: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[list[DeadLetterEntry], int]:
+        """Return deduplicated replayable DeadLetterEntry items and refused conflict count."""
+        if tag_filter is not None:
+            raw_entries = self._dlq.get_entries(tag_filter=tag_filter, limit=10_000)
+        else:
+            raw_entries = []
+            for tag in _WRITE_FAILURE_TAGS:
+                raw_entries.extend(self._dlq.get_entries(tag_filter=tag, limit=10_000))
+
+        ordered_keys: list[str] = []
+        by_key: dict[str, DeadLetterEntry] = {}
+        conflict_keys: set[str] = set()
+        anon_entries: list[DeadLetterEntry] = []
+        anon_conflicts = 0
+
+        for entry in raw_entries:
+            event = entry.event
+            if not isinstance(event, dict):
+                continue
+            if tenant_id is not None and self._event_tenant_id(event) != tenant_id:
+                continue
+            eid = str(event.get("event_id") or "").strip()
+            is_conflict = self._is_self_conflict_entry(entry)
+            if eid:
+                if eid not in by_key:
+                    ordered_keys.append(eid)
+                by_key[eid] = entry
+                if is_conflict:
+                    conflict_keys.add(eid)
+            else:
+                if is_conflict:
+                    anon_conflicts += 1
+                else:
+                    anon_entries.append(entry)
+
+        candidates: list[DeadLetterEntry] = []
+        refused_conflicts = anon_conflicts
+        for eid in ordered_keys:
+            if eid in conflict_keys:
+                refused_conflicts += 1
+                continue
+            candidates.append(by_key[eid])
+        candidates.extend(anon_entries)
+        return candidates, refused_conflicts
+
     async def replay_dlq(
         self,
         tag_filter: Optional[str] = None,
         *,
         tenant_id: Optional[str] = None,
-    ) -> int:
+    ) -> ReplayResult:
         """
         Replay dead-letter events through the full ingest validation path.
 
@@ -2800,35 +2972,42 @@ class TelemetryIngestService:
 
         Returns
         -------
-        int
-            Number of events successfully re-enqueued.
+        ReplayResult
+            Integer count of events genuinely re-enqueued, with ``.suppressed``
+            and ``.refused`` counts reported separately.
         """
-        if tag_filter is not None:
-            events = self._deduplicate_replay_events(
-                self._dlq.replay_entries(tag_filter=tag_filter)
-            )
-        else:
-            # Collect write-failure entries only.
-            replay_candidates: list[dict[str, Any]] = []
-            for tag in _WRITE_FAILURE_TAGS:
-                replay_candidates.extend(self._dlq.replay_entries(tag_filter=tag))
-            events = self._deduplicate_replay_events(replay_candidates)
-        if tenant_id is not None:
-            events = [
-                event
-                for event in events
-                if self._event_tenant_id(event) == tenant_id
-            ]
+        candidate_entries, refused = self._replay_candidate_entries(
+            tag_filter=tag_filter,
+            tenant_id=tenant_id,
+        )
 
-        count = 0
-        for event in events:
+        replayed = 0
+        suppressed = 0
+        for entry in candidate_entries:
+            event = entry.event
             # Re-enter the full ingest path — re-validates schema + evidence.
-            # Clear the event_id from the dedup set so replay can re-enqueue it.
+            # Clear the event_id from the dedup set so replay reaches the broker
+            # with a replay-specific message ID (content hash + rejected_at).
             eid = event.get("event_id")
             if eid:
                 self._seen_event_ids.pop(eid, None)
-            ok = await self.ingest(event, timeout=5.0)
-            if ok:
-                count += 1
-        log.info(f"Replayed {count}/{len(events)} DLQ write-failure events through ingest path")
-        return count
+            replay_key = str(entry.rejected_at or "").strip() or "replay"
+            outcome = await self._ingest_event(
+                event,
+                timeout=5.0,
+                replay_key=replay_key,
+            )
+            if not outcome.accepted:
+                refused += 1
+            elif outcome.duplicate or not outcome.enqueued:
+                suppressed += 1
+            else:
+                replayed += 1
+        log.info(
+            "Replayed %s/%s DLQ write-failure events through ingest path (suppressed=%s, refused=%s)",
+            replayed,
+            len(candidate_entries),
+            suppressed,
+            refused,
+        )
+        return ReplayResult(replayed, suppressed=suppressed, refused=refused)

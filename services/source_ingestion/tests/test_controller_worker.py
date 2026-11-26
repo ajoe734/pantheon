@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from services.source_ingestion import controller_worker
+from services.source_ingestion.tests import wall_clock_bounds
 from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
 from services.source_ingestion import controller_state
 from services.source_ingestion.controller_state import (
@@ -33,6 +34,16 @@ from services.source_ingestion.runtime import create_runtime
 
 
 CONNECTOR_ID = "tw-official-market-datasets"
+
+
+@pytest.fixture(autouse=True)
+def _fixture_connector_has_taiwan_session_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The generic fixture connector stands in for a governed Taiwan session connector.
+    monkeypatch.setattr(
+        controller_worker,
+        "_TAIWAN_SESSION_CONNECTOR_IDS",
+        controller_worker._TAIWAN_SESSION_CONNECTOR_IDS | {CONNECTOR_ID},
+    )
 DATASET = "tw_price_daily"
 FINAL_TRUTH_LEVEL = "reconciled_live_proof"
 SIMULATION_CONNECTOR_ID = "dev-paper-us-equity-simulation"
@@ -188,6 +199,7 @@ def _actual_readback() -> dict[str, Any]:
             "replay_failed": 0,
             "schema_rejected": 0,
         },
+        "dlq_status_counts_by_connector": {},
         "frontier_backlog": 0,
         "frontier_backlog_by_connector": {},
         "max_lag_seconds": 5,
@@ -1332,6 +1344,25 @@ def test_main_failure_line_is_unchanged_without_schedule_context(
     assert set(line) == {"tick", "status", "stage", "error", "state_sequence_no"}
 
 
+def test_main_skips_cadence_sleep_only_while_continuation_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = iter([{"status": "ok", "continuation_pending": True}, {"status": "ok", "continuation_pending": False}])
+    sleeps: list[float] = []
+    config = replace(_config(tmp_path), max_ticks=3, interval_seconds=60)
+    monkeypatch.setattr(controller_worker, "config_from_env", lambda: config)
+    monkeypatch.setattr(controller_worker, "_new_state", lambda: _state())
+    monkeypatch.setattr(controller_worker, "build_loop_writer", lambda **kwargs: RecordingWriter([]))
+    monkeypatch.setattr(controller_worker, "run_controller_tick", lambda **kwargs: next(results, {"status": "ok"}))
+    monkeypatch.setattr(controller_worker.time, "sleep", sleeps.append)
+
+    assert controller_worker.main() == 0
+    capsys.readouterr()
+    assert sleeps == [controller_worker.CONTINUATION_PAUSE_SECONDS, 60]
+
+
 def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1870,7 +1901,22 @@ def _make_stub_persona_server():
     return server, port
 
 
-def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture()
+def baseline_desired_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The official-market-only holder (the deployment default minus the Collector admissions)."""
+
+    payload = json.loads(controller_worker.DEFAULT_DESIRED_STATE_PATH.read_text(encoding="utf-8"))
+    holder = payload["personas"][0]
+    holder["required_data_sources"] = [
+        req for req in holder["required_data_sources"] if req["connector_candidates"] == ["tw-twse-tpex-official-market"]
+    ]
+    path = tmp_path / "baseline_desired_state.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_PATH", str(path))
+    return path
+
+
+def test_load_desired_state_merges_default_and_active_personas(baseline_desired_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     server, port = _make_stub_persona_server()
     try:
         active_persona_1 = {
@@ -1914,7 +1960,6 @@ def test_load_desired_state_merges_default_and_active_personas(tmp_path: Path, m
         ]
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         personas, meta = controller_worker.load_desired_state(timeout_seconds=5.0)
         pids = [p["persona_id"] for p in personas]
@@ -1940,7 +1985,6 @@ def test_load_desired_state_fails_closed_when_persona_owner_unreachable(monkeypa
         _StubPersonaOwnerHandler.personas = []
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         with pytest.raises(ControllerTickError) as exc_info:
             controller_worker.load_desired_state(timeout_seconds=5.0)
@@ -1958,7 +2002,6 @@ def test_load_desired_state_fails_closed_when_persona_owner_returns_malformed_li
         _StubPersonaOwnerHandler.personas = []
 
         monkeypatch.setenv("SOURCE_INGEST_DESIRED_STATE_URL", f"http://127.0.0.1:{port}/api/personas")
-        monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
 
         with pytest.raises(ControllerTickError) as exc_info:
             controller_worker.load_desired_state(timeout_seconds=5.0)
@@ -2271,7 +2314,7 @@ def test_controller_worker_resolves_tenant_from_bff_tenant_id(
     assert refreshed.tenant_id == "tenant-dev"
 
 
-def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(baseline_desired_state: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bff_tw_requirements = [
         {
             "dataset": "tw_price_daily",
@@ -2327,7 +2370,7 @@ def test_persona_with_bff_default_taiwan_requirements_adds_nothing_to_holder(mon
         persona_server.server_close()
 
 
-def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persona_finmind_only_merged_and_fails_closed_with_unsupported_1(baseline_desired_state: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import socket
     import threading
     import time
@@ -2770,3 +2813,1361 @@ def test_terminal_readback_exclusive_scope_still_validates_selected_connector_he
             actual=actual,
             expected_exclusive_connector_ids=(CONNECTOR_ID,),
         )
+
+
+@pytest.fixture
+def owner_dlq_readback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Real owner counters/journal, with the existing terminal connector fixture.
+
+    No provider request: connector provenance is the established official-market
+    calendar fixture; the DLQ and requirement/controller stores use real writers.
+    """
+    from services.foundation import DeadLetterStatus, EnvironmentScope, EventEnvelope, TraceContext
+
+    now = datetime(2026, 10, 23, 7, 5, tzinfo=timezone.utc)
+    fixture = _tw_oct22_close_readback(now)
+    official_id = "tw-twse-tpex-official-market"
+    finmind_id = "tw-finmind-broker-daily-report"
+    finmind = deepcopy(fixture["connectors"][0])
+    finmind["connector_id"] = finmind_id
+    finmind["connector"]["connector_id"] = finmind_id
+    finmind["freshness"]["status"] = "degraded"
+    finmind["source_health"]["status"] = "failed"
+    fixture["connectors"].append(finmind)
+    runtime = create_runtime(data_dir=tmp_path / "owner")
+    monkeypatch.setattr(runtime, "_controller_connector_readbacks", lambda: deepcopy(fixture["connectors"]))
+    ControllerStateStore(runtime.CONTROLLER_STATE_PATH).save(_state(sequence_no=1))
+    digest = "a" * 64
+    runtime.requirement_snapshot_store.append(
+        desired_state_sha256=digest, bindings={}, persona_count=1, authority="test://dlq-scope"
+    )
+    reconcile = _tw_reconcile()
+    reconcile["desired_state_sha256"] = digest
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    journal_bytes = {}
+
+    def read(entries):
+        for index, (connector_id, status) in enumerate(entries):
+            event = EventEnvelope.new(
+                event_type="source_ingestion.scheduled_run_failed",
+                aggregate_type="source_ingest_run",
+                aggregate_id=f"run-dlq-{index}",
+                sequence_no=1,
+                trace=TraceContext.new(environment=EnvironmentScope(name="dev")),
+                producer_service="source-ingestion",
+                payload={} if connector_id is None else {"connector_id": connector_id},
+            )
+            entry = runtime.dead_letter_queue.reject(
+                event, reason="test source failure", tags=("source_ingestion", "retry_exhausted")
+            )
+            if status != "pending":
+                runtime.dead_letter_queue.replace_entry(replace(entry, status=DeadLetterStatus(status)))
+        # Reload the persisted owner queue before projecting, including latest statuses.
+        runtime.dead_letter_queue.load_from_spill()
+        before = runtime.DLQ_STORE_PATH.read_bytes() if entries else b""
+        journal_bytes.update({path: path.read_bytes() for path in runtime.DATA_DIR.rglob("*.jsonl")})
+        actual = runtime._controller_readback_payload()
+        assert (runtime.DLQ_STORE_PATH.read_bytes() if entries else b"") == before
+        return actual, before
+
+    yield runtime, read, reconcile, schedule, now, official_id, finmind_id
+    assert {path: path.read_bytes() for path in runtime.DATA_DIR.rglob("*.jsonl")} == journal_bytes
+
+
+def _validate_owner_dlq(actual, reconcile, schedule, now, scope):
+    return _validate_terminal_readback_impl(
+        reconcile=reconcile, schedule=schedule, actual=actual,
+        expected_controller_id="source-ingestion-test:generation-test",
+        expected_sequence_no=1, expected_deployment=_deployment(),
+        expected_exclusive_connector_ids=scope, now=now,
+    )
+
+
+@pytest.mark.parametrize("status", ["pending", "replay_failed", "schema_rejected"])
+def test_owner_readback_accepts_official_scope_but_retains_finmind_failure(owner_dlq_readback, status):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, status)])
+    assert actual["dlq_count"] == actual["unresolved_dlq_count"] == 1
+    assert actual["dlq_status_counts"][status] == 1
+    assert actual["dlq_status_counts_by_connector"][finmind_id][status] == 1
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    with pytest.raises(ControllerTickError, match="unresolved dead-letter"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, ())
+    summary = controller_state.summarize_actual_readback(actual)
+    assert summary["unresolved_dlq_count"] == 1
+    assert summary["dlq_status_counts_by_connector"] == actual["dlq_status_counts_by_connector"]
+    assert controller_state.summarize_actual_readback(summary) == summary
+    assert actual["connectors"][1]["freshness"]["status"] == "degraded"
+    assert actual["connectors"][1]["source_health"]["status"] == "failed"
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("status", ["pending", "replay_failed", "schema_rejected"])
+def test_owner_readback_rejects_own_and_mixed_dlq(owner_dlq_readback, mixed, status):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    entries = [(official_id, status)] + ([(finmind_id, "pending")] if mixed else [])
+    actual, before = read(entries)
+    with pytest.raises(ControllerTickError, match="selected connector scope"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("connector_id", [None, "", " ", "unknown-connector", 123])
+def test_owner_readback_rejects_unknown_dlq_attribution(owner_dlq_readback, connector_id):
+    runtime, read, reconcile, schedule, now, official_id, _ = owner_dlq_readback
+    actual, before = read([(connector_id, "pending")])
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert actual["unresolved_dlq_count"] == 1
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "missing", "null", "list", "empty", "status_missing", "status_extra",
+    "negative", "bool", "string", "float", "status_swap", "unknown", "zero_bucket",
+    "counts_null", "counts_list",
+])
+def test_owner_readback_rejects_incomplete_or_contradictory_dlq_map(owner_dlq_readback, mutation):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    by_connector = actual["dlq_status_counts_by_connector"]
+    counts = by_connector[finmind_id]
+    if mutation == "missing":
+        actual.pop("dlq_status_counts_by_connector")
+    elif mutation in {"null", "list", "empty"}:
+        actual["dlq_status_counts_by_connector"] = {"null": None, "list": [], "empty": {}}[mutation]
+    elif mutation == "status_missing":
+        counts.pop("replayed")
+    elif mutation == "status_extra":
+        counts["extra"] = 0
+    elif mutation in {"negative", "bool", "string", "float"}:
+        counts["pending"] = {"negative": -1, "bool": True, "string": "1", "float": 1.0}[mutation]
+    elif mutation == "status_swap":
+        counts.update(pending=0, replayed=1)
+    elif mutation == "unknown":
+        by_connector["unknown"] = by_connector.pop(finmind_id)
+    elif mutation == "zero_bucket":
+        by_connector[official_id] = {status: 0 for status in counts}
+    elif mutation == "counts_null":
+        by_connector[finmind_id] = None
+    elif mutation == "counts_list":
+        by_connector[finmind_id] = []
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", [
+    "controller", "sequence", "deployment", "stale", "scope", "snapshot", "global",
+    "target_health", "target_freshness", "scheduler_failed",
+])
+def test_owner_readback_scoped_dlq_preserves_existing_guards(owner_dlq_readback, mutation):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    if mutation == "controller":
+        actual["controller_state"]["controller_id"] = "forged"
+    elif mutation == "sequence":
+        actual["controller_state"]["sequence_no"] = 0
+    elif mutation == "deployment":
+        actual["controller_state"]["deployment"]["git_sha"] = "forged"
+    elif mutation == "stale":
+        actual["captured_at"] = (now - timedelta(seconds=301)).isoformat()
+    elif mutation == "scope":
+        schedule["summary"]["exclusive_connector_count"] = 0
+    elif mutation == "snapshot":
+        actual["requirement_snapshot"]["desired_state_sha256"] = "forged"
+    elif mutation == "global":
+        actual["unresolved_dlq_count"] = 0
+    elif mutation == "target_health":
+        actual["connectors"][0]["source_health"]["status"] = "failed"
+    elif mutation == "target_freshness":
+        actual["connectors"][0]["freshness"]["status"] = "stale"
+    elif mutation == "scheduler_failed":
+        schedule["summary"]["total_failed"] = 1
+    with pytest.raises(ControllerTickError):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_owner_readback_accepts_only_resolved_target_history(owner_dlq_readback):
+    runtime, read, reconcile, schedule, now, official_id, finmind_id = owner_dlq_readback
+    actual, before = read([(official_id, "replayed"), (official_id, "duplicate_skipped"), (finmind_id, "pending")])
+    assert actual["dlq_count"] == 3
+    assert actual["unresolved_dlq_count"] == 1
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    schedule["summary"]["exclusive_connector_count"] = 2
+    with pytest.raises(ControllerTickError, match="selected connector scope"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id, finmind_id))
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_scoped_tick_keeps_global_dlq_failure_in_success_readback(
+    owner_dlq_readback, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    runtime, read, _, _, _, _, finmind_id = owner_dlq_readback
+    actual, before = read([(finmind_id, "pending")])
+    # Use the existing current-time tick connector fixture; owner DLQ projection
+    # and controller/requirement identities remain the real stored readback.
+    actual["connectors"][0] = _actual_readback()["connectors"][0]
+    events = []
+    config = _config(tmp_path, exclusive_connector_ids=(CONNECTOR_ID,))
+    state = _state()
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    _patch_successful_tick(monkeypatch, events,
+        expected_force_connector_ids=[CONNECTOR_ID], expected_exclusive_connector_ids=[CONNECTOR_ID])
+    reconcile = _reconcile()
+    reconcile["desired_state_sha256"] = actual["requirement_snapshot"]["desired_state_sha256"]
+    monkeypatch.setattr(controller_worker, "reconcile_desired_state", lambda **kwargs: reconcile)
+    monkeypatch.setattr(controller_worker, "read_actual_state", lambda **kwargs: deepcopy(actual))
+    result = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert result["status"] == "ok"
+    success = _call(writer, "success")["kwargs"]
+    assert success["dlq_count"] == 1
+    assert success["payload"]["actual_readback"]["unresolved_dlq_count"] == 1
+    assert state.actual_readback["unresolved_dlq_count"] == 1
+    assert state.actual_readback["dlq_status_counts_by_connector"] == actual["dlq_status_counts_by_connector"]
+    ControllerStateStore(runtime.CONTROLLER_STATE_PATH).save(state)
+    readiness = runtime._source_freshness_readiness()
+    assert readiness["status"] == "degraded_data"
+    assert readiness["data_ready"] is False
+    assert runtime.DLQ_STORE_PATH.read_bytes() == before
+
+
+def test_scoped_readback_requires_complete_map_even_when_globally_empty(owner_dlq_readback):
+    _, read, reconcile, schedule, now, official_id, _ = owner_dlq_readback
+    actual, _ = read([])
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,)) == 0
+    actual.pop("dlq_status_counts_by_connector")
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_owner_dlq(actual, reconcile, schedule, now, (official_id,))
+    assert _validate_owner_dlq(actual, reconcile, schedule, now, ()) == 0
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: continuous Collector-only pull ---
+
+STEADY = controller_worker.COLLECTOR_STEADY_PULL_MODE
+COLLECTOR_CONNECTOR_ID = "collector-papers-main"
+COLLECTOR_DEFINITION_ID = "strategy-seed-paper-corpus"
+
+
+def _collector_actual(
+    *,
+    connector_id: str = COLLECTOR_CONNECTOR_ID,
+    definition_id: str | None = COLLECTOR_DEFINITION_ID,
+    status: str = "enabled",
+    schedule_enabled: bool = True,
+    extra_direct_connector: bool = False,
+    is_due: bool = True,
+    sequence_no: int = 1,
+    fetch_binding: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from services.source_ingestion.connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    actual = json.loads(json.dumps(_actual_readback()).replace(CONNECTOR_ID, connector_id))
+    actual["controller_state"]["sequence_no"] = sequence_no
+    item = actual["connectors"][0]
+    item["fetch_binding"] = fetch_binding or {"mode": "provider_owned_adapter", "adapter": COLLECTOR_BUNDLE_ADAPTER_TOKEN}
+    item["connector"].update({"status": status, "metadata": {"definition_id": definition_id, "tenant_id": "tenant-a"}})
+    # Registered Collector records carry bundle provenance (tenant/PIT), not direct-provider provenance.
+    record = item["latest_source_record"]
+    record["provenance"] = {
+        key: value
+        for key, value in record["provenance"].items()
+        if key not in {"provider", "dataset", "api_endpoint", "schema_hash"}
+    }
+    record["provenance"].setdefault("event_time", record["provenance"]["available_time"])
+    record["provenance"]["tenant_id"] = "tenant-a"
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    # The record carries the Collector's own source id, which is not always the definition id
+    # (strategy-seed-paper-corpus is served as collector-papers).
+    definition = get_connector_definition(definition_id or "")
+    collector_source_id = (definition.metadata.get("collector") or {}).get("source_id", definition_id) if definition else definition_id
+    record["metadata"] = {
+        **(record.get("metadata") or {}),
+        "collector": {"source_id": collector_source_id, "bundle_status": "complete"},
+    }
+    item["schedule"]["enabled"] = schedule_enabled
+    item["freshness"]["is_due"] = is_due
+    if extra_direct_connector:
+        direct = deepcopy(item)
+        direct["connector_id"] = "collector-looks-like-direct-provider"
+        direct["connector"]["metadata"] = {"definition_id": "tw-twse-tpex-official-market"}
+        actual["connectors"].append(direct)
+    return actual
+
+
+def _collector_reconcile(*connector_ids: str) -> dict[str, Any]:
+    reconcile = _reconcile()
+    reconcile["results"][0]["actions"] = [
+        {"dataset": DATASET, "connector_id": cid, "status": "satisfied"} for cid in connector_ids
+    ]
+    return reconcile
+
+
+def _steady_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
+    values = {
+        "SOURCE_INGEST_CONTROLLER_MODE": STEADY,
+        "SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "scheduled_tick",
+        "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
+    }
+    values.update(overrides)
+    for key in (
+        "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS",
+        "SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS",
+        "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(
+        controller_worker,
+        "load_controller_token",
+        lambda **kwargs: "controller-test-token-that-is-at-least-32-characters",
+    )
+
+
+def test_config_accepts_unbounded_collector_steady_pull_without_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _steady_env(monkeypatch)
+    config = controller_worker.config_from_env()
+    assert config.mode == STEADY
+    assert config.max_ticks == 0
+    assert config.truth_level == "scheduled_tick"
+    assert config.exclusive_connector_ids == ()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"SOURCE_INGEST_CONTROLLER_MAX_TICKS": "3"},
+        {"SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS": "tw-twse-tpex-official-market"},
+        {"SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": COLLECTOR_CONNECTOR_ID},
+        {"SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS": COLLECTOR_CONNECTOR_ID},
+        {"SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL": "reconciled_live_proof"},
+    ],
+)
+def test_config_rejects_steady_pull_with_bounds_or_provider_selection(
+    monkeypatch: pytest.MonkeyPatch, override: dict[str, str]
+) -> None:
+    _steady_env(monkeypatch, **override)
+    with pytest.raises(ValueError):
+        controller_worker.config_from_env()
+
+
+def test_ordinary_reconcile_and_pull_stays_finite_and_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _steady_env(
+        monkeypatch,
+        SOURCE_INGEST_CONTROLLER_MODE="reconcile_and_pull",
+        SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL="reconciled_live_proof",
+    )
+    with pytest.raises(ValueError, match="MAX_TICKS between 1 and 24"):
+        controller_worker.config_from_env()
+
+
+def test_one_shot_entry_rejects_steady_pull_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid controller mode"):
+        controller_worker.run_controller_once(mode=STEADY, state_path=tmp_path / "state.json")
+
+
+def test_selection_uses_registered_collector_definition_not_name_prefix() -> None:
+    reconcile = _collector_reconcile(COLLECTOR_CONNECTOR_ID, "collector-looks-like-direct-provider")
+    actual = _collector_actual(extra_direct_connector=True)
+    assert controller_worker.select_collector_pull_connectors(actual, reconcile) == [COLLECTOR_CONNECTOR_ID]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "disabled"},
+        {"schedule_enabled": False},
+        {"definition_id": "tw-twse-tpex-official-market"},
+        {"definition_id": None},
+        {"is_due": False},
+        {"fetch_binding": {"mode": "provider_owned_adapter", "adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload"}},
+        {"fetch_binding": {"mode": "static_records", "adapter": ""}},
+        {"fetch_binding": {"mode": "external_feed", "adapter": ""}},
+    ],
+)
+def test_selection_excludes_disabled_unscheduled_not_due_and_non_collector(kwargs: dict[str, Any]) -> None:
+    assert (
+        controller_worker.select_collector_pull_connectors(
+            _collector_actual(**kwargs), _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+        )
+        == []
+    )
+
+
+def test_selection_excludes_connector_not_admitted_by_reconcile() -> None:
+    assert controller_worker.select_collector_pull_connectors(_collector_actual(), _collector_reconcile()) == []
+
+
+def _patch_steady(
+    monkeypatch: pytest.MonkeyPatch,
+    state: ControllerState,
+    actual_kwargs: dict[str, Any],
+    schedule_calls: list[dict[str, Any]],
+) -> None:
+    connector_ids = [COLLECTOR_CONNECTOR_ID]
+    monkeypatch.setattr(
+        controller_worker, "load_desired_state", lambda **kw: (_personas(), _desired_meta())
+    )
+    monkeypatch.setattr(
+        controller_worker, "reconcile_desired_state", lambda **kw: _collector_reconcile(*connector_ids)
+    )
+    for reader in ("read_actual_state", "read_actual_state_with_fetch_bindings"):
+        monkeypatch.setattr(
+            controller_worker,
+            reader,
+            lambda **kw: _collector_actual(sequence_no=state.sequence_no, **actual_kwargs),
+        )
+
+    def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
+        schedule_calls.append(kwargs)
+        return {
+            "summary": {
+                "total_ran": 1,
+                "total_failed": 0,
+                "total_skipped": 0,
+                "exclusive_connector_count": len(kwargs["exclusive_connector_ids"]),
+            }
+        }
+
+    monkeypatch.setattr(controller_worker, "run_schedule_tick", run_schedule_tick)
+
+
+def test_successive_steady_ticks_invoke_scheduler_for_collector_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    events: list[str] = []
+    store = RecordingStateStore(config.state_path, events)
+    writer = RecordingWriter(events)
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {"extra_direct_connector": True}, calls)
+
+    first = run_controller_tick(config=config, state=state, store=store, writer=writer)
+    second = run_controller_tick(config=config, state=state, store=store, writer=writer)
+
+    assert len(calls) == 2
+    for call in calls:
+        assert call["exclusive_connector_ids"] == [COLLECTOR_CONNECTOR_ID]
+        assert call["force_connector_ids"] == []
+    for result in (first, second):
+        assert result["status"] == "ok"
+        assert result["controller_mode"] == STEADY
+        assert result["provider_egress_attempted"] is True
+    assert [c["truth_level"] for c in writer.calls if c["name"] == "success"] == ["scheduled_tick"] * 2
+
+
+@pytest.mark.parametrize(
+    "actual_kwargs", [{"definition_id": "tw-twse-tpex-official-market"}, {"is_due": False}]
+)
+def test_steady_tick_without_due_collector_connector_pulls_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, actual_kwargs: dict[str, Any]
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    store = RecordingStateStore(config.state_path, [])
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, actual_kwargs, calls)
+    # Without terminal pulls the due-state (no execution counts changed) path applies.
+    result = run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    assert calls == []
+    assert result["provider_egress_attempted"] is False
+    assert result["schedule_summary"]["total_provider_pulls"] == 0
+
+
+def test_steady_tick_surfaces_collector_source_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path, truth_level="scheduled_tick", mode=STEADY)
+    state = _state()
+    store = RecordingStateStore(config.state_path, [])
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {}, calls)
+    monkeypatch.setattr(
+        controller_worker,
+        "run_schedule_tick",
+        lambda **kw: {"summary": {"total_failed": 1, "exclusive_connector_count": 1}, "failed": []},
+    )
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    assert state.consecutive_failures == 1
+
+
+def test_steady_batch_is_bounded_by_scheduler_slots_and_starts_with_least_recent_success() -> None:
+    actual = {
+        "connectors": [
+            {"connector_id": "collector-a", "freshness": {"last_success_at": "2026-11-12T01:00:00Z"}},
+            {"connector_id": "collector-b", "freshness": {"last_success_at": None}},
+            {"connector_id": "collector-c", "freshness": {"last_success_at": "2026-11-11T01:00:00Z"}},
+        ]
+    }
+    selected = ["collector-a", "collector-b", "collector-c"]
+
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=1) == ["collector-b"]
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=2) == ["collector-b", "collector-c"]
+    assert controller_worker.limit_collector_pull_batch(actual, selected, limit=10) == selected
+    assert controller_worker.limit_collector_pull_batch(actual, [], limit=2) == []
+
+
+def _deferred_scope_validate(
+    actual: dict[str, Any], now: datetime, items: list[dict[str, Any]] | None = None, selected_at: datetime | None = None
+):
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    return _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        now=now,
+        frontier_items=items or [],
+        session_selected_at=selected_at,
+    )
+
+
+def _queued_item(run_date: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "frontier_id": "frontier-a0bceb2da89b", "connector_id": CONNECTOR_ID, "status": "queued",
+        "attempts": 0, "last_error": None, "job_parameters": {"run_date": run_date}, **overrides,
+    }
+
+
+def _queued_actual(run_date: str, now: datetime, count: int = 1) -> dict[str, Any]:
+    actual = _actual_readback()
+    stamp = now.isoformat().replace("+00:00", "Z")
+    actual["captured_at"] = stamp
+    actual["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = stamp
+    actual["frontier_backlog"] = count
+    actual["frontier_backlog_by_connector"] = {CONNECTOR_ID: count}
+    return actual
+
+
+def test_terminal_readback_defers_untouched_queue_for_unclosed_later_session() -> None:
+    now = datetime.now(timezone.utc)
+    items = [_queued_item("2099-01-01")]  # later than any closed session
+    assert _deferred_scope_validate(_queued_actual("2099-01-01", now), now, items) == 0
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        _queued_item("2000-01-03"),  # requested/closed session stays a hard failure
+        _queued_item("2099-01-01", attempts=1),
+        _queued_item("2099-01-01", last_error="boom"),
+        _queued_item("2099-01-01", status="retry"),
+        _queued_item("2099-01-01", connector_id="other"),
+    ],
+)
+def test_terminal_readback_still_rejects_non_deferrable_queue(item: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ControllerTickError, match="unresolved frontier|contradict"):
+        _deferred_scope_validate(_queued_actual(item["job_parameters"]["run_date"], now), now, [item])
+
+
+@pytest.mark.parametrize(
+    "now,connector,expected",
+    [
+        ("2026-11-13T02:48:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),  # actual 10:48 Taipei
+        ("2026-11-13T05:29:00Z", "tw-taifex-futures-options-chip", "2026-11-12"),
+        ("2026-11-13T05:30:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "tw-taifex-futures-options-chip", "2026-11-13"),  # Monday -> Friday
+        ("2026-11-13T05:30:00Z", "tw-finmind-broker-daily-report", "2026-11-12"),  # FinMind 18:00 cutoff kept
+        ("2026-11-13T10:00:00Z", "tw-finmind-broker-daily-report", "2026-11-13"),
+    ],
+)
+def test_latest_eligible_session_boundaries(now: str, connector: str, expected: str) -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    assert _latest_eligible_session(connector, parsed).isoformat() == expected
+
+
+NOV13_MORNING = datetime(2026, 11, 13, 2, 48, tzinfo=timezone.utc)  # actual 10:48 Taipei
+
+
+def _nov(frontier_id: str, run_date: str, **overrides: Any) -> dict[str, Any]:
+    return _queued_item(run_date, frontier_id=frontier_id, **overrides)
+
+
+def test_terminal_readback_defers_only_session_after_real_latest_closed() -> None:
+    from datetime import timedelta
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    now = datetime.now(timezone.utc)
+    later = (_latest_eligible_session(CONNECTOR_ID, now) + timedelta(days=1)).isoformat()
+    assert _deferred_scope_validate(_queued_actual(later, now), now, [_nov("frontier-a0bceb2da89b", later)]) == 0
+
+
+@pytest.mark.parametrize(
+    "items,count,match",
+    [
+        # requested-day work plus newly queued later work: never netted away
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 2, "unresolved frontier"),
+        ([_nov("f-req", "2026-11-12")], 1, "unresolved frontier"),
+        # concurrent enqueue: aggregate (1) predates the item list (2), or the reverse
+        ([_nov("f-req", "2026-11-12"), _nov("f-later", "2026-11-13")], 1, "contradict"),
+        ([_nov("f-later", "2026-11-13")], 2, "contradict"),
+        ([_nov("f-later", "2026-11-13"), _nov("f-later", "2026-11-13")], 2, "malformed or duplicated"),
+        # holiday/weekend: Sunday Nov15 morning-closed session is Fri Nov13, so Nov13 is requested work
+        ([_nov("f-fri", "2026-11-13")], 1, None),
+    ],
+)
+def test_terminal_readback_reconciles_frontier_items_exactly(items, count, match) -> None:
+    now = NOV13_MORNING
+    if match is None:
+        now = datetime(2026, 11, 15, 3, 0, tzinfo=timezone.utc)
+        with pytest.raises(ControllerTickError, match="unresolved frontier"):
+            _deferred_scope_validate(_queued_actual("2026-11-13", now, count), now, items)
+        return
+    with pytest.raises(ControllerTickError, match=match):
+        _deferred_scope_validate(_queued_actual("x", now, count), now, items)
+
+
+def test_terminal_readback_does_not_defer_queued_work_for_non_taiwan_connector(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real validator fixture: us_price_daily-style connector, queued run_date today, attempts 0, no error.
+    monkeypatch.setattr(controller_worker, "_TAIWAN_SESSION_CONNECTOR_IDS", frozenset({"tw-taifex-futures-options-chip"}))
+    now = datetime.fromisoformat("2026-11-13T02:48:00+00:00")
+    assert controller_worker._latest_eligible_session(CONNECTOR_ID, now) is None
+    with pytest.raises(Exception, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-13", now), now, [_queued_item("2026-11-13")])
+
+
+def test_terminal_readback_binds_deferral_to_session_selected_at_across_close() -> None:
+    selected = datetime(2026, 11, 13, 5, 29, 59, tzinfo=timezone.utc)  # Taipei 13:29:59, Nov12 still latest
+    later = datetime(2026, 11, 13, 5, 31, tzinfo=timezone.utc)  # observed after 13:30 close
+    items = [_nov("frontier-a0bceb2da89b", "2026-11-13")]
+    actual = _queued_actual("2026-11-13", later)
+    # Selected-session binding: later queued Nov13 work stays deferred.
+    assert _deferred_scope_validate(actual, later, items, selected_at=selected) == 0
+    # Without the binding the real clock retargets Nov13 and fails closed.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, items)
+    # Requested-session work (Nov12) is never deferred, and a future selection cannot hide it.
+    req = [_nov("f-req", "2026-11-12")]
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(_queued_actual("2026-11-12", later), later, req, selected_at=selected)
+    # Failed/attempted later work is never deferred.
+    with pytest.raises(ControllerTickError, match="unresolved frontier"):
+        _deferred_scope_validate(actual, later, [_nov("f-x", "2026-11-13", attempts=1)], selected_at=selected)
+
+
+def test_finmind_1800_cutoff_session_binds_to_selected_at() -> None:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    finmind = "tw-finmind-broker-daily-report"
+    selected = datetime(2026, 11, 13, 9, 59, 59, tzinfo=timezone.utc)  # 17:59:59 Taipei
+    later = datetime(2026, 11, 13, 10, 1, tzinfo=timezone.utc)  # after 18:00 publication
+    # The terminal validator evaluates min(observed now, selected_at): Nov12 stays the
+    # requested session across the 18:00 cutoff, while the real clock would retarget Nov13.
+    assert _latest_eligible_session(finmind, min(later, selected)).isoformat() == "2026-11-12"
+    assert _latest_eligible_session(finmind, later).isoformat() == "2026-11-13"
+
+
+def test_steady_request_carries_one_collector_pull_so_serial_pulls_fit_one_http_timeout() -> None:
+    """Serial claimed pulls share one HTTP request; a steady tick must claim exactly one."""
+    assert controller_worker.STEADY_PULLS_PER_REQUEST == 1
+    import inspect
+
+    src = inspect.getsource(controller_worker.run_controller_tick)
+    assert "limit=STEADY_PULLS_PER_REQUEST" in src
+    assert "STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency" in src
+
+
+# --- steady RPC timeouts -----------------------------------------------------------------
+
+
+def test_steady_rpc_timeouts_derive_from_collector_read_budget_with_headroom() -> None:
+    from services.source_ingestion.connectors.collector_bundle import (
+        COLLECTOR_REQUEST_READ_BUDGET_SECONDS,
+        LATEST_CLOSE_PERSISTED_ROWS_PER_PULL,
+    )
+
+    cw = controller_worker
+    assert cw.STEADY_PULL_SERVER_BOUND_SECONDS >= (
+        COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+        + LATEST_CLOSE_PERSISTED_ROWS_PER_PULL * cw.STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW
+        + cw.STEADY_PULL_SEARCH_NOTIFY_SECONDS
+    )
+    assert cw.STEADY_PULL_RPC_TIMEOUT_SECONDS >= 2 * 31
+    assert cw.STEADY_RECONCILE_RPC_TIMEOUT_SECONDS >= 2 * 30
+
+
+@pytest.mark.parametrize("symbols", [[], ["2330.TWSE"], ["2330"]], ids=["no-symbols", "qualified", "bare"])
+def test_social_scheduled_handler_preserves_delivery_without_unneeded_price_reads(
+    tmp_path, monkeypatch, symbols, record_property
+):
+    import time
+    from fastapi.testclient import TestClient
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.main import create_app
+    from services.source_ingestion.tests.test_collector_outcome_truth import setup_governed_pipeline
+
+    authority_reader = CollectorBundleAdapter._instrument_authority
+    runtime, connector, files = setup_governed_pipeline(tmp_path, monkeypatch, "social", producer=True)
+    # Replace the fixture's authority stub with the production run-file reader.
+    monkeypatch.setattr(CollectorBundleAdapter, "_instrument_authority", authority_reader)
+    monkeypatch.setenv("PANTHEON_DAILY_PRICE_READER", "run_files")
+    monkeypatch.delenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", raising=False)
+    price = tmp_path / "market_data_store/normalized/tw_price_daily/date=2026-11-10/run.jsonl"
+    price.parent.mkdir(parents=True)
+    line = json.dumps({"metadata": {"symbol_canonical": "2330.TWSE", "normalized_row": {"close": 100}}})
+    price.write_text((line + "\n") * 1393, encoding="utf-8")
+    items_path = next(p for p in files if p.endswith("items.jsonl"))
+    items = [json.loads(line) for line in files[items_path].splitlines()]
+    for item in items:
+        item["symbols"] = symbols
+    files[items_path] = b"\n".join(json.dumps(item).encode() for item in items)
+    runtime.schedule_config_store.upsert_schedule(connector.connector_id, interval_seconds=60, enabled=True)
+    request = {"exclusive_connector_ids": [connector.connector_id],
+               "force_connector_ids": [connector.connector_id], "max_concurrency": 1}
+    price_opens = []
+    original_open = Path.open
+
+    def counted_open(path, *args, **kwargs):
+        if "/normalized/tw_price_daily/" in str(path):
+            price_opens.append(str(path))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counted_open)
+    for phase in ("cold", "warm-empty", "restart-empty"):
+        if phase == "restart-empty":
+            runtime = create_runtime(data_dir=tmp_path)
+        previous_opens = len(price_opens)
+        with TestClient(create_app(runtime)) as client:
+            start = time.monotonic()
+            response = client.post("/api/source-ingest/run-scheduled", json=request)
+            elapsed = time.monotonic() - start
+        record_property(f"{phase}_handler_seconds", elapsed)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["summary"]["total_ran"] == 1
+        assert body["summary"]["total_failed"] == 0, body
+        receipt = body["ran"][0]["receipt"]
+        expected_count = (3 if symbols else 2) if phase == "cold" else 0
+        assert receipt["raw_count"] == receipt["normalized_count"] == expected_count
+        # Work is independent of the number/size of historical files for these paths.
+        assert len(price_opens) - previous_opens == (1 if symbols == ["2330"] and phase == "cold" else 0)
+    state = runtime.connector_store.get_fetch_state(connector.connector_id)["collector_outcome"]
+    assert state["no_new_data"] is True
+    assert state["observed"]["health_state"] == "healthy"
+
+
+def _serve_steady(paths_delay: dict[str, float]):
+    import http.server
+    import threading
+    import time
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length") or 0)
+            self.rfile.read(length)
+            delay = paths_delay[self.path]
+            if delay < 0:
+                time.sleep(3)  # effectively never responds within the test bound
+                return
+            time.sleep(delay)
+            if self.path.endswith("/run-scheduled"):
+                body = {
+                    "summary": {
+                        "total_ran": 1,
+                        "total_failed": 0,
+                        "total_skipped": 0,
+                        "exclusive_connector_count": 1,
+                    }
+                }
+            else:
+                body = _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+                sha = _desired_meta()["sha256"]
+                body["desired_state_sha256"] = sha
+                body["pre_readback"] = {}
+                body["post_readback"] = {"requirement_snapshot": {"sequence": 1, "desired_state_sha256": sha}}
+                body["accepted_requirement_snapshot"] = {
+                    "sequence": 1,
+                    "desired_state_sha256": sha,
+                    "authoritative": True,
+                }
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args: Any) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _steady_server_tick(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, schedule_delay: float, reconcile_delay: float
+) -> dict[str, Any]:
+    monkeypatch.setattr(controller_worker, "STEADY_PULL_RPC_TIMEOUT_SECONDS", 1.5)
+    monkeypatch.setattr(controller_worker, "STEADY_RECONCILE_RPC_TIMEOUT_SECONDS", 1.5)
+    server = _serve_steady(
+        {
+            "/api/source-ingest/run-scheduled": schedule_delay,
+            "/api/source-ingest/persona-source-provisioning/reconcile": reconcile_delay,
+        }
+    )
+    try:
+        config = replace(
+            _config(tmp_path, truth_level="scheduled_tick", mode=STEADY),
+            api_url=f"http://127.0.0.1:{server.server_address[1]}",
+            timeout_seconds=0.5,
+        )
+        state = _state()
+        store = RecordingStateStore(config.state_path, [])
+        monkeypatch.setattr(
+            controller_worker, "load_desired_state", lambda **kw: (_personas(), _desired_meta())
+        )
+        for reader in ("read_actual_state", "read_actual_state_with_fetch_bindings"):
+            monkeypatch.setattr(
+                controller_worker,
+                reader,
+                lambda **kw: _collector_actual(sequence_no=state.sequence_no),
+            )
+        return run_controller_tick(config=config, state=state, store=store, writer=RecordingWriter([]))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_steady_run_scheduled_slower_than_config_timeout_but_inside_bound_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _steady_server_tick(tmp_path, monkeypatch, schedule_delay=1.0, reconcile_delay=0.0)
+    assert result["status"] == "ok"
+
+
+def test_steady_run_scheduled_that_never_responds_fails_within_dedicated_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(Exception) as raised:
+        _steady_server_tick(tmp_path, monkeypatch, schedule_delay=-1, reconcile_delay=0.0)
+    elapsed = time.monotonic() - start
+    # Counter that does not depend on host speed: a server that never answers can only end the tick through the
+    # dedicated RPC timeout (patched to 1.5 s above), and it does end it with that timeout, not a hang or another error.
+    assert isinstance(raised.value, controller_worker.ControllerTickError) and "timed out" in str(raised.value)
+    wall_clock_bounds.check("controller_worker.steady_rpc_timeout_failure", elapsed, 2.9, unit="s", strict=True)
+
+
+def test_steady_reconcile_slower_than_config_timeout_but_inside_bound_is_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _steady_server_tick(tmp_path, monkeypatch, schedule_delay=0.0, reconcile_delay=1.0)
+    assert result["status"] == "ok"
+
+
+def test_steady_reconcile_that_never_responds_fails_within_dedicated_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(Exception) as raised:
+        _steady_server_tick(tmp_path, monkeypatch, schedule_delay=0.0, reconcile_delay=-1)
+    elapsed = time.monotonic() - start
+    # Counter that does not depend on host speed: a server that never answers can only end the tick through the
+    # dedicated RPC timeout (patched to 1.5 s above), and it does end it with that timeout, not a hang or another error.
+    assert isinstance(raised.value, controller_worker.ControllerTickError) and "timed out" in str(raised.value)
+    wall_clock_bounds.check("controller_worker.steady_rpc_timeout_failure", elapsed, 2.9, unit="s", strict=True)
+
+
+def test_steady_timeout_env_may_raise_but_never_lower_below_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = replace(_config(tmp_path, truth_level="scheduled_tick", mode=STEADY), timeout_seconds=1.0)
+    state = _state()
+    calls: list[dict[str, Any]] = []
+    _patch_steady(monkeypatch, state, {}, calls)
+    run_controller_tick(
+        config=config, state=state, store=RecordingStateStore(config.state_path, []), writer=RecordingWriter([])
+    )
+    assert [c["timeout_seconds"] for c in calls] == [controller_worker.STEADY_PULL_RPC_TIMEOUT_SECONDS]
+
+
+from services.source_ingestion.tests.test_scheduled_connector import (  # noqa: E402,F401
+    _configure_with_records,
+    _read_headers,
+    client,
+)
+
+
+def test_controller_disconnect_keeps_execution_lock_and_terminal_receipt_without_duplicates(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real uvicorn endpoint + real controller HTTP client with a short request timeout.
+
+    The configured fetch is held in flight past the controller's timeout, so the controller
+    disconnects. Execution must stay in flight under the source execution lock (a second
+    controller request cannot overlap it), finish with a terminal receipt, persist exactly one
+    run/record, and a later tick must see it as already run instead of executing it again.
+    """
+    import socket
+    import threading
+    import time
+    import urllib.error
+
+    import uvicorn
+    from services.source_ingestion import controller_worker
+
+    test_client, _, module = client
+    assert _configure_with_records(test_client, connector_id="conn-disconnect").status_code == 201
+    assert test_client.put(
+        "/api/source-ingest/connectors/conn-disconnect/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    ).status_code == 200
+
+    fetcher = module.runtime.configured_fetcher
+    real_fetch = fetcher.fetch_batch
+    entered, release, calls = threading.Event(), threading.Event(), []
+
+    def gated_fetch(*args, **kwargs):
+        calls.append(time.monotonic())
+        entered.set()
+        assert release.wait(timeout=20), "test never released the in-flight fetch"
+        return real_fetch(*args, **kwargs)
+
+    monkeypatch.setattr(fetcher, "fetch_batch", gated_fetch)
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(module.app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    assert server.started
+    api_url = f"http://127.0.0.1:{port}"
+    token = _read_headers()["Authorization"].split(" ", 1)[1]
+    try:
+        with pytest.raises((TimeoutError, urllib.error.URLError, socket.timeout)):
+            controller_worker.run_schedule_tick(
+                api_url=api_url, max_concurrency=1, timeout_seconds=0.5, controller_token=token
+            )
+        assert entered.wait(timeout=5)
+        lock = module.runtime.source_execution_lock
+        assert not lock.acquire(blocking=False), "execution must still hold the source execution lock"
+
+        overlap: list[object] = []
+
+        def second_request() -> None:
+            try:
+                overlap.append(
+                    controller_worker.run_schedule_tick(
+                        api_url=api_url, max_concurrency=1, timeout_seconds=30.0, controller_token=token
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - surfaced by the assertions below
+                overlap.append(exc)
+
+        second = threading.Thread(target=second_request, daemon=True)
+        second.start()
+        time.sleep(0.5)
+        assert len(calls) == 1 and not overlap, "a second request must wait, not overlap the fetch"
+
+        release.set()
+        second.join(timeout=20)
+        assert not second.is_alive() and len(overlap) == 1 and isinstance(overlap[0], dict)
+        assert overlap[0]["summary"]["total_ran"] == 0, "the later tick must not re-run the connector"
+    finally:
+        release.set()
+        server.should_exit = True
+        thread.join(timeout=10)
+
+    assert len(calls) == 1
+    runs = module.runtime.store.list_runs()
+    assert len(runs) == 1 and runs[0].status.value == "completed"
+    assert len(module.runtime.evidence_repository.list_source_records()) == 1
+    assert len(module.runtime.store.list_frontier(status="done")) == 1
+    assert module.runtime.connector_store.get_fetch_state("conn-disconnect")["attempts"] == 1
+    receipt = test_client.get(f"/api/source-ingest/receipts/{runs[0].ingest_run_id}")
+    assert receipt.status_code == 200 and receipt.json()["receipt"]["status"] == "completed"
+
+
+def _continuing(actual: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    item = actual["connectors"][0]
+    state = {
+        "last_error": None,
+        "collector_outcome": {"observed": {"continuation_pending": True}, "complete": False},
+    }
+    state.update(overrides.pop("state", {}))
+    item["fetch_state"] = state
+    item["freshness"]["latest_run"] = {"status": overrides.pop("run_status", "completed")}
+    item["freshness"].update(overrides)
+    return actual
+
+
+def test_selection_continues_partial_newest_session_before_cadence() -> None:
+    actual = _continuing(_collector_actual(is_due=False))
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == [COLLECTOR_CONNECTOR_ID]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"state": {"last_error": "boom"}},
+        {"state": {"collector_outcome": {"observed": {}, "complete": False}}},
+        {"state": {"collector_outcome": {"observed": {"continuation_pending": "yes"}}}},
+        {"run_status": "failed"},
+        {"status": "degraded"},
+    ],
+)
+def test_selection_continuation_negatives_keep_finished_cadence(overrides: dict[str, Any]) -> None:
+    actual = _continuing(_collector_actual(is_due=False), **overrides)
+    assert controller_worker.select_collector_pull_connectors(
+        actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)
+    ) == []
+
+
+def test_host_not_offered_is_excluded_even_if_due_or_continuing():
+    actual = _continuing(_collector_actual(is_due=True))
+    actual["connectors"][0]["collector_offering"] = {"offered": False, "reason": "missing_credential"}
+    assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == []
+    actual["connectors"][0]["collector_offering"] = {"offered": True, "reason": None}
+    assert controller_worker.select_collector_pull_connectors(actual, _collector_reconcile(COLLECTOR_CONNECTOR_ID)) == [COLLECTOR_CONNECTOR_ID]
+
+
+def _dlq_scoped_actual(pending: int) -> dict[str, Any]:
+    actual = _actual_readback()
+    actual["dlq_count"] = pending
+    actual["pending_dlq_count"] = pending
+    actual["unresolved_dlq_count"] = pending
+    actual["dlq_status_counts"]["pending"] = pending
+    if pending:
+        actual["dlq_status_counts_by_connector"] = {
+            CONNECTOR_ID: {**actual["dlq_status_counts"], "pending": pending}
+        }
+    return actual
+
+
+def _validate_dlq_delta(actual: dict[str, Any], pre: dict[str, int] | None) -> int:
+    schedule = _schedule()
+    schedule["summary"]["exclusive_connector_count"] = 1
+    return _validate_terminal_readback_impl(
+        reconcile=_reconcile(),
+        schedule=schedule,
+        actual=actual,
+        expected_controller_id=actual["controller_state"]["controller_id"],
+        expected_sequence_no=actual["controller_state"]["sequence_no"],
+        expected_deployment=actual["controller_state"]["deployment"],
+        expected_exclusive_connector_ids=(CONNECTOR_ID,),
+        pre_unresolved_dlq_by_connector=pre,
+    )
+
+
+def test_steady_dlq_gate_accepts_preexisting_entries_and_reports_them() -> None:
+    from services.source_ingestion.controller_worker import scoped_unresolved_dlq_by_connector
+
+    pre_actual = _dlq_scoped_actual(14)
+    pre = scoped_unresolved_dlq_by_connector(pre_actual, (CONNECTOR_ID,))
+    assert pre == {CONNECTOR_ID: 14}
+    _validate_dlq_delta(_dlq_scoped_actual(14), pre)
+
+
+def test_steady_dlq_gate_rejects_new_entry_over_backlog() -> None:
+    with pytest.raises(ControllerTickError, match=r"1 new unresolved dead-letter"):
+        _validate_dlq_delta(_dlq_scoped_actual(15), {CONNECTOR_ID: 14})
+
+
+def test_bounded_mode_still_rejects_preexisting_entries() -> None:
+    with pytest.raises(ControllerTickError, match="14 unresolved dead-letter"):
+        _validate_dlq_delta(_dlq_scoped_actual(14), None)
+
+
+def test_steady_dlq_gate_still_rejects_contradictory_scoped_counts() -> None:
+    actual = _dlq_scoped_actual(14)
+    actual["dlq_status_counts_by_connector"][CONNECTOR_ID]["pending"] = 3
+    with pytest.raises(ControllerTickError, match="scoped dead-letter counts"):
+        _validate_dlq_delta(actual, {CONNECTOR_ID: 14})
+
+
+# --- COLLECTOR-PRIORITY-METADATA-REVERIFY-R2-20261122: failing TPEx history yields to due holidays/suspension ---
+
+
+def _rc2_collector_item(
+    connector_id: str,
+    *,
+    is_due: bool = True,
+    last_success_at: str | None = None,
+    last_failure_at: str | None = None,
+    last_error: str | None = None,
+    consecutive_failures: int = 0,
+    run_status: str = "completed",
+    continuation_pending: bool = False,
+    newest_session_pending: bool | None = None,
+) -> dict[str, Any]:
+    actual = _collector_actual(connector_id=connector_id, definition_id=connector_id, is_due=is_due)
+    item = deepcopy(actual["connectors"][0])
+    item["freshness"].update(
+        {
+            "is_due": is_due,
+            "last_success_at": last_success_at,
+            "last_failure_at": last_failure_at,
+            "status": "stale" if last_error else "fresh",
+            "latest_run": {"ingest_run_id": f"run-{connector_id}", "status": run_status},
+            "latest_receipt": {"ingest_run_id": f"run-{connector_id}", "status": run_status},
+        }
+    )
+    item["source_health"].update(
+        {
+            "status": "degraded" if last_error else "ok",
+            "consecutive_failures": consecutive_failures,
+            "last_error": last_error,
+            "last_success_at": last_success_at,
+        }
+    )
+    item["fetch_state"] = {
+        "last_error": last_error,
+        "collector_outcome": {
+            "complete": False,
+            "no_new_data": False,
+            "observed": {
+                "continuation_pending": continuation_pending,
+                "newest_session_pending": newest_session_pending,
+                "health_state": "degraded" if last_error else "healthy",
+            },
+        },
+    }
+    return item
+
+
+def test_rc2_failing_tpex_history_yields_to_due_holidays_and_suspension_and_retries_via_last_attempt() -> None:
+    """Acceptance 2: reproduce the RC2 selector state from survivorship-due-and-scheduled-priority-20261122T1226Z.json."""
+    tpex_id = "collector-tw-tpex-price-history"
+    holidays_id = "collector-tw-trading-holidays"
+    suspension_id = "collector-tw-trading-suspension"
+
+    tpex_failing = _rc2_collector_item(
+        tpex_id,
+        is_due=True,
+        last_success_at="2026-11-22T00:17:45Z",
+        last_failure_at="2026-11-22T12:25:18Z",
+        last_error=(
+            "scheduled connector fetch failed for collector-tw-tpex-price-history: "
+            "collector pull for collector-tw-tpex-price-history is degraded: "
+            "collector_complete_boundary_unverified, cursor_lag_over_7_days"
+        ),
+        consecutive_failures=1,
+        run_status="failed",
+        continuation_pending=True,
+        newest_session_pending=None,
+    )
+    holidays_due = _rc2_collector_item(
+        holidays_id,
+        is_due=True,
+        last_success_at="2026-11-21T12:21:21Z",
+        last_failure_at="2026-11-22T00:03:54Z",
+    )
+    suspension_due = _rc2_collector_item(
+        suspension_id,
+        is_due=True,
+        last_success_at="2026-11-21T12:21:36Z",
+        last_failure_at="2026-11-21T07:53:46Z",
+    )
+
+    actual = _collector_actual(connector_id=tpex_id, definition_id=tpex_id)
+    actual["connectors"] = [tpex_failing, holidays_due, suspension_due]
+    reconcile = _collector_reconcile(tpex_id, holidays_id, suspension_id)
+
+    selected = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected == [tpex_id, holidays_id, suspension_id]
+
+    # Slot 1: failing TPEx history yields to suspension (oldest last_attempt = 2026-11-21T12:21:36Z).
+    batch_1 = controller_worker.limit_collector_pull_batch(
+        actual, selected, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_1 == [suspension_id]
+
+    # Slot 2: after suspension succeeds at 12:26:30Z, failing TPEx history yields to holidays (last_attempt = 00:03:54Z).
+    suspension_done = _rc2_collector_item(
+        suspension_id, is_due=False, last_success_at="2026-11-22T12:26:30Z", last_failure_at="2026-11-21T07:53:46Z"
+    )
+    actual["connectors"] = [tpex_failing, holidays_due, suspension_done]
+    selected_2 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected_2 == [tpex_id, holidays_id]
+    batch_2 = controller_worker.limit_collector_pull_batch(
+        actual, selected_2, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_2 == [holidays_id]
+
+    # Slot 3: after holidays succeeds at 12:27:30Z (or even if both stay due with newer attempts), TPEx history retries.
+    holidays_done = _rc2_collector_item(
+        holidays_id, is_due=False, last_success_at="2026-11-22T12:27:30Z", last_failure_at="2026-11-22T00:03:54Z"
+    )
+    actual["connectors"] = [tpex_failing, holidays_done, suspension_done]
+    selected_3 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert selected_3 == [tpex_id]
+    batch_3 = controller_worker.limit_collector_pull_batch(
+        actual, selected_3, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+    )
+    assert batch_3 == [tpex_id]
+
+    # When TPEx has a genuinely pending fresh market session (not failing), it keeps priority ahead of due backlog.
+    tpex_fresh_pending = _rc2_collector_item(
+        tpex_id,
+        is_due=True,
+        last_success_at="2026-11-22T12:00:00Z",
+        last_failure_at=None,
+        continuation_pending=True,
+        newest_session_pending=True,
+    )
+    actual["connectors"] = [tpex_fresh_pending, holidays_due, suspension_due]
+    selected_4 = controller_worker.select_collector_pull_connectors(actual, reconcile)
+    assert (
+        controller_worker.limit_collector_pull_batch(
+            actual, selected_4, limit=controller_worker.STEADY_PULLS_PER_REQUEST
+        )
+        == [tpex_id]
+    )
+
+
+def test_steady_controller_ticks_yield_from_failing_tpex_to_holidays_and_suspension_then_retry_and_preserve_held_symbol_priority(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Acceptance 2 end-to-end regression: real steady controller ticks (1 pull slot per steady tick),
+    real scheduler and CollectorBundleAdapter with independently pending holiday and suspension connectors
+    and a repeatedly failing TPEx history connector."""
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests.test_collector_newest_session_progress import recorded_run
+    from services.source_ingestion.tests.test_scheduled_connector import admission_stack as make_admission_stack
+
+    with cb._METADATA_CACHE_LOCK:
+        cb._METADATA_CACHE.clear()
+
+    http, module, _reads, wanted, files, _transport, tick = make_admission_stack.__wrapped__(
+        client, monkeypatch, tmp_path
+    ) if hasattr(make_admission_stack, "__wrapped__") else make_admission_stack(client, monkeypatch, tmp_path)
+
+    tpex_id = "collector-tw-tpex-price-history"
+    holidays_id = "collector-tw-trading-holidays"
+    suspension_id = "collector-tw-trading-suspension"
+    enabled = {tpex_id, holidays_id, suspension_id}
+
+    # Build a TPEx session with 4 items including held symbol 10003 at the end, plus an older backfill bundle.
+    entries = [e for e in json.loads(files["bundles/index.json"])["bundles"] if e["source_id"] != tpex_id]
+    latest_files, latest_entry = recorded_run(tpex_id, count=4, fetched="2026-11-21T18:16:40Z", day="2026-11-20")
+    backfill_files, backfill_entry = recorded_run(
+        tpex_id, count=3, fetched="2026-11-11T12:35:01Z", day="2026-10-28"
+    )
+    files.update(latest_files)
+    files.update(backfill_files)
+    entries.extend([backfill_entry, latest_entry])
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    all_sources = set(wanted) | {e["source_id"] for e in entries}
+    files["status.json"] = json.dumps(
+        {
+            "sources": {
+                s: {
+                    "status": "ok",
+                    "offered": s in enabled,
+                    "last_run_at": now_iso,
+                    "cadence_seconds": 21600,
+                }
+                for s in all_sources
+            }
+        }
+    ).encode("utf-8")
+
+    # Reconcile desired state and verify all three connectors are configured and scheduled.
+    tick(controller_worker.RECONCILE_ONLY_MODE)
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "10003.TPEX")
+
+    # 1. Genuinely pending fresh market session takes priority ahead of due holidays & suspension,
+    # delivers held symbol 10003.TPEX into the latest market snapshot store, and writes a completed receipt.
+    res_fresh = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+    assert res_fresh["status"] == "ok"
+    assert res_fresh["schedule_summary"]["exclusive_connector_count"] == controller_worker.STEADY_PULLS_PER_REQUEST == 1
+    snap_1 = module.runtime.store.read_freshness_snapshot()
+    receipt_1 = snap_1["receipts"][-1]
+    assert receipt_1.connector_id == tpex_id
+    assert receipt_1.status == "completed"
+    assert receipt_1.normalized_count == 7
+    module.runtime.latest_market_snapshot_store.reload()
+    snap_held = module.runtime.latest_market_snapshot_store.get("10003.TPEX")
+    assert snap_held is not None
+    assert snap_held.points[-1].event_time[:10] == "2026-11-20"
+
+    # 2. Now make TPEx history due again alongside still-due holidays and suspension, and inject a repeated
+    # failure in TPEx history (corrupt manifest on a newly added TPEx entry).
+    bad_files, bad_entry = recorded_run(
+        tpex_id, count=2, fetched="2026-11-22T06:16:26Z", day="2026-11-20", correction=True
+    )
+    bad_base = f"bundles/{tpex_id}/{bad_entry['date']}/{bad_entry['run_id']}"
+    bad_files[f"{bad_base}/manifest.json"] = b"{corrupt-json"
+    files.update(bad_files)
+    entries.append(bad_entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    sched = module.runtime.schedule_config_store.get_schedule(tpex_id)
+    assert sched is not None
+    # Force TPEx to be due so all three (TPEx, holidays, suspension) are due at the same time.
+    module.runtime.FRONTIER_BACKOFF_SECONDS = 0
+    orig_freshness = module.runtime._connector_freshness_summary_from_snapshot
+
+    def due_freshness(cid: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        summary = dict(orig_freshness(cid, *args, **kwargs))
+        if cid == tpex_id:
+            summary["is_due"] = True
+        return summary
+
+    monkeypatch.setattr(module.runtime, "_connector_freshness_summary_from_snapshot", due_freshness)
+
+    # First attempt on due TPEx fails with ControllerTickError (1 pull slot claimed).
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+
+    # Subsequent steady ticks yield the single pull slot to due holidays and suspension even though TPEx remains due!
+    ran_connectors: list[str] = []
+    for _ in range(2):
+        res_other = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+        assert res_other["status"] == "ok"
+        assert res_other["schedule_summary"]["exclusive_connector_count"] == 1
+        latest_receipt = module.runtime.store.read_freshness_snapshot()["receipts"][-1]
+        assert latest_receipt.status == "completed"
+        assert latest_receipt.normalized_count > 0
+        ran_connectors.append(latest_receipt.connector_id)
+    assert set(ran_connectors) == {holidays_id, suspension_id}
+
+    # Even if TPEx is still failing when retried next (while holidays & suspension are now fresh/not due),
+    # the scheduler retries TPEx on the next steady tick.
+    with pytest.raises(ControllerTickError, match="failed connector"):
+        tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+
+    # Once the TPEx bundle is repaired, the next steady tick retries TPEx and completes with a valid receipt.
+    repaired_files, repaired_entry = recorded_run(
+        tpex_id, count=2, fetched="2026-11-22T06:16:26Z", day="2026-11-20", correction=True
+    )
+    files.update(repaired_files)
+    entries[-1] = repaired_entry
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode("utf-8")
+    res_retry = tick(controller_worker.COLLECTOR_STEADY_PULL_MODE)
+    assert res_retry["status"] == "ok"
+    assert res_retry["schedule_summary"]["exclusive_connector_count"] == 1
+    retry_receipt = module.runtime.store.read_freshness_snapshot()["receipts"][-1]
+    assert retry_receipt.connector_id == tpex_id
+    assert retry_receipt.status == "completed"
+    assert retry_receipt.normalized_count == 1
+

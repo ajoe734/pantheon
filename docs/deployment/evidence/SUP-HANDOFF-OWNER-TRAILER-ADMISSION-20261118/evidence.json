@@ -1,0 +1,13 @@
+{
+  "task_id": "SUP-HANDOFF-OWNER-TRAILER-ADMISSION-20261118",
+  "owner": "Claude",
+  "reviewer": "Antigravity2",
+  "delivery": "scripts/ai_status.py (reject_owner_trailer_mismatch_at_handoff), .orchestrator/worker_runner.py, docs/operations/reviewer-reassignment-and-done-gate.md",
+  "verification": [
+    "python3 -m unittest scripts.test_ai_status: 533 tests OK (handoff delegates to _verified_done_owner_reassignment with commit %cI; post-reassignment refusal; pre-reassignment acceptance; TAIFEX and COLLECTOR-LISTING replays; range/amend)",
+    ".orchestrator: python3 -m unittest test_worker_runner: OK"
+  ],
+  "live_activation": "requires governed runtime promotion",
+  "residual_findings": ["commit-time refusal in worker_commit.py is outside the artifact contract; PANTHEON_WORKER_AGENT is provided by the launch and the handoff check on the bound head is the enforcement (acceptance 4 alternative)"],
+  "review_decision": "pending"
+}

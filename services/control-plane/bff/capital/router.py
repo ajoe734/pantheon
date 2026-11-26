@@ -34,6 +34,10 @@ from .service import (
     stable_digest,
 )
 
+# authority_mode of the governed quarterly paper cycle on the allocation-evaluation route; the cycle writes
+# (paper scope only, owner-enforced), so it needs an operator, unlike a plain read-only evaluation.
+PAPER_QUARTERLY_CYCLE_MODE = "governed_paper_quarterly_cycle"
+
 try:
     from ..pm12.service import (
         _pm12_portfolio_book_exposure_response,
@@ -463,7 +467,8 @@ def create_capital_router(
     def bff_evaluate_persona_allocation_policy(
         payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(default=None)
     ) -> Dict[str, Any]:
-        identity = _require_read(authorization)
+        cycle = str(payload.get("authority_mode") or "").strip().lower() == PAPER_QUARTERLY_CYCLE_MODE
+        identity = _require_operator(authorization) if cycle else _require_read(authorization)
         try:
             evaluation = service.write("evaluate_allocation", payload, actor_id=_identity_id(identity), actor_role=_owner_actor_role(identity), auth_token=authorization)
         except Exception as exc:

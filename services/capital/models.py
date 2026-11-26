@@ -76,8 +76,26 @@ class CreateCapitalPoolRequest(BaseModel):
 class UpdateCapitalPoolStatusRequest(BaseModel):
     actor_id: str
     actor_role: str
-    status: str
+    # Omitted only for a bounded requested-profile provenance patch. This never
+    # changes status or grants activation authority.
+    status: Optional[str] = None
+    expected_persona_id: Optional[str] = None
     approval_decision_id: Optional[str] = None
+    risk_policy_ref: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ChangePaperRiskProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    actor_id: str
+    actor_role: str
+    requested_by: str = Field(min_length=1, max_length=128)
+    expected_persona_id: str = Field(min_length=1, max_length=128)
+    expected_revision: int = Field(ge=0)
+    issued_at_ms: Optional[int] = Field(default=None, gt=0, le=9999999999999)
+    request_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requested_profile: str = Field(pattern=r"^(low|medium|high)$")
 
 
 class CreateBindingRequest(BaseModel):

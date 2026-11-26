@@ -1,0 +1,35 @@
+{
+  "schema_version": "pantheon.hindsight_models.v1",
+  "embedding_manifest": "services/search/model-manifest.json",
+  "reranker": {
+    "model_name": "BAAI/bge-reranker-v2-m3",
+    "source_repository": "onnx-community/bge-reranker-v2-m3-ONNX",
+    "revision": "6f5ff65298512715a1e669753bc754d2bc8f367b",
+    "license": "Apache-2.0",
+    "precision": "int8",
+    "runtime": "onnxruntime",
+    "source_url_template": "https://huggingface.co/{repository}/resolve/{revision}/{source_path}",
+    "files": {
+      "model.onnx": {
+        "source_path": "onnx/model_quantized.onnx",
+        "sha256": "912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d"
+      },
+      "tokenizer.json": {
+        "source_path": "tokenizer.json",
+        "sha256": "8bf8afbfd11306bd872018c53bfdf2e160a56f8edbcf49933324404791c148d3"
+      },
+      "config.json": {
+        "source_path": "config.json",
+        "sha256": "122e922dcfed6503c8721e6fe1daf090340c3d95ca7f3aa3a72730b321a51cfd"
+      },
+      "tokenizer_config.json": {
+        "source_path": "tokenizer_config.json",
+        "sha256": "b87c8703482b0300d3da30e201519aa641f6a450f5eb5bf1e624afbf70c74d80"
+      },
+      "special_tokens_map.json": {
+        "source_path": "special_tokens_map.json",
+        "sha256": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835"
+      }
+    }
+  }
+}

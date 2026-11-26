@@ -1,0 +1,29 @@
+{
+  "task_id": "POOL-TRIAL-ADMISSION-CONSULT-20261113",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "scope": "A persona's daily pool cycle no longer admits a trial member directly: it opens a risk-persona consultation through the C4 trigger engine, and a later cycle admits only on the verified published memo. Paper only; no model call on the trade path; no new credential or route.",
+  "changes": {
+    "shared_verification": "services/persona/consult_triggers.py: verify_published_memo (extracted from HarnessAdoption.verify; gate recomputed from each participant's transcript, adopt_eligible, all-approve) plus trial_admission_requirement / trial_admission_decision_id (binds artifact_ref, checksum, pool version) and pool_membership_signature. HarnessAdoption.verify now calls the shared function (behaviour and error codes unchanged).",
+    "cycle": "services/persona/pool_autonomy_cycle.py: PoolAutonomyCycle._consult_gate; HttpPoolCyclePorts.trial_admission_consultation (opens as persona:<id> via open_persona_panel once per candidate+live membership; verifies published memo later), queue_operator_decision (evolution proposal flag_for_review, idempotent on 409). Pending/operator outcomes are memory outcomes admission_pending / admission_operator_decision and never a tried family (TRIED_OUTCOMES).",
+    "owner": "services/control-plane/persona/persona_strategy_pool.py: PoolDecisionRequest.initiated_by / consultation_memo_id / consultation_pool_version; a persona-initiated (or persona-pool-cycle actor) admit is refused without a memo that the owner itself verifies with the shared function; applied decisions carry consultation_memo_id and evidence_refs. Operator-initiated admission unchanged.",
+    "design_note_pool_version": "The daily risk reweight appends a pool version every cycle, so a consultation bound to version V stays valid only while the live membership (ref, checksum, stage; not weights) is identical at the later version; otherwise it is stale and a new consultation opens. The memo's decision id still binds the version it was opened against, and the owner re-verifies against it.",
+    "dataset_authority_test": "services/persona/test_pool_dataset_authority.py: fixtures pre-publish an approving risk memo through the faked consultation owner HTTP boundary (FakeConsultationOwner) for the exact candidate/pool version; cycle and pool owner run the real shared verify_published_memo (no _verify_memo or port stubs)."
+  },
+  "acceptance": {
+    "1": "test_consultation_opened_then_trial_member_admitted_after_approving_memo (no admission on the opening cycle; opened as persona:<id>), test_admission_decision_opens_consultation_and_does_not_admit_in_that_cycle",
+    "2": "same integration test (published memo, shared verification); test_shared_memo_verification_recomputes_gate_from_participant_transcripts",
+    "3": "test_risk_oppose_becomes_operator_decision_and_never_admits, test_oppose_or_ambiguous_answer_becomes_operator_decision_and_never_admits, test_unanswered_consultation_stays_pending_and_missing_owner_fails_closed",
+    "4": "pending recorded as admission_pending with no tried_family tag or tried_families entry; no second consultation (test_http_ports_open_once_verify_published_memo_and_queue_operator_decision, integration oppose scenario day 5)",
+    "5": "test_persona_initiated_admission_needs_verified_consultation_memo_and_links_it, test_persona_cycle_actor_cannot_skip_the_memo_and_operator_admission_keeps_its_path",
+    "6": "HarnessAdoption.verify and PersonaStrategyPoolStore both call consult_triggers.verify_published_memo; test_harness_adoption.py unchanged and passing",
+    "7": "services/research/tests/test_persona_cycle_demand_integration.py (moved from services/persona so it runs in the dependency-complete Research CI) runs real PersonaCycleController.consume_run daily cycles with only owner/provider HTTP faked: approve -> admitted trial member, oppose -> operator decision and no admission"
+  },
+  "limitations": [
+    "The consultation owner boundary and provider answers are test fixtures (FakeConsultationOwner); no hosted consultation service run is claimed.",
+    "A candidate held by an operator decision stays the first fresh candidate each day (receipts repeat as already_queued) until the operator resolves it; it is not yet filtered out of candidate selection.",
+    "Deployment must provide the consultation owner URL/token to the persona service; unconfigured fails closed with consultation_unavailable.",
+    "hosted_behavior_claimed: false"
+  ],
+  "verification": "/tmp/gfd-venv python -m pytest: test_consult_triggers, test_harness_adoption, test_pool_autonomy_cycle, test_persona_strategy_pool, test_pool_dataset_authority: 105 passed (persona/control-plane); services/research/tests/test_persona_cycle_demand_integration.py: 5 passed incl. the 3 moved admission-consult cases. Note: /tmp/gfd-venv has numpy, so lean-misc absence of numpy is not reproduced locally; persona tests no longer import research/vectorbt modules"
+}

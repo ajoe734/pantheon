@@ -37,13 +37,18 @@ services:
       - dev-paper-persona-tokens:/issued/persona
       - dev-paper-capital-tokens:/issued/capital
       - dev-paper-evolution-tokens:/issued/evolution
+      - dev-paper-evolution-scheduler-tokens:/issued/evolution-daily-sweep-scheduler
       - dev-paper-persona-evaluator-tokens:/issued/persona-evaluator-agent
       - dev-paper-training-session-tokens:/issued/training-session-svc
       - dev-paper-training-worker-tokens:/issued/training-session-preview-worker
       - dev-paper-research-tokens:/issued/research-orchestrator-svc
+      - dev-paper-consultation-tokens:/issued/consultation-svc
       - dev-paper-agora-projector-tokens:/issued/source-ingest-agora-projector
+      - dev-paper-openclaw-adapter-tokens:/issued/openclaw-gateway-adapter
       # Capital reader principal only, for the paper producer and fleet reconciler.
       - dev-paper-capital-reader-tokens:/issued/paper-capital-reader
+      # Registry entry read principal, mounted only into the paper fleet reconciler.
+      - dev-paper-registry-reader-tokens:/issued/paper-registry-reader
     healthcheck:
       test: ["CMD", "python", "/issuer/issue_dev_paper_principals.py", "--healthcheck"]
       interval: 30s
@@ -53,6 +58,7 @@ services:
 
   postgres:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POSTGRES:-8g}
     image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     shm_size: 256m
@@ -79,8 +85,116 @@ services:
       retries: 10
       start_period: 10s
 
+  retrieval-postgres:
+    profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RETRIEVAL_POSTGRES:-1g}
+    image: pgvector/pgvector:0.8.0-pg16@sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: retrieval_owner
+      POSTGRES_PASSWORD: ${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}
+      POSTGRES_DB: pantheon_retrieval
+    volumes:
+      - retrieval-postgres-data:/var/lib/postgresql/data
+      - ./services/search/sql/retrieval_index.sql:/docker-entrypoint-initdb.d/01-retrieval.sql:ro
+    # No host port: this projection is accessible only inside the service network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retrieval_owner -d pantheon_retrieval"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  memory-index-postgres:
+    profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MEMORY_INDEX_POSTGRES:-512m}
+    build:
+      context: .
+      dockerfile: deploy/memory-index-postgres/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: memory_index_owner
+      POSTGRES_PASSWORD: ${MEMORY_INDEX_POSTGRES_PASSWORD:-memory_index_dev_only}
+      POSTGRES_DB: pantheon_memory_index
+    volumes:
+      - memory-index-postgres-data:/var/lib/postgresql/data
+    networks: [memory-index-storage]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory_index_owner -d pantheon_memory_index"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  hindsight:
+    profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_HINDSIGHT:-10g}
+    build:
+      context: .
+      dockerfile: deploy/hindsight/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+    environment:
+      HINDSIGHT_API_DATABASE_URL: postgresql://memory_index_owner:${MEMORY_INDEX_POSTGRES_PASSWORD:-memory_index_dev_only}@memory-index-postgres:5432/pantheon_memory_index
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION: pgroonga
+      HINDSIGHT_API_VECTOR_EXTENSION: pgvector
+      HINDSIGHT_API_RUN_MIGRATIONS_ON_STARTUP: "true"
+      HINDSIGHT_API_MCP_ENABLED: "false"
+      HINDSIGHT_API_TENANT_EXTENSION: hindsight_api.extensions.builtin.tenant:ApiKeyTenantExtension
+      HINDSIGHT_API_TENANT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      # Hindsight's default-LLM gate: with 'none' consolidation is skipped even when the per-operation
+      # provider is set (observed in the real-container probe). The bridge deploy sets these to the bridge.
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_LLM_PROVIDER:-none}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_LLM_MODEL:-}
+      HINDSIGHT_API_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
+      HINDSIGHT_API_RETAIN_EXTRACTION_MODE: chunks
+      HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION: "false"
+      # Chunks mode and no consolidation stay the deployed defaults. With the bridge configured the memory service
+      # switches each bank to verbatim retain + auto-consolidation, so the background worker runs only then.
+      HINDSIGHT_API_WORKER_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
+      HINDSIGHT_API_RETAIN_LLM_PROVIDER: ${HINDSIGHT_RETAIN_LLM_PROVIDER:-none}
+      HINDSIGHT_API_RETAIN_LLM_MODEL: ${HINDSIGHT_RETAIN_LLM_MODEL:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_RETAIN_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_RETAIN_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
+      HINDSIGHT_API_CONSOLIDATION_LLM_PROVIDER: ${HINDSIGHT_CONSOLIDATION_LLM_PROVIDER:-none}
+      HINDSIGHT_API_CONSOLIDATION_LLM_MODEL: ${HINDSIGHT_CONSOLIDATION_LLM_MODEL:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_CONSOLIDATION_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_CONSOLIDATION_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
+      HINDSIGHT_API_REFLECT_LLM_PROVIDER: ${HINDSIGHT_REFLECT_LLM_PROVIDER:-none}
+      HINDSIGHT_API_REFLECT_LLM_MODEL: ${HINDSIGHT_REFLECT_LLM_MODEL:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_REFLECT_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_REFLECT_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
+      HINDSIGHT_API_LLM_TEMPERATURE_REFLECT: ${HINDSIGHT_LLM_TEMPERATURE_REFLECT:-0.1}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_PROVIDER: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_PROVIDER:-none}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_MODEL: ${HINDSIGHT_MENTAL_MODEL_REFRESH_LLM_MODEL:-}
+      # Bridge token only (never a provider key or the gateway token); base URL is the internal adapter bridge.
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_API_KEY: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_BASE_URL: ${HINDSIGHT_LLM_BRIDGE_BASE_URL:-}
+      HINDSIGHT_API_EMBEDDINGS_ONNX_BATCH_SIZE: "4"
+      HINDSIGHT_API_RERANKER_ONNX_BATCH_SIZE: "4"
+      # Observe/consult recalls must finish in ~1 s: the neural cross-encoder cost 5-10 s per recall on two
+      # CPU threads. 'rrf' keeps the fused semantic+BM25+graph+temporal order (no model call).
+      HINDSIGHT_API_RERANKER_PROVIDER: rrf
+      OMP_NUM_THREADS: "2"
+    networks: [memory-index, memory-index-storage, memory-llm-bridge]
+    depends_on:
+      memory-index-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "hindsight_api.http_probe", "http://127.0.0.1:8888/health", "5"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
   nats:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_NATS:-512m}
     image: nats:2.11-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00
     restart: unless-stopped
     command: ["--jetstream", "--http_port", "8222", "--store_dir", "/data/jetstream"]
@@ -98,6 +212,7 @@ services:
 
   signal-store:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SIGNAL_STORE:-640m}
     image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     restart: unless-stopped
     healthcheck:
@@ -108,6 +223,7 @@ services:
 
   consultation-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_CONSULTATION_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -137,9 +253,54 @@ services:
       CONSULTATION_HANDOFF_TOKEN: ${CONSULTATION_HANDOFF_TOKEN:-pantheon-local-consultation-handoff-token}
       CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE: ${CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE:-/data/health/workflow-health.json}
       CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_INTERVAL_SECONDS:-15}
+      CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS: ${CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS:-180}
+      CONSULTATION_WORKFLOW_LEASE_SECONDS: ${CONSULTATION_WORKFLOW_LEASE_SECONDS:-120}
+      CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS: ${CONSULTATION_MEMORY_READ_TIMEOUT_SECONDS:-15.0}
+      # Consult-policy persona panels: outcome memory writeback (memory) and
+      # the harness-patch decision owner (evolution). Governance is the
+      # handoff sink above. A panel blocks, never silently skips, if absent.
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      # Issued consultation-svc memory principal (learn-feedback as write_authority consultation-svc), read per request.
+      CONSULTATION_MEMORY_WRITE_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${CONSULTATION_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_WRITE_TOKEN}
+      # Decision case files read their facts from the existing owner APIs.
+      # Credentials must be supplied by the environment; no new authority.
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_REGISTRY_SERVICE_TOKEN: ${PANTHEON_REGISTRY_SERVICE_TOKEN:-}
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-}
+      # Issued pool-read principal (persona_pool_reader: strategy-pool GETs only), read per request.
+      CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
+      PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${CONSULTATION_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_POOL_READ_TOKEN}
+      # Issued directory-read principal (viewer: GET /api/personas) for meeting roster resolution, read per request.
+      CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE: ${CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN}
+      PANTHEON_RESEARCH_API_URL: http://research-orchestrator-svc:8101
+      PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      # Issued meeting-owner principal (consultation-svc, role service) for meeting-action tickets at the
+      # research owner, read per request from the rotating file; no signing secret is distributed.
+      CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE: ${CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_RESEARCH_SERVICE_TOKEN}
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
+      # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
+      CONSULTATION_TELEMETRY_READ_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${CONSULTATION_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_TELEMETRY_READ_TOKEN}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
+      # Issued consultation-svc memory READ principal (consultation_session: retrieve only). Reads present this
+      # credential and send the matching actor id/roles; the write principal above stays write-only.
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-}
+      CONSULTATION_MEMORY_READ_TOKEN_FILE: ${CONSULTATION_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_READ_ACTOR_ID: pantheon-dev-consultation-memory-reader
+      PANTHEON_MEMORY_READ_ACTOR_ROLES: consultation_session
+      # No depends_on for evolution: it transitively depends on this service
+      # (via runtime-manager). A harness-patch panel probes it and blocks.
+      PANTHEON_EVOLUTION_API_URL: http://evolution:8093
     volumes:
       - consultation-data:/data/consultation
       - worker-health-data:/data/health
+      - dev-paper-consultation-tokens:/run/pantheon-principals:ro
     ports:
       - "${CONSULTATION_PORT:-18096}:8096"
     depends_on:
@@ -150,11 +311,13 @@ services:
         required: false
       governance:
         condition: service_healthy
+      memory:
+        condition: service_healthy
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); f=h.get('functional_health') or {}; age=time.time()-os.path.getmtime(p); sys.exit(0 if f.get('ready') is True and int(f.get('blocked_count') or 0)==0 and int(f.get('dead_letter_count') or 0)==0 and age<=90 else 1)\"",
+          "python -c \"import json,os,sys,time,urllib.request; port=os.environ.get('PORT','8096'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz',timeout=5).read(); p=os.environ['CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE']; h=json.load(open(p,encoding='utf-8')); age=time.time()-os.path.getmtime(p); sys.exit(0 if isinstance(h,dict) and age<=90 else 1)\"",
         ]
       interval: 10s
       timeout: 5s
@@ -163,6 +326,7 @@ services:
 
   source-ingest:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST:-6g}
     stop_grace_period: 30s
     build:
       context: .
@@ -176,6 +340,7 @@ services:
       PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
       PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
       SOURCE_INGEST_DATA_DIR: /data/source-ingest
+      INTRADAY_STORE_ROOT: /data/source-ingest
       SOURCE_INGEST_CONNECTOR_STORE_PATH: /data/source-ingest/connector_config.jsonl
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
@@ -208,6 +373,10 @@ services:
       PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${PANTHEON_COLLECTOR_BUNDLE_TOKEN:-}
       # FinMind broker connectors read env://FINMIND_API_TOKEN; empty => missing-credential outcome.
       FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}
+      # Governed Agora platform source connector reads incremental records via internal Agora owner route.
+      AGORA_PLATFORM_SOURCE_URL: ${AGORA_PLATFORM_SOURCE_URL:-http://operator-bff:8001/internal/agora/platform-source/records}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_SERVICE_ACTOR: ${AGORA_PLATFORM_SOURCE_SERVICE_ACTOR:-source-ingest}
       # Tenant admitted for the deploy coverage readback through the strict JWT boundary.
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
@@ -221,6 +390,7 @@ services:
       SEARCH_INGEST_NOTIFY_URL: ${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}
     volumes:
       - source-ingest-data:/data/source-ingest
+      - runtime-data:/data/runtime:ro
     ports:
       - "${SOURCE_INGEST_PORT:-18097}:8097"
     depends_on:
@@ -230,7 +400,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=5).read()\"",
+          "python -c \"import os, urllib.request; port=os.environ.get('PORT','8097'); urllib.request.urlopen(f'http://127.0.0.1:{port}/livez', timeout=5).read()\"",
         ]
       interval: 10s
       timeout: 5s
@@ -239,6 +409,7 @@ services:
 
   source-ingest-controller-migrate:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST_CONTROLLER_MIGRATE:-256m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -255,6 +426,7 @@ services:
         required: false
   source-ingest-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SOURCE_INGEST_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -262,6 +434,8 @@ services:
     restart: "${SOURCE_INGEST_CONTROLLER_RESTART_POLICY:-unless-stopped}"
     stop_grace_period: 30s
     # Sole durable owner. Explicit bounded smoke via SOURCE_INGEST_CONTROLLER_MAX_TICKS=1.
+    # Modes: reconcile_only (no pulls), reconcile_and_pull (finite bounded), collector_steady_pull
+    # (unbounded, Collector bundle connectors only, cadence-respecting; needs MAX_TICKS=0).
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
@@ -275,10 +449,14 @@ services:
       SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS: ${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_CONTROLLER_ALIVE_PATH: /data/source-ingest/controller_alive
+      INTRADAY_STORE_ROOT: /data/source-ingest
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: ${SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL:-scheduled_tick}
       SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}
       FINMIND_API_TOKEN: ${FINMIND_API_TOKEN:-}
+      AGORA_PLATFORM_SOURCE_URL: ${AGORA_PLATFORM_SOURCE_URL:-http://operator-bff:8001/internal/agora/platform-source/records}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_SERVICE_ACTOR: ${AGORA_PLATFORM_SOURCE_SERVICE_ACTOR:-source-ingest-scheduler}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_LOOP_ID: source-ingestion
       PANTHEON_CONTROLLER_NAME: source-ingestion-controller
@@ -340,6 +518,7 @@ services:
 
   strategy-distillation-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_STRATEGY_DISTILLATION_WORKER:-640m}
     build:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
@@ -359,6 +538,17 @@ services:
       PANTHEON_L2_EXTRACTION_ENABLED: ${PANTHEON_L2_EXTRACTION_ENABLED:-0}
       PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP: ${PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP:-400}
       PANTHEON_L2_EXTRACTION_LEDGER_PATH: /data/source-ingest/l2_extraction_ledger.sqlite
+      # One HYPOTHESIS_CARD call: client, adapter and gateway share this deadline (bounded 5-180 s).
+      # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
+      PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
+      PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
+      # A compiled card rule is bound to the governed whole-market dataset (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125):
+      # a logical id or a pinned gmd- snapshot; no symbol list. Unset or not governed keeps every rule a research-only
+      # draft with the reason in the controller state. The boundary is read from the stored daily bars below.
+      PANTHEON_L2_CARD_DATASET_ID: ${PANTHEON_L2_CARD_DATASET_ID:-governed-market:tw-daily}
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
+      DISTILLATION_RESEARCH_URL: http://research-orchestrator-svc:8101
+      DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE: ${DISTILLATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/DISTILLATION_RESEARCH_SERVICE_TOKEN}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       SOURCE_INGEST_EVIDENCE_STORE_PATH: /data/source-ingest/source_evidence.jsonl
@@ -400,6 +590,7 @@ services:
 
   alpha-replication-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_ALPHA_REPLICATION_WORKER:-768m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -411,6 +602,8 @@ services:
       ALPHA_REPLICATION_CONTROLLER_MAX_TICKS: ${ALPHA_REPLICATION_CONTROLLER_MAX_TICKS:-0}
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
       ALPHA_REPLICATION_CONTROLLER_STATE_PATH: /data/research-orchestrator/alpha-replication/controller_state.json
+      # Card admission reads Registry drafts; off until the coordinator has seen one hosted tick of the bounded read.
+      ALPHA_REPLICATION_CARD_ADMISSION_ENABLED: ${ALPHA_REPLICATION_CARD_ADMISSION_ENABLED:-0}
       STRATEGY_SPEC_SEED_STORE_PATH: /data/source-ingest/distill_seeds.jsonl
       PANTHEON_REGISTRY_URL: http://registry:8087
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -423,10 +616,40 @@ services:
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       GIT_SHA: ${GIT_SHA:-local-dev}
       PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE: ${PANTHEON_ALPHA_REVALIDATION_DISPATCH_MODE:-handoff_only}
+      # Hypothesis card admission path (design section 6A). Every value below is required: an unset
+      # address or credential disables the card path with a readable reason on the worker health file.
+      PANTHEON_GOVERNANCE_URL: ${PANTHEON_GOVERNANCE_URL:-http://governance:8082}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-http://research-orchestrator-svc:8101}
+      PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
+      RESEARCH_GOVERNANCE_PROPOSER_ID: ${RESEARCH_GOVERNANCE_PROPOSER_ID:-}
+      RESEARCH_GOVERNANCE_GATE_ID: ${RESEARCH_GOVERNANCE_GATE_ID:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN:-}
+      RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE: ${RESEARCH_GOVERNANCE_PROPOSER_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_PROPOSER_TOKEN}
+      RESEARCH_GOVERNANCE_GATE_TOKEN: ${RESEARCH_GOVERNANCE_GATE_TOKEN:-}
+      RESEARCH_GOVERNANCE_GATE_TOKEN_FILE: ${RESEARCH_GOVERNANCE_GATE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_GOVERNANCE_GATE_TOKEN}
+      RESEARCH_REGISTRY_SERVICE_TOKEN: ${RESEARCH_REGISTRY_SERVICE_TOKEN:-}
+      RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN:-}
+      ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE: ${ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN}
+      RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
+      RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Card gate dataset: the governed whole-market dataset read from the stored daily bars (DailyBarsReader).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Scheduled AlphaTemplate evaluation (ALPHA-TEMPLATE-EVALUATION-SCHEDULED-20261125): time_series templates on the
+      # governed dataset, at most weekly after a new stored trading day; results go to the Registry store.
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
+      ALPHA_TEMPLATE_EVAL_ENABLED: ${ALPHA_TEMPLATE_EVAL_ENABLED:-1}
+      # State file of the cycle in progress; each cycle's research run records sit beside it under cycles/ (last 3 kept).
+      ALPHA_TEMPLATE_EVAL_STATE_PATH: /data/research-orchestrator/alpha-replication/template-evaluation/schedule_state.json
+      ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS: ${ALPHA_TEMPLATE_EVAL_MAX_SYMBOLS:-60}
     volumes:
       - dev-paper-alpha-replication-tokens:/run/pantheon-principals:ro
       - research-orchestrator-data:/data/research-orchestrator
       - source-ingest-data:/data/source-ingest
+      - bff-data:/data/bff:ro
     depends_on:
       research-orchestrator-svc:
         condition: service_healthy
@@ -447,13 +670,19 @@ services:
 
   search-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_SEARCH_SVC:-13g}
     stop_grace_period: 30s
+    cpus: 2.0
+    cpu_shares: 256
     build:
       context: .
       dockerfile: services/search/Dockerfile
     restart: unless-stopped
     environment:
       PORT: "8098"
+      PANTHEON_SEARCH_JWT_SECRET: ${PANTHEON_SEARCH_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_SEARCH_JWT_ISSUER: ${PANTHEON_SEARCH_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PANTHEON_SEARCH_JWT_AUDIENCE: ${PANTHEON_SEARCH_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
       SEARCH_DATA_DIR: /data/search
       SEARCH_INDEX_STORE_PATH: /data/search/search-index.jsonl
       SEARCH_MATERIALIZE_STORE_PATH: /data/search/search-materialize.jsonl
@@ -462,6 +691,11 @@ services:
       SEARCH_FRESHNESS_SLA_SECONDS: ${SEARCH_FRESHNESS_SLA_SECONDS:-3600}
       SEARCH_PIPELINE_RETENTION_RUNS: ${SEARCH_PIPELINE_RETENTION_RUNS:-500}
       SEARCH_DURABLE_INDEX_ONLY: ${SEARCH_DURABLE_INDEX_ONLY:-false}
+      # Hybrid Postgres backend is the default; jsonl only by explicit override and always reported.
+      PANTHEON_SEARCH_BACKEND: ${PANTHEON_SEARCH_BACKEND:-postgres_pgvector}
+      PANTHEON_SEARCH_POSTGRES_DSN: postgresql://retrieval_owner:${RETRIEVAL_POSTGRES_PASSWORD:-retrieval_dev_only}@retrieval-postgres:5432/pantheon_retrieval
+      SEARCH_EMBEDDING_CACHE_DIR: /opt/search/models
+      HF_HUB_OFFLINE: "1"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       # Read the source owner's transactional evidence table by default.
@@ -476,6 +710,8 @@ services:
       - "${SEARCH_PORT:-18098}:8098"
     depends_on:
       postgres:
+        condition: service_healthy
+      retrieval-postgres:
         condition: service_healthy
       # source-ingest owns and bootstraps source_ingest.source_evidence;
       # search must not open its read-only view before the owner is ready.
@@ -494,6 +730,7 @@ services:
 
   search-index-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_SEARCH_INDEX_SCHEDULER:-256m}
     # Default-on: this scheduler only talks to the in-stack search service, so
     # the runtime manifest — not an operator-selected profile — is the single
     # source of truth for whether the required loop worker is running.
@@ -506,6 +743,7 @@ services:
     environment:
       SEARCH_API_URL: http://search-svc:8098
       SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS: ${SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS:-300}
+      SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS: ${SEARCH_INDEX_SCHEDULER_TICK_TIMEOUT_SECONDS:-120}
       SEARCH_INDEX_SCHEDULER_MAX_TICKS: ${SEARCH_INDEX_SCHEDULER_MAX_TICKS:-0}
       SEARCH_INDEX_SCHEDULER_FORCE_FULL: ${SEARCH_INDEX_SCHEDULER_FORCE_FULL:-false}
       SEARCH_INDEX_SCHEDULER_MATERIALIZE: ${SEARCH_INDEX_SCHEDULER_MATERIALIZE:-true}
@@ -525,10 +763,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
+      start_period: 300s
 
   training-session-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_TRAINING_SESSION_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -601,6 +840,7 @@ services:
 
   training-session-preview-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_TRAINING_SESSION_PREVIEW_WORKER:-256m}
     build:
       context: .
       dockerfile: services/training-session/Dockerfile
@@ -642,6 +882,7 @@ services:
 
   policy-learning-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POLICY_LEARNING_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -693,6 +934,7 @@ services:
 
   policy-learning-shadow-eval-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_POLICY_LEARNING_SHADOW_EVAL_SCHEDULER:-256m}
     # Human-imitation shadow-evaluation loop worker (L12-IMIT-001).
     build:
       context: .
@@ -745,6 +987,7 @@ services:
 
   research-orchestrator-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_ORCHESTRATOR_SVC:-384m}
     build:
       context: .
       dockerfile: services/research/Dockerfile
@@ -752,6 +995,11 @@ services:
     environment:
       PORT: "8101"
       RESEARCH_ORCHESTRATOR_DATA_DIR: /data/research-orchestrator
+      MEMORY_SVC_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      RESEARCH_MEMORY_WORKER_ENABLED: "true"
+      RESEARCH_MEMORY_POLL_SECONDS: "30"
       RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
       RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -762,6 +1010,9 @@ services:
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
+      # GET /api/research/alpha-templates/evaluations reads the Registry store (same Postgres owner as registry).
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
       # Keep HTTP admission and the supervised alpha worker on one durable
       # volume so accepted research specs survive a service restart.
       ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
@@ -778,18 +1029,44 @@ services:
       # Retrain executor credentials: read at call time from the read-only dev-paper volume.
       TRAINING_SESSION_URL: http://training-session-svc:8099
       REGISTRY_URL: http://registry:8087
+      PANTHEON_REGISTRY_URL: ${PANTHEON_REGISTRY_URL:-http://registry:8087}
+      PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
+      RESEARCH_RETRAIN_CANONICAL_DATASET_PATH: ${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
+      TRAINING_SESSION_CANONICAL_DATASET_PATH: ${TRAINING_SESSION_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}
+      RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH: ${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      TRAINING_SESSION_THRESHOLD_POLICY_PATH: ${TRAINING_SESSION_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
       RESEARCH_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_REGISTRY_SERVICE_TOKEN}
       RESEARCH_TRAINING_SERVICE_TOKEN_FILE: ${RESEARCH_TRAINING_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_TRAINING_SERVICE_TOKEN}
       RESEARCH_BFF_SERVICE_TOKEN_FILE: ${RESEARCH_BFF_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_BFF_SERVICE_TOKEN}
       RESEARCH_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_PERSONA_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_PERSONA_SERVICE_TOKEN}
       RESEARCH_CAPITAL_SERVICE_TOKEN_FILE: ${RESEARCH_CAPITAL_SERVICE_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CAPITAL_SERVICE_TOKEN}
-      # Must equal the tenant of the issued BFF principal (tenant-dev in dev).
-      # Daily paper-only allocator (cap 5); set DISCOVERY_ALLOCATOR_ENABLED=false to disable.
-      DISCOVERY_ALLOCATOR_ENABLED: ${DISCOVERY_ALLOCATOR_ENABLED:-true}
-      DISCOVERY_ALLOCATOR_TENANT_ID: ${DISCOVERY_ALLOCATOR_TENANT_ID:-tenant-dev}
+      # Case-file composition (research demands + evolution executor): narrow read-only owner principals
+      # issued by scripts/issue_dev_paper_principals.py and delivered as files only. Identity is empty unless
+      # issued; actor id equals the memory credential subject. No write-capable RESEARCH_* token is used here.
+      RESEARCH_CASE_FILE_ACTOR_ID: ${RESEARCH_CASE_FILE_ACTOR_ID:-}
+      RESEARCH_CASE_FILE_ACTOR_ROLES: ${RESEARCH_CASE_FILE_ACTOR_ROLES:-}
+      PANTHEON_REGISTRY_API_URL: http://registry:8087
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      PANTHEON_REGISTRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      PANTHEON_PERSONA_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN}
+      RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      PANTHEON_TELEMETRY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN}
+      RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
+      PANTHEON_MEMORY_SERVICE_TOKEN_FILE: ${RESEARCH_CASE_FILE_MEMORY_READ_TOKEN_FILE:-/run/pantheon-principals/RESEARCH_CASE_FILE_MEMORY_READ_TOKEN}
+      # Regime classifier fit reads governed index, breadth and chip rows from the read-only source-ingest volume.
+      RESEARCH_REGIME_STORE_ROOT: ${RESEARCH_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
+      # Template search dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
       - dev-paper-research-tokens:/run/pantheon-principals:ro
+      - bff-data:/data/bff:ro
+      - source-ingest-data:/data/source-ingest:ro
     ports:
       - "${RESEARCH_ORCHESTRATOR_PORT:-18101}:8101"
     depends_on:
@@ -809,6 +1086,7 @@ services:
 
   openclaw-data-init:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_DATA_INIT:-128m}
     image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
     command: ["sh", "-c", "mkdir -p /home/node/.openclaw && chown -R 1000:1000 /home/node/.openclaw"]
     volumes:
@@ -816,6 +1094,7 @@ services:
 
   openclaw-gateway:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY:-1280m}
     # Governed OpenClaw gateway image with Claude Code and Gemini CLIs.
     build:
       context: .
@@ -833,6 +1112,12 @@ services:
       # Optional long-lived credential (`claude setup-token`) for Claude CLI.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       ANTHROPIC_API_KEY: ${PANTHEON_OPENCLAW_ANTHROPIC_API_KEY:-}
+      # OpenAI API route keys (per-token billing). Deliberately NOT the ambient
+      # OpenAI/Codex key names: the gateway, its OpenAI plugin and bundled CLIs read those
+      # ambiently and the subscription route would silently move to per-token billing.
+      # Only models.providers.openai-api[-2] reference these through SecretRef env.
+      OPENCLAW_API_ROUTE_KEY_1: ${PANTHEON_OPENCLAW_OPENAI_API_KEY:-}
+      OPENCLAW_API_ROUTE_KEY_2: ${PANTHEON_OPENCLAW_OPENAI_API_KEY_2:-}
       ANTHROPIC_WORKSPACE_ID: ${PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID:-}
       OPENCLAW_OPENAI_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
@@ -843,6 +1128,18 @@ services:
       # Isolated qualification only: unset (empty) on root/prod, so the startup
       # below stays a no-op. Holds a credential-free config batch.
       PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH: ${PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH:-}
+      # Persona tools plugin (design H9). The plugin forwards each persona tool call to the adapter
+      # broker with this secret and holds no memory or persona-service credential. Unset: the plugin
+      # stays disabled. The config value is an unresolved env reference, so the secret is never
+      # written to the openclaw-data volume.
+      PERSONA_TOOL_BROKER_TOKEN: ${PERSONA_TOOL_BROKER_TOKEN:-}
+      # The plugin ships as a stock plugin in the image (enabledByDefault) and reads these two env vars, so
+      # openclaw.json stays a plain writable file (no $include overlay: that made every config.patch fail with
+      # "would flatten $include-owned config"). Rollback-safe: nothing plugin-related is persisted on the
+      # shared openclaw-data volume. BASE_PATCH still strips any plugin path/entry an earlier candidate
+      # persisted (one config write per start), and startup deletes the legacy overlay file.
+      PERSONA_TOOL_BROKER_URL: http://openclaw-gateway-adapter:8104/internal/persona-tools/v1
+      PANTHEON_OPENCLAW_BASE_PATCH: '{"gateway":{"http":{"endpoints":{"responses":{"enabled":true}}}},"plugins":{"load":{"paths":null},"entries":{"pantheon-persona-tools":null}}}'
     depends_on:
       openclaw-data-init:
         condition: service_completed_successfully
@@ -856,7 +1153,7 @@ services:
         # Keep the token in the container environment rather than interpolating
         # it into the shell command. The opt-in isolated batch is applied here,
         # before the gateway serves, and fails closed without the credential.
-        "node dist/index.js config set gateway.http.endpoints.responses.enabled true --json >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
+        "printf '%s' \"$$PANTHEON_OPENCLAW_BASE_PATCH\" | node dist/index.js config patch --stdin >/dev/null && if [ -n \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" ]; then [ -n \"$$ANTHROPIC_API_KEY\" ] && [ -n \"$$ANTHROPIC_WORKSPACE_ID\" ] && [ -n \"$$OPENCLAW_OPENAI_OAUTH_TOKEN\" ] || exit 1; node dist/index.js config set --batch-json \"$$PANTHEON_OPENCLAW_ISOLATED_MODEL_BATCH\" >/dev/null || exit 1; fi && rm -f /home/node/.openclaw/openclaw.runtime.json /home/node/.openclaw/openclaw.runtime.json.tmp && exec node dist/index.js gateway --allow-unconfigured --port 18789 --auth token --token \"$$OPENCLAW_GATEWAY_TOKEN\"",
       ]
     volumes:
       - openclaw-data:/home/node/.openclaw
@@ -877,6 +1174,7 @@ services:
 
   openclaw-gateway-adapter:
     profiles: ["management-ai", "openclaw", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPENCLAW_GATEWAY_ADAPTER:-3g}
     build:
       context: .
       dockerfile: services/openclaw-gateway-adapter/Dockerfile
@@ -895,7 +1193,9 @@ services:
       # provider degrades with OPENCLAW_GATEWAY_TOKEN_not_set even when the CLI is baked.
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       OPENCLAW_AGENT_ID: ${OPENCLAW_AGENT_ID:-main}
-      OPENCLAW_PRIMARY_MODEL: ${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}
+      # One deployment variable holds the ordered model chain (first = primary);
+      # unset keeps the shipped default chain (services/persona/model-chain.default).
+      OPENCLAW_MODEL_CHAIN: ${OPENCLAW_MODEL_CHAIN:-}
       # Agent ensure/reconcile runs in this authenticated adapter container but
       # must mutate the exact gateway-owned state and workspace volume.
       PANTHEON_OPENCLAW_GATEWAY_STATE_DIR: /home/node/.openclaw
@@ -928,6 +1228,34 @@ services:
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}
       CONSULTATION_PROVIDER_TOKEN: ${CONSULTATION_PROVIDER_TOKEN:-pantheon-local-consultation-provider}
       CONSULTATION_PROVIDER_ALLOWED_SERVICE_ACTOR: consultation-workflow-executor
+      # Provisioning verifies participant identities against the Persona owner.
+      PANTHEON_PERSONA_API_URL: http://persona:8002
+      PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
+      # Committee-visible memory reader (tenant-filtered in the provider).
+      PANTHEON_MEMORY_API_URL: http://memory:8086
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+      PANTHEON_MEMORY_ACTOR_ID: ${PANTHEON_MEMORY_ACTOR_ID:-consultation-provider}
+      PANTHEON_MEMORY_ACTOR_ROLES: ${PANTHEON_MEMORY_ACTOR_ROLES:-operator}
+      # Persona memory materialize + tool broker: host-issued read-only principal file (survives
+      # container recreation/compensation). Actor id must equal the token subject in strict auth.
+      OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE: ${OPENCLAW_ADAPTER_MEMORY_TOKEN_FILE:-/run/pantheon-principals/OPENCLAW_ADAPTER_MEMORY_TOKEN}
+      PANTHEON_OPENCLAW_MEMORY_ACTOR_ID: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ID:-openclaw-persona-sync}
+      PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES: ${PANTHEON_OPENCLAW_MEMORY_ACTOR_ROLES:-persona_memory_reader}
+      # Hindsight background-model bridge (design H5): off unless explicitly enabled.
+      MEMORY_LLM_BRIDGE_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
+      MEMORY_LLM_BRIDGE_TOKEN: ${MEMORY_LLM_BRIDGE_TOKEN:-}
+      MEMORY_LLM_BRIDGE_DEADLINE_SECONDS: ${MEMORY_LLM_BRIDGE_DEADLINE_SECONDS:-120}
+      MEMORY_LLM_BRIDGE_MAX_CONCURRENCY: ${MEMORY_LLM_BRIDGE_MAX_CONCURRENCY:-2}
+      MEMORY_LLM_BRIDGE_DAILY_BUDGET: ${MEMORY_LLM_BRIDGE_DAILY_BUDGET:-500}
+      MEMORY_LLM_BRIDGE_STATE_PATH: /root/.openclaw/memory-llm-bridge.sqlite3
+      # Persona tool broker (design H9): the gateway's pantheon-persona-tools plugin calls
+      # /internal/persona-tools/v1 with this secret. Off unless explicitly enabled; the broker holds the
+      # only memory credential (PANTHEON_MEMORY_AUTH_TOKEN above) and reads only one persona's own scope.
+      PERSONA_TOOL_BROKER_ENABLED: ${PERSONA_TOOL_BROKER_ENABLED:-false}
+      PERSONA_TOOL_BROKER_TOKEN: ${PERSONA_TOOL_BROKER_TOKEN:-}
+      PERSONA_TOOL_BROKER_STATE_PATH: /root/.openclaw/persona-tool-broker.sqlite3
+    networks: [default, memory-llm-bridge]
     volumes:
       - ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CODEX_CONTAINER_HOME:-/home/pantheon-assistant/.codex}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
       - ${PANTHEON_ASSISTANT_CLAUDE_HOST_CONFIG_DIR:-/srv/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CLAUDE_CONTAINER_CONFIG_DIR:-/home/pantheon-assistant/.claude}:${PANTHEON_ASSISTANT_CREDENTIAL_MOUNT_MODE:-rw}
@@ -936,6 +1264,7 @@ services:
       # Shared only for the governed internal agent ensure surface. The adapter
       # validates an exact /workspaces/<persona-id> target before every write.
       - openclaw-data:/home/node/.openclaw:rw
+      - dev-paper-openclaw-adapter-tokens:/run/pantheon-principals:ro
     depends_on:
       # Wait for shared volume owner and gateway before admitting agent writes.
       openclaw-data-init:
@@ -959,6 +1288,7 @@ services:
 
   broker:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_BROKER:-640m}
     stop_grace_period: 30s
     build:
       context: .
@@ -983,6 +1313,7 @@ services:
 
   runtime-manager:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RUNTIME_MANAGER:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -1053,6 +1384,7 @@ services:
 
   governance:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_GOVERNANCE:-256m}
     build:
       context: .
       dockerfile: services/governance/Dockerfile
@@ -1064,6 +1396,14 @@ services:
       GOVERNANCE_REGISTRY_BASE_URL: ${GOVERNANCE_REGISTRY_BASE_URL:-http://registry:8087}
       GOVERNANCE_REGISTRY_SERVICE_TOKEN: ${GOVERNANCE_REGISTRY_SERVICE_TOKEN:-}
       GOVERNANCE_REGISTRY_SERVICE_TOKEN_FILE: ${GOVERNANCE_REGISTRY_SERVICE_TOKEN_FILE:-}
+      # Paper-ladder persona lifecycle review reads the Capital and Runtime Manager binding owners
+      # with two distinct read-only principals (no secret value committed).
+      GOVERNANCE_CAPITAL_BASE_URL: ${GOVERNANCE_CAPITAL_BASE_URL:-http://capital:8092}
+      GOVERNANCE_CAPITAL_SERVICE_TOKEN: ${GOVERNANCE_CAPITAL_SERVICE_TOKEN:-}
+      GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE: ${GOVERNANCE_CAPITAL_SERVICE_TOKEN_FILE:-}
+      GOVERNANCE_RUNTIME_MANAGER_BASE_URL: ${GOVERNANCE_RUNTIME_MANAGER_BASE_URL:-http://runtime-manager:8081}
+      GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN: ${GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN:-}
+      GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE: ${GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN_FILE:-}
       PORT: "8082"
       GOVERNANCE_DATA_DIR: /data/governance
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1113,6 +1453,7 @@ services:
 
   telemetry:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_TELEMETRY:-4g}
     build:
       context: .
       dockerfile: services/telemetry/Dockerfile
@@ -1154,6 +1495,7 @@ services:
 
   incidents:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_INCIDENTS:-2g}
     build:
       context: .
       dockerfile: services/incidents/Dockerfile
@@ -1199,6 +1541,7 @@ services:
 
   postmortems:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_POSTMORTEMS:-512m}
     build:
       context: .
       dockerfile: services/postmortems/Dockerfile
@@ -1238,6 +1581,7 @@ services:
 
   operator-bff:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPERATOR_BFF:-3g}
     stop_grace_period: 30s
     build:
       context: .
@@ -1252,6 +1596,17 @@ services:
       PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID: ${PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID:-pantheon-dev-paper-provisioner}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
       PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
+      # Distinct propose-only principal for persona paper enrolment (Governance forbids
+      # proposer == decider); empty means enrolment fails closed with a readable reason.
+      PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID:-}
+      PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN:-}
+      PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE: ${PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE:-}
+      # Paper pool risk policy content is drafted by the persona-risk-officer (one persona turn per pool/profile/
+      # input digest) and approved through Governance; the gateway is the same one the persona cycle uses.
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
+      # Operator outer bounds per profile, enforced as validation (empty = built-in low: single name <= 20%, reserve >= 10%).
+      PANTHEON_PAPER_RISK_PROFILE_BOUNDS: ${PANTHEON_PAPER_RISK_PROFILE_BOUNDS:-}
       BFF_DATA_DIR: /data/bff
       AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
       AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
@@ -1315,6 +1670,13 @@ services:
       PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE: ${PANTHEON_BFF_AGORA_PERSONA_LAB_RUN_STORE:-/data/bff/agora_persona_lab_runs.json}
       PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_SUITE_STORE:-/data/bff/agora_evaluation_suites.json}
       PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE: ${PANTHEON_BFF_AGORA_EVALUATION_RUN_STORE:-/data/bff/agora_evaluation_runs.json}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_ALLOWED_SERVICE_ACTORS: ${AGORA_PLATFORM_SOURCE_ALLOWED_SERVICE_ACTORS:-source-ingest,source-ingest-scheduler,agora-owner-connector,attribution-owner,attribution,evaluation,research-orchestrator,meeting-orchestrator}
+      AGORA_PLATFORM_SOURCE_SERVICE_TENANTS: ${AGORA_PLATFORM_SOURCE_SERVICE_TENANTS:-*}
+      PANTHEON_EVALUATION_API_URL: ${PANTHEON_EVALUATION_API_URL:-http://evaluation:8084}
+      EVALUATION_SERVICE_TOKEN: ${EVALUATION_SERVICE_TOKEN:-pantheon-local-evaluation-service-token}
+      PANTHEON_ATTRIBUTION_API_URL: ${PANTHEON_ATTRIBUTION_API_URL:-http://evaluation:8084}
+      PANTHEON_ATTRIBUTION_SERVICE_TOKEN: ${PANTHEON_ATTRIBUTION_SERVICE_TOKEN:-${EVALUATION_SERVICE_TOKEN:-pantheon-local-evaluation-service-token}}
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
       # Post-cutover canonical Postgres reader for lifecycle projections.
       # Legacy JSON projection files and generation symlinks are retired.
@@ -1478,6 +1840,8 @@ services:
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
+      PANTHEON_PERSONA_API_URL: ${PANTHEON_PERSONA_API_URL:-${PERSONA_URL:-http://persona:8002}}
+      PANTHEON_PERSONA_SERVICE_URL: ${PANTHEON_PERSONA_SERVICE_URL:-${PERSONA_URL:-http://persona:8002}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
       PERSONA_EVALUATOR_URL: http://persona-evaluator-agent:8105
@@ -1613,6 +1977,7 @@ services:
 
   agora-interaction-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_AGORA_INTERACTION_WORKER:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -1770,15 +2135,95 @@ services:
         required: false
   persona:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PERSONA:-512m}
     build:
       context: .
       dockerfile: services/control-plane/persona/Dockerfile
     restart: unless-stopped
     environment:
+      PERSONA_DAILY_CYCLE_ENABLED: ${PERSONA_DAILY_CYCLE_ENABLED:-true}
+      # Match the consultation executor's deployment tenant; no invented tenant.
+      PERSONA_DEFAULT_TENANT_ID: ${PERSONA_DEFAULT_TENANT_ID:-${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}}
+      PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
+      PANTHEON_SERVICE_ACTOR: ${PANTHEON_SERVICE_ACTOR:-persona-svc}
+      # current_environment() scopes paper lifecycle approvals (ApprovalUsageContext).
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
+      PERSONA_API_URL: ${PERSONA_API_URL:-http://persona:8002}
+      PANTHEON_PERSONA_API_URL: ${PANTHEON_PERSONA_API_URL:-http://persona:8002}
+      PANTHEON_INCIDENTS_API_URL: http://incidents:8090
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
+      PERSONA_REGISTRY_BASE_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
+      PERSONA_REGISTRY_SERVICE_TOKEN: ${PERSONA_REGISTRY_SERVICE_TOKEN:-}
+      PERSONA_REGISTRY_SERVICE_TOKEN_FILE: ${PERSONA_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_REGISTRY_SERVICE_TOKEN}
+      PANTHEON_REGISTRY_SERVICE_TOKEN: ${PANTHEON_REGISTRY_SERVICE_TOKEN:-}
+      PANTHEON_REGISTRY_SERVICE_TOKEN_FILE: ${PANTHEON_REGISTRY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_REGISTRY_SERVICE_TOKEN}
+      PANTHEON_BFF_OODA_PACKET_STORE: ${PANTHEON_BFF_OODA_PACKET_STORE:-/data/bff/ooda_packets.json}
+      OPENCLAW_GATEWAY_URL: http://openclaw-gateway:18789
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}
       PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL: ${PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL:-http://governance:8082}
+      PANTHEON_GOVERNANCE_API_URL: ${PANTHEON_GOVERNANCE_API_URL:-http://governance:8082}
+      PANTHEON_GOVERNANCE_SERVICE_URL: ${PANTHEON_GOVERNANCE_SERVICE_URL:-http://governance:8082}
       PERSONA_GOVERNANCE_SERVICE_TOKEN: ${PERSONA_GOVERNANCE_SERVICE_TOKEN:-}
-      PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-}
+      PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE: ${PERSONA_GOVERNANCE_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_GOVERNANCE_SERVICE_TOKEN}
+      LESSON_RULE_PROPOSER_TOKEN: ${LESSON_RULE_PROPOSER_TOKEN:-}
+      LESSON_RULE_PROPOSER_TOKEN_FILE: ${LESSON_RULE_PROPOSER_TOKEN_FILE:-/run/pantheon-principals/LESSON_RULE_PROPOSER_TOKEN}
+      PANTHEON_LESSON_RULE_PROPOSER_ID: ${PANTHEON_LESSON_RULE_PROPOSER_ID:-persona-svc}
+      PERSONA_LESSON_RULE_STORE_BACKEND: ${PERSONA_LESSON_RULE_STORE_BACKEND:-${PERSONA_STORE_BACKEND:-postgres}}
+      PERSONA_LESSON_RULE_STORE_DSN: ${PERSONA_LESSON_RULE_STORE_DSN:-${PERSONA_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      PERSONA_LESSON_RULE_STORE_TABLE: ${PERSONA_LESSON_RULE_STORE_TABLE:-persona.lesson_rule_proposals}
       PERSONA_GOVERNANCE_TIMEOUT_SECONDS: ${PERSONA_GOVERNANCE_TIMEOUT_SECONDS:-5}
+      PERSONA_RESEARCH_SERVICE_TOKEN: ${PERSONA_RESEARCH_SERVICE_TOKEN:-}
+      PERSONA_RESEARCH_SERVICE_TOKEN_FILE: ${PERSONA_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RESEARCH_SERVICE_TOKEN}
+      PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}
+      PANTHEON_RESEARCH_SERVICE_TOKEN_FILE: ${PANTHEON_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RESEARCH_SERVICE_TOKEN}
+      RESEARCH_API_URL: ${RESEARCH_API_URL:-http://research-orchestrator-svc:8101}
+      PANTHEON_RESEARCH_API_URL: ${PANTHEON_RESEARCH_API_URL:-http://research-orchestrator-svc:8101}
+      PERSONA_MEMORY_SERVICE_TOKEN: ${PERSONA_MEMORY_SERVICE_TOKEN:-}
+      PERSONA_MEMORY_SERVICE_TOKEN_FILE: ${PERSONA_MEMORY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_MEMORY_SERVICE_TOKEN}
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PERSONA_MEMORY_WRITE_TOKEN_FILE: ${PERSONA_MEMORY_WRITE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_MEMORY_WRITE_TOKEN}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-/run/pantheon-principals/PERSONA_MEMORY_WRITE_TOKEN}
+      PANTHEON_MEMORY_SERVICE_TOKEN: ${PANTHEON_MEMORY_SERVICE_TOKEN:-}
+      PANTHEON_MEMORY_SERVICE_TOKEN_FILE: ${PANTHEON_MEMORY_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_MEMORY_SERVICE_TOKEN}
+      MEMORY_API_URL: ${MEMORY_API_URL:-http://memory:8086}
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_AUTH_TOKEN_FILE: ${EVOLUTION_AUTH_TOKEN_FILE:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution:8093}
+      PANTHEON_EVOLUTION_API_URL: ${PANTHEON_EVOLUTION_API_URL:-http://evolution:8093}
+      PANTHEON_CONSULTATION_API_URL: ${PANTHEON_CONSULTATION_API_URL:-http://consultation-svc:8096}
+      PANTHEON_CONSULTATION_SERVICE_URL: ${PANTHEON_CONSULTATION_SERVICE_URL:-http://consultation-svc:8096}
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      CONSULTATION_API_TOKEN: ${CONSULTATION_API_TOKEN:-${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}}
+      CONSULTATION_SERVICE_ACTOR: ${CONSULTATION_SERVICE_ACTOR:-persona-svc}
+      PANTHEON_SEARCH_API_URL: ${PANTHEON_SEARCH_API_URL:-http://search-svc:8098}
+      PERSONA_SEARCH_SERVICE_TOKEN: ${PERSONA_SEARCH_SERVICE_TOKEN:-}
+      PERSONA_SEARCH_SERVICE_TOKEN_FILE: ${PERSONA_SEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_SEARCH_SERVICE_TOKEN}
+      # Pool publish route principal: host-issued read-only file (survives recreation/compensation); never an env value.
+      PERSONA_POOL_PUBLISH_BFF_TOKEN_FILE: ${PERSONA_POOL_PUBLISH_BFF_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_PUBLISH_BFF_TOKEN}
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_SEARCH_SERVICE_TOKEN:-}
+      PANTHEON_SEARCH_SERVICE_TOKEN_FILE: ${PANTHEON_SEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_SEARCH_SERVICE_TOKEN}
+      REGISTRY_URL: ${PERSONA_REGISTRY_BASE_URL:-http://registry:8087}
+      PERSONA_POOL_CANONICAL_DATASET_PATH: ${PERSONA_POOL_CANONICAL_DATASET_PATH:-}
+      PERSONA_POOL_THRESHOLD_POLICY_PATH: ${PERSONA_POOL_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}
+      # Same DatasetVersion authority as training; direct dataset paths stay unset.
+      SOURCE_INGEST_API_URL: ${SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      PANTHEON_SOURCE_INGEST_API_URL: ${PANTHEON_SOURCE_INGEST_API_URL:-${SOURCE_INGEST_API_URL:-http://source-ingest:8097}}
+      PERSONA_POOL_SOURCE_CONNECTOR_ID: ${TRAINING_SESSION_SOURCE_CONNECTOR_ID:-tw-twse-tpex-official-market}
+      PERSONA_POOL_SOURCE_DATASET_ID: ${TRAINING_SESSION_SOURCE_DATASET_ID:-tw_price_daily}
+      PERSONA_POOL_SOURCE_VOLUME_ROOT: /data/source-ingest
+      # Pool admission price dataset: the governed whole-market dataset read from the stored daily bars (read-only mount).
+      GOVERNED_MARKET_STORE_ROOT: ${GOVERNED_MARKET_STORE_ROOT:-/data/source-ingest/market_data_store}
+      PERSONA_POOL_DATASET_AUTHORITY_OUTPUT_ROOT: /data/bff/persona-pool-dataset-authority
+      PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS: ${PERSONA_POOL_SOURCE_AUTHORITY_TIMEOUT_SECONDS:-30}
+      PERSONA_POOL_SOURCE_READ_TOKEN_FILE: ${PERSONA_POOL_SOURCE_READ_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
+      PERSONA_SOURCE_INGEST_SERVICE_TOKEN: ${PERSONA_SOURCE_INGEST_SERVICE_TOKEN:-}
+      PERSONA_SOURCE_INGEST_SERVICE_TOKEN_FILE: ${PERSONA_SOURCE_INGEST_SERVICE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_POOL_SOURCE_READ_TOKEN}
+      PERSONA_POOL_SOURCE_READ_TENANT_ID: ${PANTHEON_DEV_BFF_TENANT_ID:-tenant-dev}
+      PANTHEON_CYCLE_ACTOR_ID: ${PANTHEON_CYCLE_ACTOR_ID:-persona_cycle_controller}
+      PANTHEON_CYCLE_MEMORY_ACTOR_ROLES: ${PANTHEON_CYCLE_MEMORY_ACTOR_ROLES:-persona_session}
+      PANTHEON_SHADOW_REPLAY_AGENT_ID: ${PANTHEON_SHADOW_REPLAY_AGENT_ID:-}
+      PANTHEON_SHADOW_REPLAY_POLICY_URL: ${PANTHEON_SHADOW_REPLAY_POLICY_URL:-}
       PORT: "8002"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PERSONA_STORE_BACKEND: ${PERSONA_STORE_BACKEND:-postgres}
@@ -1791,18 +2236,24 @@ services:
       # Verify the operator JWT the BFF forwards using the BFF's own signing
       # configuration (same secret/issuer/audience the BFF verifies with).
       PERSONA_JWT_SECRET: ${PERSONA_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
-      PERSONA_JWT_ISSUER: ${PERSONA_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
-      PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
+      PERSONA_JWT_ISSUER: ${PERSONA_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PERSONA_JWT_AUDIENCE: ${PERSONA_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      # Trade lesson candidates are registered in memory review before a reflection is persisted (fail closed).
+      PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_REGISTRY_URL: http://registry:8087
+      PANTHEON_ATTRIBUTION_API_URL: ${PANTHEON_ATTRIBUTION_API_URL:-http://evaluation:8084}
+      PANTHEON_ATTRIBUTION_SERVICE_TOKEN: ${PANTHEON_ATTRIBUTION_SERVICE_TOKEN:-${EVALUATION_SERVICE_TOKEN:-pantheon-local-evaluation-service-token}}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
+      - bff-data:/data/bff
       - dev-paper-persona-tokens:/run/pantheon-principals:ro
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1821,6 +2272,7 @@ services:
 
   router:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_ROUTER:-256m}
     build:
       context: services/control-plane/router
       dockerfile: Dockerfile
@@ -1846,6 +2298,7 @@ services:
 
   web-channel:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_WEB_CHANNEL:-256m}
     build:
       context: .
       dockerfile: services/channels/web/Dockerfile
@@ -1868,6 +2321,7 @@ services:
 
   evaluation:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_EVALUATION:-256m}
     build:
       context: .
       dockerfile: services/evaluation/Dockerfile
@@ -1876,6 +2330,12 @@ services:
       PORT: "8084"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      EVALUATION_SERVICE_TOKEN: ${EVALUATION_SERVICE_TOKEN:-pantheon-local-evaluation-service-token}
+      PANTHEON_ATTRIBUTION_SERVICE_TOKEN: ${PANTHEON_ATTRIBUTION_SERVICE_TOKEN:-${EVALUATION_SERVICE_TOKEN:-pantheon-local-evaluation-service-token}}
+      AGORA_PLATFORM_SOURCE_URL: ${AGORA_PLATFORM_SOURCE_URL:-http://operator-bff:8001/internal/agora/platform-source/records}
+      AGORA_PLATFORM_SOURCE_SERVICE_TOKEN: ${AGORA_PLATFORM_SOURCE_SERVICE_TOKEN:-pantheon-local-agora-platform-source-token}
+      AGORA_PLATFORM_SOURCE_SERVICE_ACTOR: ${AGORA_PLATFORM_SOURCE_SERVICE_ACTOR:-attribution}
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
     depends_on:
       postgres:
         condition: service_healthy
@@ -1892,6 +2352,7 @@ services:
 
   feedback:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_FEEDBACK:-256m}
     build:
       context: .
       dockerfile: services/control-plane/feedback/Dockerfile
@@ -1910,8 +2371,33 @@ services:
       retries: 10
       start_period: 5s
 
+  learning-feedback-bridge:
+    profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_LEARNING_FEEDBACK_BRIDGE:-256m}
+    build:
+      context: .
+      dockerfile: services/memory/Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "services.persona.learning_feedback_bridge", "--poll", "30", "--skip-openclaw-sync"]
+    environment:
+      EVOLUTION_API_URL: http://evolution:8093
+      POSTMORTEMS_API_URL: http://postmortems:8091
+      MEMORY_API_URL: http://memory:8086
+      EVOLUTION_AUTH_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
+      EVOLUTION_DEFAULT_TENANT_ID: ${EVOLUTION_DEFAULT_TENANT_ID:-${PANTHEON_DEV_BFF_TENANT_ID:-pantheon-default}}
+      PANTHEON_MEMORY_AUTH_TOKEN: ${PANTHEON_MEMORY_AUTH_TOKEN:-}
+      PANTHEON_MEMORY_AUTH_TOKEN_FILE: ${PANTHEON_MEMORY_AUTH_TOKEN_FILE:-}
+    depends_on:
+      memory:
+        condition: service_healthy
+      evolution:
+        condition: service_healthy
+      postmortems:
+        condition: service_healthy
+
   memory:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MEMORY:-256m}
     build:
       context: .
       dockerfile: services/memory/Dockerfile
@@ -1925,12 +2411,27 @@ services:
       PANTHEON_MEMORY_STORE_DSN: ${PANTHEON_MEMORY_STORE_DSN:-}
       PANTHEON_MEMORY_AUTH_MODE: strict
       PANTHEON_MEMORY_JWT_SECRET: ${PANTHEON_MEMORY_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
-      PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
-      PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_MEMORY_JWT_ISSUER: ${PANTHEON_MEMORY_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PANTHEON_MEMORY_JWT_AUDIENCE: ${PANTHEON_MEMORY_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
+      PANTHEON_SEARCH_API_URL: http://search-svc:8098
+      PANTHEON_SEARCH_SERVICE_TOKEN: ${PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN:-}
       PANTHEON_MEMORY_DATA_DIR: /data/memory
+      PANTHEON_MEMORY_HINDSIGHT_URL: http://hindsight:8888
+      PANTHEON_MEMORY_HINDSIGHT_API_KEY: ${HINDSIGHT_API_KEY:-hindsight_dev_only}
+      PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS: ${PANTHEON_MEMORY_HINDSIGHT_RECALL_TIMEOUT_SECONDS:-8}
+      PANTHEON_MEMORY_HINDSIGHT_RECALL_CONCURRENCY: ${PANTHEON_MEMORY_HINDSIGHT_RECALL_CONCURRENCY:-1}
+      PANTHEON_MEMORY_HINDSIGHT_RECALL_QUEUE_WAIT_SECONDS: ${PANTHEON_MEMORY_HINDSIGHT_RECALL_QUEUE_WAIT_SECONDS:-10}
+      # LLM layers (verbatim retain, consolidation, standing questions) follow the OpenClaw memory-index bridge switch.
+      PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED: ${MEMORY_LLM_BRIDGE_ENABLED:-false}
+      # memory.retrieve policy is evaluated by the canonical governance
+      # service (POST /api/governance/authz/check, which takes no bearer).
+      # Without this, retrieve denies with governance_authz_unconfigured.
+      # PANTHEON_MEMORY_AUTHZ_MODE=local is deliberately NOT set (no bypass).
+      PANTHEON_GOVERNANCE_AUTHZ_URL: ${PANTHEON_GOVERNANCE_AUTHZ_URL:-http://governance:8082}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
     volumes:
       - memory-data:/data/memory
+    networks: [default, memory-index]
     depends_on:
       postgres:
         condition: service_healthy
@@ -1947,6 +2448,7 @@ services:
 
   registry:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_REGISTRY:-256m}
     build:
       context: .
       dockerfile: services/registry/Dockerfile
@@ -1958,6 +2460,7 @@ services:
       REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE: ${REGISTRY_GOVERNANCE_SERVICE_TOKEN_FILE:-}
       REGISTRY_GOVERNANCE_TIMEOUT_SECONDS: ${REGISTRY_GOVERNANCE_TIMEOUT_SECONDS:-5}
       PORT: "8087"
+      REGISTRY_REGIME_STORE_ROOT: ${REGISTRY_REGIME_STORE_ROOT:-/data/source-ingest/market_data_store}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       # Hard-enforce Postgres in staging/prod; override to memory only for local
       # dev rollback. Memory is a test double injected directly by unit tests,
@@ -1974,8 +2477,12 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-http://runtime-manager:8081}
       PANTHEON_DEPLOYMENT_API_URL: ${PANTHEON_DEPLOYMENT_API_URL:-http://deployment:8095}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      # Existing Research owner-binding readback origin (strict caller auth forwarded).
+      RESEARCH_ORCHESTRATOR_API_URL: ${RESEARCH_ORCHESTRATOR_API_URL:-http://research-orchestrator-svc:8101}
     volumes:
       - dev-paper-registry-tokens:/run/pantheon-principals:ro
+      # Governed datasets the regime evaluator reads point-in-time (read-only; REGIME-REGISTRY-EVALUATOR-20261115).
+      - source-ingest-data:/data/source-ingest:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -1992,6 +2499,7 @@ services:
 
   optimizer-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_OPTIMIZER_SVC:-256m}
     build:
       context: .
       dockerfile: services/optimizer-svc/Dockerfile
@@ -2016,6 +2524,7 @@ services:
 
   promotion:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PROMOTION:-256m}
     build:
       context: .
       dockerfile: services/promotion/Dockerfile
@@ -2044,6 +2553,7 @@ services:
 
   capital:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_CAPITAL:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2051,6 +2561,7 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8092"
+      PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       CAPITAL_DATA_DIR: /data/capital
       CAPITAL_GOVERNANCE_BASE_URL: ${CAPITAL_GOVERNANCE_BASE_URL:-http://governance:8082}
       CAPITAL_GOVERNANCE_SERVICE_TOKEN: ${CAPITAL_GOVERNANCE_SERVICE_TOKEN:-}
@@ -2058,6 +2569,8 @@ services:
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
+      RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       # Dev rollback defaults to JSON/JSONL; staging/prod select postgres via env.
       CAPITAL_STORE_BACKEND: ${CAPITAL_STORE_BACKEND:-json}
@@ -2077,7 +2590,7 @@ services:
       CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-}
       CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}
       CAPITAL_PERMISSIVE_ALLOWED_TENANTS: ${CAPITAL_PERMISSIVE_ALLOWED_TENANTS:-${PANTHEON_BFF_TENANT_ID:-default}}
-      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager,research-orchestrator}
+      CAPITAL_ALLOWED_READER_SERVICES: ${CAPITAL_ALLOWED_READER_SERVICES:-control-plane-bff,runtime-manager,research-orchestrator,pantheon-dev-governance-capital-binding-reader}
     volumes:
       - capital-data:/data/capital
       - dev-paper-capital-tokens:/run/pantheon-principals:ro
@@ -2095,6 +2608,7 @@ services:
 
   deployment:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_DEPLOYMENT:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2144,6 +2658,7 @@ services:
 
   deployment-outbox-consumer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_DEPLOYMENT_OUTBOX_CONSUMER:-256m}
     build:
       context: .
       dockerfile: services/deployment/Dockerfile
@@ -2209,6 +2724,7 @@ services:
 
   evolution:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2280,6 +2796,7 @@ services:
 
   evolution-dispatch-worker:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_DISPATCH_WORKER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2321,6 +2838,7 @@ services:
 
   evolution-daily-sweep-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_DAILY_SWEEP_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2336,7 +2854,36 @@ services:
       EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
       EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/data/health/evolution-scheduler-health.json}
+      EVOLUTION_AUTO_CONSUMER_ENABLED: ${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}
+      AUTO_CONSUMER_PERSONA_URL: ${AUTO_CONSUMER_PERSONA_URL:-http://persona:8002}
+      AUTO_CONSUMER_PERSONA_TOKEN: ${AUTO_CONSUMER_PERSONA_TOKEN:-}
+      AUTO_CONSUMER_PERSONA_TOKEN_FILE: ${AUTO_CONSUMER_PERSONA_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_PERSONA_TOKEN}
+      AUTO_CONSUMER_REGISTRY_URL: ${AUTO_CONSUMER_REGISTRY_URL:-http://registry:8087}
+      AUTO_CONSUMER_REGISTRY_TOKEN: ${AUTO_CONSUMER_REGISTRY_TOKEN:-}
+      AUTO_CONSUMER_REGISTRY_TOKEN_FILE: ${AUTO_CONSUMER_REGISTRY_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_REGISTRY_TOKEN}
+      AUTO_CONSUMER_TELEMETRY_URL: ${AUTO_CONSUMER_TELEMETRY_URL:-http://telemetry:8083}
+      AUTO_CONSUMER_TELEMETRY_TOKEN: ${AUTO_CONSUMER_TELEMETRY_TOKEN:-${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}}
+      AUTO_CONSUMER_CAPITAL_URL: ${AUTO_CONSUMER_CAPITAL_URL:-http://capital:8092}
+      AUTO_CONSUMER_CAPITAL_TOKEN: ${AUTO_CONSUMER_CAPITAL_TOKEN:-}
+      AUTO_CONSUMER_CAPITAL_TOKEN_FILE: ${AUTO_CONSUMER_CAPITAL_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_CAPITAL_TOKEN}
+      AUTO_CONSUMER_RESEARCH_URL: ${AUTO_CONSUMER_RESEARCH_URL:-http://research-orchestrator-svc:8101}
+      AUTO_CONSUMER_RESEARCH_TOKEN: ${AUTO_CONSUMER_RESEARCH_TOKEN:-}
+      AUTO_CONSUMER_RESEARCH_TOKEN_FILE: ${AUTO_CONSUMER_RESEARCH_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_RESEARCH_TOKEN}
+      AUTO_CONSUMER_BFF_URL: ${AUTO_CONSUMER_BFF_URL:-http://operator-bff:8001}
+      AUTO_CONSUMER_BFF_TOKEN: ${AUTO_CONSUMER_BFF_TOKEN:-}
+      AUTO_CONSUMER_BFF_TOKEN_FILE: ${AUTO_CONSUMER_BFF_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_BFF_TOKEN}
+      AUTO_CONSUMER_GOVERNANCE_URL: ${AUTO_CONSUMER_GOVERNANCE_URL:-http://governance:8082}
+      AUTO_CONSUMER_PROPOSER_ID: ${AUTO_CONSUMER_PROPOSER_ID:-evolution-auto-consumer-proposer}
+      AUTO_CONSUMER_PROPOSER_TOKEN: ${AUTO_CONSUMER_PROPOSER_TOKEN:-}
+      AUTO_CONSUMER_PROPOSER_TOKEN_FILE: ${AUTO_CONSUMER_PROPOSER_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_PROPOSER_TOKEN}
+      AUTO_CONSUMER_GATE_ID: ${AUTO_CONSUMER_GATE_ID:-${PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID:-pantheon-dev-paper-provisioner}}
+      AUTO_CONSUMER_GATE_TOKEN: ${AUTO_CONSUMER_GATE_TOKEN:-}
+      AUTO_CONSUMER_GATE_TOKEN_FILE: ${AUTO_CONSUMER_GATE_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_GATE_TOKEN}
+      AUTO_CONSUMER_EVIDENCE_PATH: ${AUTO_CONSUMER_EVIDENCE_PATH:-/data/evolution/auto_consumer_evidence.jsonl}
+      AUTO_CONSUMER_DECAY_LEDGER_PATH: ${AUTO_CONSUMER_DECAY_LEDGER_PATH:-/data/evolution/paper_decay_windows.jsonl}
     volumes:
+      - evolution-data:/data/evolution
+      - dev-paper-evolution-scheduler-tokens:/run/pantheon-principals:ro
       - worker-health-data:/data/health
     depends_on:
       evolution:
@@ -2351,6 +2898,7 @@ services:
 
   evolution-threshold-sweep-producer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_EVOLUTION_THRESHOLD_SWEEP_PRODUCER:-256m}
     build:
       context: .
       dockerfile: services/evolution/Dockerfile
@@ -2392,6 +2940,7 @@ services:
 
   lineage-read:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_LINEAGE_READ:-256m}
     build:
       context: .
       dockerfile: services/lineage-read/Dockerfile
@@ -2412,6 +2961,7 @@ services:
 
   paper-fleet-reconciler:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2428,6 +2978,12 @@ services:
       RECONCILER_LOOP_CONTROLLER_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_RUNTIME_MANAGER_TOKEN_FILE: ${PANTHEON_RUNTIME_MANAGER_TOKEN_FILE:-}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-}
+      PANTHEON_RUNTIME_MANAGER_ACTOR_ID: ${PANTHEON_RUNTIME_MANAGER_ACTOR_ID:-paper-fleet-reconciler}
+      PANTHEON_RUNTIME_MANAGER_ROLES: ${PANTHEON_RUNTIME_MANAGER_ROLES:-operator}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       RECONCILER_POLL_INTERVAL_SECONDS: ${RECONCILER_POLL_INTERVAL_SECONDS:-15}
@@ -2441,7 +2997,14 @@ services:
       PANTHEON_CAPITAL_API_URL: http://capital:8092
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN:-}
       DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE: ${DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE:-}
+      # Member baseline read (report-only comparison): Registry owner URL plus a registry-reader-only
+      # file exported by the dev principal issuer. Empty (no default credential) outside dev.
+      PERSONA_REGISTRY_BASE_URL: http://registry:8087
+      PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE: ${PAPER_RUNTIME_REGISTRY_READ_TOKEN_FILE:-}
+      PAPER_MEMBER_BASELINE_REFRESH_SECONDS: ${PAPER_MEMBER_BASELINE_REFRESH_SECONDS:-300}
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      INTRADAY_STORE_ROOT: ${INTRADAY_STORE_ROOT:-/data/source-ingest}
+      SOURCE_INGEST_STORE_ROOT: ${SOURCE_INGEST_STORE_ROOT:-/data/source-ingest}
       PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS: ${PANTHEON_PERFORMANCE_MARK_MAX_AGE_SECONDS:-172800}
       PANTHEON_PERFORMANCE_STATE_ROOT: /data/runtime/paper-performance
@@ -2450,6 +3013,7 @@ services:
     volumes:
       - runtime-data:/data/runtime
       - dev-paper-capital-reader-tokens:/run/pantheon-principals:ro
+      - dev-paper-registry-reader-tokens:/run/pantheon-registry-read:ro
       - source-ingest-data:/data/source-ingest:ro
     depends_on:
       runtime-manager:
@@ -2470,6 +3034,7 @@ services:
 
   paper-signal-producer:
     profiles: ["execution", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PAPER_SIGNAL_PRODUCER:-256m}
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile
@@ -2483,6 +3048,12 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-runtime-control-internal}
+      PANTHEON_RUNTIME_MANAGER_TOKEN_FILE: ${PANTHEON_RUNTIME_MANAGER_TOKEN_FILE:-}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-}
+      PANTHEON_RUNTIME_MANAGER_ACTOR_ID: ${PANTHEON_RUNTIME_MANAGER_ACTOR_ID:-paper-signal-producer}
+      PANTHEON_RUNTIME_MANAGER_ROLES: ${PANTHEON_RUNTIME_MANAGER_ROLES:-operator}
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
       # Expression-layer inputs: pool policy and budget from the capital
       # service, cash and positions from the telemetry runtime summary.
@@ -2495,6 +3066,8 @@ services:
       # snapshot contract.  The default remains paper-only and fails closed
       # when a binding lacks an executable artifact or a valid snapshot.
       PANTHEON_SOURCE_INGEST_URL: http://source-ingest:8097
+      INTRADAY_STORE_ROOT: ${INTRADAY_STORE_ROOT:-/data/source-ingest}
+      SOURCE_INGEST_STORE_ROOT: ${SOURCE_INGEST_STORE_ROOT:-/data/source-ingest}
       PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT: /data/source-ingest/market_data_store
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PAPER_PRODUCER_INTERVAL_SECONDS: ${PAPER_PRODUCER_INTERVAL_SECONDS:-60}
@@ -2525,6 +3098,7 @@ services:
 
   reconciliation-drift-svc:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_SVC:-256m}
     stop_grace_period: 30s
     build:
       context: .
@@ -2541,6 +3115,7 @@ services:
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      PANTHEON_PAPER_BROKER_URL: http://broker:8102
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_RUNTIME_MANAGER_URL: http://runtime-manager:8081
       PANTHEON_RUNTIME_MANAGER_TOKEN: runtime-control-internal
@@ -2580,6 +3155,7 @@ services:
 
   reconciliation-drift-consumer:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_CONSUMER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2621,6 +3197,7 @@ services:
 
   reconciliation-drift-scheduler:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_SCHEDULER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2655,6 +3232,7 @@ services:
 
   reconciliation-drift-incident-listener:
     profiles: ["root", "workers"]
+    mem_limit: ${DEV_MEM_LIMIT_RECONCILIATION_DRIFT_INCIDENT_LISTENER:-256m}
     build:
       context: .
       dockerfile: services/reconciliation-drift/Dockerfile
@@ -2694,6 +3272,7 @@ services:
 
   research-worker-gateway-svc:
     profiles: ["research", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_RESEARCH_WORKER_GATEWAY_SVC:-256m}
     build:
       context: .
       dockerfile: services/research-worker-gateway/Dockerfile
@@ -3038,6 +3617,7 @@ services:
 
   monitor-agent:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_MONITOR_AGENT:-256m}
     build:
       context: .
       dockerfile: services/monitor-agent/Dockerfile
@@ -3062,6 +3642,7 @@ services:
         required: false
   persona-evaluator-agent:
     profiles: ["core", "root"]
+    mem_limit: ${DEV_MEM_LIMIT_PERSONA_EVALUATOR_AGENT:-256m}
     build:
       context: .
       dockerfile: services/persona-evaluator-agent/Dockerfile
@@ -3070,19 +3651,40 @@ services:
       RANKING_STORE_DSN: ${RANKING_STORE_DSN:-${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}}
       RANKING_STORE_TABLE: ${RANKING_STORE_TABLE:-rankings.rankings}
       PERSONA_EVALUATOR_BFF_URL: http://operator-bff:8001
+      PERSONA_EVALUATOR_ACTOR_ID: ${PERSONA_EVALUATOR_ACTOR_ID:-persona-evaluator-agent}
       PERSONA_EVALUATOR_BFF_TOKEN: ${PERSONA_EVALUATOR_BFF_TOKEN:-}
-      PERSONA_EVALUATOR_BFF_TOKEN_FILE: ${PERSONA_EVALUATOR_BFF_TOKEN_FILE:-}
+      PERSONA_EVALUATOR_BFF_TOKEN_FILE: ${PERSONA_EVALUATOR_BFF_TOKEN_FILE:-/run/pantheon-principals/PERSONA_EVALUATOR_BFF_TOKEN}
+      PERSONA_RANKING_TOKEN: ${PERSONA_RANKING_TOKEN:-${PERSONA_EVALUATOR_BFF_TOKEN:-}}
+      PERSONA_RANKING_TOKEN_FILE: ${PERSONA_RANKING_TOKEN_FILE:-/run/pantheon-principals/PERSONA_RANKING_TOKEN}
+      PERSONA_ALLOCATION_TOKEN: ${PERSONA_ALLOCATION_TOKEN:-}
+      PERSONA_ALLOCATION_TOKEN_FILE: ${PERSONA_ALLOCATION_TOKEN_FILE:-/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN}
       PANTHEON_GOVERNANCE_API_URL: http://governance:8082
       PERSONA_EVALUATOR_GOVERNANCE_TOKEN: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN:-}
-      PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE:-}
+      PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE: ${PERSONA_EVALUATOR_GOVERNANCE_TOKEN_FILE:-/run/pantheon-principals/PERSONA_EVALUATOR_GOVERNANCE_TOKEN}
       PERSONA_EVALUATOR_READ_TOKEN: ${PERSONA_EVALUATOR_READ_TOKEN:-persona-evaluator-read-internal}
       PERSONA_EVALUATOR_PERSONA_URL: http://persona:8002
       PERSONA_EVALUATOR_PERSONA_TOKEN: ${PERSONA_EVALUATOR_PERSONA_TOKEN:-${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}}
       PERSONA_EVALUATOR_PERSONA_TOKEN_FILE: ${PERSONA_EVALUATOR_PERSONA_TOKEN_FILE:-}
+      # Existing owner credentials only; missing credentials leave recorded routing holds.
+      PANTHEON_CONSULTATION_API_URL: http://consultation-svc:8096
+      CONSULTATION_SERVICE_TOKEN: ${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}
+      AUTO_CONSUMER_CAPITAL_URL: http://capital:8092
+      AUTO_CONSUMER_CAPITAL_TOKEN: ${AUTO_CONSUMER_CAPITAL_TOKEN:-}
+      AUTO_CONSUMER_CAPITAL_TOKEN_FILE: ${AUTO_CONSUMER_CAPITAL_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_CAPITAL_TOKEN}
+      AUTO_CONSUMER_TELEMETRY_URL: http://telemetry:8083
+      AUTO_CONSUMER_TELEMETRY_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-telemetry-service-internal}
+      AUTO_CONSUMER_REGISTRY_URL: http://registry:8087
+      AUTO_CONSUMER_REGISTRY_TOKEN: ${AUTO_CONSUMER_REGISTRY_TOKEN:-}
+      AUTO_CONSUMER_REGISTRY_TOKEN_FILE: ${AUTO_CONSUMER_REGISTRY_TOKEN_FILE:-/run/pantheon-principals/AUTO_CONSUMER_REGISTRY_TOKEN}
+      AUTO_CONSUMER_EVOLUTION_URL: http://evolution:8093
+      AUTO_CONSUMER_EVOLUTION_TOKEN: ${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}
       PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: http://openclaw-gateway-adapter:8104
       PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}
       PERSONA_EVALUATOR_INTERVAL_SECONDS: ${PERSONA_EVALUATOR_INTERVAL_SECONDS:-900}
+      # Paper capital pool for the governed quarterly paper allocation cycle; empty = cycle not configured (no allocation).
+      # The BFF token must carry the operator role for this write (paper scope only; real capital is untouched).
+      PERSONA_EVALUATOR_PAPER_POOL_ID: ${PERSONA_EVALUATOR_PAPER_POOL_ID:-${PANTHEON_PAPER_POOL_ID:-pool-paper-default}}
       PERSONA_EVALUATOR_STATE_PATH: /data/persona-evaluator-agent/state.json
     volumes:
       - persona-evaluator-agent-data:/data/persona-evaluator-agent
@@ -3095,6 +3697,8 @@ services:
 
         required: false
 volumes:
+  retrieval-postgres-data:
+  memory-index-postgres-data:
   dev-paper-deployment-tokens:
   dev-paper-registry-tokens:
   dev-paper-governance-tokens:
@@ -3105,12 +3709,16 @@ volumes:
   dev-paper-persona-tokens:
   dev-paper-capital-tokens:
   dev-paper-evolution-tokens:
+  dev-paper-evolution-scheduler-tokens:
   dev-paper-persona-evaluator-tokens:
   dev-paper-training-session-tokens:
   dev-paper-training-worker-tokens:
   dev-paper-research-tokens:
+  dev-paper-consultation-tokens:
   dev-paper-agora-projector-tokens:
+  dev-paper-openclaw-adapter-tokens:
   dev-paper-capital-reader-tokens:
+  dev-paper-registry-reader-tokens:
   broker-data:
   bff-data:
   capital-data:
@@ -3138,3 +3746,13 @@ volumes:
   lineage-data:
   telemetry-data:
   worker-health-data:
+
+networks:
+  default: {}
+  memory-index:
+    internal: true
+  memory-index-storage:
+    internal: true
+  # Only hindsight and the adapter bridge endpoint; no other service joins.
+  memory-llm-bridge:
+    internal: true

@@ -1,0 +1,75 @@
+........................................................................ [ 24%]
+........................................................................ [ 49%]
+........................................................................ [ 74%]
+........................................................................ [ 99%]
+..                                                                       [100%]
+=============================== warnings summary ===============================
+../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/main.py:474: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/94d30df1aaedf114/lib/python3.12/site-packages/fastapi/applications.py:4744: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/main.py:480: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/main.py:559: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/main.py:2706: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/source_ingestion/tests/test_demand_priority.py::test_real_research_owner_route_enforces_issued_reader_tenant
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/main.py:2724: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+services/source_ingestion/tests/test_distillation_controller.py::test_distillation_controller_tick_success
+services/source_ingestion/tests/test_distillation_controller.py::test_distillation_controller_tick_success
+  /tmp/pantheon-worker-worktrees/pantheon/l2-demand-priority-r2-20261112/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.
+    from jsonschema import Draft7Validator, RefResolver
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+290 passed, 13 warnings in 76.03s (0:01:16)

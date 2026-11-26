@@ -34,9 +34,13 @@ on:
 permissions:
   contents: read
 
+# A dev push run that started always reaches a conclusion: a newer push only
+# replaces the pending run of the same group (at most one in progress and one
+# pending), so every green commit can trigger the publish cut. Pull requests and
+# every other ref keep cancel-in-progress.
 concurrency:
   group: branch-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/dev') }}
 
 jobs:
   trailers:
@@ -236,7 +240,7 @@ jobs:
   smoke:
     name: Smoke acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     needs:
       - trailers
       - generated-files
@@ -284,6 +288,14 @@ jobs:
         run: |
           python3 -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision
 
+      # RC3 WP3.2: a persistent writer in code with no entry in docs/operations/storage-manifest.json
+      # (or a manifest entry the code no longer has) fails the pull request.
+      - name: Storage manifest check
+        timeout-minutes: 5
+        run: |
+          python3 -m unittest scripts.test_check_storage_manifest
+          python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report.json
+
       # Unconditional (no path filter): source_ingestion reds came from changes
       # in other services. Fresh data dir avoids incompatible shared state; the
       # directory runs alone so no repo-wide conftest masks failures.
@@ -291,14 +303,23 @@ jobs:
         run: |
           python3 -m pip install -r services/source_ingestion/requirements.txt
 
+      # Design SD_MARKET_DATA_ONE_WRITE_PER_DAY sections 6 and 6A: fails a PR that grows a store
+      # past its table row on hosted-shaped data (22,500 symbols, 500 days, 500-record batches).
+      - name: Market data budget check
+        timeout-minutes: 5
+        run: |
+          python3 -m pytest -q scripts/test_check_market_data_budget.py
+          python3 scripts/check_market_data_budget.py --output /tmp/market-data-budget-report.json
+
       - name: Run source ingestion tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           SOURCE_INGEST_TEST_POSTGRES_DSN: postgresql://pantheon:pantheon@localhost:5432/source_ingest_test
         run: |
-          SOURCE_INGEST_DATA_DIR="$(mktemp -d)"
-          export SOURCE_INGEST_DATA_DIR
-          python3 -m pytest -q services/source_ingestion/tests services/source_ingestion/test_*.py
+          # Same tests as the former single serial pytest, run as 4 deterministic
+          # parallel shards (own data dir each). The runner fails if the shards
+          # run a different count than collected, or if one test exceeds 300s.
+          python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300
 
       # Unconditional (no path filter): these pin deploy guarantees (profiles,
       # mark source, state volumes) that went stale for days because no
@@ -720,7 +741,9 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
-          python3 -m pytest -q services/control_plane
+          python3 -m pytest -q services/control_plane \
+            services/control-plane/bff/pm12/test_holdings_serving_binding.py \
+            services/control-plane/bff/test_persona_provisioning_route_security.py
 
       - name: Run promotion service tests
         if: ${{ !cancelled() }}
@@ -756,6 +779,18 @@ jobs:
         timeout-minutes: 10
         run: |
           python3 -m pytest -q services/openclaw-gateway-adapter
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run pantheon-persona-tools plugin tests
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        working-directory: integrations/openclaw/plugins/pantheon-persona-tools
+        run: |
+          npm ci
+          npm test
 
       - name: Run telemetry service tests
         if: ${{ !cancelled() }}
@@ -826,6 +861,58 @@ jobs:
         run: |
           python3 -m pytest -q services/persona
 
+  # Every tracked test file runs in a required job unless it is listed in
+  # docs/operations/ci-test-inventory.json with a reason and an owner.
+  # test-inventory-guard fails on a test file that is neither run nor listed;
+  # test-sweep runs the files no other job command names (a new test file is in
+  # CI by default). Both are legs of the required "Service suites" check.
+  test-inventory-guard:
+    name: Test inventory guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Guard tests and every test file is run or listed
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest -q scripts/test_ci_test_inventory.py
+          python3 scripts/ci_test_inventory.py check
+
+  test-sweep:
+    name: Test sweep (shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs:
+      - trailers
+      - generated-files
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        timeout-minutes: 10
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt \
+            -r services/control-plane/bff/requirements.txt \
+            -r services/control-plane/feedback/requirements.txt pytest
+      - name: Run sweep shard
+        timeout-minutes: 25
+        run: |
+          python3 scripts/ci_test_inventory.py run-shard --shard ${{ matrix.shard }} --of 12 --jobs 3 --timeout 300
+
   # Aggregator: keeps the required check name "Service suites" stable for
   # branch protection and .orchestrator/config.json required_status_checks.
   service-suites:
@@ -838,6 +925,8 @@ jobs:
       - service-suites-heavy
       - service-suites-runtime
       - service-suites-misc
+      - test-inventory-guard
+      - test-sweep
     steps:
       - name: Require every leg to succeed
         env:
@@ -880,9 +969,13 @@ jobs:
           # moves numpy/scipy forward (pip check is clean, mlflow needs numpy<3).
           "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
             -r services/research/vectorbt/requirements.txt
+          # Regime classifier libraries: same pins as the deployed research
+          # image (services/research/runtime-requirements.txt).
+          "$RUNNER_TEMP/research-venv/bin/python" -m pip install \
+            "statsmodels==0.15.0" "ruptures==1.1.10"
           "$RUNNER_TEMP/research-venv/bin/python" -m pip check
 
       - name: Run research suite
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: |
           "$RUNNER_TEMP/research-venv/bin/python" -m pytest -q services/research

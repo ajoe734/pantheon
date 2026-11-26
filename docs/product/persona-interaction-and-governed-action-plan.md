@@ -234,6 +234,52 @@ Operator actions are `request_review`, `request_research`, `modify`, `validate`,
 `approve`, `reject`, `defer`, and `cancel`. `modify` creates a new proposal
 revision and preserves the original.
 
+### 7.1 Approved recommended measure consumers
+
+The exact-source candidate path freezes a persisted opinion and measure, runs
+the canonical binding validator, and links an independently issued canonical
+formal approval through
+`POST /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link`.
+An approved outcome forwards a request to the existing domain owner before the
+BFF commits the approval linkage and downstream receipt. Rejections and
+revision requests never dispatch a consumer.
+
+| Measure | Existing owner route | Result |
+| --- | --- | --- |
+| `research_request` | Research discovery ticket owner, `POST /api/research/tickets` | open research ticket owned by the recommending Persona |
+| `memory_candidate` | Memory, `POST /api/memory/trade-lessons` | proposed Persona lesson candidate awaiting Memory review |
+| `persona_mutation_review` | Persona, `POST /api/personas/{persona_id}/harness/patches` | draft harness patch awaiting the existing precheck and adoption flow |
+
+Research `proposed_value` contains the research request. Memory `proposed_value`
+must contain exactly `reflection_id`, `trade_episode_ids`, `reflection_version`,
+and `proposed_change`: reflection provenance must already exist in the reviewed
+measure. The bridge does not invent reflection or trade identities. Harness
+`proposed_value` must contain exactly `base_version`, `patch_type`,
+`proposed_change`, and typed `evidence_refs`. Its target is the recommending
+Persona and its immutable `target_version` is the decimal harness base version.
+The server supplies patch id, interaction/session id, expected effect and
+rollback target; it never calls activation.
+
+The BFF transport uses a stable measure key scoped by tenant, private user,
+Persona, interaction, opinion and measure id. Each owner receives a deterministic
+resource id and `Idempotency-Key`. Candidate readback includes
+`downstream_receipts` with the owner path, resource id and request checksum.
+PostgreSQL serializes approval/consumer receipt writes; a lost owner response or
+rolled-back local transaction is recovered by retrying the same approval link.
+The retry first reads the deterministic owner resource and verifies its reviewed
+request bytes. Changed content under the same measure identity fails closed.
+An approved candidate cannot be modified; further changes need a new measure.
+
+An unconfigured, unavailable or rejecting owner leaves the approval unlinked
+with a readable error. Types without a consumer are refused at approval. Legacy
+proposal cards without persisted opinion/measure provenance must first be
+converted through the exact-source candidate path; canonical approval refs alone
+do not make an ownerless card executable. Forwarding retains caller tenant and
+authorization. Harness draft creation may use the already configured Persona
+service credential because that existing owner route requires `persona.admin`.
+These consumers create review artifacts only: they do not merge memory, amend
+policy, change harness versions, or grant runtime or capital authority.
+
 ## 8. Authority And Risk Tiers
 
 | Tier | Examples | Flow |

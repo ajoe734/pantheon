@@ -1340,7 +1340,12 @@ def test_deployment_owner_jwt_key_selection_http_matrix(client, monkeypatch):
 
     # 5. Bad signature fails
     h, p, s = valid_hs.split(".")
-    bad_sig_hs = f"{h}.{p}.{s[:-2]}AA"
+    import base64 as _b64
+
+    _raw = bytearray(_b64.urlsafe_b64decode(s + "=" * (-len(s) % 4)))
+    _raw[0] ^= 0xFF  # guaranteed to change the decoded signature bytes
+    _bad_s = _b64.urlsafe_b64encode(bytes(_raw)).rstrip(b"=").decode("ascii")
+    bad_sig_hs = f"{h}.{p}.{_bad_s}"
     resp_bad_sig = test_client.get(
         "/api/deployment/plans",
         headers={"Authorization": f"Bearer {bad_sig_hs}", "X-Tenant-Id": "tenant-deployment-test"},
@@ -1573,3 +1578,88 @@ def test_retirement_replay_denied_on_plan_tenant_mismatch(client):
     assert denied.status_code in {400, 403, 404}
     dlq = test_client.get("/api/deployment/outbox", params={"status": "dead_lettered"})
     assert [r["event"]["event_id"] for r in dlq.json()] == [event_id]
+
+
+def test_create_plan_rejects_wrong_tenant_stale_and_invalid_inline_risk_policy(client):
+    test_client, _ = client
+    valid_policy = {
+        "risk_policy_id": "rp-plan-paper-01",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 2.0,
+        "net_limit": 2.0,
+        "max_leverage": 2.0,
+    }
+    for idx, (bad_policy, expected_code) in enumerate(
+        [
+            ({}, "risk_policy_invalid"),
+            ({**valid_policy, "gross_limit": -1.0}, "risk_policy_invalid_limit"),
+            ({**valid_policy, "tenant_id": "tenant-foreign"}, "risk_policy_wrong_tenant"),
+            ({**valid_policy, "status": "superseded"}, "risk_policy_stale"),
+        ]
+    ):
+        payload = _plan_payload(
+            plan_id=f"plan-paper-bad-policy-{idx}",
+            current_stage="none",
+            target_stage="paper",
+        )
+        payload["metadata"] = {**payload.get("metadata", {}), "risk_policy": bad_policy}
+        response = test_client.post("/api/deployment/plans", json=payload)
+        assert response.status_code == 422
+        assert expected_code in response.json()["detail"]
+
+
+def test_create_plan_validates_ref_only_risk_policy_for_missing_stale_wrong_tenant_and_valid(
+    client, tmp_path, monkeypatch
+):
+    import json
+
+    test_client, _ = client
+    policy_dir = tmp_path / "deploy_ref_policies"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+    valid_ref_policy = {
+        "risk_policy_id": "rp-plan-ref-valid",
+        "version": "1.0",
+        "status": "active",
+        "allowed_stages": ["paper"],
+        "gross_limit": 1.5,
+        "net_limit": 1.0,
+        "max_leverage": 1.5,
+        "metadata": {"tenant_id": "tenant-deployment-test"},
+    }
+    stale_ref_policy = {**valid_ref_policy, "risk_policy_id": "rp-plan-ref-stale", "status": "stale"}
+    wrong_tenant_ref_policy = {
+        **valid_ref_policy,
+        "risk_policy_id": "rp-plan-ref-wrong-tenant",
+        "metadata": {"tenant_id": "tenant-foreign"},
+    }
+    for pol in (valid_ref_policy, stale_ref_policy, wrong_tenant_ref_policy):
+        (policy_dir / f"{pol['risk_policy_id']}.json").write_text(json.dumps(pol), encoding="utf-8")
+    monkeypatch.setenv("CAPITAL_RISK_POLICY_DIR", str(policy_dir))
+
+    for idx, (ref_name, expected_code) in enumerate(
+        [
+            ("rp-plan-ref-missing", "risk_policy_missing"),
+            ("rp-plan-ref-stale", "risk_policy_stale"),
+            ("rp-plan-ref-wrong-tenant", "risk_policy_wrong_tenant"),
+        ]
+    ):
+        payload = _plan_payload(
+            plan_id=f"plan-paper-bad-ref-{idx}",
+            current_stage="none",
+            target_stage="paper",
+        )
+        payload["metadata"] = {**payload.get("metadata", {}), "risk_policy_ref": ref_name}
+        response = test_client.post("/api/deployment/plans", json=payload)
+        assert response.status_code == 422
+        assert expected_code in response.json()["detail"]
+
+    ok_payload = _plan_payload(
+        plan_id="plan-paper-ok-ref",
+        current_stage="none",
+        target_stage="paper",
+    )
+    ok_payload["metadata"] = {**ok_payload.get("metadata", {}), "risk_policy_ref": "rp-plan-ref-valid"}
+    ok_resp = test_client.post("/api/deployment/plans", json=ok_payload)
+    assert ok_resp.status_code == 201

@@ -477,3 +477,117 @@ def test_paper_signal_producer_rejects_missing_market_context_fail_closed() -> N
     assert exc_info.value.code == "market_input_missing"
     assert "market" in str(exc_info.value)
 
+
+
+from services.source_ingestion.tests.frozen_source_codec import (
+    BEE_REF, NEW70A_REF, CODECS, frozen_source_codec as _frozen_source_codec,
+)
+
+
+@pytest.mark.parametrize("ref", [BEE_REF, NEW70A_REF])
+@pytest.mark.parametrize("corruption", ["truncated", "same_length", "missing"])
+def test_frozen_codec_integrity_before_execution(ref, corruption, monkeypatch):
+    filename = CODECS[ref][0]
+    read_bytes = Path.read_bytes
+
+    def damaged(path):
+        raw = read_bytes(path)
+        if path.name != filename:
+            return raw
+        if corruption == "missing":
+            raise FileNotFoundError(path)
+        if corruption == "truncated":
+            return raw[:-1]
+        return b"!" + raw[1:]
+
+    monkeypatch.setattr(Path, "read_bytes", damaged)
+    with pytest.raises(FileNotFoundError if corruption == "missing" else ValueError):
+        _frozen_source_codec(ref)
+
+
+def test_frozen_codec_requires_full_known_commit():
+    with pytest.raises(ValueError, match="unknown frozen Source codec commit"):
+        _frozen_source_codec(BEE_REF[:7])
+
+
+def _state_envelope(codec, state):
+    return codec._canonical_json({"state": state, "checksum_algorithm": "sha256",
+                                  "checksum": codec._checksum(state)}) + "\n"
+
+
+def test_exact_bee_daily_roundtrip_and_extended_v1_failure_at_4883(tmp_path):
+    from services.source_ingestion import requirement_state as current
+    bee = _frozen_source_codec(BEE_REF)
+    new70a = _frozen_source_codec(NEW70A_REF)
+    samples = current.market_snapshot_writer_samples()
+    import types
+    # The shared witness recipe drives the exact historical writer entrypoints
+    # too; it is test data construction, not an alternate serializer.
+    historical_samples = types.FunctionType(current.market_snapshot_writer_samples.__code__, new70a.__dict__)()
+    assert historical_samples == samples
+    ordinary = samples["official_daily"]
+    # New writer -> exact old reader -> old serializer -> new reader. Every
+    # envelope/lineage/snapshot/PIT/receipt field, not merely closes, survives.
+    old_snapshot = next(iter(bee._market_snapshots_from_lines([ordinary], path=Path("journal")).values()))
+    rewritten = _state_envelope(bee, old_snapshot.to_dict())
+    assert rewritten == ordinary
+    assert next(iter(current._market_snapshots_from_lines([rewritten], path=Path("journal")).values())).to_dict() == old_snapshot.to_dict()
+    for name, raw in samples.items():
+        old_new = new70a._market_snapshots_from_lines(raw.splitlines(), path=Path("journal"))
+        head = current._market_snapshots_from_lines(raw.splitlines(), path=Path("journal"))
+        assert [s.to_dict() for s in head.values()] == [s.to_dict() for s in old_new.values()]
+        for line in raw.splitlines():
+            state = json.loads(line)["state"]
+            if state.get("withdrawn") is not True:
+                state = new70a.LatestMarketSnapshot.from_dict(state).to_dict()
+            assert _state_envelope(new70a, state) == line + "\n"
+            current._market_snapshots_from_lines([_state_envelope(new70a, state)], path=Path("journal"))
+        if name != "official_daily":
+            with pytest.raises(bee.MarketSnapshotStateError):
+                bee._market_snapshots_from_lines(raw.splitlines(), path=Path("journal"))
+    path = tmp_path / "latest_market_snapshots.jsonl"
+    # Structural reproduction of the sanitized metadata; no real market rows.
+    path.write_text(ordinary * 4882 + samples["collector_close"], encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(bee.MarketSnapshotStateError, match=r":4883: market snapshot point schema is invalid"):
+        bee.LatestMarketSnapshotStore(path)
+    current.LatestMarketSnapshotStore(path)
+    new70a.LatestMarketSnapshotStore(path)
+    assert path.read_bytes() == before
+    collector = json.loads(samples["collector_close"])["state"]
+    assert collector["schema_version"] == "source_ingest_latest_market_snapshot.v1"
+    assert "collector_close" in collector["points"][0]
+    assert collector["lineage"]["ingest_run_ids"] == ["fixture-provisional"]
+    for name in samples:
+        if name.endswith("_withdrawal"):
+            tombstone = json.loads(samples[name].splitlines()[-1])["state"]
+            assert tombstone["withdrawn"] is True
+            assert current._market_snapshots_from_lines(samples[name].splitlines(), path=Path("journal")) == {}
+    reconciliation = json.loads(samples["close_reconciliation"].splitlines()[-1])["state"]
+    assert reconciliation["close_reconciliation"][0]["kept"] == "official"
+    assert "collector_close" not in reconciliation["points"][0]
+
+
+@pytest.mark.parametrize("mutation,match", [
+    ("checksum", "checksum mismatch"), ("lineage", "lineage does not match"),
+    ("snapshot_id", "id does not match"), ("unknown", "schema is invalid"),
+    ("null_collector", "collector close lineage schema"),
+    ("false_official", "collector close lineage schema"),
+    ("stripped_collector", "lineage does not match"),
+])
+def test_protocol_witnesses_fail_closed_without_laundering_collector(mutation, match):
+    from services.source_ingestion import requirement_state as codec
+    envelope = json.loads(codec.market_snapshot_writer_samples()["collector_close"])
+    state = envelope["state"]
+    if mutation == "checksum":
+        envelope["checksum"] = "0" * 64
+    else:
+        if mutation == "lineage": state["lineage"]["content_refs"] = ["forged"]
+        elif mutation == "snapshot_id": state["snapshot_id"] = "mss-forged"
+        elif mutation == "unknown": state["unknown"] = True
+        elif mutation == "null_collector": state["points"][0]["collector_close"] = None
+        elif mutation == "false_official": state["points"][0]["collector_close"]["official"] = True
+        elif mutation == "stripped_collector": del state["points"][0]["collector_close"]
+        envelope["checksum"] = codec._checksum(state)
+    with pytest.raises(codec.MarketSnapshotStateError, match=match):
+        codec._market_snapshots_from_lines([json.dumps(envelope)], path=Path("journal"))

@@ -43,6 +43,94 @@ class DictRecord(dict):
         return dict(self)
 
 
+class AgoraEvidenceStore:
+    """Agora human-evidence owner over the single durable dataset inbox.
+
+    Admission and downstream publication share the existing inbox transaction;
+    there is no second notes table/outbox write that can be lost on a crash.
+    """
+
+    def __init__(self, dataset_store: Any) -> None:
+        self.inbox = dataset_store
+
+    def admit(self, evidence: Any, **scope: Any) -> Any:
+        from services.control_plane.bff.agora.dataset_extraction.extractor import admit_evidence
+        return admit_evidence(evidence, store=self.inbox, **scope)
+
+    def get(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Any:
+        return self.inbox.get_inbox_entry(evidence_id, tenant_id=tenant_id, user_id=user_id)
+
+    def list_persona(self, *, tenant_id: str, user_id: str, persona_id: str) -> List[Dict[str, Any]]:
+        # Keep pending/failed evidence visible to Observe independently of L5.
+        return [
+            item
+            for status in ("pending", "processing", "processed", "failed")
+            for item in self.inbox._list_inbox(tenant_id=tenant_id, user_id=user_id, status=status)
+            if item["persona_id"] == persona_id
+        ]
+
+    def cycle_references(self, *, tenant_id: str, persona_id: str, since: Any = None,
+                         after_id: str = "") -> List[Dict[str, Any]]:
+        """Purpose-bound worker read of consented teaching references only.
+
+        The Persona owner supplies canonical tenant/persona identity. Private
+        content and user identities never leave this owner through this port;
+        human-facing reads retain their tenant+user predicate. This is the
+        same learning consent used by the existing extraction consumer.
+        """
+        from datetime import datetime, timedelta, timezone
+        if not tenant_id or not persona_id:
+            raise ValueError("canonical persona scope is required")
+        now = datetime.now(timezone.utc)
+        if self.inbox.backend == "memory":
+            with self.inbox._lock:
+                rows = [dict(r) for r in self.inbox._inbox.values()
+                        if r["tenant_id"] == tenant_id and r["persona_id"] == persona_id
+                        and "agora_human_evidence" in r.get("content", {})]
+        else:
+            with self.inbox._connect() as conn:
+                found = conn.execute(
+                    f"SELECT evidence_id, created_at, consent_granted, learning_eligible, purpose, retention_days "
+                    f"FROM {self.inbox._inbox_table} WHERE tenant_id = %s AND persona_id = %s "
+                    "AND content ? 'agora_human_evidence' AND consent_granted = true "
+                    "AND learning_eligible = true AND purpose = 'policy_learning' "
+                    "AND (created_at, evidence_id) > (%s, %s) AND "
+                    "created_at::timestamptz + retention_days * interval '1 day' > %s "
+                    "ORDER BY created_at, evidence_id LIMIT 101",
+                    (tenant_id, persona_id, since or datetime.min.replace(tzinfo=timezone.utc), after_id, now),
+                ).fetchall()
+            rows = [dict(zip(("evidence_id", "created_at", "consent_granted", "learning_eligible", "purpose", "retention_days"), r))
+                    for r in found]
+        refs = []
+        for row in rows:
+            created = datetime.fromisoformat(str(row["created_at"]).replace("Z", "+00:00"))
+            if (row.get("consent_granted") and row.get("learning_eligible")
+                    and row.get("purpose") == "policy_learning"
+                    and created + timedelta(days=row["retention_days"]) > now
+                    and (since is None or (created, row["evidence_id"]) > (since, after_id))):
+                refs.append({"evidence_id": row["evidence_id"], "created_at": created.isoformat()})
+        return sorted(refs, key=lambda r: (r["created_at"], r["evidence_id"]))[:101]
+
+    def pending_scopes(self, limit: int = 25) -> List[Any]:
+        """Discover bounded durable work after restart, including expired leases."""
+        if self.inbox.backend == "memory":
+            with self.inbox._lock:
+                return list(dict.fromkeys(
+                    (item["tenant_id"], item["user_id"])
+                    for item in self.inbox._inbox.values()
+                    if item["status"] in {"pending", "processing"}
+                ))[:limit]
+        with self.inbox._connect() as conn:
+            rows = conn.execute(
+                f"SELECT tenant_id, user_id FROM {self.inbox._inbox_table} "
+                "WHERE status = 'pending' OR (status = 'processing' AND "
+                "(lease_expires_at IS NULL OR lease_expires_at <= now())) "
+                "GROUP BY tenant_id, user_id ORDER BY min(created_at) LIMIT %s",
+                (limit,),
+            ).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+
 class AgoraStore:
     """
     Concrete persistent store for Agora write operations.
@@ -114,6 +202,9 @@ class AgoraStore:
         )
         self._interactions = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.interactions", owner_service="agora-svc", bootstrap=bootstrap
+        )
+        self._decision_locks = PostgresJsonOwnerStore(
+            dsn=self.dsn, table=f"{self.schema}.decision_locks", owner_service="agora-svc", bootstrap=bootstrap
         )
 
     # -------------------------------------------------------------------------
@@ -926,6 +1017,32 @@ class AgoraStore:
     def get_interaction(self, interaction_id: str) -> Optional[DictRecord]:
         data = self._interactions.get(interaction_id)
         return DictRecord(data) if data else None
+
+    # -------------------------------------------------------------------------
+    # Shadow-mode decision locks (immutable; insert-only, no update/delete path)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def decision_lock_id(tenant_id: str, decision_event_id: str) -> str:
+        digest = hashlib.sha256(f"{tenant_id}\x1f{decision_event_id}".encode("utf-8")).hexdigest()
+        return f"hdl-{digest[:32]}"
+
+    def create_decision_lock(self, lock: Dict[str, Any]) -> DictRecord:
+        """Insert one lock; a second write for the same decision is rejected."""
+        from .shadow_mode import DecisionLockExistsError
+
+        inserted, existing = self._decision_locks.insert_if_absent(
+            str(lock["human_decision_id"]), dict(lock)
+        )
+        if not inserted:
+            raise DecisionLockExistsError(str(lock.get("decision_event_id")))
+        return DictRecord(existing)
+
+    def get_decision_lock(self, human_decision_id: str) -> Optional[DictRecord]:
+        data = self._decision_locks.get(human_decision_id)
+        return DictRecord(data) if data else None
+
+    def list_decision_locks(self) -> List[DictRecord]:
+        return [DictRecord(row) for row in self._decision_locks.list_all()]
 
 
 def build_agora_store(

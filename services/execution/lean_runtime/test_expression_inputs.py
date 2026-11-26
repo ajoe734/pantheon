@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import os
 import unittest
 import urllib.error
-from typing import Any
+from typing import Any, Mapping
+from unittest.mock import patch
 
-from services.capital.risk_policy import RiskPolicy
+from services.capital.risk_policy import (
+    RiskPolicy,
+    capital_pool_approval_digest,
+    resolve_pool_risk_policy_binding,
+    risk_policy_digest,
+)
 from services.execution.lean_runtime.expression_inputs import (
     CapitalPoolReadError,
     CapitalPoolReader,
@@ -65,17 +73,108 @@ POLICY = {
 }
 
 
+def _ensure_default_pool_owner_transport(pool_snapshot: Mapping[str, Any]) -> None:
+    from services.capital import risk_policy as _rp_mod
+    from services.governance.test_approval_authority import SnapshotApprovalReader
+
+    current_http = getattr(_rp_mod, "_capital_owner_http_get_json", None)
+    if callable(current_http) and not getattr(current_http, "_pool_1_fixture_wrapped", False):
+        base_http = current_http
+
+        def _wrapped_owner_http(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+            if url.rstrip("/") in {
+                "http://capital/api/capital-pools/pool-1/approvals/apv-pool-1",
+                "http://capital:8092/api/capital-pools/pool-1/approvals/apv-pool-1",
+            }:
+                return _approval_evidence_json(pool_snapshot, decision_id="apv-pool-1")
+            return base_http(url, headers, timeout)
+
+        setattr(_wrapped_owner_http, "_pool_1_fixture_wrapped", True)
+        setattr(_rp_mod, "_capital_owner_http_get_json", _wrapped_owner_http)
+
+    if not getattr(getattr(_rp_mod, "configured_approval_reader", None), "_pool_1_fixture_reader", False):
+
+        def _fixture_approval_reader(_domain: str = "capital", **_kwargs: Any) -> Any:
+            return SnapshotApprovalReader(_approval_evidence_json(pool_snapshot, decision_id="apv-pool-1"))
+
+        setattr(_fixture_approval_reader, "_pool_1_fixture_reader", True)
+        setattr(_rp_mod, "configured_approval_reader", _fixture_approval_reader)
+
+
 def _pool(**overrides: Any) -> dict[str, Any]:
-    pool = {
+    pool: dict[str, Any] = {
         "pool_id": "pool-1",
+        "tenant_id": "default",
+        "owner_id": "default",
+        "owner_type": "org",
         "status": "active",
         "currency": "TWD",
         "budget": 100000.0,
         "single_runtime_enforced": True,
-        "metadata": {"risk_policy": dict(POLICY)},
+        "metadata": {
+            "risk_policy": dict(POLICY),
+            "requested_risk_profile": "low",
+            "require_approved_profile_mapping": True,
+            "profile_mapping_approval_id": "apv-pool-1",
+        },
     }
     pool.update(overrides)
-    return pool
+    if "approval_digest" not in pool and isinstance(pool.get("metadata"), Mapping):
+        pool["approval_digest"] = capital_pool_approval_digest(pool)
+    snapshot = json.loads(json.dumps(pool))
+    meta = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), Mapping) else {}
+    if snapshot.get("pool_id") == "pool-1" and meta.get("profile_mapping_approval_id") == "apv-pool-1":
+        _ensure_default_pool_owner_transport(snapshot)
+    return snapshot
+
+
+def _approval_evidence_json(
+    pool: Mapping[str, Any] | None = None,
+    *,
+    decision_id: str | None = None,
+) -> dict[str, Any]:
+    from services.governance.test_approval_authority import approval_snapshot
+
+    target_pool = dict(pool or _pool())
+    meta = dict(target_pool.get("metadata") or {})
+    policy = dict(meta.get("risk_policy") or POLICY)
+    pool_id = str(target_pool.get("pool_id") or "pool-1")
+    tenant_id = str(target_pool.get("tenant_id") or "default")
+    resolved_decision_id = str(
+        decision_id
+        or meta.get("profile_mapping_approval_id")
+        or f"apv-capital-pool-{pool_id}"
+    )
+    target_version = str(
+        target_pool.get("approval_digest")
+        or capital_pool_approval_digest(target_pool)
+    )
+    return json.loads(
+        json.dumps(
+            approval_snapshot(
+                decision_id=resolved_decision_id,
+                tenant_id=tenant_id,
+                owner_user_id="proposer-1",
+                target_type="capital_pool_activation",
+                target_id=pool_id,
+                target_version=target_version,
+                metadata={
+                    "subject": {
+                        "pool_id": pool_id,
+                        "risk_direction": "increase",
+                        "risk_policy_id": str(policy.get("risk_policy_id") or "rp-pool-1"),
+                        "risk_policy_version": str(policy.get("version") or "1.0"),
+                        "risk_policy_digest": risk_policy_digest(policy),
+                        "requested_risk": str(meta.get("requested_risk_profile") or "low"),
+                    },
+                    "approvals": [
+                        {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                        {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                    ],
+                },
+            )
+        )
+    )
 
 
 def _summary(**overrides: Any) -> dict[str, Any]:
@@ -245,6 +344,32 @@ class BuildExpressionInputsTests(unittest.TestCase):
 
 
 class ProviderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from services.capital import risk_policy as _rp_mod
+
+        super().setUp()
+        env_patcher = patch.dict(
+            os.environ,
+            {
+                "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
+                "DEPLOYMENT_CAPITAL_SERVICE_TOKEN": "capital-token",
+                "PANTHEON_TENANT_ID": "default",
+            },
+            clear=False,
+        )
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+        def fetch_owner_approval(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+            self.assertEqual(headers["Authorization"], "Bearer capital-token")
+            self.assertEqual(headers["X-Pantheon-Service"], "runtime-manager")
+            self.assertTrue(url.endswith("/api/capital-pools/pool-1/approvals/apv-pool-1"))
+            return _approval_evidence_json()
+
+        http_patcher = patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval)
+        http_patcher.start()
+        self.addCleanup(http_patcher.stop)
+
     def test_provider_reads_the_pool_policy_through_the_governed_resolver(self) -> None:
         pools: list[str] = []
 
@@ -405,6 +530,304 @@ class ProducerComposeEnvironmentTest(unittest.TestCase):
 
     def test_reconciler_environment_resolves_the_same_principal(self) -> None:
         self.assertTrue(self._provider("paper-fleet-reconciler", True).capital_reader_configured)
+
+    def test_composed_producer_and_reconciler_environments_resolve_json_pool_and_owner_approval_without_callable_metadata(
+        self,
+    ) -> None:
+        import tempfile
+        from pathlib import Path
+        from services.capital import risk_policy as _rp_mod
+        from services.execution.lean_runtime import expression_inputs as _ei_mod
+
+        for service in ("paper-signal-producer", "paper-fleet-reconciler"):
+            with self.subTest(service=service), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
+                path.write_text("issued-capital-reader-token", encoding="utf-8")
+                path.chmod(0o600)
+                env = _compose_environment(service, str(path))
+                env["PANTHEON_PAPER_EXPRESSION_LAYER"] = "on"
+                self.assertEqual([k for k in env if "GOVERNANCE" in k], [])
+
+                tenant_id = "tenant-dev"
+                pool_json = _pool(
+                    pool_id="pool-review",
+                    tenant_id=tenant_id,
+                    owner_id=tenant_id,
+                    metadata={
+                        "risk_policy": dict(POLICY, risk_policy_id="rp-pool-review"),
+                        "requested_risk_profile": "low",
+                        "require_approved_profile_mapping": True,
+                        "profile_mapping_approval_id": "apv-review",
+                    },
+                )
+                self.assertNotIn("approval_reader", pool_json["metadata"])
+                approval_json = _approval_evidence_json(pool_json, decision_id="apv-review")
+                seen_approval_urls: list[str] = []
+
+                def fetch_capital_or_summary(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+                    if "/api/capital-pools/" in url:
+                        self.assertEqual(headers["Authorization"], "Bearer issued-capital-reader-token")
+                        return pool_json
+                    if "/api/telemetry/runtime-summaries/" in url:
+                        return _summary(runtime_id="rt-review")
+                    raise AssertionError(url)
+
+                def fetch_owner_approval(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+                    seen_approval_urls.append(url)
+                    self.assertEqual(headers["Authorization"], "Bearer issued-capital-reader-token")
+                    self.assertEqual(headers["X-Pantheon-Service"], "runtime-manager")
+                    self.assertEqual(headers["X-Tenant-Id"], tenant_id)
+                    if url.endswith("/api/capital-pools/pool-review/approvals/apv-review"):
+                        return approval_json
+                    raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+
+                with patch.dict(os.environ, env, clear=True), patch.object(
+                    _ei_mod, "_http_get_json", fetch_capital_or_summary
+                ), patch.object(_rp_mod, "_capital_owner_http_get_json", fetch_owner_approval):
+                    res = resolve_pool_risk_policy_binding(pool=pool_json)
+                    self.assertTrue(res.resolved, res.reason)
+                    self.assertEqual(res.profile_mapping_status, "approved_profile_mapping")
+                    self.assertEqual(res.profile_mapping_approval_id, "apv-review")
+
+                    provider = _ei_mod.build_production_expression_inputs(env)
+                    inputs = provider({"capital_pool_id": "pool-review", "runtime_id": "rt-review"})
+                    self.assertEqual(inputs["risk_budget"]["gross_limit"], 200000.0)
+                    self.assertTrue(
+                        seen_approval_urls
+                        and all(
+                            u == "http://capital:8092/api/capital-pools/pool-review/approvals/apv-review"
+                            for u in seen_approval_urls
+                        )
+                    )
+
+                def deny_owner_approval(url: str, headers: Mapping[str, str], timeout: float) -> Any:
+                    raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+
+                with patch.dict(os.environ, env, clear=True), patch.object(
+                    _ei_mod, "_http_get_json", fetch_capital_or_summary
+                ), patch.object(_rp_mod, "_capital_owner_http_get_json", deny_owner_approval):
+                    denied = resolve_pool_risk_policy_binding(pool=pool_json)
+                    self.assertFalse(denied.resolved)
+                    self.assertEqual(denied.reason_code, "risk_policy_profile_mapping_unapproved")
+                    provider_denied = _ei_mod.build_production_expression_inputs(env)
+                    with self.assertRaises(ExpressionInputsUnavailable) as caught:
+                        provider_denied({"capital_pool_id": "pool-review", "runtime_id": "rt-review"})
+                    self.assertEqual(caught.exception.missing, "risk_policy")
+                    self.assertIn("risk_policy_profile_mapping_unapproved", caught.exception.detail)
+
+    def test_build_expression_inputs_surfaces_policy_identity_net_single_name_reserve_and_reservations(self) -> None:
+        policy = RiskPolicy.from_mapping(
+            {
+                **POLICY,
+                "version": "1.2",
+                "gross_limit": 1.8,
+                "net_limit": 1.2,
+                "max_leverage": 1.5,
+                "max_single_name_weight": 0.30,
+                "min_cash_reserve_pct": 0.10,
+            }
+        )
+        summary = _summary(
+            ledger_fill_count=1,
+            executed_trade_count=1,
+            ledger_cash=80000.0,
+            positions=[
+                {
+                    "symbol": "2317.TWSE",
+                    "quantity": 100.0,
+                    "average_price": 200.0,
+                    "mark_price": 200.0,
+                    "market_value": 20000.0,
+                    "currency": "TWD",
+                }
+            ],
+            order_reservations=[
+                {
+                    "reservation_id": "res-competing-1",
+                    "symbol": "2330.TW",
+                    "side": "buy",
+                    "kind": "cash_share",
+                    "quantity": 10,
+                    "price": 1000.0,
+                    "notional": 10000.0,
+                    "cash_reserved": 10014.25,
+                }
+            ],
+        )
+        inputs = build_expression_inputs(pool=_pool(budget=100000.0), policy=policy, summary=summary)
+        budget = inputs["risk_budget"]
+        self.assertEqual(budget["risk_policy_id"], "rp-pool-1")
+        self.assertEqual(budget["risk_policy_version"], "1.2")
+        self.assertEqual(budget["risk_policy_digest"], risk_policy_digest(policy))
+        self.assertEqual(budget["equity"], 100000.0)
+        self.assertEqual(budget["raw_cash"], 80000.0)
+        self.assertEqual(budget["cash_reserved"], 10014.25)
+        self.assertEqual(budget["cash_reserve_required"], 10000.0)
+        self.assertEqual(budget["available_cash"], 59985.75)
+        self.assertEqual(budget["available_buying_power"], 59985.75)
+        self.assertEqual(budget["gross_limit"], 180000.0)
+        self.assertEqual(budget["gross_used"], 30000.0)
+        self.assertEqual(budget["net_limit"], 120000.0)
+        self.assertEqual(budget["net_used"], 30000.0)
+        self.assertEqual(budget["signed_net_used"], 30000.0)
+        self.assertEqual(budget["max_leverage"], 1.5)
+        self.assertEqual(budget["max_single_name_weight"], 0.30)
+        self.assertEqual(budget["max_single_name_notional"], 30000.0)
+        self.assertEqual(budget["underlying_exposures"], {"2317": 20000.0, "2330": 10000.0})
+        self.assertEqual(len(budget["order_reservations"]), 1)
+        self.assertEqual(set(inputs["persona_book"].keys()), {"positions", "gross_notional"})
+
+    def test_low_profile_bounds_reduce_the_2317_452_share_request_and_name_the_limit(self) -> None:
+        """Risk-officer drafted `low` policy (single name 20% / cash reserve 10% of NAV) governs sizing.
+
+        100,000 TWD, 2317 @ 221 with Taiwan fees: the old inline v1.0 sized 451-452 shares (~100% of NAV);
+        the drafted limits reach sizing through build_expression_inputs -> evaluate_pre_trade_sizing.
+        """
+        from services.execution.lean_runtime import expression_policy as ep
+        from services.execution.lean_runtime.test_expression_policy import (
+            PARAMS as EP_PARAMS, TJ_2317_CANDIDATES, TJ_2317_VIEW,
+        )
+
+        policy = RiskPolicy.from_mapping({
+            **POLICY, "risk_policy_id": "rp-pool-low", "version": "2.0",
+            "max_single_name_weight": 0.20, "min_cash_reserve_pct": 0.10,
+        })
+        inputs = build_expression_inputs(pool=_pool(budget=100000.0), policy=policy, summary=_summary())
+        budget = inputs["risk_budget"]
+        self.assertEqual(budget["max_single_name_notional"], 20000.0)
+        self.assertEqual(budget["cash_reserve_required"], 10000.0)
+        sizing = ep.evaluate_pre_trade_sizing(
+            TJ_2317_VIEW, TJ_2317_CANDIDATES, {"positions": [], "gross_notional": 0.0}, budget, EP_PARAMS
+        )
+        self.assertEqual(sizing["permitted_units"], 90)
+        self.assertLess(sizing["permitted_units"], 452)
+        self.assertEqual(sizing["binding_limit"], "max_single_name_weight")
+        self.assertLessEqual(sizing["order_notional"], 0.20 * 100000.0)
+        self.assertGreaterEqual(sizing["remaining_cash"], 0.10 * 100000.0)
+        self.assertLessEqual(sizing["after_trade_concentration_of_initial_capital"], 0.20)
+
+    def test_blueprint_limits_sector_turnover_and_liquidity_facts_surface_in_risk_budget(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from services.execution.lean_runtime.instrument_candidates import clear_market_fact_cache
+
+        clear_market_fact_cache()
+        policy = RiskPolicy.from_mapping(
+            {
+                **POLICY,
+                "risk_policy_id": "rp-pool-blueprint",
+                "version": "2.0",
+                "max_single_name_weight": 0.20,
+                "min_cash_reserve_pct": 0.10,
+                "max_sector_exposure": {"24": 0.30, "*": 0.25},
+                "turnover_limit": 1.2,
+                "liquidity_constraints": {
+                    "min_avg_daily_volume": 300_000.0,
+                    "max_order_pct_adv": 0.05,
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ind_dir = root / "normalized" / "tw_industry_classification" / "date=2026-11-24"
+            ind_dir.mkdir(parents=True)
+            with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+                for sym, code in (("2330", "24"), ("2303", "24"), ("2317", "25")):
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_official_industry_classification",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": sym,
+                                        "industry_code": int(code),
+                                        "industry_code_raw": code,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+            price_dir = root / "normalized" / "tw_price_daily" / "date=2026-11-24"
+            price_dir.mkdir(parents=True)
+            with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+                for day_idx in range(1, 21):
+                    d_str = f"2026-11-{day_idx:02d}"
+                    handle.write(
+                        json.dumps(
+                            {
+                                "source_id": "tw_price_daily",
+                                "metadata": {
+                                    "normalized_row": {
+                                        "symbol": "2330",
+                                        "trade_date": d_str,
+                                        "close": 1000.0,
+                                        "volume": 500_000.0,
+                                    }
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+            summary = _summary(
+                ledger_fill_count=1,
+                executed_trade_count=1,
+                ledger_cash=80_000.0,
+                positions=[
+                    {
+                        "symbol": "2330.TW",
+                        "quantity": 20.0,
+                        "average_price": 1000.0,
+                        "mark_price": 1000.0,
+                        "market_value": 20_000.0,
+                        "currency": "TWD",
+                    }
+                ],
+                fills=[
+                    {
+                        "symbol": "2330.TW",
+                        "quantity": 20.0,
+                        "fill_price": 1000.0,
+                        "trade_date": "2026-11-24",
+                    }
+                ],
+            )
+            inputs = build_expression_inputs(
+                pool=_pool(budget=100_000.0),
+                policy=policy,
+                summary=summary,
+                normalized_root=root,
+                as_of_trading_day="2026-11-24",
+            )
+            budget = inputs["risk_budget"]
+            self.assertEqual(budget["max_sector_exposure"], {"24": 0.30, "*": 0.25})
+            self.assertEqual(budget["sector_by_underlying"]["2330"], "24")
+            self.assertEqual(budget["sector_exposures"], {"24": 0.20})
+            self.assertEqual(budget["missing_sector_underlyings"], [])
+            self.assertEqual(budget["turnover_limit"], 1.2)
+            self.assertEqual(budget["turnover_limit_notional"], 120_000.0)
+            self.assertEqual(budget["turnover_used_notional"], 20_000.0)
+            self.assertEqual(budget["turnover_used"], 0.20)
+            self.assertFalse(budget["turnover_unavailable"])
+            self.assertEqual(budget["avg_daily_volume_by_underlying"]["2330"], 500_000.0)
+            self.assertEqual(set(inputs["persona_book"].keys()), {"positions", "gross_notional"})
+
+            # When fills exist on the ledger without turnover history, turnover_unavailable is flagged.
+            summary_no_turnover = _summary(
+                ledger_fill_count=2,
+                executed_trade_count=2,
+                ledger_cash=80_000.0,
+                positions=summary["positions"],
+            )
+            inputs_no_turnover = build_expression_inputs(
+                pool=_pool(budget=100_000.0),
+                policy=policy,
+                summary=summary_no_turnover,
+                normalized_root=root,
+                as_of_trading_day="2026-11-24",
+            )
+            self.assertIsNone(inputs_no_turnover["risk_budget"]["turnover_used"])
+            self.assertTrue(inputs_no_turnover["risk_budget"]["turnover_unavailable"])
 
 
 if __name__ == "__main__":

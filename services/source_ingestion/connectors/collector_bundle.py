@@ -19,6 +19,8 @@ Fail-closed rules:
 * any hash / source id / schema mismatch rejects the whole pull; nothing is
   returned and nothing is written (raw copy happens only after every bundle
   verified and every record passed the external source contract);
+* verified daily-price bundles with typed session-time failures are quarantined
+  during the ordered sweep; no rows from that bundle are admitted;
 * every record is research-only, ``redistribution_allowed = false``.
 """
 
@@ -28,15 +30,22 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
+import time
 import urllib.request
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar, copy_context
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from threading import RLock
+from typing import Any, Callable, Collection, Iterable, Mapping, Sequence
 
-from services.external_egress import open_external_url
+from services.external_egress import GuardedKeepAliveClient, open_external_url
 
 from ..external_sources import validate_external_source_record
 from .base import (
@@ -51,7 +60,7 @@ from .base import (
     SourceRecord,
     SourceType,
 )
-from .bounded_reader import read_bounded_response
+from .bounded_reader import PayloadTooLarge, read_bounded_response
 
 COLLECTOR_BUNDLE_ADAPTER_TOKEN = "CollectorBundleAdapter.records_from_bundle"
 COLLECTOR_BUNDLE_TOKEN_ENV = "PANTHEON_COLLECTOR_BUNDLE_TOKEN"
@@ -62,10 +71,167 @@ COLLECTOR_HOST_PLACEHOLDER = "collector.pantheon-collector.invalid"
 SUPPORTED_BUNDLE_SCHEMA_VERSIONS = frozenset({"collector_bundle.v1"})
 BUNDLE_STATUSES = frozenset({"complete", "partial", "paused"})
 CURSOR_LAG_DEGRADED_DAYS = 7
-MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_JSON_BYTES = 8 * 1024 * 1024  # index.json, status.json: one small object per bundle / source
+# A bundle carries one whole market day, so manifest.json and items.jsonl scale with the number of
+# listed securities of a venue, not with a fixed 8 MiB. The bound is derived, not a large guess:
+#   rows:   a venue day is up to about 14000 rows today (hosted TPEx 2026-11-17: 13870 rows, warrants
+#           included); the bound allows twice that, WHOLE_MARKET_DAY_MAX_ROWS = 28000.
+#   items:  measured 16175460 bytes / 13870 rows = 1166 bytes per row (hosted); ceiling 2048 per row.
+#   manifest: about 330 bytes per item entry (generated hosted shape; hosted size not measured);
+#           ceiling 512 per entry.
+# A file above its bound still fails closed with a message naming the file, its size and the bound.
+WHOLE_MARKET_DAY_MAX_ROWS = 28000
+ITEMS_JSONL_ROW_BYTES_CEILING = 2048
+MANIFEST_ITEM_BYTES_CEILING = 512
+MAX_ITEMS_JSONL_BYTES = WHOLE_MARKET_DAY_MAX_ROWS * ITEMS_JSONL_ROW_BYTES_CEILING  # 57,344,000
+MAX_MANIFEST_BYTES = WHOLE_MARKET_DAY_MAX_ROWS * MANIFEST_ITEM_BYTES_CEILING  # 14,336,000
 MAX_RAW_BYTES = 32 * 1024 * 1024
 COLLECTOR_SOURCE_TYPES = frozenset({"social", "news", "paper", "macro", "filing", "market"})
 COLLECTOR_BUNDLE_ROOT_ENV = "PANTHEON_COLLECTOR_BUNDLE_ROOT"
+
+
+class MarketTimeEvidenceError(SourceEvidenceError):
+    """A verified price bundle cannot represent a completed Taiwan session."""
+
+    def __init__(self, reason: str, item_id: str, detail: str) -> None:
+        self.reason = reason
+        self.item_id = item_id
+        super().__init__(f"{reason}: collector item {item_id} {detail}")
+
+# Configured ingestion owns persistence; tuple adapter callers retain their
+# existing eager acknowledgement contract. ContextVar isolates concurrent pulls.
+_DEFER_ACK = ContextVar("collector_defer_ack", default=False)
+# Whole-operation monotonic deadline for one pull(): priority, ordered sweep, metadata and
+# every transport read share it, so one request can never run past the controller boundary.
+COLLECTOR_REQUEST_READ_BUDGET_SECONDS = 15.0
+# Market raw reads overlap. Metadata and bundle/cursor traversal remain
+# ordered; newest closes use four readers, historical sweeps at most sixteen, with no queue
+# beyond that batch and no reader surviving the pull.
+LATEST_CLOSE_RAW_READ_CONCURRENCY = 4
+# Configured delivery also pays per-item evidence and snapshot persistence after reads.
+# Bound that work even when the Collector transport is fast; the remainder continues.
+LATEST_CLOSE_PERSISTED_ROWS_PER_PULL = 256
+HISTORY_RAW_READ_CONCURRENCY = 16
+# Upper bound on kept-alive connections (= in-flight raw reads) to the collector host within
+# one raw verification window; connections close when the window ends. Equal to the existing
+# history width on purpose: a narrower cap would cut hosted TPEx history from 16 to 8 rows per
+# pull (the 15 s budget is already spent before the raw window; one group of 16 is read).
+# Keep-alive alone removes the per-read handshake; width is unchanged.
+COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL = HISTORY_RAW_READ_CONCURRENCY
+_OP_DEADLINE: ContextVar[float | None] = ContextVar("collector_op_deadline", default=None)
+_KEEPALIVE_CLIENT: ContextVar[GuardedKeepAliveClient | None] = ContextVar("collector_keepalive", default=None)
+# Process-local, shared across the short-lived adapters built by configured pulls.
+# No serialized trust marker survives a restart. Bounds apply to both population
+# and encoded metadata size; raw bodies are never cached here.
+VERIFIED_METADATA_CACHE_ENTRIES = 16
+# Counted in collector file bytes (manifest.json + items.jsonl as read). One bundle at the
+# whole-market-day bound must be cacheable, otherwise every continuation tick re-reads the day.
+# Measured resident cost of a parsed day is about 2.6x its file bytes.
+VERIFIED_METADATA_CACHE_BYTES = MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES
+_METADATA_CACHE_LOCK = RLock()
+# In-memory only (nothing persisted, nothing survives a restart): bounded by count.
+# Trade date and verified item hashes proven for one exact index entry: lets the priority path
+# skip re-verifying earlier sessions and equivalent/already-delivered candidates even when the
+# full parsed workset exceeds VERIFIED_METADATA_CACHE_BYTES.
+PRIORITY_TRADE_DATE_MEMO_ENTRIES = 512
+_PRIORITY_TRADE_DATE_MEMO: OrderedDict[tuple, Any] = OrderedDict()
+# Per connector scope: the latest session was fully delivered for exactly this candidate index
+# fingerprint and persisted state; an identical index lets the next pull skip every verification.
+PRIORITY_DELIVERED_MEMO_ENTRIES = 64
+# Per scope: (date, run_id) of the bundle the ordered history sweep is reading; the priority
+# path's superseded-session eviction must not drop it. One entry per scope, bounded by scopes.
+_HISTORY_READING: dict[tuple, set[tuple[str, str]]] = {}
+_PRIORITY_DELIVERED_MEMO: OrderedDict[tuple, tuple[str, str, str, tuple[str, ...], str]] = OrderedDict()
+
+
+class _MetadataCacheDict(OrderedDict):
+    def clear(self) -> None:
+        super().clear()
+        _PRIORITY_TRADE_DATE_MEMO.clear()
+        _PRIORITY_DELIVERED_MEMO.clear()
+        _HISTORY_READING.clear()
+
+
+_METADATA_CACHE: OrderedDict[tuple, tuple[Any, VerifiedBundle, int]] = _MetadataCacheDict()
+
+
+class _DeadlineBody:
+    """Response wrapper: a body stream never outlives the operation deadline.
+
+    Raises TimeoutError between chunks once the deadline passes; partial bytes are never
+    returned as data.
+    """
+
+    def __init__(self, response: Any, deadline: float) -> None:
+        self._response = response
+        self._deadline = deadline
+        self.headers = getattr(response, "headers", None)
+
+    def read(self, size: int = -1) -> bytes:
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        # read1 performs at most one underlying receive, so the deadline is re-checked
+        # after every socket receive instead of once per (possibly many-recv) buffered
+        # read; the caller loops until EOF and Content-Length truncation is still checked.
+        read1 = getattr(self._response, "read1", None)
+        if read1 is None:
+            return self._response.read(size)
+        chunk = read1(size)
+        if chunk and time.monotonic() >= self._deadline:
+            raise TimeoutError("collector response body read exceeded the operation deadline")
+        return chunk
+
+
+@contextmanager
+def operation_deadline(seconds: float | None):
+    if seconds is None or _OP_DEADLINE.get() is not None:
+        yield
+        return
+    token = _OP_DEADLINE.set(time.monotonic() + max(seconds, 0.0))
+    try:
+        yield
+    finally:
+        _OP_DEADLINE.reset(token)
+
+
+@contextmanager
+def deferred_collector_acknowledgement():
+    token = _DEFER_ACK.set(True)
+    try:
+        yield
+    finally:
+        _DEFER_ACK.reset(token)
+
+
+@dataclass(frozen=True)
+class CollectorDelivery:
+    """In-process verified delivery, never accepted from serialized batch metadata."""
+
+    expected: tuple[SourceRecord, ...]
+    acknowledge: Callable[[], None]
+    _payloads: tuple[str, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # SourceRecord metadata contains mutable nested mappings. Snapshot the
+        # verified payload so an in-place change cannot mutate its own proof.
+        object.__setattr__(self, "_payloads", tuple(
+            json.dumps(r.to_dict(), sort_keys=True, default=str) for r in self.expected))
+
+    def validate(self, records: Sequence[SourceRecord]) -> None:
+        if len(records) != len(self._payloads):
+            raise SourceEvidenceError("collector delivery record coverage mismatch")
+        for actual, snapshot in zip(records, self._payloads):
+            payload = json.loads(json.dumps(actual.to_dict(), sort_keys=True, default=str))
+            original = json.loads(snapshot)
+            metadata = payload.pop("metadata")
+            expected_metadata = original.pop("metadata")
+            # The maintained provider wrapper adds these defaults after pull;
+            # it cannot overwrite any value already verified by the adapter.
+            for key in ("tenant_id", "provider_owned_adapter", "ingest_job", "as_of_date", "dataset", "symbol"):
+                if key not in expected_metadata:
+                    metadata.pop(key, None)
+            if payload != original or metadata != expected_metadata:
+                raise SourceEvidenceError("collector delivery identity/hash/PIT/schema mismatch")
 
 
 def collector_host() -> str:
@@ -80,14 +246,51 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _utc(value: Any, field_name: str) -> datetime:
+_RFC2822_RE = re.compile(
+    r"^(?:(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun), )?(?P<d>\d{1,2}) "
+    r"(?P<mon>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?P<y>\d{4}) "
+    r"(?P<H>\d{2}):(?P<M>\d{2}):(?P<S>\d{2}) (?:(?P<utc>GMT|UTC?)|(?P<sign>[+-])(?P<oh>\d{2})(?P<om>\d{2}))$"
+)
+_RFC2822_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_RFC2822_DOWS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _strict_rfc2822_utc(text: str) -> datetime | None:
+    """Strictly parse a full RFC 2822 date with GMT/UT/UTC or a 4-digit numeric offset.
+
+    Anything else (no zone, -0000, short/oversized offsets, named zones, trailing text,
+    impossible calendar values, weekday mismatch) returns None; never guesses.
+    """
+    m = _RFC2822_RE.match(text)
+    if not m:
+        return None
+    if m["utc"]:
+        offset = timedelta(0)
+    else:
+        oh, om = int(m["oh"]), int(m["om"])
+        if oh > 23 or om > 59 or (m["sign"] == "-" and oh == 0 and om == 0):
+            return None
+        offset = (1 if m["sign"] == "+" else -1) * timedelta(hours=oh, minutes=om)
+    try:
+        local = datetime(int(m["y"]), _RFC2822_MONTHS.index(m["mon"]) + 1, int(m["d"]),
+                         int(m["H"]), int(m["M"]), int(m["S"]))
+    except ValueError:
+        return None
+    if m["dow"] and _RFC2822_DOWS[local.weekday()] != m["dow"]:
+        return None
+    return (local - offset).replace(tzinfo=timezone.utc)
+
+
+def _utc(value: Any, field_name: str, *, allow_rfc2822: bool = False) -> datetime:
     text = str(value or "").strip()
     if not text:
         raise SourceEvidenceError(f"collector bundle {field_name} is required")
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
+        parsed = _strict_rfc2822_utc(text) if allow_rfc2822 else None
+        if parsed is None:
+            raise SourceEvidenceError(f"collector bundle {field_name} must be ISO-8601: {text!r}") from exc
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -121,7 +324,23 @@ class HttpBundleTransport(BundleTransport):
             url,
             headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with open_external_url(request, caller="source_ingest.collector_bundle", timeout=self.timeout_seconds) as response:
+        timeout = self.timeout_seconds
+        op_deadline = _OP_DEADLINE.get()
+        if op_deadline is not None:
+            # A read never outlives the operation budget (1s floor keeps it a real read);
+            # the body stream is held to the same floored deadline, chunk by chunk.
+            timeout = min(timeout, max(op_deadline - time.monotonic(), 1.0))
+            op_deadline = max(op_deadline, time.monotonic() + 1.0)
+        client = _KEEPALIVE_CLIENT.get()
+        if client is not None and client.host == self.host.lower().rstrip("."):
+            opened = client.open(request, timeout=timeout, deadline=op_deadline)
+        else:
+            opened = open_external_url(
+                request, caller="source_ingest.collector_bundle", timeout=timeout, deadline=op_deadline
+            )
+        with opened as response:
+            if op_deadline is not None:
+                response = _DeadlineBody(response, op_deadline)
             return read_bounded_response(response, max_bytes=max_bytes)
 
 
@@ -140,7 +359,9 @@ class LocalDirectoryBundleTransport(BundleTransport):
             raise SourceEvidenceError(f"collector bundle file not found: {target}")
         data = target.read_bytes()
         if len(data) > max_bytes:
-            raise SourceEvidenceError(f"collector bundle file exceeds max_bytes={max_bytes}: {target}")
+            error = PayloadTooLarge(f"collector bundle file exceeds max_bytes={max_bytes}: {target}")
+            error.limit, error.size, error.size_is_exact = max_bytes, len(data), True
+            raise error
         return data
 
 
@@ -155,10 +376,22 @@ class VerifiedBundle:
     manifest_items: Mapping[str, Mapping[str, Any]]
     raw_bytes: Mapping[str, bytes]  # sha256 -> bytes
     cursor: str
+    # Absolute items.jsonl row index up to which raw files were verified this pull;
+    # None means the whole requested window was verified (no read-budget cut).
+    verified_through: int | None = None
+    # manifest.json + items.jsonl bytes read for this bundle (cache accounting).
+    source_bytes: int = 0
+    # Why a producer-partial bundle was acknowledged without delivering rows
+    # ("superseded:<run_id>" or "market_closure:<date>"); empty = unresolved.
+    resolution: str = ""
 
     @property
     def status(self) -> str:
         return str(self.manifest.get("status"))
+
+    @property
+    def unresolved_partial(self) -> bool:
+        return self.status == "partial" and not self.resolution
 
 
 @dataclass(frozen=True)
@@ -170,6 +403,86 @@ class CollectorPullResult:
     observed: Mapping[str, Any] = field(default_factory=dict)
     feature_rejected: tuple[Mapping[str, str], ...] = ()
     complete: bool = True  # False: the output cap left raw items / derived rows for a later pull
+    priority_key: str | None = None  # newest-trading-day bundle delivered ahead of the cursor sweep
+    priority_delivered: int = 0  # items of that bundle delivered so far (it may exceed one pull's cap)
+    priority_done: bool = False
+    priority_held: tuple[str, ...] = ()  # held instrument codes the delivery order was built for
+    priority_trade_date: str | None = None
+    priority_items: Mapping[str, str] = field(default_factory=dict)  # persisted item id -> verified hash
+    no_new_data: bool = False  # verified complete boundary agrees with the consumed cursor and host status
+    delivery: CollectorDelivery | None = None
+
+
+PRIORITY_LATEST_DATASETS = frozenset({"tw_price_daily"})
+TW_INDEX_DATASET = "tw_index_daily"
+TW_INDEX_OHLC_COLLECTOR_DATASET = "tw_index_ohlc_daily"
+TW_MARKET_BREADTH_DATASET = "tw_market_breadth_daily"
+# Collector row datasets that are normalized as index / breadth rows, never as per-symbol prices.
+REGIME_INDEX_BREADTH_DATASETS = frozenset({TW_INDEX_DATASET, TW_INDEX_OHLC_COLLECTOR_DATASET, TW_MARKET_BREADTH_DATASET})
+# TW-SUSPENSION-HOLIDAYS-INTAKE-20261115: official exchange schedule / suspension records.  Their row date
+# (a holiday, a suspension day) is not their publication date: the event time is the stated publication
+# (never later than the fetch) and availability is the verified fetch, so nothing is back-dated.
+TW_TRADING_HOLIDAYS_DATASET = "tw_trading_holidays"
+TW_TRADING_SUSPENSION_DATASET = "tw_trading_suspension"
+SURVIVORSHIP_EVIDENCE_DATASETS = frozenset({TW_TRADING_HOLIDAYS_DATASET, TW_TRADING_SUSPENSION_DATASET})
+# Raw source values of the two datasets, kept as the official pages state them; nothing is derived.
+SURVIVORSHIP_EVIDENCE_KEYS = (
+    "venue", "api_endpoint", "official_publication_ref", "holiday_name", "description", "is_closed",
+    "market_status", "year", "suspended_date", "suspended_date_raw", "suspended_time_raw", "resumed_date",
+    "resumed_date_raw", "resumed_time_raw", "security_category", "serial_no",
+)
+BREADTH_GROUPS = ("whole_market", "stocks")
+BREADTH_COUNT_KEYS = ("advancers", "limit_up", "decliners", "limit_down", "unchanged", "untraded", "no_comparison")
+PRIORITY_LATEST_MAX_CADENCE_SECONDS = 3600
+_BUNDLE_TRADE_DATE_RE = re.compile(r"^(?:backfill|close)-(\d{4}-\d{2}-\d{2})")
+
+
+_PRICE_HISTORY_PEERS = {"collector-tw-twse-price-history": "collector-tw-tpex-price-history",
+                        "collector-tw-tpex-price-history": "collector-tw-twse-price-history"}
+MARKET_CLOSURES_FILE = "market_closures.jsonl"
+
+
+def _run_trade_date(run_id: str) -> str | None:
+    match = _BUNDLE_TRADE_DATE_RE.match(run_id)
+    return match.group(1) if match else None
+
+
+def read_market_closures(state_dir: str | Path) -> list[dict[str, Any]]:
+    """Recorded unscheduled market closures (``<raw_root>/state/market_closures.jsonl``)."""
+    path = Path(state_dir) / MARKET_CLOSURES_FILE
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _held_codes(symbols: Sequence[str]) -> tuple[str, ...]:
+    """Bare instrument codes (``2330.TWSE`` -> ``2330``) of the active paper symbols, sorted."""
+    return tuple(sorted({str(s).strip().split(".", 1)[0].upper() for s in symbols if str(s).strip()}))
+
+
+def _bundle_trade_date(entry: Mapping[str, Any], items: Sequence[Mapping[str, Any]] = ()) -> str:
+    """Session identity comes from row dates, never the bundle's fetch directory."""
+    days = {str(row.get("trade_date") or "") for row in items}
+    declared = str(entry.get("trade_date") or "")
+    if "" in days or (not days and not declared):
+        raise SourceEvidenceError("price-history bundle requires row trade_date")
+    day = max(days) if days else declared
+    if declared and declared != day:
+        raise SourceEvidenceError("collector trade_date disagrees with rows")
+    try:
+        for value in days:
+            date.fromisoformat(value)
+        return date.fromisoformat(day).isoformat()
+    except ValueError as exc:
+        raise SourceEvidenceError("price-history bundle has invalid trade_date") from exc
 
 
 def _cursor_key(finished_at: datetime, run_id: str) -> str:
@@ -207,21 +520,61 @@ def _loads(data: bytes, what: str) -> Any:
         raise SourceEvidenceError(f"collector bundle {what} is not valid JSON") from exc
 
 
+def _read_whole_file(transport: BundleTransport, path: str, *, max_bytes: int) -> bytes:
+    """Read one bundle file within its stated bound; an oversized file fails with a readable reason."""
+    try:
+        data = transport.read(path, max_bytes=max_bytes)
+    except PayloadTooLarge as exc:
+        size = exc.size if exc.size is not None else max_bytes
+        shown = f"{size} bytes" if exc.size_is_exact else f"more than {size} bytes"
+        raise SourceEvidenceError(
+            f"collector bundle file {path} is {shown}, above its read bound of {max_bytes} bytes") from exc
+    if len(data) > max_bytes:
+        raise SourceEvidenceError(
+            f"collector bundle file {path} is {len(data)} bytes, above its read bound of {max_bytes} bytes")
+    return data
+
+
 def verify_bundle(
     transport: BundleTransport,
     *,
     expected_source_id: str,
     entry: Mapping[str, Any],
+    item_window: tuple[int, int] | None = None,
+    deadline: float | None = None,
+    priority_codes: Collection[str] = (),
+    raw_read_concurrency: int = 1,
 ) -> VerifiedBundle:
-    """Fetch and verify one bundle; raises on any mismatch, returns nothing partial."""
+    """Fetch and verify one bundle; raises on any mismatch, returns nothing partial.
 
+    ``item_window`` (start, stop over items.jsonl rows) bounds per-pull transport work:
+    manifest, items.jsonl, id coverage and bundle_sha256 (declared hashes) are always
+    verified, but raw files are fetched and hash/size checked only for the windowed rows.
+    Rows outside the window are verified when a later pull's window reaches them.
+
+    ``priority_codes`` (instrument codes such as ``2330``) reorder ``items``/the window so the
+    rows whose item id ends in ``-<code>`` come first (stable, otherwise manifest order); every
+    raw file is still fetched and hash/size verified, only the order of verification changes.
+
+    ``deadline`` (monotonic seconds) is a whole-operation read budget: once it passes, no
+    further raw file is fetched (at least one is always read so every pull progresses) and
+    ``verified_through`` records how far verification got. Nothing is skipped or assumed.
+
+    ``raw_read_concurrency`` overlaps a bounded batch (four for newest closes,
+    sixteen for historical market sweeps). Every reader shares the operation context/deadline and joins
+    before return; a timeout can retain only an ordered verified prefix.
+    """
+
+    if deadline is None:
+        deadline = _OP_DEADLINE.get()
     source_id = str(entry.get("source_id") or "").strip()
     date = str(entry.get("date") or "").strip()
     run_id = str(entry.get("run_id") or "").strip()
     if not (source_id and date and run_id) or any("/" in x or ".." in x for x in (source_id, date, run_id)):
         raise SourceEvidenceError(f"collector bundle index entry is malformed: {dict(entry)!r}")
     base = f"bundles/{source_id}/{date}/{run_id}"
-    manifest = _loads(transport.read(f"{base}/manifest.json", max_bytes=MAX_JSON_BYTES), "manifest.json")
+    manifest_bytes = _read_whole_file(transport, f"{base}/manifest.json", max_bytes=MAX_MANIFEST_BYTES)
+    manifest = _loads(manifest_bytes, "manifest.json")
     if not isinstance(manifest, dict):
         raise SourceEvidenceError("collector bundle manifest must be an object")
 
@@ -237,7 +590,11 @@ def verify_bundle(
     status = str(manifest.get("status") or "")
     if status not in BUNDLE_STATUSES:
         raise SourceEvidenceError(f"collector bundle status must be one of {sorted(BUNDLE_STATUSES)}: {status!r}")
+    if "status" in entry and entry["status"] != status:
+        raise SourceEvidenceError("collector bundle status does not match its index entry")
     finished_at = _utc(manifest.get("finished_at"), "finished_at")
+    if finished_at != _utc(entry.get("finished_at"), "index finished_at"):
+        raise SourceEvidenceError("collector bundle finished_at does not match its index entry")
     _utc(manifest.get("started_at"), "started_at")
     for required in ("terms_ref", "robots_decision", "collector_version", "fetch_policy_hash"):
         if not str(manifest.get(required) or "").strip():
@@ -253,8 +610,56 @@ def verify_bundle(
             raise SourceEvidenceError("collector bundle manifest.items need unique item_id values")
         manifest_items[item_id] = item
 
+    if compute_bundle_sha256([str(i["content_sha256"]).lower() for i in manifest_items.values()]) != str(
+        manifest.get("bundle_sha256") or ""
+    ).lower():
+        raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+    if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
+        raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+
+    items_bytes = _read_whole_file(transport, f"{base}/items.jsonl", max_bytes=MAX_ITEMS_JSONL_BYTES)
+    source_bytes = len(manifest_bytes) + len(items_bytes)
+    items: list[Mapping[str, Any]] = []
+    for line in items_bytes.splitlines():
+        if line.strip():
+            row = _loads(line, "items.jsonl line")
+            if not isinstance(row, dict):
+                raise SourceEvidenceError("collector bundle items.jsonl lines must be objects")
+            items.append(row)
+    item_ids = [str(row.get("id") or "").strip() for row in items]
+    if sorted(item_ids) != sorted(manifest_items) or len(set(item_ids)) != len(item_ids):
+        raise SourceEvidenceError("collector bundle items.jsonl ids do not match manifest.items")
+
+    if priority_codes:
+        codes = {str(c).strip().upper() for c in priority_codes if str(c).strip()}
+        first = [
+            r for r in items
+            if str(r.get("id") or "").rsplit("-", 1)[-1].upper() in codes
+            or str(r.get("symbol") or "").strip().upper() in codes
+        ]
+        if first:
+            lead = {id(r) for r in first}
+            items = first + [r for r in items if id(r) not in lead]
+            item_ids = [str(row.get("id") or "").strip() for row in items]
+
+    bundle = VerifiedBundle(source_id, date, run_id, finished_at, manifest, tuple(items), manifest_items,
+                            {}, _cursor_key(finished_at, run_id), source_bytes=source_bytes)
+    return _verify_raw_window(transport, bundle, item_window=item_window, deadline=deadline,
+                              raw_read_concurrency=raw_read_concurrency)
+
+
+def _verify_raw_window(transport: BundleTransport, bundle: VerifiedBundle, *,
+                       item_window: tuple[int, int] | None, deadline: float | None,
+                       raw_read_concurrency: int) -> VerifiedBundle:
+    item_ids = [str(row["id"]) for row in bundle.items]
+    wanted_ids = item_ids if item_window is None else item_ids[max(item_window[0], 0):max(item_window[1], 0)]
     raw_bytes: dict[str, bytes] = {}
-    for item_id, item in manifest_items.items():
+    verified_through: int | None = None
+    window_start = max(item_window[0], 0) if item_window is not None else 0
+    base = f"bundles/{bundle.source_id}/{bundle.date}/{bundle.run_id}"
+    manifest_items = bundle.manifest_items
+    def read_verified(item_id: str) -> tuple[str, bytes]:
+        item = manifest_items[item_id]
         declared = str(item.get("content_sha256") or "").strip().lower()
         raw_path = _safe_raw_path(str(item.get("raw_path") or ""))
         data = transport.read(f"{base}/{raw_path}", max_bytes=MAX_RAW_BYTES)
@@ -263,36 +668,60 @@ def verify_bundle(
             raise SourceEvidenceError(f"collector bundle raw hash mismatch for item {item_id}: declared={declared} actual={actual}")
         if "bytes" in item and int(item["bytes"]) != len(data):
             raise SourceEvidenceError(f"collector bundle raw size mismatch for item {item_id}")
-        raw_bytes[actual] = data
+        return actual, data
 
-    if compute_bundle_sha256([str(i["content_sha256"]).lower() for i in manifest_items.values()]) != str(
-        manifest.get("bundle_sha256") or ""
-    ).lower():
-        raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+    width = max(1, min(raw_read_concurrency, HISTORY_RAW_READ_CONCURRENCY))
+    keepalive: GuardedKeepAliveClient | None = None
+    token = None
+    if isinstance(transport, HttpBundleTransport) and wanted_ids:
+        width = max(1, min(width, COLLECTOR_RAW_READ_CONNECTIONS_PER_PULL))
+        keepalive = GuardedKeepAliveClient(
+            transport.host, caller="source_ingest.collector_bundle", max_connections=width,
+            timeout=transport.timeout_seconds)
+        token = _KEEPALIVE_CLIENT.set(keepalive)
+    verified_through = None
+    try:
+        verified_through = _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes)
+    finally:
+        if token is not None:
+            _KEEPALIVE_CLIENT.reset(token)
+        if keepalive is not None:
+            keepalive.close()
+    return replace(bundle, raw_bytes=raw_bytes, verified_through=verified_through)
 
-    items_text = transport.read(f"{base}/items.jsonl", max_bytes=MAX_JSON_BYTES).decode("utf-8")
-    items: list[Mapping[str, Any]] = []
-    for line in items_text.splitlines():
-        if line.strip():
-            row = _loads(line.encode("utf-8"), "items.jsonl line")
-            if not isinstance(row, dict):
-                raise SourceEvidenceError("collector bundle items.jsonl lines must be objects")
-            items.append(row)
-    item_ids = [str(row.get("id") or "").strip() for row in items]
-    if sorted(item_ids) != sorted(manifest_items) or len(set(item_ids)) != len(item_ids):
-        raise SourceEvidenceError("collector bundle items.jsonl ids do not match manifest.items")
 
-    return VerifiedBundle(
-        source_id=source_id,
-        date=date,
-        run_id=run_id,
-        finished_at=finished_at,
-        manifest=manifest,
-        items=tuple(items),
-        manifest_items=manifest_items,
-        raw_bytes=raw_bytes,
-        cursor=_cursor_key(finished_at, run_id),
-    )
+def _read_window(transport, read_verified, wanted_ids, width, deadline, window_start, raw_bytes):
+    verified_through = None
+    # A separate context per worker preserves the *same* operation deadline and
+    # egress policy. Never acknowledge out of order or discard a genuine failure
+    # from a later parallel read merely because an earlier read timed out.
+    with (ThreadPoolExecutor(max_workers=width) if width > 1 else nullcontext()) as readers:
+        for offset in range(0, len(wanted_ids), width):
+            if deadline is not None and offset > 0 and time.monotonic() >= deadline:
+                verified_through = window_start + offset
+                break
+            group = wanted_ids[offset:offset + width]
+            futures = ([readers.submit(copy_context().run, read_verified, item_id) for item_id in group]
+                       if readers is not None else [None])
+            outcomes: list[tuple[str, bytes] | TimeoutError] = []
+            for future in futures:
+                try:
+                    outcomes.append(future.result() if future is not None else read_verified(group[0]))
+                except TimeoutError as exc:
+                    outcomes.append(exc)
+            for index, outcome in enumerate(outcomes):
+                if isinstance(outcome, TimeoutError):
+                    # Only a contiguous verified prefix can survive a deadline cut.
+                    # The missing item and any later prefetched items replay next pull.
+                    if offset + index > 0 and deadline is not None and time.monotonic() >= deadline:
+                        verified_through = window_start + offset + index
+                        break
+                    raise outcome
+                actual, data = outcome
+                raw_bytes[actual] = data
+            if verified_through is not None:
+                break
+    return verified_through
 
 
 def observed_from_collector_status(
@@ -302,6 +731,8 @@ def observed_from_collector_status(
     cursor: str | None,
     cadence_seconds: int | None = None,
     now: datetime | None = None,
+    verified_bundle: VerifiedBundle | None = None,
+    delivery_complete: bool = False,
 ) -> dict[str, Any]:
     """Project the host ``status.json`` + our cursor into health fields.
 
@@ -309,6 +740,8 @@ def observed_from_collector_status(
     ``SourceObservedState``. ``degraded`` when the source is paused/failing on
     the host, the newest bundle is older than twice its cadence, or our cursor
     lags the host's newest bundle by more than seven days.
+    Producer ``complete`` additionally requires the verified latest bundle,
+    full delivery coverage, matching run/time/cursor and a known fresh cadence.
     """
 
     now = now or datetime.now(timezone.utc)
@@ -319,19 +752,44 @@ def observed_from_collector_status(
         entry = sources.get(source_id) or {}
     elif isinstance(sources, list):
         entry = next((s for s in sources if isinstance(s, Mapping) and s.get("source_id") == source_id), {})
+    if not isinstance(entry, Mapping):
+        raise SourceEvidenceError("collector status source entry must be an object")
     if not entry:
         reasons.append("collector_status_missing_source")
 
     host_status = str(entry.get("status") or "")
-    if host_status in {"paused", "failed", "failing"}:
+    if host_status in {"paused", "failed", "failing", "unavailable"}:
         reasons.append(f"collector_source_{host_status}" + (f":{entry.get('paused_reason')}" if entry.get("paused_reason") else ""))
+    elif host_status not in {"ok", "healthy", "complete"}:
+        reasons.append(f"collector_source_status_unverified:{host_status or 'missing'}")
 
     last_run_at = None
     if entry.get("last_run_at"):
         last_run_at = _utc(entry["last_run_at"], "status.last_run_at")
+    else:
+        reasons.append("collector_last_run_missing")
     cadence = int(cadence_seconds or entry.get("cadence_seconds") or 0)
     if last_run_at and cadence and now - last_run_at > timedelta(seconds=2 * cadence):
         reasons.append("newest_bundle_older_than_twice_cadence")
+
+    if host_status == "complete":
+        # BundleWriter publishes completion of one exact run, not a blanket
+        # health assertion. A status-only observation has no verified delivery.
+        if (verified_bundle is None or verified_bundle.source_id != source_id
+                or verified_bundle.status != "complete" or not delivery_complete
+                or cursor != verified_bundle.cursor):
+            reasons.append("collector_complete_boundary_unverified")
+        if verified_bundle is not None:
+            if last_run_at != verified_bundle.finished_at:
+                reasons.append("collector_complete_time_mismatch")
+            if entry.get("last_run_id") != verified_bundle.run_id:
+                reasons.append("collector_complete_run_mismatch")
+        if cadence <= 0:
+            reasons.append("collector_complete_cadence_missing")
+        if last_run_at and last_run_at > now:
+            reasons.append("collector_last_run_in_future")
+        if entry.get("paused_reason"):
+            reasons.append(f"collector_source_paused:{entry['paused_reason']}")
 
     lag_days: float | None = None
     cursor_at = None
@@ -357,6 +815,18 @@ def observed_from_collector_status(
     }
 
 
+def source_offering(status_doc: Mapping[str, Any] | None, source_id: str) -> dict[str, Any]:
+    """Additive host admission. Legacy status without offered retains its old behaviour."""
+    sources = (status_doc or {}).get("sources", {})
+    if isinstance(sources, list):
+        entry = next((s for s in sources if isinstance(s, Mapping) and s.get("source_id") == source_id), {})
+    else:
+        entry = sources.get(source_id, {}) if isinstance(sources, Mapping) else {}
+    if not isinstance(entry, Mapping) or not isinstance(entry.get("offered"), bool):
+        return {"offered": None, "reason": "collector_offering_unverified"}
+    return {"offered": entry["offered"], "reason": entry.get("offered_reason")}
+
+
 @dataclass(frozen=True)
 class CollectorBundleAdapter:
     """Pull, verify and map collector bundles for one collector source."""
@@ -374,6 +844,10 @@ class CollectorBundleAdapter:
     host: str | None = None
     raw_root: str | None = None
     max_records: int = 500
+    # Whole-pull raw read budget, kept below the controller's per-request timeout; the
+    # remainder stays pending behind a partial cursor. None disables the budget.
+    read_budget_seconds: float | None = COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    history_raw_read_concurrency: int = HISTORY_RAW_READ_CONCURRENCY
     transport: BundleTransport | None = None
     # Venue-qualified instruments (e.g. ``2330.TWSE``) that bare social symbols may resolve to,
     # in addition to the symbols that have stored daily bars under the storage roots.
@@ -433,12 +907,12 @@ class CollectorBundleAdapter:
         )
         if derived is None:
             return {}
-        original = [self.dataset] if self.dataset != derived else []
+        original = [self.dataset if self.dataset != derived else "collector_bundle_items"]
         return {
             "normalized_datasets": [derived, *original],
             "feature_targets": [derived],
             "raw_only_datasets": original,
-            "storage_targets": [f"normalized/{derived}", f"features/{derived}"],
+            "storage_targets": [f"normalized/{derived}"],
         }
 
     def fetch_config(self) -> Mapping[str, Any]:
@@ -470,45 +944,807 @@ class CollectorBundleAdapter:
         cursor: str | None = None,
         trace_id: str = "",
         max_records: int | None = None,
+        priority_symbols: Sequence[str] = (),
+    ) -> CollectorPullResult:
+        """Cursor-ordered pull; price-history sources deliver the newest trading day first.
+
+        The cursor sweep is oldest-first, so a two-year backfill would hold the newest close
+        behind hundreds of older per-date bundles. For ``tw_price_daily`` the newest-trade-date
+        bundle is verified and returned ahead of the sweep (its key is persisted separately), and
+        the cursor sweep continues with whatever output cap remains. Replays are idempotent.
+        """
+
+        with operation_deadline(self.read_budget_seconds):
+            return self._pull_bounded(
+                cursor=cursor, trace_id=trace_id, max_records=max_records, priority_symbols=priority_symbols
+            )
+
+    def _pull_bounded(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+        priority_symbols: Sequence[str] = (),
+    ) -> CollectorPullResult:
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        priority = self._pull_priority_latest(
+            cursor, trace_id=trace_id, total_cap=total_cap, held=_held_codes(priority_symbols)
+        )
+        if priority is None:
+            return self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=max_records)
+        records, key, paused, delivered, done, held, trade_date, delivered_items = priority
+        remaining = total_cap - len(records)
+        op_deadline = _OP_DEADLINE.get()
+        base = None
+        if done and remaining > 0 and not (records and op_deadline is not None and time.monotonic() >= op_deadline):
+            try:
+                base = self._pull_ordered(cursor=cursor, trace_id=trace_id, max_records=remaining,
+                                          priority_state={"trade_date": trade_date, "key": key, "items": delivered_items})
+            except TimeoutError:
+                # The shared deadline cut the ordered sweep before any of its rows verified:
+                # keep the already verified priority prefix; ordered work stays pending.
+                if not records or op_deadline is None or time.monotonic() < op_deadline:
+                    raise
+        if base is None:
+            base = CollectorPullResult(
+                records=(), next_cursor=cursor, bundle_count=0, complete=False,
+                observed=observed_from_collector_status(
+                    self.read_status(), source_id=self.source_id, cursor=cursor, cadence_seconds=self._health_cadence_seconds()
+                ),
+            )
+        seen = {r.source_id for r in records}
+        merged = (*records, *(r for r in base.records if r.source_id not in seen))
+        result = CollectorPullResult(
+            records=merged,
+            next_cursor=base.next_cursor,
+            bundle_count=base.bundle_count + 1,
+            paused_reasons=(*paused, *base.paused_reasons),
+            # Newest-session rows still undelivered: the controller may re-pull before the
+            # finished-source cadence. Only this pull's own acknowledged outcome carries it.
+            observed=({**base.observed, "continuation_pending": True, "newest_session_pending": not done}
+                      if merged and (not done or not base.complete) and not paused and not base.paused_reasons
+                      else base.observed),
+            feature_rejected=base.feature_rejected,
+            complete=base.complete,
+            no_new_data=not merged and not paused and base.no_new_data,
+            priority_key=key,
+            priority_delivered=delivered,
+            priority_done=done,
+            priority_held=held,
+            priority_trade_date=trade_date,
+            priority_items=delivered_items,
+        )
+        if _DEFER_ACK.get():
+            def acknowledge() -> None:
+                # The ordered part may have verified a complete persisted
+                # boundary. Composing priority rows must retain its native ack;
+                # otherwise the next due pull rejects the consumed cursor.
+                if base.delivery is not None:
+                    base.delivery.acknowledge()
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
+        return result
+
+    def _priority_latest_enabled(self) -> bool:
+        # A sub-hourly Pantheon pull cadence (price-history definitions: 30 min) means the newest
+        # session must not wait behind the oldest-first backfill sweep; daily cadence keeps the
+        # plain cursor order.
+        return (
+            self.source_type == "market"
+            and self.dataset in PRIORITY_LATEST_DATASETS
+            and 0 < self.cadence_seconds <= PRIORITY_LATEST_MAX_CADENCE_SECONDS
+        )
+
+    def _health_cadence_seconds(self) -> int | None:
+        # The Pantheon pull cadence of a price-history source (30 min) is faster than the collector's
+        # own run cadence; staleness is judged against the host's cadence from status.json.
+        if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
+            return None
+        return self.cadence_seconds
+
+    def _priority_key_path(self) -> Path:
+        return self._raw_root() / "state" / _slug(self.connector_id) / "latest_priority.json"
+
+    def _metadata_scope(self, transport: BundleTransport) -> tuple:
+        if isinstance(transport, HttpBundleTransport):
+            namespace = (transport.host, transport.token_env,
+                         _sha256(os.environ.get(transport.token_env, "").encode()))
+        elif isinstance(transport, LocalDirectoryBundleTransport):
+            namespace = (str(Path(transport.root_dir).resolve()),)
+        else:
+            namespace = (id(transport),)
+        return (str(self._raw_root().resolve()), self.source_id, namespace)
+
+    def _verified_metadata(self, transport: BundleTransport, entry: Mapping[str, Any],
+                           source_id: str | None = None) -> VerifiedBundle:
+        """Reuse only fully verified immutable metadata bound to the live index.
+
+        Entries without a digest retain the full-read contract. HTTP authorization
+        and local roots isolate cache populations; injected transports are held by
+        reference so object-id reuse cannot alias an earlier reader.
+        """
+        expected = source_id or self.source_id
+        digest = str(entry.get("bundle_sha256") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            return verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
+        scope = self._metadata_scope(transport)
+        if expected != self.source_id:
+            scope = (*scope[:1], expected, *scope[2:])
+        key = (*scope, json.dumps(dict(entry), sort_keys=True, separators=(",", ":")))
+        with _METADATA_CACHE_LOCK:
+            cached = _METADATA_CACHE.get(key)
+            if cached is not None:
+                _METADATA_CACHE.move_to_end(key)
+                return cached[1]
+        bundle = verify_bundle(transport, expected_source_id=expected, entry=entry, item_window=(0, 0))
+        size = bundle.source_bytes
+        if size <= VERIFIED_METADATA_CACHE_BYTES:
+            with _METADATA_CACHE_LOCK:
+                # A changed digest/identity for this run supersedes its old entry.
+                for old_key, (_, old, _) in list(_METADATA_CACHE.items()):
+                    if old_key[:3] == scope and (old.date, old.run_id) == (bundle.date, bundle.run_id):
+                        del _METADATA_CACHE[old_key]
+                _METADATA_CACHE[key] = (transport, bundle, size)
+                while (len(_METADATA_CACHE) > VERIFIED_METADATA_CACHE_ENTRIES
+                       or sum(value[2] for value in _METADATA_CACHE.values()) > VERIFIED_METADATA_CACHE_BYTES):
+                    victim = next(
+                        (
+                            k for k, (_, cached, _) in _METADATA_CACHE.items()
+                            if k != key and (cached.date, cached.run_id) not in _HISTORY_READING.get(k[:3], set())
+                        ),
+                        None,
+                    )
+                    if victim is not None:
+                        del _METADATA_CACHE[victim]
+                    else:
+                        _METADATA_CACHE.popitem(last=False)
+        return bundle
+
+    def _verify_ordered_bundle(self, transport: BundleTransport, *, expected_source_id: str,
+                               entry: Mapping[str, Any], item_window: tuple[int, int],
+                               deadline: float | None = None, raw_read_concurrency: int = 1) -> VerifiedBundle:
+        if not self._priority_latest_enabled():
+            return verify_bundle(transport, expected_source_id=expected_source_id, entry=entry,
+                                 item_window=item_window, deadline=deadline, raw_read_concurrency=raw_read_concurrency)
+        bundle = self._verified_metadata(transport, entry, expected_source_id)
+        return _verify_raw_window(transport, bundle, item_window=item_window,
+                                  deadline=deadline if deadline is not None else _OP_DEADLINE.get(),
+                                  raw_read_concurrency=raw_read_concurrency)
+
+    def _load_priority_state(self) -> tuple[str | None, int, bool, tuple[str, ...]]:
+        path = self._priority_key_path()
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+        except (OSError, ValueError):
+            return None, 0, False, ()
+        if isinstance(doc, dict) and doc.get("source_id") == self.source_id and doc.get("key"):
+            held = doc.get("held")
+            return (str(doc["key"]), int(doc.get("delivered") or 0), bool(doc.get("done")),
+                    tuple(str(c) for c in held) if isinstance(held, list) else ())
+        return None, 0, False, ()
+
+    def _priority_document(self) -> Mapping[str, Any]:
+        try:
+            doc = json.loads(self._priority_key_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) and doc.get("source_id") == self.source_id else {}
+
+    def _validate_priority_bundle_rows(self, bundle: VerifiedBundle) -> None:
+        if self.attribution_required and not str(bundle.manifest.get("attribution") or "").strip():
+            raise SourceEvidenceError(
+                f"collector source {self.source_id} requires attribution text in the manifest"
+            )
+        for row in bundle.items:
+            item_id = str(row["id"]).strip()
+            manifest_item = bundle.manifest_items[item_id]
+            if not str(row.get("url") or manifest_item.get("url") or "").strip():
+                raise SourceEvidenceError(f"collector item {item_id} has no url")
+            fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
+            published_raw = row.get("published_at")
+            published_at = (
+                _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True)
+                if published_raw
+                else fetched_at
+            )
+            if row.get("trade_date"):
+                self._market_event_time(item_id, row, published_raw, published_at, fetched_at)
+
+    def _verified_manifest_matching_trusted(
+        self,
+        transport: BundleTransport,
+        entry: Mapping[str, Any],
+        *,
+        trusted_trade_date: str,
+        trusted_items: Mapping[str, str],
+    ) -> bool:
+        source_id = str(entry.get("source_id") or "").strip()
+        date = str(entry.get("date") or "").strip()
+        run_id = str(entry.get("run_id") or "").strip()
+        if not (source_id and date and run_id) or any("/" in x or ".." in x for x in (source_id, date, run_id)):
+            raise SourceEvidenceError(f"collector bundle index entry is malformed: {dict(entry)!r}")
+        if "trade_date" in entry and str(entry.get("trade_date") or "").strip() != trusted_trade_date:
+            return False
+        base = f"bundles/{source_id}/{date}/{run_id}"
+        manifest_bytes = _read_whole_file(transport, f"{base}/manifest.json", max_bytes=MAX_MANIFEST_BYTES)
+        manifest = _loads(manifest_bytes, "manifest.json")
+        if not isinstance(manifest, dict):
+            raise SourceEvidenceError("collector bundle manifest must be an object")
+        if str(manifest.get("source_id") or "") != self.source_id or source_id != self.source_id:
+            raise SourceEvidenceError(
+                f"collector bundle source_id mismatch: manifest={manifest.get('source_id')!r} "
+                f"index={source_id!r} expected={self.source_id!r}"
+            )
+        if str(manifest.get("run_id") or "") != run_id:
+            raise SourceEvidenceError("collector bundle run_id does not match its index entry")
+        if str(manifest.get("schema_version") or "") not in SUPPORTED_BUNDLE_SCHEMA_VERSIONS:
+            raise SourceEvidenceError(
+                f"collector bundle schema_version is not supported: {manifest.get('schema_version')!r}"
+            )
+        status = str(manifest.get("status") or "")
+        if status not in BUNDLE_STATUSES:
+            raise SourceEvidenceError(f"collector bundle status must be one of {sorted(BUNDLE_STATUSES)}: {status!r}")
+        if "status" in entry and entry["status"] != status:
+            raise SourceEvidenceError("collector bundle status does not match its index entry")
+        finished_at = _utc(manifest.get("finished_at"), "finished_at")
+        if finished_at != _utc(entry.get("finished_at"), "index finished_at"):
+            raise SourceEvidenceError("collector bundle finished_at does not match its index entry")
+        _utc(manifest.get("started_at"), "started_at")
+        for required in ("terms_ref", "robots_decision", "collector_version", "fetch_policy_hash"):
+            if not str(manifest.get(required) or "").strip():
+                raise SourceEvidenceError(f"collector bundle manifest.{required} is required")
+        if status != "complete":
+            return False
+        if "trade_date" in manifest and str(manifest.get("trade_date") or "").strip() != trusted_trade_date:
+            return False
+        if self.attribution_required and not str(manifest.get("attribution") or "").strip():
+            raise SourceEvidenceError(
+                f"collector source {self.source_id} requires attribution text in the manifest"
+            )
+        manifest_items_raw = manifest.get("items")
+        if not isinstance(manifest_items_raw, list):
+            raise SourceEvidenceError("collector bundle manifest.items must be a list")
+        item_hashes: dict[str, str] = {}
+        for item in manifest_items_raw:
+            item_id = str(item.get("item_id") or "").strip() if isinstance(item, dict) else ""
+            if not item_id or item_id in item_hashes:
+                raise SourceEvidenceError("collector bundle manifest.items need unique item_id values")
+            _safe_raw_path(str(item.get("raw_path") or ""))
+            if not str(item.get("url") or "").strip():
+                return False
+            sha = str(item.get("content_sha256") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", sha):
+                raise SourceEvidenceError(f"collector item {item_id} has invalid content_sha256")
+            item_hashes[item_id] = sha
+        if compute_bundle_sha256(item_hashes.values()) != str(manifest.get("bundle_sha256") or "").lower():
+            raise SourceEvidenceError("collector bundle bundle_sha256 mismatch")
+        if entry.get("bundle_sha256") and str(entry["bundle_sha256"]).lower() != str(manifest["bundle_sha256"]).lower():
+            raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+        return bool(item_hashes) and item_hashes == trusted_items
+
+    def _pull_priority_latest(
+        self, cursor: str | None, *, trace_id: str, total_cap: int, held: tuple[str, ...] = ()
+    ) -> tuple[list[SourceRecord], str, tuple[str, ...], int, bool, tuple[str, ...], str, Mapping[str, str]] | None:
+        if (
+            not self._priority_latest_enabled()
+            or self.source_type != "market"
+            or self.dataset not in PRIORITY_LATEST_DATASETS
+            or total_cap <= 0
+        ):
+            return None
+        transport = self._transport()
+        index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
+        entries = index.get("bundles") if isinstance(index, dict) else None
+        if not isinstance(entries, list):
+            raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
+        mine = [
+            e for e in entries
+            if isinstance(e, dict) and str(e.get("source_id") or "") == self.source_id
+            and str(e.get("status") or "complete") == "complete"
+        ]
+        if not mine:
+            return None
+        # Fetch date / dated run ids are upper bounds for candidate pruning only.
+        # An actual session is admitted only after manifest/hash/id coverage and row dates verify.
+        def upper_bound(e: Mapping[str, Any]) -> str:
+            match = _BUNDLE_TRADE_DATE_RE.match(str(e.get("run_id") or ""))
+            return str(e.get("trade_date") or (match.group(1) if match else e.get("date")) or "")
+
+        state = self._priority_document()
+        state_key, delivered, state_done, state_held = self._load_priority_state()
+        scope = self._metadata_scope(transport)
+        state_trade_date = str(state.get("trade_date") or "")
+        state_items_raw = state.get("items") if isinstance(state.get("items"), Mapping) else {}
+        state_items = {str(k): str(v).lower() for k, v in state_items_raw.items() if str(k).strip() and str(v).strip()}
+        state_hash = _sha256(json.dumps(state.get("items") or {}, sort_keys=True).encode())
+        base_cursor, _ = _split_cursor(cursor)
+        if base_cursor and _PARTIAL_CURSOR_MARK in str(cursor):
+            resumed = next(
+                (
+                    (str(e.get("date") or ""), str(e.get("run_id") or ""))
+                    for e in mine
+                    if _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or ""))
+                    == base_cursor
+                ),
+                None,
+            )
+            if resumed is not None:
+                with _METADATA_CACHE_LOCK:
+                    reading_set = _HISTORY_READING.setdefault(scope, set())
+                    if len(reading_set) < VERIFIED_METADATA_CACHE_ENTRIES:
+                        reading_set.add(resumed)
+
+        def fingerprint(trade_day: str) -> str | None:
+            # Every index entry that could still hold this session (upper bound not below it).
+            # Unverifiable-by-digest entries are never memoised.
+            parts = []
+            for e in mine:
+                if upper_bound(e) >= trade_day:
+                    if not re.fullmatch(r"[0-9a-f]{64}", str(e.get("bundle_sha256") or "").lower()):
+                        return None
+                    parts.append(json.dumps(dict(e), sort_keys=True, separators=(",", ":")))
+            return _sha256("\n".join(sorted(parts)).encode())
+
+        with _METADATA_CACHE_LOCK:
+            known_delivered = _PRIORITY_DELIVERED_MEMO.get(scope)
+        if (known_delivered is not None and state.get("trade_date") == known_delivered[0]
+                and state_key == known_delivered[1] and state_held == held
+                and state_hash == known_delivered[4] and fingerprint(known_delivered[0]) == known_delivered[2]):
+            # Same candidate index, same persisted state, session fully delivered: the full
+            # verification below would find nothing pending and return None.
+            return None
+        trusted_by_digest: dict[str, tuple[str, Mapping[str, str]]] = {}
+        receipt_digest = (
+            compute_bundle_sha256(tuple(state_items.values()))
+            if state_done and state_key and state_trade_date and state_items
+            else ""
+        )
+        if receipt_digest:
+            state_entry = next(
+                (
+                    e for e in mine
+                    if _cursor_key(_utc(e.get("finished_at"), "index finished_at"), str(e.get("run_id") or ""))
+                    == state_key
+                ),
+                None,
+            )
+            if state_entry is None or str(state_entry.get("bundle_sha256") or "").lower() == receipt_digest:
+                trusted_by_digest[receipt_digest] = (state_trade_date, state_items)
+        best: tuple[str, str] | None = None
+        candidates: list[tuple[str, str, Mapping[str, Any], Mapping[str, str], VerifiedBundle | None]] = []
+        for entry in sorted(mine, key=lambda e: (upper_bound(e), str(e.get("finished_at"))), reverse=True):
+            if best and upper_bound(entry) < best[0]:
+                continue
+            key = _cursor_key(_utc(entry.get("finished_at"), "index finished_at"), str(entry.get("run_id") or ""))
+            digest = str(entry.get("bundle_sha256") or "")
+            digest_lower = digest.lower()
+            valid_digest = bool(re.fullmatch(r"[0-9a-f]{64}", digest_lower))
+            entry_sig = json.dumps(dict(entry), sort_keys=True, separators=(",", ":"))
+            memo_key = (*scope, str(entry.get("run_id") or ""), digest_lower)
+            known_day: str | None = None
+            known_items: Mapping[str, str] | None = None
+            if valid_digest:
+                with _METADATA_CACHE_LOCK:
+                    memo_val = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                    if memo_val is not None:
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                if isinstance(memo_val, str):
+                    known_day = memo_val
+                elif isinstance(memo_val, tuple) and len(memo_val) >= 3:
+                    known_day = str(memo_val[0])
+                    if memo_val[1] == entry_sig and isinstance(memo_val[2], Mapping):
+                        known_items = memo_val[2]
+                        trusted_by_digest.setdefault(digest_lower, (known_day, known_items))
+            if best and known_day is not None and known_day < best[0]:
+                continue  # proven earlier session for this exact bundle; not a candidate
+            if known_day is not None and known_items is not None:
+                candidates.append((known_day, key, entry, known_items, None))
+                if best is None or (known_day, key) > best:
+                    best = (known_day, key)
+                continue
+            cache_key = (*scope, entry_sig)
+            with _METADATA_CACHE_LOCK:
+                in_metadata_cache = cache_key in _METADATA_CACHE
+            if not in_metadata_cache and valid_digest and digest_lower in trusted_by_digest:
+                ref_day, ref_items = trusted_by_digest[digest_lower]
+                if self._verified_manifest_matching_trusted(
+                    transport, entry, trusted_trade_date=ref_day, trusted_items=ref_items
+                ):
+                    with _METADATA_CACHE_LOCK:
+                        _PRIORITY_TRADE_DATE_MEMO[memo_key] = (ref_day, entry_sig, ref_items)
+                        _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                        while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                            _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
+                    if best and ref_day < best[0]:
+                        continue
+                    candidates.append((ref_day, key, entry, ref_items, None))
+                    if best is None or (ref_day, key) > best:
+                        best = (ref_day, key)
+                    continue
+            bundle = self._verified_metadata(transport, entry)
+            if bundle.status != "complete" or not bundle.items:
+                continue
+            trade_date = _bundle_trade_date(entry, bundle.items)
+            if "trade_date" in bundle.manifest:
+                _bundle_trade_date(bundle.manifest, bundle.items)
+            if digest and digest_lower != str(bundle.manifest["bundle_sha256"]).lower():
+                raise SourceEvidenceError("collector index bundle_sha256 mismatch")
+            if best is None or trade_date >= best[0]:
+                try:
+                    self._validate_priority_bundle_rows(bundle)
+                except Exception:
+                    with _METADATA_CACHE_LOCK:
+                        _METADATA_CACHE.pop(cache_key, None)
+                    raise
+            item_hashes: Mapping[str, str] = {
+                str(r["id"]): str(bundle.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                for r in bundle.items
+            }
+            if state_items and item_hashes == state_items:
+                item_hashes = state_items
+            else:
+                for _, _, _, existing_hashes, _ in candidates:
+                    if existing_hashes == item_hashes:
+                        item_hashes = existing_hashes
+                        break
+            if valid_digest:
+                trusted_by_digest.setdefault(digest_lower, (trade_date, item_hashes))
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_TRADE_DATE_MEMO[memo_key] = (trade_date, entry_sig, item_hashes)
+                    _PRIORITY_TRADE_DATE_MEMO.move_to_end(memo_key)
+                    while len(_PRIORITY_TRADE_DATE_MEMO) > PRIORITY_TRADE_DATE_MEMO_ENTRIES:
+                        _PRIORITY_TRADE_DATE_MEMO.popitem(last=False)
+            candidates.append((trade_date, key, entry, item_hashes, bundle))
+            if best is None or (trade_date, key) > best:
+                best = (trade_date, key)
+        if best is None:
+            return None
+        trade_date, key = best
+        if base_cursor is not None and (key < base_cursor or (key == base_cursor and _PARTIAL_CURSOR_MARK not in str(cursor))):
+            return None
+        if state.get("trade_date") and trade_date < state["trade_date"]:
+            return None
+        delivered_items = dict(state.get("items") or {}) if state.get("trade_date") == trade_date else {}
+        if not state.get("trade_date") and state_key:
+            # Migrate the old acknowledged prefix using its own original manifest/order,
+            # never the offset in a newer run. This preserves corrections and reordered rows.
+            old_entry = next((e for e in mine if _cursor_key(_utc(e.get("finished_at"), "index finished_at"),
+                                                           str(e.get("run_id") or "")) == state_key), None)
+            if old_entry:
+                old = verify_bundle(
+                    transport, expected_source_id=self.source_id, entry=old_entry, item_window=(0, 0),
+                    priority_codes=state_held)
+                if _bundle_trade_date(old_entry, old.items) == trade_date:
+                    delivered_items = {str(r["id"]): str(old.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                                       for r in old.items[:delivered]}
+        # A later complete run can omit an instrument. Keep the union of this
+        # session's items, choosing the latest revision of each native identity.
+        # Its pending tail must survive both a new run and a worker restart.
+        session_item_owners: dict[str, tuple[str, Mapping[str, Any], str, VerifiedBundle | None]] = {}
+        for day, cand_key, cand_entry, cand_hashes, cand_bundle in sorted(candidates, key=lambda c: c[1], reverse=True):
+            if day == trade_date:
+                for item_id, sha in cand_hashes.items():
+                    session_item_owners.setdefault(item_id, (cand_key, cand_entry, sha, cand_bundle))
+        # Release cached earlier-session metadata, except the history bundle the ordered
+        # sweep is currently reading (it is not a candidate and must survive across pulls).
+        # Earlier-session candidates this pull verified are kept so they are not re-read next pull.
+        kept = {(str(e.get("date") or ""), str(e.get("run_id") or "")) for day, _, e, _, _ in candidates if day < trade_date}
+        with _METADATA_CACHE_LOCK:
+            reading = _HISTORY_READING.get(scope, set())
+            for cache_key, (_, cached, _) in list(_METADATA_CACHE.items()):
+                if (cache_key[:3] == scope and cached.items
+                        and _bundle_trade_date({}, cached.items) < trade_date
+                        and (cached.date, cached.run_id) not in reading
+                        and (cached.date, cached.run_id) not in kept
+                        and (*scope, cached.run_id, str(cached.manifest.get("bundle_sha256") or "").lower())
+                        not in _PRIORITY_TRADE_DATE_MEMO):
+                    del _METADATA_CACHE[cache_key]
+            _PRIORITY_DELIVERED_MEMO.pop(scope, None)
+        pending_ids = {
+            item_id
+            for item_id, (_, _, sha, _) in session_item_owners.items()
+            if delivered_items.get(item_id) != sha
+        }
+        if not pending_ids:
+            fp = fingerprint(trade_date)
+            delivered_hash = _sha256(json.dumps(delivered_items, sort_keys=True).encode())
+            if fp is not None:
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, delivered_hash)
+                    _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
+                    while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
+                        _PRIORITY_DELIVERED_MEMO.popitem(last=False)
+            if state_key != key or not state.get("trade_date") or state_held != held:
+                return [], key, (), len(session_item_owners), True, held, trade_date, delivered_items
+            return None
+        session_items: dict[str, tuple[VerifiedBundle, Mapping[str, Any]]] = {}
+        needed_keys = {session_item_owners[item_id][0] for item_id in pending_ids}
+        for day, cand_key, cand_entry, _, cand_bundle in sorted(candidates, key=lambda c: c[1], reverse=True):
+            if day == trade_date and cand_key in needed_keys:
+                resolved_bundle = cand_bundle or self._verified_metadata(transport, cand_entry)
+                for row in resolved_bundle.items:
+                    item_id = str(row["id"])
+                    if item_id in pending_ids and session_item_owners.get(item_id, ("",))[0] == cand_key:
+                        session_items.setdefault(item_id, (resolved_bundle, row))
+        pending = list(session_items.values())
+        pending.sort(key=lambda pair: not (
+            str(pair[1].get("symbol") or "").upper() in held
+            or str(pair[1]["id"]).rsplit("-", 1)[-1].upper() in held))
+        if _DEFER_ACK.get():
+            total_cap = min(total_cap, LATEST_CLOSE_PERSISTED_ROWS_PER_PULL)
+        rows = []
+        offset = 0
+        deadline = _OP_DEADLINE.get()
+        while offset < min(len(pending), total_cap):
+            if rows and deadline is not None and time.monotonic() >= deadline:
+                break
+            candidate = pending[offset][0]
+            end = offset + 1
+            while end < min(len(pending), total_cap) and pending[end][0].cursor == candidate.cursor:
+                end += 1
+            items = tuple(row for _, row in pending[offset:end])
+            windowed = _verify_raw_window(transport, replace(candidate, items=items), item_window=(0, len(items)),
+                                          deadline=deadline, raw_read_concurrency=LATEST_CLOSE_RAW_READ_CONCURRENCY)
+            stop = len(items) if windowed.verified_through is None else windowed.verified_through
+            window = items[:stop]
+            batch = [self._record(windowed, row, trace_id=trace_id) for row in window]
+            self._write_raw([(windowed, {})], batch)
+            rows.extend(batch)
+            delivered_items.update({str(r["id"]): str(candidate.manifest_items[str(r["id"])]["content_sha256"]).lower()
+                                    for r in window})
+            offset += len(window)
+            if len(window) < len(items):
+                break
+        count = sum(delivered_items.get(item_id) == sha
+                    for item_id, (_, _, sha, _) in session_item_owners.items())
+        done = count == len(session_item_owners)
+        if done:
+            fp = fingerprint(trade_date)
+            delivered_hash = _sha256(json.dumps(delivered_items, sort_keys=True).encode())
+            if fp is not None:
+                with _METADATA_CACHE_LOCK:
+                    _PRIORITY_DELIVERED_MEMO[scope] = (trade_date, key, fp, held, delivered_hash)
+                    _PRIORITY_DELIVERED_MEMO.move_to_end(scope)
+                    while len(_PRIORITY_DELIVERED_MEMO) > PRIORITY_DELIVERED_MEMO_ENTRIES:
+                        _PRIORITY_DELIVERED_MEMO.popitem(last=False)
+        return rows, key, (), count, done, held, trade_date, delivered_items
+
+    def _pull_ordered(
+        self,
+        *,
+        cursor: str | None = None,
+        trace_id: str = "",
+        max_records: int | None = None,
+        priority_state: Mapping[str, Any] | None = None,
     ) -> CollectorPullResult:
         transport = self._transport()
+        priority_state = priority_state or self._priority_document()
         index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
         entries = index.get("bundles") if isinstance(index, dict) else None
         if not isinstance(entries, list):
             raise SourceEvidenceError("collector bundle index.json must contain a bundles list")
 
         base_cursor, partial_skip = _split_cursor(cursor)
+        partial_cursor = _PARTIAL_CURSOR_MARK in str(cursor)
         pending: list[tuple[datetime, str, Mapping[str, Any]]] = []
+        source_entries: list[tuple[str, Mapping[str, Any]]] = []
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("source_id") or "") != self.source_id:
                 continue
             finished = _utc(entry.get("finished_at"), "index finished_at")
             key = _cursor_key(finished, str(entry.get("run_id") or ""))
-            if base_cursor is None or key > base_cursor or (partial_skip and key == base_cursor):
+            source_entries.append((key, entry))
+            if base_cursor is None or key > base_cursor or (partial_cursor and key == base_cursor):
                 pending.append((finished, key, entry))
         pending.sort(key=lambda t: t[1])
 
-        verified = [verify_bundle(transport, expected_source_id=self.source_id, entry=e) for _, _, e in pending]
+        # Bound per-pull verification work to what the output cap can return: verify bundles
+        # lazily and only fetch raw files for the rows that can fit under the cap. Later
+        # rows/bundles are verified by the pulls that reach them (persisted resume cursor).
+        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
+        verified: list[VerifiedBundle] = []
+        with _METADATA_CACHE_LOCK:
+            _HISTORY_READING.pop(self._metadata_scope(transport), None)
+        acknowledged_only_keys: set[str] = set()
+        rejected: list[Mapping[str, Any]] = []
+        rejected_keys: set[str] = set()
+        rejected_items: list[Mapping[str, Any]] = []
+        window_stops: dict[str, int] = {}
+        remaining = max(total_cap, 1)
+        unverified_pending = False
+        closures: list[dict[str, Any]] = []
+        deadline = _OP_DEADLINE.get()
+        if deadline is None and self.read_budget_seconds is not None:
+            deadline = time.monotonic() + max(self.read_budget_seconds, 0.0)
+        for _, key, entry in pending:
+            if verified and deadline is not None and time.monotonic() >= deadline:
+                # Budget spent between bundles: the rest stays pending behind the cursor.
+                unverified_pending = True
+                break
+            if remaining <= 0:
+                unverified_pending = True
+                break
+            skip = partial_skip if key == base_cursor else 0
+            try:
+                if self._priority_latest_enabled() and priority_state.get("items") and key < str(priority_state.get("key") or ""):
+                    scope = self._metadata_scope(transport)
+                    entry_sig = json.dumps(dict(entry), sort_keys=True, separators=(",", ":"))
+                    cache_key = (*scope, entry_sig)
+                    digest_lower = str(entry.get("bundle_sha256") or "").lower()
+                    memo_key = (*scope, str(entry.get("run_id") or ""), digest_lower)
+                    with _METADATA_CACHE_LOCK:
+                        in_cache = cache_key in _METADATA_CACHE
+                        memo_val = _PRIORITY_TRADE_DATE_MEMO.get(memo_key)
+                    if (
+                        not in_cache
+                        and isinstance(memo_val, tuple)
+                        and len(memo_val) >= 3
+                        and memo_val[1] == entry_sig
+                        and isinstance(memo_val[2], Mapping)
+                        and memo_val[2]
+                        and str(memo_val[0]) == str(priority_state.get("trade_date") or "")
+                        and all(str(item_id) in priority_state["items"] for item_id in memo_val[2])
+                    ):
+                        finished_dt = _utc(entry.get("finished_at"), "index finished_at")
+                        verified.append(
+                            VerifiedBundle(
+                                source_id=self.source_id,
+                                date=str(entry.get("date") or ""),
+                                run_id=str(entry.get("run_id") or ""),
+                                finished_at=finished_dt,
+                                manifest={
+                                    "source_id": self.source_id,
+                                    "run_id": str(entry.get("run_id") or ""),
+                                    "status": "complete",
+                                    "finished_at": _iso(finished_dt),
+                                    "bundle_sha256": str(entry.get("bundle_sha256") or ""),
+                                },
+                                manifest_items={},
+                                items=(),
+                                raw_bytes={},
+                                cursor=key,
+                            )
+                        )
+                        acknowledged_only_keys.add(key)
+                        window_stops[key] = 0
+                        continue
+                metadata_bundle = None
+                if self.source_type == "market" and self.dataset in PRIORITY_LATEST_DATASETS:
+                    metadata_bundle = self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "complete":
+                        try:
+                            # Validate the entire bundle before any capped prefix is emitted.
+                            # An invalid tail must not leave a partly admitted price bundle.
+                            for row in metadata_bundle.items:
+                                fetched = _utc(row.get("fetched_at"), "fetched_at")
+                                stated = row.get("published_at")
+                                published = _utc(stated, "published_at", allow_rfc2822=True) if stated else fetched
+                                self._market_event_time(str(row["id"]), row, stated, published, fetched)
+                        except MarketTimeEvidenceError as exc:
+                            rejection = self._record_market_rejection(metadata_bundle, exc)
+                            rejected.append(rejection)
+                            rejected_keys.add(key)
+                            # Empty traversal entry advances only the sweep, never a data ack.
+                            verified.append(replace(metadata_bundle, items=()))
+                            window_stops[key] = 0
+                            continue
+                if (self.source_type == "market" and self.dataset not in PRIORITY_LATEST_DATASETS
+                        and self.dataset not in SURVIVORSHIP_EVIDENCE_DATASETS):
+                    candidate = self._verified_metadata(transport, entry)
+                    if candidate.status == "complete":
+                        kept_rows = []
+                        for row in candidate.items:
+                            try:
+                                fetched = _utc(row.get("fetched_at"), "fetched_at")
+                                stated = row.get("published_at")
+                                published = _utc(stated, "published_at", allow_rfc2822=True) if stated else fetched
+                                if row.get("trade_date"):
+                                    self._market_event_time(str(row["id"]), row, stated, published, fetched)
+                            except MarketTimeEvidenceError as exc:
+                                rejected_items.append({
+                                    "source_id": self.source_id, "run_id": candidate.run_id, "cursor": candidate.cursor,
+                                    "item_id": exc.item_id, "trade_date": str(row.get("trade_date")),
+                                    "reason": exc.reason, "fetched_at": str(row.get("fetched_at")),
+                                    "detail": str(exc)[:300]})
+                                continue
+                            kept_rows.append(row)
+                        if len(kept_rows) != len(candidate.items):
+                            metadata_bundle = replace(candidate, items=tuple(kept_rows))
+                if self._priority_latest_enabled() and priority_state.get("items") and key <= str(priority_state.get("key") or ""):
+                    metadata_bundle = metadata_bundle or self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0))
+                    if (metadata_bundle.items and _bundle_trade_date(entry, metadata_bundle.items) == priority_state.get("trade_date")
+                            and all(str(row["id"]) in priority_state["items"] for row in metadata_bundle.items)):
+                        # Every identity of this session was persisted by the newer priority run.
+                        # Older revisions must not overwrite a subsequently delivered correction.
+                        verified.append(replace(metadata_bundle, items=()))
+                        acknowledged_only_keys.add(key)
+                        window_stops[key] = 0
+                        continue
+                if self.source_id in _PRICE_HISTORY_PEERS and self.source_type == "market":
+                    # Resolve a producer-partial bundle from verified metadata before any raw read.
+                    metadata_bundle = metadata_bundle or self._verified_metadata(transport, entry)
+                    if metadata_bundle.status == "partial":
+                        early = self._resolve_partial_bundle(transport, metadata_bundle, source_entries, deadline)
+                        if early is not None:
+                            verified.append(replace(metadata_bundle, items=(), resolution=early[0]))
+                            acknowledged_only_keys.add(key)
+                            window_stops[key] = 0
+                            if early[1] is not None:
+                                closures.append(early[1])
+                            continue
+                with _METADATA_CACHE_LOCK:
+                    # The bundle whose raw rows this pull windows is the one being backfilled.
+                    reading_set = _HISTORY_READING.setdefault(self._metadata_scope(transport), set())
+                    if len(reading_set) < VERIFIED_METADATA_CACHE_ENTRIES:
+                        reading_set.add((str(entry.get("date") or ""), str(entry.get("run_id") or "")))
+                if metadata_bundle is not None:
+                    bundle = _verify_raw_window(
+                        transport, metadata_bundle, item_window=(skip, skip + remaining), deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency)
+                else:
+                    bundle = self._verify_ordered_bundle(
+                        transport, expected_source_id=self.source_id, entry=entry, item_window=(skip, skip + remaining),
+                        deadline=deadline,
+                        raw_read_concurrency=self.history_raw_read_concurrency if self.source_type == "market" else 1,
+                    )
+            except TimeoutError:
+                # A later bundle cut by the shared deadline before any of its rows verified
+                # keeps the already verified prefix; that bundle stays pending (no skip, no
+                # forged completion). With nothing verified yet, the timeout is not progress.
+                if verified and deadline is not None and time.monotonic() >= deadline:
+                    unverified_pending = True
+                    break
+                raise
+            verified.append(bundle)
+            window_stops[bundle.cursor] = skip + remaining
+            if bundle.status == "partial":
+                resolution = self._resolve_partial_bundle(transport, bundle, source_entries, deadline)
+                if resolution is not None:
+                    # Acknowledged without delivering its rows (traversal only, like a rejected bundle).
+                    verified[-1] = replace(bundle, items=(), resolution=resolution[0])
+                    window_stops[bundle.cursor] = 0
+                    acknowledged_only_keys.add(bundle.cursor)
+                    if resolution[1] is not None:
+                        closures.append(resolution[1])
+                    continue
+            if bundle.verified_through is not None:
+                # Read budget exhausted mid-window: later rows/bundles stay pending.
+                unverified_pending = True
+                break
+            if bundle.status in {"paused", "partial"}:
+                # Material after an unresolved bundle must remain pending.
+                unverified_pending = True
+                break
+            if bundle.status != "paused":
+                remaining -= max(len(bundle.items) - skip, 0)
 
         all_records: list[SourceRecord] = []
         paused: list[str] = []
         for bundle in verified:
             if bundle.status == "paused":
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
-                continue
+                break
             skip = partial_skip if bundle.cursor == base_cursor else 0
-            for row in bundle.items[skip:]:
+            stop = min(len(bundle.items), window_stops[bundle.cursor])
+            if bundle.verified_through is not None:
+                stop = min(stop, bundle.verified_through)
+            for row in bundle.items[skip:stop]:
                 all_records.append(self._record(bundle, row, trace_id=trace_id))
 
         # The caller's output cap covers raw + derived feature records together. Shrink the
         # raw budget until both fit; derived rows are acknowledged (ledger / emission
         # markers) only if actually returned, so a capped expansion stays pending.
-        total_cap = self.max_records if max_records is None else max(min(self.max_records, int(max_records)), 0)
         budget = total_cap
         while True:
             records, next_cursor, raw_plan = self._select_raw(
                 verified, all_records, cursor, budget, skips={base_cursor: partial_skip} if partial_skip else {}
             )
+            cut = verified[-1] if verified and verified[-1].verified_through is not None else None
+            if cut is not None and len(records) == len(all_records):
+                # Everything verified is returned; resume exactly where the budget stopped.
+                next_cursor = f"{cut.cursor}{_PARTIAL_CURSOR_MARK}{cut.verified_through}"
             plan = self._plan_governed_features(records)
             # Already-acknowledged replays are idempotent and droppable; only pending
             # rows must fit alongside the raw items.
@@ -525,18 +1761,75 @@ class CollectorBundleAdapter:
             first = next((b for b in verified if b.status != "paused"), None)
             if first is not None:
                 first_skip = partial_skip if first.cursor == base_cursor else 0
-                candidate = [r for r in all_records[: max(len(first.items) - first_skip, 0)]]
+                # Only the raw window verified by this pull may contribute to
+                # derived rows, even when a bundle exceeds the public cap.
+                candidate = list(all_records[: min(max(len(first.items) - first_skip, 0), total_cap)])
                 plan = self._plan_governed_features(candidate)
-        feature_records, feature_rejected = self._commit_governed_features(
-            plan, limit=max(total_cap - len(records), 0), trace_id=trace_id
-        )
-        self._write_raw(raw_plan, records)
-        observed = observed_from_collector_status(
-            self.read_status(), source_id=self.source_id, cursor=next_cursor, cadence_seconds=self.cadence_seconds
-        )
+        limit = max(total_cap - len(records), 0)
+        selected = self._select_feature_rows(plan, limit)
+        if _DEFER_ACK.get():
+            feature_records = feature_rows_to_records(selected, connector_id=self.connector_id,
+                                                     trace_id=trace_id, license_scope=self.license_scope)
+            feature_rejected = plan.rejected
+        else:
+            feature_records, feature_rejected = self._commit_governed_features(plan, limit=limit, trace_id=trace_id)
+        # Cache the verified window even for a feature-only capped delivery.
+        # Its provenance must already resolve; this cache is not a cursor ack.
+        self._write_raw([(b, {}) for b in verified if b.status != "paused" and b.cursor not in rejected_keys], records)
         pending_rows = sum(1 for r in plan.rows if not plan.is_acked(r))
-        complete = (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
-        return CollectorPullResult(
+        complete = not unverified_pending and (not verified or next_cursor == verified[-1].cursor) and max(total_cap - len(records), 0) >= pending_rows
+        latest_key, latest_entry = max(source_entries, key=lambda pair: pair[0]) if source_entries else (None, None)
+        boundary = (verified[-1] if verified and verified[-1].cursor == latest_key
+                    and latest_key not in rejected_keys else None)
+        if not records and not feature_records and not verified and cursor == latest_key and cursor and not partial_cursor:
+            # The cache alone cannot acknowledge a configured delivery; the
+            # persistence owner must also have committed this exact boundary.
+            boundary = self._verify_ordered_bundle(transport, expected_source_id=self.source_id,
+                                     entry=latest_entry, item_window=(0, 0))
+        observed = observed_from_collector_status(
+            self.read_status(), source_id=self.source_id, cursor=next_cursor,
+            cadence_seconds=self._health_cadence_seconds(), verified_bundle=boundary,
+            delivery_complete=complete and not feature_rejected,
+        )
+        if rejected:
+            observed = {**observed, "rejected_bundles": rejected}
+        resolved = [{"run_id": b.run_id, "resolution": b.resolution} for b in verified if b.resolution]
+        if resolved:
+            observed = {**observed, "resolved_partial_bundles": resolved}
+        if closures and not _DEFER_ACK.get():
+            self._record_market_closures(closures)
+        if rejected_items:
+            observed = {**observed, "rejected_items": rejected_items, "rejected_item_count": len(rejected_items)}
+        no_new_data = bool(verified and boundary is not None
+                           and all(b.cursor in acknowledged_only_keys | rejected_keys for b in verified) and complete
+                           and not records and not feature_records and not feature_rejected
+                           and observed["health_state"] == "healthy")
+        if not records and not feature_records and not verified and source_entries and cursor and not partial_cursor:
+            # Revalidate the exact consumed boundary over the guarded transport. No raw
+            # rows are fetched here: the acknowledged cursor represents their previous
+            # consumption; manifest hashes and item coverage are verified again.
+            if cursor == latest_key:
+                if boundary.status == "paused":
+                    paused.append(f"{boundary.run_id}:{boundary.manifest.get('paused_reason') or 'paused'}")
+                no_new_data = (
+                    boundary.status == "complete" and boundary.cursor == cursor and complete
+                    and observed["health_state"] == "healthy"
+                    and observed["freshness"]["collector_last_run_at"] == _iso(boundary.finished_at)
+                    and not feature_rejected
+                    and self._has_verified_boundary(boundary, persisted_only=_DEFER_ACK.get())
+                )
+                if not no_new_data:
+                    observed = {**observed, "health_state": "degraded",
+                                "reasons": (*observed["reasons"], "collector_consumed_boundary_unverified")}
+        if paused:
+            observed = {**observed, "health_state": "degraded",
+                        "reasons": (*observed["reasons"], *(f"collector_bundle_paused:{r}" for r in paused))}
+        if (self.source_type == "market" and records and not complete and not paused
+                and all(b.status == "complete" for b in verified)):
+            # A verified prefix cut by the output/deadline budget is ready to continue.
+            # Producer partial/paused bundles wait for cadence rather than retrying hot.
+            observed = {**observed, "continuation_pending": True}
+        result = CollectorPullResult(
             records=(*feature_records, *records),
             next_cursor=next_cursor,
             bundle_count=len(verified),
@@ -544,13 +1837,118 @@ class CollectorBundleAdapter:
             observed=observed,
             feature_rejected=feature_rejected,
             complete=complete,
+            no_new_data=no_new_data,
         )
+        if _DEFER_ACK.get():
+            def acknowledge() -> None:
+                self._record_market_closures(closures)
+                self._commit_governed_features(replace(plan, rows=selected), limit=None,
+                                               trace_id=trace_id, persisted=True)
+                if complete and boundary is not None and next_cursor == boundary.cursor and not feature_rejected:
+                    self._acknowledge_boundary(boundary)
+                self.save_resume_cursor(result)
+            result = replace(result, delivery=CollectorDelivery(result.records, acknowledge))
+        return result
+
+    # -- partial bundle resolution -------------------------------------------------
+    def _resolve_partial_bundle(
+        self, transport: BundleTransport, bundle: VerifiedBundle,
+        source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
+    ) -> tuple[str, dict[str, Any] | None] | None:
+        """Why a producer-partial price bundle may be acknowledged without rows, else None.
+
+        Only the two price-history sources resolve, and only on independent evidence:
+        a later complete bundle of the same source for the same trade date (the rows come
+        from that bundle once), or an unscheduled closure confirmed by both venues.
+        Anything else keeps the sweep stopped (None).
+        """
+        if self.source_type != "market" or self.source_id not in _PRICE_HISTORY_PEERS:
+            return None
+        trade_day = _run_trade_date(bundle.run_id)
+        if trade_day is None:
+            return None
+        try:
+            for key, entry in source_entries:
+                if key <= bundle.cursor or _run_trade_date(str(entry.get("run_id") or "")) != trade_day:
+                    continue
+                later = self._verify_ordered_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if (later.status == "complete" and later.items
+                        and {str(r.get("trade_date") or "") for r in later.items} == {trade_day}):
+                    return f"superseded:{later.run_id}", None
+            if bundle.items or bundle.manifest.get("reason") != "no_data_for_date":
+                return None
+            return self._confirm_market_closure(transport, bundle, trade_day, source_entries, deadline)
+        except (SourceEvidenceError, ValueError, OSError):
+            return None
+
+    def _confirm_market_closure(
+        self, transport: BundleTransport, bundle: VerifiedBundle, trade_day: str,
+        source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        # The sweep must not have any complete bundle of this date on this venue.
+        for _, entry in source_entries:
+            if _run_trade_date(str(entry.get("run_id") or "")) == trade_day and entry.get("run_id") != bundle.run_id:
+                other = self._verify_ordered_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if other.status == "complete" or other.items:
+                    return None
+        peer_id = _PRICE_HISTORY_PEERS[self.source_id]
+        peer_index = _loads(transport.read("bundles/index.json", max_bytes=MAX_JSON_BYTES), "index.json")
+        peer_runs = []
+        for entry in peer_index.get("bundles", []):
+            if (isinstance(entry, dict) and str(entry.get("source_id") or "") == peer_id
+                    and _run_trade_date(str(entry.get("run_id") or "")) == trade_day):
+                peer = self._verify_ordered_bundle(
+                    transport, expected_source_id=peer_id, entry=entry, item_window=(0, 0), deadline=deadline)
+                if peer.status == "complete" or peer.items:
+                    return None
+                peer_runs.append(peer)
+        if not peer_runs or any(p.status != "partial" or p.manifest.get("reason") != "no_data_for_date" for p in peer_runs):
+            return None
+        day = date.fromisoformat(trade_day)
+        if day.weekday() >= 5 or not self._calendar_lists_session(trade_day):
+            return None
+        record = {"trade_date": trade_day, "kind": "unscheduled_market_closure",
+                  "evidence": "both_venues_no_data_for_date_on_scheduled_session",
+                  "bundles": sorted([f"{self.source_id}:{bundle.run_id}", f"{peer_id}:{peer_runs[0].run_id}"])}
+        return f"market_closure:{trade_day}", record
+
+    def _calendar_lists_session(self, trade_day: str) -> bool:
+        """The governed holiday calendar covers the year and does not close ``trade_day`` on both venues."""
+        from ..candidate_pool_market_feed import _partitions, _read_closed_days
+        from ..survivorship_attestation import HOLIDAY_DATASET
+
+        closed = _read_closed_days(_partitions(self._raw_root(), HOLIDAY_DATASET))
+        year = trade_day[:4]
+        return trade_day not in closed and any(d.startswith(year) for d in closed)
+
+    def _market_closures_path(self) -> Path:
+        return self._raw_root() / "state" / MARKET_CLOSURES_FILE
+
+    def _record_market_closures(self, closures: Sequence[Mapping[str, Any]]) -> None:
+        """Append-only closure ledger (one ~300 byte line per closure date, kept indefinitely)."""
+        if not closures:
+            return
+        path = self._market_closures_path()
+        known = {r.get("trade_date") for r in read_market_closures(path.parent)}
+        fresh = [c for c in closures if c["trade_date"] not in known]
+        if not fresh:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            for record in fresh:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
 
     # -- durable resume cursor (capped public pulls) -------------------------------
     def _resume_cursor_path(self) -> Path:
         return self._raw_root() / "state" / _slug(self.connector_id) / "resume_cursor.json"
 
     def load_resume_cursor(self) -> str | None:
+        if _DEFER_ACK.get():
+            # Only the schedule store proves configured ingestion committed.
+            # Legacy adapter cursors may have been saved by a failed raw job.
+            return None
         path = self._resume_cursor_path()
         if not path.is_file():
             return None
@@ -567,6 +1965,22 @@ class CollectorBundleAdapter:
         Cleared once a pull reaches the end, so a finished sweep replays from scratch exactly
         like an un-cursored pull (idempotent downstream).
         """
+        if _DEFER_ACK.get():
+            return
+        if result.priority_key:
+            pri = self._priority_key_path()
+            pri.parent.mkdir(parents=True, exist_ok=True)
+            tmp = pri.with_name(pri.name + ".tmp")
+            tmp.write_text(
+                json.dumps({
+                    "source_id": self.source_id, "key": result.priority_key,
+                    "delivered": result.priority_delivered, "done": result.priority_done,
+                    "held": list(result.priority_held),
+                    "trade_date": result.priority_trade_date, "items": dict(result.priority_items),
+                }),
+                encoding="utf-8",
+            )
+            os.replace(tmp, pri)
         path = self._resume_cursor_path()
         if result.complete or not result.next_cursor:
             path.unlink(missing_ok=True)
@@ -587,7 +2001,9 @@ class CollectorBundleAdapter:
             raise SourceEvidenceError(f"collector item {item_id} has no url")
         fetched_at = _utc(row.get("fetched_at"), f"item {item_id} fetched_at")
         published_raw = row.get("published_at")
-        published_at = _utc(published_raw, f"item {item_id} published_at") if published_raw else fetched_at
+        published_at = _utc(published_raw, f"item {item_id} published_at", allow_rfc2822=True) if published_raw else fetched_at
+        if self.source_type == "market" and row.get("trade_date"):
+            published_at = self._market_event_time(item_id, row, published_raw, published_at, fetched_at)
         text = row.get("text")
         title = str(row.get("title") or (str(text).strip()[:80] if text else "") or item_id)
         raw_ref = f"raw/{_slug(self.connector_id)}/{_slug(self.dataset)}/date={bundle.date}/bundle-{bundle.run_id}/{PurePosixPath(manifest_item['raw_path']).name}"
@@ -653,6 +2069,11 @@ class CollectorBundleAdapter:
             "investment_trust_net_shares",
             "dealer_net_shares",
             "total_institutional_net_shares",
+            "index_name",
+            "change_points",
+            "change_percent",
+            "whole_market",
+            "stocks",
             "series_id",
             "period_end",
             "value",
@@ -663,6 +2084,15 @@ class CollectorBundleAdapter:
         ):
             if row.get(optional) not in (None, "", [], {}):
                 metadata[optional] = row[optional]
+        if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+            for optional in SURVIVORSHIP_EVIDENCE_KEYS:
+                if row.get(optional) not in (None, "", [], {}):
+                    metadata[optional] = row[optional]
+
+        if self.source_type in {"macro", "social"}:
+            # Provider item labels cannot turn raw evidence into a governed row.
+            metadata["dataset"] = (self.dataset if self.dataset not in {
+                TW_MACRO_SERIES_DATASET, TW_COMMUNITY_DAILY_DATASET} else "collector_bundle_items")
 
         if self.source_type == "social":
             author = str(row.get("hashed_author") or "").strip()
@@ -700,11 +2130,39 @@ class CollectorBundleAdapter:
                 "investment_trust_net_shares",
                 "dealer_net_shares",
                 "total_institutional_net_shares",
+                "index_name",
+                "change_points",
+                "change_percent",
+                "whole_market",
+                "stocks",
             ):
                 if metadata.get(market_key) not in (None, "", [], {}):
                     market_row.setdefault(market_key, metadata[market_key])
+            if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+                market_row = self._survivorship_evidence_row(item_id, market_row, metadata)
+            exchange = str(market_row.get("exchange") or "").upper()
+            if self.dataset in PRIORITY_LATEST_DATASETS and market_row.get("symbol") and exchange in {"TWSE", "TPEX"}:
+                # Same canonical identity as the official OpenAPI row, so a session's collector and
+                # official closes land on one symbol series and can be compared.
+                market_row.setdefault("symbol_canonical", f"{str(market_row['symbol']).strip().upper()}.{exchange}")
+                market_row.setdefault("market", "TW")
+            if market_row.get("dataset") in REGIME_INDEX_BREADTH_DATASETS:
+                market_row = self._regime_market_row(item_id, market_row, metadata)
+                metadata["dataset"] = market_row["dataset"]
             if market_row:
                 metadata.setdefault("normalized_row", market_row)
+            if self.dataset in PRIORITY_LATEST_DATASETS:
+                # Exchange-website close relayed by the collector: provisional, never official truth.
+                metadata["collector_close"] = {
+                    "provisional": True,
+                    "official": False,
+                    "collector_source_id": self.source_id,
+                    "exchange_endpoint": url,
+                    "upstream_endpoint": row.get("upstream_endpoint"),
+                    "bundle_sha256": str(manifest["bundle_sha256"]).lower(),
+                    "bundle_run_id": bundle.run_id,
+                    "trade_date": row.get("trade_date"),
+                }
             for key, val in metrics_dict.items():
                 if val not in (None, "", [], {}):
                     metadata.setdefault(key, val)
@@ -719,6 +2177,140 @@ class CollectorBundleAdapter:
             trace_id=trace_id,
         )
         return validate_external_source_record(record, connector=self.connector(), force=True)
+
+    @staticmethod
+    def _survivorship_evidence_row(item_id: str, row: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalized holiday / suspension row; raw source values kept, a malformed row fails closed."""
+        dataset = str(row.get("dataset") or "")
+        out: dict[str, Any] = {k: v for k, v in row.items() if v not in (None, "", [], {})}
+        for key in SURVIVORSHIP_EVIDENCE_KEYS:
+            if metadata.get(key) not in (None, "", [], {}):
+                out.setdefault(key, metadata[key])
+        trade_date = str(out.get("trade_date") or "").strip()
+        venue = str(out.get("venue") or "")
+        if not trade_date or venue not in {"TWSE", "TPEx"} or not str(out.get("api_endpoint") or ""):
+            raise SourceEvidenceError(f"collector item {item_id} lacks trade_date, venue or its official endpoint")
+        out["date"] = trade_date
+        out["market"] = "TW"
+        if dataset == TW_TRADING_HOLIDAYS_DATASET:
+            if not isinstance(out.get("is_closed"), bool):
+                raise SourceEvidenceError(f"collector holiday item {item_id} has no is_closed state")
+            out["closed"] = out["is_closed"]
+        elif not str(out.get("symbol") or "").strip() or not (out.get("suspended_date") or out.get("resumed_date")):
+            raise SourceEvidenceError(f"collector suspension item {item_id} lacks a symbol or a dated event")
+        return out
+
+    @staticmethod
+    def _regime_market_row(item_id: str, row: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, Any]:
+        """Normalized index / breadth row; raw source values are kept, nothing is derived or filled.
+
+        Index rows (the TAIEX monthly OHLC history lands in the same ``tw_index_daily``
+        dataset) are keyed by the index name as the series key. A row missing its key or a
+        required close fails closed. Breadth keeps the source's whole-market and stock
+        groups and adds flat per-group counts for the catalogue.
+        """
+        source_dataset = str(row["dataset"])
+        out: dict[str, Any] = {k: v for k, v in row.items() if v not in (None, "", [], {})}
+        trade_date = str(row.get("trade_date") or "").strip()
+        if not trade_date:
+            raise SourceEvidenceError(f"collector item {item_id} has no trade_date")
+        out["date"] = trade_date
+        out["market"] = "TW"
+        if source_dataset == TW_MARKET_BREADTH_DATASET:
+            for group in BREADTH_GROUPS:
+                counts = row.get(group)
+                if not isinstance(counts, Mapping):
+                    raise SourceEvidenceError(f"collector breadth item {item_id} has no {group} counts")
+                for key in BREADTH_COUNT_KEYS:
+                    value = counts.get(key)
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                        raise SourceEvidenceError(f"collector breadth item {item_id} has an invalid {group}.{key}")
+                    out[f"{group}_{key}"] = value
+            return out
+        name = str(row.get("index_name") or "").strip()
+        close = row.get("close")
+        if not name:
+            raise SourceEvidenceError(f"collector index item {item_id} has no index_name")
+        if isinstance(close, bool) or not isinstance(close, (int, float)) or not close > 0:
+            raise SourceEvidenceError(f"collector index item {item_id} has no valid close")
+        out["series_id"] = name
+        out["source_collector_dataset"] = source_dataset
+        out["dataset"] = TW_INDEX_DATASET
+        return out
+
+    def _market_event_time(
+        self, item_id: str, row: Mapping[str, Any], published_raw: Any, published_at: datetime,
+        fetched_at: datetime,
+    ) -> datetime:
+        """Point-in-time history: a market row's event time is its own trade date.
+
+        A backfilled bundle is fetched long after the trade date, so falling back to the fetch
+        time would stamp two years of history with today. The row's trade date (Taipei) is the
+        event date; a stated publish time on another date is rejected, never trusted.
+        Daily prices cannot be fetched before the 13:30 Taipei session close.
+        A later conventional publish label is bounded by the verified observation.
+        """
+
+        try:
+            trade_date = date.fromisoformat(str(row["trade_date"]).strip())
+        except ValueError as exc:
+            raise SourceEvidenceError(f"collector item {item_id} has an invalid trade_date") from exc
+        if self.dataset in SURVIVORSHIP_EVIDENCE_DATASETS:
+            if published_at > fetched_at:
+                raise SourceEvidenceError(f"collector item {item_id} published_at is after its fetch time")
+            return published_at
+        is_price = self.dataset in PRIORITY_LATEST_DATASETS
+        session_close = datetime(trade_date.year, trade_date.month, trade_date.day, 5, 30, tzinfo=timezone.utc)
+        if is_price and fetched_at < session_close:
+            raise MarketTimeEvidenceError("market_price_fetched_before_session_close", item_id,
+                                          f"was fetched before {_iso(session_close)}")
+        if published_raw:
+            if published_at.astimezone(_TAIPEI_TZ).date() != trade_date:
+                raise SourceEvidenceError(
+                    f"collector item {item_id} published_at is not on its trade_date {trade_date.isoformat()}"
+                )
+            event_time = published_at
+        else:
+            close_utc = _MARKET_EVENT_CLOSE_UTC.get(str(row.get("dataset") or self.dataset), (6, 30))
+            event_time = datetime(trade_date.year, trade_date.month, trade_date.day, *close_utc, tzinfo=timezone.utc)
+        if is_price:
+            if event_time < session_close:
+                raise MarketTimeEvidenceError("market_price_published_before_session_close", item_id,
+                                              "has a publish time before the session close")
+            if event_time > fetched_at and fetched_at.astimezone(_TAIPEI_TZ).date() == trade_date:
+                # The collector uses a conventional 14:30 publication label even when
+                # the exchange supplied the close earlier. Observation is the conservative
+                # event bound; availability remains the original fetch timestamp.
+                return fetched_at
+        elif event_time > fetched_at:
+            # Index / breadth / flow rows: same principle as prices. A row fetched on its own
+            # trade date at or after the session close is bounded by the fetch time; one
+            # fetched earlier is not final and is refused as that single item.
+            if fetched_at.astimezone(_TAIPEI_TZ).date() == trade_date and fetched_at >= session_close:
+                return fetched_at
+            raise MarketTimeEvidenceError(
+                "market_row_not_final", item_id,
+                f"trade_date {trade_date.isoformat()} event_time {_iso(event_time)} is after "
+                f"fetched_at {_iso(fetched_at)} (before session close {_iso(session_close)} or not its trade date)")
+        return event_time
+
+    def _record_market_rejection(self, bundle: VerifiedBundle, error: MarketTimeEvidenceError) -> Mapping[str, Any]:
+        """Durable quarantine evidence, separate from legacy cursor/priority state.
+
+        This records a rejection, never proves raw verification or persistence. A
+        later pull still verifies the host metadata and reevaluates the bundle.
+        """
+        evidence = {"source_id": self.source_id, "run_id": bundle.run_id, "date": bundle.date,
+                    "cursor": bundle.cursor, "bundle_sha256": bundle.manifest["bundle_sha256"],
+                    "reason": error.reason, "item_id": error.item_id, "detail": str(error)}
+        root = self._raw_root() / "state" / _slug(self.connector_id) / "rejected_bundles"
+        root.mkdir(parents=True, exist_ok=True)
+        identity = _sha256(f"{bundle.cursor}:{bundle.manifest['bundle_sha256']}".encode())
+        path = root / f"{identity}.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        return evidence
 
     def _instrument_authority(self) -> dict[str, tuple[str, ...]]:
         authority = {k: set(v) for k, v in stored_instrument_authority(self._raw_root()).items()}
@@ -742,19 +2334,28 @@ class CollectorBundleAdapter:
     ) -> tuple[list[SourceRecord], str | None, list[tuple[VerifiedBundle, Mapping[str, Any]]]]:
         skips = skips or {}
         raw_plan = [(b, {}) for b in verified if b.status != "paused"]
-        next_cursor = verified[-1].cursor if verified else cursor
+        next_cursor = cursor
+        for bundle in verified:
+            if bundle.status == "paused":
+                break
+            next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
+                           if bundle.unresolved_partial else bundle.cursor)
         records = list(all_records[:budget])
         # Truncation must not skip unconsumed bundles: advance the cursor past whole
         # bundles fully represented in `records`. A bundle larger than the remaining
         # budget is consumed partially (``<key>|items=<n>``) so a bundle bigger than the
         # public cap still makes bounded progress instead of starving every later pull.
-        if len(records) < len(all_records):
+        if len(records) < len(all_records) or len(records) < sum(
+            max(len(b.items) - skips.get(b.cursor, 0), 0) for b in verified if b.status != "paused"
+        ):
             kept = len(records)
             next_cursor = cursor
             running = 0
             consumed_bundles: list[VerifiedBundle] = []
             for bundle in verified:
-                n = 0 if bundle.status == "paused" else max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
+                if bundle.status == "paused":
+                    break
+                n = max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
                 if running + n > kept:
                     take = kept - running
                     if take > 0:
@@ -763,7 +2364,8 @@ class CollectorBundleAdapter:
                         running += take
                     break
                 running += n
-                next_cursor = bundle.cursor
+                next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
+                               if bundle.unresolved_partial else bundle.cursor)
                 consumed_bundles.append(bundle)
             keep_ids = {id(b) for b in consumed_bundles}
             raw_plan = [(b, x) for b, x in raw_plan if id(b) in keep_ids]
@@ -774,12 +2376,13 @@ class CollectorBundleAdapter:
         return self._raw_root() / "state" / _slug(self.connector_id) / "macro_emitted.jsonl"
 
     @staticmethod
-    def _read_markers(path: Path) -> list[tuple[str, str, str]]:
+    def _read_markers(path: Path, *, persisted_only: bool = False) -> list[tuple[str, str, str]]:
         if not path.is_file():
             return []
         return [
             (d["symbol"], d["day"], d["step"])
             for d in (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip())
+            if not persisted_only or d.get("persisted") is True
         ]
 
     def _community_ledger_path(self) -> Path:
@@ -806,25 +2409,28 @@ class CollectorBundleAdapter:
             for provider_id, dataset, field_name, source, period_kind in self.macro_series_map:
                 extra.setdefault(provider_id, []).append((dataset, field_name, source, period_kind))
             rows, rejected = macro_feature_rows(records, extra_series_map=extra)
-            known = frozenset(self._read_markers(self._macro_emitted_path()))
+            known = frozenset(self._read_markers(self._macro_emitted_path(), persisted_only=_DEFER_ACK.get()))
             return _FeaturePlan(tuple(rows), tuple(rejected), (), known)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
-            ledger = dict(load_community_ledger(path))
+            ledger = dict(load_community_ledger(path, persisted_only=_DEFER_ACK.get()))
             now = _feature_iso(self.clock() if self.clock else datetime.now(timezone.utc))
+            # Only bare tickers consult stored price history. Empty pulls still
+            # rebuild closed-day ledger revisions, but need no instrument lookup.
+            # Normalize exactly like resolve_social_symbol (``raw or ""``) so None,
+            # False, 0 and "" stay recorded empty-symbol refusals without a scan.
+            needs_authority = any(
+                (text := str(symbol or "").strip()) and "." not in text
+                for record in records for symbol in _social_record_symbols(record)
+            )
             entries, rejected_list = community_ledger_entries(
-                records, authority=self._instrument_authority(), seen_at=now
+                records, authority=self._instrument_authority() if needs_authority else {}, seen_at=now
             )
             fresh = list({e["key"]: e for e in entries if e["key"] not in ledger}.values())
             for entry in fresh:
                 ledger[entry["key"]] = entry
             emitted_path = path.with_name("community_emitted.jsonl")
-            done = []
-            if emitted_path.is_file():
-                done = [
-                    (d["symbol"], d["day"], d["step"])
-                    for d in (json.loads(x) for x in emitted_path.read_text(encoding="utf-8").splitlines() if x.strip())
-                ]
+            done = self._read_markers(emitted_path, persisted_only=_DEFER_ACK.get())
             rows = community_daily_rows_from_ledger(
                 ledger, {(e["symbol"], e["day"]) for e in entries}, now=_feature_time(now), emitted=done
             )
@@ -833,55 +2439,93 @@ class CollectorBundleAdapter:
         return _FeaturePlan((), (), (), frozenset())
 
     def _commit_governed_features(
-        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = ""
+        self, plan: "_FeaturePlan", *, limit: int | None, trace_id: str = "", persisted: bool = False
     ) -> tuple[tuple[SourceRecord, ...], tuple[dict[str, str], ...]]:
         """Return up to ``limit`` rows; acknowledge ledger/markers only for what is returned."""
-        rows = plan.rows
-        if limit is not None and len(rows) > limit:
-            # An output cap must never starve unacknowledged revisions: keep those first
-            # (then already-acknowledged replays), preserving chronological order.
-            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
-            rows = tuple(rows[i] for i in sorted(ranked))
+        rows = self._select_feature_rows(plan, limit)
         if self.dataset == TW_COMMUNITY_DAILY_DATASET or self.source_type == "social":
             path = self._community_ledger_path()
             if plan.fresh_entries:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as handle:
                     for entry in plan.fresh_entries:
-                        handle.write(json.dumps(entry, sort_keys=True) + "\n")
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = path.with_name("community_emitted.jsonl")
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
+                        handle.write(json.dumps({**entry, "persisted": persisted}, sort_keys=True) + "\n")
+            emitted_path = path.with_name("community_emitted.jsonl")
         elif self.dataset == TW_MACRO_SERIES_DATASET or self.source_type == "macro":
-            known = set(plan.known_markers)
-            new_markers = []
-            for r in rows:
-                marker = (r["symbol"], r["event_time"], r["available_time"])
-                if marker not in known:
-                    known.add(marker)
-                    new_markers.append(marker)
-            if new_markers:
-                emitted_path = self._macro_emitted_path()
-                emitted_path.parent.mkdir(parents=True, exist_ok=True)
-                with emitted_path.open("a", encoding="utf-8") as handle:
-                    for m in new_markers:
-                        handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2]}) + "\n")
-        return feature_rows_to_records(rows, connector_id=self.connector_id, trace_id=trace_id), plan.rejected
+            emitted_path = self._macro_emitted_path()
+        else:
+            return (), plan.rejected
+        known = set(self._read_markers(emitted_path, persisted_only=persisted))
+        new_markers = []
+        for r in rows:
+            marker = (r["symbol"], r["event_time"], r["available_time"])
+            if marker not in known:
+                known.add(marker)
+                new_markers.append(marker)
+        if new_markers:
+            emitted_path.parent.mkdir(parents=True, exist_ok=True)
+            with emitted_path.open("a", encoding="utf-8") as handle:
+                for m in new_markers:
+                    handle.write(json.dumps({"symbol": m[0], "day": m[1], "step": m[2],
+                                             "persisted": persisted}) + "\n")
+        return feature_rows_to_records(rows, connector_id=self.connector_id,
+                                       trace_id=trace_id, license_scope=self.license_scope), plan.rejected
+
+    @staticmethod
+    def _select_feature_rows(plan: "_FeaturePlan", limit: int | None) -> tuple:
+        rows = tuple(r for r in plan.rows if not plan.is_acked(r)) if _DEFER_ACK.get() else plan.rows
+        if limit is not None and len(rows) > limit:
+            # An output cap must never starve unacknowledged revisions: keep those first
+            # (then already-acknowledged replays), preserving chronological order.
+            ranked = sorted(range(len(rows)), key=lambda i: (plan.is_acked(rows[i]), i))[:limit]
+            rows = tuple(rows[i] for i in sorted(ranked))
+        return tuple(rows)
 
     def fetch_bundle(self, *, cursor: str | None = None, trace_id: str = "") -> CollectorPullResult:
         return self.pull(cursor=cursor, trace_id=trace_id)
 
     # -- raw storage -----------------------------------------------------------
+    def _raw_bundle_path(self, bundle: VerifiedBundle) -> Path:
+        return (self._raw_root() / "raw" / _slug(self.connector_id) / _slug(self.dataset)
+                / f"date={bundle.date}" / f"bundle-{bundle.run_id}")
+
+    def _boundary_ack(self, bundle: VerifiedBundle) -> dict[str, str]:
+        return {"source_id": self.source_id, "connector_id": self.connector_id, "cursor": bundle.cursor,
+                "manifest_sha256": _sha256(json.dumps(dict(bundle.manifest), sort_keys=True).encode())}
+
+    def _acknowledge_boundary(self, bundle: VerifiedBundle) -> None:
+        # Called only by the native delivery acknowledgement, after the
+        # scheduler/pipeline's existing persistence checks. Raw caching and
+        # legacy eager pulls never create this receipt.
+        path = self._raw_bundle_path(bundle) / "persisted_boundary.json"
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(self._boundary_ack(bundle), sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _has_verified_boundary(self, bundle: VerifiedBundle, *, persisted_only: bool = False) -> bool:
+        """A supplied cursor alone cannot prove that this exact bundle was consumed.
+
+        Reuse the raw evidence written only after verification. The manifest and
+        local raw hashes must still match. Configured ingestion also requires
+        the native persistence acknowledgement. No network raw reads are made.
+        """
+        root = self._raw_bundle_path(bundle)
+        try:
+            if persisted_only and json.loads((root / "persisted_boundary.json").read_text()) != self._boundary_ack(bundle):
+                return False
+            if json.loads((root / "manifest.json").read_text(encoding="utf-8")) != bundle.manifest:
+                return False
+            for item in bundle.manifest_items.values():
+                path = root / PurePosixPath(_safe_raw_path(str(item["raw_path"]))).name
+                size = path.stat().st_size
+                if size > MAX_RAW_BYTES or ("bytes" in item and size != int(item["bytes"])):
+                    return False
+                if _sha256(path.read_bytes()) != str(item["content_sha256"]).lower():
+                    return False
+            return True
+        except (OSError, ValueError):
+            return False
+
     def _raw_root(self) -> Path:
         if self.raw_root:
             return Path(self.raw_root)
@@ -893,21 +2537,26 @@ class CollectorBundleAdapter:
         return Path(os.environ.get("SOURCE_INGEST_DATA_DIR", "/data/source-ingest")) / "market_data_store"
 
     def _write_raw(self, plan: Sequence[tuple[VerifiedBundle, Mapping[str, Any]]], records: Sequence[SourceRecord]) -> None:
-        root = self._raw_root()
         for bundle, _ in plan:
-            target = root / "raw" / _slug(self.connector_id) / _slug(self.dataset) / f"date={bundle.date}" / f"bundle-{bundle.run_id}"
-            if target.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = Path(tempfile.mkdtemp(prefix=".bundle-", dir=target.parent))
-            try:
-                for item_id, item in bundle.manifest_items.items():
-                    (tmp / PurePosixPath(item["raw_path"]).name).write_bytes(bundle.raw_bytes[str(item["content_sha256"]).lower()])
-                (tmp / "manifest.json").write_text(json.dumps(bundle.manifest, sort_keys=True), encoding="utf-8")
-                os.replace(tmp, target)
-            finally:
-                if tmp.exists():
-                    shutil.rmtree(tmp, ignore_errors=True)
+            target = self._raw_bundle_path(bundle)
+            target.mkdir(parents=True, exist_ok=True)
+            # Raw files are written per verified item (windowed pulls verify a bundle in
+            # slices), each atomically; the manifest lands once the first slice does.
+            for item in bundle.manifest_items.values():
+                sha = str(item["content_sha256"]).lower()
+                if sha not in bundle.raw_bytes:
+                    continue
+                dest = target / PurePosixPath(item["raw_path"]).name
+                if dest.exists():
+                    continue
+                tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+                tmp.write_bytes(bundle.raw_bytes[sha])
+                os.replace(tmp, dest)
+            manifest_path = target / "manifest.json"
+            if not manifest_path.exists():
+                tmp = manifest_path.with_name(f".manifest.{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(bundle.manifest, sort_keys=True), encoding="utf-8")
+                os.replace(tmp, manifest_path)
 
 
 @dataclass(frozen=True)
@@ -938,6 +2587,8 @@ COMMUNITY_AUTHOR_DOMINANCE_SHARE = 0.5  # one author above this share of a day's
 _ENGAGEMENT_KEYS = ("engagement", "likes", "like_count", "comments", "comment_count", "replies", "reply_count", "shares", "share_count", "push_count", "upvotes")
 COMMUNITY_ZSCORE_MIN_HISTORY_DAYS = 5
 _TAIPEI_TZ = timezone(timedelta(hours=8))
+# Event time of a market row without a stated publish time: the day's published close (UTC).
+_MARKET_EVENT_CLOSE_UTC: dict[str, tuple[int, int]] = {"tw_institutional_flow": (8, 30)}
 _BULLISH_LABELS = frozenset({"bullish", "bull", "positive", "long", "看多", "多"})
 _BEARISH_LABELS = frozenset({"bearish", "bear", "negative", "short", "看空", "空"})
 
@@ -954,7 +2605,8 @@ def _feature_time(value: Any) -> datetime:
 
 
 def _feature_iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    # Distinct same-second ingestion steps must remain distinct PIT revisions.
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _month_end(year: int, month: int) -> date:
@@ -1069,6 +2721,8 @@ def macro_feature_rows(
                     "unit": str(meta.get("unit") or ""),
                     "source_id": record.source_id,
                     "connector_id": record.connector_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return tuple(rows), tuple(rejected)
@@ -1079,14 +2733,45 @@ def macro_feature_rows(
 SOCIAL_SYMBOL_AUTHORITY_DATASET = "tw_price_daily"
 
 
+_DAILY_BARS_READERS: dict[str, Any] = {}
+
+
+def _daily_bars_symbols(root: Path) -> list[str]:
+    """Every symbol with a stored daily bar, through ``DailyBarsReader.list_symbols`` (one reader per root:
+    its per-day symbol sets are cached against the day manifests, so a repeat call opens no file)."""
+    from ..daily_bars_reader import DailyBarsReader
+    from ..daily_bars_store import DailyBarsError
+
+    reader = _DAILY_BARS_READERS.get(str(root))
+    if reader is None:
+        if len(_DAILY_BARS_READERS) >= 8:
+            _DAILY_BARS_READERS.clear()
+        reader = _DAILY_BARS_READERS[str(root)] = DailyBarsReader(root)
+    try:
+        return sorted(reader.list_symbols())
+    except DailyBarsError:
+        return []  # an unreadable store gives no authority; an unknown symbol is then refused, never guessed
+
+
 def stored_instrument_authority(*roots: str | Path) -> dict[str, tuple[str, ...]]:
     """Governed instrument identities: venue-qualified symbols that have stored daily bars.
 
     Returns ``{ticker: (canonical, ...)}`` (e.g. ``{"2330": ("2330.TWSE",)}``) read from the
-    normalized ``tw_price_daily`` rows under each root.
+    normalized ``tw_price_daily`` rows under each root, or, with ``PANTHEON_DAILY_PRICE_READER=daily_bars``,
+    from the symbols of the daily bars store (``DailyBarsReader.list_symbols``).
     """
+    from ..market_data_storage import daily_price_reader_mode
+
     found: dict[str, set[str]] = {}
+    from_bars = daily_price_reader_mode() == "daily_bars"
     for root in roots:
+        if from_bars:
+            if (Path(root) / "daily_bars").is_dir():
+                for canonical in _daily_bars_symbols(Path(root)):
+                    canonical = canonical.upper()
+                    if "." in canonical:
+                        found.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+            continue
         base = Path(root) / "normalized" / _slug(SOCIAL_SYMBOL_AUTHORITY_DATASET)
         if not base.is_dir():
             continue
@@ -1128,6 +2813,12 @@ def resolve_social_symbol(raw: Any, authority: Mapping[str, Sequence[str]]) -> s
     return candidates[0]
 
 
+def _social_record_symbols(record: SourceRecord) -> Sequence[Any]:
+    meta = record.metadata
+    symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
+    return [symbols] if isinstance(symbols, str) else symbols
+
+
 def community_ledger_entries(
     records: Sequence[SourceRecord],
     *,
@@ -1139,9 +2830,7 @@ def community_ledger_entries(
     rejected: list[dict[str, str]] = []
     for record in records:
         meta = record.metadata
-        symbols = meta.get("symbols") or ([meta["symbol"]] if meta.get("symbol") else [])
-        if isinstance(symbols, str):
-            symbols = [symbols]
+        symbols = _social_record_symbols(record)
         try:
             event = _feature_time(meta.get("event_time"))
             available = _feature_time(meta.get("available_time"))
@@ -1190,18 +2879,23 @@ def community_ledger_entries(
                     "engagement": engagement,
                     "available": _feature_iso(available),
                     "first_seen": seen_at,
+                    "source_id": record.source_id,
+                    "content_hash": meta.get("content_hash"),
+                    "raw_uri": meta.get("raw_uri"),
                 }
             )
     return entries, rejected
 
 
-def load_community_ledger(path: Path) -> dict[str, dict[str, Any]]:
+def load_community_ledger(path: Path, *, persisted_only: bool = False) -> dict[str, dict[str, Any]]:
     ledger: dict[str, dict[str, Any]] = {}
     if not path.is_file():
         return ledger
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             entry = json.loads(line)
+            if persisted_only and entry.get("persisted") is not True:
+                continue
             ledger.setdefault(str(entry["key"]), entry)  # first sight wins: replays never rewrite history
     return ledger
 
@@ -1286,6 +2980,8 @@ def community_daily_rows_from_ledger(
                 "ingest_time": max(str(e["first_seen"]) for e in visible),
                 "availability_lag_days": 0,
                 "post_volume": float(len(visible)),
+                "source_records": [{k: e.get(k) for k in ("source_id", "content_hash", "raw_uri")}
+                                   for e in visible],
             }
             authors = {e.get("author") for e in visible if e.get("author")}
             if authors:
@@ -1344,13 +3040,15 @@ def feature_rows_to_records(
     *,
     connector_id: str,
     trace_id: str = "",
+    license_scope: str = "collector_public_web",
 ) -> tuple[SourceRecord, ...]:
     """Wrap governed macro/community feature rows so the storage writer can persist them."""
     out: list[SourceRecord] = []
     for row in rows:
         dataset = str(row["dataset"])
         entity = str(row.get("series_id") or row.get("symbol") or "")
-        row_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()[:24]
+        content_hash = hashlib.sha256(json.dumps(dict(row), sort_keys=True, default=str).encode()).hexdigest()
+        row_hash = content_hash[:24]
         out.append(
             SourceRecord(
                 source_id=f"{connector_id}:{dataset}:{entity}:{row.get('field') or 'daily'}:{row['event_time']}:{row_hash}",
@@ -1370,8 +3068,13 @@ def feature_rows_to_records(
                     "availability_lag_days": row["availability_lag_days"],
                     "normalized_row": dict(row),
                     "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
-                    "access_scope": ["public", "research"],
-                    "license_scope": "collector_public_web",
+                    "content_hash": f"sha256:{content_hash}",
+                    "access_scope": ["research"],
+                    "allowed_use": ["research", "search_index", "experiment"],
+                    "entitlement_tags": ["collector-research"],
+                    "direct_execution_allowed": False,
+                    "redistribution_allowed": False,
+                    "license_scope": license_scope,
                     "schema_hash": f"{dataset}.v1",
                 },
                 trace_id=trace_id,

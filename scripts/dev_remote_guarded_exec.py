@@ -80,6 +80,24 @@ def _read_regular(path: Path, *, maximum: int, private: bool = False) -> bytes:
     return raw
 
 
+def _raise_child_exit(child: subprocess.Popen, deadline: float) -> None:
+    """Attribute EPIPE to the child's real exit status when it already exited.
+
+    A closed stdin pipe is the symptom; the helper's exit status is the cause.
+    Bounded by 1s and the overall deadline; no reconnect or new time budget.
+    """
+    limit = min(time.monotonic() + 1.0, deadline)
+    while True:
+        status = child.poll()
+        if status is not None:
+            if status != 0:
+                raise subprocess.CalledProcessError(status, [])
+            raise TransportError("remote exited before receiving startup context")
+        if time.monotonic() >= limit:
+            return
+        time.sleep(0.005)
+
+
 def _frame(nonce: str, sequence: int, receipt: str | None = None) -> bytes:
     value = {"type": "heartbeat", "nonce": nonce, "sequence": sequence}
     if receipt is not None:
@@ -238,6 +256,9 @@ def execute(ssh_helper: Path, script_file: Path, deadline_seconds: int, *,
                     offset += os.write(fd, initial[offset:offset + 4096])
                 except BlockingIOError:
                     pass
+                except BrokenPipeError:
+                    _raise_child_exit(child, deadline)
+                    raise
         sequence = 1
         last_sent = time.monotonic()
         while True:
@@ -261,7 +282,12 @@ def execute(ssh_helper: Path, script_file: Path, deadline_seconds: int, *,
                 receipt = output.pending_receipt if output is not None else None
                 frame = _frame(nonce, sequence, receipt)
                 # <= PIPE_BUF: no backlog or deferred replay of partial frames.
-                if os.write(fd, frame) != len(frame):
+                try:
+                    written = os.write(fd, frame)
+                except BrokenPipeError:
+                    _raise_child_exit(child, deadline)
+                    raise
+                if written != len(frame):
                     raise TransportError("partial heartbeat")
                 if output is not None:
                     output.pending_receipt = None

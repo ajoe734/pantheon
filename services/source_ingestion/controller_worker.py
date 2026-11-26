@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,6 +28,14 @@ from .controller_state import (
     utc_now,
 )
 from .controller_auth import load_controller_token
+from .chip_publication_schedule import (
+    FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS,
+    finmind_fundamental_publication_fresh,
+)
+from .connectors.collector_bundle import (
+    COLLECTOR_REQUEST_READ_BUDGET_SECONDS,
+    LATEST_CLOSE_PERSISTED_ROWS_PER_PULL,
+)
 
 
 DEFAULT_DESIRED_STATE_PATH = Path(__file__).with_name("default_desired_state.json")
@@ -35,6 +44,27 @@ NON_TERMINAL_TRUTH_LEVEL = "scheduled_tick"
 RECONCILE_ONLY_MODE = "reconcile_only"
 RECONCILE_AND_PULL_MODE = "reconcile_and_pull"
 CONTROLLER_MODES = frozenset({RECONCILE_ONLY_MODE, RECONCILE_AND_PULL_MODE})
+# Continuous loop that pulls only registered Collector bundle connectors on their
+# own cadence. Deliberately outside CONTROLLER_MODES: the finite one-shot entry
+# (run_controller_once / scheduler_once) must never accept it.
+COLLECTOR_STEADY_PULL_MODE = "collector_steady_pull"
+STEADY_PULLS_PER_REQUEST = 1
+# Server-side bound of one steady run-scheduled request: the Collector read budget, the
+# persistence of at most LATEST_CLOSE_PERSISTED_ROWS_PER_PULL rows (hosted: ~9s for 256 rows),
+# and the search notify (<=5s). Hosted observed 29-31s, so the RPC timeout carries 2x headroom.
+STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW = 0.05
+STEADY_PULL_SEARCH_NOTIFY_SECONDS = 5.0
+STEADY_PULL_HEADROOM_FACTOR = 2.0
+STEADY_PULL_SERVER_BOUND_SECONDS = (
+    COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+    + LATEST_CLOSE_PERSISTED_ROWS_PER_PULL * STEADY_PULL_POST_PROCESS_SECONDS_PER_ROW
+    + STEADY_PULL_SEARCH_NOTIFY_SECONDS
+)
+STEADY_PULL_RPC_TIMEOUT_SECONDS = STEADY_PULL_SERVER_BOUND_SECONDS * STEADY_PULL_HEADROOM_FACTOR
+# Reconcile hosted observed 16-30s; 2x headroom over the slowest observation.
+STEADY_RECONCILE_OBSERVED_MAX_SECONDS = 30.0
+STEADY_RECONCILE_RPC_TIMEOUT_SECONDS = STEADY_RECONCILE_OBSERVED_MAX_SECONDS * STEADY_PULL_HEADROOM_FACTOR
+CONFIGURABLE_CONTROLLER_MODES = CONTROLLER_MODES | {COLLECTOR_STEADY_PULL_MODE}
 UNRESOLVED_FRONTIER_STATUSES = frozenset({"queued", "retry", "running"})
 MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS = 100
 CADENCE_SOURCE_AGE_LIMIT_SECONDS = {
@@ -86,6 +116,34 @@ def _digest(value: Any) -> str:
     return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
+HTTP_ERROR_DETAIL_LIMIT = 500
+
+
+def _http_error_detail(exc: urllib.error.HTTPError, *, bearer_token: str | None = None) -> str:
+    """The response's reason text, bounded; never a header, never the bearer token.
+
+    A JSON body's ``detail`` is used when present; any other body (not JSON, or JSON
+    without ``detail``) is used as text. Reading the body can fail; that is reported, not raised.
+    """
+
+    try:
+        raw = exc.read(HTTP_ERROR_DETAIL_LIMIT * 8).decode("utf-8", errors="replace")
+    except Exception as read_error:  # noqa: BLE001 - diagnosis must not mask the HTTP failure
+        return f"<response body unreadable: {type(read_error).__name__}>"
+    text = raw.strip()
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, Mapping) and "detail" in parsed:
+        detail = parsed["detail"]
+        text = detail if isinstance(detail, str) else _canonical_json(detail)
+    if bearer_token:
+        text = text.replace(bearer_token, "[redacted]")
+    text = " ".join(text.split()) or "<empty response body>"
+    return text[:HTTP_ERROR_DETAIL_LIMIT]
+
+
 def _request_json(
     url: str,
     *,
@@ -102,8 +160,15 @@ def _request_json(
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        raw = response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        raise ControllerTickError(
+            "controller",
+            f"HTTPError: {exc}: {_http_error_detail(exc, bearer_token=bearer_token)}",
+            http_status=exc.code,
+        ) from exc
     parsed = json.loads(raw) if raw else {}
     if allow_list:
         if not isinstance(parsed, (dict, list)):
@@ -135,6 +200,32 @@ def run_schedule_tick(
         bearer_token=controller_token,
         timeout_seconds=timeout_seconds,
     )
+
+
+_RETENTION_LAST_DAY: dict[str, str] = {}
+
+
+def run_retention_sweep(*, api_url: str, controller_token: str | None, timeout_seconds: float = 30.0,
+                        today: str | None = None) -> dict[str, Any]:
+    """SOURCE-RETENTION-SWEEPER-20261118-R2: the sweeper rides the existing controller tick (no second scheduler).
+
+    Called at most once per Taipei day from here (and once per trading day by the sweeper itself); a failure is
+    returned as data and never fails the tick. Dry run unless the service has the named setting."""
+    from datetime import timedelta
+
+    day = today or datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    if _RETENTION_LAST_DAY.get(api_url) == day:
+        return {"called": False, "reason": "already_called_today"}
+    try:
+        result = _request_json(
+            api_url.rstrip("/") + "/api/source-ingest/retention/run",
+            method="POST", payload={}, bearer_token=controller_token, timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - retention must never fail the ingest tick
+        return {"called": True, "ok": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    _RETENTION_LAST_DAY[api_url] = day
+    return {"called": True, "ok": True, "ran": bool(result.get("ran")), "status": result.get("status") or result.get("reason"),
+            "mode": result.get("mode")}
 
 
 def _load_bearer_token() -> str | None:
@@ -424,6 +515,33 @@ def read_actual_state(*, api_url: str, timeout_seconds: float = 30.0) -> dict[st
     )
 
 
+def read_actual_state_with_fetch_bindings(*, api_url: str, timeout_seconds: float = 30.0) -> dict[str, Any]:
+    """Controller readback plus each connector's persisted fetch mode/adapter from the registry.
+
+    The controller readback omits the fetch config; the registry entry's fetch_policy is the
+    existing read-only view of it. A connector absent from the registry gets no binding and
+    therefore can never be admitted to a steady Collector pull.
+    """
+
+    actual = read_actual_state(api_url=api_url, timeout_seconds=timeout_seconds)
+    registry = _request_json(api_url.rstrip("/") + "/api/source-ingest/registry", timeout_seconds=timeout_seconds)
+    policies = {
+        str(entry.get("connector_id") or ""): entry.get("fetch_policy")
+        for entry in (registry.get("connectors") if isinstance(registry, Mapping) else None) or []
+        if isinstance(entry, Mapping)
+    }
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, dict):
+            continue
+        policy = policies.get(str(item.get("connector_id") or ""))
+        if isinstance(policy, Mapping):
+            item["fetch_binding"] = {
+                "mode": str(policy.get("mode") or ""),
+                "adapter": str(policy.get("adapter") or ""),
+            }
+    return actual
+
+
 def read_frontier_state(*, api_url: str, timeout_seconds: float = 30.0) -> tuple[dict[str, Any], ...]:
     """Read the authoritative crawl frontier without mutating it."""
 
@@ -657,6 +775,78 @@ def _trusted_unresolved_dlq_count(actual: Mapping[str, Any]) -> int | None:
     return unresolved_count
 
 
+def _collector_cover_event_time(trade_date: str) -> datetime:
+    # Same event-time stamp the collector connector gives a market row without a publish time.
+    day = datetime.fromisoformat(trade_date)
+    return datetime(day.year, day.month, day.day, 6, 30, tzinfo=timezone.utc)
+
+
+def _collector_cover_session_close(trade_date: str) -> datetime:
+    day = datetime.fromisoformat(trade_date)
+    return datetime(day.year, day.month, day.day, 5, 30, tzinfo=timezone.utc)  # 13:30 Asia/Taipei
+
+
+def _iso_date_after(run_date: str, session_date: Any) -> bool:
+    from datetime import date as _date
+
+    if session_date is None:
+        return False
+    try:
+        return _date.fromisoformat(run_date) > session_date
+    except ValueError:
+        return False
+
+
+_TAIWAN_SESSION_CONNECTOR_IDS = frozenset(
+    {"tw-finmind-broker-daily-report", "tw-taifex-futures-options-chip", "tw-twse-tpex-official-market"}
+)
+
+
+def _latest_eligible_session(connector_id: str, now: datetime | None) -> Any:
+    """Latest closed (TWSE/TAIFEX 13:30) or published (FinMind 18:00) Taipei session.
+
+    None for connectors without governed Taiwan session eligibility: nothing is deferred."""
+    if connector_id not in _TAIWAN_SESSION_CONNECTOR_IDS:
+        return None
+    from datetime import time as _time, timedelta
+
+    from .connectors.finmind_taiwan import latest_published_broker_session
+    from .connectors.taiwan_official import governed_taiwan_calendar_evidence
+
+    def is_session_day(day: Any) -> bool:
+        evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+        return day.weekday() < 5 and (not evidence or day.isoformat() not in (evidence.get("holidays") or {}))
+
+    current = now or datetime.now(timezone.utc)
+    if connector_id == "tw-finmind-broker-daily-report":
+        return latest_published_broker_session(current, is_session_day=is_session_day)
+    taipei = current.astimezone(timezone(timedelta(hours=8)))
+    cursor = taipei.date() if taipei.time() >= _time(13, 30) else taipei.date() - timedelta(days=1)
+    for _ in range(20):
+        if is_session_day(cursor):
+            break
+        cursor -= timedelta(days=1)
+    return cursor
+
+
+def scoped_unresolved_dlq_by_connector(
+    actual: Mapping[str, Any], connector_ids: Sequence[str]
+) -> dict[str, int]:
+    """Unresolved (pending+replay_failed+schema_rejected) DLQ counts for selected connectors."""
+    wanted = {str(c).strip() for c in connector_ids if str(c).strip()}
+    by_connector = actual.get("dlq_status_counts_by_connector")
+    result: dict[str, int] = {connector_id: 0 for connector_id in sorted(wanted)}
+    if not isinstance(by_connector, Mapping):
+        return result
+    for connector_id, counts in by_connector.items():
+        if connector_id not in wanted or not isinstance(counts, Mapping):
+            continue
+        result[connector_id] = sum(
+            int(counts.get(status) or 0) for status in ("pending", "replay_failed", "schema_rejected")
+        )
+    return result
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -666,8 +856,13 @@ def _validate_terminal_readback(
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
     expected_exclusive_connector_ids: Sequence[str] = (),
+    collector_connector_ids: Sequence[str] = (),
     now: datetime | None = None,
+    frontier_items: Sequence[Mapping[str, Any]] = (),
+    session_selected_at: datetime | None = None,
+    pre_unresolved_dlq_by_connector: Mapping[str, int] | None = None,
 ) -> int:
+    collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     if actual.get("schema_version") != "source_ingest_controller_readback.v1":
         raise ControllerTickError(
             "actual_readback",
@@ -773,10 +968,73 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    if unresolved_dlq_count:
+    exclusive_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in expected_exclusive_connector_ids
+        if str(connector_id).strip()
+    }
+    validated_unresolved_dlq_count = unresolved_dlq_count
+    if exclusive_connector_ids:
+        exclusive_count = schedule_summary.get("exclusive_connector_count")
+        if type(exclusive_count) is not int or exclusive_count != len(exclusive_connector_ids):
+            raise ControllerTickError(
+                "schedule_contract",
+                "scheduled tick response contradicts the exclusive connector scope",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        by_connector = actual.get("dlq_status_counts_by_connector")
+        known_connector_ids = {
+            item.get("connector_id")
+            for item in actual.get("connectors") or []
+            if isinstance(item, Mapping) and item.get("configured") is True
+        }
+        if (
+            not isinstance(by_connector, Mapping)
+            or any(
+                not isinstance(connector_id, str)
+                or not connector_id.strip()
+                or connector_id not in known_connector_ids
+                or not isinstance(counts, Mapping)
+                or set(counts) != expected_dlq_statuses
+                or any(type(count) is not int or count < 0 for count in counts.values())
+                or sum(counts.values()) < 1
+                for connector_id, counts in by_connector.items()
+            )
+            or any(
+                sum(counts[status] for counts in by_connector.values()) != dlq_status_counts[status]
+                for status in expected_dlq_statuses
+            )
+        ):
+            raise ControllerTickError(
+                "actual_readback",
+                "authoritative source readback has missing, unknown or contradictory scoped dead-letter counts",
+                reconcile=reconcile,
+                schedule=schedule,
+                actual_readback=actual,
+            )
+        validated_unresolved_dlq_count = sum(
+            counts[status]
+            for connector_id, counts in by_connector.items()
+            if connector_id in exclusive_connector_ids
+            for status in ("pending", "replay_failed", "schema_rejected")
+        )
+    new_unresolved_dlq_count = validated_unresolved_dlq_count
+    if exclusive_connector_ids and pre_unresolved_dlq_by_connector is not None:
+        # Steady pull: only entries this tick added fail it; older backlog is reported, not fatal.
+        post_by_connector = scoped_unresolved_dlq_by_connector(actual, exclusive_connector_ids)
+        new_unresolved_dlq_count = sum(
+            max(0, count - int(pre_unresolved_dlq_by_connector.get(connector_id, 0)))
+            for connector_id, count in post_by_connector.items()
+        )
+    if new_unresolved_dlq_count:
         raise ControllerTickError(
             "actual_readback",
-            f"authoritative source readback has {unresolved_dlq_count} unresolved dead-letter entrie(s)",
+            f"authoritative source readback has {new_unresolved_dlq_count} "
+            + ("new " if pre_unresolved_dlq_by_connector is not None else "")
+            + "unresolved dead-letter entrie(s)"
+            + (" in selected connector scope" if exclusive_connector_ids else ""),
             reconcile=reconcile,
             schedule=schedule,
             actual_readback=actual,
@@ -809,26 +1067,64 @@ def _validate_terminal_readback(
             schedule=schedule,
             actual_readback=actual,
         )
-    exclusive_connector_ids = {
-        str(connector_id).strip()
-        for connector_id in expected_exclusive_connector_ids
-        if str(connector_id).strip()
-    }
     validated_frontier_backlog = (
         sum(frontier_backlog_by_connector.get(connector_id, 0) for connector_id in exclusive_connector_ids)
         if exclusive_connector_ids
         else frontier_backlog
     )
-    if exclusive_connector_ids:
-        exclusive_count = schedule_summary.get("exclusive_connector_count")
-        if type(exclusive_count) is not int or exclusive_count != len(exclusive_connector_ids):
+    if validated_frontier_backlog and exclusive_connector_ids and frontier_items:
+        # Reconcile the aggregate against the unique per-connector frontier items
+        # read separately; any disagreement (e.g. a concurrent enqueue) fails closed.
+        # Only queued, never-attempted work for a session after the latest
+        # closed/published one is deferred (visible, not proof for that session);
+        # every other unresolved item still counts.
+        unique: dict[str, Mapping[str, Any]] = {}
+        for item in frontier_items:
+            connector_id = str(item.get("connector_id") or "")
+            if connector_id in exclusive_connector_ids and item.get("status") in {"queued", "retry", "running"}:
+                frontier_id = item.get("frontier_id")
+                if not isinstance(frontier_id, str) or not frontier_id or frontier_id in unique:
+                    raise ControllerTickError(
+                        "actual_readback",
+                        "authoritative frontier items are malformed or duplicated",
+                        reconcile=reconcile,
+                        schedule=schedule,
+                        actual_readback=actual,
+                    )
+                unique[frontier_id] = item
+        per_connector: dict[str, int] = {}
+        for item in unique.values():
+            per_connector[str(item["connector_id"])] = per_connector.get(str(item["connector_id"]), 0) + 1
+        if per_connector != {
+            connector_id: frontier_backlog_by_connector[connector_id]
+            for connector_id in exclusive_connector_ids
+            if connector_id in frontier_backlog_by_connector
+        }:
             raise ControllerTickError(
-                "schedule_contract",
-                "scheduled tick response contradicts the exclusive connector scope",
+                "actual_readback",
+                "authoritative frontier items contradict the readback frontier counts",
                 reconcile=reconcile,
                 schedule=schedule,
                 actual_readback=actual,
             )
+        validated_frontier_backlog = sum(
+            1
+            for item in unique.values()
+            if not (
+                item.get("status") == "queued"
+                and item.get("attempts") == 0
+                and not item.get("last_error")
+                and _iso_date_after(
+                    str((item.get("job_parameters") or {}).get("run_date") or ""),
+                    # Bind to the session selected at refresh start (same as the
+                    # preparation step) so crossing a close does not retarget it.
+                    _latest_eligible_session(
+                        str(item["connector_id"]),
+                        min(now_dt, session_selected_at) if session_selected_at else now_dt,
+                    ),
+                )
+            )
+        )
     if validated_frontier_backlog:
         scope = "selected connector scope" if exclusive_connector_ids else "global scope"
         raise ControllerTickError(
@@ -877,6 +1173,12 @@ def _validate_terminal_readback(
             actual_readback=actual,
         )
     invalid: list[str] = []
+    # TW-SAME-DAY-CLOSE-VIA-COLLECTOR: a session covered by an admitted collector close (both
+    # exchanges, complete lineage) counts as fresh for the official market connector, whose own
+    # OpenAPI rows for that session only publish the next morning.
+    from .tw_close_reconcile import covered_collector_close_session
+
+    collector_close_cover = covered_collector_close_session(list(actual_connectors.values()))
     for connector_id in sorted(wanted):
         item = actual_connectors[connector_id]
         schedule_readback = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
@@ -893,9 +1195,13 @@ def _validate_terminal_readback(
             else {}
         )
         expected_datasets = {str(action.get("dataset") or "") for action in wanted_requirements[connector_id]}
+        # A registered Collector bundle connector is a pre-existing custom connector: it carries
+        # no persona-derived desired_state and its records carry bundle (not direct-provider)
+        # provenance, so it is validated against its own run/PIT/tenant truth below.
+        is_collector = connector_id in collector_ids
         if not item.get("configured"):
             invalid.append(f"{connector_id}:connector_missing")
-        if str(desired_state.get("dataset") or "") not in expected_datasets:
+        if not is_collector and str(desired_state.get("dataset") or "") not in expected_datasets:
             invalid.append(f"{connector_id}:desired_dataset_mismatch")
         for gate in sorted(policy_gates):
             result = gate_results.get(gate) if isinstance(gate_results, Mapping) else None
@@ -907,7 +1213,12 @@ def _validate_terminal_readback(
             record = item.get("latest_source_record")
             health = item.get("source_health")
             freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
-            if freshness.get("status") != "fresh":
+            collector_cover_applies = (
+                connector_id == "tw-twse-tpex-official-market"
+                and collector_close_cover is not None
+                and now_dt >= _collector_cover_session_close(collector_close_cover["trade_date"])
+            )
+            if freshness.get("status") != "fresh" and not is_collector and not collector_cover_applies:
                 invalid.append(f"{connector_id}:freshness_not_accepted")
             staleness_seconds = freshness.get("staleness_seconds")
             interval_seconds = int(schedule_readback.get("interval_seconds") or 0)
@@ -921,20 +1232,59 @@ def _validate_terminal_readback(
                 if not record.get("source_id") or not record.get("content_ref") or not record.get("trace_id"):
                     invalid.append(f"{connector_id}:record_identity_incomplete")
                 provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
-                required_provenance = {
-                    "provider",
-                    "dataset",
-                    "available_time",
-                    "api_endpoint",
-                    "access_scope",
-                    "license_scope",
-                    "schema_hash",
-                    "source_ingest_run_id",
-                }
+                required_provenance = (
+                    {"available_time", "event_time", "access_scope", "license_scope", "source_ingest_run_id", "tenant_id"}
+                    if is_collector
+                    else {
+                        "provider",
+                        "dataset",
+                        "available_time",
+                        "api_endpoint",
+                        "access_scope",
+                        "license_scope",
+                        "schema_hash",
+                        "source_ingest_run_id",
+                    }
+                )
                 missing_provenance = sorted(key for key in required_provenance if provenance.get(key) in (None, "", []))
                 if missing_provenance:
                     invalid.append(f"{connector_id}:provenance_missing[{','.join(missing_provenance)}]")
-                if str(provenance.get("dataset") or "") not in expected_datasets:
+                if is_collector:
+                    connector_meta = (
+                        item.get("connector", {}).get("metadata")
+                        if isinstance(item.get("connector"), Mapping)
+                        else None
+                    )
+                    connector_meta = connector_meta if isinstance(connector_meta, Mapping) else {}
+                    record_meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+                    collector_meta = (
+                        record_meta.get("collector") if isinstance(record_meta.get("collector"), Mapping) else {}
+                    )
+                    from .persona_source_reconciler import RECONCILIATION_METADATA_KEY
+
+                    expected_tenant = connector_meta.get("tenant_id")
+                    reconciliation = connector_meta.get(RECONCILIATION_METADATA_KEY)
+                    if not expected_tenant and isinstance(reconciliation, Mapping) and isinstance(
+                        controller_state, Mapping
+                    ):
+                        # A controller-provisioned Collector connector carries no tenant of its own:
+                        # the runtime stamps its records with the controller's tenant.
+                        expected_tenant = controller_state.get("tenant_id")
+                    if not expected_tenant or provenance.get("tenant_id") != expected_tenant:
+                        invalid.append(f"{connector_id}:record_tenant_mismatch")
+                    from .connector_definitions import get_connector_definition
+
+                    # The definition id is not always the Collector's source id
+                    # (strategy-seed-paper-corpus is served as collector-papers).
+                    definition = get_connector_definition(str(connector_meta.get("definition_id") or ""))
+                    expected_source_id = (
+                        (definition.metadata.get("collector") or {}).get("source_id") if definition else None
+                    ) or connector_meta.get("definition_id")
+                    if collector_meta.get("source_id") != expected_source_id:
+                        invalid.append(f"{connector_id}:record_collector_definition_mismatch")
+                    if collector_meta.get("bundle_status") != "complete":
+                        invalid.append(f"{connector_id}:collector_bundle_incomplete")
+                elif str(provenance.get("dataset") or "") not in expected_datasets:
                     invalid.append(f"{connector_id}:record_dataset_mismatch")
                 available_at = None
                 try:
@@ -948,7 +1298,12 @@ def _validate_terminal_readback(
                     else CADENCE_SOURCE_AGE_LIMIT_SECONDS.get(cadence)
                 )
                 is_tw = connector_id == "tw-twse-tpex-official-market"
-                if is_tw:
+                if is_collector:
+                    # PIT: availability must be valid and not in the future; run freshness is
+                    # enforced by the cadence/run/health checks (bundle age is host-defined).
+                    if available_at is None or (available_at - now_dt).total_seconds() > 300:
+                        invalid.append(f"{connector_id}:source_data_stale[collector_pit_invalid]")
+                elif is_tw:
                     eval_now_dt = now or captured_at or now_dt
                     source_id_str = str(record.get("source_id") or "")
                     if not source_id_str.startswith("tw-official:"):
@@ -986,11 +1341,33 @@ def _validate_terminal_readback(
                             max_refresh_age_seconds=max_source_age or 86400,
                             calendar_evidence=cal_ev,
                         )
+                        if not tw_ok and tw_reason == "market_input_stale" and collector_cover_applies:
+                            tw_ok, tw_reason, _tw_detail = evaluate_taiwan_market_freshness(
+                                event_time_dt=_collector_cover_event_time(collector_close_cover["trade_date"]),
+                                now_dt=eval_now_dt,
+                                refresh_receipt_dt=collector_close_cover["receipt_at"],
+                                lineage={**lineage, "collector_close": collector_close_cover["lineage"]},
+                                max_refresh_age_seconds=max_source_age or 86400,
+                                calendar_evidence=cal_ev,
+                            )
                         if not tw_ok:
                             reason_tag = f"[{tw_reason}]" if tw_reason else ""
                             tag_entry = f"{connector_id}:source_data_stale{reason_tag}"
                             if tag_entry not in invalid:
                                 invalid.append(tag_entry)
+                elif connector_id in FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS:
+                    # Slow FinMind fundamentals: age is decided by the statutory publication
+                    # schedule (same rule as runtime freshness), not the generic cadence limit.
+                    if (
+                        available_at is None
+                        or (available_at - now_dt).total_seconds() > 300
+                        or not finmind_fundamental_publication_fresh(
+                            FINMIND_FUNDAMENTAL_PUBLICATION_DATASETS[connector_id],
+                            available_at,
+                            now_dt,
+                        )
+                    ):
+                        invalid.append(f"{connector_id}:source_data_stale")
                 else:
                     if (
                         available_at is None
@@ -1020,7 +1397,20 @@ def _validate_terminal_readback(
                 if isinstance(record, Mapping):
                     provenance = record.get("provenance") if isinstance(record.get("provenance"), Mapping) else {}
                     if provenance.get("source_ingest_run_id") != latest_run.get("ingest_run_id"):
-                        invalid.append(f"{connector_id}:record_run_mismatch")
+                        # A retained collector close may predate a later healthy backfill run.
+                        # It is accepted only when its OWN run is attested by a completed
+                        # receipt (covered_collector_close_session verified that); the
+                        # current-run completed/health checks above still apply.
+                        retained_close_attested = (
+                            is_collector
+                            and collector_close_cover is not None
+                            and any(
+                                entry.get("collector_source_id") == connector_id
+                                for entry in collector_close_cover["lineage"]
+                            )
+                        )
+                        if not retained_close_attested:
+                            invalid.append(f"{connector_id}:record_run_mismatch")
     if invalid:
         raise ControllerTickError(
             "actual_readback",
@@ -1040,6 +1430,7 @@ def _validate_due_state_readback(
     expected_controller_id: str,
     expected_sequence_no: int,
     expected_deployment: Mapping[str, Any],
+    collector_connector_ids: Sequence[str] = (),
 ) -> None:
     """Accept connector/schedule convergence without claiming provider proof.
 
@@ -1126,6 +1517,7 @@ def _validate_due_state_readback(
         if isinstance(item, Mapping) and item.get("connector_id")
     }
     invalid: list[str] = []
+    collector_ids = {str(item).strip() for item in collector_connector_ids if str(item).strip()}
     for connector_id, requirements in sorted(wanted_requirements.items()):
         item = actual_connectors.get(connector_id)
         if item is None:
@@ -1136,7 +1528,7 @@ def _validate_due_state_readback(
         expected_datasets = {str(action.get("dataset") or "") for action in requirements}
         if item.get("configured") is not True:
             invalid.append(f"{connector_id}:connector_unconfigured")
-        if str(desired_state.get("dataset") or "") not in expected_datasets:
+        if connector_id not in collector_ids and str(desired_state.get("dataset") or "") not in expected_datasets:
             invalid.append(f"{connector_id}:desired_dataset_mismatch")
         source_class = str(desired_state.get("source_class") or "")
         if source_class != "live_push" and (
@@ -1159,6 +1551,185 @@ def _validate_due_state_readback(
             reconcile=reconcile,
             actual_readback=actual,
         )
+
+
+def _fetch_binds_collector_adapter(item: Mapping[str, Any]) -> bool:
+    """The persisted fetch config must be the Collector bundle provider-owned adapter.
+
+    A matching definition_id alone is not enough: a connector whose effective fetch
+    mode/adapter is anything else (e.g. a direct provider adapter) is never a steady pull.
+    """
+
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    binding = item.get("fetch_binding") if isinstance(item.get("fetch_binding"), Mapping) else {}
+    return (
+        binding.get("mode") == "provider_owned_adapter"
+        and binding.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    )
+
+
+def registered_collector_connector_ids(actual: Mapping[str, Any], reconcile: Mapping[str, Any]) -> list[str]:
+    """Reconciled, configured connectors whose registered definition is the Collector bundle adapter."""
+
+    from .connector_definitions import deployed_connector_definitions
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    collector_definitions = {
+        definition_id
+        for definition_id, definition in deployed_connector_definitions().items()
+        if definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    }
+    reconciled = set(_connector_ids(reconcile))
+    found: list[str] = []
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, Mapping) or item.get("configured") is not True:
+            continue
+        connector_id = str(item.get("connector_id") or "")
+        connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
+        metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
+        if (
+            connector_id in reconciled
+            and str(metadata.get("definition_id") or "") in collector_definitions
+            and _fetch_binds_collector_adapter(item)
+        ):
+            found.append(connector_id)
+    return sorted(found)
+
+
+CONTINUATION_PAUSE_SECONDS = 1
+
+
+def _collector_continuation_pending(item: Mapping[str, Any], freshness: Mapping[str, Any]) -> bool:
+    """Market delivery is partial: the last pull succeeded, persisted, and said more remains.
+
+    Only the latest persisted pull's outcome counts (a failed fetch or failed run replaces or
+    outranks it), so a failing source falls back to its normal cadence instead of retrying hot.
+    """
+
+    state = item.get("fetch_state") if isinstance(item.get("fetch_state"), Mapping) else {}
+    outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
+    observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
+    latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+    last_success = _attempt_sort_key(freshness.get("last_success_at"))
+    last_failure = _attempt_sort_key(freshness.get("last_failure_at"))
+    return (
+        observed.get("continuation_pending") is True
+        and not state.get("last_error")
+        and not (last_failure and last_failure > last_success)
+        and latest_run.get("status") == "completed"
+        and freshness.get("status") not in {"degraded", "disabled", "unscheduled"}
+    )
+
+
+def select_collector_pull_connectors(
+    actual: Mapping[str, Any], reconcile: Mapping[str, Any]
+) -> list[str]:
+    """Pick enabled, scheduled, currently due connectors whose registered definition is the Collector bundle adapter.
+
+    The scheduler forces every exclusively selected connector, so cadence is applied here:
+    a connector whose readback freshness is not due is left out and nothing is pulled for it.
+
+    Selection uses the connector's registered definition (adapter token), never the
+    connector-id name, and only connectors the current desired-state reconcile admitted.
+    """
+
+    from .connector_definitions import deployed_connector_definitions
+    from .connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    collector_definitions = {
+        definition_id
+        for definition_id, definition in deployed_connector_definitions().items()
+        if definition.adapter_token == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+    }
+    reconciled = set(_connector_ids(reconcile))
+    selected: set[str] = set()
+    for item in actual.get("connectors") or []:
+        if not isinstance(item, Mapping) or item.get("configured") is not True:
+            continue
+        connector_id = str(item.get("connector_id") or "")
+        if connector_id not in reconciled:
+            continue
+        connector = item.get("connector") if isinstance(item.get("connector"), Mapping) else {}
+        metadata = connector.get("metadata") if isinstance(connector.get("metadata"), Mapping) else {}
+        if str(metadata.get("definition_id") or "") not in collector_definitions:
+            continue
+        if not _fetch_binds_collector_adapter(item):
+            continue
+        if (item.get("collector_offering") or {}).get("offered") is False:
+            continue
+        if str(connector.get("status") or "") != "enabled":
+            continue
+        schedule = item.get("schedule") if isinstance(item.get("schedule"), Mapping) else {}
+        if schedule.get("enabled") is not True or int(schedule.get("interval_seconds") or 0) <= 0:
+            continue
+        freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
+        if freshness.get("is_due") is not True and not _collector_continuation_pending(item, freshness):
+            continue
+        selected.add(connector_id)
+    return sorted(selected)
+
+
+def _attempt_sort_key(value: Any) -> str:
+    parsed = parse_utc(str(value)) if value else None
+    return parsed.isoformat() if parsed is not None else ""
+
+
+def limit_collector_pull_batch(actual: Mapping[str, Any], selected: Sequence[str], *, limit: int) -> list[str]:
+    """Bound one steady tick to what the scheduler can claim (its max concurrency).
+
+    The scheduler claims at most ``limit`` exclusively selected connectors per tick and reports the
+    rest as failed, so more due Collector sources than slots must be spread over ticks. The
+    least recently attempted sources go first (latest of last success and last failure from the
+    readback), so a source that keeps failing rotates behind the others instead of monopolising
+    the slots; the remainder stay due and are picked up on the next tick.
+    """
+
+    from .connector_definitions import deployed_connector_definitions
+
+    definitions = deployed_connector_definitions()
+    last_attempt: dict[str, str] = {}
+    newest_pending: set[str] = set()
+    newest_continuing: set[str] = set()
+    for item in actual.get("connectors") or []:
+        if isinstance(item, Mapping):
+            freshness = item.get("freshness") if isinstance(item.get("freshness"), Mapping) else {}
+            last_success = _attempt_sort_key(freshness.get("last_success_at"))
+            last_failure = _attempt_sort_key(freshness.get("last_failure_at"))
+            attempts = [last_success, last_failure]
+            cid = str(item.get("connector_id") or "")
+            last_attempt[cid] = max(attempts)
+            connector = item.get("connector") or {}
+            definition = definitions.get(str((connector.get("metadata") or {}).get("definition_id") or ""))
+            collector = (definition.metadata.get("collector") or {}) if definition else {}
+            state = item.get("fetch_state") if isinstance(item.get("fetch_state"), Mapping) else {}
+            source_health = item.get("source_health") if isinstance(item.get("source_health"), Mapping) else {}
+            outcome = state.get("collector_outcome") if isinstance(state.get("collector_outcome"), Mapping) else {}
+            observed = outcome.get("observed") if isinstance(outcome.get("observed"), Mapping) else {}
+            latest_run = freshness.get("latest_run") if isinstance(freshness.get("latest_run"), Mapping) else {}
+            latest_receipt = (
+                freshness.get("latest_receipt") if isinstance(freshness.get("latest_receipt"), Mapping) else {}
+            )
+            last_attempt_failed = (
+                bool(last_failure and last_failure > last_success)
+                or bool(state.get("last_error"))
+                or bool(source_health.get("last_error"))
+                or int(source_health.get("consecutive_failures") or 0) > 0
+                or (bool(latest_run.get("status")) and latest_run.get("status") != "completed")
+                or (bool(latest_receipt.get("status")) and latest_receipt.get("status") != "completed")
+            )
+            continuing = _collector_continuation_pending(item, freshness) and not last_attempt_failed
+            if (collector.get("dataset") == "tw_price_daily"
+                    and not last_attempt_failed
+                    and (freshness.get("is_due") is True
+                         or (continuing and observed.get("newest_session_pending") is not False))):
+                newest_pending.add(cid)
+                if continuing and observed.get("newest_session_pending") is True:
+                    newest_continuing.add(cid)
+    ranked = sorted(selected, key=lambda connector_id: (connector_id not in newest_continuing,
+                                                       connector_id not in newest_pending,
+                                                       last_attempt.get(connector_id, ""), connector_id))
+    return sorted(ranked[: max(int(limit), 1)])
 
 
 def build_loop_writer(*, dsn: str, state: ControllerState) -> LoopControllerWriterLike:
@@ -1196,20 +1767,35 @@ class ControllerConfig:
     force_connector_ids: tuple[str, ...] = ()
     exclusive_connector_ids: tuple[str, ...] = ()
     frontier_recovery_connector_ids: tuple[str, ...] = ()
+    session_selected_at: datetime | None = None
+
+
+def _env_session_selected_at() -> datetime | None:
+    raw = str(os.getenv("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT") or "").strip()
+    if not raw:
+        return None
+    parsed = parse_utc(raw)
+    if parsed is None or parsed > datetime.now(timezone.utc):
+        raise ValueError("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT must be an aware, non-future timestamp")
+    return parsed
 
 
 def config_from_env() -> ControllerConfig:
     interval = _env_int("SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS", 60, minimum=1)
     alive = str(os.getenv("SOURCE_INGEST_CONTROLLER_ALIVE_PATH") or "").strip()
     mode = str(os.getenv("SOURCE_INGEST_CONTROLLER_MODE") or RECONCILE_ONLY_MODE).strip()
-    if mode not in CONTROLLER_MODES:
+    if mode not in CONFIGURABLE_CONTROLLER_MODES:
         raise ValueError("SOURCE_INGEST_CONTROLLER_MODE is invalid")
-    default_truth = NON_TERMINAL_TRUTH_LEVEL if mode == RECONCILE_ONLY_MODE else "reconciled_live_proof"
+    default_truth = (
+        "reconciled_live_proof" if mode == RECONCILE_AND_PULL_MODE else NON_TERMINAL_TRUTH_LEVEL
+    )
     truth_level = str(os.getenv("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL") or default_truth).strip()
     if truth_level not in {"scheduled_tick", "reconciled_live_proof"}:
         raise ValueError("SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL is invalid")
     if mode == RECONCILE_ONLY_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
         raise ValueError("reconcile_only mode must use scheduled_tick truth")
+    if mode == COLLECTOR_STEADY_PULL_MODE and truth_level != NON_TERMINAL_TRUTH_LEVEL:
+        raise ValueError("collector_steady_pull mode must use scheduled_tick truth")
     max_ticks = _env_int("SOURCE_INGEST_CONTROLLER_MAX_TICKS", 0, minimum=0)
     force_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS")
     exclusive_connector_ids = _env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS")
@@ -1223,6 +1809,16 @@ def config_from_env() -> ControllerConfig:
     if len(frontier_recovery_connector_ids) > MAX_EXPLICIT_FRONTIER_RECOVERY_ITEMS:
         raise ValueError(
             "SOURCE_INGEST_CONTROLLER_FRONTIER_RECOVERY_CONNECTOR_IDS exceeds the explicit recovery bound"
+        )
+    if mode == COLLECTOR_STEADY_PULL_MODE and (
+        max_ticks != 0
+        or force_connector_ids
+        or exclusive_connector_ids
+        or frontier_recovery_connector_ids
+    ):
+        raise ValueError(
+            "collector_steady_pull mode is unbounded and selects connectors itself; "
+            "it must not set max ticks, force, exclusive or recovery connector IDs"
         )
     if mode == RECONCILE_ONLY_MODE and (
         force_connector_ids or exclusive_connector_ids or frontier_recovery_connector_ids
@@ -1248,6 +1844,7 @@ def config_from_env() -> ControllerConfig:
         force_connector_ids=force_connector_ids,
         exclusive_connector_ids=exclusive_connector_ids,
         frontier_recovery_connector_ids=frontier_recovery_connector_ids,
+        session_selected_at=_env_session_selected_at(),
     )
 
 
@@ -1636,18 +2233,42 @@ def run_controller_tick(
             desired_state_sha256=str(desired_meta["sha256"]),
             source_authority=str(desired_meta["authority"]),
             controller_token=config.controller_token,
-            timeout_seconds=config.timeout_seconds,
+            timeout_seconds=(
+                max(config.timeout_seconds, STEADY_RECONCILE_RPC_TIMEOUT_SECONDS)
+                if config.mode == COLLECTOR_STEADY_PULL_MODE
+                else config.timeout_seconds
+            ),
         )
-        if config.mode == RECONCILE_ONLY_MODE:
+        steady_pull_ids: list[str] = []
+        if config.mode == COLLECTOR_STEADY_PULL_MODE:
+            steady_actual = read_actual_state_with_fetch_bindings(
+                api_url=config.api_url, timeout_seconds=config.timeout_seconds
+            )
+            steady_pull_ids = limit_collector_pull_batch(
+                steady_actual,
+                select_collector_pull_connectors(steady_actual, reconcile),
+                # Claimed connectors run serially inside ONE scheduler HTTP request, so a steady
+                # tick carries exactly one Collector pull (bounded by its own read budget);
+                # the rest stay due for following ticks.
+                limit=STEADY_PULLS_PER_REQUEST,
+            )
+        provider_egress_attempted = config.mode == RECONCILE_AND_PULL_MODE or bool(steady_pull_ids)
+        if config.mode == RECONCILE_ONLY_MODE or (
+            config.mode == COLLECTOR_STEADY_PULL_MODE and not steady_pull_ids
+        ):
             schedule = {
-                "mode": RECONCILE_ONLY_MODE,
+                "mode": config.mode,
                 "provider_egress_attempted": False,
                 "summary": {
                     "total_reconciled_connectors": len(_connector_ids(reconcile)),
                     "total_provider_pulls": 0,
                 },
             }
-            actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            actual = (
+                read_actual_state_with_fetch_bindings(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                if config.mode == COLLECTOR_STEADY_PULL_MODE
+                else read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+            )
             _validate_due_state_readback(
                 reconcile=reconcile,
                 pre_actual=pre_actual,
@@ -1655,9 +2276,17 @@ def run_controller_tick(
                 expected_controller_id=state.controller_id,
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
+                collector_connector_ids=(
+                    registered_collector_connector_ids(actual, reconcile)
+                    if config.mode == COLLECTOR_STEADY_PULL_MODE
+                    else ()
+                ),
             )
         else:
-            exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))
+            steady = config.mode == COLLECTOR_STEADY_PULL_MODE
+            exclusive_connector_ids = steady_pull_ids if steady else sorted(set(config.exclusive_connector_ids))
+            pre_steady_dlq = scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
+            pre_steady_dlq_trusted = isinstance(pre_actual.get("dlq_status_counts_by_connector"), Mapping)
             frontier_recovery = recover_explicit_frontier(
                 api_url=config.api_url,
                 recovery_connector_ids=config.frontier_recovery_connector_ids,
@@ -1666,14 +2295,20 @@ def run_controller_tick(
                 timeout_seconds=config.timeout_seconds,
             )
             forced_connector_ids = (
-                exclusive_connector_ids
+                []
+                if steady
+                else exclusive_connector_ids
                 if exclusive_connector_ids
                 else sorted(set(_mutated_connector_ids(reconcile)) | set(config.force_connector_ids))
             )
             schedule = run_schedule_tick(
                 api_url=config.api_url,
-                max_concurrency=config.max_concurrency,
-                timeout_seconds=config.timeout_seconds,
+                max_concurrency=STEADY_PULLS_PER_REQUEST if steady else config.max_concurrency,
+                timeout_seconds=(
+                    max(config.timeout_seconds, STEADY_PULL_RPC_TIMEOUT_SECONDS)
+                    if steady
+                    else config.timeout_seconds
+                ),
                 force_connector_ids=forced_connector_ids,
                 exclusive_connector_ids=exclusive_connector_ids,
                 controller_token=config.controller_token,
@@ -1687,6 +2322,20 @@ def run_controller_tick(
                 expected_sequence_no=state.sequence_no,
                 expected_deployment=state.deployment,
                 expected_exclusive_connector_ids=exclusive_connector_ids,
+                collector_connector_ids=steady_pull_ids if steady else (),
+                session_selected_at=None if steady else config.session_selected_at,
+                pre_unresolved_dlq_by_connector=(
+                    pre_steady_dlq if steady and pre_steady_dlq_trusted else None
+                ),
+                frontier_items=(
+                    read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
+                    if exclusive_connector_ids
+                    and any(
+                        (actual.get("frontier_backlog_by_connector") or {}).get(connector_id)
+                        for connector_id in exclusive_connector_ids
+                    )
+                    else ()
+                ),
             )
         wanted_connector_ids = set(_connector_ids(reconcile))
         evidence_refs = [
@@ -1701,14 +2350,21 @@ def run_controller_tick(
         accepted_actual = summarize_actual_readback(actual)
         accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         accepted_actual["validated_frontier_backlog"] = validated_frontier_backlog
-        accepted_actual["validated_frontier_connector_ids"] = sorted(set(config.exclusive_connector_ids))
+        if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
+            accepted_actual["pre_existing_unresolved_dlq_by_connector"] = {
+                k: v for k, v in pre_steady_dlq.items() if v
+            }
+            accepted_actual["pre_existing_unresolved_dlq_count"] = sum(pre_steady_dlq.values())
+        accepted_actual["validated_frontier_connector_ids"] = sorted(
+            set(config.exclusive_connector_ids) | set(steady_pull_ids)
+        )
         _async(
             writer.record_success(
                 LOOP_ID,
                 config.truth_level,
                 summary=(
                     "desired connector and schedule state reconciled; provider egress not attempted"
-                    if config.mode == RECONCILE_ONLY_MODE
+                    if not provider_egress_attempted
                     else "desired state reconciled; scheduled ingestion terminal readback accepted"
                 ),
                 backlog=validated_frontier_backlog,
@@ -1721,7 +2377,7 @@ def run_controller_tick(
                 + [ref for ref in evidence_refs if ref and ref != "None"],
                 payload={
                     "controller_mode": config.mode,
-                    "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                    "provider_egress_attempted": provider_egress_attempted,
                     "desired_state": desired_meta,
                     "reconcile_summary": reconcile.get("summary"),
                     "frontier_recovery": frontier_recovery,
@@ -1748,23 +2404,42 @@ def run_controller_tick(
             reconcile={"summary": reconcile.get("summary"), "connector_ids": sorted(wanted_connector_ids)},
             schedule={
                 "mode": config.mode,
-                "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+                "provider_egress_attempted": provider_egress_attempted,
                 "frontier_recovery": frontier_recovery,
                 "summary": schedule.get("summary"),
             },
             actual_readback=accepted_actual,
         )
         store.save(state)
+        retention = run_retention_sweep(
+            api_url=config.api_url, controller_token=config.controller_token, timeout_seconds=config.timeout_seconds)
+        continuation_pending = False
+        if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
+            # A pull just persisted: pending newest-session or ordered history rows
+            # continue on the next bounded tick instead of idling a full cadence.
+            # Terminal readback already contains the persisted outcome. Reuse it
+            # with the registry bindings admitted earlier in this same tick;
+            # another full readback/registry pair repeats host status and growing
+            # evidence scans after every 15-second pull.
+            bindings = {item["connector_id"]: item.get("fetch_binding")
+                        for item in steady_actual.get("connectors") or [] if isinstance(item, Mapping)}
+            continuation_actual = {**actual, "connectors": [
+                {**item, "fetch_binding": bindings.get(item.get("connector_id"))}
+                for item in actual.get("connectors") or [] if isinstance(item, Mapping)
+            ]}
+            continuation_pending = bool(select_collector_pull_connectors(continuation_actual, reconcile))
         return {
             "status": "ok",
+            "continuation_pending": continuation_pending,
             "controller_mode": config.mode,
-            "provider_egress_attempted": config.mode == RECONCILE_AND_PULL_MODE,
+            "provider_egress_attempted": provider_egress_attempted,
             "state_sequence_no": state.sequence_no,
             "desired_state": desired_meta,
             "reconcile_summary": reconcile.get("summary"),
             "frontier_recovery": frontier_recovery,
             "schedule_summary": schedule.get("summary"),
             "actual_readback": state.actual_readback,
+            "retention": retention,
         }
     except Exception as exc:
         error = exc if isinstance(exc, ControllerTickError) else ControllerTickError("controller", f"{type(exc).__name__}: {exc}")
@@ -1824,11 +2499,15 @@ def main() -> int:
     writer = build_loop_writer(dsn=config.database_url, state=state)
     tick = 0
     last_tick_failed = False
+    sleep_seconds = config.interval_seconds
     while True:
         tick += 1
+        sleep_seconds = config.interval_seconds
         try:
             result = run_controller_tick(config=config, state=state, store=store, writer=writer)
             last_tick_failed = False
+            if result.get("continuation_pending") is True:
+                sleep_seconds = min(config.interval_seconds, CONTINUATION_PAUSE_SECONDS)
             print(_canonical_json({"tick": tick, **result}), flush=True)
         except Exception as exc:
             last_tick_failed = True
@@ -1850,7 +2529,7 @@ def main() -> int:
             )
         if config.max_ticks and tick >= config.max_ticks:
             return 1 if last_tick_failed else 0
-        time.sleep(config.interval_seconds)
+        time.sleep(sleep_seconds)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose and smoke tests.

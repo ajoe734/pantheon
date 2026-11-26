@@ -8,12 +8,16 @@ through the owner API or a read-only database role.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
+
+logger = logging.getLogger(__name__)
 
 from services.knowledge.evidence import (
     EvidenceBundle,
@@ -22,9 +26,9 @@ from services.knowledge.evidence import (
     JsonlEvidenceRepository,
     KnowledgeObject,
 )
-from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped
-from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError
-from services.source_ingestion.connectors.base import SourceRecord
+from services.knowledge.evidence.repository import _UNSCOPED, _Unscoped, _capture_datetime, evidence_item_in_capture_window, evidence_item_linked_entity_types
+from services.knowledge.evidence.models import EVIDENCE_LIST_OMITTED_METADATA_KEYS, EvidenceValidationError, strip_list_heavy_metadata
+from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus, SourceType
 
 _PG_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -43,6 +47,36 @@ _EVIDENCE_REPLAY_ORDER = (
     "evidence_item",
     "evidence_bundle",
     "knowledge_object",
+)
+
+_DEDUPE_KEY_EXPR = (
+    "(CASE record_type "
+    "WHEN 'source_record' THEN payload->'metadata'->>'source_dedupe_key' "
+    "WHEN 'evidence_item' THEN payload->'metadata'->>'evidence_dedupe_key' "
+    "END)"
+)
+_TENANT_SCOPE_EXPR = "COALESCE(payload->'metadata'->>'tenant_id', '')"
+_OBJECT_ID_EXPR = (
+    "(CASE record_type "
+    "WHEN 'source_record' THEN payload->>'source_id' "
+    "WHEN 'evidence_item' THEN payload->>'evidence_item_id' "
+    "WHEN 'evidence_bundle' THEN payload->>'evidence_bundle_id' "
+    "WHEN 'knowledge_object' THEN payload->>'knowledge_object_id' "
+    "END)"
+)
+_DEDUPE_FIELDS_BY_RECORD_TYPE: Dict[str, str] = {
+    "source_record": "source_dedupe_key",
+    "evidence_item": "evidence_dedupe_key",
+}
+_CONCURRENT_LOOKUP_INDEX_SPECS: tuple[tuple[str, str], ...] = (
+    (
+        "source_evidence_dedupe_lookup_idx",
+        f"(record_type, {_DEDUPE_KEY_EXPR}, append_id DESC, {_TENANT_SCOPE_EXPR})",
+    ),
+    (
+        "source_evidence_object_id_lookup_idx",
+        f"(record_type, {_OBJECT_ID_EXPR}, append_id DESC)",
+    ),
 )
 
 
@@ -159,21 +193,231 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             except queue.Empty:
                 break
 
+    def _acquire_bootstrap_advisory_lock(
+        self,
+        conn: Any,
+        lock_namespace: str,
+        timeout_seconds: float = 120.0,
+        poll_interval_seconds: float = 0.05,
+    ) -> bool:
+        """Acquire session advisory lock without holding a virtual transaction while waiting.
+
+        A blocking SQL ``SELECT pg_advisory_lock(...)`` keeps a virtual transaction
+        open while waiting, which deadlocks against ``CREATE INDEX CONCURRENTLY`` /
+        ``DROP INDEX CONCURRENTLY`` waiting for older virtual transactions to finish.
+        Polling ``pg_try_advisory_lock`` on an autocommit connection ends each probe
+        statement immediately so the waiting session stays idle between probes.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            rows = conn.execute(
+                "SELECT pg_try_advisory_lock(hashtext(%s), hashtext(%s))",
+                (lock_namespace, self.table),
+            ).fetchall()
+            if (
+                not rows
+                or not isinstance(rows[0], (tuple, list))
+                or len(rows[0]) != 1
+                or not isinstance(rows[0][0], bool)
+            ):
+                return True
+            if rows[0][0]:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_interval_seconds)
+
     def _bootstrap(self) -> None:
+        lock_namespace = "source_ingest.source_evidence.bootstrap"
         with self._get_connection() as conn:
-            if self.schema:
-                conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(self.schema)}")
-            conn.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.table} (
-                    append_id   BIGSERIAL PRIMARY KEY,
-                    record_id   TEXT NOT NULL,
-                    record_type TEXT NOT NULL,
-                    payload     JSONB NOT NULL,
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE (record_type, record_id)
+            lock_acquired = self._acquire_bootstrap_advisory_lock(conn, lock_namespace)
+            try:
+                if self.schema:
+                    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_pg(self.schema)}")
+                conn.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.table} (
+                        append_id   BIGSERIAL PRIMARY KEY,
+                        record_id   TEXT NOT NULL,
+                        record_type TEXT NOT NULL,
+                        payload     JSONB NOT NULL,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        UNIQUE (record_type, record_id)
+                    )
+                    """
                 )
-                """
+
+                # Stored scalar projections avoid repeatedly detoasting the payload in
+                # GROUP BY. PostgreSQL maintains them on every insert/upsert, including
+                # writes from independent owner processes; no cache invalidation path.
+                # A connector confidence is a score, not a verification: "verified"
+                # requires a recorded verification with a method and a time
+                # (BFF-EVIDENCE-DETAIL-AND-PAGING-20261125). Null confidence no
+                # longer reads as verified.
+                verified_expr = (
+                    "CASE WHEN LENGTH(BTRIM(COALESCE(payload->'metadata'->'verification'->>'method', ''))) > 0 "
+                    "AND LENGTH(BTRIM(COALESCE(payload->'metadata'->'verification'->>'verified_at', "
+                    "payload->'metadata'->'verification'->>'time', ''))) > 0 THEN TRUE ELSE FALSE END"
+                )
+                marker = "verification-record-v2"
+                existing_rows = conn.execute(
+                    "SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a "
+                    "WHERE a.attrelid = %s::regclass AND a.attname = 'evidence_verified' AND NOT a.attisdropped",
+                    (self.table,),
+                ).fetchall()
+                existing = existing_rows[0] if existing_rows else None
+                rewrite_columns = existing is not None and (
+                    existing[0] if isinstance(existing, tuple) else list(existing.values())[0]
+                ) != marker
+                # Bound the wait for ACCESS EXCLUSIVE so a busy old container cannot hang
+                # service start; the one-time rewrite below is a single atomic ALTER
+                # (drop + re-add in one statement), so an old container reading during
+                # the switch sees either the old or the new column, never none.
+                conn.execute("SET lock_timeout = '15s'")
+                entity_values = " || ".join([
+                    "jsonb_path_query_array(document, '$.metadata.linked_entity_type')",
+                    "jsonb_path_query_array(document, '$.metadata.linked_object_summary.entity_type')",
+                    *[
+                        f"CASE WHEN jsonb_typeof(document->'metadata'->'{key}') = 'array' "
+                        f"THEN jsonb_path_query_array(document, '$.metadata.{key}[*].entity_type') ELSE '[]'::jsonb END"
+                        for key in ("linked_decisions", "linked_entities", "related_entities")
+                    ],
+                ])
+                link_types_fn = _quote_pg(f"{self.schema or 'public'}.source_evidence_link_types")
+                # SQL functions allow the immutable array reduction a generated
+                # column cannot express with a subquery. Normalize at write time so
+                # overlap reads use GIN without parsing/detoasting any payload.
+                conn.execute(
+                    f"CREATE OR REPLACE FUNCTION {link_types_fn}(document JSONB) RETURNS TEXT[] "
+                    "LANGUAGE SQL IMMUTABLE PARALLEL SAFE AS $$ "
+                    "SELECT COALESCE(array_agg(DISTINCT LOWER(BTRIM(value))) FILTER (WHERE value IS NOT NULL), ARRAY[]::text[]) "
+                    f"FROM jsonb_array_elements_text({entity_values}) links(value) $$"
+                )
+                projections = {
+                    "evidence_tenant_id": ("TEXT", "payload->'metadata'->>'tenant_id'"),
+                    "evidence_capture_time": ("TEXT", "COALESCE(NULLIF(payload->>'available_time', ''), NULLIF(payload->>'event_time', ''))"),
+                    "evidence_linked_types": ("TEXT[]", f"{link_types_fn}(payload)"),
+                    "evidence_source_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal')"),
+                    "evidence_link_type": ("TEXT", "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting')"),
+                    "evidence_credibility_tier": ("TEXT", f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END)"),
+                    "evidence_verified": ("BOOLEAN", verified_expr),
+                }
+                rewritten = ("evidence_verified", "evidence_credibility_tier")
+                alterations = ", ".join(
+                    ("DROP COLUMN " + name + ", ADD COLUMN " if rewrite_columns and name in rewritten else "ADD COLUMN IF NOT EXISTS ")
+                    + f"{name} {kind} GENERATED ALWAYS AS ({expr}) STORED"
+                    for name, (kind, expr) in projections.items()
+                )
+                conn.execute(f"ALTER TABLE {self.table} {alterations}")
+                conn.execute("RESET lock_timeout")
+                conn.execute(f"COMMENT ON COLUMN {self.table}.evidence_verified IS '{marker}'")
+                # Paging selects ids from this index only (no payload read for rows
+                # skipped by the offset); size/build time recorded in evidence.
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_page_idx ON {self.table} "
+                    "(evidence_tenant_id, append_id DESC) WHERE record_type = 'evidence_item'"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_summary_idx ON {self.table} "
+                    "(evidence_tenant_id, evidence_source_type, evidence_link_type, "
+                    "evidence_credibility_tier, evidence_verified) WHERE record_type = 'evidence_item'"
+                )
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS source_evidence_linked_types_idx ON {self.table} "
+                    "USING GIN (evidence_linked_types) WHERE record_type = 'evidence_item'"
+                )
+                self._ensure_concurrent_lookup_indexes(conn)
+            finally:
+                if lock_acquired:
+                    try:
+                        conn.execute(
+                            "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s))",
+                            (lock_namespace, self.table),
+                        )
+                    except Exception:
+                        pass
+
+    def _ensure_concurrent_lookup_indexes(self, conn: Any) -> None:
+        """Create or repair non-blocking concurrent expression lookup indexes.
+
+        CREATE INDEX CONCURRENTLY takes SHARE UPDATE EXCLUSIVE instead of SHARE
+        or ACCESS EXCLUSIVE so active service writers are not blocked while
+        building on the ~203 MB hosted table. If an earlier concurrent build
+        was interrupted (process killed or connection lost), PostgreSQL leaves
+        an index entry with indisvalid = false (or indisready = false) that
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS would otherwise skip on later
+        starts and that the planner never uses. Check pg_index.indisvalid and
+        pg_index.indisready first; if an index exists but is not valid/ready,
+        drop it with DROP INDEX CONCURRENTLY IF EXISTS and rebuild it.
+        """
+        index_names = tuple(name for name, _ in _CONCURRENT_LOOKUP_INDEX_SPECS)
+        rows = conn.execute(
+            """
+            SELECT c.relname, i.indisvalid, i.indisready
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = COALESCE(NULLIF(%s, ''), current_schema())
+              AND c.relname IN (%s, %s)
+            """,
+            (self.schema, index_names[0], index_names[1]),
+        ).fetchall()
+        index_states: Dict[str, tuple[bool, bool]] = {}
+        for row in rows or ():
+            if isinstance(row, dict):
+                name = row.get("relname")
+                valid = row.get("indisvalid")
+                ready = row.get("indisready")
+            elif isinstance(row, (tuple, list)) and len(row) == 3:
+                name, valid, ready = row[0], row[1], row[2]
+            else:
+                continue
+            if isinstance(name, str) and isinstance(valid, bool) and isinstance(ready, bool):
+                index_states[name] = (valid, ready)
+
+        for index_name, index_expr in _CONCURRENT_LOOKUP_INDEX_SPECS:
+            qualified_index = (
+                _quote_pg(f"{self.schema}.{index_name}")
+                if self.schema
+                else _quote_pg(index_name)
+            )
+            state = index_states.get(index_name)
+            if state is not None:
+                is_valid, is_ready = state
+                if not (is_valid and is_ready):
+                    logger.warning(
+                        "Lookup index %s on %s is invalid or not ready (indisvalid=%s, indisready=%s); "
+                        "dropping with DROP INDEX CONCURRENTLY IF EXISTS and rebuilding",
+                        index_name,
+                        self.table,
+                        is_valid,
+                        is_ready,
+                    )
+                    conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_index}")
+                    logger.info(
+                        "Rebuilding lookup index %s on %s with CREATE INDEX CONCURRENTLY IF NOT EXISTS",
+                        index_name,
+                        self.table,
+                    )
+                    conn.execute(
+                        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {self.table} {index_expr}"
+                    )
+                    continue
+                logger.info(
+                    "Lookup index %s on %s is already valid and ready (indisvalid=%s, indisready=%s)",
+                    index_name,
+                    self.table,
+                    is_valid,
+                    is_ready,
+                )
+                continue
+            logger.info(
+                "Creating lookup index %s on %s with CREATE INDEX CONCURRENTLY IF NOT EXISTS",
+                index_name,
+                self.table,
+            )
+            conn.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {self.table} {index_expr}"
             )
 
     def reload(self) -> None:
@@ -323,9 +567,23 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
     def _read_one(self, r_type: str, r_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> Any | None:
         if tenant_id is not _UNSCOPED:
             sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, _scoped_record_id(tenant_id, r_id))
-        else:
+            records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
+            if not records and _scoped_record_id(tenant_id, r_id) != r_id:
+                # A tenant item the list shows may be stored under the bare id; the
+                # payload tenant claim is still re-checked by _fetch_records.
+                sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND record_id = %s", (r_type, r_id)
+                records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
             k = "source_id" if r_type == "source_record" else f"{r_type}_id"
-            sql, params = f"SELECT payload FROM {self.table} WHERE record_type = %s AND (record_id = %s OR payload->>%s = %s) ORDER BY append_id DESC LIMIT 1", (r_type, r_id, k, r_id)
+            return next((r for r in records if getattr(r, k, None) == r_id), records[0] if records else None)
+        else:
+            sql = (
+                "SELECT payload FROM ("
+                f"(SELECT append_id, payload FROM {self.table} WHERE record_type = %s AND record_id = %s ORDER BY append_id DESC LIMIT 1) "
+                "UNION ALL "
+                f"(SELECT append_id, payload FROM {self.table} WHERE record_type = %s AND {_OBJECT_ID_EXPR} = %s ORDER BY append_id DESC LIMIT 1)"
+                ") AS matched ORDER BY append_id DESC LIMIT 1"
+            )
+            params = (r_type, r_id, r_type, r_id)
         records = self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
         k = "source_id" if r_type == "source_record" else f"{r_type}_id"
         return next((r for r in records if getattr(r, k, None) == r_id), records[0] if records else None)
@@ -340,7 +598,22 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         return self._fetch_records(sql, params, r_type, tenant_id=tenant_id)
 
     def _read_by_dedupe(self, r_type: str, field: str, key: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> Any | None:
-        if tenant_id is not _UNSCOPED:
+        if _DEDUPE_FIELDS_BY_RECORD_TYPE.get(r_type) == field:
+            if tenant_id is not _UNSCOPED:
+                sql = (
+                    f"SELECT payload FROM {self.table} "
+                    f"WHERE record_type = %s AND {_DEDUPE_KEY_EXPR} = %s AND {_TENANT_SCOPE_EXPR} = %s "
+                    "ORDER BY append_id DESC LIMIT 1"
+                )
+                params: tuple[Any, ...] = (r_type, key, tenant_id or "")
+            else:
+                sql = (
+                    f"SELECT payload FROM {self.table} "
+                    f"WHERE record_type = %s AND {_DEDUPE_KEY_EXPR} = %s "
+                    "ORDER BY append_id DESC LIMIT 1"
+                )
+                params = (r_type, key)
+        elif tenant_id is not _UNSCOPED:
             where = "AND payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "AND (payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
             params = (r_type, field, key, tenant_id) if tenant_id is not None else (r_type, field, key)
             sql = f"SELECT payload FROM {self.table} WHERE record_type = %s AND payload->'metadata'->>%s = %s {where} ORDER BY append_id DESC LIMIT 1"
@@ -381,14 +654,37 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         *,
         limit: int,
         offset: int = 0,
+        captured_from: str | None = None,
+        captured_before: str | None = None,
+        linked_entity_types: tuple[str, ...] | None = None,
     ) -> tuple[List[EvidenceItem], int]:
         if getattr(self, "_replaying", False):
-            return super().list_evidence_items_page(tenant_id=tenant_id, limit=limit, offset=offset)
+            return super().list_evidence_items_page(
+                tenant_id=tenant_id, limit=limit, offset=offset,
+                captured_from=captured_from, captured_before=captured_before,
+                linked_entity_types=linked_entity_types,
+            )
         if tenant_id is not _UNSCOPED:
-            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            where = "evidence_tenant_id = %s" if tenant_id is not None else "(evidence_tenant_id IS NULL OR evidence_tenant_id = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
+        if linked_entity_types is not None:
+            # Array overlap counts/paginates each item once even with many links.
+            where += " AND evidence_linked_types && %s::text[]"
+            scope_params += (list(linked_entity_types),)
+        windowed = captured_from is not None or captured_before is not None
+        if windowed:
+            try:
+                return self._list_evidence_items_window(
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, linked_entity_types=linked_entity_types, sql_cast=True
+                )
+            except RuntimeError:
+                # A stored timestamp the SQL cast rejects must not fail the whole
+                # read: filter the same population in Python with identical rules.
+                return self._list_evidence_items_window(
+                    where, scope_params, tenant_id, limit, offset, captured_from, captured_before, linked_entity_types=linked_entity_types, sql_cast=False
+                )
         # The heavy metadata keys are dropped in SQL so they never leave the DB.
         stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
         base = f"FROM {self.table} WHERE record_type = %s AND {where}"
@@ -398,9 +694,112 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
         total = int((count_row[0] if isinstance(count_row, tuple) else list(count_row.values())[0]) if count_row else 0)
+        # Ids first (index-only walk), payloads only for the page: the heap and
+        # TOAST cost no longer grows with the offset.
+        items = self._fetch_records(
+            f"SELECT {stripped} FROM {self.table} t JOIN ("
+            f"SELECT append_id {base} ORDER BY append_id DESC LIMIT %s OFFSET %s"
+            ") page USING (append_id) ORDER BY t.append_id DESC",
+            ("evidence_item", *scope_params, int(limit), int(offset)),
+            "evidence_item",
+            tenant_id=tenant_id,
+        )
+        return items, total
+
+    def _list_evidence_items_window(
+        self,
+        where: str,
+        scope_params: tuple[Any, ...],
+        tenant_id: str | None | _Unscoped,
+        limit: int,
+        offset: int,
+        captured_from: str | None,
+        captured_before: str | None,
+        *,
+        sql_cast: bool,
+        linked_entity_types: tuple[str, ...] | None = None,
+    ) -> tuple[List[EvidenceItem], int]:
+        """Page the evidence items captured in ``[captured_from, captured_before)``.
+
+        Capture time is ``available_time`` then ``event_time`` (the BFF rule);
+        rows with no parsable time never match. ``sql_cast`` filters in SQL
+        behind a strict ISO guard; otherwise the tenant population is filtered
+        in Python with the shared repository predicate.
+        """
+        if not sql_cast:
+            items = [
+                i for i in self._read_many("evidence_item", tenant_id)
+                if evidence_item_in_capture_window(i, captured_from, captured_before)
+                and (linked_entity_types is None or evidence_item_linked_entity_types(i) & set(linked_entity_types))
+            ]
+            window = list(reversed(items))[int(offset): int(offset) + int(limit)]
+            return [strip_list_heavy_metadata(i) for i in window], len(items)
+        # No BTRIM: legacy selection only falls back on an absent/empty value, so a
+        # blank or padded string stays "odd" and is judged by the Python predicate.
+        raw_ts = "evidence_capture_time"
+        # Strict: hours 00-23, a zone only after a time, <=6 fraction digits. Anything
+        # else (date+zone, 24:00, compact forms, ...) goes to the Python predicate.
+        iso_guard = (
+            r"'^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+            r"(([T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9]([.][0-9]{1,6})?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?)$'"
+        )
+        has_zone = r"'(Z|[+-][0-9]{2}:[0-9]{2})$'"
+        captured = (
+            f"(CASE WHEN {raw_ts} ~ {iso_guard} THEN "
+            f"(CASE WHEN {raw_ts} ~ {has_zone} THEN REPLACE({raw_ts}, 'Z', '+00:00')::timestamptz "
+            f"ELSE ({raw_ts})::timestamp AT TIME ZONE 'UTC' END) END)"
+        )
+        # Stored timestamps the strict ISO guard does not recognise (compact
+        # dates, ``+0000`` offsets, ...) still parse under the legacy
+        # ``datetime.fromisoformat`` rule. Those rare rows are judged in Python
+        # with the shared predicate and joined into the SQL window by id.
+        bounds: list[Any] = []
+        for value in (captured_from, captured_before):
+            parsed = _capture_datetime(value) if value is not None else None
+            if value is not None and parsed is None:
+                return [], 0
+            bounds.append(parsed)
+        try:
+            with self._get_connection() as conn:
+                odd_rows = conn.execute(
+                    f"SELECT append_id, {raw_ts} FROM {self.table} "
+                    f"WHERE record_type = %s AND {where} AND {raw_ts} IS NOT NULL AND NOT ({raw_ts} ~ {iso_guard})",
+                    ("evidence_item", *scope_params),
+                ).fetchall()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        odd_ids: list[int] = []
+        for row in odd_rows:
+            append_id, raw = (row[0], row[1]) if isinstance(row, tuple) else list(row.values())[:2]
+            moment = _capture_datetime(raw)
+            if moment is None:
+                continue
+            if (bounds[0] is None or bounds[0] <= moment) and (bounds[1] is None or moment < bounds[1]):
+                odd_ids.append(append_id)
+        in_window = [f"{captured} IS NOT NULL"]
+        params: list[Any] = []
+        for parsed, op in ((bounds[0], ">="), (bounds[1], "<")):
+            if parsed is None:
+                continue
+            in_window.append(f"{captured} {op} %s")
+            params.append(parsed)
+        clause = "(" + " AND ".join(in_window) + ")"
+        if odd_ids:
+            clause = f"({clause} OR append_id = ANY(%s))"
+            params.append(odd_ids)
+        clauses = [clause]
+        stripped = "payload" + "".join(f" #- '{{metadata,{k}}}'" for k in EVIDENCE_LIST_OMITTED_METADATA_KEYS)
+        base = f"FROM {self.table} WHERE record_type = %s AND {where} AND " + " AND ".join(clauses)
+        base_params = ("evidence_item", *scope_params, *params)
+        try:
+            with self._get_connection() as conn:
+                count_row = conn.execute(f"SELECT COUNT(*) {base}", base_params).fetchone()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        total = int((count_row[0] if isinstance(count_row, tuple) else list(count_row.values())[0]) if count_row else 0)
         items = self._fetch_records(
             f"SELECT {stripped} {base} ORDER BY append_id DESC LIMIT %s OFFSET %s",
-            ("evidence_item", *scope_params, int(limit), int(offset)),
+            (*base_params, int(limit), int(offset)),
             "evidence_item",
             tenant_id=tenant_id,
         )
@@ -413,27 +812,15 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         if getattr(self, "_replaying", False):
             return super().summarize_evidence_items(tenant_id=tenant_id)
         if tenant_id is not _UNSCOPED:
-            where = "payload->'metadata'->>'tenant_id' = %s" if tenant_id is not None else "(payload->'metadata'->>'tenant_id' IS NULL OR payload->'metadata'->>'tenant_id' = '')"
+            where = "evidence_tenant_id = %s" if tenant_id is not None else "(evidence_tenant_id IS NULL OR evidence_tenant_id = '')"
             scope_params: tuple[Any, ...] = (tenant_id,) if tenant_id is not None else ()
         else:
             where, scope_params = "TRUE", ()
-        verified_expr = (
-            "CASE "
-            "WHEN payload->'confidence' IS NULL OR jsonb_typeof(payload->'confidence') = 'null' THEN TRUE "
-            "WHEN jsonb_typeof(payload->'confidence') = 'number' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-            "WHEN jsonb_typeof(payload->'confidence') = 'string' AND (payload->>'confidence') ~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$' AND (payload->>'confidence')::double precision >= 0.8 THEN TRUE "
-            "ELSE FALSE "
-            "END"
-        )
         sql = (
-            "SELECT "
-            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'source_class'), ''), NULLIF(BTRIM(payload->>'item_type'), ''), 'internal') AS source_type, "
-            "COALESCE(NULLIF(BTRIM(payload->'metadata'->>'link_type'), ''), 'supporting') AS link_type, "
-            f"COALESCE(NULLIF(BTRIM(payload->'metadata'->>'credibility_tier'), ''), CASE WHEN ({verified_expr}) THEN 'verified' ELSE 'unverified' END) AS credibility_tier, "
-            f"({verified_expr}) AS verified, "
+            "SELECT evidence_source_type AS source_type, evidence_link_type AS link_type, evidence_credibility_tier AS credibility_tier, "
             "COUNT(*) AS row_count "
             f"FROM {self.table} WHERE record_type = %s AND {where} "
-            "GROUP BY 1, 2, 3, 4"
+            "GROUP BY 1, 2, 3"
         )
         try:
             with self._get_connection() as conn:
@@ -441,7 +828,6 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
         except Exception as exc:
             raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
         total = 0
-        verified_count = 0
         by_source_type: dict[str, int] = {}
         by_link_type: dict[str, int] = {}
         by_credibility_tier: dict[str, int] = {}
@@ -450,24 +836,18 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
                 source_type = str(row.get("source_type") or "internal").strip() or "unknown"
                 link_type = str(row.get("link_type") or "supporting").strip() or "unknown"
                 credibility_tier = str(row.get("credibility_tier") or "unverified").strip() or "unknown"
-                verified = bool(row.get("verified"))
                 count = int(row.get("row_count") or 0)
             else:
                 source_type = str(row[0] or "internal").strip() or "unknown"
                 link_type = str(row[1] or "supporting").strip() or "unknown"
                 credibility_tier = str(row[2] or "unverified").strip() or "unknown"
-                verified = bool(row[3])
-                count = int(row[4] or 0)
+                count = int(row[3] or 0)
             total += count
-            if verified:
-                verified_count += count
             by_source_type[source_type] = by_source_type.get(source_type, 0) + count
             by_link_type[link_type] = by_link_type.get(link_type, 0) + count
             by_credibility_tier[credibility_tier] = by_credibility_tier.get(credibility_tier, 0) + count
         return {
             "total": total,
-            "verified_count": verified_count,
-            "verified_evidence": verified_count,
             "by_source_type": by_source_type,
             "by_link_type": by_link_type,
             "by_credibility_tier": by_credibility_tier,
@@ -494,6 +874,9 @@ def read_source_records_for_tenant(
     *,
     jsonl_path: Path,
     tenant_id: str,
+    limit: int | None = None,
+    already_admitted: Callable[[SourceRecord], bool] | None = None,
+    summary: dict[str, Any] | None = None,
 ) -> list[SourceRecord]:
     """Read normalized records for one tenant without taking source write ownership.
 
@@ -501,14 +884,39 @@ def read_source_records_for_tenant(
     transaction and constrain rows by their persisted tenant claim. JSONL is
     retained for local/test configurations, but the caller still supplies an
     explicit tenant and the repository's tenant index enforces that scope.
+    With ``limit``, SQL filters eligibility and each payload query is limited to
+    that batch size. ``already_admitted`` uses the existing durable version
+    receipts; ``summary`` receives a scalar eligible count from the same snapshot.
+    Without ``limit`` the original read API remains available to other callers.
     """
     tenant = str(tenant_id or "").strip()
     if not tenant or tenant == "*":
         raise ValueError("an explicit non-wildcard tenant_id is required for source evidence reads")
 
+    if limit is not None and limit < 1:
+        raise ValueError("source read limit must be positive")
+
+    def eligible(source: SourceRecord) -> bool:
+        return source.status == SourceRecordStatus.NORMALIZED and not (
+            source.source_type == SourceType.MARKET and source.metadata.get("collector_market_bundle")
+        )
+
     backend = os.getenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl").strip().lower()
     if backend in ("", "jsonl"):
-        return JsonlEvidenceRepository(jsonl_path).list_source_records(tenant_id=tenant)
+        records = JsonlEvidenceRepository(jsonl_path).list_source_records(tenant_id=tenant)
+        if limit is None:
+            return records
+        candidates = [source for source in records if eligible(source)]
+        selected = []
+        for source in candidates:
+            if already_admitted is None or not already_admitted(source):
+                selected.append(source)
+                if len(selected) == limit:
+                    break
+        if summary is not None:
+            summary.update(eligible_source_count=len(candidates), source_read_limit=limit,
+                           source_summary_origin="source-ingest.tenant_eligible_records_jsonl")
+        return selected
     if backend != "postgres":
         raise ValueError("SOURCE_INGEST_EVIDENCE_BACKEND must be jsonl or postgres")
 
@@ -521,30 +929,98 @@ def read_source_records_for_tenant(
     except ImportError as exc:
         raise RuntimeError("psycopg is required when SOURCE_INGEST_EVIDENCE_BACKEND=postgres") from exc
 
-    # This consumer never bootstraps schema, reloads other record kinds, or
-    # writes. Filter in SQL so foreign/unowned rows are not materialized here.
+    # No schema or writes belong to this consumer. A bounded catch-up read
+    # pages eligible rows by append order. Known versions do not consume the
+    # admission budget; a revised payload at an old append_id is seen next tick.
+    records: list[SourceRecord] = []
+    where = "record_type = %s AND payload->'metadata'->>'tenant_id' = %s"
+    params: tuple[Any, ...] = ("source_record", tenant)
+    if limit is not None:
+        # Match SourceRecord's missing-status default and Python truthiness for
+        # the collector marker, including legacy boolean/container values.
+        where += (
+            " AND COALESCE(payload->>'status', 'normalized') = 'normalized'"
+            " AND NOT (payload->>'source_type' = 'market' AND "
+            "COALESCE(payload->'metadata'->'collector_market_bundle', 'null'::jsonb) "
+            "NOT IN ('null'::jsonb, 'false'::jsonb, '0'::jsonb, "
+            "'\"\"'::jsonb, '[]'::jsonb, '{}'::jsonb))"
+        )
     try:
         with psycopg.connect(dsn) as conn:
-            conn.execute("SET TRANSACTION READ ONLY")
-            rows = conn.execute(
-                f"SELECT payload FROM {table} "
-                "WHERE record_type = %s AND payload->'metadata'->>'tenant_id' = %s "
-                "ORDER BY append_id ASC",
-                ("source_record", tenant),
-            ).fetchall()
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            if limit is not None and summary is not None:
+                count_row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", params).fetchone()
+                total = count_row[0] if isinstance(count_row, tuple) else next(iter(count_row.values()))
+                summary.update(eligible_source_count=int(total), source_read_limit=limit,
+                               source_summary_origin="source-ingest.postgres.tenant_eligible_count")
+            if limit is not None and hasattr(conn, "cursor"):
+                # One read-only server-side cursor in the same snapshot replaces
+                # a Limit/Sort/Seq Scan per keyset page; still bounded to 100.
+                with conn.cursor(name="distillation_eligible_sources") as cur:
+                    cur.execute(
+                        f"SELECT payload, append_id FROM {table} WHERE {where} ORDER BY append_id ASC",
+                        params,
+                    )
+                    while True:
+                        rows = cur.fetchmany(limit)
+                        if not rows:
+                            break
+                        for row in rows:
+                            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+                            if isinstance(payload, str):
+                                payload = json.loads(payload)
+                            if not isinstance(payload, dict):
+                                raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+                            source = SourceRecord.from_dict(payload)
+                            if source.tenant_id != tenant:
+                                raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
+                            if eligible(source) and (
+                                already_admitted is None or not already_admitted(source)
+                            ):
+                                records.append(source)
+                                if len(records) == limit:
+                                    return records
+                        del rows
+                return records
+            after = -1
+            while True:
+                if limit is None:
+                    rows = conn.execute(
+                        f"SELECT payload FROM {table} WHERE {where} ORDER BY append_id ASC", params,
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT payload, append_id FROM {table} WHERE {where} "
+                        "AND append_id > %s ORDER BY append_id ASC LIMIT %s",
+                        (*params, after, limit),
+                    ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    payload = row[0] if isinstance(row, tuple) else row.get("payload")
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if not isinstance(payload, dict):
+                        raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+                    source = SourceRecord.from_dict(payload)
+                    if source.tenant_id != tenant:
+                        raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
+                    if limit is None or (eligible(source) and (
+                        already_admitted is None or not already_admitted(source)
+                    )):
+                        records.append(source)
+                        if limit is not None and len(records) == limit:
+                            return records
+                if limit is None:
+                    break
+                last = rows[-1]
+                after = int(last[1] if isinstance(last, tuple) else last["append_id"])
+                # Release this payload batch before fetching another.
+                del rows, row, last, payload, source
+    except EvidenceValidationError:
+        raise
     except Exception as exc:
         raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
-    records: list[SourceRecord] = []
-    for row in rows:
-        payload = row[0] if isinstance(row, tuple) else row.get("payload")
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        if not isinstance(payload, dict):
-            raise EvidenceValidationError("Source evidence owner returned a malformed source record")
-        source = SourceRecord.from_dict(payload)
-        if source.tenant_id != tenant:
-            raise EvidenceValidationError("Source evidence owner returned a record outside the requested tenant")
-        records.append(source)
     return records
 
 

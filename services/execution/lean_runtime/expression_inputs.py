@@ -41,6 +41,7 @@ from services.capital.risk_policy import (
     RiskPolicy,
     RiskPolicyLoadError,
     resolve_bound_pool_risk_policy,
+    risk_policy_digest,
 )
 
 log = logging.getLogger(__name__)
@@ -259,6 +260,115 @@ def _unit_price(row: Mapping[str, Any]) -> float | None:
     return None
 
 
+def _reservations_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract pending order reservations and reserved cash/margin/exposure from a summary."""
+    from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
+
+    raw_list = summary.get("order_reservations")
+    if raw_list is None:
+        raw_list = summary.get("reservations")
+    if isinstance(raw_list, Mapping):
+        items: list[ Any ] = list(raw_list.values())
+    elif isinstance(raw_list, list):
+        items = raw_list
+    else:
+        items = []
+
+    reservations: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    reserved_cash = 0.0
+    reserved_margin = 0.0
+    reserved_gross = 0.0
+    reserved_signed_net = 0.0
+    reserved_underlying: dict[str, float] = {}
+    reserved_underlying_signed: dict[str, float] = {}
+
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        res_id = str(
+            item.get("reservation_id")
+            or item.get("signal_id")
+            or item.get("client_order_id")
+            or item.get("decision_id")
+            or ""
+        ).strip()
+        if res_id and res_id in seen_ids:
+            continue
+        if res_id:
+            seen_ids.add(res_id)
+        is_reducing = bool(item.get("is_risk_reducing") or item.get("close_leg") or item.get("reason_code") == "close_leg")
+        underlying = normalize_underlying_code(
+            str(item.get("underlying") or item.get("symbol") or item.get("instrument_id") or "")
+        )
+        side = str(item.get("side") or item.get("action") or "").strip().lower()
+        direction = str(item.get("direction") or ("SHORT" if side == "sell" else "LONG")).strip().upper()
+        kind = str(item.get("kind") or ("stock_future" if str(item.get("instrument_id") or "").startswith("ssf:") else "cash_share"))
+        qty = abs(_finite(item.get("quantity") if item.get("quantity") is not None else item.get("units")) or 0.0)
+        mult = _finite(item.get("multiplier") if item.get("multiplier") is not None else item.get("unit")) or 1.0
+        price = _finite(item.get("price") if item.get("price") is not None else item.get("mark_price")) or 0.0
+        notional = _finite(item.get("notional") if item.get("notional") is not None else item.get("gross_notional"))
+        if notional is None:
+            notional = qty * mult * price
+        notional = max(0.0, float(notional))
+        cash_req = _finite(item.get("cash_reserved") if item.get("cash_reserved") is not None else item.get("cash_required"))
+        if cash_req is None:
+            if not is_reducing and kind == "cash_share" and direction == "LONG" and qty > 0 and price > 0:
+                from services.execution.lean_runtime.taiwan_cash_costs import buy_cash_required
+                cash_req = buy_cash_required(underlying or "0000", int(round(qty)), price)
+            else:
+                cash_req = 0.0
+        margin_req = _finite(item.get("margin_reserved") if item.get("margin_reserved") is not None else item.get("margin_required")) or 0.0
+        signed_notional = -notional if direction == "SHORT" or side == "sell" else notional
+        if not is_reducing:
+            reserved_cash += max(0.0, float(cash_req))
+            reserved_margin += max(0.0, float(margin_req))
+            reserved_gross += notional
+            reserved_signed_net += signed_notional
+            if underlying:
+                reserved_underlying[underlying] = round(reserved_underlying.get(underlying, 0.0) + notional, 2)
+                reserved_underlying_signed[underlying] = round(
+                    reserved_underlying_signed.get(underlying, 0.0) + signed_notional, 2
+                )
+        reservations.append(
+            {
+                "reservation_id": res_id or f"res-{len(reservations) + 1}",
+                "underlying": underlying,
+                "instrument_id": str(item.get("instrument_id") or (f"eq:{underlying}" if underlying else "")),
+                "kind": kind,
+                "direction": direction,
+                "side": side or ("sell" if direction == "SHORT" else "buy"),
+                "units": qty,
+                "multiplier": mult,
+                "price": price,
+                "notional": round(notional, 2),
+                "cash_reserved": round(max(0.0, float(cash_req)), 2),
+                "margin_reserved": round(max(0.0, float(margin_req)), 2),
+                "is_risk_reducing": is_reducing,
+            }
+        )
+
+    scalar_cash = _finite(summary.get("cash_reserved") if summary.get("cash_reserved") is not None else summary.get("reserved_cash"))
+    if scalar_cash is not None and scalar_cash > reserved_cash:
+        reserved_cash = scalar_cash
+    scalar_margin = _finite(summary.get("order_margin_reserved") if summary.get("order_margin_reserved") is not None else summary.get("reserved_margin"))
+    if scalar_margin is not None and scalar_margin > reserved_margin:
+        reserved_margin = scalar_margin
+    scalar_gross = _finite(summary.get("gross_reserved") if summary.get("gross_reserved") is not None else summary.get("reserved_gross_notional"))
+    if scalar_gross is not None and scalar_gross > reserved_gross:
+        reserved_gross = scalar_gross
+
+    return {
+        "reservations": reservations,
+        "reserved_cash": round(reserved_cash, 2),
+        "reserved_margin": round(reserved_margin, 2),
+        "reserved_gross_notional": round(reserved_gross, 2),
+        "reserved_signed_net_notional": round(reserved_signed_net, 2),
+        "reserved_underlying_notional": reserved_underlying,
+        "reserved_underlying_signed_notional": reserved_underlying_signed,
+    }
+
+
 def _book_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
     """Positions, gross, stock value, futures P&L and reserved margin from a summary."""
     from services.execution.lean_runtime.instrument_candidates import normalize_underlying_code
@@ -271,7 +381,9 @@ def _book_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(rows, list):
         raise ExpressionInputsUnavailable("ledger", "runtime summary positions is not a list")
     positions: list[dict[str, Any]] = []
-    gross = stock_value = futures_unrealized = margin_reserved = 0.0
+    gross = signed_net = stock_value = futures_unrealized = margin_reserved = 0.0
+    underlying_gross: dict[str, float] = {}
+    underlying_signed: dict[str, float] = {}
     for row in rows:
         if not isinstance(row, Mapping):
             raise ExpressionInputsUnavailable("ledger", "runtime summary position is not an object")
@@ -280,7 +392,7 @@ def _book_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
             raise ExpressionInputsUnavailable("ledger", "position quantity unreadable")
         if quantity == 0:
             continue
-        underlying = normalize_underlying_code(str(row.get("symbol") or ""))
+        underlying = normalize_underlying_code(str(row.get("symbol") or row.get("underlying") or ""))
         multiplier = _finite(row.get("multiplier")) or 1.0
         is_future = row.get("kind") == "stock_future"
         price = _unit_price(row)
@@ -289,7 +401,12 @@ def _book_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
                 "ledger", f"position {row.get('instrument_id') or underlying} has no mark price"
             )
         notional = abs(quantity) * multiplier * price
+        signed_notional = quantity * multiplier * price
         gross += notional
+        signed_net += signed_notional
+        if underlying:
+            underlying_gross[underlying] = round(underlying_gross.get(underlying, 0.0) + notional, 2)
+            underlying_signed[underlying] = round(underlying_signed.get(underlying, 0.0) + signed_notional, 2)
         if is_future:
             unrealized = _finite(row.get("unrealized_pnl"))
             average = _finite(row.get("average_price"))
@@ -314,12 +431,23 @@ def _book_from_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
                 "notional": round(notional, 2),
             }
         )
+    res_info = _reservations_from_summary(summary)
+    combined_underlying_gross = dict(underlying_gross)
+    for u_code, u_res in res_info["reserved_underlying_notional"].items():
+        combined_underlying_gross[u_code] = round(combined_underlying_gross.get(u_code, 0.0) + u_res, 2)
+    combined_underlying_signed = dict(underlying_signed)
+    for u_code, u_res_s in res_info["reserved_underlying_signed_notional"].items():
+        combined_underlying_signed[u_code] = round(combined_underlying_signed.get(u_code, 0.0) + u_res_s, 2)
     return {
         "positions": positions,
         "gross_notional": round(gross, 2),
+        "signed_net_notional": round(signed_net, 2),
         "stock_value": stock_value,
         "futures_unrealized": futures_unrealized,
         "margin_reserved": margin_reserved,
+        "underlying_gross_by_code": combined_underlying_gross,
+        "underlying_signed_by_code": combined_underlying_signed,
+        **res_info,
     }
 
 
@@ -331,15 +459,100 @@ def _ledger_has_fills(summary: Mapping[str, Any]) -> bool:
     return False
 
 
+def _turnover_notional_from_summary(
+    summary: Mapping[str, Any],
+    policy: RiskPolicy,
+    *,
+    as_of_trading_day: Any = None,
+) -> float | None:
+    """Resolve rolling window turnover notional from virtual book / ledger summary."""
+    from services.execution.lean_runtime.instrument_candidates import _optional_date
+
+    for key in ("turnover_notional", "traded_notional", "rolling_turnover_notional", "window_turnover_notional"):
+        val = _finite(summary.get(key))
+        if val is not None and val >= 0.0:
+            return float(val)
+    raw_fills = (
+        summary.get("fills")
+        if isinstance(summary.get("fills"), list)
+        else (
+            summary.get("virtual_book_fills")
+            if isinstance(summary.get("virtual_book_fills"), list)
+            else (summary.get("recent_fills") if isinstance(summary.get("recent_fills"), list) else None)
+        )
+    )
+    if raw_fills is not None:
+        window_days = 1
+        if isinstance(policy.metadata, Mapping) and policy.metadata.get("turnover_window_days") is not None:
+            w = _finite(policy.metadata.get("turnover_window_days"))
+            if w is not None and w >= 1:
+                window_days = int(w)
+        ref_day = _optional_date(as_of_trading_day or summary.get("as_of_trading_day") or summary.get("trading_day"))
+        total = 0.0
+        for item in raw_fills:
+            if not isinstance(item, Mapping):
+                continue
+            if ref_day is not None:
+                raw_ts = item.get("trade_date") or item.get("filled_at") or item.get("timestamp")
+                fill_day = _optional_date(str(raw_ts)[:10]) if raw_ts else None
+                if fill_day is not None and (ref_day - fill_day).days >= window_days:
+                    continue
+            notional = _finite(item.get("notional") if item.get("notional") is not None else item.get("gross_notional"))
+            if notional is None:
+                qty = abs(_finite(item.get("quantity") if item.get("quantity") is not None else item.get("units")) or 0.0)
+                mult = _finite(item.get("multiplier") if item.get("multiplier") is not None else item.get("unit")) or 1.0
+                px = _finite(item.get("fill_price") if item.get("fill_price") is not None else item.get("price")) or 0.0
+                notional = qty * mult * px
+            total += max(0.0, float(notional))
+        return round(total, 2)
+    return None
+
+
 def build_expression_inputs(
     *,
     pool: Mapping[str, Any],
     policy: RiskPolicy,
     summary: Mapping[str, Any],
+    normalized_root: Any = None,
+    as_of_trading_day: Any = None,
 ) -> dict[str, Any]:
     """Pure assembly of ``{"persona_book", "risk_budget"}`` from the three truths."""
-    if policy.gross_limit is None:
+    from services.execution.lean_runtime.instrument_candidates import (
+        normalize_underlying_code,
+        read_avg_daily_volume,
+        read_industry_classifications,
+    )
+
+    if policy.gross_limit is None or float(policy.gross_limit) <= 0:
         raise ExpressionInputsUnavailable("risk_policy", "gross_limit is not set in the pool policy")
+    for pos_field in ("net_limit", "max_leverage", "max_single_name_weight", "turnover_limit"):
+        val = getattr(policy, pos_field, None)
+        if val is not None and (_finite(val) is None or float(val) <= 0):
+            raise ExpressionInputsUnavailable("risk_policy", f"{pos_field} must be a positive finite number")
+    if policy.max_sector_exposure not in (None, {}):
+        sec_vals = (
+            list(policy.max_sector_exposure.values())
+            if isinstance(policy.max_sector_exposure, Mapping)
+            else [policy.max_sector_exposure]
+        )
+        if not sec_vals or any(_finite(v) is None or float(v) <= 0.0 or float(v) > 1.0 for v in sec_vals):
+            raise ExpressionInputsUnavailable("risk_policy", "max_sector_exposure must be in (0, 1]")
+    if policy.liquidity_constraints:
+        if "min_avg_daily_volume" in policy.liquidity_constraints:
+            min_adv = _finite(policy.liquidity_constraints.get("min_avg_daily_volume"))
+            if min_adv is None or min_adv <= 0.0:
+                raise ExpressionInputsUnavailable("risk_policy", "min_avg_daily_volume must be positive")
+        if "max_order_pct_adv" in policy.liquidity_constraints:
+            max_pct = _finite(policy.liquidity_constraints.get("max_order_pct_adv"))
+            if max_pct is None or max_pct <= 0.0 or max_pct > 1.0:
+                raise ExpressionInputsUnavailable("risk_policy", "max_order_pct_adv must be in (0, 1]")
+    min_reserve_pct = getattr(policy, "min_cash_reserve_pct", None)
+    if min_reserve_pct is not None and (_finite(min_reserve_pct) is None or float(min_reserve_pct) < 0 or float(min_reserve_pct) >= 1.0):
+        raise ExpressionInputsUnavailable("risk_policy", "min_cash_reserve_pct must be in [0, 1)")
+    min_reserve_abs = getattr(policy, "min_cash_reserve", None)
+    if min_reserve_abs is not None and (_finite(min_reserve_abs) is None or float(min_reserve_abs) < 0):
+        raise ExpressionInputsUnavailable("risk_policy", "min_cash_reserve must be non-negative")
+
     pool_budget = _finite(pool.get("budget"))
     if not _ledger_has_fills(summary) and (pool_budget is None or pool_budget <= 0):
         raise ExpressionInputsUnavailable("pool_budget", "capital pool has no positive budget")
@@ -352,17 +565,171 @@ def build_expression_inputs(
             )
     else:
         cash = pool_budget
+    assert cash is not None
     equity = cash + book["stock_value"] + book["futures_unrealized"]
     if equity <= 0:
         raise ExpressionInputsUnavailable("ledger", f"non-positive equity {equity:.2f}")
-    free_margin = equity - book["margin_reserved"]
-    risk_budget = {
+
+    total_margin_reserved = book["margin_reserved"] + book["reserved_margin"]
+    cash_reserved = book["reserved_cash"]
+    free_margin = equity - total_margin_reserved
+    pct_reserve_req = float(min_reserve_pct) * equity if min_reserve_pct is not None else 0.0
+    abs_reserve_req = float(min_reserve_abs) if min_reserve_abs is not None else 0.0
+    cash_reserve_required = max(pct_reserve_req, abs_reserve_req, 0.0)
+    raw_buying_power = max(min(cash - cash_reserved, free_margin), 0.0)
+    available_cash = round(max(raw_buying_power - cash_reserve_required, 0.0), 2)
+    gross_used = round(book["gross_notional"] + book["reserved_gross_notional"], 2)
+    signed_net_used = round(book["signed_net_notional"] + book["reserved_signed_net_notional"], 2)
+
+    effective_root = (
+        normalized_root
+        if normalized_root is not None
+        else (os.getenv("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT") or "").strip() or None
+    )
+    pool_meta = pool.get("metadata") if isinstance(pool.get("metadata"), Mapping) else {}
+
+    # 1. Sector classification & exposures
+    sector_by_underlying: dict[str, str] = {}
+    if effective_root is not None and (policy.max_sector_exposure not in (None, {}) or normalized_root is not None):
+        disk_sectors = read_industry_classifications(effective_root, as_of_trading_day=as_of_trading_day)
+        if isinstance(disk_sectors, Mapping):
+            sector_by_underlying.update({str(k): str(v) for k, v in disk_sectors.items() if v is not None})
+    for source_map in (
+        pool_meta.get("sector_by_underlying"),
+        pool.get("sector_by_underlying"),
+        summary.get("sector_by_underlying"),
+    ):
+        if isinstance(source_map, Mapping):
+            for raw_u, raw_sec in source_map.items():
+                if raw_sec in (None, ""):
+                    continue
+                try:
+                    u_code = normalize_underlying_code(str(raw_u))
+                except Exception:
+                    u_code = str(raw_u).strip()
+                if u_code:
+                    sector_by_underlying[u_code] = str(raw_sec).strip()
+    for row in (summary.get("positions") or []):
+        if isinstance(row, Mapping) and (row.get("sector") or row.get("industry_code")):
+            raw_u = row.get("symbol") or row.get("underlying")
+            if raw_u:
+                try:
+                    u_code = normalize_underlying_code(str(raw_u))
+                except Exception:
+                    u_code = str(raw_u).strip()
+                if u_code and u_code not in sector_by_underlying:
+                    sector_by_underlying[u_code] = str(row.get("sector") or row.get("industry_code")).strip()
+
+    sector_exposures: dict[str, float] = {}
+    missing_sector_underlyings: list[str] = []
+    for u_code, u_notional in sorted(book["underlying_gross_by_code"].items()):
+        if u_notional <= 0:
+            continue
+        sec = sector_by_underlying.get(u_code)
+        if not sec:
+            missing_sector_underlyings.append(u_code)
+        else:
+            sector_exposures[sec] = round(sector_exposures.get(sec, 0.0) + (u_notional / equity), 6)
+
+    # 2. Turnover over policy window
+    turnover_limit_val = float(policy.turnover_limit) if policy.turnover_limit is not None else None
+    turnover_limit_notional = round(turnover_limit_val * equity, 2) if turnover_limit_val is not None else None
+    explicit_turnover_ratio = _finite(
+        summary.get("turnover") if summary.get("turnover") is not None else summary.get("turnover_ratio")
+    )
+    summary_turnover_notional = _turnover_notional_from_summary(
+        summary, policy, as_of_trading_day=as_of_trading_day
+    )
+    if explicit_turnover_ratio is not None and explicit_turnover_ratio >= 0.0:
+        base_turnover_notional: float | None = round(explicit_turnover_ratio * equity, 2)
+    elif summary_turnover_notional is not None:
+        base_turnover_notional = summary_turnover_notional
+    elif not _ledger_has_fills(summary):
+        base_turnover_notional = 0.0
+    else:
+        base_turnover_notional = None
+
+    if base_turnover_notional is not None:
+        turnover_used_notional: float | None = round(base_turnover_notional + book["reserved_gross_notional"], 2)
+        turnover_used: float | None = round(turnover_used_notional / equity, 6)
+        turnover_unavailable = False
+    else:
+        turnover_used_notional = None
+        turnover_used = None
+        turnover_unavailable = bool(turnover_limit_val is not None)
+
+    # 3. Liquidity constraints & ADV
+    avg_daily_volume_by_underlying: dict[str, float] = {}
+    for adv_src in (
+        pool_meta.get("avg_daily_volume_by_underlying"),
+        pool.get("avg_daily_volume_by_underlying"),
+        summary.get("avg_daily_volume_by_underlying"),
+    ):
+        if isinstance(adv_src, Mapping):
+            for raw_u, raw_adv in adv_src.items():
+                adv_num = _finite(raw_adv)
+                if adv_num is not None and adv_num > 0.0:
+                    try:
+                        u_code = normalize_underlying_code(str(raw_u))
+                    except Exception:
+                        u_code = str(raw_u).strip()
+                    if u_code:
+                        avg_daily_volume_by_underlying[u_code] = float(adv_num)
+    if effective_root is not None and policy.liquidity_constraints:
+        for u_code in sorted(book["underlying_gross_by_code"].keys()):
+            if u_code not in avg_daily_volume_by_underlying:
+                adv_disk = read_avg_daily_volume(effective_root, u_code, as_of_trading_day=as_of_trading_day)
+                if adv_disk is not None and adv_disk > 0.0:
+                    avg_daily_volume_by_underlying[u_code] = float(adv_disk)
+
+    risk_budget: dict[str, Any] = {
         "equity": round(equity, 2),
-        "available_cash": round(max(min(cash, free_margin), 0.0), 2),
+        "raw_cash": round(cash, 2),
+        "free_margin": round(free_margin, 2),
+        "available_cash": available_cash,
+        "available_buying_power": available_cash,
         "gross_limit": round(float(policy.gross_limit) * equity, 2),
-        "gross_used": book["gross_notional"],
+        "gross_limit_multiple": float(policy.gross_limit),
+        "gross_used": gross_used,
+        "net_limit": round(float(policy.net_limit) * equity, 2) if policy.net_limit is not None else None,
+        "net_limit_multiple": float(policy.net_limit) if policy.net_limit is not None else None,
+        "net_used": round(abs(signed_net_used), 2),
+        "signed_net_used": signed_net_used,
         "max_leverage": policy.max_leverage,
-        "margin_reserved": round(book["margin_reserved"], 2),
+        "max_single_name_weight": policy.max_single_name_weight,
+        "max_single_name_notional": (
+            round(float(policy.max_single_name_weight) * equity, 2)
+            if policy.max_single_name_weight is not None
+            else None
+        ),
+        "max_sector_exposure": (
+            dict(policy.max_sector_exposure)
+            if isinstance(policy.max_sector_exposure, Mapping)
+            else policy.max_sector_exposure
+        ),
+        "sector_by_underlying": sector_by_underlying,
+        "sector_exposures": sector_exposures,
+        "missing_sector_underlyings": missing_sector_underlyings,
+        "turnover_limit": turnover_limit_val,
+        "turnover_limit_notional": turnover_limit_notional,
+        "turnover_used": turnover_used,
+        "turnover_used_notional": turnover_used_notional,
+        "turnover_unavailable": turnover_unavailable,
+        "liquidity_constraints": dict(policy.liquidity_constraints) if policy.liquidity_constraints else {},
+        "avg_daily_volume_by_underlying": avg_daily_volume_by_underlying,
+        "min_cash_reserve_pct": min_reserve_pct,
+        "min_cash_reserve": min_reserve_abs,
+        "cash_reserve_required": round(cash_reserve_required, 2),
+        "margin_reserved": round(total_margin_reserved, 2),
+        "order_margin_reserved": round(book["reserved_margin"], 2),
+        "cash_reserved": round(cash_reserved, 2),
+        "underlying_exposures": book["underlying_gross_by_code"],
+        "underlying_signed_exposures": book["underlying_signed_by_code"],
+        "reserved_underlying_notional": book["reserved_underlying_notional"],
+        "order_reservations": book["reservations"],
+        "risk_policy_id": policy.risk_policy_id,
+        "risk_policy_version": str(policy.version),
+        "risk_policy_digest": risk_policy_digest(policy),
     }
     persona_book = {
         "positions": book["positions"],

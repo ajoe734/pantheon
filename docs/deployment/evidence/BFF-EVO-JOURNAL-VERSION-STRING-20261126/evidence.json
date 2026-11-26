@@ -1,0 +1,32 @@
+{
+  "task": "BFF-EVO-JOURNAL-VERSION-STRING-20261126",
+  "root_cause_class": "RC6",
+  "register_instance": "RC6",
+  "defect": "hosted /management/evolution-journal showed the error boundary (TypeError L.target.version.toLowerCase is not a function) because evolution_journal_pool_version_items returned target={type: persona, id, version: <int pool_version>}; the frontend (execute-plans src/management/pages/oversight/_core.tsx) lower-cases target.version",
+  "fix": {
+    "pool_version": "services/control-plane/bff/evolution/service.py evolution_journal_pool_version_items: target.version = str(number) (\"6\" for v6); the top-level pool_version field stays the integer",
+    "shared_target": "evolution_journal_target (used by evolution_decision, postmortem, freeze_order, rollback): version is None when absent else str(value), so a numeric owner target_version or rollback to_version can no longer reach the page as a number; type and id unchanged",
+    "contract": "BFF_API_CONTRACT.md states target.type/id/version are each a string or null on every entry_type",
+    "probe": "acceptance/probes/mgmt-evolution-pages-readable fails with target_field_not_text_or_null:<item id>.<field> when any journal item's target is missing or carries a non-text, non-null type/id/version"
+  },
+  "tests": {
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_journal_target_fields_are_text_or_null_for_every_entry_type": "evolution_decision, postmortem, freeze_order, rollback from the committed fixture pack and pool_version from the recorded hosted persona-ee7112a829d38b9135ac versions v1..v6 (PV_VERSIONS); asserts type/id/version text-or-null on every item, all five entry types present, pool target == {type: persona, id, version: str(pool_version)} and pool_version stays int",
+    "services/control-plane/bff/tests/test_bff_b3_evolution_journal.py::test_journal_numeric_owner_versions_are_returned_as_text": "rollback to_version 3 -> \"3\", decision target_version 2 -> \"2\", absent version -> null",
+    "acceptance/test_mgmt_evolution_pages_readable.py::test_fails_when_target_version_is_a_number": "the recorded pre-fix shape (pool v6 target.version 6) fails the probe; an item without target fails the probe"
+  },
+  "fails_on_dev": "both new BFF tests run against an origin/dev (99b888f29) export with the new test file: 2 failed -- ('pool_version', 'pool_version:persona-ee7112a829d38b9135ac:v6', 'version', 6) and assert 3 == '3'; on this branch: 2 passed",
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/*evol*.py acceptance/test_mgmt_evolution_pages_readable.py",
+    "result": "276 passed, 4 failed; the 4 failures are all in test_evolution_program_approval_dispatch.py (registry mutate boundary and research run outcome fields) and fail identically on the origin/dev export without this change (4 failed, 7 passed) -- pre-existing, unrelated to the journal",
+    "journal_and_probe": "test_bff_b3_evolution_journal.py 46 passed; acceptance/test_mgmt_evolution_pages_readable.py 10 passed"
+  },
+  "changed_assertions": [
+    "acceptance/test_mgmt_evolution_pages_readable.py journal() fixture items gained a target object (pool rows {type: persona, id: persona-ee7112a829d38b9135ac, version: str(n)}, decision {type/id/version null}) because the probe now checks target on every item and the real journal always returns target; no existing assertion changed, weakened, deleted or skipped"
+  ],
+  "functional_evidence_only": "no VM/SSH access; hosted verification belongs to the operator acceptance task",
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer Claude2 is from the owner family",
+  "scope_approval": "operator approval 2026-11-25 06:2xZ (conversation 5724fc3b) names the evolution pages, so the feature freeze does not apply",
+  "residuals": [
+    "target.id is passed through unchanged; recorded owner ids are strings, a numeric owner id would now fail the probe and the contract test rather than the page"
+  ]
+}

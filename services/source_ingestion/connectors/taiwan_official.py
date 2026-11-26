@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -224,9 +224,11 @@ _DATASET_SCHEMA_HASHES = {
     "tdcc_shareholding_distribution": TDCC_SHAREHOLDING_SCHEMA_HASH,
     "taifex_futures_chip": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
     "taifex_options_chip": TAIFEX_OPTIONS_CHIP_SCHEMA_HASH,
+    "taifex_tx_daily": "tw_taifex_tx_daily.v1",
     "tw_monthly_revenue": "tw_monthly_revenue.v1",
     "tw_financial_statement": "tw_financial_statement.v1",
     "tw_valuation_bwibbu": "tw_valuation_bwibbu.v1",
+    "tw_industry_classification": "tw_industry_classification.v1",
 }
 
 
@@ -402,6 +404,10 @@ TAIWAN_OFFICIAL_PRICE_HISTORY_ENDPOINTS: Mapping[str, dict[str, Any]] = {
 
 
 OFFICIAL_FETCH_ATTEMPTS = 3
+
+
+class OfficialBodyNotParseable(SourceEvidenceError):
+    """The body is a form the endpoint adapter does not read; retrying cannot change it."""
 OFFICIAL_FETCH_BACKOFF_SECONDS = 1.0
 
 
@@ -444,7 +450,18 @@ def _fetch_official(
         try:
             with open_external_url(request, caller=caller, timeout=timeout_seconds) as response:
                 raw_bytes = read_bounded_response(response, max_bytes=max_bytes)
-            return parse(raw_bytes)
+                status = getattr(response, "status", None) or getattr(response, "code", None)
+                content_type = (getattr(response, "headers", None) or {}).get("Content-Type")
+            try:
+                return parse(raw_bytes)
+            except OfficialBodyNotParseable as exc:
+                raise OfficialBodyNotParseable(
+                    f"official endpoint {request.full_url} body not parseable: {exc} "
+                    f"(HTTP status {status}; content-type {content_type}; {len(raw_bytes)} bytes; "
+                    f"first 80 bytes {raw_bytes[:80]!r}); not retried"
+                ) from exc
+        except OfficialBodyNotParseable:
+            raise
         except (
             ResponseTruncated,
             TimeoutError,
@@ -472,6 +489,8 @@ def _taifex_endpoint(dataset: str) -> str:
         return f"{TAIFEX_OPENAPI_BASE_URL}/PutCallRatio"
     if dataset == "taifex_futures_chip":
         return f"{TAIFEX_OPENAPI_BASE_URL}/MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate"
+    if dataset == "taifex_tx_daily":
+        return f"{TAIFEX_OPENAPI_BASE_URL}/DailyMarketReportFut"
     raise SourceEvidenceError(f"unsupported TAIFEX dataset: {dataset}")
 
 
@@ -847,7 +866,7 @@ def _endpoint_for(dataset: str, venue: str) -> Mapping[str, Any]:
             "venue": canonical,
             "source_dataset": fundamental[canonical]["source_dataset"],
             "endpoint": fundamental[canonical]["endpoint"],
-            "cadence": "monthly_or_quarterly_filing" if dataset != "tw_valuation_bwibbu" else "daily_after_close",
+            "cadence": "daily_after_close" if dataset in {"tw_valuation_bwibbu", "tw_industry_classification"} else "monthly_or_quarterly_filing",
             "tier_scope": [],
         }
     for endpoint in TAIWAN_OFFICIAL_ENDPOINTS:
@@ -877,6 +896,24 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
     connector_metadata: Mapping[str, Any] = field(default_factory=dict)
     bundle_transport: BundleTransport | None = None
     bundle_root: str | Path | None = None
+    # SOURCE-WARRANT-LISTING-EXPIRY-20261117: a ListingFilter (security_listing). tw_price_daily rows whose symbol
+    # is in no current exchange listing (expired warrant, unknown code) are not turned into records; the count is
+    # kept on the filter (listing_filter.skipped_not_listed_count) for the run summary. None = off.
+    listing_filter: Any | None = None
+    # Verification of an inferred (undated) margin session: lookup(connector_id, previous_session_date) returns
+    # {symbol: {"margin_balance", "short_balance"}} stored for that session, or None when it is not stored.
+    previous_session_lookup: Any | None = None
+    accept_first_load: bool = False
+
+    def __post_init__(self) -> None:
+        # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the three full-market chip profiles hold the whole
+        # session in one run, whatever smaller budget the caller built the adapter with (profile budget 3000).
+        from ..connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+        profile = TW_CHIP_REFRESH_PROFILES.get(self.connector_id) or {}
+        budget = int(profile.get("max_records") or 0) if profile.get("full_market") else 0
+        if budget and self.max_records < budget:
+            object.__setattr__(self, "max_records", budget)
 
     def _resolve_bundle_transport(
         self,
@@ -1511,6 +1548,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         priority_symbols: Sequence[str] | str | None = None,
         max_records: int | None = None,
         trace_id: str = "",
+        fetch_time: datetime | None = None,
     ) -> tuple[SourceRecord, ...]:
         tier = _tier_name(universe_tier)
         if tier == "archive_universe" and dataset != "tw_price_daily":
@@ -1519,6 +1557,11 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         source_dataset = source_dataset or str(endpoint.get("source_dataset") or dataset)
         api_endpoint = api_endpoint or str(endpoint.get("endpoint") or "")
+        if self._is_full_market_chip(dataset):
+            # The caller's trade_date/run_date is the fetch date for scheduled jobs; it must never become a row
+            # session. Only a date the provider response itself carries (payload or row) is trusted; otherwise
+            # the published-session helper decides (see _stamp_full_market_sessions).
+            trade_date = None
         if trade_date is None and isinstance(payload, Mapping):
             trade_date = _roc_date_to_iso(payload.get("date") or payload.get("Date") or payload.get("資料日期"))
         normalized_rows = self.normalized_rows_from_payload(
@@ -1530,11 +1573,23 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             trade_date=trade_date,
             available_time=available_time,
         )
+        full_market = self._is_full_market_chip(dataset)
+        provider_listed_count = 0
+        if full_market:
+            normalized_rows = self._stamp_full_market_sessions(dataset, normalized_rows, fetch_time)
+            provider_listed_count = len(normalized_rows)
         normalized_rows = _prioritize_normalized_rows(
             normalized_rows,
             _priority_symbols_for_venue(priority_symbols, venue),
         )
-        return self._records_from_normalized_rows(
+        if full_market:
+            limit = max_records if max_records is not None else self.max_records
+            if limit and len(normalized_rows) > limit:
+                raise SourceEvidenceError(
+                    f"{self.connector_id} {dataset} {venue} returned {len(normalized_rows)} rows which exceed "
+                    f"max_records {limit}; refusing to truncate a full-market chip dataset"
+                )
+        records = self._records_from_normalized_rows(
             dataset=dataset,
             venue=venue,
             normalized_rows=normalized_rows,
@@ -1545,6 +1600,105 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
             max_records=max_records,
             trace_id=trace_id,
         )
+        if full_market:
+            # The readback compares the stored count of the run with this provider listed count (partial/complete).
+            for record in records:
+                record.metadata["provider_listed_count"] = provider_listed_count
+        return records
+
+    def _is_full_market_chip(self, dataset: str) -> bool:
+        if dataset not in _GOVERNED_DAILY_FLOW_DATASETS:
+            return False
+        from ..chip_publication_schedule import is_full_market_chip_connector
+
+        return is_full_market_chip_connector(self.connector_id)
+
+    def _stamp_full_market_sessions(
+        self,
+        dataset: str,
+        normalized_rows: Sequence[Mapping[str, Any]],
+        fetch_time: datetime | None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Every stored row carries its session date; rows are only kept when they are listed shares/ETFs.
+
+        Rows with no provider date (TWSE MI_MARGN, TPEx margin) take the session from the shared
+        published-session helper applied to the fetch time. A row whose session cannot be decided fails the
+        run naming the profile; the fetch date is never used as a fallback.
+        """
+        from ..chip_publication_schedule import ChipSessionUndecidable, resolve_chip_row_session
+
+        listing_filter = self.listing_filter
+        if listing_filter is not None and getattr(listing_filter, "enabled", True):
+            normalized_rows = [
+                r for r in normalized_rows if listing_filter.admits(r.get("symbol_canonical") or r.get("symbol") or "")
+            ]
+
+        def _is_session_day(day: Any) -> bool:
+            calendar = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+            return day.weekday() < 5 and not (calendar and day.isoformat() in (calendar.get("holidays") or {}))
+
+        when = fetch_time or datetime.now(timezone.utc)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        out: list[dict[str, Any]] = []
+        session_cache: dict[str, str] = {}
+        inferred_rows: list[Mapping[str, Any]] = []
+        for row in normalized_rows:
+            provided = str(row.get("date") or "").strip()
+            if not provided:
+                inferred_rows.append(row)
+            if provided in session_cache:
+                session = session_cache[provided]
+            else:
+                try:
+                    session = resolve_chip_row_session(
+                        self.connector_id, provided, when, is_session_day=_is_session_day
+                    ).isoformat()
+                except ChipSessionUndecidable as exc:
+                    raise SourceEvidenceError(f"{self.connector_id} {dataset}: {exc}") from exc
+                session_cache[provided] = session
+            stamped = dict(row)
+            stamped["date"] = session
+            if not str(stamped.get("available_time") or "").strip() or stamped.get("available_time") == provided:
+                stamped["available_time"] = ""
+            out.append(stamped)
+        if inferred_rows and dataset == "tw_margin_short_balance" and self.previous_session_lookup is not None:
+            from ..chip_publication_schedule import previous_chip_session, verify_margin_session_chain
+
+            inferred = date.fromisoformat(session_cache[""])
+            try:
+                previous = previous_chip_session(inferred, is_session_day=_is_session_day)
+                bridge: dict[str, Any] = {}
+                try:
+                    stored_previous = self.previous_session_lookup(self.connector_id, previous)
+                except ChipSessionUndecidable:
+                    # gap bridging: the wired lookup carries its bounded earlier-session reader
+                    earlier_lookup = getattr(self.previous_session_lookup, "earlier_session_lookup", None)
+                    if earlier_lookup is None:
+                        raise
+                    found = earlier_lookup(self.connector_id, previous, is_session_day=_is_session_day)
+                    if found is None:
+                        raise
+                    compared, stored_previous = found
+                    missing = []
+                    cursor = previous
+                    while cursor > compared:
+                        missing.append(cursor)
+                        cursor = previous_chip_session(cursor, is_session_day=_is_session_day)
+                    bridge = {"compared_session": compared, "missing_sessions": tuple(reversed(missing))}
+                evidence = verify_margin_session_chain(
+                    self.connector_id,
+                    inferred,
+                    inferred_rows,
+                    stored_previous,
+                    accept_first_load=self.accept_first_load,
+                    **bridge,
+                )
+            except ChipSessionUndecidable as exc:
+                raise SourceEvidenceError(f"{self.connector_id} {dataset}: {exc}") from exc
+            out = [{**r, "session_chain": evidence} if not str(orig.get("date") or "").strip() else r
+                   for r, orig in zip(out, normalized_rows)]
+        return tuple(out)
 
     def _records_from_normalized_rows(
         self,
@@ -1563,6 +1717,10 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         endpoint = dict(_endpoint_for(dataset, venue))
         limit = max_records if max_records is not None else self.max_records
         records: list[SourceRecord] = []
+        if dataset == "tw_price_daily" and self.listing_filter is not None and getattr(self.listing_filter, "enabled", True):
+            normalized_rows = [
+                r for r in normalized_rows if self.listing_filter.admits(r.get("symbol_canonical") or r.get("symbol") or "")
+            ]
         for row in normalized_rows[: limit]:
             normalized_row = dict(row)
             calendar_evidence = None
@@ -1663,6 +1821,8 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         canonical = _canonical_venue(venue)
         if dataset in TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS:
             common = {"source_dataset": source_dataset, "api_endpoint": api_endpoint}
+            if dataset == "tw_industry_classification":
+                return normalize_industry_classification_rows(canonical, payload, **common)
             if dataset == "tw_monthly_revenue":
                 return normalize_monthly_revenue_rows(canonical, payload, **common)
             if dataset == "tw_valuation_bwibbu":
@@ -2391,6 +2551,85 @@ def _taifex_text_rows(value: Any) -> tuple[dict[str, Any], ...]:
     return tuple(dict(item) for item in value if isinstance(item, Mapping))
 
 
+# Required columns per TAIFEX OpenAPI dataset the normalizers read. Each entry is a group
+# of accepted spellings (JSON key or comma separated text header); a response must carry
+# one spelling of every group. The attachment form (JSON or comma separated text) of a
+# dataset changes without notice, so every dataset is read through the same reader.
+_TAIFEX_FUTURES_CHIP_REQUIRED: tuple[tuple[str, ...], ...] = (
+    ("日期", "Date", "date", "TradingDate"),
+    ("商品名稱", "Contract", "契約名稱", "商品代號", "contract", "ContractCode"),
+    ("身份別", "身分別", "ParticipantGroup", "participant_group", "Identity", "Item"),
+    ("多方交易口數", "LongVolume", "buy_volume", "買進口數", "TradingVolume(Long)"),
+    ("空方交易口數", "ShortVolume", "sell_volume", "賣出口數", "TradingVolume(Short)"),
+    ("多空交易口數淨額", "NetVolume", "net_volume", "買賣超口數", "TradingVolume(Net)"),
+    ("多方未平倉口數", "LongOpenInterest", "long_oi", "OpenInterest(Long)"),
+    ("空方未平倉口數", "ShortOpenInterest", "short_oi", "OpenInterest(Short)"),
+    ("多空未平倉口數淨額", "NetOpenInterest", "net_oi", "OpenInterest(Net)"),
+)
+_TAIFEX_OPTIONS_CHIP_REQUIRED: tuple[tuple[str, ...], ...] = (
+    ("Date", "日期", "date", "TradingDate"),
+    ("PutVolume", "賣權成交量", "put_volume"),
+    ("CallVolume", "買權成交量", "call_volume"),
+    ("PutOI", "賣權未平倉量", "PutOpenInterest", "put_open_interest"),
+    ("CallOI", "買權未平倉量", "CallOpenInterest", "call_open_interest"),
+)
+
+
+def _taifex_body_head(raw_bytes: bytes) -> str:
+    return repr(bytes(raw_bytes[:80]))
+
+
+def _parse_taifex_dataset_body(
+    dataset_name: str,
+    raw_bytes: bytes,
+    required: Sequence[Sequence[str]],
+) -> list[dict[str, Any]]:
+    """Read one TAIFEX OpenAPI body in either served form, failing closed.
+
+    Accepts the JSON array and the comma separated text (BOM tolerated) through the
+    shared ``_taifex_text_rows``. A body that is neither form raises
+    ``OfficialBodyNotParseable`` naming the dataset and the first bytes; a response
+    missing a required column raises a format changed error naming the dataset and
+    the columns. Nothing is guessed and an empty body is never a success.
+    """
+    try:
+        text = _decode_taifex_bytes(raw_bytes)
+    except UnicodeDecodeError as exc:
+        raise OfficialBodyNotParseable(
+            f"{dataset_name}: not UTF-8 text ({exc.reason}); first bytes {_taifex_body_head(raw_bytes)}"
+        ) from exc
+    rows = _taifex_text_rows(text)
+    if not rows:
+        raise OfficialBodyNotParseable(
+            f"{dataset_name}: neither a JSON array of rows nor a comma separated table; "
+            f"first bytes {_taifex_body_head(raw_bytes)}"
+        )
+    present = set().union(*(r.keys() for r in rows))
+    missing = [list(group) for group in required if not any(name in present for name in group)]
+    if missing:
+        raise SourceEvidenceError(
+            f"{dataset_name} format changed: missing required columns {[g[0] for g in missing]} "
+            f"(accepted spellings {missing}); columns found {sorted(map(str, present))}"
+        )
+    return list(rows)
+
+
+def _parse_taifex_futures_chip_body(raw_bytes: bytes) -> list[dict[str, Any]]:
+    return _parse_taifex_dataset_body(
+        "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",
+        raw_bytes,
+        _TAIFEX_FUTURES_CHIP_REQUIRED,
+    )
+
+
+def _parse_taifex_options_chip_body(raw_bytes: bytes) -> list[dict[str, Any]]:
+    return _parse_taifex_dataset_body("PutCallRatio", raw_bytes, _TAIFEX_OPTIONS_CHIP_REQUIRED)
+
+
+def _parse_taifex_ssf_body(raw_bytes: bytes) -> tuple[dict[str, Any], ...]:
+    return _taifex_text_rows(_decode_taifex_bytes(raw_bytes))
+
+
 def parse_taifex_stock_lists_units(page: str) -> dict[str, dict[str, Any]]:
     """Map contract family (``QF``) to underlying code, name, unit and ETF flag.
 
@@ -2673,6 +2912,206 @@ def taifex_ssf_normalized_rows(
     return tuple(results)
 
 
+TAIFEX_TX_DAILY_DATASET = "taifex_tx_daily"
+TAIFEX_TX_DAILY_SCHEMA_HASH = "tw_taifex_tx_daily.v1"
+TAIFEX_TX_DAILY_CONTRACTS = ("TX", "MTX")
+TAIFEX_TX_DAILY_MAX_RECORDS = 500
+_TX_DAILY_SESSIONS = {"一般": "regular", "盤後": "after_hours"}
+_TX_DAILY_MONTH = re.compile(r"^\d{6}(W\d)?$")
+_TX_DAILY_REQUIRED_COLUMNS = (
+    "Date", "Contract", "ContractMonth(Week)", "TradingSession", "Open", "High", "Low",
+    "Last", "Volume", "SettlementPrice", "OpenInterest",
+)
+
+
+# The text form of DailyMarketReportFut carries these Chinese header columns, in the
+# same order as the JSON keys (recorded 2026-11-18, see tests/fixtures/taifex_tx_daily).
+_TX_DAILY_TEXT_COLUMNS: Mapping[str, str] = {
+    "日期": "Date",
+    "契約代號": "Contract",
+    "到期月份(週別)": "ContractMonth(Week)",
+    "開盤價": "Open",
+    "最高價": "High",
+    "最低價": "Low",
+    "最後成交價": "Last",
+    "漲跌價": "Change",
+    "漲跌%": "%",
+    "合計成交量": "Volume",
+    "結算價": "SettlementPrice",
+    "未沖銷契約數": "OpenInterest",
+    "最後最佳買價": "BestBid",
+    "最後最佳賣價": "BestAsk",
+    "歷史最高價": "HistoricalHigh",
+    "歷史最低價": "HistoricalLow",
+    "是否因訊息面暫停交易": "TradingHalt",
+    "交易時段": "TradingSession",
+    "價差對單式委託成交量": "Volume(ExecutionsAmongSpreadOrderAndSingleOrderOnly)",
+}
+_TX_DAILY_ENGLISH_TO_TEXT = {v: k for k, v in _TX_DAILY_TEXT_COLUMNS.items()}
+
+
+def _tx_daily_canonical_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Give a text-form row the JSON keys; JSON-form rows pass through unchanged."""
+    if not any(k in row for k in _TX_DAILY_TEXT_COLUMNS):
+        return dict(row)
+    missing = [
+        text_col for json_col, text_col in _TX_DAILY_ENGLISH_TO_TEXT.items()
+        if json_col in _TX_DAILY_REQUIRED_COLUMNS and text_col not in row
+    ]
+    if missing:
+        raise SourceEvidenceError(
+            f"DailyMarketReportFut format changed: missing text columns {missing}"
+        )
+    return {_TX_DAILY_TEXT_COLUMNS.get(k, k): v for k, v in row.items()}
+
+
+def _tx_daily_source_rows(payload: Any) -> tuple[dict[str, Any], ...]:
+    if isinstance(payload, Mapping) and "DailyMarketReportFut" in payload:
+        payload = payload["DailyMarketReportFut"]
+    return tuple(_tx_daily_canonical_row(r) for r in _taifex_text_rows(payload))
+
+
+def _parse_tx_daily_body(raw_bytes: bytes) -> tuple[dict[str, Any], ...]:
+    """Read the JSON array or the comma separated text of DailyMarketReportFut.
+
+    Row reading is the shared ``_taifex_text_rows``; a body that is neither form
+    raises a non-retried error instead of being parsed into guessed rows.
+    """
+    try:
+        text = _decode_taifex_bytes(raw_bytes)
+    except UnicodeDecodeError as exc:
+        raise OfficialBodyNotParseable(f"not UTF-8 text ({exc.reason})") from exc
+    rows = _taifex_text_rows(text)
+    if rows:
+        _tx_daily_canonical_row(rows[0])  # a text header with a missing or renamed column names it
+    if not rows or not any(
+        ("Contract" in r and "Date" in r) or ("契約代號" in r and "日期" in r) for r in rows
+    ):
+        raise OfficialBodyNotParseable("neither a JSON array of rows nor a comma separated table with Date and Contract columns")
+    return rows
+
+
+# Every TAIFEX OpenAPI endpoint name the module can request -> the reader of its body.
+# A test walks the module and fails when an endpoint is requested without an entry here.
+TAIFEX_OPENAPI_BODY_READERS: Mapping[str, Callable[[bytes], Any]] = {
+    "PutCallRatio": _parse_taifex_options_chip_body,
+    "MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate": _parse_taifex_futures_chip_body,
+    "DailyMarketReportFut": _parse_tx_daily_body,
+    "SingleStockFuturesMargining": _parse_taifex_ssf_body,
+    "SingleStockFuturesETFMargining": _parse_taifex_ssf_body,
+    "FinalSettlementPriceSSF": _parse_taifex_ssf_body,
+}
+
+
+def taifex_tx_daily_select_rows(
+    payload: Any, contracts: Sequence[str] | None = None
+) -> tuple[dict[str, Any], ...]:
+    """Pick the governed TX/MTX rows from a DailyMarketReportFut response.
+
+    Selection happens before any record cap so the ~2300 other contract rows can
+    never truncate the TX/MTX rows away. The single-stock-futures normalizer is
+    not involved and keeps its own contract-code and regular-session filters.
+    """
+    wanted = {str(c).strip().upper() for c in (contracts or TAIFEX_TX_DAILY_CONTRACTS)}
+    return tuple(
+        row for row in _tx_daily_source_rows(payload)
+        if _text(_first(row, "Contract", "契約代號")).upper() in wanted
+    )
+
+
+def taifex_tx_daily_normalized_rows(
+    payload: Any,
+    *,
+    contracts: Sequence[str] | None = None,
+    api_endpoint: str = "",
+    available_time: str | None = None,
+    max_records: int | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Normalize TX/MTX rows of DailyMarketReportFut, regular and after-hours kept apart.
+
+    Raw source values are kept; ``-``, ``NULL`` and blank values become ``None``
+    and are never replaced by zero or an interpolated value. Calendar-spread
+    months (``202611/202612``) are not outright contract months and are skipped.
+    An empty response, no TX/MTX row, a missing column, an unknown session or an
+    unrecognized contract month fails closed. Exceeding ``max_records`` after the
+    contract filter also fails closed instead of silently truncating.
+    """
+    all_rows = _tx_daily_source_rows(payload)
+    if not all_rows:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: response has no rows")
+    selected = taifex_tx_daily_select_rows(all_rows, contracts)
+    if not selected:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: no TX or MTX row in response")
+    limit = max_records or TAIFEX_TX_DAILY_MAX_RECORDS
+    ingest_time = _utc_now()
+    results: list[dict[str, Any]] = []
+    for row in selected:
+        missing = [c for c in _TX_DAILY_REQUIRED_COLUMNS if c not in row]
+        if missing:
+            raise SourceEvidenceError(f"DailyMarketReportFut format changed: missing columns {missing}")
+        price_date = _roc_date_to_iso(row.get("Date"))
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", price_date or ""):
+            raise SourceEvidenceError(f"DailyMarketReportFut row has no valid Date: {row.get('Date')!r}")
+        month = _text(row.get("ContractMonth(Week)"))
+        if "/" in month:
+            continue
+        if not _TX_DAILY_MONTH.match(month):
+            raise SourceEvidenceError(f"DailyMarketReportFut unrecognized contract month: {month!r}")
+        raw_session = _text(row.get("TradingSession"))
+        session = _TX_DAILY_SESSIONS.get(raw_session)
+        if session is None:
+            raise SourceEvidenceError(f"DailyMarketReportFut unrecognized trading session: {raw_session!r}")
+        code = _text(row.get("Contract")).upper()
+        # Regular-session figures exist after the afternoon close; the after-hours
+        # session of a date runs to 05:00 Taipei the next day (21:00Z that date).
+        earliest = f"{price_date}T16:30:00Z" if session == "regular" else f"{price_date}T21:00:00Z"
+        stamp = _validate_or_convert_rfc3339(available_time, name="available_time") if available_time else earliest
+        if _utc_parse(stamp) < _utc_parse(earliest):
+            stamp = earliest
+
+        def price(key: str) -> float | None:
+            value = _float(row.get(key))
+            return value if value is not None and math.isfinite(value) else None
+
+        results.append({
+            "dataset": TAIFEX_TX_DAILY_DATASET,
+            "date": price_date,
+            "event_time": f"{price_date}T00:00:00Z",
+            "available_time": stamp,
+            "ingest_time": ingest_time,
+            "contract": code,
+            "contract_month": month,
+            "contract_month_kind": "weekly" if "W" in month else "monthly",
+            "contract_id": f"taifex:{code}:{month}:{session}",
+            "trading_session": session,
+            "trading_session_raw": raw_session,
+            "market": "TW",
+            "venue": "TAIFEX",
+            "open_price": price("Open"),
+            "high_price": price("High"),
+            "low_price": price("Low"),
+            "last_price": price("Last"),
+            "settlement_price": price("SettlementPrice"),
+            "volume": _int(row.get("Volume")),
+            "open_interest": _int(row.get("OpenInterest")),
+            "source_dataset": "DailyMarketReportFut",
+            "api_endpoint": api_endpoint or _taifex_endpoint(TAIFEX_TX_DAILY_DATASET),
+            "raw_row": dict(row),
+        })
+    if not results:
+        raise SourceEvidenceError("DailyMarketReportFut parse failure: only spread rows for TX or MTX")
+    if len(results) > limit:
+        raise SourceEvidenceError(
+            f"DailyMarketReportFut TX/MTX rows ({len(results)}) exceed max_records {limit}; refusing to truncate"
+        )
+    return tuple(results)
+
+
+def _utc_parse(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
 @dataclass(frozen=True)
 class TaifexDerivativesChipAdapter(SourceConnectorProvider):
     """TAIFEX official daily futures and options chip-context adapter (SD-SRCM-05 §7.3)."""
@@ -2719,10 +3158,14 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "source_class": "taiwan_chip",
                 "official_reference_truth": True,
                 "dataset_schema_hash": TAIFEX_FUTURES_CHIP_SCHEMA_HASH,
-                "normalized_datasets": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
+                "normalized_datasets": [
+                    "taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET, TAIFEX_TX_DAILY_DATASET,
+                ],
                 "tier_policy": {
-                    "core_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET],
-                    "candidate_universe": ["taifex_futures_chip", "taifex_options_chip"],
+                    "core_universe": [
+                        "taifex_futures_chip", "taifex_options_chip", TAIFEX_SSF_DATASET, TAIFEX_TX_DAILY_DATASET,
+                    ],
+                    "candidate_universe": ["taifex_futures_chip", "taifex_options_chip", TAIFEX_TX_DAILY_DATASET],
                 },
                 # Code-reviewed public official reference source (auth none, no secret):
                 # satisfies the persona reconciler's require_connector_approved gate, which
@@ -2767,7 +3210,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
         resolved_ds = str(dataset or self.dataset or "taifex_futures_chip")
         if resolved_ds == TAIFEX_SSF_DATASET:
             return self._fetch_ssf_payload(timeout_seconds=timeout_seconds)
-        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
+        if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip", TAIFEX_TX_DAILY_DATASET):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         url = _taifex_endpoint(resolved_ds)
         request = urllib.request.Request(
@@ -2777,13 +3220,24 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 "User-Agent": "pantheon-source-ingest/0.1",
             },
         )
+        # DailyMarketReportFut is served as comma separated text (2026-11-18); read both forms.
         parsed = _fetch_official(
             request,
             caller="source_ingest.taifex_derivatives",
             timeout_seconds=timeout_seconds,
             max_bytes=2097152,
-            parse=lambda raw_bytes: json.loads(raw_bytes.decode("utf-8-sig")),
+            parse=TAIFEX_OPENAPI_BODY_READERS[url.rsplit("/", 1)[-1]],
         )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            # Filter to TX/MTX first: the response lists ~2300 contracts and a cap
+            # applied before filtering would truncate the governed rows away.
+            selected = list(taifex_tx_daily_select_rows(parsed, self.contracts))
+            limit = max_records or self.max_records
+            if limit and len(selected) > limit:
+                raise SourceEvidenceError(
+                    f"DailyMarketReportFut TX/MTX rows ({len(selected)}) exceed max_records {limit}; refusing to truncate"
+                )
+            return selected
         if isinstance(parsed, list) and (max_records or self.max_records):
             limit = max_records or self.max_records
             return parsed[:limit]
@@ -2803,7 +3257,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 timeout_seconds=timeout_seconds,
                 max_bytes=2097152,
                 # The ETF margin table is served as CSV with a BOM on some reads.
-                parse=lambda raw_bytes: _taifex_text_rows(_decode_taifex_bytes(raw_bytes)),
+                parse=TAIFEX_OPENAPI_BODY_READERS[name],
             )
         request = urllib.request.Request(
             TAIFEX_SSF_STOCK_LISTS_URL,
@@ -2878,6 +3332,17 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 max_records=max_records,
                 trace_id=trace_id,
             )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            return self._tx_daily_records_from_payload(
+                payload,
+                source_dataset=source_dataset,
+                api_endpoint=api_endpoint,
+                available_time=available_time,
+                universe_tier=universe_tier,
+                contracts=contracts,
+                max_records=max_records,
+                trace_id=trace_id,
+            )
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         resolved_endpoint = api_endpoint or _taifex_endpoint(resolved_ds)
@@ -2931,6 +3396,70 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                         "access_scope": ["public", "research"],
                         "license_scope": "official_reference",
                         "schema_hash": schema_hash,
+                    },
+                    trace_id=trace_id,
+                )
+            )
+        return tuple(records)
+
+    def _tx_daily_records_from_payload(
+        self,
+        payload: Any,
+        *,
+        source_dataset: str | None,
+        api_endpoint: str | None,
+        available_time: str | None,
+        universe_tier: str,
+        contracts: Sequence[str] | None,
+        max_records: int | None,
+        trace_id: str,
+    ) -> tuple[SourceRecord, ...]:
+        rows = self.normalized_rows_from_payload(
+            payload,
+            dataset=TAIFEX_TX_DAILY_DATASET,
+            api_endpoint=api_endpoint or "",
+            available_time=available_time,
+            contracts=contracts,
+            max_records=max_records,
+        )
+        records: list[SourceRecord] = []
+        for row in rows:
+            row_hash = _stable_hash({"dataset": TAIFEX_TX_DAILY_DATASET, "row": row})
+            contract = _text(row.get("contract"))
+            month = _text(row.get("contract_month"))
+            session = _text(row.get("trading_session"))
+            as_of_date = _text(row.get("date"), row_hash)
+            records.append(
+                SourceRecord(
+                    source_id=f"tw-taifex:{TAIFEX_TX_DAILY_DATASET}:{contract}:{month}:{session}:{row_hash}",
+                    connector_id=self.connector_id,
+                    source_type="market",
+                    title=f"TAIFEX {TAIFEX_TX_DAILY_DATASET} {contract} {month} {session} {as_of_date}",
+                    content_ref=(
+                        f"tw-taifex://{TAIFEX_TX_DAILY_DATASET}/{contract}/{month}/{session}/{as_of_date}/{row_hash}"
+                    ),
+                    metadata={
+                        "source_class": "taiwan_chip",
+                        "provider": "TAIFEX",
+                        "dataset": TAIFEX_TX_DAILY_DATASET,
+                        "source_dataset": source_dataset or row.get("source_dataset"),
+                        "venue": "TAIFEX",
+                        "contract": contract,
+                        "contract_month": month,
+                        "trading_session": session,
+                        "date": row.get("date"),
+                        "event_time": row.get("event_time"),
+                        "available_time": row.get("available_time"),
+                        "ingest_time": row.get("ingest_time"),
+                        "api_endpoint": row.get("api_endpoint"),
+                        "cadence": "daily_after_taifex_publication",
+                        "universe_tier": _tier_name(universe_tier),
+                        "normalized_row": dict(row),
+                        "raw_row": dict(row.get("raw_row") or {}),
+                        "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
+                        "access_scope": ["public", "research"],
+                        "license_scope": "official_reference",
+                        "schema_hash": TAIFEX_TX_DAILY_SCHEMA_HASH,
                     },
                     trace_id=trace_id,
                 )
@@ -3029,6 +3558,14 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                 available_time=available_time,
                 max_records=max_records,
             )
+        if resolved_ds == TAIFEX_TX_DAILY_DATASET:
+            return taifex_tx_daily_normalized_rows(
+                payload,
+                contracts=contracts if contracts is not None else self.contracts,
+                api_endpoint=api_endpoint,
+                available_time=available_time,
+                max_records=max_records,
+            )
         if resolved_ds not in ("taifex_futures_chip", "taifex_options_chip"):
             raise SourceEvidenceError(f"unsupported TAIFEX dataset: {resolved_ds}")
         rows = _rows_from_payload(payload)
@@ -3086,7 +3623,7 @@ class TaifexDerivativesChipAdapter(SourceConnectorProvider):
                     "raw_row": dict(raw),
                 })
             else:
-                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品代號", "contract", "ContractCode"), "TX")
+                raw_contract = _text(_first(raw, "Contract", "契約名稱", "商品名稱", "商品代號", "contract", "ContractCode"), "TX")
                 if not _matches_taifex_contract(raw_contract, resolved_contracts):
                     continue
                 contract = _TAIFEX_CONTRACT_ALIASES.get(raw_contract, raw_contract)
@@ -3170,6 +3707,10 @@ _TWSE_OPENDATA_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/opendata"
 _TWSE_EXCHANGE_REPORT_BASE_URL = f"{TWSE_OPENAPI_BASE_URL}/exchangeReport"
 
 TAIWAN_OFFICIAL_FUNDAMENTAL_ENDPOINTS: Mapping[str, Mapping[str, Mapping[str, str]]] = {
+    "tw_industry_classification": {
+        "TWSE": {"source_dataset": "t187ap03_L", "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap03_L"},
+        "TPEx": {"source_dataset": "mopsfin_t187ap03_O", "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap03_O"},
+    },
     "tw_monthly_revenue": {
         "TWSE": {"source_dataset": "t187ap05_L", "endpoint": f"{_TWSE_OPENDATA_BASE_URL}/t187ap05_L"},
         "TPEx": {"source_dataset": "mopsfin_t187ap05_O", "endpoint": f"{TPEX_OPENAPI_BASE_URL}/mopsfin_t187ap05_O"},
@@ -3286,6 +3827,46 @@ def _version_available_time(
     return iso_utc(max(floor, known) if known else floor)
 
 
+def normalize_industry_classification_rows(
+    venue: str,
+    payload: Any,
+    *,
+    source_dataset: str,
+    api_endpoint: str,
+    ingest_time: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Observe company profiles prospectively; source report/listing dates are not history.
+
+    Verified official fields: TWSE 產業別 and TPEx SecuritiesIndustryCode.
+    The exchange code is a numeric category (01 stays in industry_code_raw).
+    Missing/invalid codes remain missing, never a shared 'unknown' sector.
+    """
+    from ..feature_catalogue import parse_time
+
+    canonical = _canonical_venue(venue)
+    # The shared legacy clock truncates microseconds. An acquired category must
+    # never become visible even a fraction of a second before it was observed.
+    observed = parse_time(ingest_time or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    symbol_key, industry_key = (
+        ("公司代號", "產業別") if canonical == "TWSE"
+        else ("SecuritiesCompanyCode", "SecuritiesIndustryCode")
+    )
+    out = []
+    for row in _rows_from_payload(payload):
+        symbol, code = _text(row.get(symbol_key)), _text(row.get(industry_key))
+        if not re.fullmatch(r"\d{4,6}", symbol) or not re.fullmatch(r"\d{2}", code) or int(code) == 0:
+            continue
+        item = _fundamental_base(
+            "tw_industry_classification", canonical, symbol, row,
+            source_dataset=source_dataset, api_endpoint=api_endpoint,
+            event_time=observed[:10], lag_days=0, available_time=observed, ingest_time=observed,
+        )
+        item.update(industry_code=int(code), industry_code_raw=code, observed_at=observed,
+                    source_report_date=_roc_date_to_iso(_first(row, "出表日期", "Date")))
+        out.append(item)
+    return tuple(out)
+
+
 def normalize_monthly_revenue_rows(
     venue: str,
     payload: Any,
@@ -3330,6 +3911,14 @@ def normalize_monthly_revenue_rows(
     return tuple(out)
 
 
+def _statutory_quarter_lag_days(event_time: str, base_lag: int) -> int:
+    """Days from the quarter end to its statutory deadline (annual report: Mar 31, even in a leap year)."""
+    from ..feature_catalogue import statutory_available_date
+
+    deadline = statutory_available_date("tw_quarterly_statements", event_time)
+    return max(base_lag, (deadline - date.fromisoformat(event_time[:10])).days) if deadline else base_lag
+
+
 def normalize_financial_statement_rows(
     venue: str,
     income_payload: Any,
@@ -3358,10 +3947,9 @@ def normalize_financial_statement_rows(
         value = _float(_first(row, "歸屬於母公司業主之權益合計", "歸屬於母公司業主之權益", "權益總額", "權益總計"))
         if symbol and year and quarter in _QUARTER_END_MONTH_DAY and value:
             b_month, b_day = _QUARTER_END_MONTH_DAY[quarter]
-            b_lag = 90 if quarter == 4 else base_lag
-            b_available = _version_available_time(
-                row, f"{year:04d}-{b_month:02d}-{b_day:02d}", b_lag, ingested
-            )
+            b_event = f"{year:04d}-{b_month:02d}-{b_day:02d}"
+            b_lag = _statutory_quarter_lag_days(b_event, base_lag)
+            b_available = _version_available_time(row, b_event, b_lag, ingested)
             # Retain the balance version's own knowledge time (conservative first-seen
             # when it states no publication date); a later correction wins with its time.
             equity[(symbol, year, quarter)] = (value, b_available)
@@ -3374,7 +3962,7 @@ def normalize_financial_statement_rows(
             continue
         month, day = _QUARTER_END_MONTH_DAY[quarter]
         event_time = f"{year:04d}-{month:02d}-{day:02d}"
-        lag = 90 if quarter == 4 else base_lag
+        lag = _statutory_quarter_lag_days(event_time, base_lag)
         revenue = _float(_first(row, "營業收入", "Revenue", "OperatingRevenue"))
         gross = _float(_first(row, "營業毛利（毛損）淨額", "營業毛利（毛損）", "GrossProfit"))
         operating = _float(_first(row, "營業利益（損失）", "OperatingIncome"))
@@ -3486,6 +4074,8 @@ def fetch_fundamental_rows(
         "ingest_time": ingest_time,
     }
     payload = _get(spec["endpoint"])
+    if dataset == "tw_industry_classification":
+        return normalize_industry_classification_rows(canonical, payload, **common)
     if dataset == "tw_monthly_revenue":
         return normalize_monthly_revenue_rows(canonical, payload, **common)
     if dataset == "tw_valuation_bwibbu":

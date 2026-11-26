@@ -1134,7 +1134,7 @@ def test_configured_failure_dlq_audit_preserves_existing_watermark(client) -> No
     assert replayed_watermark.json()["watermark"]["last_ingest_run_id"] == first_run_id
 
 
-def test_configured_connector_preserves_per_record_access_scope_for_search_index(client) -> None:
+def test_configured_connector_preserves_per_record_access_scope_for_search_index(client, monkeypatch) -> None:
     test_client, data_dir, _ = client
     configured = test_client.post(
         "/api/source-ingest/connectors",
@@ -1194,6 +1194,7 @@ def test_configured_connector_preserves_per_record_access_scope_for_search_index
     assert by_id[knowledge_object_ids[0]]["access_scope"] == ["operator", "research"]
     assert by_id[knowledge_object_ids[1]]["access_scope"] == ["risk-committee"]
 
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app
 
     search_client = TestClient(create_app(data_dir / "search-index.jsonl", data_dir / "source_evidence.jsonl"))
@@ -2548,11 +2549,11 @@ def test_evidence_items_route_returns_tenant_population_summary_and_excludes_ten
     assert len(body_p1["items"]) == 10 and len(body_p2["items"]) == 10
     expected_summary = {
         "total": 25,
-        "verified_count": 19,
-        "verified_evidence": 19,
+        # verified_count is removed and confidence >= 0.8 no longer means "verified":
+        # none of these rows carries a verification record (method + time).
         "by_source_type": {"official_reference": 20, "exchange_filing": 5},
         "by_link_type": {"supporting": 25},
-        "by_credibility_tier": {"verified": 19, "unverified": 6},
+        "by_credibility_tier": {"unverified": 25},
     }
     assert body_p1["summary"] == expected_summary
     assert body_p2["summary"] == expected_summary

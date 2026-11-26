@@ -1,0 +1,14 @@
+{
+  "task": "PERSONA-CASE-FILE-OUTCOMES-NOOP-WRITE-20261125",
+  "class": "RC3",
+  "change": "try_metadata_cas(skip_unchanged=True) skips commit when merged metadata equals the same-snapshot metadata; CaseFileOutcomes._mutate opts in and returns no update for an absent, empty state",
+  "tests": "services/persona/test_case_file_outcomes.py: 20 passed (no-write pass byte-identical, one commit per capture/observation/delivery attempt, no empty state row, active_paper_owner_required kept, concurrent writer retried not overwritten)",
+  "store_used_by_tests": "real Persona owner and its record store used by the existing outcome fixture (no fake owner); a separate Postgres-backed run was not performed",
+  "other_try_metadata_cas_callers": [
+    {"site": "write_owner.py training-target generation", "can_commit_unchanged": "no: guard requires strictly newer generation", "timer": false},
+    {"site": "write_owner.py trade_reflection_idempotency claim/finalize/release", "can_commit_unchanged": "release may rewrite an absent key", "timer": false},
+    {"site": "harness.py _mutate", "can_commit_unchanged": "yes", "timer": false, "note": "operator/request triggered; residual finding, not changed"}
+  ],
+  "runtime_budget": {"persona_writes_per_day_before": "about 2000 for three Personas (measured)", "after": "only on outcome state change", "new_writers": 0, "storage_manifest": "unchanged"},
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27T10:03Z; reviewer may be from the owner's family"
+}

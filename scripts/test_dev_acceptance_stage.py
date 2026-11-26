@@ -1,0 +1,418 @@
+import json
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import dev_acceptance_stage as stage  # noqa: E402
+
+SHA_A, SHA_B = "a" * 40, "b" * 40
+IDENT = {"backend_sha": SHA_A, "frontend_sha": SHA_B, "fe_url": "https://fe", "bff_url": "https://bff"}
+OK = lambda **_: {"status": "passed", "detail": ""}  # noqa: E731
+
+
+def probe(directory, name, body, mode=0o755):
+    path = directory / name
+    path.write_text(body)
+    path.chmod(mode)
+    return path
+
+
+def test_discover_probes_rules(tmp_path):
+    probe(tmp_path, "a", "#!/bin/sh\n# acceptance-owner: TASK-1\n")
+    probe(tmp_path, "noexec", "#!/bin/sh\n", mode=0o644)
+    probe(tmp_path, ".hidden", "x")
+    probe(tmp_path, "notes.md", "x")
+    (tmp_path / "sub").mkdir()
+    found = {p["id"]: p for p in stage.discover_probes(tmp_path)}
+    assert set(found) == {"probe:a", "probe:noexec"}
+    assert found["probe:a"]["owner"] == "TASK-1" and found["probe:a"]["executable"]
+    assert not found["probe:noexec"]["executable"] and found["probe:noexec"]["owner"] is None
+    assert stage.discover_probes(tmp_path / "missing") == []
+
+
+def test_real_probe_exit_codes_and_verdict(tmp_path):
+    for name, code in (("ok", 0), ("skip", 77), ("bad", 3)):
+        probe(tmp_path, name, f"#!/bin/sh\n# acceptance-owner: OWN-{name}\necho out-{name}\nexit {code}\n")
+    probe(tmp_path, "noowner", "#!/bin/sh\nexit 0\n")
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=dict(os.environ), lease_held=False, identity_fn=OK)
+    by_id = {r["id"]: r for r in results}
+    assert by_id["probe:ok"]["status"] == "passed"
+    assert by_id["probe:skip"]["status"] == "skipped"
+    assert by_id["probe:bad"]["status"] == "failed" and "out-bad" in by_id["probe:bad"]["detail"]
+    assert by_id["probe:noowner"]["status"] == "failed"
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=IDENT, run={})
+    assert verdict["acceptance"] == "failed"
+    assert {(f["id"], f["owner"]) for f in verdict["failed"]} == {("probe:bad", "OWN-bad"), ("probe:noowner", "UNDECLARED")}
+
+
+def test_probe_receives_pair_environment(tmp_path):
+    probe(tmp_path, "env", "#!/bin/sh\n# acceptance-owner: OWN\n[ \"$ACCEPTANCE_BACKEND_SHA\" = " + SHA_A + " ] && [ \"$ACCEPTANCE_BFF_URL\" = https://bff ]\n")
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=dict(os.environ), lease_held=False, identity_fn=OK)
+    assert results[-1]["status"] == "passed"
+
+
+def test_mutating_check_needs_lease_and_leaves_verdict_pending():
+    calls = []
+    check = {"id": "check:m", "kind": "check", "owner": "OWN", "mutates": True, "argv": ["x"], "timeout": 5}
+    run = lambda argv, env, timeout: calls.append(argv) or (0, "")  # noqa: E731
+    res = stage.run_stage(checks=[check], probes=[], identity=IDENT, base_env={}, lease_held=False,
+                          runner=run, identity_fn=OK)
+    assert calls == [] and res[-1]["status"] == "skipped"
+    assert stage.verdict_status(res) == "pending"
+    res = stage.run_stage(checks=[check], probes=[], identity=IDENT, base_env={}, lease_held=True,
+                          runner=run, identity_fn=OK)
+    assert calls == [["x"]] and stage.verdict_status(res) == "passed"
+
+
+def test_identity_check_detects_drift_and_unreachable():
+    good = {"https://fe/deployment.json": {"deploymentState": "accepted", "bffCommit": SHA_A, "frontendSha": SHA_B},
+            "https://bff/bff/version": {"source_commit_sha": SHA_A}}
+    ok = stage.identity_check(fe_url="https://fe", bff_url="https://bff", backend_sha=SHA_A, frontend_sha=SHA_B,
+                              fetch=good.__getitem__)
+    assert ok["status"] == "passed"
+    bad = {**good, "https://bff/bff/version": {"source_commit_sha": SHA_B}}
+    assert stage.identity_check(fe_url="https://fe", bff_url="https://bff", backend_sha=SHA_A, frontend_sha=SHA_B,
+                                fetch=bad.__getitem__)["status"] == "failed"
+
+    def boom(**_):
+        raise OSError("down")
+    res = stage.run_stage(checks=[], probes=[], identity=IDENT, base_env={}, lease_held=False, identity_fn=boom)
+    assert res[0]["status"] == "failed" and "down" in res[0]["detail"]
+
+
+def test_load_checks_validates(tmp_path):
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps({"checks": [{"id": "x", "owner": "OWN-1", "argv": ["true"], "mutates": True}]}))
+    assert stage.load_checks(path)[0]["mutates"] is True
+    assert stage.plan(stage.load_checks(path), [])["mutating"] is True
+    path.write_text(json.dumps({"checks": [{"id": "x", "argv": ["true"]}]}))
+    with pytest.raises(ValueError):
+        stage.load_checks(path)
+
+
+def test_cli_never_fails_and_bounds_growth(tmp_path, monkeypatch):
+    out = tmp_path / "v.json"
+    bad = tmp_path / "checks.json"
+    bad.write_text("{not json")
+    monkeypatch.setattr(stage, "identity_check", OK)
+    argv = ["run", "--checks", str(bad), "--probes-dir", str(tmp_path / "none"), "--backend-sha", SHA_A,
+            "--frontend-sha", SHA_B, "--fe-url", "https://fe", "--bff-url", "https://bff", "--verdict-out", str(out)]
+    assert stage.main(argv) == 0  # a broken declaration is a failed verdict, never a crash
+    first = json.loads(out.read_text())
+    assert first["acceptance"] == "failed" and first["failed"][0]["owner"] == stage.SELF_OWNER
+    assert stage.main(argv) == 0
+    assert out.read_text().count("schemaVersion") == 1  # replaced, not appended
+    assert stage.main(["pending", *argv[1:]]) == 0
+    assert json.loads(out.read_text())["acceptance"] == "pending"
+
+
+def test_detail_is_truncated_and_checks_capped(tmp_path):
+    big = stage._result({"id": "c", "kind": "check", "owner": "O"}, "failed", detail="x" * 10000)
+    assert len(big["detail"]) == stage.DETAIL_LIMIT
+    probes = [{"id": f"probe:{i}", "kind": "probe", "path": tmp_path / "p", "owner": "O", "executable": True}
+              for i in range(300)]
+    res = stage.run_stage(checks=[], probes=probes, identity=IDENT, base_env={}, lease_held=False,
+                          runner=lambda *a: (0, ""), identity_fn=OK)
+    assert len(res) == stage.MAX_CHECKS
+
+
+def test_missing_declarations_mean_no_extra_checks():
+    root = Path(__file__).resolve().parent.parent / "acceptance"
+    assert stage.discover_probes(root / "probes") == [] or all(p["owner"] and p["executable"] for p in stage.discover_probes(root / "probes"))
+    assert stage.load_checks(root / "no-such-checks.json") == []
+
+
+def test_readme_example_probe_satisfies_contract(tmp_path):
+    readme = (Path(__file__).resolve().parent.parent / "acceptance" / "README.md").read_text()
+    body = readme.split("```bash\n", 1)[1].split("```", 1)[0]
+    probe(tmp_path, "example", body)
+    found = stage.discover_probes(tmp_path)
+    assert found[0]["owner"] and found[0]["executable"]
+
+
+def test_repo_probes_dir_has_no_daily_state_probe():
+    repo_probes = Path(__file__).resolve().parent.parent / "acceptance" / "probes"
+    assert "probe:persona-day" not in {p["id"] for p in stage.discover_probes(repo_probes)}
+
+
+def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
+    # identity passed; the persona-day daily probe is not a release probe, so it is not run at all.
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(
+        Path(__file__).resolve().parent.parent / "acceptance" / "probes"), identity=IDENT,
+        base_env={k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")},
+        lease_held=False, identity_fn=OK)
+    # Feature probes shipped in acceptance/probes skip without viewer credentials (exit 77).
+    assert [r["id"] for r in results] == [
+        "check:deployed-pair-identity",
+        "probe:daily-bars-volume",
+        "probe:meeting-action-followthrough",
+        "probe:meeting-review-disposition",
+        "probe:mgmt-evolution-pages-readable",
+        "probe:mgmt-registry-pages-readable",
+        "probe:mgmt-strategy-meeting-research-readable",
+        "probe:paper-risk-journey",
+        "probe:paper-risk-policy-binding",
+        "probe:persona-pool-member-rules",
+        "probe:persona-risk-profile-change",
+        "probe:trade-journey-readable",
+        "probe:trading-pulse-operator",
+    ]
+    for probe_id in ("probe:paper-risk-journey", "probe:paper-risk-policy-binding",
+                     "probe:persona-risk-profile-change"):
+        risk_probe = next(r for r in results if r["id"] == probe_id)
+        assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
+    assert "probe:persona-day" not in {r["id"] for r in results}
+    assert stage.verdict_status(results) == "passed"
+
+
+def test_probe_output_is_redacted_before_verdict(tmp_path):
+    secret = "s3cr3t-viewer-value"
+    other = "tok-abc-123"
+    probe(tmp_path, "leak", "#!/bin/sh\n# acceptance-owner: OWN\necho \"$ACCEPTANCE_VIEWER_CLIENT_SECRET $SOME_TOKEN\"\nexit 3\n")
+    env = {**os.environ, "ACCEPTANCE_VIEWER_CLIENT_SECRET": secret, "SOME_TOKEN": other,
+           "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer-id"}
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=env, lease_held=False, identity_fn=OK)
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=IDENT, run={})
+    text = json.dumps(verdict)
+    assert secret not in text and other not in text
+    assert "[redacted]" in results[-1]["detail"]
+
+
+def test_redaction_applies_to_custom_runner_output():
+    env = {"ACCEPTANCE_VIEWER_CLIENT_SECRET": "abc-secret-9", "X_PASSWORD": "pw-77", "EMPTY_TOKEN": ""}
+    runner = lambda argv, e, t: (1, "got abc-secret-9 and pw-77")  # noqa: E731
+    check = {"id": "check:x", "kind": "check", "owner": "OWN-x", "mutates": False, "argv": ["x"], "timeout": 1}
+    results = stage.run_stage(checks=[check], probes=[], identity=IDENT, base_env=env, lease_held=False,
+                              runner=runner, identity_fn=OK)
+    assert "abc-secret-9" not in results[-1]["detail"] and "pw-77" not in results[-1]["detail"]
+
+
+def test_probe_environment_carries_viewer_identity(tmp_path):
+    probe(tmp_path, "viewer", "#!/bin/sh\n# acceptance-owner: OWN\n[ \"$ACCEPTANCE_VIEWER_CLIENT_ID\" = vid ] && [ \"$ACCEPTANCE_VIEWER_CLIENT_SECRET\" = vsec ]\n")
+    env = {**os.environ, "ACCEPTANCE_VIEWER_CLIENT_ID": "vid", "ACCEPTANCE_VIEWER_CLIENT_SECRET": "vsec"}
+    results = stage.run_stage(checks=[], probes=stage.discover_probes(tmp_path), identity=IDENT,
+                              base_env=env, lease_held=False, identity_fn=OK)
+    assert results[-1]["status"] == "passed"
+
+
+def test_plan_declares_redaction():
+    assert stage.plan([], [])["redacts_output"] is True
+
+
+# --- post-switch management crawl (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126) ---------------------
+
+VIEWER_ENV = {"PATH": os.environ.get("PATH", ""), "ACCEPTANCE_VIEWER_CLIENT_ID": "pantheon-dev-viewer-v1",
+              "ACCEPTANCE_VIEWER_CLIENT_SECRET": "viewer-secret-xyz"}
+TOKEN = "hdr.payload-token-123.sig"
+CRAWL_IDENT = {**IDENT, "fe_url": "https://app.dev.mvl-cap.tw", "bff_url": "https://api.dev.mvl-cap.tw"}
+
+
+def _route(path, status="ok", console=(), **extra):
+    return {"path": path, "kind": "nav", "status": status, "navError": "", "alias": None,
+            "dataCheck": {"pass": status == "ok", "reasons": [] if status == "ok" else ["render_error"]},
+            "bffRequests": [{"method": "GET", "url": f"https://api.dev.mvl-cap.tw/bff{path}?page_size=20",
+                             "status": 200}],
+            "consoleErrors": [{"text": t, "kind": k} for t, k in console],
+            "consoleErrorCounts": {k: sum(1 for _, kk in console if kk == k) for _, k in console},
+            "mockFindings": [], "detailHonestyViolations": [], **extra}
+
+
+def _manifest(routes, passed):
+    failures = [] if passed else ["No route crashes, is blank, or fails to navigate.", "No render-crash console errors."]
+    return {"schemaVersion": 1, "taskId": "MGMT-GAP-006", "routes": routes,
+            "result": {"pass": passed, "overall": "pass" if passed else "fail", "failures": failures}}
+
+
+# Root 45684275970 (BFF b3f93d448 + FE 38e5337d1, verdict `passed` with 12 checks and no crawl):
+# /management/evolution-journal rendered the full-page error boundary because #7832 made
+# pool_version target.version a number (18 of the first 50 rows).
+REPLAY_45684275970 = _manifest([
+    _route("/management/cockpit"),
+    _route("/management/evolution-journal", status="crash",
+           console=[("TypeError: L.target.version.toLowerCase is not a function", "render_crash")]),
+    _route("/management/evolution"),
+], passed=False)
+
+
+def _writer(manifest, code=1, record=None):
+    def runner(argv, *, env, cwd, deadline):
+        if record is not None:
+            record.update(argv=argv, env=env, cwd=cwd, deadline=deadline)
+        out = Path(argv[argv.index("--out-dir") + 1])
+        (out / "management-hosted-acceptance-2026-11-25.json").write_text(json.dumps(manifest))
+        return code, f"crawled with {env['BFF_AUTH_TOKEN']}"
+    return runner
+
+
+def _frontend(tmp_path):
+    root = tmp_path / "fe"
+    (root / "scripts").mkdir(parents=True)
+    (root / stage.CRAWL_SCRIPT).write_text("// crawl\n")
+    return root
+
+
+def _crawl(tmp_path, *, runner, prepared="success", identity_passed=True, env=None, minter=None):
+    return stage.crawl_check(frontend_dir=_frontend(tmp_path), prepared=prepared, identity=CRAWL_IDENT,
+                             identity_passed=identity_passed, base_env=VIEWER_ENV if env is None else env,
+                             work_dir=tmp_path / "work", deadline=stage.CRAWL_DEADLINE_SECONDS,
+                             minter=minter or (lambda *a: TOKEN), runner=runner)
+
+
+def _passing_probe_results():
+    return [stage._result({"id": "check:deployed-pair-identity", "kind": "check", "owner": stage.SELF_OWNER},
+                          "passed"),
+            stage._result({"id": "probe:x", "kind": "probe", "owner": "OWN"}, "passed", exit_code=0)]
+
+
+def test_replay_45684275970_journal_error_boundary_makes_verdict_failed(tmp_path):
+    record = {}
+    check, artifact = _crawl(tmp_path, runner=_writer(REPLAY_45684275970, record=record))
+    assert check["id"] == stage.CRAWL_ID and check["status"] == "failed"
+    assert "/management/evolution-journal" in check["detail"]
+    assert "L.target.version.toLowerCase is not a function" in check["detail"]
+    assert [r["path"] for r in check["failedRoutes"]] == ["/management/evolution-journal"]
+    results = _passing_probe_results() + [check]
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=CRAWL_IDENT, run={})
+    assert verdict["acceptance"] == "failed"
+    assert verdict["failed"][0]["id"] == stage.CRAWL_ID
+    assert "/management/evolution-journal" in stage.summary_markdown(verdict, "success")
+    # the existing crawl at the deployed frontend commit, viewer token, write CTAs off, stated deadline
+    assert record["argv"][:2] == ["node", stage.CRAWL_SCRIPT]
+    assert record["env"]["BFF_AUTH_TOKEN"] == TOKEN and record["env"]["PANTHEON_ACCEPT_CLICK_WRITE_CTAS"] == "0"
+    assert record["env"]["PANTHEON_FE_BASE_URL"] == "https://app.dev.mvl-cap.tw"
+    assert "ACCEPTANCE_VIEWER_CLIENT_SECRET" not in record["env"]
+    assert record["deadline"] == stage.CRAWL_DEADLINE_SECONDS == 720
+    assert artifact["status"] == "failed" and artifact["routeCount"] == 3
+
+
+def test_crawl_artifact_and_verdict_carry_no_token_or_body(tmp_path):
+    leaky = _manifest([_route("/management/jobs", status="crash",
+                              console=[(f"TypeError: x is not a function {TOKEN}", "render_crash")],
+                              textSample="SECRET-BODY-TEXT")], passed=False)
+    leaky["routes"][0]["bffRequests"].append({"method": "POST", "url": "https://api.dev.mvl-cap.tw/bff/x?q=1"})
+    check, artifact = _crawl(tmp_path, runner=_writer(leaky))
+    text = json.dumps([check, artifact])
+    assert TOKEN not in text and "viewer-secret-xyz" not in text
+    assert "SECRET-BODY-TEXT" not in text and "page_size=20" not in text  # no body, no request query
+    assert artifact["nonGetRequests"] == ["POST /bff/x"]
+    assert set(artifact["routes"][0]) <= {"path", "kind", "status", "dataPass", "problems"}
+
+
+def test_passed_crawl_keeps_verdict_passed(tmp_path):
+    check, artifact = _crawl(tmp_path, runner=_writer(_manifest([_route("/management/cockpit")], True), code=0))
+    assert check["status"] == "passed" and artifact["status"] == "passed"
+    results = _passing_probe_results() + [check]
+    assert stage.verdict_status(results) == "passed"
+
+
+@pytest.mark.parametrize("kwargs, reason", [
+    ({"prepared": "failure"}, "frontend_not_prepared"),
+    ({"prepared": ""}, "frontend_not_prepared"),
+    ({"identity_passed": False}, "stack_not_verified"),
+    ({"env": {"PATH": "/usr/bin"}}, "viewer_credential_missing"),
+])
+def test_crawl_that_cannot_start_is_skipped_and_never_passed(tmp_path, kwargs, reason):
+    calls = []
+    check, artifact = _crawl(tmp_path, runner=lambda *a, **k: calls.append(1) or (0, ""), **kwargs)
+    assert calls == []  # nothing ran on hosted
+    assert check["status"] == "skipped" and check["reason"] == reason and artifact["reason"] == reason
+    results = _passing_probe_results() + [check]
+    assert stage.verdict_status(results) == "pending"
+
+
+def test_viewer_login_failure_and_no_report_and_deadline_are_skipped(tmp_path):
+    def refuse(*_):
+        raise RuntimeError("http_401")
+    check, _ = _crawl(tmp_path / "a", runner=lambda *a, **k: (0, ""), minter=refuse)
+    assert check["reason"] == "viewer_login_failed" and "http_401" in check["detail"]
+    check, _ = _crawl(tmp_path / "b", runner=lambda *a, **k: (2, "Missing @playwright/test"))
+    assert check["status"] == "skipped" and check["reason"] == "crawl_no_report"
+    check, _ = _crawl(tmp_path / "c", runner=lambda *a, **k: (None, ""))
+    assert check["status"] == "skipped" and check["reason"] == "crawl_deadline"
+    assert stage.verdict_status(_passing_probe_results() + [check]) == "pending"
+
+
+def test_failed_probe_with_skipped_crawl_stays_failed():
+    results = [stage._result({"id": "probe:bad", "kind": "probe", "owner": "OWN"}, "failed", exit_code=1),
+               stage._crawl_result("skipped", reason="crawl_deadline")]
+    assert stage.verdict_status(results) == "failed"
+
+
+def test_deadline_kills_the_whole_crawl_process_group(tmp_path):
+    marker = tmp_path / "child.pid"
+    script = f"sleep 30 & echo $! > {marker}; wait"
+    code, _ = stage.run_crawl_process(["bash", "-c", script], env=dict(os.environ), cwd=tmp_path, deadline=1)
+    assert code is None
+    pid = int(marker.read_text())
+    import time as _time
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        _time.sleep(0.05)
+    else:
+        pytest.fail("crawl child survived the deadline")
+
+
+def _identity_ok(monkeypatch):
+    original = stage.run_stage
+    monkeypatch.setattr(stage, "run_stage", lambda **kw: original(**kw, identity_fn=OK))
+
+
+def _cli_argv(tmp_path, out, extra):
+    return ["run", "--checks", str(tmp_path / "none.json"), "--probes-dir", str(tmp_path / "none"),
+            "--backend-sha", SHA_A, "--frontend-sha", SHA_B, "--fe-url", "https://app.dev.mvl-cap.tw",
+            "--bff-url", "https://api.dev.mvl-cap.tw", "--verdict-out", str(out), *extra]
+
+
+@pytest.mark.parametrize("case, expected", [("passed", "passed"), ("failed", "failed"), ("skipped", "pending")])
+def test_cli_exit_code_is_unchanged_in_all_three_crawl_cases(tmp_path, monkeypatch, case, expected):
+    _identity_ok(monkeypatch)
+    for key, value in VIEWER_ENV.items():
+        monkeypatch.setenv(key, value)
+    manifest = REPLAY_45684275970 if case == "failed" else _manifest([_route("/management/cockpit")], True)
+    original = stage.crawl_check
+    monkeypatch.setattr(stage, "crawl_check", lambda **kw: original(
+        **kw, minter=lambda *a: TOKEN, runner=_writer(manifest, code=0 if case == "passed" else 1)))
+    out, crawl_out = tmp_path / "v.json", tmp_path / "crawl.json"
+    prepared = "failure" if case == "skipped" else "success"
+    argv = _cli_argv(tmp_path, out, ["--crawl-frontend-dir", str(_frontend(tmp_path)),
+                                     "--crawl-prepared", prepared, "--crawl-out", str(crawl_out)])
+    assert stage.main(argv) == 0  # the deploy job result never depends on the crawl
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == expected
+    assert [c["id"] for c in verdict["checks"]][-1] == stage.CRAWL_ID
+    assert json.loads(crawl_out.read_text())["status"] == case
+    assert TOKEN not in out.read_text() + crawl_out.read_text()
+
+
+def test_cli_internal_crawl_error_is_skipped_not_passed(tmp_path, monkeypatch):
+    _identity_ok(monkeypatch)
+
+    def boom(**_):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(stage, "crawl_check", boom)
+    out = tmp_path / "v.json"
+    argv = _cli_argv(tmp_path, out, ["--crawl-frontend-dir", str(tmp_path), "--crawl-prepared", "success",
+                                     "--crawl-out", str(tmp_path / "c.json")])
+    assert stage.main(argv) == 0
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == "pending" and verdict["checks"][-1]["reason"] == "crawl_internal_error"
+
+
+def test_without_crawl_flag_the_release_probe_stage_is_unchanged(tmp_path, monkeypatch):
+    _identity_ok(monkeypatch)
+    out = tmp_path / "v.json"
+    assert stage.main(_cli_argv(tmp_path, out, [])) == 0
+    verdict = json.loads(out.read_text())
+    assert verdict["acceptance"] == "passed"
+    assert [c["id"] for c in verdict["checks"]] == ["check:deployed-pair-identity"]

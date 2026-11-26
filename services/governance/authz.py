@@ -18,6 +18,7 @@ _INSTITUTIONAL_READ_ROLES = {
     "trainer_session",
     "consultation_session",
     "automated_gate",
+    "persona_memory_reader",
 }
 _PERSONA_SESSION_ROLES = {
     "persona_session",
@@ -30,6 +31,8 @@ _PERSONA_OPERATOR_ROLES = {
     "admin",
     "reviewer",
     "auditor",
+    # Read-only service reader (OpenClaw adapter materialize / tool broker); never a memory write role.
+    "persona_memory_reader",
 }
 _LESSON_GOVERNANCE_ROLES = {
     "operator",

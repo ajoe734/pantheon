@@ -1,0 +1,28 @@
+{
+  "task_id": "OPS-MERGED-REVIEW-RECOVERY-TAIFEX-TX-DAILY-20261118",
+  "source_task_id": "TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118",
+  "record": ".orchestrator/review-evidence/tw_taifex_tx_daily_csv_response_merged_recovery_20261118.md",
+  "read_only_sources": [
+    {
+      "command": "python3 over ~/pantheon-ci-deploy/runtime/task-state/task-state-events-v2.jsonl: task upserts for the source id, printing status/owner/reviewer/review_binding/github_review_bridge",
+      "output": "line 74786 2026-11-18T00:24:57Z assign owner Claude2 reviewer Antigravity (no reassignment); line 74797 2026-11-18T00:38:39Z review_approved owner Claude2 reviewer Antigravity review_binding {base dev, pr 7554, head 0283c4400b2c1f068dc72cad494db350c0255310}, github_review_bridge actor Antigravity decision approve review id 5949031088, evidence manifest blob f10bfc373041faaa5c0291ce868bd293c3e43a45; line 74808 2026-11-18T00:58:07Z blocked, same bindings"
+    },
+    {
+      "command": "grep source id over coordination-root/ai-activity-log.jsonl and archive/logs/ai-activity-log.jsonl-*.gz, excluding permission_hook; separately grep task_reassigned and compare event types",
+      "output": "assign Human/Ops 00:24:57Z (to Claude2, reviewer Antigravity); start Claude2 00:25:40Z; worker_commit Claude2 00:32:31Z (0283c4400b2c); handoff Claude2 00:32:56Z; review_approved Antigravity 00:38:39Z at 0283c4400b2c1f068dc72cad494db350c0255310; blocker Claude2 00:58:07Z (done rejected: prior-owner LLM-Agent trailer requires an exact canonical audited task_reassigned event; trailer 'LLM-Agent: Claude', canonical owner Claude2, no task_reassigned event exists); no event of type task_reassigned exists for this task (the only task_reassigned text hits are permission_hook payloads and the blocker message)"
+    },
+    {
+      "command": "git show -s --format='%H author %an parents %P' 0283c4400b2c1f068dc72cad494db350c0255310 (and %B trailers)",
+      "output": "author Claude2 <claude2-agent@pantheon.local>, committer Claude2; trailers LLM-Agent: Claude, Task-ID: TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118, Reviewer: Antigravity"
+    },
+    {
+      "command": "git merge-base --is-ancestor 0283c4400b2c1f068dc72cad494db350c0255310 origin/dev; git show -s --format='%H %P %cI' 638f5b1bd88e7b1951612bee1e9845fdc4135a17",
+      "output": "ancestor yes; merge ancestor yes; 638f5b1bd88e7b1951612bee1e9845fdc4135a17 parents 6246d6c6a0b2878b1d43f888a5dca12a16c6d6ba 0283c4400b2c1f068dc72cad494db350c0255310, 2026-11-18T08:55:18+08:00"
+    },
+    {
+      "command": "python3 over coordination-root/.orchestrator/worker-runtime/status/claude2-20261118T002530Z-d436dec0.json and claude2-20261118T005618Z-8a32ce69.json",
+      "output": "both runs agent claude2, owner Claude2, reviewer Antigravity; roles owner (completed, exit 0) and owner_finalize (failed, exit 143 after the hold from the blocker)"
+    }
+  ],
+  "scope": "two artifact files only; no product code, no source task row, reconcile_merged_done not run"
+}

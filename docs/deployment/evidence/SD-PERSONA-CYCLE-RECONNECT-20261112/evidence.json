@@ -1,0 +1,217 @@
+{
+  "task_id": "SD-PERSONA-CYCLE-RECONNECT-20261112",
+  "kind": "design_document_evidence",
+  "read_date": "2026-11-12",
+  "document": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md",
+  "hosted_behavior_claimed": false,
+  "repo_base": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
+  "operator_statements_2026_11_12": [
+    "persona的記憶跟各persona的討論會議機制是怎樣進行? 這些你詳細跟現在的L1-L12怎麼協作",
+    "跟這些到底互動關係是什麼?你詳細思考整理出來",
+    "你完整把規劃以及原先作法找出來",
+    "另外給你方向你要變成harness也能夠自己優化",
+    "這些感覺起來應該是要有的阿",
+    "好，加入完整版",
+    "寫成正式設計，也把任務開起來做一做，12同步也做一做 10原本的規劃加入完整版，並且把任務讓supervisor 跟auto worker做一做"
+  ],
+  "earlier_operator_decisions_kept": [
+    "2026-10-06/08 paper capital operations skip owner approval and separation of duties (services/governance/contract.md:406)",
+    "2026-11-07 no model call on the trade path; risk limits outside the mutation surface",
+    "2026-11-12 P-4 paper-only autonomy for pool actions",
+    "2026-11-12 canary candidacy built up to approval only; fixed nomination rule; agent writes rationale only (PAPER-CANARY-PROMOTION-PROPOSAL-20261112)"
+  ],
+  "changes_to_original_plan": [
+    "D5 paper-scope lesson endorsement by evaluation gates plus risk-persona review (was human endorsement)",
+    "D10 paper-scope persona harness mutation adopted by automated gate plus risk persona after pre-check and shadow comparison (EVOLUTION_REVIEW mutate was Risk Owner approval)"
+  ],
+  "coordinator_proposed_values_not_operator_decisions": [
+    "daily-cycle cadence weekdays 10:00Z",
+    "harness observation window 10 trading days",
+    "harness cooldown 7 days per component",
+    "panel composition initiator plus risk persona plus red-team persona; no voting"
+  ],
+  "planning_recovery_method": "10 document-family readers each followed by an adversarial verifier, plus a missed-document sweep and a consistency sweep, on a read-only export of origin/dev a7ff97105 (2026-11-12)",
+  "hosted_read_only_observations_2026_11_12": [
+    "memory service data directory empty; no governance authorization address on the memory service",
+    "OODA packet store file absent; 4 OpenClaw cron jobs all */15 first-evaluation; run logs show 0 tokens",
+    "no OpenClaw agent for the trading personas; agents: main, structured-extraction, 2 agora-servant, 7 persona-opinion",
+    "trade reflections: 2 rows on one release-probe persona",
+    "evolution decisions 664, all flag_for_review or freeze",
+    "persona.strategy_pools table absent; PERSONA_REGISTRY_BASE_URL unset on persona service",
+    "DISCOVERY_ALLOCATOR_ENABLED=true on research-orchestrator-svc"
+  ],
+  "verify_on_delivery": "Repository citations in sections 2 and 3 checked on repo_base; hosted observations not independently reverified.",
+  "hosted_observation_provenance": {
+    "source": "inherited coordinator notes from the committed design",
+    "independently_reverified": false,
+    "raw_hosted_capture_supplied": false,
+    "limitation": "Historical context only; fresh exact-version hosted evidence belongs to PERSONA-CYCLE-RECONNECT-HOSTED-ACCEPTANCE-20261112."
+  },
+  "source_verification": {
+    "base_sha": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
+    "citations": [
+      {"reference": "CANONICAL_DOCUMENT_MAP.md:28-50", "base_blob": "9db69da031359b1a15f225a205733e1393e8ee49"},
+      {"reference": "Pantheon_總索引版系統分析文件.md", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "CANONICAL_DOCUMENT_MAP.md:36", "base_blob": "9db69da031359b1a15f225a205733e1393e8ee49"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:112-114", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:389-409", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:116-121", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "docs/04/pantheon_sa_supplemental_2026-05-15/SA_management_console_multi_persona_ooda.md", "base_blob": "72c5b296d387599e010666b7a3c7da6eee8a7259"},
+      {"reference": "docs/04/pantheon_sa_supplemental_2026-05-15/SD_management_console_multi_persona_ooda.md", "base_blob": "33cde2ae69c8bb38045219cb0d880b21e7c966b6"},
+      {"reference": ".orchestrator/task-briefs/openclaw_persona_ooda_loop_wiring.md:13", "base_blob": "f9d9eb624d3db2a34d3e0c5a3dedae86329cab44"},
+      {"reference": "services/control-plane/cron/workflows.py:75", "base_blob": "e382bb72809d244e88426a2f2a1375fb7f8f7ab1"},
+      {"reference": "services/control-plane/bff/personas/service.py:4414", "base_blob": "35e2efddf1fb02244d2fdb5f32c3eb7df1d92167"},
+      {"reference": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:362-381", "base_blob": "4d90e4be1f5651780851cb25571480d758210f5a"},
+      {"reference": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/LOOP_PRODUCT_LEVEL_REMEDIATION_PLAN_2026-07-13.md:376-377", "base_blob": "4d90e4be1f5651780851cb25571480d758210f5a"},
+      {"reference": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-OODA-001.md", "base_blob": "7871ff9f9e19ec2e0b49d909ef6cf6689c4ab230"},
+      {"reference": "services/persona/cron_ooda_closure.py", "base_blob": "f206880ba01817ae46ab60c38f953dcbd42d2a7b"},
+      {"reference": "docs/deployment/loop-catalog.registry.json:724-736", "base_blob": "ab361ba64a5fe46ccd0fbba30780285a821dbe97"},
+      {"reference": "docs/deployment/loop-catalog.registry.json:781-783", "base_blob": "ab361ba64a5fe46ccd0fbba30780285a821dbe97"},
+      {"reference": "docs/05/system-verification-rounds/INDEX.md:21-25", "base_blob": "d317753ae72b38811c6746f9a924d14a8a047796"},
+      {"reference": "docs/deployment/evidence/loop-product-level/closeout-truth-audit-2026-07-16.md:28", "base_blob": "b85da3d3e8971a7c1bfbcaef8a075dea2a5b36f2"},
+      {"reference": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/SECURITY_PREFLIGHT_AND_HOLD_MATRIX_2026-07-18.md:22-31", "base_blob": "c7b35fff8dd03392c6ce925468a33aac036daa1b"},
+      {"reference": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md:77-89", "base_blob": "7c1cc3e70f2ab70527113ad4940bc372a1ed9b1e"},
+      {"reference": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md:108-118", "base_blob": "7c1cc3e70f2ab70527113ad4940bc372a1ed9b1e"},
+      {"reference": "services/memory/MEMORY_LAYER_DESIGN_NOTE.md:180-189", "base_blob": "7c1cc3e70f2ab70527113ad4940bc372a1ed9b1e"},
+      {"reference": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md:83-95", "base_blob": "a0ce75eedd42052c10a6fb42110eaefb4eb6efb1"},
+      {"reference": "docs/04/pantheon_openclaw_persona_memory_gap_2026-07-03/OPENCLAW_PERSONA_MEMORY_GAP_SPEC.md:127-133", "base_blob": "a0ce75eedd42052c10a6fb42110eaefb4eb6efb1"},
+      {"reference": "docs/04/persona_trade_journal_gap_2026-07-11/PERSONA_TRADE_JOURNAL_GAP.md:110", "base_blob": "9cc919de015a04a432d5a34518974c2ca1c66c35"},
+      {"reference": "docs/04/pantheon_data_strategy_source_design_2026-06-09/EPIC_INTERACTION_DERIVED_SEEDS.md", "base_blob": "867de2d32c6dbf0628e43bd20377cd42aa815107"},
+      {"reference": "PERSONA_RUNTIME_MODEL.md:164-179", "base_blob": "2bc3e82d3d04003429c9869557dc54d0d60ed616"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:783-787", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "PERSONA_RUNTIME_MODEL.md:297-307", "base_blob": "2bc3e82d3d04003429c9869557dc54d0d60ed616"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:752-757", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "services/control-plane/persona/contract.md:134-142", "base_blob": "a7a55aff5cf75587e663920d71d0e69335e089ba"},
+      {"reference": "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:61-64", "base_blob": "6a4b91f467840ddd78460f11778ba74b0874e097"},
+      {"reference": "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:71-74", "base_blob": "6a4b91f467840ddd78460f11778ba74b0874e097"},
+      {"reference": "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:86-89", "base_blob": "6a4b91f467840ddd78460f11778ba74b0874e097"},
+      {"reference": "docs/04/pantheon_evolution_generative_loop_gap_2026-07-14/SEVEN_STAGE_DISCUSSION_LOOP_SPEC.md:124-149", "base_blob": "6a4b91f467840ddd78460f11778ba74b0874e097"},
+      {"reference": "services/consultation/main.py:1237", "base_blob": "2bc50ac910db53af27e2f9b7f08fcbb32ce6bfab"},
+      {"reference": "MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md:184-227", "base_blob": "13398c10952eb21aeb96fd6aa68bd6067f22a232"},
+      {"reference": "services/control-plane/governance/approval_decision.py:169", "base_blob": "5567ca3126954bc174973ab5ad6b6007c2e92571"},
+      {"reference": "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md:205-214", "base_blob": "746419bd832f2c745d6d14e5fac7fda6bacd5128"},
+      {"reference": "OPENCLAW_RUNTIME_CONTRACT.md:509-517", "base_blob": "9be1b778bedfe0cf8c74fb97c1d2d4efca1875f9"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:415-432", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "Pantheon_總索引版系統分析文件.md:747-749", "base_blob": "0bba94a189c2e035b7476c1601b41d80701db451"},
+      {"reference": "docs/product/persona-interaction-and-governed-action-plan.md:218-231", "base_blob": "6bd1a2b18ee2f542371d5df6cc1f5af40c46e448"},
+      {"reference": "docs/product/persona-interaction-and-governed-action-plan.md:304-305", "base_blob": "6bd1a2b18ee2f542371d5df6cc1f5af40c46e448"},
+      {"reference": "docs/product/persona-interaction-daily-strict-operator-delivery-plan.md:21-23", "base_blob": "6910607de56e03f709245cf7c5efa28e022354a1"},
+      {"reference": "LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md", "base_blob": "b5f8f73fdbb26f3dce375413fb2f331096f63bb6"},
+      {"reference": "docs/design/agora-trading-desk-design/uploads/Pantheon_Agora_ClaudeDesign_UI_Spec_2026-05-20.md:137", "base_blob": "b36e359622699a02ee053c2f8fd015dc92865302"},
+      {"reference": "docs/design/agora-trading-desk-design/uploads/Pantheon_Agora_ClaudeDesign_UI_Spec_2026-05-20.md:1018-1022", "base_blob": "b36e359622699a02ee053c2f8fd015dc92865302"},
+      {"reference": "docs/design/agora-trading-desk-design/uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V5_Final_2026-05-20.md:694", "base_blob": "62a82106f599414a900bb9ad24414fd9a967d874"},
+      {"reference": "docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/A4_shadow_human_actual_sourcing.md:189-193", "base_blob": "9dc156319b829fc1314e0a30673512b7aef6c9f3"},
+      {"reference": "EVOLUTION_REVIEW_AND_THRESHOLDS.md:46-47", "base_blob": "0365daadac6c3f33b9b3d271dc6f9a2a604a19c5"},
+      {"reference": "EVOLUTION_REVIEW_AND_THRESHOLDS.md:98-114", "base_blob": "0365daadac6c3f33b9b3d271dc6f9a2a604a19c5"},
+      {"reference": "EVOLUTION_REVIEW_AND_THRESHOLDS.md:132-151", "base_blob": "0365daadac6c3f33b9b3d271dc6f9a2a604a19c5"},
+      {"reference": "EVOLUTION_REVIEW_AND_THRESHOLDS.md:221-227", "base_blob": "0365daadac6c3f33b9b3d271dc6f9a2a604a19c5"},
+      {"reference": "EVOLUTION_REVIEW_AND_THRESHOLDS.md:266-271", "base_blob": "0365daadac6c3f33b9b3d271dc6f9a2a604a19c5"},
+      {"reference": "services/control-plane/governance/evolution_controller_contract.md:70", "base_blob": "94cb52c556c330e37c488b61a1cb5a4bedddefb9"},
+      {"reference": "services/control-plane/persona/lp001/contract.md", "base_blob": "c2266ce81e11dd8d0cb6535ddc06524d2bda073c"},
+      {"reference": "docs/03/SD-02_persona_governance.md:224-235", "base_blob": "ad728c9d0181683345925335f7e8995a065e716a"},
+      {"reference": "TARGET_ARCHITECTURE.md:14", "base_blob": "c6c6937734f5dcd08914bdc8db3f37f81011510f"},
+      {"reference": "docs/02-architecture/phase4-bff-thinning.md:11", "base_blob": "a2a1818213752ff39dab42a8c578949a2e03b611"},
+      {"reference": "docs/02-architecture/phase4-bff-thinning.md:86", "base_blob": "a2a1818213752ff39dab42a8c578949a2e03b611"},
+      {"reference": "services/governance/contract.md:430-435", "base_blob": "8e4f58ec5e0a2fc12f4e811ec175171cfa067e18"},
+      {"reference": "services/governance/contract.md:273-280", "base_blob": "8e4f58ec5e0a2fc12f4e811ec175171cfa067e18"},
+      {"reference": "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md:35-38", "base_blob": "f3fe213d8979416ef0e29536a214f81c756ac9fa"},
+      {"reference": "docs/04/pantheon_data_strategy_source_design_2026-06-09/DATA_STRATEGY_SOURCE_SYSTEM_DESIGN.md:526-528", "base_blob": "f3fe213d8979416ef0e29536a214f81c756ac9fa"},
+      {"reference": "docs/04/pantheon_data_strategy_source_design_2026-06-09/CLOSEOUT_DATASTRAT_PERSONA_005.md", "base_blob": "bf2d8e838a93cc65bccd6d065b4c157e64b74fae"},
+      {"reference": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md:64-85", "base_blob": "ea8e814c96fc5cb7b06dfcf920651706f13b1462"},
+      {"reference": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md:115-127", "base_blob": "ea8e814c96fc5cb7b06dfcf920651706f13b1462"},
+      {"reference": "services/control-plane/bff/command_adapters/retired.py:5-22", "base_blob": "ece3dfa79b435ae72840bc53d83c5325a8131276"},
+      {"reference": "services/memory/main.py:428", "base_blob": "bbe1d5262a8a0a55820bf033911d9df288dbb4f4"}
+    ],
+    "operator_quotes_compared_with_commit": "461e458c8a16a0a5163a1f32651c5f046688ce7e",
+    "operator_quotes_unchanged": true,
+    "decision_sources_checked": 13,
+    "changed_files": [
+      "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md",
+      "docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json"
+    ],
+    "command": "python3 -c 'import json; exec(json.load(open(\"docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json\"))[\"verification_script\"])'",
+    "result": "passed"
+  },
+  "verification_script": "import hashlib,json,re,subprocess\nfrom pathlib import Path\nmanifest=Path('docs/deployment/evidence/SD-PERSONA-CYCLE-RECONNECT-20261112/evidence.json')\ne=json.loads(manifest.read_text());p=Path(e['document']);s=p.read_text();base=e['repo_base']\noriginal=subprocess.check_output(['git','show','461e458c8a16a0a5163a1f32651c5f046688ce7e:'+str(p)],text=True)\nquotes=lambda text: re.findall(r'^> (.*)$',text,re.M)\nassert quotes(s)==quotes(original)==e['operator_statements_2026_11_12'], 'operator quotes changed'\nassert e['hosted_behavior_claimed'] is False\nassert e['hosted_observation_provenance']['independently_reverified'] is False\nsection=s.split('\\n## 2.')[1].split('\\n## 4.')[0]\nrefs=[]\nfor token in re.findall(r'`([^`]+)`',section):\n    m=re.fullmatch(r'([^:]+\\.(?:md|py|json))(?::(\\d+)(?:-(\\d+))?)?',token)\n    assert not token.startswith(':'), f'shorthand reference: {token}'\n    if not m: continue\n    path,start,end=m.groups(); source=Path(path)\n    assert source.is_file(), f'missing {token}'\n    delivered=source.read_bytes();baseline=subprocess.check_output(['git','show',base+':'+path])\n    assert delivered==baseline, f'reference changed from checked base: {path}'\n    lines=delivered.decode().splitlines()\n    if start: assert 1<=int(start)<=int(end or start)<=len(lines), f'bad line {token}'\n    refs.append({'reference':token,'base_blob':subprocess.check_output(['git','rev-parse',base+':'+path],text=True).strip()})\nassert refs\nrefs=list({r['reference']:r for r in refs}.values())\nassert refs==e['source_verification']['citations'], 'citation manifest differs'\ndecisions=s.split('\\n## 4.')[1].split('\\n## 5.')[0]\nrows=re.findall(r'^\\| D(\\d+) \\| (.*)$',decisions,re.M)\nassert [int(n) for n,_ in rows]==list(range(1,14))\nfor n,row in rows:\n    assert re.search(r'`[^`]+\\.(md|py|json)(?::[^`]*)?`',row), f'D{n} missing source'\nallowed={str(p),str(manifest)}\nchanged=set(subprocess.check_output(['git','diff','--name-only',base],text=True).splitlines())\nassert changed==allowed, f'out-of-scope change: {changed}'\nsubprocess.run(['git','diff','--check',base],check=True)\nprint(f'PASS: {len(refs)} citations resolve at {base}; 7 verbatim statements; D1-D13 cite sources; exact two-file scope; JSON false hosted claim; diff whitespace clean')\n",
+  "manual_design_checks": [
+    "C1 runs in existing persona service and reuses OpenClaw cron; no second scheduler.",
+    "C3 writes to the existing Memory Plane; workspace memory is a materialized cache.",
+    "C4 uses the existing consultation service; C5/C6/C7/C8/C9 retain explicit owner routes.",
+    "D5/D10 are proposed amendments, not active approval authority; D7 composition and numeric starting values are coordinator proposals.",
+    "Hosted observations are inherited and not independently verified by this design task."
+  ],
+  "delivery_validation": {
+    "commit_trailers": {
+      "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --task-id SD-PERSONA-CYCLE-RECONNECT-20261112",
+      "exit_status": 0,
+      "result": "passed after authorized metadata replay"
+    },
+    "review_admitted": false,
+    "remaining_action": "Fresh exact-head handoff to assigned reviewer Codex2, required CI and native supervisor integration; this manifest claims no approval or merge.",
+    "metadata_repair": {
+      "task_id": "SD-PERSONA-CYCLE-RECONNECT-20261112",
+      "backup_ref": "recovery/sd7249-before-metadata-replay-20261112",
+      "actor": "Codex",
+      "old_head": "d9f4abd9e33d49c570e14268c9d59930622014e2",
+      "new_head": "44e38d7cee711eefa714c3b5980dd94786a4d2a2",
+      "original_final_tree": "b5faf2bfb09944776c958103f7ec1a703f1cd7a6",
+      "final_tree_identical": true,
+      "commits": [
+        {
+          "old": "d1d854a31da2f1c685823ce096f60726777f0d3e",
+          "new": "461e458c8a16a0a5163a1f32651c5f046688ce7e",
+          "tree": "ab091da9203c6d8dbc5a455b48586df1283745f3",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "7cab4c014e90da984bd8b87425ee61a07ff84102",
+          "new": "f284a7ec80ea97ca559180b93ab2b75f129eb194",
+          "tree": "36b4c7e5f9f08df3fb5f289ff87564f096c8e460",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "bc523dd09397c4541e995257ee26d4ba1163ce90",
+          "new": "963bd46ffa070ce6fa8d64f95c8344dc856adc3a",
+          "tree": "425ec76e9290e75aa2b2ebdb5f242a99de16985e",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "df2b0103a5e815df3571474c20f348330ef29030",
+          "new": "164ec7d48a157c249f04e6d760c4fa9eebb5ce99",
+          "tree": "d908341c81467b3da04a6ef7314b52d201646510",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        },
+        {
+          "old": "d9f4abd9e33d49c570e14268c9d59930622014e2",
+          "new": "44e38d7cee711eefa714c3b5980dd94786a4d2a2",
+          "tree": "b5faf2bfb09944776c958103f7ec1a703f1cd7a6",
+          "author_preserved": true,
+          "message_preserved_except_authorized_first_subject": true
+        }
+      ],
+      "authorization": "Current canonical task generation 3; Human/Ops reopen at 2026-11-12T15:59:10Z explicitly authorized this single task-ref replay and lease.",
+      "new_subject": "SD-PERSONA-CYCLE-RECONNECT-20261112: reconnect persona cycle",
+      "preserved_attribution": "Original author names, emails, timestamps and all LLM-Agent, Reviewer and Co-Authored-By lines preserved; Codex is the replay committer, not the inherited content author.",
+      "publication": "Single explicit force-with-lease bound to the task ref and old head succeeded; subsequent delivery uses normal non-force pushes.",
+      "tree_equality_scope": "Every replayed commit tree equals its original tree; final equality is recorded before the normal current-dev merge and this evidence refresh.",
+      "historical_failure": {
+        "commit": "d1d854a31da2f1c685823ce096f60726777f0d3e",
+        "reason": "subject exceeds 72 chars (77)",
+        "prior_exit_status": 1
+      }
+    },
+    "base_refresh": {
+      "previous_base": "97308364387bd613382cbad4550eb6682a539932",
+      "current_base": "a41eb0b5f5b6fe7712081acdd5faec3858cc941a",
+      "result": "Normal merge of repaired dev from PR #7256; all 71 cited source blobs and line ranges are unchanged. Only the design and evidence differ from this base.",
+      "ci_repair_pr": 7256,
+      "source_blob_comparison": "All 71 citation entries match their previously checked base blobs; no moved references.",
+      "prior_failed_head": "06dcfc50bdb2dbf268356bce4333f206cb11b4b9",
+      "prior_failed_head_status": "Historical failures remain failures; this delivery requires fresh CI on its new head."
+    }
+  }
+}

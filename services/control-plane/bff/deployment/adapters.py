@@ -33,6 +33,9 @@ class DeploymentReadSurfaceAdapter:
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._read_surface.get_approval_decision(decision_id)
 
+    def get_approval_decisions(self, decision_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        return self._read_surface.get_approval_decisions(decision_ids)
+
     def get_review_summary(self, plan_id: str) -> Optional[Dict[str, Any]]:
         return self._read_surface.get_review_summary(plan_id)
 
@@ -75,6 +78,12 @@ class DeploymentReadSurfaceAdapter:
 
     def get_telemetry_summary(self, runtime_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._read_surface.get_telemetry_summary(runtime_id)
+
+    def list_paper_runtime_monitoring_sessions(self) -> Sequence[Dict[str, Any]]:
+        return self._read_surface.list_paper_runtime_monitoring_sessions()
+
+    def list_telemetry_summaries(self) -> Sequence[Dict[str, Any]]:
+        return self._read_surface.list_telemetry_summaries()
 
 
 class DefaultDeploymentCommands:

@@ -736,6 +736,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             f"/management/evolution-journal?persona={persona_id}&source=fleet_summary"
         )
 
+        personas_service._persona_fleet_shared_cache_clear()
         decisions[:] = [
             {
                 "id": "evo-dec-focus",
@@ -785,6 +786,7 @@ def test_persona_fleet_mutation_evolution_contract() -> None:
             }
         ]
 
+        personas_service._persona_fleet_shared_cache_clear()
         resp = client.get("/bff/management/persona-fleet?page_size=50", headers=OPERATOR_HEADERS)
         invalid = next(item for item in resp.json()["data"]["items"] if item["id"] == persona_id)
         assert invalid["last_mutation_kind"] == "fleet_summary"
@@ -1134,3 +1136,36 @@ def test_persona_fleet_owner_precedence_and_default_fallback() -> None:
         assert by_id["persona-owner-meta-owner-id"]["owner"] == "metadata-owner-id-wins"
         assert by_id["persona-owner-default-fallback"]["owner"] == "pathreon-management"
 
+
+
+def test_persona_fleet_rows_identical_with_digest_only_snapshot_identity() -> None:
+    """BFF-PERSONA-HEALTH-AND-LEAGUE-READS-20261114: fleet rows and summary for
+    identical inputs must not change when the ranking snapshot identity is derived
+    from the digest only (new) versus a fully built snapshot record (previous)."""
+    from services.rankings.snapshots import snapshot_record
+
+    def _previous(items: Any, *, surface: str, period: str) -> Any:
+        snapshot_id = snapshot_record(items, surface=surface, period=period).ranking_snapshot_id
+        return (
+            [
+                {**{k: v for k, v in item.items() if k != "_snapshot_evidence_ref_ids"}, "ranking_snapshot_id": snapshot_id}
+                for item in items
+            ],
+            snapshot_id,
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        new = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+        assert new.status_code == 200, new.text
+        current = personas_service._pm12_attach_ranking_snapshot
+        personas_service._pm12_attach_ranking_snapshot = _previous
+        try:
+            old = client.get("/bff/management/persona-fleet", headers=OPERATOR_HEADERS)
+        finally:
+            personas_service._pm12_attach_ranking_snapshot = current
+        assert old.status_code == 200, old.text
+        new_data, old_data = new.json()["data"], old.json()["data"]
+        assert new_data["items"], "fixture must yield fleet rows"
+        assert json.dumps(new_data["items"], sort_keys=True, default=str) == json.dumps(old_data["items"], sort_keys=True, default=str)
+        assert json.dumps(new_data["summary"], sort_keys=True, default=str) == json.dumps(old_data["summary"], sort_keys=True, default=str)

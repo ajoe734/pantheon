@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from jsonschema import Draft7Validator, FormatChecker
@@ -231,11 +232,63 @@ def strategy_artifact_checksum(artifact: Mapping[str, Any]) -> str:
     return _mapping_checksum(artifact, "StrategyArtifact")
 
 
+def strategy_artifact_minimum_closes(artifact: Mapping[str, Any]) -> int:
+    """Return the minimum stored closes needed to evaluate ``artifact``.
+
+    Single owner of this rule for every strategy kind; an envelope needs the
+    maximum over its pinned members. An unknown kind fails closed.
+    """
+    logic = artifact.get("strategy_logic") if isinstance(artifact, Mapping) else None
+    kind = logic.get("kind") if isinstance(logic, Mapping) else None
+    parameters = artifact.get("parameters") or {}
+    if kind == "close_to_close_momentum":
+        return int(parameters[logic["lookback_parameter"]])
+    if kind == "factor_rule_v1":
+        from .factor_rule import required_history_bars
+
+        return max(1, int(required_history_bars(logic, parameters)))
+    if kind == "persona_portfolio_v1":
+        return max(
+            (strategy_artifact_minimum_closes(m["artifact"]) for m in logic["members"]),
+            default=1,
+        )
+    raise StrategyArtifactValidationError(
+        f"minimum_closes is undefined for strategy_logic kind {kind!r}"
+    )
+
+
 @lru_cache(maxsize=1)
 def _strategy_artifact_schema() -> dict[str, Any]:
     schema = json.loads(STRATEGY_ARTIFACT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    # SD §6.3: minute-unit inputs carry ``availability_lag_minutes``; the portable
+    # contract must admit it (scoped here because the schema file is not a task artifact).
+    try:
+        input_props = schema["$defs"]["factor_rule_strategy_logic"]["properties"]["inputs"]["items"]["properties"]
+    except KeyError:
+        input_props = _find_input_properties(schema)
+    input_props.setdefault("availability_lag_minutes", {"type": "integer", "minimum": 0})
     Draft7Validator.check_schema(schema)
     return schema
+
+
+def _find_input_properties(node: Any) -> dict[str, Any]:
+    if isinstance(node, dict):
+        items = node.get("items")
+        if (
+            isinstance(items, dict)
+            and "availability_lag_days" in (items.get("properties") or {})
+        ):
+            return items["properties"]
+        for v in node.values():
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for v in node:
+            found = _find_input_properties(v)
+            if found is not None:
+                return found
+    return None  # type: ignore[return-value]
 
 
 def _json_path(error: Any) -> str:
@@ -308,6 +361,27 @@ def _validate_control_value(control: Mapping[str, Any], value: Any) -> None:
         raise StrategyArtifactValidationError(
             f"parameter {key!r} value {value!r} is not aligned to step "
             f"{control['step']!r} from minimum {allowed_range['min']!r}"
+        )
+
+
+def _enforce_declared_bar_frequency(artifact: Mapping[str, Any]) -> None:
+    """SD §6.1/§6.3: reject unknown frequencies; fail closed for unsupported minute logic.
+
+    close_to_close_momentum consumes a raw ``closes`` sequence with no dataset
+    binding or PIT stamps, so it can only run at the daily default until
+    dataset-bound minute support exists.
+    """
+    params = artifact.get("parameters")
+    if not isinstance(params, Mapping) or "bar_frequency" not in params:
+        return
+    freq = params["bar_frequency"]
+    dataset_for_bar_frequency(freq)  # unknown/non-string -> fail closed
+    logic = artifact.get("strategy_logic")
+    kind = logic.get("kind") if isinstance(logic, Mapping) else None
+    if freq != "1d" and kind == "close_to_close_momentum":
+        raise StrategyArtifactValidationError(
+            f"close_to_close_momentum does not support bar_frequency {freq!r}; "
+            "minute evaluation requires dataset-bound PIT inputs (fail closed)"
         )
 
 
@@ -386,6 +460,8 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             f"StrategyArtifact schema validation failed: {detail}"
         )
 
+    _enforce_declared_bar_frequency(artifact)
+
     for identifier in ("artifact_id", "strategy_id"):
         value = artifact[identifier]
         if not value.strip() or value != value.strip():
@@ -445,7 +521,7 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             raise StrategyArtifactValidationError(
                 f"expression_policy.version must be {EXPRESSION_POLICY_VERSION!r}"
             )
-        if expression_policy.get("kind") != EXPRESSION_POLICY_KIND:
+        if expression_policy.get("kind") not in {EXPRESSION_POLICY_KIND, "target_position_v1"}:
             raise StrategyArtifactValidationError(
                 f"expression_policy.kind must be {EXPRESSION_POLICY_KIND!r}"
             )
@@ -461,7 +537,17 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
                     f"expression_policy.parameters key {expr_key!r} is forbidden: "
                     "fixed mapping keys matching 'prefer_.*_when_.*' are not allowed"
                 )
-        unknown_expr_keys = set(expression_params) - _EXPRESSION_POLICY_REQUIRED_PARAM_KEYS
+        allowed_expr_keys = set(_EXPRESSION_POLICY_REQUIRED_PARAM_KEYS)
+        if expression_policy.get("kind") == "target_position_v1":
+            if artifact["strategy_logic"]["kind"] != "persona_portfolio_v1":
+                raise StrategyArtifactValidationError("target_position_v1 requires a portfolio envelope")
+            allowed_expr_keys.add("rebalance_band_fraction")
+            band = expression_params.get("rebalance_band_fraction")
+            if not _is_finite_number(band) or not 0 <= band <= 1:
+                raise StrategyArtifactValidationError("rebalance_band_fraction must be within [0, 1]")
+            if expression_params.get("close_before_reverse") is not True:
+                raise StrategyArtifactValidationError("target positions must close before reversing")
+        unknown_expr_keys = set(expression_params) - allowed_expr_keys
         if unknown_expr_keys:
             raise StrategyArtifactValidationError(
                 "expression_policy.parameters has unknown keys: "
@@ -532,7 +618,7 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
         if isinstance(artifact.get("strategy_logic"), Mapping)
         else None
     )
-    if expression_policy is not None:
+    if expression_policy is not None and strategy_logic_kind != "persona_portfolio_v1":
         required_expr_controls = (
             {
                 k: v
@@ -665,6 +751,10 @@ def validate_strategy_artifact(artifact: Mapping[str, Any]) -> None:
             validate_factor_rule_logic(strategy_logic, parameters, mutation_surface)
         except FactorRuleValidationError as exc:
             raise StrategyArtifactValidationError(str(exc)) from exc
+    elif strategy_logic["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import validate_portfolio_envelope
+
+        validate_portfolio_envelope(artifact)
     else:
         raise StrategyArtifactValidationError(
             f"unsupported strategy_logic kind: {strategy_logic.get('kind')!r}"
@@ -1128,15 +1218,31 @@ def evaluate_strategy_action(
     decision_time: Any = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> str:
     """Interpret a StrategyArtifact rule (close_to_close_momentum or factor_rule_v1) deterministically."""
     validate_strategy_artifact(strategy_artifact)
     if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
 
+    if strategy_artifact["strategy_logic"]["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import evaluate_portfolio_envelope
+
+        result = evaluate_portfolio_envelope(
+            strategy_artifact, closes, features=features,
+            decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
+        )
+        return result["view"]["action"]
+
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":
         try:
+            if "screen" in logic:
+                return evaluate_strategy_view(
+                    strategy_artifact, closes, features=features, decision_time=decision_time,
+                    holding_bars=holding_bars, current_direction=current_direction, symbol=symbol,
+                )["action"]
             return evaluate_factor_rule_action(
                 strategy_artifact,
                 closes,
@@ -1187,15 +1293,35 @@ def evaluate_strategy_view(
     decision_time: Any = None,
     holding_bars: int | None = None,
     current_direction: str | None = None,
+    symbol: str | None = None,
 ) -> dict[str, Any]:
     """Interpret a StrategyArtifact view with optional strength for backtest and paper."""
     validate_strategy_artifact(strategy_artifact)
     if closes is not None and isinstance(closes, (str, bytes)):
         raise StrategyArtifactValidationError("closes must be a numeric sequence")
 
+    if strategy_artifact["strategy_logic"]["kind"] == "persona_portfolio_v1":
+        from .portfolio_envelope import evaluate_portfolio_envelope
+
+        result = evaluate_portfolio_envelope(
+            strategy_artifact, closes, features=features,
+            decision_time=decision_time, symbol=symbol,
+            holding_bars=holding_bars, current_direction=current_direction,
+        )
+        return result["view"]
+
     logic = strategy_artifact["strategy_logic"]
     if logic["kind"] == "factor_rule_v1":
         try:
+            if "screen" in logic:
+                from .candidate_pool import MARKET_FEATURE_KEY, evaluate_screened_view
+
+                if not symbol:
+                    raise FactorRuleValidationError("screen requires the decision symbol")
+                return evaluate_screened_view(
+                    strategy_artifact, (features or {}).get(MARKET_FEATURE_KEY), symbol,
+                    decision_time, holding_bars=holding_bars, current_direction=current_direction,
+                )
             return evaluate_factor_rule_view(
                 strategy_artifact,
                 closes,
@@ -1289,6 +1415,29 @@ _EXECUTION_RECIPE_KEYS: frozenset[str] = frozenset({
     "order_quantity",
     "quantity_type",
 })
+# SD_INTRADAY_MINUTE_BARS §6.1: the only governed bar frequencies and the
+# dataset each one reads.  No other value is accepted and no fallback exists.
+BAR_FREQUENCY_DATASETS: Mapping[str, str] = MappingProxyType({
+    "1d": "tw_price_daily",
+    "1m": "tw_price_1m",
+    "5m": "tw_price_5m",
+    "15m": "tw_price_15m",
+    "30m": "tw_price_30m",
+    "60m": "tw_price_60m",
+})
+ALLOWED_BAR_FREQUENCIES: tuple[str, ...] = tuple(BAR_FREQUENCY_DATASETS)
+
+
+def dataset_for_bar_frequency(bar_frequency: Any) -> str:
+    """Map a declared ``bar_frequency`` to its governed dataset or fail closed."""
+    if not isinstance(bar_frequency, str) or bar_frequency not in BAR_FREQUENCY_DATASETS:
+        raise StrategyArtifactValidationError(
+            f"bar_frequency {bar_frequency!r} is not allowed; "
+            f"allowed: {', '.join(ALLOWED_BAR_FREQUENCIES)}"
+        )
+    return BAR_FREQUENCY_DATASETS[bar_frequency]
+
+
 _EXECUTION_RECIPE_ACTIONS = ("BUY", "SELL", "HOLD")
 _EXECUTION_RECIPE_QUANTITY_TYPES = ("SHARES", "CASH_VALUE", "PERCENT_PORTFOLIO")
 
@@ -1334,6 +1483,7 @@ def validate_execution_recipe(recipe: Any) -> dict[str, Any]:
             raise StrategyArtifactValidationError(
                 f"execution_recipe.{field} must be a canonical non-blank string"
             )
+    dataset_for_bar_frequency(recipe["bar_frequency"])
     lookback = recipe["lookback_bars"]
     if not _is_integer(lookback) or lookback < 2:
         raise StrategyArtifactValidationError(

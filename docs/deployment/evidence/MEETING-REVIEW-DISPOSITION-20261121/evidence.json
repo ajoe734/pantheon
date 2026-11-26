@@ -1,0 +1,105 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task_id": "MEETING-REVIEW-DISPOSITION-20261121",
+  "paired_frontend_task_id": "FE-MEETING-REVIEW-DISPOSITION-20261121",
+  "register_class": "RC2",
+  "title": "Let an operator resolve a closed meeting synthesis review and read the durable result",
+  "incident": {
+    "meeting_id": "mtg-2c016da5651a0dc4",
+    "meeting_code": "MT-1",
+    "persona_id": "persona-2448c7053e33ea48da47",
+    "persona_name": "澄川",
+    "closed_at": "2026-11-20T17:40:52Z",
+    "status": "closed",
+    "outcome": "REVIEW",
+    "rounds": 2,
+    "proposals_count": 0,
+    "stored_synthesis": "Synthesis empty or unreadable; recorded as REVIEW with no proposal.",
+    "stored_unreadable_reason": null,
+    "legacy_cause_fallback": "unknown",
+    "problem_register_doc": "docs/operations/problem-register.md"
+  },
+  "contracts": {
+    "source_owner_endpoint": "POST /api/consult/meetings/{meeting_id}/review",
+    "public_bff_endpoints": [
+      "POST /bff/management/meetings/{meeting_id}/review",
+      "POST /bff/meetings/{meeting_id}/review"
+    ],
+    "request_body": {
+      "note": "string (required, trimmed non-empty, <= 2000 Unicode characters; serialized operator_review object <= 16384 UTF-8 bytes so 2000 ASCII, CJK, or 4-byte emoji characters are accepted with HTTP 200 and >2000 characters rejected with HTTP 422 review_note_too_long)"
+    },
+    "operator_review_shape": {
+      "status": "pending | reviewed",
+      "disposition": "closed_no_proposal | null",
+      "note": "string | null",
+      "reviewed_by": "string | null",
+      "reviewed_at": "ISO-8601 UTC timestamp | null",
+      "cause": "string ('unknown' on legacy rows without stored cause; specific stored cause when present)",
+      "unreadable_reason": "string | null"
+    },
+    "privacy_and_trader_visibility": {
+      "private_memory_withholding": "Consistent _is_private_meeting_item / _is_private_memory_item filtering across source (list_meetings_view, get_meeting_detail_view) and BFF (shape_meeting_list_item, shape_meeting_detail, project_human_inbox_meeting_items) checks all private scope keys (relevance_scope, memory_layer, scope, visibility_scope, memory_scope), boolean flags (is_private, private), and private kind/type/owner markers on case_file_items, case_file groups, pre_read, round positions, agora_records, attribution_record, and evidence_refs, stripping withheld item IDs and private position citations before flattening evidence_refs.",
+      "trader_scope_filtering": "Agora/trader-scoped records and private_servant round positions are withheld from flattened source list/detail evidence_refs by default and included in BFF shaped detail/list/inbox evidence_refs and round citations only for operators (is_operator=True) or the owning trader (caller_user_id == trader_id)."
+    },
+    "human_inbox_projection": {
+      "pending_before_review": "meeting_review:{meeting_id} projected in GET /bff/management/human-inbox with status='pending', gate='meeting_review', can_proceed=false, evidence_refs, and unreadable_reason/cause context",
+      "after_review": "meeting_review:{meeting_id} leaves the pending GET /bff/management/human-inbox queue while GET /bff/management/meetings/{meeting_id} and GET /bff/meetings/{meeting_id} return operator_review.status='reviewed' and preserve outcome='REVIEW', synthesis, transcript/rounds, and proposals=[]"
+    },
+    "concurrency_and_idempotency": {
+      "identical_retry": "HTTP 200 with identical operator_review (preserving first reviewed_by and reviewed_at) and replayed=true (zero duplicate lifecycle/audit/outbox writes)",
+      "partial_write_failure_recovery": "If outbox.append or append_audit raises an OSError after the lifecycle event is written (or across a process restart), in-memory and replayed state preserves the first operator and timestamp, rejects conflicting operators with HTTP 409, and an identical retry repairs the missing outbox record (via _has_outbox_for_lifecycle_event) and/or missing audit record (via _ensure_meeting_review_audit) leaving exactly 1 review lifecycle event, 1 outbox record, and 1 meeting_review_recorded audit event",
+      "conflicting_retry_or_other_operator": "HTTP 409 meeting_already_reviewed",
+      "non_review_or_unclosed_meeting": "HTTP 409 meeting_not_in_review",
+      "wrong_tenant": "HTTP 403 tenant_scope_mismatch / BFF_ERR_TENANT_SCOPE (404 when meeting_id is in another tenant)",
+      "viewer_or_non_operator_role": "HTTP 403 insufficient_role / BFF_ERR_FORBIDDEN"
+    }
+  },
+  "runtime_storage_budget": {
+    "new_recurring_jobs": 0,
+    "new_persistent_stores": 0,
+    "existing_storage_owner": "services/consultation/store.py (ConsultationStore / PostgresConsultationStore)",
+    "cadence": "On-demand authenticated operator action only. At hosted scale (3 enrolled trading personas, <= 3 meetings/persona/ISO week = <= 9 meetings/week total), at most 1 non-replayed review write can occur per closed REVIEW meeting.",
+    "per_record_byte_cap": {
+      "note_max_chars": 2000,
+      "operator_review_object_max_bytes": 16384,
+      "enforced_by": "services/consultation/store.py::_validate_meeting_operator_review_write"
+    },
+    "count_cap": "At most 1 persisted operator_review lifecycle upsert, 1 ConsultAuditEvent (action='meeting_review_recorded'), and 1 OutboxRecord (idempotency_key='consult-lifecycle:<event_id>') per closed REVIEW meeting. Identical retries verify outbox and audit presence and short-circuit as replayed=true without duplicate writes; conflicting writes are rejected by both record_meeting_operator_review and ConsultationStore._validate_meeting_operator_review_write.",
+    "growth_per_day_at_hosted_scale": "With 3 enrolled trading personas (<= 9 meetings/week, ~1.3 meetings/day), each persona_meeting lifecycle upsert and outbox envelope stores a full meeting snapshot (~15-40 KB base snapshot, up to ~45-56 KB with a max 2000-char Unicode operator_review <= 16 KB). Even if 100% of meetings closed with outcome=REVIEW, operator review dispositions add at most ~1.3 full-snapshot lifecycle upserts/day (~20-75 KB/day worst case), ~1.3 full-snapshot outbox records/day (~20-75 KB/day worst case), and ~1.3 compact audit rows/day (~400-600 B each, < 1 KB/day).",
+    "retention_and_cleanup": "Whole-writer historical row/byte retention and compaction for the existing append-only consultation JSONL journals and SQL tables remain tracked as unreviewed under RC3 WP3.1 (startup replay into in-memory state and duplicate suppression do not delete or compact historical lines/rows on disk). For this incremental field, unchanged put_meeting writes and idempotent operator_review retries are suppressed before appending a new lifecycle, outbox, or audit record.",
+    "storage_manifest_entries": [
+      "jsonl:consult_lifecycle_events.jsonl",
+      "jsonl:consult_audit.jsonl",
+      "jsonl:consult_outbox.jsonl",
+      "table:services/consultation/store.py::{self.lifecycle_table}",
+      "table:services/consultation/store.py::{self.audit_table}",
+      "table:services/consultation/store.py::{self.outbox_table}",
+      "schema_table:consult_svc.lifecycle_events",
+      "schema_table:consult_svc.audit_events",
+      "schema_table:consult_svc.outbox_records"
+    ]
+  },
+  "acceptance_probes_and_tests": {
+    "read_only_hosted_probe": "acceptance/probes/meeting-review-disposition",
+    "read_only_probe_guarantee": "Uses GET-only viewer endpoints (/bff/management/meetings, /bff/management/meetings/{id}, /bff/meetings/{id}, /bff/management/human-inbox) and never sends POST /review or mutates the user's real meeting mtg-2c016da5651a0dc4.",
+    "focused_isolated_dev_acceptance_command": "pytest -q acceptance/test_meeting_review_disposition.py -k isolated_dev_acceptance_write_and_readback",
+    "isolated_dev_acceptance_meeting_id": "mtg-dev-acceptance-review-disposition-20261121",
+    "local_validation_commands": [
+      {
+        "command": "pytest -q services/consultation/tests/test_persona_meeting_routes.py services/consultation/tests/test_persona_meetings.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py acceptance/test_meeting_review_disposition.py scripts/test_check_storage_manifest.py scripts/test_dev_acceptance_stage.py",
+        "status": "passed",
+        "summary": "80 passed"
+      },
+      {
+        "command": "python3 scripts/check_storage_manifest.py",
+        "status": "passed",
+        "summary": "passed=true, failures=[], bounded=16, unreviewed=336"
+      },
+      {
+        "command": "python3 scripts/ci_test_inventory.py check",
+        "status": "passed",
+        "summary": "test inventory ok"
+      }
+    ]
+  }
+}

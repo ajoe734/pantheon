@@ -1,0 +1,67 @@
+{
+  "task_id": "L2-DEMAND-PRIORITY-R2-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Durable L2 cap deferral, 14-day expiry, tenant-scoped research-demand priority and production controller wiring",
+  "implementation_notes": "docs/deployment/evidence/L2-DEMAND-PRIORITY-R2-20261112/README.md",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_DISCOVERY_DEMAND_AND_EVOLUTION_TRIGGERS_2026-11-12.md",
+  "current_owner_contract": "docs/contracts/research_demand.v1.schema.json",
+  "owner_contract_adaptation": "The persona cycle writes a string mandate. Fixed mandate/family vocabulary is derived from that existing field; no allocator or new demand schema is introduced.",
+  "validation": [
+    {
+      "status": "passed",
+      "exit_status": 0,
+      "bounded_timeout_seconds": 180,
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_demand_priority.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_queue_lifetime.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_e2e_source_ingest_distillation_acceptance.py services/source_ingestion/tests/test_product_v2_source_distillation_r3.py scripts/test_issue_dev_paper_principals.py --tb=short",
+      "result": "290 passed, 13 dependency deprecation warnings in 76.03 seconds",
+      "tested_code_commit": "1f2c11f20237e1ded168168e6cb0f4cba308c9b1",
+      "tested_base": "7ed9b84d26f07f981ba94a19427c2fb7151048d7",
+      "log": "docs/deployment/evidence/L2-DEMAND-PRIORITY-R2-20261112/acceptance.log"
+    }
+  ],
+  "additional_check": "git diff --check",
+  "log_normalization": "Captured stdout/stderr with trailing whitespace removed; no command output or warnings omitted.",
+  "acceptance_evidence": {
+    "1": [
+      "test_cap_two_five_records_across_windows_real_worker_queue_and_extractor",
+      "test_expiry_after_fourteen_days_is_durable_and_costs_no_model_call",
+      "test_stale_deferral_cannot_release_a_new_workers_lease",
+      "test_extracted_card_ends_deferral_before_registry_retry"
+    ],
+    "2": [
+      "test_cap_two_five_records_across_windows_real_worker_queue_and_extractor[demand]",
+      "test_environment_controller_tick_drives_demand_deferral_across_two_windows",
+      "test_fixed_vocabulary_boundaries_and_no_free_text_terms"
+    ],
+    "3": [
+      "test_cap_two_five_records_across_windows_real_worker_queue_and_extractor[empty]",
+      "test_shared_ledger_reservations_cannot_overspend_cap",
+      "test_distillation_research_reader_is_dedicated_and_mounted",
+      "test_daily_cap_stops_with_budget_exhausted_default_is_400"
+    ],
+    "4": [
+      "test_authenticated_scoped_read_uses_actual_persona_mandate_contract",
+      "test_real_research_owner_route_enforces_issued_reader_tenant",
+      "test_cap_two_five_records_across_windows_real_worker_queue_and_extractor[outage]",
+      "test_reads_fail_closed_to_arrival_order",
+      "test_unreachable_read_records_sanitized_reason",
+      "test_missing_credential_and_rotating_file_fail_closed",
+      "test_scoped_run_never_reads_or_claims_foreign_records"
+    ],
+    "5": [
+      "test_cap_two_five_records_across_windows_real_worker_queue_and_extractor",
+      "test_environment_controller_tick_drives_demand_deferral_across_two_windows"
+    ]
+  },
+  "fixture": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json",
+  "proof_boundary": {
+    "real": "Production controller, worker factory, catch_up/run_pending, SQLite queue/inbox, extraction ledger, extraction admission/citation validation, compiler, research owner route/auth and synthetic principal issuer",
+    "replayed": "Hand-authored model-shaped extraction fixture; HTTP transport except the real Research TestClient route; controlled clocks",
+    "not_claimed": "Live provider, hosted deployment, market returns, approved executable pool or capital effects"
+  },
+  "independent_review": {
+    "status": "pending",
+    "reviewer": "Claude"
+  },
+  "hosted_claim": false
+}

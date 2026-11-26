@@ -53,7 +53,11 @@ def test_explicit_withdrawal_denies_captured_principal_and_removes_only_fixed_fi
     env = configured()
     refresh_files(tmp_path, env, now=NOW)
     grant_env = {"GOVERNANCE_DEV_PAPER_GRANT_FILE": str(tmp_path / "governance/grant")}
-    assert configured_dev_paper_grant_enabled(grant_env)
+    from services.governance.paper_approval_scope import configured_persona_lifecycle_grant
+    from scripts.issue_dev_paper_principals import ENROLLMENT_PROPOSER_SUBJECT
+    # The issued grant content carries the explicit paper-ladder widening naming the proposer.
+    widening = configured_persona_lifecycle_grant(grant_env)
+    assert widening is not None and widening.proposer_subject == ENROLLMENT_PROPOSER_SUBJECT
     unrelated = tmp_path / "governance/unrelated-audit-note"
     unrelated.write_text("keep")
     captured = (tmp_path / "operator-bff/PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN").read_text()
@@ -142,11 +146,13 @@ def test_compose_limits_issuer_and_mounts_each_reader_read_only():
     source_volumes = {v.split(":")[1].split("/")[-1]: v.split(":")[0] for v in issuer["volumes"]}
     # A consumer directory normally carries the name of its one service. The
     # paper capital reader directory is shared by exactly these two services.
-    shared_consumers = {"paper-capital-reader": ("paper-signal-producer", "paper-fleet-reconciler")}
+    shared_consumers = {"paper-capital-reader": ("paper-signal-producer", "paper-fleet-reconciler"),
+                        "paper-registry-reader": ("paper-fleet-reconciler",)}
     for consumer, variables in CONSUMER_FILES.items():
         for service in shared_consumers.get(consumer, (consumer,)):
             mounts = services[service]["volumes"]
-            assert source_volumes[consumer] + ":/run/pantheon-principals:ro" in mounts
+            root = "/run/pantheon-registry-read" if consumer == "paper-registry-reader" else "/run/pantheon-principals"
+            assert source_volumes[consumer] + ":" + root + ":ro" in mounts
             for variable in variables:
                 assert variable + "_FILE" in services[service]["environment"]
     outbox = services["deployment-outbox-consumer"]
@@ -251,6 +257,10 @@ def test_paper_capital_reader_directory_is_issued_renewed_and_capital_only(tmp_p
     refresh_files(tmp_path, env, now=NOW)
     directory = tmp_path / consumer
     assert sorted(p.name for p in directory.iterdir()) == ["DEPLOYMENT_CAPITAL_SERVICE_TOKEN"]
+    assert CONSUMER_FILES["paper-registry-reader"] == ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",)
+    registry = verify((tmp_path / "paper-registry-reader" / "PAPER_RUNTIME_REGISTRY_READ_TOKEN").read_text())
+    assert registry["roles"] == ["registry-reader"] and registry["sub"] == "pantheon-dev-paper-runtime-registry-reader"
+    assert registry["allowed_tenants"] == ["tenant-dev"]
     path = directory / "DEPLOYMENT_CAPITAL_SERVICE_TOKEN"
     first = configured_service_token("DEPLOYMENT_CAPITAL_SERVICE_TOKEN", {"DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": str(path)})
     claims = verify(first)
@@ -269,3 +279,20 @@ def test_paper_capital_reader_directory_is_issued_renewed_and_capital_only(tmp_p
     # Withdrawal removes only the fixed file in this directory.
     revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
     assert not path.exists()
+
+
+def test_governance_binding_reader_files_rotate_and_are_removed_on_withdrawal(tmp_path):
+    env = configured()
+    names = ("GOVERNANCE_CAPITAL_SERVICE_TOKEN", "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN")
+    refresh_files(tmp_path, env, now=NOW)
+    before = {n: (tmp_path / "governance" / n).read_text() for n in names}
+    assert healthy_files(tmp_path, env, now=NOW + 1)
+    refresh_files(tmp_path, env, now=NOW + REFRESH_SECONDS)
+    for name in names:
+        renewed = (tmp_path / "governance" / name).read_text()
+        assert renewed != before[name]
+        assert verify(renewed, now=NOW + REFRESH_SECONDS + 1)["sub"].startswith("pantheon-dev-governance-")
+        assert configured_service_token(name, {name + "_FILE": str(tmp_path / "governance" / name)}) == renewed
+    revoke_files(tmp_path, {**env, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})
+    assert not any((tmp_path / "governance" / n).exists() for n in names)
+    assert (tmp_path / "governance" / "grant").read_text() == "revoked"

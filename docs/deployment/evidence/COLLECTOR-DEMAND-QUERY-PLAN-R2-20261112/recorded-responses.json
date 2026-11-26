@@ -1,0 +1,20 @@
+[
+ {
+  "file": "arxiv_query_recorded.xml",
+  "url": "https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10",
+  "http_status": 200,
+  "content_type": "application/atom+xml; charset=utf-8",
+  "bytes": 24773,
+  "sha256": "3b64d06d9e617ba41174ec626570708e3e9aa9f1b82d264f1b6597b9b48e3397",
+  "recorded_at": "2026-11-13T08:54:40.578816+00:00"
+ },
+ {
+  "file": "openalex_search_recorded.json",
+  "url": "https://api.openalex.org/works?search=%22asset+pricing%22&per-page=10",
+  "http_status": 200,
+  "content_type": "application/json",
+  "bytes": 221361,
+  "sha256": "2542a65937d9c943c2dda483637eb0aa30e063c285195e4ef034dc8990d09a46",
+  "recorded_at": "2026-11-13T08:54:41.227519+00:00"
+ }
+]

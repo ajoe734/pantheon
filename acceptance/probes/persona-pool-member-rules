@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+# acceptance-owner: BFF-PERSONA-STRATEGY-VISIBILITY-20261119
+"""Read-only release probe: persona detail shows each pool member's strategy rules.
+
+Reads every page of GET /bff/personas (page_size=200, following next_page_token until
+empty) and, for every persona that is not retired or archived and whose strategy_pool
+surface is ok:
+  * each current (non-removed) member has an ok data.strategyPool.memberRules row;
+  * pool_health is not cycle_pool_snapshot_mismatch when the members of the version
+    named by observed_pool_version equal the current members. A persona without a
+    cycle observation is not a failure.
+
+Logs in through /bff/auth/dev-login (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET); the token
+stays in memory and is never printed. GET only apart from that exchange.
+Exit 0 passed, 1 failed, 77 skipped (a required variable is missing).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+
+
+def _members(pool):
+    return sorted((m.get("artifact_ref"), m.get("checksum"), m.get("stage"), m.get("risk_weight"))
+                  for m in (pool or {}).get("members") or [] if m.get("stage") != "removed")
+
+
+def check_persona(detail) -> list:
+    """Failure strings for one persona detail response ([] when it passes or is not applicable)."""
+    surfaces = (detail.get("meta") or {}).get("surfaces") or {}
+    pool = (detail.get("data") or {}).get("strategyPool") or {}
+    if (surfaces.get("strategy_pool") or {}).get("status") != "ok" or not isinstance(pool.get("current"), dict):
+        return []
+    failures = []
+    rows = {r.get("artifact_ref"): r for r in pool.get("memberRules") or [] if isinstance(r, dict)}
+    for member in pool["current"].get("members") or []:
+        if member.get("stage") == "removed":
+            continue
+        row = rows.get(member.get("artifact_ref"))
+        if not row or row.get("status") != "ok":
+            reason = (row or {}).get("reason") or (surfaces.get("member_rules") or {}).get("reason") or "no_row"
+            failures.append(f"member_rules_missing:{member.get('artifact_ref')}:{reason}")
+    health = surfaces.get("pool_health") or {}
+    observed = health.get("observed_pool_version")
+    if health.get("reason") == "cycle_pool_snapshot_mismatch" and observed is not None:
+        observed_pool = next((v for v in pool.get("versions") or [] if v.get("pool_version") == observed), None)
+        if observed_pool is not None and _members(observed_pool) == _members(pool["current"]):
+            failures.append(f"pool_health_false_mismatch:observed_v{observed}")
+    return failures
+
+
+def _personas(listing):
+    data = listing.get("data") if isinstance(listing, dict) else listing
+    if isinstance(data, dict):
+        data = data.get("items") or data.get("personas") or []
+    return [p for p in data or [] if isinstance(p, dict)]
+
+
+def _is_retired(persona) -> bool:
+    return any(str(persona.get(k) or "").lower() in ("retired", "archived")
+               for k in ("lifecycle_state", "lifecycleState", "state", "status"))
+
+
+def _next_token(listing):
+    if not isinstance(listing, dict):
+        return None
+    for holder in (listing, listing.get("meta") or {}, (listing.get("meta") or {}).get("page") or {},
+                   listing.get("page") or {}, listing.get("pagination") or {}):
+        if isinstance(holder, dict) and holder.get("next_page_token"):
+            return str(holder["next_page_token"])
+    return None
+
+
+def _all_personas(fetch, max_pages=100):
+    personas, token = [], None
+    for _ in range(max_pages):
+        path = "/bff/personas?page_size=200"
+        if token:
+            path += "&page_token=" + urllib.parse.quote(token, safe="")
+        listing = fetch(path)
+        personas.extend(_personas(listing))
+        token = _next_token(listing)
+        if not token:
+            return personas
+    raise RuntimeError("persona_list_pagination_exceeded")
+
+
+def _applicable(detail) -> bool:
+    surfaces = (detail.get("meta") or {}).get("surfaces") or {}
+    pool = (detail.get("data") or {}).get("strategyPool") or {}
+    return (surfaces.get("strategy_pool") or {}).get("status") == "ok" and isinstance(pool.get("current"), dict)
+
+
+def run(fetch) -> dict:
+    personas = _all_personas(fetch)
+    results, skipped_retired, skipped_no_pool = {}, 0, 0
+    for persona in personas:
+        pid = persona.get("id") or persona.get("persona_id")
+        if not pid or _is_retired(persona):
+            skipped_retired += 1
+            continue
+        detail = fetch(f"/bff/personas/{pid}")
+        if not _applicable(detail):
+            skipped_no_pool += 1
+            continue
+        results[pid] = check_persona(detail)
+    failed = {pid: f for pid, f in results.items() if f}
+    report = {"read": len(personas), "skipped": skipped_retired + skipped_no_pool,
+              "skipped_retired": skipped_retired, "skipped_no_pool": skipped_no_pool,
+              "checked": len(results),
+              "results": {pid: ("failed" if f else "ok") for pid, f in sorted(results.items())},
+              "failed": failed}
+    if not results:
+        report["reason"] = "no_persona_checked"
+    report["passed"] = bool(results) and not failed
+    return report
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = run(lambda path: _request(urllib.request.Request(
+            base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -944,7 +944,9 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
         assert reconcile["consumer"] == "scripts/openclaw-sync-persona-agents.py"
 
 
-def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> None:
+def test_bff_persona_runtime_profile_exposes_route_policy_model_contract(monkeypatch) -> None:
+    # Fixture value of the chain variable; BFF validates pins against the chain.
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1,fx-b/model-2")
     with tempfile.TemporaryDirectory() as td:
         client = _fresh_client(td)
         create = client.post(
@@ -961,7 +963,7 @@ def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> No
                 "personaId": pid,
                 "model_routing": {
                     "mode": "hard_pin",
-                    "model": "openai/gpt-5.5",
+                    "model": "fx-b/model-2",
                 },
             }
 
@@ -973,7 +975,7 @@ def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> No
         assert data["workspace_ref"].endswith(f"/{persona_id}")
         assert data["model_routing"]["mode"] == "hard_pin"
         assert data["model_routing"]["status"] == "ready"
-        assert data["model_routing"]["primary_model"] == "openai/gpt-5.5"
+        assert data["model_routing"]["primary_model"] == "fx-b/model-2"
         assert data["model_routing"]["fallback_models"] == []
         assert data["memory_policy"]["source"] == "canonical_persona_memory_plane"
         assert data["memory_policy"]["cache_mutation_policy"] == "memory_bridge_only"
@@ -1175,3 +1177,575 @@ def test_bff_types_compat_lists_canonical_entities() -> None:
         assert "Strategy" in body["data"]["exported_entities"]
         assert "Persona" in body["data"]["exported_entities"]
         assert "compatibility_decision" in body["data"]
+
+
+def _build_5031_entry_registry_catalog():
+    """Build a representative 5,031-entry (4,900 active families + 100 superseded v1
+    revisions + 30 retired families + 1 foreign-tenant family) RegistryStore.
+    """
+    from services.registry.models import (
+        ArtifactState,
+        ArtifactType,
+        Lineage,
+        RegistryEntry,
+        StorageBackend,
+        StorageRef,
+    )
+    from services.registry.storage import RegistryStore
+
+    reg_store = RegistryStore()
+    entries: dict[str, RegistryEntry] = {}
+
+    for i in range(4900):
+        sid = f"strat-dev-{i:04d}"
+        is_target_1200 = i == 1200
+        is_multipage_batch = 100 <= i < 125
+        if is_target_1200:
+            title = "Deep Catalog Macro Horizon 1200"
+            owner = "quant-desk-1200"
+        elif is_multipage_batch:
+            title = f"MultiPageBatchSignal Strategy {i:04d}"
+            owner = "quant-desk-batch"
+        else:
+            title = f"Systematic Alpha Strategy {i:04d}"
+            owner = "quant-research-desk"
+
+        state = (
+            ArtifactState.DRAFT
+            if i < 4700
+            else (ArtifactState.CANDIDATE if i < 4800 else ArtifactState.APPROVED)
+        )
+        day = (i % 28) + 1
+        hour = (i // 28) % 24
+        minute = i % 60
+        updated_at = f"2026-10-{day:02d}T{hour:02d}:{minute:02d}:00Z"
+
+        if i < 100:
+            rid_v1 = f"reg-{sid}-v1"
+            v1_title = (
+                "Deep Catalog Macro Horizon Superseded"
+                if i == 50
+                else f"Superseded Draft {i:04d}"
+            )
+            v1_spec = {
+                "strategy_id": sid,
+                "spec_version": "1.0.0",
+                "version": "1.0.0",
+                "lifecycle_state": "draft",
+                "title": v1_title,
+                "name": v1_title,
+                "persona_ids": [f"persona-{i % 20}"],
+                "created_at": "2026-09-01T00:00:00Z",
+                "updated_at": "2026-09-01T00:00:00Z",
+                "provenance": {"created_at": "2026-09-01T00:00:00Z", "source_kind": "research_factory"},
+                "governance": {"risk_level": "medium", "owner": owner},
+            }
+            entries[rid_v1] = RegistryEntry(
+                registry_id=rid_v1,
+                artifact_type=ArtifactType.STRATEGY_SPEC,
+                strategy_id=sid,
+                version="1.0.0",
+                artifact_state=ArtifactState.DRAFT,
+                lineage=Lineage(source_run_ids=[f"run-{rid_v1}"]),
+                storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+                checksum=f"sha256:{rid_v1}",
+                evaluation_summary={"risk_level": "medium"},
+                metadata={
+                    "spec_version_id": rid_v1,
+                    "tenant_id": "tenant-dev",
+                    "spec_version": "1.0.0",
+                    "version": "1.0.0",
+                    "title": v1_title,
+                    "name": v1_title,
+                    "owner": owner,
+                    "strategy_spec": v1_spec,
+                },
+                created_at="2026-09-01T00:00:00Z",
+                updated_at="2026-09-01T00:00:00Z",
+                owner_tenant="tenant-dev",
+            )
+
+        ver = "1.1.0" if i < 100 else "1.0.0"
+        rid = f"reg-{sid}-{ver}"
+        spec = {
+            "strategy_id": sid,
+            "spec_version": ver,
+            "version": ver,
+            "lifecycle_state": state.value,
+            "title": title,
+            "name": title,
+            "persona_ids": [f"persona-{i % 20}"],
+            "created_at": "2026-10-01T00:00:00Z",
+            "updated_at": updated_at,
+            "last_modified_at": updated_at,
+            "provenance": {"created_at": "2026-10-01T00:00:00Z", "source_kind": "research_factory"},
+            "governance": {"risk_level": "medium", "owner": owner},
+            "market_scope": {"market": "TWSE", "frequency": "1d", "symbols": ["2330.TW"]},
+            "execution_profile": {"capital_pool_id": "pool-dev-1", "risk_level": "medium"},
+            "hypothesis": "heavy-payload-" + ("x" * 256),
+        }
+        entries[rid] = RegistryEntry(
+            registry_id=rid,
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=sid,
+            version=ver,
+            artifact_state=state,
+            lineage=Lineage(source_run_ids=[f"run-{rid}"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum=f"sha256:{rid}",
+            evaluation_summary={"risk_level": "medium"},
+            metadata={
+                "spec_version_id": rid,
+                "tenant_id": "tenant-dev",
+                "spec_version": ver,
+                "version": ver,
+                "title": title,
+                "name": title,
+                "owner": owner,
+                "risk": "medium",
+                "strategy_spec": spec,
+            },
+            created_at="2026-10-01T00:00:00Z",
+            updated_at=updated_at,
+            owner_tenant="tenant-dev",
+        )
+
+    for i in range(30):
+        sid = f"strat-dev-ret-{i:04d}"
+        rid = f"reg-{sid}-v1"
+        ret_title = (
+            "Deep Catalog Macro Horizon Retired"
+            if i == 1
+            else f"Retired Strategy {i:04d}"
+        )
+        entries[rid] = RegistryEntry(
+            registry_id=rid,
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=sid,
+            version="1.0.0",
+            artifact_state=ArtifactState.RETIRED,
+            lineage=Lineage(source_run_ids=[f"run-{rid}"]),
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+            checksum=f"sha256:{rid}",
+            evaluation_summary={"risk_level": "medium"},
+            metadata={
+                "spec_version_id": rid,
+                "tenant_id": "tenant-dev",
+                "spec_version": "1.0.0",
+                "version": "1.0.0",
+                "title": ret_title,
+                "name": ret_title,
+                "lifecycle_state": "retired",
+                "strategy_spec": {
+                    "strategy_id": sid,
+                    "spec_version": "1.0.0",
+                    "lifecycle_state": "retired",
+                    "title": ret_title,
+                    "name": ret_title,
+                },
+            },
+            created_at="2026-10-01T00:00:00Z",
+            updated_at="2026-10-28T23:59:00Z",
+            owner_tenant="tenant-dev",
+        )
+
+    rid_foreign = "reg-strat-foreign-0001-v1"
+    entries[rid_foreign] = RegistryEntry(
+        registry_id=rid_foreign,
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="strat-foreign-0001",
+        version="1.0.0",
+        artifact_state=ArtifactState.APPROVED,
+        lineage=Lineage(source_run_ids=["run-foreign-1"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.strategy_spec"),
+        checksum="sha256:foreign-1",
+        evaluation_summary={"risk_level": "medium"},
+        metadata={
+            "spec_version_id": rid_foreign,
+            "tenant_id": "tenant-foreign",
+            "spec_version": "1.0.0",
+            "version": "1.0.0",
+            "title": "Deep Catalog Macro Horizon Foreign",
+            "name": "Deep Catalog Macro Horizon Foreign",
+            "strategy_spec": {
+                "strategy_id": "strat-foreign-0001",
+                "spec_version": "1.0.0",
+                "lifecycle_state": "approved",
+                "title": "Deep Catalog Macro Horizon Foreign",
+                "name": "Deep Catalog Macro Horizon Foreign",
+            },
+        },
+        created_at="2026-10-01T00:00:00Z",
+        updated_at="2026-10-28T23:59:00Z",
+        owner_tenant="tenant-foreign",
+    )
+
+    reg_store._entries = entries
+    assert len(reg_store._entries) == 5031
+    return reg_store
+
+
+class _BoundedSearchReadSurface(ReadSurfacePorts):
+    """Production-wired ReadSurfacePorts for /bff/search tests backed by the
+    canonical Registry owner view for strategies and in-memory persona/pool readers.
+    """
+
+    def __init__(
+        self,
+        *,
+        personas: list[dict[str, Any]],
+        capital_pools: list[dict[str, Any]],
+    ) -> None:
+        super().__init__(
+            research_knowledge_source=DefaultResearchKnowledgeSourcePort(
+                research_write_owner=_FakeResearchWriteOwner({}),
+            )
+        )
+        self.allow_local_snapshot_fallback = False
+        self._personas = personas
+        self._capital_pools = capital_pools
+
+    def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._personas)
+
+    def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return list(self._capital_pools)
+
+
+def _fresh_bounded_owner_search_app(
+    monkeypatch,
+    reg_store,
+    *,
+    personas: list[dict[str, Any]] | None = None,
+    capital_pools: list[dict[str, Any]] | None = None,
+) -> tuple[TestClient, list[dict[str, Any]]]:
+    from types import SimpleNamespace
+    import urllib.parse
+    import services.control_plane.bff.command_adapters.base as cmd_base
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    import services.registry.service as reg_service_mod
+    from services.registry.models import ArtifactState
+    from services.registry.split_api import RegistryService
+
+    reg_svc = RegistryService(reg_store)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.test")
+    monkeypatch.setattr(reg_service_mod, "get_registry_service", lambda: reg_svc)
+    monkeypatch.setattr(
+        reg_service_mod,
+        "_strategy_spec_read_scope",
+        lambda authorization, x_tenant_id: (
+            SimpleNamespace(
+                tenant=x_tenant_id or "tenant-dev",
+                tenant_id=x_tenant_id or "tenant-dev",
+                roles=("viewer",),
+                claims={"tenant": x_tenant_id or "tenant-dev"},
+            ),
+            x_tenant_id or "tenant-dev",
+        ),
+    )
+
+    registry_calls: list[dict[str, Any]] = []
+
+    def _fake_http_request_json(url: str, *, method: str = "GET", payload=None, auth_token=None, tenant_id=None, extra_headers=None, timeout=5.0):
+        parsed = urllib.parse.urlsplit(url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        view = (qs.get("view") or [None])[0]
+        state = (qs.get("state") or [None])[0]
+        exclude_state = (qs.get("exclude_state") or [None])[0]
+        persona_id = (qs.get("persona_id") or [None])[0]
+        query = (qs.get("query") or [None])[0]
+        q = (qs.get("q") or [None])[0]
+        page_token = (qs.get("page_token") or [None])[0]
+        page_size = int((qs.get("page_size") or ["20"])[0])
+        art_raw = (qs.get("artifact_state") or [None])[0]
+        art_state = ArtifactState(art_raw) if art_raw else None
+
+        resp = reg_service_mod.list_all_strategy_spec_entries(
+            artifact_state=art_state,
+            view=view,
+            state=state,
+            exclude_state=exclude_state,
+            persona_id=persona_id,
+            query=query,
+            q=q,
+            page_token=page_token,
+            page_size=page_size,
+            authorization=f"Bearer {auth_token}" if auth_token else None,
+            x_tenant_id=tenant_id,
+        )
+        if hasattr(resp, "body"):
+            raw_bytes = bytes(resp.body)
+            decoded = json.loads(raw_bytes.decode("utf-8"))
+        else:
+            decoded = [v.model_dump(mode="json") for v in resp]
+            raw_bytes = json.dumps(decoded).encode("utf-8")
+        registry_calls.append(
+            {
+                "url": url,
+                "path": parsed.path,
+                "view": view,
+                "query": query if query is not None else q,
+                "page_token": page_token,
+                "page_size": page_size,
+                "tenant_id": tenant_id,
+                "response_bytes": len(raw_bytes),
+                "full_summary_rows_extracted": reg_store.full_summary_rows_extracted,
+            }
+        )
+        return decoded
+
+    monkeypatch.setattr(cmd_base, "http_request_json", _fake_http_request_json)
+
+    read_surface = _BoundedSearchReadSurface(
+        personas=personas
+        if personas is not None
+        else [
+            {
+                "id": "persona-horizon-1200",
+                "persona_id": "persona-horizon-1200",
+                "name": "Macro Horizon 1200 Persona",
+                "lifecycle_state": "active",
+                "status": "active",
+                "metadata": {"owner": "op-macro", "risk_level": "low"},
+                "updated_at": "2026-10-15T00:00:00Z",
+            }
+        ],
+        capital_pools=capital_pools
+        if capital_pools is not None
+        else [
+            {
+                "id": "pool-horizon-1200",
+                "pool_id": "pool-horizon-1200",
+                "name": "Macro Horizon 1200 Pool",
+                "status": "active",
+                "owner": "treasury-desk",
+                "risk_level": "medium",
+                "updated_at": "2026-10-16T00:00:00Z",
+            }
+        ],
+    )
+    _READ_STORE_HOLDER.current = read_surface
+
+    app = FastAPI()
+    app.add_middleware(OwnerReadContextMiddleware)
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+            return JSONResponse(status_code=exc.status_code, content=detail)
+        if isinstance(detail, dict) and "code" in detail:
+            return JSONResponse(status_code=exc.status_code, content={"error": detail})
+        code = "RESOURCE_NOT_FOUND" if exc.status_code == 404 else ("VALIDATION_FAILED" if exc.status_code == 422 else "ERROR")
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": code, "message": str(detail)}})
+
+    app.include_router(
+        create_research_router(
+            read_surface=_PROXY_READ_STORE,
+            get_read_store=lambda: _READ_STORE_HOLDER.current,
+            extract_identity=_extract_identity_for_test,
+            require_read_role=personas_service._require_read_role,
+            require_operator_role=personas_service._require_operator_role,
+            bff_error=personas_service._bff_error,
+            utc_now=utc_now,
+            page_slice=personas_service._page_slice,
+            snapshot_meta=lambda s: {"snapshot_at": s},
+            dataset_surface_status=lambda *a, **k: {"status": "ok"},
+            include_prepared_subrouters=True,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False), registry_calls
+
+
+def test_bff_search_5031_catalog_finds_strategy_beyond_first_page_via_bounded_owner_view(
+    monkeypatch,
+) -> None:
+    """AC1 & AC2: Over a 5,031-entry Registry catalog, GET /bff/search finds an
+    authorized matching strategy beyond the old first page through the bounded
+    Registry view=strategy_summary_page route, makes 0 unpaged full-entry calls,
+    extracts Phase 2 full summary leaves only for the returned matching page,
+    and preserves DTO shape, multi-page paging, retired/superseded exclusion,
+    and tenant isolation.
+    """
+    reg_store = _build_5031_entry_registry_catalog()
+    client, registry_calls = _fresh_bounded_owner_search_app(monkeypatch, reg_store)
+    viewer_headers = {"Authorization": "Bearer viewer-1:viewer:tenant-dev"}
+
+    # 1. Confirm strat-dev-1200 is not on the default first page of 20 strategies
+    first_page = client.get("/bff/search?types=strategy&page_size=20", headers=viewer_headers)
+    assert first_page.status_code == 200, first_page.text
+    first_page_ids = [item["id"] for item in first_page.json()["data"]]
+    assert len(first_page_ids) == 20
+    assert "strat-dev-1200" not in first_page_ids
+    assert first_page.json()["page_info"] == {
+        "next_page_token": "20",
+        "total": 4900,
+        "returned": 20,
+    }
+    assert registry_calls[-1]["view"] == "strategy_summary_page"
+    assert registry_calls[-1]["full_summary_rows_extracted"] == 20
+
+    # 2. Search for strat-dev-1200 beyond page 1 by title substring
+    registry_calls.clear()
+    resp = client.get(
+        "/bff/search?q=Macro+Horizon+1200&types=strategy&page_size=20",
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(registry_calls) == 1
+    assert registry_calls[0]["view"] == "strategy_summary_page"
+    assert registry_calls[0]["query"] == "Macro Horizon 1200"
+    assert registry_calls[0]["full_summary_rows_extracted"] == 1
+    assert all(call["view"] == "strategy_summary_page" for call in registry_calls)
+
+    assert body["page_info"] == {
+        "next_page_token": None,
+        "total": 1,
+        "returned": 1,
+    }
+    assert body["data"] == body["items"]
+    item = body["data"][0]
+    assert set(item.keys()) == {"id", "type", "name", "state", "owner", "risk", "updatedAt"}
+    assert item["id"] == "strat-dev-1200"
+    assert item["type"] == "strategy"
+    assert item["name"] == "Deep Catalog Macro Horizon 1200"
+    assert item["state"] == "draft"
+    assert item["owner"] == "quant-desk-1200"
+    assert item["risk"] == "medium"
+    assert isinstance(item["updatedAt"], str) and item["updatedAt"]
+    assert "meta" in body and "surfaces" in body["meta"]
+
+    # 3. Retired, superseded v1, and foreign-tenant strategies with "Macro Horizon" are excluded
+    registry_calls.clear()
+    broad = client.get(
+        "/bff/search?q=Deep+Catalog+Macro+Horizon&types=strategy&page_size=20",
+        headers=viewer_headers,
+    )
+    assert broad.status_code == 200, broad.text
+    broad_ids = [row["id"] for row in broad.json()["data"]]
+    assert broad_ids == ["strat-dev-1200"]
+    assert registry_calls[-1]["full_summary_rows_extracted"] == 1
+
+    # 4. Multi-page search across 25 matching strategies beyond page 1
+    registry_calls.clear()
+    collected_ids: list[str] = []
+    token: str | None = None
+    expected_page_counts = [10, 10, 5]
+    for expected_count in expected_page_counts:
+        url = "/bff/search?q=MultiPageBatchSignal&types=strategy&page_size=10"
+        if token is not None:
+            url += f"&page_token={token}"
+        page_resp = client.get(url, headers=viewer_headers)
+        assert page_resp.status_code == 200, page_resp.text
+        page_body = page_resp.json()
+        assert page_body["page_info"]["total"] == 25
+        assert page_body["page_info"]["returned"] == expected_count
+        assert len(page_body["data"]) == expected_count
+        assert registry_calls[-1]["view"] == "strategy_summary_page"
+        assert registry_calls[-1]["full_summary_rows_extracted"] == expected_count
+        collected_ids.extend(row["id"] for row in page_body["data"])
+        token = page_body["page_info"]["next_page_token"]
+    assert token is None
+    assert len(collected_ids) == 25
+    assert len(set(collected_ids)) == 25
+    assert set(collected_ids) == {f"strat-dev-{i:04d}" for i in range(100, 125)}
+
+    # 5. Caller tenant mismatch fails closed with 403 FORBIDDEN
+    cross_tenant = client.get(
+        "/bff/search?q=Macro+Horizon&types=strategy",
+        headers={**viewer_headers, "X-Tenant-Id": "tenant-foreign"},
+    )
+    assert cross_tenant.status_code == 403, cross_tenant.text
+    assert _error(cross_tenant)["code"] == "FORBIDDEN"
+
+
+def test_bff_search_mixed_sources_persona_only_pool_only_and_owner_failure_contract(
+    monkeypatch,
+) -> None:
+    """AC2: Verify mixed source search (strategy + persona + capital_pool),
+    persona-only and capital-pool-only reads (0 Registry calls, succeeding even
+    when Registry is down), and true Registry owner failure (HTTP 503
+    DEPENDENCY_UNAVAILABLE, never a 200 empty result).
+    """
+    import urllib.error
+    from io import BytesIO
+    import services.control_plane.bff.command_adapters.base as cmd_base
+
+    reg_store = _build_5031_entry_registry_catalog()
+    client, registry_calls = _fresh_bounded_owner_search_app(monkeypatch, reg_store)
+    tenant_headers = {"Authorization": "Bearer op-2:operator:tenant-dev"}
+
+    # 1. Mixed source search returns strategy + persona + capital_pool and pages across boundary
+    mixed = client.get("/bff/search?q=Horizon+1200&page_size=20", headers=tenant_headers)
+    assert mixed.status_code == 200, mixed.text
+    mixed_body = mixed.json()
+    assert mixed_body["page_info"] == {
+        "next_page_token": None,
+        "total": 3,
+        "returned": 3,
+    }
+    assert [(r["type"], r["id"]) for r in mixed_body["data"]] == [
+        ("strategy", "strat-dev-1200"),
+        ("persona", "persona-horizon-1200"),
+        ("capital_pool", "pool-horizon-1200"),
+    ]
+    assert len(registry_calls) == 1
+    assert registry_calls[0]["view"] == "strategy_summary_page"
+    assert registry_calls[0]["full_summary_rows_extracted"] == 1
+
+    # Mixed source single-item pagination across strategy -> persona -> capital_pool
+    paged_items: list[tuple[str, str]] = []
+    next_tok: str | None = None
+    for idx in range(3):
+        url = "/bff/search?q=Horizon+1200&page_size=1"
+        if next_tok is not None:
+            url += f"&page_token={next_tok}"
+        p_resp = client.get(url, headers=tenant_headers)
+        assert p_resp.status_code == 200, p_resp.text
+        p_body = p_resp.json()
+        assert p_body["page_info"]["total"] == 3
+        assert p_body["page_info"]["returned"] == 1
+        paged_items.append((p_body["data"][0]["type"], p_body["data"][0]["id"]))
+        next_tok = p_body["page_info"]["next_page_token"]
+        if idx < 2:
+            assert next_tok == str(idx + 1)
+        else:
+            assert next_tok is None
+    assert paged_items == [
+        ("strategy", "strat-dev-1200"),
+        ("persona", "persona-horizon-1200"),
+        ("capital_pool", "pool-horizon-1200"),
+    ]
+
+    # 2. Simulate Registry owner failure (HTTP 503)
+    def _failing_registry(*args, **kwargs):
+        registry_calls.append({"failed": True})
+        raise urllib.error.HTTPError("http://registry.test/api/registry/strategy-specs", 503, "Service Unavailable", {}, BytesIO(b""))
+
+    monkeypatch.setattr(cmd_base, "http_request_json", _failing_registry)
+
+    # Persona-only and capital-pool-only searches do not call Registry and succeed with 200
+    registry_calls.clear()
+    persona_only = client.get("/bff/search?q=Macro+Horizon+1200&types=persona", headers=tenant_headers)
+    assert persona_only.status_code == 200, persona_only.text
+    assert len(registry_calls) == 0
+    assert [(r["type"], r["id"]) for r in persona_only.json()["data"]] == [
+        ("persona", "persona-horizon-1200"),
+    ]
+
+    pool_only = client.get("/bff/search?q=Macro+Horizon+1200&types=capital_pool", headers=tenant_headers)
+    assert pool_only.status_code == 200, pool_only.text
+    assert len(registry_calls) == 0
+    assert [(r["type"], r["id"]) for r in pool_only.json()["data"]] == [
+        ("capital_pool", "pool-horizon-1200"),
+    ]
+
+    # 3. Strategy search and mixed search fail closed with HTTP 503 DEPENDENCY_UNAVAILABLE (never empty 200)
+    strat_fail = client.get("/bff/search?q=Macro+Horizon+1200&types=strategy", headers=tenant_headers)
+    assert strat_fail.status_code == 503, strat_fail.text
+    assert _error(strat_fail)["code"] == "DEPENDENCY_UNAVAILABLE"
+
+    all_fail = client.get("/bff/search?q=Macro+Horizon+1200", headers=tenant_headers)
+    assert all_fail.status_code == 503, all_fail.text
+    assert _error(all_fail)["code"] == "DEPENDENCY_UNAVAILABLE"

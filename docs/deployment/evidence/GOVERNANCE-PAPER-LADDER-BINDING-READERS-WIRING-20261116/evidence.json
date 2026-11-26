@@ -1,0 +1,11 @@
+{
+  "task_id": "GOVERNANCE-PAPER-LADDER-BINDING-READERS-WIRING-20261116",
+  "defect": "Hosted dev e7ec353d6: governance container had empty GOVERNANCE_CAPITAL_BASE_URL / GOVERNANCE_RUNTIME_MANAGER_BASE_URL and no service tokens, so configured_persona_paper_binding_verifier raised PaperCandidateUnavailable and POST /api/governance/approvals/apv-persona-enroll-*/review returned 503 (13:51Z); personas persona-2448c7053e33ea48da47 / persona-ee7112a829d38b9135ac / persona-6507750312870d03a241 stuck at research_only (governance_decision_not_approved:research_only_to_consultable:proposed/None).",
+  "fix": "Issuer mints two distinct read-only principals for governance (capital-reader subject pantheon-dev-governance-capital-binding-reader; viewer subject pantheon-dev-governance-runtime-binding-reader), delivered as token files to the governance consumer directory with renewal/revocation; docker-compose governance service passes both base URLs and token/_FILE settings (empty secret defaults); capital CAPITAL_ALLOWED_READER_SERVICES default admits the Capital reader subject (GET only).",
+  "authorization_notes": "No Capital or Runtime Manager code change needed: Capital reads admit capital-reader role plus a reader-service allowlist (compose default extended); Runtime Manager /api/runtime-bindings admits viewer with tenant claim. No write authority widened.",
+  "validation": {
+    "command": "pytest scripts/test_issue_dev_paper_principals.py scripts/test_dev_paper_principal_renewal.py scripts/test_persona_cycle_owner_ports_compose_contract.py services/governance/tests/test_paper_grant_persona_lifecycle_integration.py",
+    "result": "118 passed",
+    "mutation_check": "removing the reader subject from CAPITAL_ALLOWED_READER_SERVICES makes the two issued-principal integration tests fail"
+  }
+}

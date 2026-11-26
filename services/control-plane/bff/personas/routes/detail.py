@@ -26,6 +26,7 @@ from ..service import (
     _project_persona_dto,
     _project_persona_fleet_item,
     _project_persona_management_operational_surface,
+    _resolve_active_runtime_binding_overlay,
     _retrieve_canonical_persona_memory,
     _routed_strategies_for_persona,
     build_persona_runtime_profile,
@@ -145,7 +146,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             _require_read_role(identity)
 
             # PS-02: Persona detail
-            persona = _service.get_persona(persona_id)
+            caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+            persona = _get_persona_record_for_detail(
+                persona_id, caller_tenant, fallback_owner=identity.operator_id,
+            )
             if not persona:
                 _raise_if_read_surface_unavailable(_dataset_surface_status("personas", snapshot_at=utc_now()), label="Persona")
                 raise _bff_error(
@@ -541,6 +545,15 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "activeIncidents": active_incidents_for_persona,
                 "latestTelemetry": latest_telemetry_summary,
             }
+            data["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            surfaces.update(pool_surfaces)
+            data["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
+                persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
+                lifecycle_state=((persona.get("lifecycle_state") or persona.get("state")) if isinstance(persona, dict) else None),
+            )
+            surfaces.update(cycle_surfaces)
 
             return {
                 "data": data,
@@ -574,11 +587,15 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     "Persona not found",
                     f"Persona {persona_id} does not exist",
                 )
+            rb_overlay = _resolve_active_runtime_binding_overlay(raw)
             dto = _project_persona_dto(
                 raw,
-                overlay=None,
+                overlay=rb_overlay or None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
             )
+            from ..risk_changes import project_risk_change
+
+            project_risk_change(dto, raw, caller_tenant)
             containment = _service.get_persona_containment(persona_id)
             if containment:
                 containment_state = str(containment.get("containment_state") or "frozen")
@@ -596,6 +613,15 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                     snapshot_at=snapshot_at,
                     has_data=True,
                 )
+            dto["strategyPool"], pool_surfaces = _service.read_strategy_pool(
+                persona_id, caller_tenant, authorization=authorization, snapshot_at=snapshot_at,
+            )
+            meta.setdefault("surfaces", {}).update(pool_surfaces)
+            dto["personaCycle"], cycle_surfaces = _service.read_persona_cycle(
+                persona_id, caller_tenant, identity=identity, authorization=authorization, snapshot_at=snapshot_at,
+                lifecycle_state=((raw.get("lifecycle_state") or raw.get("state")) if isinstance(raw, dict) else None),
+            )
+            meta["surfaces"].update(cycle_surfaces)
             return {
                 "data": dto,
                 "meta": meta,

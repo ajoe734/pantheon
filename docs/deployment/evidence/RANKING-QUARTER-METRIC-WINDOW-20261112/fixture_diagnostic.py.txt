@@ -1,0 +1,21 @@
+"""Evaluate the proposed fixture in memory; never edit the repository fixture."""
+import ast
+import __future__
+from pathlib import Path
+import subprocess
+import tempfile
+import pytest
+from services.control_plane.bff import test_bff_promotion_review_governance as fixture
+
+repo = Path.cwd()
+relative = Path("services/control-plane/bff/test_bff_promotion_review_governance.py")
+patch = Path(__file__).resolve().with_name("proposed-fixture-repair.patch")
+with tempfile.TemporaryDirectory(prefix="quarter-fixture-diagnostic-") as temporary:
+    destination = Path(temporary) / relative
+    destination.parent.mkdir(parents=True)
+    destination.write_text((repo / relative).read_text())
+    subprocess.run(["patch", "--silent", "-p1", "-i", str(patch)], cwd=temporary, check=True)
+    tree = ast.parse(destination.read_text())
+node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_pm12_eligible_persona_records")
+exec(compile(ast.Module(body=[node], type_ignores=[]), "proposed_fixture.py", "exec", flags=__future__.annotations.compiler_flag), fixture.__dict__)
+raise SystemExit(pytest.main(["-q", "services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py"]))

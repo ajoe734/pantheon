@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "persona_strategy_pool.v1",
+  "title": "Persona strategy pool version",
+  "description": "One immutable version of a persona's strategy pool. Every change appends a version; removed members stay in history. Execution reads members only through the envelope artifact, not this record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "persona_id", "tenant_id", "pool_version", "members", "change_reason", "created_at", "created_by", "previous_digest", "digest"],
+  "properties": {
+    "schema_version": {"const": "persona_strategy_pool.v1"},
+    "persona_id": {"type": "string", "minLength": 1},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "pool_version": {"type": "integer", "minimum": 1},
+    "members": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+    "change_reason": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string"},
+    "created_by": {"type": "string"},
+    "previous_digest": {"type": ["string", "null"]},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_ref", "checksum", "stage", "risk_weight", "baseline_ref", "joined_at", "parent_ref", "demand_ref"],
+      "properties": {
+        "artifact_ref": {"type": "string", "minLength": 1, "description": "Approved registry entry id"},
+        "checksum": {"type": "string", "minLength": 1, "description": "Must equal the registry entry checksum"},
+        "stage": {"enum": ["trial", "active", "removed"]},
+        "risk_weight": {"type": "number", "minimum": 0, "maximum": 1},
+        "baseline_ref": {"type": ["string", "null"], "description": "Gate verdict reference (the approval decision that admitted the artifact, never the rollback target); required when stage is active"},
+        "joined_at": {"type": "string"},
+        "parent_ref": {"type": ["string", "null"]},
+        "demand_ref": {"type": ["string", "null"]},
+        "removed_at": {"type": ["string", "null"]},
+        "removal_reason": {"type": ["string", "null"], "description": "Required when stage is removed"}
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -13,14 +14,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from services.external_egress import is_internal_host, open_external_url
+from services.external_egress import is_internal_host, open_external_url, open_internal_service_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
+from .connectors.collector_bundle import (
+    COLLECTOR_BUNDLE_ADAPTER_TOKEN, CollectorPullResult, deferred_collector_acknowledgement,
+)
 from .external_sources import validate_external_source_connector, validate_external_source_record
 from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
 from .process_lock import exclusive_file_lock
 from .scheduler import IngestBatch
 
+
+# TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: the full TWSE/TPEx chip response (~1310 rows) must fit one
+# run; the profile budget is 3000 (connector_definitions.TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS). Adapters with
+# their own tighter guard (FinMind per-job budget in deploy_nonprod_vm.sh) keep enforcing it themselves.
+PROVIDER_OWNED_ADAPTER_MAX_RECORDS = 5000
 
 SENSITIVE_CONFIG_KEYS = {
     "api_key",
@@ -194,46 +203,102 @@ class JsonlConfiguredConnectorStore:
         self._lock = threading.RLock()
         self._configs: dict[str, ConfiguredConnector] = {}
         self._states: dict[str, dict[str, Any]] = {}
+        self._read_key: tuple[int, int, int] | None = None
+        self._read_offset = 0
+        self._read_line_no = 0
         self.reload()
 
     def reload(self) -> None:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
 
+    def _stat_key(self) -> tuple[int, int, int] | None:
+        try:
+            stat = self.path.stat()
+            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return None
+
     def _reload_unlocked(self) -> None:
-        self._configs = {}
-        self._states = {}
-        if not self.path.exists():
+        """Bring the projections up to date with the journal.
+
+        Same file identity and unchanged stat: nothing to read. Same inode that only grew: apply the
+        appended complete lines. Anything else (replaced, truncated, same-size rewrite, missing):
+        full replay. The result always equals a full replay of the file.
+        """
+        key = self._stat_key()
+        if key is None:
+            self._configs = {}
+            self._states = {}
+            self._read_key = None
+            self._read_offset = 0
+            self._read_line_no = 0
             return
-        for line_no, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise SourceEvidenceError(f"Invalid connector config JSONL at {self.path}:{line_no}: {exc.msg}") from exc
-            record_type = str(entry.get("record_type") or "")
-            payload = entry.get("payload")
-            if not isinstance(payload, Mapping):
-                raise SourceEvidenceError(f"Invalid connector config payload at {self.path}:{line_no}")
-            if record_type == "connector_config":
-                connector_payload = payload.get("connector")
-                fetch_payload = payload.get("fetch")
-                if not isinstance(connector_payload, Mapping) or not isinstance(fetch_payload, Mapping):
-                    raise SourceEvidenceError(f"Invalid connector config record at {self.path}:{line_no}")
-                connector = validate_external_source_connector(SourceConnector.from_dict(connector_payload))
-                self._configs[connector.connector_id] = ConfiguredConnector(
-                    connector=connector,
-                    fetch=dict(fetch_payload),
-                    updated_at=str(payload.get("updated_at") or _utc_now()),
-                )
-            elif record_type == "connector_fetch_state":
-                connector_id = str(payload.get("connector_id") or "")
-                if not connector_id:
-                    raise SourceEvidenceError(f"Invalid connector fetch state at {self.path}:{line_no}")
-                self._states[connector_id] = dict(payload)
-            else:
-                raise SourceEvidenceError(f"Unsupported connector config record: {record_type or '<missing>'}")
+        previous = self._read_key
+        if previous is not None and key == previous:
+            return
+        if (
+            previous is None
+            or key[0] != previous[0]
+            or key[1] < previous[1]
+            or key[1] == previous[1]
+        ):
+            self._configs = {}
+            self._states = {}
+            self._read_offset = 0
+            self._read_line_no = 0
+        with self.path.open("rb") as handle:
+            handle.seek(self._read_offset)
+            while raw := handle.readline():
+                complete = raw.endswith(b"\n")
+                try:
+                    line = raw.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise SourceEvidenceError(
+                        f"Invalid connector config JSONL at {self.path}:{self._read_line_no + 1}: {exc.reason}"
+                    ) from exc
+                self._apply_line_unlocked(line, self._read_line_no + 1)
+                if not complete:
+                    break  # unterminated tail: applied like a full replay, re-read once completed
+                self._read_offset = handle.tell()
+                self._read_line_no += 1
+        self._read_key = key
+
+    def _apply_line_unlocked(self, line: str, line_no: int) -> None:
+        if not line.strip():
+            return
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise SourceEvidenceError(f"Invalid connector config JSONL at {self.path}:{line_no}: {exc.msg}") from exc
+        record_type = str(entry.get("record_type") or "")
+        payload = entry.get("payload")
+        if not isinstance(payload, Mapping):
+            raise SourceEvidenceError(f"Invalid connector config payload at {self.path}:{line_no}")
+        if record_type == "connector_config":
+            connector_payload = payload.get("connector")
+            fetch_payload = payload.get("fetch")
+            if not isinstance(connector_payload, Mapping) or not isinstance(fetch_payload, Mapping):
+                raise SourceEvidenceError(f"Invalid connector config record at {self.path}:{line_no}")
+            connector = validate_external_source_connector(SourceConnector.from_dict(connector_payload))
+            self._configs[connector.connector_id] = ConfiguredConnector(
+                connector=connector,
+                fetch=dict(fetch_payload),
+                updated_at=str(payload.get("updated_at") or _utc_now()),
+            )
+        elif record_type == "connector_fetch_state":
+            connector_id = str(payload.get("connector_id") or "")
+            if not connector_id:
+                raise SourceEvidenceError(f"Invalid connector fetch state at {self.path}:{line_no}")
+            self._states[connector_id] = dict(payload)
+        else:
+            raise SourceEvidenceError(f"Unsupported connector config record: {record_type or '<missing>'}")
+
+    @staticmethod
+    def _copy_config(config: ConfiguredConnector) -> ConfiguredConnector:
+        return ConfiguredConnector(
+            connector=config.connector, fetch=copy.deepcopy(dict(config.fetch)), updated_at=config.updated_at
+        )
 
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
         connector = validate_external_source_connector(connector)
@@ -250,7 +315,7 @@ class JsonlConfiguredConnectorStore:
             config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
             self._append("connector_config", connector.connector_id, config.to_dict())
             self._configs[connector.connector_id] = config
-            return config
+            return self._copy_config(config)
 
     def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         """Return the persisted fetch contract without mutating the store."""
@@ -259,19 +324,20 @@ class JsonlConfiguredConnectorStore:
     def get_config(self, connector_id: str) -> ConfiguredConnector | None:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            return self._configs.get(connector_id)
+            config = self._configs.get(connector_id)
+            return None if config is None else self._copy_config(config)
 
     def list_configs(self) -> list[ConfiguredConnector]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            return list(self._configs.values())
+            return [self._copy_config(c) for c in self._configs.values()]
 
     def read_snapshot(self) -> tuple[list[ConfiguredConnector], dict[str, dict[str, Any]]]:
         """Read configured connectors and their fetch states in one replay."""
 
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
-            configs = list(self._configs.values())
+            configs = [self._copy_config(c) for c in self._configs.values()]
             fetch_states = {
                 config.connector.connector_id: self._fetch_state_unlocked(
                     config.connector.connector_id
@@ -286,7 +352,7 @@ class JsonlConfiguredConnectorStore:
             return self._fetch_state_unlocked(connector_id)
 
     def _fetch_state_unlocked(self, connector_id: str) -> dict[str, Any]:
-        return dict(
+        return copy.deepcopy(
             self._states.get(
                 connector_id,
                 {
@@ -300,12 +366,17 @@ class JsonlConfiguredConnectorStore:
             )
         )
 
-    def record_fetch_attempt(self, connector_id: str, *, success: bool, error: str | None = None) -> dict[str, Any]:
+    def record_fetch_attempt(
+        self, connector_id: str, *, success: bool, error: str | None = None,
+        collector_outcome: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         with exclusive_file_lock(self._lock_path, self._lock):
             self._reload_unlocked()
             state = self._fetch_state_unlocked(connector_id)
             state["connector_id"] = connector_id
             state["attempts"] = int(state.get("attempts") or 0) + 1
+            if collector_outcome is not None:
+                state["collector_outcome"] = dict(collector_outcome)
             if success:
                 state["successful_attempts"] = int(state.get("successful_attempts") or 0) + 1
                 state["last_error"] = None
@@ -315,7 +386,7 @@ class JsonlConfiguredConnectorStore:
             state["updated_at"] = _utc_now()
             self._append("connector_fetch_state", connector_id, state)
             self._states[connector_id] = state
-            return dict(state)
+            return copy.deepcopy(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         _reject_inline_fetch_secrets(fetch)
@@ -394,8 +465,10 @@ class JsonlConfiguredConnectorStore:
                 str(fetch.get("adapter") or fetch.get("provider_owned_fetcher") or "")
             )
             max_records = int(fetch.get("max_records") or 100)
-            if max_records <= 0 or max_records > 1000:
-                raise SourceEvidenceError("fetch.max_records must be > 0 and <= 1000")
+            if max_records <= 0 or max_records > PROVIDER_OWNED_ADAPTER_MAX_RECORDS:
+                raise SourceEvidenceError(
+                    f"fetch.max_records must be > 0 and <= {PROVIDER_OWNED_ADAPTER_MAX_RECORDS}"
+                )
             adapter_config = fetch.get("adapter_config") or {}
             request = fetch.get("request") or {}
             if not isinstance(adapter_config, Mapping):
@@ -464,6 +537,8 @@ class ConfiguredConnectorFetcher:
             self.store.record_fetch_attempt(connector_id, success=False, error=reason)
             raise SourceEvidenceError(reason)
 
+        collector_outcome = None
+        collector_result = None
         try:
             if config.fetch.get("mode") == "external_feed":
                 payload = self._fetch_external_payload(config.fetch)
@@ -484,13 +559,40 @@ class ConfiguredConnectorFetcher:
                     for payload in record_payloads
                 )
             elif config.fetch.get("mode") == "provider_owned_adapter":
-                records = execute_provider_owned_adapter(
-                    connector=config.connector,
-                    fetch=config.fetch,
-                    trace_id=trace_id,
-                    job_parameters=job_parameters,
-                )
-                next_watermark = config.fetch.get("next_watermark")
+                fetch = config.fetch
+                if fetch.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN:
+                    request = dict(fetch.get("request") or {})
+                    request.setdefault("watermark", watermark)
+                    fetch = {**fetch, "request": request}
+                with deferred_collector_acknowledgement():
+                    result = execute_provider_owned_adapter(
+                        connector=config.connector,
+                        fetch=fetch,
+                        trace_id=trace_id,
+                        job_parameters=job_parameters,
+                        preserve_collector_outcome=True,
+                    )
+                if isinstance(result, CollectorPullResult):
+                    collector_result = result
+                    records = result.records
+                    next_watermark = result.next_cursor
+                    collector_outcome = {
+                        "observed": dict(result.observed), "paused_reasons": list(result.paused_reasons),
+                        "complete": result.complete, "no_new_data": result.no_new_data,
+                        "bundle_count": result.bundle_count, "next_cursor": result.next_cursor,
+                        "feature_rejected": list(result.feature_rejected),
+                    }
+                    if not records and not result.no_new_data:
+                        reasons = [*result.paused_reasons, *result.observed.get("reasons", ())]
+                        collector_outcome["observed"] = {
+                            **result.observed, "health_state": "degraded",
+                            "reasons": [*result.observed.get("reasons", ()), "collector_empty_unproven"],
+                        }
+                        raise SourceEvidenceError("collector empty outcome is not verified no-new-data: "
+                                                  + "; ".join(reasons or ["no complete consumed bundle evidence"]))
+                else:
+                    records = result
+                    next_watermark = config.fetch.get("next_watermark")
             else:
                 record_payloads = config.fetch.get("records", [])
                 next_watermark = config.fetch.get("next_watermark")
@@ -504,17 +606,39 @@ class ConfiguredConnectorFetcher:
                     for payload in record_payloads
                 )
         except Exception as exc:
-            self.store.record_fetch_attempt(connector_id, success=False, error=str(exc))
+            if (config.fetch.get("mode") == "provider_owned_adapter"
+                    and config.fetch.get("adapter") == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+                    and collector_outcome is None):
+                # Verification/transport failures must not leave a prior healthy empty
+                # outcome looking current in the persisted fetch-state readback.
+                collector_outcome = {
+                    "observed": {"health_state": "degraded", "reasons": ["collector_pull_failed"]},
+                    "complete": False, "no_new_data": False,
+                }
+            self.store.record_fetch_attempt(connector_id, success=False, error=str(exc),
+                                           collector_outcome=collector_outcome)
             raise
-        self.store.record_fetch_attempt(connector_id, success=True)
+        self.store.record_fetch_attempt(connector_id, success=True, collector_outcome=collector_outcome)
+        empty_ok = bool(config.fetch.get("allow_empty", False))
+        empty_reason = str(config.fetch.get("empty_reason") or "") or None
+        if collector_result is not None:
+            empty_ok = collector_result.no_new_data
+            empty_reason = "verified collector consumed cursor; no new data" if empty_ok else None
         return IngestBatch(
-            records=records,
+            records=tuple(r for r in records if not (
+                collector_result is not None and r.source_type.value == "market"
+                and config.connector.source_type.value in {"macro", "social"})),
+            derived_records=tuple(r for r in records if (
+                collector_result is not None and r.source_type.value == "market"
+                and config.connector.source_type.value in {"macro", "social"})),
+            collector_delivery=collector_result.delivery if collector_result is not None else None,
             next_watermark=next_watermark,
-            empty_ok=bool(config.fetch.get("allow_empty", False)),
-            empty_reason=str(config.fetch.get("empty_reason") or "") or None,
+            empty_ok=empty_ok,
+            empty_reason=empty_reason,
             metadata={
                 "fetch_mode": config.fetch.get("mode"),
                 "job_parameters": dict(job_parameters or {}),
+                **({"collector_outcome": collector_outcome} if collector_outcome is not None else {}),
             },
         )
 
@@ -638,25 +762,13 @@ def _open_configured_url(
     allowed_prefixes: list[str],
 ):
     if network_scope == "internal_service":
-        host = urllib.parse.urlparse(request.full_url).hostname or ""
-        if not is_internal_host(host):
-            raise SourceEvidenceError("internal_service redirect escaped to an external host")
-        opener = urllib.request.build_opener(_InternalServiceRedirectHandler(allowed_prefixes))
-        return opener.open(request, timeout=timeout)
+        return open_internal_service_url(
+            request,
+            timeout=timeout,
+            allowed_prefixes=allowed_prefixes,
+            error_cls=SourceEvidenceError,
+        )
     return open_external_url(request, caller=caller, timeout=timeout)
-
-
-class _InternalServiceRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, allowed_prefixes: list[str]) -> None:
-        super().__init__()
-        self.allowed_prefixes = allowed_prefixes
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        absolute_url = urllib.parse.urljoin(req.full_url, newurl)
-        host = urllib.parse.urlparse(absolute_url).hostname or ""
-        if not is_internal_host(host) or not _url_is_allowed(absolute_url, self.allowed_prefixes):
-            raise SourceEvidenceError("internal_service redirect escaped its internal URL allowlist")
-        return super().redirect_request(req, fp, code, msg, headers, absolute_url)
 
 
 def _assert_robots_allowed(

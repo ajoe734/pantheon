@@ -1,0 +1,76 @@
+{
+  "schema_version": "collector_query_vocabulary.v1",
+  "terms": {
+    "quantitative finance": [
+      "quantitative finance",
+      "量化"
+    ],
+    "machine learning": [
+      "machine learning",
+      "機器學習"
+    ],
+    "asset pricing": [
+      "asset pricing",
+      "資產定價"
+    ],
+    "Taiwan": [
+      "taiwan",
+      "台灣",
+      "台股"
+    ],
+    "semiconductor": [
+      "semiconductor",
+      "半導體"
+    ],
+    "momentum": [
+      "momentum",
+      "動能"
+    ],
+    "mean reversion": [
+      "mean reversion",
+      "均值回歸"
+    ],
+    "value": [
+      "value",
+      "價值"
+    ],
+    "quality": [
+      "quality",
+      "品質"
+    ],
+    "volatility": [
+      "volatility",
+      "波動"
+    ],
+    "liquidity": [
+      "liquidity",
+      "流動性"
+    ],
+    "price volume": [
+      "price volume",
+      "ohlcv",
+      "twse-daily",
+      "價量"
+    ],
+    "margin balance": [
+      "margin balance",
+      "tw-margin",
+      "融資"
+    ],
+    "institutional flow": [
+      "institutional flow",
+      "t86",
+      "法人"
+    ],
+    "monthly revenue": [
+      "monthly revenue",
+      "月營收"
+    ],
+    "Taiwan stock": [
+      "taiwan stock"
+    ],
+    "台股": [
+      "台股"
+    ]
+  }
+}

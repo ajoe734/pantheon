@@ -40,6 +40,11 @@ from services.trade_journey.correlation_envelope import (
     propagate_envelope,
     validate_envelope,
 )
+from broker_paper_client import (
+    BrokerOrderNotFound,
+    BrokerPaperError,
+    fetch_paper_order,
+)
 from store import build_reconciliation_drift_store
 from telemetry_client import (
     TelemetryAuthError,
@@ -1322,6 +1327,27 @@ def consume_telemetry_events(body: TelemetryEventConsumeBody) -> Dict[str, Any]:
                 )
                 continue
             report["tenant_id"] = event_tenant_id
+            report_id = str(report.get("drift_report_id") or "").strip()
+            existing_report = (
+                store.get_drift_report(report_id, tenant_id=event_tenant_id)
+                if report_id and claim_result.get("reason") != "recovered"
+                else None
+            )
+            if existing_report is not None:
+                duplicate_event_ids.append(event_id)
+                drift_reports.append(existing_report)
+                work_result = {
+                    "status": "ok",
+                    "event_id": event_id,
+                    "drift_report_id": existing_report.get("drift_report_id"),
+                    "incident_id": existing_report.get("incident_id"),
+                }
+                store.complete_work(
+                    claim_id=str(claim["claim_id"]),
+                    lease_token=str(claim["lease_token"]),
+                    result=work_result,
+                )
+                continue
             stored = store.put_drift_report(report)
             existing_report_ids.add(str(stored.get("drift_report_id") or ""))
             drift_reports.append(stored)
@@ -2162,7 +2188,11 @@ def _paper_lifecycle_identity(
         return None, "lifecycle_runtime_mismatch"
     if str(identity.get("event_id")) != str(envelope.get("event_id")):
         return None, "lifecycle_event_envelope_mismatch"
-    if str(identity.get("tenant_id")) != str(envelope.get("tenant_id")):
+    summary_tenant = str(summary.get("tenant_id") or "").strip()
+    if (
+        str(identity.get("tenant_id")) != str(envelope.get("tenant_id"))
+        or (summary_tenant and str(identity.get("tenant_id")) != summary_tenant)
+    ):
         return None, "lifecycle_tenant_mismatch"
     if str(identity.get("trace_id")) != str(envelope.get("trace_id")):
         return None, "lifecycle_trace_mismatch"
@@ -2225,6 +2255,561 @@ def _paper_lifecycle_identity(
     return identity, None
 
 
+_RUNTIME_HEALTH_CHECKS = frozenset(
+    {
+        "runtime_state",
+        "runtime_health_summary",
+        "queue_lag_ms",
+        "event_delivery_lag_ms",
+        "actual_metrics_presence",
+    }
+)
+_RUNTIME_UNHEALTHY_DEFER_SECONDS = 60 * 60
+
+
+def _journey_reconciliation_decision(
+    evaluation: Dict[str, Any],
+    *,
+    snapshot_created_at: Any,
+    timestamp: str,
+) -> tuple[str, str | None, List[Dict[str, Any]]]:
+    """Decide one journey from journey-scoped checks only.
+
+    Returns (decision, reason_code, reason_detail) where decision is one of
+    ``completed``, ``failed`` or ``defer``.  Strategy performance drift
+    (``drift_checks``) is reported through the drift incident path and never
+    decides a journey; runtime health is transient and defers the journey.
+    """
+    non_ok = [
+        check
+        for check in evaluation.get("reconciliation_checks") or []
+        if isinstance(check, dict)
+        and str(check.get("status") or "").strip().lower() != "ok"
+    ]
+    if not non_ok:
+        return "completed", None, []
+    detail = [
+        {
+            "check": check.get("check"),
+            "status": check.get("status"),
+            "detail": check.get("detail"),
+            "observed": check.get("observed"),
+            "threshold": check.get(
+                "threshold",
+                check.get("critical_threshold", check.get("warning_threshold")),
+            ),
+        }
+        for check in non_ok
+    ]
+    names = {str(check.get("check") or "") for check in non_ok}
+    if names <= _RUNTIME_HEALTH_CHECKS:
+        snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
+        now = _strict_lifecycle_datetime(timestamp)
+        if (
+            snapshot_at is not None
+            and now is not None
+            and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
+        ):
+            return "failed", "runtime_unhealthy_at_reconciliation", detail
+        return "defer", None, detail
+    if "authoritative_actual_identity" in names:
+        return "failed", "reconciliation_identity_unverified", detail
+    return "failed", "reconciliation_check_failed", detail
+
+
+_BOOKING_TOLERANCE = 1e-6
+_BROKER_READ_TIMEOUT_SECONDS = 3.0
+
+
+def _num(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+_FILL_BOOKING_EVIDENCE_KEYS = (
+    "position_quantity_before",
+    "position_quantity_after",
+    "cash_before",
+    "cash_after",
+    "fill_quantity",
+    "fill_price",
+    "broker_order_id",
+)
+
+
+def _booking_fill(identity: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Fill evidence carried by the committed position snapshot, or None for no-fill journeys."""
+    meta = identity.get("metadata") if isinstance(identity.get("metadata"), dict) else {}
+    if meta.get("submitted_to_broker") is not True and not any(
+        meta.get(key) not in (None, "") for key in _FILL_BOOKING_EVIDENCE_KEYS
+    ):
+        return None
+    return meta
+
+
+def _booking_check(
+    check: str,
+    expected: float | None,
+    actual: float | None,
+    *,
+    missing_fields: Sequence[str] = (),
+) -> Dict[str, Any]:
+    if expected is None or actual is None:
+        missing_sides: List[str] = []
+        for field in missing_fields:
+            if field and field not in missing_sides:
+                missing_sides.append(field)
+        if expected is None and not missing_fields:
+            missing_sides.append("expected")
+        if actual is None and "actual" not in missing_sides:
+            missing_sides.append("actual")
+        return {
+            "check": check,
+            "status": "unverified",
+            "expected": expected,
+            "actual": actual,
+            "difference": None,
+            "delta": None,
+            "missing_evidence": missing_sides,
+        }
+    diff = actual - expected
+    return {
+        "check": check,
+        "status": "passed" if abs(diff) <= _BOOKING_TOLERANCE else "failed",
+        "expected": expected,
+        "actual": actual,
+        "difference": diff,
+        "delta": diff,
+    }
+
+
+def _journey_booking_decision(
+    identity: Dict[str, Any],
+    *,
+    snapshot_created_at: Any,
+    timestamp: str,
+    broker_url: str,
+) -> tuple[str, str | None, List[Dict[str, Any]]] | None:
+    """Compare broker record, fill and booked position/cash for a journey with a fill.
+
+    Returns None when the journey has no fill (reconciled as before), otherwise
+    (decision, reason_code, reason_detail) with decision completed|failed|defer.
+    Commission and tax are ledger-owned: they are never compared with the broker.
+    """
+    fill = _booking_fill(identity)
+    if fill is None:
+        return None
+    side = str(fill.get("side") or "").strip().lower()
+    sign = -1.0 if side == "sell" else (1.0 if side == "buy" else None)
+    fill_qty = _num(fill.get("fill_quantity"))
+    fill_price = _num(fill.get("fill_price"))
+    kind = str(fill.get("kind") or "cash_share")
+    if "multiplier" not in fill:
+        multiplier: float | None = 1.0
+    else:
+        parsed_mult = _num(fill.get("multiplier"))
+        multiplier = parsed_mult if (parsed_mult is not None and parsed_mult > 0.0) else None
+    broker_order_id = str(fill.get("broker_order_id") or "").strip()
+    detail: List[Dict[str, Any]] = []
+    failures: List[str] = []
+
+    # 1. broker record vs fill event
+    if not broker_url:
+        detail.append({"check": "broker_record", "status": "not_configured"})
+    elif not broker_order_id:
+        detail.append(
+            {
+                "check": "broker_record",
+                "status": "unverified",
+                "broker_order_id": None,
+                "expected": "broker_order_id present",
+                "actual": None,
+                "missing_evidence": ["broker_order_id"],
+            }
+        )
+    else:
+        order: Dict[str, Any] | None = None
+        try:
+            order = fetch_paper_order(
+                broker_url, broker_order_id, timeout_seconds=_BROKER_READ_TIMEOUT_SECONDS
+            )
+        except BrokerOrderNotFound:
+            order = None
+        except BrokerPaperError as exc:
+            snapshot_at = _strict_lifecycle_datetime(snapshot_created_at)
+            now = _strict_lifecycle_datetime(timestamp)
+            unavailable = [
+                {
+                    "check": "broker_record",
+                    "status": "unavailable",
+                    "broker_order_id": broker_order_id,
+                    "error": str(exc),
+                }
+            ]
+            if (
+                snapshot_at is not None
+                and now is not None
+                and (now - snapshot_at).total_seconds() >= _RUNTIME_UNHEALTHY_DEFER_SECONDS
+            ):
+                return "failed", "broker_unavailable_at_reconciliation", unavailable
+            return "defer", None, unavailable
+        if order is None:
+            detail.append(
+                {
+                    "check": "broker_record",
+                    "status": "failed",
+                    "broker_order_id": broker_order_id,
+                    "expected": "paper broker order present",
+                    "actual": "missing",
+                }
+            )
+            failures.append("broker_record_missing")
+        else:
+            broker_checks = [
+                _booking_check("broker_fill_qty", fill_qty, _num(order.get("fill_qty"))),
+                _booking_check("broker_fill_price", fill_price, _num(order.get("fill_price"))),
+            ]
+            for name, expected, actual in (
+                ("broker_status", "filled", str(order.get("status") or "").lower()),
+                ("broker_side", side, str(order.get("side") or "").lower()),
+                (
+                    "broker_instrument_id",
+                    str(fill.get("instrument_id") or ""),
+                    str(order.get("instrument_id") or ""),
+                ),
+            ):
+                if not expected or not actual:
+                    missing_sides = []
+                    if not expected:
+                        missing_sides.append("expected")
+                    if not actual:
+                        missing_sides.append("actual")
+                    broker_checks.append(
+                        {
+                            "check": name,
+                            "status": "unverified",
+                            "expected": expected or None,
+                            "actual": actual or None,
+                            "missing_evidence": missing_sides,
+                        }
+                    )
+                else:
+                    broker_checks.append(
+                        {
+                            "check": name,
+                            "status": "passed" if expected == actual else "failed",
+                            "expected": expected,
+                            "actual": actual,
+                        }
+                    )
+            detail.extend(broker_checks)
+            if any(c["status"] == "failed" for c in broker_checks):
+                failures.append("broker_fill_mismatch")
+
+    # 2. position change equals the signed fill quantity
+    before = _num(fill.get("position_quantity_before"))
+    after = _num(fill.get("position_quantity_after"))
+    signed_qty = None if (fill_qty is None or sign is None) else sign * fill_qty
+    position = _booking_check(
+        "position_change",
+        signed_qty,
+        None if before is None or after is None else after - before,
+    )
+    snap_metrics = identity.get("metrics") if isinstance(identity.get("metrics"), dict) else {}
+    snap_position = _booking_check(
+        "committed_snapshot_position", after, _num(snap_metrics.get("position_qty"))
+    )
+    detail.extend([position, snap_position])
+    if position["status"] == "failed" or snap_position["status"] == "failed":
+        failures.append("position_variance")
+
+    # 3. cash change equals -(signed qty x price x multiplier) - fee - tax (cash_share)
+    if kind == "cash_share":
+        cash_before = _num(fill.get("cash_before"))
+        cash_after = _num(fill.get("cash_after"))
+        fee = _num(fill.get("fee"))
+        tax = _num(fill.get("tax"))
+        cash_missing_fields: List[str] = []
+        if sign is None:
+            cash_missing_fields.append("side")
+        if fill_qty is None:
+            cash_missing_fields.append("fill_quantity")
+        if fill_price is None:
+            cash_missing_fields.append("fill_price")
+        if multiplier is None:
+            cash_missing_fields.append("multiplier")
+        if fee is None:
+            cash_missing_fields.append("fee")
+        if tax is None:
+            cash_missing_fields.append("tax")
+        expected_cash = (
+            None
+            if (
+                signed_qty is None
+                or fill_price is None
+                or multiplier is None
+                or fee is None
+                or tax is None
+            )
+            else -(signed_qty * fill_price * multiplier) - fee - tax
+        )
+        cash = _booking_check(
+            "cash_change",
+            expected_cash,
+            None if cash_before is None or cash_after is None else cash_after - cash_before,
+            missing_fields=cash_missing_fields,
+        )
+        snap_cash = _booking_check(
+            "committed_snapshot_cash", cash_after, _num(snap_metrics.get("cash"))
+        )
+        detail.extend([cash, snap_cash])
+        if cash["status"] == "failed" or snap_cash["status"] == "failed":
+            failures.append("cash_variance")
+
+    if failures:
+        return "failed", failures[0], detail
+    if any(c.get("status") == "unverified" for c in detail):
+        return "failed", "reconciliation_evidence_incomplete", detail
+    return "completed", None, detail
+
+
+_EXPRESSION_CHOICE_REASON_CODES = frozenset(
+    {"long_cash", "long_lever", "short_via_future", "close_leg"}
+)
+_PREBROKER_FORBIDDEN_EVIDENCE_KEYS = (
+    "broker_order_id",
+    "fill_id",
+    "source_fill_event_id",
+    "broker_trade_id",
+    "shioaji_trade_id",
+    "ledger_entry_id",
+    "position_id",
+    "reconciliation_id",
+    "reconciliation_evaluation_id",
+    "trade_episode_id",
+    "position_quantity_before",
+    "position_quantity_after",
+    "cash_before",
+    "cash_after",
+    "fill_price",
+)
+_NON_PREBROKER_REJECTION_REASONS = frozenset(
+    {
+        "reason_not_recorded",
+        "unknown",
+        "uncertain",
+        "uncertain_broker_outcome",
+        "uncertain_broker_outcome_pending_reconciliation",
+        "taiwan_broker_error",
+        "tw_broker_error",
+        "broker_error",
+        "broker_rejected",
+        "transport_failed",
+        "submitted",
+        "accepted",
+        "filled",
+        "partially_filled",
+        "partial_fill",
+        "partial",
+        "pending",
+        "in_flight",
+    }
+)
+
+
+def _is_terminal_prebroker_paper_rejection(
+    event: Mapping[str, Any],
+    metadata: Mapping[str, Any] | None = None,
+) -> bool:
+    """True for an authoritative terminal pre-broker paper ``order_rejection``.
+
+    Requires explicit ``submitted_to_broker=False`` and zero/absent fill
+    quantities across event, metadata, and metrics, consistent pre-broker risk
+    rejection status and a single concrete non-expression rejection reason, and
+    no broker/fill/ledger/reconciliation identifiers or uncertain/in-flight
+    submission evidence.
+    """
+    if not isinstance(event, Mapping) or event.get("event_type") != "order_rejection":
+        return False
+    if metadata is None:
+        raw_meta = event.get("metadata")
+        metadata = raw_meta if isinstance(raw_meta, Mapping) else {}
+    elif not isinstance(metadata, Mapping):
+        return False
+    raw_metrics = event.get("metrics")
+    metrics: Mapping[str, Any] = raw_metrics if isinstance(raw_metrics, Mapping) else {}
+
+    present_submission_flags = [
+        container["submitted_to_broker"]
+        for container in (event, metadata, metrics)
+        if "submitted_to_broker" in container
+    ]
+    if not present_submission_flags or any(
+        flag is not False for flag in present_submission_flags
+    ):
+        return False
+
+    for field in _PREBROKER_FORBIDDEN_EVIDENCE_KEYS:
+        for container in (event, metadata, metrics):
+            if container.get(field) not in (None, "", [], {}):
+                return False
+
+    for flag_field in (
+        "sim_fill_flag",
+        "ledger_committed",
+        "is_real_capital",
+        "is_real_order",
+        "reconciliation_required",
+    ):
+        for container in (event, metadata, metrics):
+            if flag_field in container and container[flag_field] is not None:
+                if container[flag_field] is not False:
+                    return False
+
+    for qty_field in ("fill_quantity", "filled_quantity", "quantity", "ledger_fill_count"):
+        for container in (metrics, event, metadata):
+            if qty_field not in container:
+                continue
+            raw_qty = container.get(qty_field)
+            if raw_qty is None:
+                continue
+            if isinstance(raw_qty, bool):
+                return False
+            try:
+                parsed_qty = float(raw_qty)
+            except (TypeError, ValueError):
+                return False
+            if not math.isfinite(parsed_qty) or parsed_qty != 0.0:
+                return False
+
+    for scope_field in ("tenant_id", "binding_id", "runtime_id"):
+        top_val = str(event.get(scope_field) or "").strip()
+        meta_val = metadata.get(scope_field)
+        if meta_val not in (None, "") and (
+            not isinstance(meta_val, str) or meta_val.strip() != top_val
+        ):
+            return False
+    for mode_field in ("environment", "execution_mode", "deployment_stage"):
+        meta_mode = metadata.get(mode_field)
+        if meta_mode not in (None, "") and (
+            not isinstance(meta_mode, str) or meta_mode.strip().lower() != "paper"
+        ):
+            return False
+    authority_refs = event.get("authority_refs")
+    if isinstance(authority_refs, Mapping):
+        runtime_mode = authority_refs.get("runtime_mode")
+        if runtime_mode not in (None, "") and (
+            not isinstance(runtime_mode, str) or runtime_mode.strip().lower() != "paper"
+        ):
+            return False
+
+    for container in (event, metadata, metrics):
+        if "broker_outcome" in container and container["broker_outcome"] is not None:
+            raw_outcome = container["broker_outcome"]
+            if not isinstance(raw_outcome, str) or raw_outcome.strip().lower() not in {
+                "not_submitted",
+                "pre_broker_rejected",
+                "rejected",
+            }:
+                return False
+
+    def _normalized_str_values(key: str) -> list[str] | None:
+        values: list[str] = []
+        for container in (event, metadata, metrics):
+            if key not in container or container[key] is None:
+                continue
+            raw_val = container[key]
+            if not isinstance(raw_val, str) or not raw_val.strip():
+                return None
+            values.append(raw_val.strip().lower())
+        return values
+
+    order_statuses = _normalized_str_values("order_status")
+    if order_statuses is None or any(
+        s not in {"rejected", "not_submitted"} for s in order_statuses
+    ):
+        return False
+
+    rejection_statuses = _normalized_str_values("rejection_status")
+    if rejection_statuses is None or any(s != "rejected" for s in rejection_statuses):
+        return False
+
+    risk_statuses = _normalized_str_values("risk_status")
+    if risk_statuses is None or any(s != "rejected" for s in risk_statuses):
+        return False
+
+    risk_gate_flags = [
+        container["risk_gate_evaluated"]
+        for container in (event, metadata, metrics)
+        if "risk_gate_evaluated" in container
+    ]
+    if any(flag is not True for flag in risk_gate_flags):
+        return False
+    if not risk_statuses and not risk_gate_flags:
+        return False
+
+    concrete_reasons: set[str] = set()
+    for reason_key in ("reject_reason", "risk_reason", "reason"):
+        vals = _normalized_str_values(reason_key)
+        if vals is None:
+            return False
+        for val in vals:
+            if (
+                val in _EXPRESSION_CHOICE_REASON_CODES
+                or val in _NON_PREBROKER_REJECTION_REASONS
+            ):
+                return False
+            concrete_reasons.add(val)
+
+    reason_codes = _normalized_str_values("reason_code")
+    if reason_codes is None:
+        return False
+    for val in reason_codes:
+        if val in _NON_PREBROKER_REJECTION_REASONS:
+            return False
+        if val not in _EXPRESSION_CHOICE_REASON_CODES:
+            concrete_reasons.add(val)
+
+    submission_statuses = _normalized_str_values("broker_submission_status")
+    if submission_statuses is None:
+        return False
+    for val in submission_statuses:
+        if (
+            val in _NON_PREBROKER_REJECTION_REASONS
+            or val in _EXPRESSION_CHOICE_REASON_CODES
+        ):
+            return False
+        if val not in {"not_submitted", "rejected"}:
+            concrete_reasons.add(val)
+
+    return len(concrete_reasons) == 1
+
+
+_REASON_DETAIL_MAX_ENTRIES = 20
+_REASON_DETAIL_MAX_TEXT = 500
+
+
+def _bounded_reason_detail(detail: Any) -> Any:
+    """Bound reason_detail in entry count and string length."""
+    def _clip(value: Any) -> Any:
+        if isinstance(value, str) and len(value) > _REASON_DETAIL_MAX_TEXT:
+            return value[:_REASON_DETAIL_MAX_TEXT]
+        if isinstance(value, dict):
+            return {str(k): _clip(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_clip(v) for v in value[:_REASON_DETAIL_MAX_ENTRIES]]
+        return value
+
+    if isinstance(detail, list):
+        return [_clip(item) for item in detail[:_REASON_DETAIL_MAX_ENTRIES]]
+    return _clip(detail)
+
+
 def _scheduled_lifecycle_event(
     *,
     summary: Dict[str, Any],
@@ -2245,7 +2830,11 @@ def _scheduled_lifecycle_event(
         "reconciliation_failed",
     }:
         return None, "lifecycle_already_reconciled"
-    if is_noop_order(identity, identity.get("metadata") or {}):
+    if is_noop_order(
+        identity, identity.get("metadata") or {}
+    ) or _is_terminal_prebroker_paper_rejection(
+        identity, identity.get("metadata") or {}
+    ):
         return None, "lifecycle_noop_order_closed"
     if identity["event_type"] != "position_snapshot":
         return None, "lifecycle_in_flight"
@@ -2257,9 +2846,27 @@ def _scheduled_lifecycle_event(
             f"pantheon:scheduled-reconciliation:{evaluation_id}",
         )
     )
+    decision, recon_reason_code, recon_reason_detail = _journey_reconciliation_decision(
+        evaluation,
+        snapshot_created_at=identity.get("created_at"),
+        timestamp=timestamp,
+    )
+    if decision == "defer":
+        return None, "reconciliation_deferred_runtime_unhealthy"
+    if decision == "completed":
+        booking = _journey_booking_decision(
+            identity,
+            snapshot_created_at=identity.get("created_at"),
+            timestamp=timestamp,
+            broker_url=os.getenv("PANTHEON_PAPER_BROKER_URL", "").strip(),
+        )
+        if booking is not None:
+            decision, recon_reason_code, recon_reason_detail = booking
+            if decision == "defer":
+                return None, "reconciliation_deferred_broker_unavailable"
     event_type = (
         "reconciliation_completed"
-        if str(evaluation.get("status") or "").lower() == "ok"
+        if decision == "completed"
         else "reconciliation_failed"
     )
     sequence_no = int(identity["sequence_no"]) + 1
@@ -2323,6 +2930,13 @@ def _scheduled_lifecycle_event(
         "metadata": metadata,
         "correlation_envelope": envelope,
     }
+    # The telemetry schema forbids top-level reason fields (additionalProperties
+    # false); the reason travels in metadata, which every reader already consults.
+    if event_type == "reconciliation_failed":
+        event["metadata"]["reason_code"] = recon_reason_code
+        event["metadata"]["reason_detail"] = _bounded_reason_detail(recon_reason_detail)
+    elif recon_reason_detail:
+        event["metadata"]["reason_detail"] = _bounded_reason_detail(recon_reason_detail)
     if isinstance(identity.get("authority_refs"), dict):
         event["authority_refs"] = json.loads(json.dumps(identity["authority_refs"]))
     return event, None
@@ -2666,6 +3280,85 @@ def _append_telemetry_lifecycle_event(
     )
 
 
+_REFUSAL_REPEAT_LIMIT = int(os.getenv("PANTHEON_RECON_REFUSAL_REPEAT_LIMIT", "3"))
+_REFUSAL_RETRY_SECONDS = float(os.getenv("PANTHEON_RECON_REFUSAL_RETRY_SECONDS", "3600"))
+_VOLATILE_EVENT_KEYS = ("event_id", "reconciliation_id", "created_at", "correlation_envelope")
+_VOLATILE_METADATA_KEYS = (
+    "reconciliation_evaluation_id",
+    "reconciliation_tick_id",
+    "correlation_envelope",
+)
+
+
+def _event_refusal_fingerprint(event: Dict[str, Any]) -> str:
+    """Stable identity of an event's content across ticks (ids/times removed)."""
+    body = {k: v for k, v in event.items() if k not in _VOLATILE_EVENT_KEYS}
+    meta = body.get("metadata")
+    if isinstance(meta, dict):
+        body["metadata"] = {k: v for k, v in meta.items() if k not in _VOLATILE_METADATA_KEYS}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _repeated_refusal(
+    *,
+    event: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    timestamp: str,
+    evaluations: Optional[List[Dict[str, Any]]],
+) -> Dict[str, Any] | None:
+    """Return the prior refusal when telemetry already refused identical content.
+
+    Bounded: after ``_REFUSAL_REPEAT_LIMIT`` real refusals of identical content the
+    pass stops sending, keeps the refusal reason, and probes again at most once per
+    ``_REFUSAL_RETRY_SECONDS``.  Changed content (a fixed emitter) is never suppressed.
+    """
+    binding_id = str(evaluation.get("binding_id") or "")
+    fingerprint = _event_refusal_fingerprint(event)
+    source = (
+        evaluations
+        if evaluations is not None
+        else _tenant_scoped(store.list_evaluations_for_binding(binding_id))
+    )
+    refusals: List[tuple[str, Dict[str, Any]]] = []
+    for prior in source:
+        if prior.get("evaluation_id") == evaluation.get("evaluation_id"):
+            continue
+        state = prior.get("lifecycle_append")
+        if not isinstance(state, dict) or state.get("status") != "terminal_rejected":
+            continue
+        prior_event = state.get("event")
+        if (
+            state.get("repeat_suppressed")
+            or not isinstance(prior_event, dict)
+            or prior_event.get("causal_parent_id") != event.get("causal_parent_id")
+            or _event_refusal_fingerprint(prior_event) != fingerprint
+        ):
+            continue
+        refusals.append((str(state.get("attempted_at") or ""), state))
+    if len(refusals) < _REFUSAL_REPEAT_LIMIT:
+        return None
+    refusals.sort(key=lambda item: item[0])
+    last_at, last_state = refusals[-1]
+    last_dt = _strict_lifecycle_datetime(last_at)
+    now = _strict_lifecycle_datetime(timestamp)
+    if (
+        last_dt is not None
+        and now is not None
+        and (now - last_dt).total_seconds() >= _REFUSAL_RETRY_SECONDS
+    ):
+        return None
+    return {
+        "refusal_count": len(refusals),
+        "last_attempted_at": last_at,
+        "http_status": last_state.get("http_status"),
+        "error": last_state.get("error"),
+        "response": last_state.get("response"),
+        "fingerprint": fingerprint,
+    }
+
+
 def _ensure_scheduled_lifecycle_append(
     *,
     summary: Dict[str, Any],
@@ -2749,6 +3442,30 @@ def _ensure_scheduled_lifecycle_append(
             evaluation["lifecycle_append"] = state
             store.put_evaluation(evaluation)
             return state
+        repeated = _repeated_refusal(
+            event=event, evaluation=evaluation, timestamp=timestamp, evaluations=evaluations
+        )
+        if repeated is not None:
+            state = {
+                "status": "terminal_rejected",
+                "terminal": True,
+                "retryable": False,
+                "outcome": "failed",
+                "reason": "telemetry_refused_identical_event",
+                "repeat_suppressed": True,
+                "http_status": repeated["http_status"],
+                "error": repeated["error"],
+                "response": repeated["response"],
+                "refusal_count": repeated["refusal_count"],
+                "last_attempted_at": repeated["last_attempted_at"],
+                "event_fingerprint": repeated["fingerprint"],
+                "attempt_count": 0,
+                "event_id": event["event_id"],
+                "updated_at": timestamp,
+            }
+            evaluation["lifecycle_append"] = state
+            store.put_evaluation(evaluation)
+            return state
         state = {
             "status": "pending",
             "terminal": False,
@@ -2818,6 +3535,7 @@ def _lifecycle_append_receipt(binding_id: str, state: Dict[str, Any]) -> Dict[st
         "reason": state.get("reason"),
         "http_status": state.get("http_status"),
         "error": state.get("error"),
+        "refusal_count": state.get("refusal_count"),
     }
 
 
@@ -3187,6 +3905,179 @@ def _dispatch_scheduled_drift_report(report: Dict[str, Any], *, timeout_seconds:
     return result
 
 
+def _drift_input_max_age_seconds() -> float:
+    """Longest age a telemetry drawdown may have and still count as this window's input.
+
+    Defaults to the scheduler evaluation window; telemetry carries the last
+    drawdown forward indefinitely, so age is judged here, not assumed.
+    """
+    for name in (
+        "RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS",
+        "RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS",
+    ):
+        raw = os.getenv(name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            value = float(str(raw).strip())
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return 300.0
+
+
+def _mark_stale_drawdown_input(
+    drift_checks: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+    *,
+    evaluated_at: str,
+) -> bool:
+    """Turn a drawdown check built on an out-of-window value into a stale-input result.
+
+    A stale input is recorded as ``stale_input`` and degraded, never as a
+    warning/critical breach, so it neither opens nor extends a breach incident.
+    """
+    drawdown_at = _strict_lifecycle_datetime(summary.get("drawdown_at"))
+    evaluated = _strict_lifecycle_datetime(evaluated_at)
+    if drawdown_at is None or evaluated is None:
+        return False
+    age_seconds = (evaluated - drawdown_at).total_seconds()
+    max_age = _drift_input_max_age_seconds()
+    if age_seconds <= max_age:
+        return False
+    marked = False
+    for check in drift_checks:
+        if check.get("metric") != "drawdown" or check.get("observed") is None:
+            continue
+        check.update(
+            {
+                "status": "degraded",
+                "stale_input": True,
+                "input_observed_at": summary.get("drawdown_at"),
+                "input_age_seconds": age_seconds,
+                "input_max_age_seconds": max_age,
+                "governed_threshold_breached": False,
+                "detail": "drawdown input is older than the evaluation window",
+            }
+        )
+        marked = True
+    return marked
+
+
+def _resolve_retired_binding_incidents(
+    binding_id: str,
+    retired_at: Any,
+    *,
+    timeout_seconds: float,
+) -> Dict[str, Any] | None:
+    incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+    if not incidents_api_url or timeout_seconds <= 0:
+        return None
+    try:
+        return _post_json(
+            f"{incidents_api_url}/api/incidents/resolve-retired-binding",
+            {"binding_id": binding_id, "retired_at": retired_at or None},
+            timeout_seconds=timeout_seconds,
+        )
+    except HTTPException:
+        logging.getLogger(__name__).warning(
+            "could not resolve drift incidents of retired binding %s", binding_id, exc_info=True
+        )
+        return None
+
+
+def _get_json(url: str, *, timeout_seconds: float) -> Any:
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else None
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"incident service rejected request: {exc.code}") from exc
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"incident service unavailable: {exc!r}") from exc
+
+
+def _sweep_max_lookups() -> int:
+    try:
+        return max(0, int(os.getenv("PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS", "10")))
+    except ValueError:
+        return 10
+
+
+def _sweep_retired_binding_incidents(
+    evaluated_binding_ids: set,
+    *,
+    tenant_id: str,
+    timestamp: str,
+    dispatch_timeout: Any,
+    skip_binding_ids: set | None = None,
+) -> Dict[str, Any]:
+    """Resolve open drift incidents whose binding this pass did not evaluate and is retired.
+
+    Reads only open incidents plus at most N runtime-manager lookups per pass; the only
+    write is the existing resolve-retired-binding call. Failures leave incidents open.
+    """
+    result: Dict[str, Any] = {
+        "open_drift_incident_count": 0,
+        "lookups": 0,
+        "lookup_failures": 0,
+        "resolutions": [],
+        "retired_binding_ids": [],
+        "truncated": False,
+    }
+    incidents_api_url = os.getenv("PANTHEON_INCIDENTS_API_URL", "").rstrip("/")
+    if not incidents_api_url or not os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip():
+        return result
+    budget = dispatch_timeout()
+    if budget <= 0:
+        return result
+    try:
+        incidents = _get_json(
+            f"{incidents_api_url}/api/incidents?open_only=true", timeout_seconds=budget
+        )
+    except HTTPException:
+        logging.getLogger(__name__).warning("retired-binding sweep could not list incidents", exc_info=True)
+        result["lookup_failures"] += 1
+        return result
+    candidates: List[str] = []
+    for inc in incidents if isinstance(incidents, list) else []:
+        if not isinstance(inc, dict):
+            continue
+        if not str(inc.get("incident_cluster_id") or "").startswith("drift:"):
+            continue
+        result["open_drift_incident_count"] += 1
+        bid = str(inc.get("binding_id") or "").strip()
+        if bid and bid not in evaluated_binding_ids and bid not in (skip_binding_ids or set()):
+            if bid not in candidates:
+                candidates.append(bid)
+    limit = _sweep_max_lookups()
+    if len(candidates) > limit:
+        result["truncated"] = True
+        candidates = candidates[:limit]
+    for bid in candidates:
+        lookup_budget = dispatch_timeout()
+        if lookup_budget <= 0:
+            result["truncated"] = True
+            break
+        result["lookups"] += 1
+        try:
+            binding = _authoritative_runtime_binding(bid, timeout_seconds=lookup_budget)
+        except RuntimeError:
+            result["lookup_failures"] += 1
+            continue
+        if not _binding_retired_before(binding, timestamp):
+            continue
+        result["retired_binding_ids"].append(bid)
+        resolution = _resolve_retired_binding_incidents(
+            bid, (binding or {}).get("retired_at"), timeout_seconds=dispatch_timeout()
+        )
+        if resolution and resolution.get("resolved_incident_ids"):
+            result["resolutions"].append(resolution)
+    return result
+
+
 def _first_trigger_value(*payloads: Optional[Dict[str, Any]], keys: tuple[str, ...]) -> Any:
     for payload in payloads:
         if not isinstance(payload, dict):
@@ -3255,7 +4146,9 @@ def _execute_scheduled_reconcile(
     tenant_id: str,
     timestamp: str,
     tick_id: str,
+    window_id: Optional[str] = None,
     started: Optional[float] = None,
+    fetched_summaries_out: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Run a scheduled reconciliation pass over all active bindings visible in telemetry.
 
@@ -3263,6 +4156,7 @@ def _execute_scheduled_reconcile(
     have an evaluation record for that tick, so duplicate scheduler ticks do not
     create duplicate ReconciliationRecords.
     """
+    effective_window_id = str(window_id or body.window_id or tick_id).strip()
     tick_start = started if started is not None else time.monotonic()
     tick_deadline = tick_start + max(1.0, float(body.sla_seconds or 60.0) - 5.0)
 
@@ -3297,6 +4191,11 @@ def _execute_scheduled_reconcile(
         if body.lifecycle_only:
             err_result["lifecycle_only"] = True
         return err_result
+
+    if fetched_summaries_out is not None and isinstance(summaries, list):
+        fetched_summaries_out.extend(
+            item for item in summaries if isinstance(item, dict)
+        )
 
     scoped_summaries: List[Dict[str, Any]] = []
     for summary in summaries:
@@ -3353,6 +4252,8 @@ def _execute_scheduled_reconcile(
     lifecycle_terminal_failures: List[Dict[str, Any]] = []
     lifecycle_ineligible_binding_ids: List[str] = []
     retired_binding_ids: List[str] = []
+    stale_input_binding_ids: List[str] = []
+    retired_incident_resolutions: List[Dict[str, Any]] = []
     paused_binding_ids: List[str] = []
     binding_lookup_failed = False
     dispatch_incidents = False if body.lifecycle_only else bool(body.dispatch_incidents)
@@ -3416,6 +4317,8 @@ def _execute_scheduled_reconcile(
             baseline_sources,
         )
         _record_causal_drawdown_event(drift_checks, summary)
+        if _mark_stale_drawdown_input(drift_checks, summary, evaluated_at=timestamp):
+            stale_input_binding_ids.append(binding_id)
         reconciliation_checks = _summary_actual_state_checks(
             summary,
             binding_id=binding_id,
@@ -3449,6 +4352,13 @@ def _execute_scheduled_reconcile(
                     if _binding_retired_before(authoritative, timestamp):
                         retired_binding_ids.append(binding_id)
                         lifecycle_ineligible_binding_ids.append(binding_id)
+                        resolution = _resolve_retired_binding_incidents(
+                            binding_id,
+                            (authoritative or {}).get("retired_at"),
+                            timeout_seconds=dispatch_timeout(),
+                        )
+                        if resolution and resolution.get("resolved_incident_ids"):
+                            retired_incident_resolutions.append(resolution)
                         continue
                     if _binding_paused(authoritative):
                         paused_binding_ids.append(binding_id)
@@ -3458,12 +4368,15 @@ def _execute_scheduled_reconcile(
                 binding_lookup_failed = True
 
         existing_evaluation = None
+        prior_incident_delivery = None
         if evaluation_id in existing_evaluation_ids:
             cached_eval = store.get_evaluation(
                 evaluation_id,
                 tenant_id=tenant_id,
             )
             if cached_eval is not None:
+                if isinstance(cached_eval.get("incident_delivery"), dict):
+                    prior_incident_delivery = dict(cached_eval["incident_delivery"])
                 cached_append = cached_eval.get("lifecycle_append")
                 has_created_event = isinstance(cached_append, dict) and bool(
                     cached_append.get("event") or cached_append.get("event_id")
@@ -3488,6 +4401,14 @@ def _execute_scheduled_reconcile(
                     skipped_binding_ids.append(binding_id)
                     evaluation_statuses.append(str(existing_evaluation.get("status") or status))
                     target_evaluation = existing_evaluation
+        if existing_evaluation is None and prior_incident_delivery is None and effective_window_id != tick_id:
+            window_eval_id = _tick_evaluation_id(effective_window_id, binding_id)
+            if window_eval_id in existing_evaluation_ids:
+                window_eval = store.get_evaluation(window_eval_id, tenant_id=tenant_id)
+                if isinstance(window_eval, dict) and isinstance(
+                    window_eval.get("incident_delivery"), dict
+                ):
+                    prior_incident_delivery = dict(window_eval["incident_delivery"])
         if existing_evaluation is None:
             evaluation = {
                 "id": evaluation_id,
@@ -3525,7 +4446,13 @@ def _execute_scheduled_reconcile(
                     ],
                 ],
                 "tick_id": tick_id,
+                "window_id": effective_window_id,
                 "trigger": "scheduled",
+                **(
+                    {"incident_delivery": prior_incident_delivery}
+                    if prior_incident_delivery is not None
+                    else {}
+                ),
                 "source_contract": {
                     "telemetry_truth_owner": "telemetry-ingest",
                     "lineage_truth_owner": "lineage-read",
@@ -3595,6 +4522,16 @@ def _execute_scheduled_reconcile(
                 }
             )
 
+    retired_sweep: Dict[str, Any] | None = None
+    if not body.lifecycle_only and not requested_binding_id:
+        retired_sweep = _sweep_retired_binding_incidents(
+            {_summary_binding_id(item) for item in summaries},
+            tenant_id=tenant_id,
+            timestamp=timestamp,
+            dispatch_timeout=dispatch_timeout,
+        )
+        retired_incident_resolutions.extend(retired_sweep["resolutions"])
+
     tick_status = _worst_status(evaluation_statuses)
     if incident_delivery_errors or lifecycle_retryable_errors or lifecycle_terminal_rejections:
         tick_status = "failure"
@@ -3623,6 +4560,9 @@ def _execute_scheduled_reconcile(
         "lifecycle_terminal_failures": lifecycle_terminal_failures,
         "lifecycle_ineligible_binding_ids": list(dict.fromkeys(lifecycle_ineligible_binding_ids)),
         "retired_binding_ids": retired_binding_ids,
+        "stale_input_binding_ids": stale_input_binding_ids,
+        "retired_incident_resolutions": retired_incident_resolutions,
+        "retired_binding_sweep": retired_sweep,
         "paused_binding_ids": paused_binding_ids,
         "incident_dispatch_enabled": dispatch_incidents,
         "telemetry_summaries_fetched": len(summaries),
@@ -3664,6 +4604,77 @@ def _completed_window_response(claim: Dict[str, Any]) -> Dict[str, Any]:
         }
     )
     return cached
+
+
+def _consumer_worker_state_path() -> Optional[Path]:
+    configured = os.getenv(
+        "RECONCILIATION_DRIFT_CONSUMER_WORKER_STATE_PATH", ""
+    ).strip()
+    if configured:
+        return Path(configured)
+    candidate = Path(_data_dir()) / "consumer-worker-state.json"
+    return candidate if candidate.exists() else None
+
+
+def prune_work_claims(
+    *,
+    now: datetime | str | None = None,
+    runtime_summaries: Optional[List[Dict[str, Any]]] = None,
+    consumer_state: Any = None,
+    protected_window_ids: Optional[List[str]] = None,
+    scheduled_reconcile_max_age_seconds: Optional[float] = None,
+    telemetry_consume_max_age_seconds: Optional[float] = None,
+    batch_size: Optional[int] = None,
+    max_batches: Optional[int] = None,
+    include_scheduled_reconcile: bool = True,
+    include_telemetry_consume: bool = True,
+) -> Dict[str, Any]:
+    effective_include_consume = include_telemetry_consume
+    effective_summaries = runtime_summaries
+    if effective_summaries is None and effective_include_consume:
+        telemetry_url = os.getenv("PANTHEON_TELEMETRY_API_URL", "").rstrip("/")
+        if telemetry_url:
+            try:
+                effective_summaries = fetch_runtime_summaries(
+                    telemetry_url,
+                    tenant_id=_current_tenant_id(),
+                    timeout_seconds=5.0,
+                )
+            except Exception:
+                effective_include_consume = False
+    effective_consumer_state = (
+        consumer_state
+        if consumer_state is not None
+        else _consumer_worker_state_path()
+    )
+    try:
+        return store.prune_work_claims(
+            now=now,
+            runtime_summaries=effective_summaries,
+            consumer_state=effective_consumer_state,
+            protected_window_ids=protected_window_ids,
+            scheduled_reconcile_max_age_seconds=scheduled_reconcile_max_age_seconds,
+            telemetry_consume_max_age_seconds=telemetry_consume_max_age_seconds,
+            batch_size=batch_size,
+            max_batches=max_batches,
+            include_scheduled_reconcile=include_scheduled_reconcile,
+            include_telemetry_consume=effective_include_consume,
+        )
+    except Exception:
+        if effective_include_consume and include_scheduled_reconcile:
+            return store.prune_work_claims(
+                now=now,
+                runtime_summaries=None,
+                consumer_state=None,
+                protected_window_ids=protected_window_ids,
+                scheduled_reconcile_max_age_seconds=scheduled_reconcile_max_age_seconds,
+                telemetry_consume_max_age_seconds=telemetry_consume_max_age_seconds,
+                batch_size=batch_size,
+                max_batches=max_batches,
+                include_scheduled_reconcile=True,
+                include_telemetry_consume=False,
+            )
+        raise
 
 
 @app.post("/api/reconciliation-drift/scheduled-reconcile", status_code=201)
@@ -3750,13 +4761,16 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
 
     started = _monotonic()
     claim_finalized = False
+    fetched_summaries: List[Dict[str, Any]] = []
     try:
         result = _execute_scheduled_reconcile(
             body,
             tenant_id=tenant_id,
             timestamp=timestamp,
             tick_id=tick_id,
+            window_id=window_id,
             started=started,
+            fetched_summaries_out=fetched_summaries,
         )
         duration_seconds = max(0.0, _monotonic() - started)
         result.update(
@@ -3804,6 +4818,25 @@ def scheduled_reconcile(body: ScheduledReconcileBody) -> Dict[str, Any]:
             result=result,
             updated_at=utc_now(),
         )
+        if hasattr(store, "prune_work_claims"):
+            summaries_fetched_ok = result.get("failure_code") not in {
+                "telemetry_auth_failed",
+                "telemetry_unavailable",
+            }
+            default_max_batches = int(
+                os.getenv("RECONCILIATION_DRIFT_WORK_CLAIM_PRUNE_MAX_BATCHES", "10")
+            )
+            try:
+                prune_work_claims(
+                    now=timestamp,
+                    runtime_summaries=fetched_summaries if summaries_fetched_ok else None,
+                    max_batches=default_max_batches,
+                    include_telemetry_consume=summaries_fetched_ok,
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "scheduled work claim prune failed", exc_info=True
+                )
         return result
     except Exception as exc:
         if not claim_finalized:

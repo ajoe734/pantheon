@@ -1,0 +1,11 @@
+{
+  "task_id": "BFF-PERSONA-MEMORY-WIRING-20261112",
+  "scope": "source_only_no_vm_no_deploy",
+  "change": "docker-compose.yml memory service: PANTHEON_GOVERNANCE_AUTHZ_URL default http://governance:8082",
+  "root_cause": "memory env lacked governance authz URL -> governance_authz_unconfigured",
+  "validation": {
+    "command": "pytest scripts/test_persona_provisioning_compose_contract.py services/memory/test_main.py",
+    "result": "46 passed"
+  },
+  "not_changed": ["JWT strict auth", "tenant/private isolation", "no local authz bypass", "no new issuer/role"]
+}

@@ -81,3 +81,111 @@ def test_existing_execution_policy_and_other_store_entries_are_preserved(client)
     assert metadata["market_data_policy"] == policy
     assert metadata["symbol"] == "2330.TW"
     assert metadata["object_store"]["unrelated/config"] == "keep"
+
+
+def test_momentum_plan_market_data_policy_is_byte_identical_to_legacy_derivation(client):
+    """The shared helper must reproduce the pre-change momentum policy exactly."""
+    test_client, governance_dir = client
+    artifact, _ = _inline_registry(test_client, governance_dir)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-byte-identical"))
+    assert response.status_code == 201, response.text
+    legacy = {
+        "owner": "source-ingest",
+        "contract": "latest_stored_normalized",
+        "minimum_closes": artifact["parameters"][artifact["strategy_logic"]["lookback_parameter"]],
+        "max_age_seconds": 86400,
+    }
+    actual = response.json()["metadata"]["market_data_policy"]
+    assert json.dumps(actual, sort_keys=True) == json.dumps(legacy, sort_keys=True)
+
+
+def _set_lookback(test_client, governance_dir, lookback):
+    artifact, entry = _inline_registry(test_client, governance_dir)
+    key = artifact["strategy_logic"]["lookback_parameter"]
+    artifact["parameters"][key] = lookback
+    for control in artifact["mutation_surface"]["controls"]:
+        if control["parameter_key"] == key:
+            control["current_value"] = lookback
+            control["allowed_range"]["max"] = max(control["allowed_range"]["max"], lookback)
+    entries = json.loads(test_client.registry_snapshot.read_text())
+    entries[entry["registry_id"]]["checksum"] = strategy_artifact_checksum(artifact)
+    entries[entry["registry_id"]]["metadata"] = {"strategy_artifact": artifact}
+    test_client.registry_snapshot.write_text(json.dumps(entries))
+    approval = approval_snapshot(
+        decision_id="approval-001", target_id=entry["registry_id"], target_version=entry["version"],
+        target_type="registry_entry", candidate_digest=strategy_artifact_checksum(artifact),
+        capital_pool_id="pool-001", persona_id="persona-ops", tenant_id="tenant-deployment-test",
+    )
+    (governance_dir / "approval_decisions.json").write_text(json.dumps({"approval-001": approval}))
+
+
+def test_plan_needing_more_closes_than_snapshot_serves_is_refused(client):
+    test_client, governance_dir = client
+    _set_lookback(test_client, governance_dir, 120)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-too-long"))
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "close_to_close_momentum" in detail and "120" in detail and "60" in detail
+    assert test_client.get("/api/deployment/plans/plan-too-long").status_code == 404
+
+
+def test_plan_needing_exactly_served_closes_is_built(client):
+    test_client, governance_dir = client
+    _set_lookback(test_client, governance_dir, 60)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-at-limit"))
+    assert response.status_code == 201, response.text
+    assert response.json()["metadata"]["market_data_policy"]["minimum_closes"] == 60
+
+
+def test_explicit_market_data_policy_skips_history_check(client):
+    test_client, governance_dir = client
+    _set_lookback(test_client, governance_dir, 120)
+    request = _plan_payload(plan_id="plan-explicit-long")
+    policy = {"owner": "source-ingest", "contract": "latest_stored_normalized", "minimum_closes": 120, "max_age_seconds": 600}
+    request["metadata"] = {"symbol": "2330.TW", "market_data_policy": policy}
+    response = test_client.post("/api/deployment/plans", json=request)
+    assert response.status_code == 201, response.text
+    assert response.json()["metadata"]["market_data_policy"] == policy
+
+
+def _install_factor_rule(test_client, governance_dir, z_window):
+    from services.registry.test_factor_rule import _sample_factor_rule_artifact
+
+    _, entry = _inline_registry(test_client, governance_dir)
+    artifact = _sample_factor_rule_artifact()
+    artifact.update(artifact_id=entry["registry_id"], strategy_id=entry["strategy_id"], version=entry["version"])
+    artifact["parameters"]["symbols"] = ["2330.TW"]
+    artifact["parameters"]["z_window"] = z_window
+    for control in artifact["mutation_surface"]["controls"]:
+        if control["parameter_key"] == "z_window":
+            control["current_value"] = z_window
+            control["allowed_range"]["max"] = max(control["allowed_range"]["max"], z_window)
+    checksum = strategy_artifact_checksum(artifact)
+    entries = json.loads(test_client.registry_snapshot.read_text())
+    entries[entry["registry_id"]]["checksum"] = checksum
+    entries[entry["registry_id"]]["metadata"] = {"strategy_artifact": artifact}
+    test_client.registry_snapshot.write_text(json.dumps(entries))
+    approval = approval_snapshot(
+        decision_id="approval-001", target_id=entry["registry_id"], target_version=entry["version"],
+        target_type="registry_entry", candidate_digest=checksum,
+        capital_pool_id="pool-001", persona_id="persona-ops", tenant_id="tenant-deployment-test",
+    )
+    (governance_dir / "approval_decisions.json").write_text(json.dumps({"approval-001": approval}))
+
+
+def test_factor_rule_plan_needing_504_bars_is_refused(client):
+    test_client, governance_dir = client
+    _install_factor_rule(test_client, governance_dir, 504)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-factor-long"))
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "factor_rule_v1" in detail and "504" in detail and "60" in detail
+    assert test_client.get("/api/deployment/plans/plan-factor-long").status_code == 404
+
+
+def test_factor_rule_plan_within_snapshot_is_built(client):
+    test_client, governance_dir = client
+    _install_factor_rule(test_client, governance_dir, 24)
+    response = test_client.post("/api/deployment/plans", json=_plan_payload(plan_id="plan-factor-ok"))
+    assert response.status_code == 201, response.text
+    assert response.json()["metadata"]["market_data_policy"]["minimum_closes"] == 24

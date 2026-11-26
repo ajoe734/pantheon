@@ -39,6 +39,14 @@ BASELINE_FILE="${STATE}/baseline.json"
 ACTIVE_MANIFEST_FILE="${STATE}/active_manifest.json"
 RUNTIME_CONFIG_FILE="${PROD_ROOT}/config/runtime-config.js"
 BUDGET="${PROD_ROLLBACK_BUDGET_SECONDS:-120}"
+if [[ -n "${PROD_DATA_MOUNT:-}" && -d "${PROD_DATA_MOUNT}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT"
+  for _d in secrets manifests state fe proxy config; do
+    if [[ ! -e "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+      ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+    fi
+  done
+fi
 mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/fe/artifacts" "${PROD_ROOT}/manifests" "${PROD_ROOT}/proxy" "${PROD_ROOT}/config"
 
 PREFLIGHT_ARGS=(all --manifest "$RELEASE_MANIFEST_PATH" --expected-sha256 "$EXPECTED_MANIFEST_SHA256"
@@ -146,6 +154,19 @@ PREFLIGHT_OUT="$(python3 "${SCRIPT_DIR}/prod_preflight.py" "${PREFLIGHT_ARGS[@]}
   printf '%s\n' "$PREFLIGHT_OUT" >&2
   die_json "PREFLIGHT_FAILED" "production preflight failed closed; no state mutated"
 }
+if [[ -n "${PROD_DATA_MOUNT:-}" && "$(readlink -f "$PROD_ROOT" 2>/dev/null || echo "$PROD_ROOT")" != "$(readlink -f "$PROD_DATA_MOUNT" 2>/dev/null || echo "$PROD_DATA_MOUNT")" ]]; then
+  mkdir -p "$PROD_ROOT" "${PROD_DATA_MOUNT}"/{secrets,manifests,state/journal,state/snapshots,fe/releases,fe/artifacts,proxy,config}
+  for _d in secrets manifests state fe proxy config; do
+    if [[ -d "${PROD_ROOT}/${_d}" && ! -L "${PROD_ROOT}/${_d}" ]]; then
+      tar -C "${PROD_ROOT}/${_d}" -cf - . | tar -C "${PROD_DATA_MOUNT}/${_d}" -xpf - \
+        && rm -rf "${PROD_ROOT}/${_d}" \
+        || die_json "DATA_MIGRATE_FAILED" "cannot migrate ${PROD_ROOT}/${_d} onto ${PROD_DATA_MOUNT}/${_d}"
+    fi
+    ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}" \
+      || die_json "DATA_LINK_FAILED" "cannot symlink ${PROD_ROOT}/${_d} -> ${PROD_DATA_MOUNT}/${_d}"
+  done
+  mkdir -p "$STATE" "${PROD_ROOT}/fe/releases" "${PROD_ROOT}/fe/artifacts" "${PROD_ROOT}/manifests" "${PROD_ROOT}/proxy" "${PROD_ROOT}/config"
+fi
 FE_SHA="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["frontend_artifact_sha256"])' "$PREFLIGHT_OUT")"
 BFF_IMAGE="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["operator_bff_image"])' "$PREFLIGHT_OUT")"
 FE_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["frontend"]["commit"])' "$RELEASE_MANIFEST_PATH")"
@@ -160,10 +181,29 @@ if [[ -e "$FE_RELEASE" ]]; then
     || die_json "IMMUTABLE_RELEASE_DIR" "release dir exists with different content; never overwritten"
 fi
 
+# 2b. Journal per dispatch. A journal left by an earlier dispatch of the same release id is archived (atomic rename)
+# BEFORE any marker is written or any baseline check reads it, so rollback/recovery only ever see the current
+# dispatch (a stale `bootstrap` marker would otherwise force the bootstrap-abort path; stale *_switched markers
+# would mislead recovery). Runtime budget: ~50 KB per dispatch, at most JOURNAL_ARCHIVE_KEEP archives per release id.
+JOURNAL_ARCHIVE_KEEP=10
+JOURNAL_ROOT="${STATE}/journal"
+if [[ -d "$JOURNAL" ]]; then
+  ARCHIVE="${JOURNAL}.archived-$(date -u +%Y%m%dT%H%M%SZ)"
+  [[ ! -e "$ARCHIVE" ]] || ARCHIVE="${ARCHIVE}-$$"
+  mv -T "$JOURNAL" "$ARCHIVE" || die_json "JOURNAL_ARCHIVE_FAILED" "cannot archive the previous journal for ${RELEASE_ID}; nothing switched"
+fi
+if [[ -d "$JOURNAL_ROOT" ]]; then
+  # Newest N archives per release id are kept (UTC timestamp names sort chronologically); older ones are deleted.
+  ls -1d "${JOURNAL_ROOT}/${RELEASE_ID}.archived-"* 2>/dev/null | sort -r | tail -n +$((JOURNAL_ARCHIVE_KEEP + 1)) \
+    | while IFS= read -r old; do [[ -n "$old" ]] && rm -rf -- "$old"; done
+fi
+
 # 3. Snapshot preflight + healthy retained baseline (absent only for explicit bootstrap).
-"$PROD_OPS_CMD" snapshot_preflight "$RELEASE_ID" || die_json "SNAPSHOT_FAILED" "pre-release snapshot failed; nothing switched"
+# A refusal here changes nothing: the archived journal is renamed back (no new journal exists yet).
+unarchive_journal() { [[ -z "${ARCHIVE:-}" || -e "$JOURNAL" ]] || mv -T "$ARCHIVE" "$JOURNAL" 2>/dev/null; }
+"$PROD_OPS_CMD" snapshot_preflight "$RELEASE_ID" || { unarchive_journal; die_json "SNAPSHOT_FAILED" "pre-release snapshot failed; nothing switched"; }
 if [[ "$BOOTSTRAP" == "false" ]]; then
-  "$PROD_OPS_CMD" baseline_health "$RELEASE_ID" || die_json "BASELINE_UNHEALTHY" "retained baseline is not healthy; refusing to switch"
+  "$PROD_OPS_CMD" baseline_health "$RELEASE_ID" || { unarchive_journal; die_json "BASELINE_UNHEALTHY" "retained baseline is not healthy; refusing to switch"; }
 fi
 
 # 4. Journal the restore targets (FE symlink, upstream, baseline manifest/images/config, runtime-config) BEFORE any mutation.
@@ -305,7 +345,14 @@ write_state prod_green_verified
 # Exactly one owner at any time: drain (baseline, or none on first release) then activate the candidate.
 : > "${JOURNAL}/singletons_drained"
 "$PROD_OPS_CMD" drain_singletons "$RELEASE_ID" || rollback_and_exit "singleton_drain_failed"
-"$PROD_OPS_CMD" activate_singletons "$RELEASE_ID" || rollback_and_exit "singleton_activate_failed"
+ACTIVATE_OUT="$("$PROD_OPS_CMD" activate_singletons "$RELEASE_ID")" || rollback_and_exit "singleton_activate_failed"
+# Last stdout line carries the reporting-only product worker Docker health JSON (never a gate).
+WORKER_HEALTH_JSON="$(printf '%s\n' "$ACTIVATE_OUT" | tail -n1 | python3 -c 'import json,sys
+try:
+    d = json.loads(sys.stdin.read()).get("product_worker_health")
+except Exception:
+    d = None
+print(json.dumps(d if isinstance(d, dict) else {}, sort_keys=True))')"
 "$PROD_OPS_CMD" gate "$RELEASE_ID" candidate_ready "$TARGET_PORT" || rollback_and_exit "candidate_not_ready_after_handoff"
 
 # 8. Compensated BFF upstream switch (atomic file replace + proxy reload).
@@ -371,4 +418,5 @@ rec = {
 Path(out_p).write_text(json.dumps(rec, sort_keys=True) + "\n", encoding="utf-8")
 PY
 write_state prod_active
-printf '{"status":"prod_active","release_id":"%s","observation_window_minutes":30,"note":"release_complete requires hosted drills and 30-minute observation; not asserted here"}\n' "$RELEASE_ID"
+python3 -c 'import json,sys
+print(json.dumps({"status":"prod_active","release_id":sys.argv[1],"observation_window_minutes":30,"product_worker_health":json.loads(sys.argv[2]),"product_worker_health_is_gate":False,"note":"release_complete requires hosted drills and 30-minute observation; not asserted here"}))' "$RELEASE_ID" "$WORKER_HEALTH_JSON"

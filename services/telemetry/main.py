@@ -244,6 +244,14 @@ from .auth import (
     require_infrastructure_health_authority,
     require_telemetry_authority,
 )
+from .heartbeat_retention import (
+    HeartbeatRetentionJob,
+    INFRA_HEALTH_RETENTION_DAYS_ENV,
+    RAW_RETENTION_DAYS_ENV,
+    RETENTION_ENABLED_ENV,
+    STATE_SNAPSHOT_RETENTION_DAYS_ENV,
+    TELEMETRY_EVENTS_RETENTION_DAYS_ENV,
+)
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
     build_telemetry_event_from_runtime_heartbeat,
@@ -378,6 +386,7 @@ class _RuntimeBindingAdapter:
 
 _svc: TelemetryIngestService | None = None
 _lineage_svc: LineageReadService | None = None
+_retention_job: HeartbeatRetentionJob | None = None
 
 _DEFAULT_SCHEMA_PATH = str(Path(__file__).resolve().parent / "telemetry_event.schema.json")
 _DEFAULT_STORAGE_DIR = "/tmp/pantheon/telemetry"
@@ -835,6 +844,7 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "spill_path": dlq_stats.get("spill_path"),
             "tag_counts": dlq_stats.get("tag_counts", {}),
             "write_failure_entries": write_failure_dlq_entries,
+            "trading_dead_letters": dlq_stats.get("trading_dead_letters", {}),
         }
         canonical_table_payload = _canonical_telemetry_table_dependency()
 
@@ -866,7 +876,21 @@ register_flask_health_routes(
 def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     """Execute a lineage query family and map service-level errors to HTTP."""
     try:
-        result = _get_lineage_service().query(
+        lineage_svc = _get_lineage_service()
+        if (
+            query_family == "telemetry_event_trace"
+            and _svc is not None
+            and getattr(lineage_svc, "_event_reader", None) is None
+        ):
+            target_eid = str(params.get("event_id") or "").strip()
+            if target_eid and lineage_svc.graph.get_node("telemetry_event", target_eid) is None:
+                try:
+                    accepted = _svc.get_accepted_event(target_eid, tenant_id=tenant_id)
+                except Exception:  # noqa: BLE001
+                    accepted = None
+                if isinstance(accepted, dict) and accepted.get("event_type") == "infrastructure_health":
+                    lineage_svc.admit_telemetry_event(accepted, None)
+        result = lineage_svc.query(
             query_family,
             tenant_id=tenant_id,
             **params,
@@ -896,9 +920,35 @@ def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     return jsonify(result), 200
 
 
+def _build_retention_job() -> HeartbeatRetentionJob:
+    """Build the periodic raw heartbeat, infrastructure_health, state_snapshot, and 14d telemetry_events retention job for canonical Postgres."""
+    db_dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
+    enabled = _env_bool(RETENTION_ENABLED_ENV, default=True) and bool(db_dsn)
+    return HeartbeatRetentionJob(
+        db_dsn,
+        retention_days=os.getenv(RAW_RETENTION_DAYS_ENV) or None,
+        infra_health_retention_days=os.getenv(INFRA_HEALTH_RETENTION_DAYS_ENV) or None,
+        state_snapshot_retention_days=os.getenv(STATE_SNAPSHOT_RETENTION_DAYS_ENV) or None,
+        telemetry_events_retention_days=os.getenv(TELEMETRY_EVENTS_RETENTION_DAYS_ENV) or None,
+        enabled=enabled,
+    )
+
+
+def _get_retention_job() -> HeartbeatRetentionJob | None:
+    return _retention_job
+
+
+def run_heartbeat_retention_once(*, now: Any = None, timeout: float = 60.0) -> dict[str, Any]:
+    """Execute one bounded heartbeat retention pass on the background loop."""
+    if _retention_job is None:
+        raise RuntimeError("Heartbeat retention job is not initialised; call startup() first")
+    result = _run_async(_retention_job.run_once(now=now), timeout=timeout)
+    return result.to_dict()
+
+
 def startup():
     """Start the background event loop and the ingest service."""
-    global _loop, _loop_thread, _svc, _lineage_svc
+    global _loop, _loop_thread, _svc, _lineage_svc, _retention_job
     _loop, _loop_thread = _start_background_loop()
     # LIN-003: build the lineage service first so _build_service() can wire
     # it as the ingest live-write target — accepted events become resolvable
@@ -907,17 +957,32 @@ def startup():
     _svc = _build_service(lineage_write_store=_lineage_svc)
     startup_timeout = _startup_timeout_seconds()
     _run_async(_svc.start(), timeout=startup_timeout)
+    _retention_job = _build_retention_job()
+    if _retention_job.enabled:
+        _run_async(_retention_job.start(), timeout=5.0)
     log.info("TelemetryIngestService started within %.0fs startup budget", startup_timeout)
 
 
 def shutdown():
     """Gracefully stop the ingest service."""
-    global _svc, _loop, _lineage_svc
+    global _svc, _loop, _lineage_svc, _retention_job
+    if _retention_job is not None:
+        try:
+            _run_async(_retention_job.stop(), timeout=5.0)
+        except Exception as exc:
+            log.error(f"Error stopping heartbeat retention job: {exc}")
+        _retention_job = None
     if _svc is not None:
+        summary_store = getattr(_svc, "_runtime_summary_store", None)
         try:
             _run_async(_svc.stop(graceful=True), timeout=15.0)
         except Exception as exc:
             log.error(f"Error during graceful shutdown: {exc}")
+        if summary_store is not None and hasattr(summary_store, "close"):
+            try:
+                summary_store.close()
+            except Exception as exc:
+                log.error(f"Error flushing runtime summary store on shutdown: {exc}")
         _svc = None
     if _loop is not None:
         _loop.call_soon_threadsafe(_loop.stop)
@@ -1094,6 +1159,22 @@ def ingest_infrastructure_health():
 
     status = result.get("status")
     if status in ("accepted", "duplicate"):
+        if _lineage_svc is not None:
+            try:
+                admitted_event = (
+                    svc.get_accepted_event(
+                        str(result.get("event_id") or ""),
+                        tenant_id=event.get("tenant_id"),
+                    )
+                    or event
+                )
+                _lineage_svc.admit_telemetry_event(admitted_event, None)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "Lineage live-write admission failed for infrastructure_health event %s: %s",
+                    result.get("event_id"),
+                    exc,
+                )
         return jsonify({
             "status": "accepted",
             "duplicate": status == "duplicate",
@@ -1198,7 +1279,10 @@ def runtime_heartbeat_status(runtime_id: str):
 def stats():
     """Return TelemetryIngestService statistics."""
     svc = _get_service()
-    return jsonify(svc.stats()), 200
+    payload = dict(svc.stats())
+    if _retention_job is not None:
+        payload["heartbeat_retention"] = _retention_job.stats()
+    return jsonify(payload), 200
 
 
 @app.route("/api/telemetry/runtime-summaries", methods=["GET"])
@@ -1367,12 +1451,12 @@ def replay_dlq():
       tag — if provided, replay only entries with this tag.
             Default: replay only write-failure entries (safe).
 
-    Returns { replayed: <count> }.
+    Returns { replayed: <count>, suppressed: <count>, refused: <count> }.
     """
     tag = request.args.get("tag") or None
     svc = _get_service()
     try:
-        count = _run_async(
+        result = _run_async(
             svc.replay_dlq(
                 tag_filter=tag,
                 tenant_id=request_tenant_id(),
@@ -1382,7 +1466,11 @@ def replay_dlq():
         log.exception("Error during DLQ replay")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
-    return jsonify({"replayed": count}), 200
+    return jsonify({
+        "replayed": int(result),
+        "suppressed": int(getattr(result, "suppressed", 0)),
+        "refused": int(getattr(result, "refused", 0)),
+    }), 200
 
 
 @app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])
@@ -1445,11 +1533,21 @@ def forensic_plan_trace(plan_id: str):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import atexit
+    import signal
+
     logging.basicConfig(level=logging.INFO)
     startup()
 
-    import atexit
     atexit.register(shutdown)
+
+    def _handle_stop_signal(signum: int, _frame: Any) -> None:
+        log.info("Received signal %s; shutting down telemetry service", signum)
+        shutdown()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _handle_stop_signal)
+    signal.signal(signal.SIGINT, _handle_stop_signal)
 
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=False)

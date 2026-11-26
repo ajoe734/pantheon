@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -19,9 +20,9 @@ if str(SCRIPTS) not in sys.path:
 import dev_environment_lease as lease
 WORKFLOW = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
 DEPLOY = ROOT / "scripts" / "deploy_nonprod_vm.sh"
-CONTROLLER_SHA = "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870"
+CONTROLLER_SHA = "081075781d28a6563c731909667b98b7b5c153f9"
 CONTROLLER_SCRIPT_SHA256 = (
-    "89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4"
+    "c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa"
 )
 CONTROLLER_WRAPPER_SHA256 = (
     "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2"
@@ -158,10 +159,11 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
 
     assert "fetch-depth: 0" in dev
     assert "refs/remotes/origin/dev" in dev
-    assert '"${sha}" != "${trusted_ref}"' in dev
+    # Payload may be any green ancestor of the dev tip, never an off-dev commit.
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in dev
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
-    assert '"${GITHUB_SHA}" != "${sha}"' in dev
-    assert "current execute-plans dev moved" in dev
+    assert "has no successful dev push Branch CI run" in dev
+    assert "is not on dev" in dev
 
 
 def test_lease_coordinates_the_fixed_cross_repository_resource() -> None:
@@ -245,7 +247,8 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 
     assert '${DEV_BFF_URL}/bff/version' in dev
     assert '[[ "${actual}" == "${TARGET_SHA}" ]]' in dev
-    assert "PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}" in dev
+    assert "FUNCTIONAL_GATE_OUTCOME: ${{ steps.functional_gate.outcome }}" in dev
+    assert "PAPER_BOOTSTRAP_OUTCOME" not in dev and "AGORA_OUTCOME" not in dev
     assert '"${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}' in dev
     assert '[[ "${complete_success}" != "true" || -e "${LEASE_FAILURE_FILE}" ]]' in dev
     assert "lease quarantined until TTL" in dev
@@ -274,34 +277,43 @@ def test_provider_live_acceptance_is_not_a_dev_deployment_gate() -> None:
     assert "openclaw-assistant-openclaw-live-smoke.sh" not in dev
     assert "steps.openclaw" not in dev
     assert "OPENCLAW_OUTCOME" not in dev
-    assert "success:success:success:success:success:success" in dev
-    assert "success:success:skipped:success:success:success" in dev
+    cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
+    assert cleanup["env"]["PAPER_BOOTSTRAP_REQUESTED"] == "${{ env.PAPER_BOOTSTRAP_REQUESTED }}"
+    assert "success:success:${expected_gate}:success:success:success" in cleanup["run"]
 
 
-@pytest.mark.parametrize("component", ["root", "auto", "bff"])
+@pytest.mark.parametrize(("component", "paper_requested"), [
+    ("root", True), ("root", False), ("auto", True), ("auto", False), ("bff", False),
+])
 @pytest.mark.parametrize("failed_step", [None, "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
-                                      "PAPER_BOOTSTRAP_OUTCOME", "PUBLIC_SMOKE_OUTCOME",
-                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME"])
+                                      "PUBLIC_SMOKE_OUTCOME",
+                                      "DEPLOY_POSTURE_EVIDENCE_OUTCOME",
+                                      "STEADY_RESTART_LOOP_OUTCOME"])
 def test_deployment_completion_retains_real_checks_without_provider_gate(
-    component: str, failed_step: str | None,
+    component: str, failed_step: str | None, paper_requested: bool,
 ) -> None:
-    dev = _job(_workflow(), "deploy-dev", "coordinate-dev-release")
-    start = dev.index("          complete_success=false")
-    end = dev.index('          if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
+    cleanup = next(step for step in _dev_steps() if step.get("id") == "lease_cleanup")
+    body = cleanup["run"]
+    start = body.index("complete_success=false")
+    end = body.index('if [[ ! -s "${LEASE_PID_FILE}" ]]', start)
     outcomes = {name: "success" for name in (
-        "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME", "PAPER_BOOTSTRAP_OUTCOME",
-        "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME", "AGORA_OUTCOME",
+        "HEARTBEAT_OUTCOME", "DEPLOY_OUTCOME",
+        "PUBLIC_SMOKE_OUTCOME", "DEPLOY_POSTURE_EVIDENCE_OUTCOME",
+        "STEADY_RESTART_LOOP_OUTCOME",
     )}
-    if component == "bff":
-        outcomes["PAPER_BOOTSTRAP_OUTCOME"] = "skipped"
+    # Advisory (non-strict) run: the functional gate step is skipped.
+    outcomes["FUNCTIONAL_GATE_OUTCOME"] = "skipped"
     if failed_step:
         outcomes[failed_step] = "failure"
     result = subprocess.run(
-        ["bash", "-c", dev[start:end] + '\nprintf "%s" "$complete_success"'],
-        env={**os.environ, **outcomes, "TARGET_COMPONENT": component, "ARTIFACTS_VERIFIED": "true"},
-        capture_output=True, text=True, check=True,
+        ["bash", "-euo", "pipefail", "-c", body[start:end] + '\nprintf "%s" "$complete_success"'],
+        env={**os.environ, **outcomes, "TARGET_COMPONENT": component,
+             "FUNCTIONAL_CHECKS_STRICT": "false",
+             "PAPER_BOOTSTRAP_REQUESTED": str(paper_requested).lower(), "ARTIFACTS_VERIFIED": "true"},
+        capture_output=True, text=True, check=True, timeout=10,
     )
-    assert result.stdout == ("false" if failed_step else "true")
+    expected = "false" if failed_step else "true"
+    assert result.stdout == expected, f"completion must be {expected}; got {result.stdout} ({failed_step})"
 
 
 def test_dev_release_admission_requires_complete_backend_and_lease_success() -> None:
@@ -373,24 +385,29 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
     assert dev.count('GIT_CONFIG_PARAMETERS: ""') >= 7
     assert dev.count("unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR") >= 3
     assert dev.count("unset PANTHEON_ENVIRONMENT_LEASE_TOKEN") >= 7
+    # The advisory steps (market refresh, paper baseline, Agora) now call the
+    # guard through guarded_advisory instead of exec, so only the stack deploy
+    # and the two remaining guarded mutations still exec the wrapper.
     assert dev.count(
         'exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh"'
-    ) >= 3
+    ) >= 2
     assert "env -i \\\n" in dev
     assert "PANTHEON_ENVIRONMENT_LEASE_TOKEN=\"${{ secrets." not in dev
 
 
 def test_all_third_party_actions_are_full_sha_pinned() -> None:
-    workflow = _workflow()
+    import yaml
 
-    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 6
-    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 1
-    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 1
-    for line in workflow.splitlines():
-        if "uses:" in line:
-            ref = line.rsplit("@", 1)[-1]
-            assert len(ref) == 40
-            assert all(char in "0123456789abcdef" for char in ref)
+    # Action implementation pins are independent of checkout's repository with.ref.
+    actions = [entry["uses"] for job in yaml.safe_load(_workflow())["jobs"].values()
+               for entry in (job, *job.get("steps", [])) if "uses" in entry
+               and not entry["uses"].startswith("./")]
+    assert actions
+    assert f"actions/checkout@{CHECKOUT_SHA}" in actions
+    assert f"google-github-actions/auth@{AUTH_SHA}" in actions
+    assert f"google-github-actions/setup-gcloud@{GCLOUD_SHA}" in actions
+    for action in actions:
+        assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action), action
 
 
 def _lease_state(path: Path, *, lease_id: str, expected_sha: str) -> None:
@@ -1327,18 +1344,32 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     for post_up_gate in (
         'rollback_dev_bff_on_failure "docker_compose_up"',
         'rollback_dev_bff_on_failure "projector_recreate"',
-        'rollback_dev_bff_on_failure "source_refresh_readback"',
         'rollback_dev_bff_on_failure "shared_model_pool"',
-        'rollback_dev_bff_on_failure "paper_fleet"',
         'rollback_dev_bff_on_failure "bff_lifecycle_readiness"',
         'rollback_dev_bff_on_failure "bff_source_sha"',
         'rollback_dev_bff_on_failure "bff_auth_gate"',
         'rollback_dev_bff_on_failure "ppl_alloc_009_proof_gate"',
         'rollback_dev_bff_on_failure "caddy_ingress"',
-        'rollback_dev_bff_on_failure "evolution_daily_sweep"',
-        'rollback_dev_bff_on_failure "trade_journey_residual"',
     ):
         assert post_up_gate in root_section, f"Missing {post_up_gate} in root deploy path"
+
+    # The four in-script functional checks are advisory: they run through
+    # run_dev_advisory_check and no longer roll back directly. Only a strict
+    # dispatch maps a failure to the named rollback stage.
+    for check, stage, command in (
+        ("bounded_source_refresh_readback", "source_refresh_readback", "verify_bounded_source_refresh_readback"),
+        ("dev_paper_fleet", "paper_fleet", "verify_dev_paper_fleet"),
+        ("evolution_daily_sweep", "evolution_daily_sweep", "verify_dev_evolution_daily_sweep"),
+        ("trade_journey_residual", "trade_journey_residual", "verify_trade_journey_residual_dev.sh"),
+    ):
+        assert f"run_dev_advisory_check {check} {stage}" in root_section, check
+        assert command in root_section.split(f"run_dev_advisory_check {check} {stage}", 1)[1].split("\n    ", 3)[0] \
+            or command in root_section.split(f"run_dev_advisory_check {check} {stage}", 1)[1][:200]
+        assert f'rollback_dev_bff_on_failure "{stage}"' not in root_section
+    assert 'rollback_dev_bff_on_failure "${rollback_stage}"' in deploy_script
+    assert 'run_dev_advisory_check bounded_source_refresh_readback' not in bff_section
+    # The stack-safety gates stay blocking in the root path.
+    assert 'rollback_dev_bff_on_failure "exact_component_deployment"' in root_section
 
     for post_up_gate in (
         'rollback_dev_bff_on_failure "bff_recreate"',
@@ -1354,35 +1385,45 @@ def test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative(tmp_p
     assert "Compensate dev deployment failure to exact hosted baseline" in dev_job
     assert "PANTHEON_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}" in dev_job
     assert "PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}" in dev_job
-    assert "((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root') && steps.paper_bootstrap.outcome != 'success')" in dev_job
+    condition = _extract_deploy_compensation_condition()
+    assert "steps.paper_bootstrap" not in condition and "steps.agora" not in condition
+    assert "steps.functional_gate.outcome == 'failure'" in condition
+    for component in ("root", "auto"):
+        for requested in (True, False):
+            context = {
+                "env": {"TARGET_COMPONENT": component, "PAPER_BOOTSTRAP_REQUESTED": str(requested).lower()},
+                "steps": {name: {"outcome": "success"} for name in (
+                    "lease", "artifact_baseline", "heartbeat", "deploy", "artifact_baseline_upload",
+                    "artifact_candidate_seal", "artifact_candidate_upload", "public_smoke",
+                    "deploy-posture-evidence", "agora", "steady_restart_loop",
+                )},
+            }
+            context["steps"]["paper_bootstrap"] = {"outcome": "success" if requested else "skipped"}
+            assert not _evaluate_github_actions_condition(condition, context)
+            context["steps"]["paper_bootstrap"]["outcome"] = "failure"
+            assert not _evaluate_github_actions_condition(condition, context)  # advisory
+            context["steps"]["agora"]["outcome"] = "failure"
+            assert not _evaluate_github_actions_condition(condition, context)  # advisory
+            context["steps"]["functional_gate"] = {"outcome": "failure"}  # strict dispatch only
+            assert _evaluate_github_actions_condition(condition, context)
+            context["steps"]["functional_gate"] = {"outcome": "skipped"}
+            context["steps"]["public_smoke"]["outcome"] = "failure"
+            assert _evaluate_github_actions_condition(condition, context)
 
-    # 3. Simulate post-up failure rollback execution
-    baseline_backend_sha = SAMPLE_BACKEND_SHA
-    baseline_frontend_sha = SAMPLE_FRONTEND_SHA
-    candidate_backend_sha = "b" * 40
-
-    sim_state = {
-        "current_bff_sha": candidate_backend_sha,
-        "current_frontend_sha": baseline_frontend_sha,
-        "rollback_executed": False,
-    }
-
-    # Simulate injected post-up verification failure followed by rollback
-    def simulate_post_up_failure_and_rollback(failed_stage: str) -> int:
-        # Candidate was rolled out to candidate_backend_sha
-        assert sim_state["current_bff_sha"] == candidate_backend_sha
-        # Injected failure occurs at post-up stage
-        # Rollback handler executes:
-        sim_state["current_bff_sha"] = baseline_backend_sha
-        sim_state["rollback_executed"] = True
-        return 1
-
-    rc = simulate_post_up_failure_and_rollback("bff_auth_gate")
-    assert rc != 0
-    assert sim_state["rollback_executed"] is True
-    # Verify both hosted identities returned to / remain at the captured baseline pair
-    assert sim_state["current_bff_sha"] == baseline_backend_sha
-    assert sim_state["current_frontend_sha"] == baseline_frontend_sha
+    # Execute the maintained compensation step with existing offline transport/lease fixtures.
+    env, invocations, summary = _setup_mock_compensation_environment(
+        tmp_path, "b" * 40, SAMPLE_FRONTEND_SHA, SAMPLE_BACKEND_SHA, SAMPLE_FRONTEND_SHA,
+    )
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", _extract_deploy_compensation_run_script()],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--artifact-restore" in invocations.read_text()
+    assert f"--sha {SAMPLE_BACKEND_SHA}" in invocations.read_text()
+    assert (tmp_path / "mock_bff_sha.txt").read_text().strip() == SAMPLE_BACKEND_SHA
+    assert (tmp_path / "mock_fe_sha.txt").read_text().strip() == SAMPLE_FRONTEND_SHA
+    assert "Artifact restore proved exact prior images and FE bytes" in summary.read_text()
 
 
 def test_validate_required_loop_workers_logic() -> None:
@@ -1392,7 +1433,7 @@ def test_validate_required_loop_workers_logic() -> None:
     array_lines = deploy_script.split("REQUIRED_LOOP_WORKERS=(", 1)[1].split(")", 1)[0].splitlines()
     required = [line.split("#")[0].strip() for line in array_lines if line.split("#")[0].strip()]
 
-    assert len(required) == 28
+    assert len(required) == len(set(required)) == 31
     assert "source-ingest" in required
     assert "operator-bff" in required
     assert "paper-fleet-reconciler" in required
@@ -1523,9 +1564,9 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
-            True,
-            "Root paper bootstrap failure must trigger rollback compensation",
+            "success",
+            False,
+            "Root paper bootstrap failure is advisory and must not trigger rollback compensation",
         ),
         (
             "root",
@@ -1584,9 +1625,9 @@ def _extract_deploy_compensation_condition() -> str:
             SAMPLE_BACKEND_SHA,
             "success",
             "failure",
-            "skipped",
-            True,
-            "Auto paper bootstrap failure must trigger rollback compensation",
+            "success",
+            False,
+            "Auto paper bootstrap failure is advisory and must not trigger rollback compensation",
         ),
         (
             "auto",
@@ -1627,11 +1668,12 @@ def test_dev_deploy_compensation_condition_truth_table(
     context = {
         "env": {
             "TARGET_COMPONENT": target_component,
+            "PAPER_BOOTSTRAP_REQUESTED": "true" if target_component in ("root", "auto") else "false",
         },
         "steps": {
             **{name: {"outcome": "success"} for name in (
                 "heartbeat", "artifact_baseline_upload", "artifact_candidate_seal",
-                "artifact_candidate_upload", "deploy-posture-evidence", "agora",
+                "artifact_candidate_upload", "deploy-posture-evidence", "agora", "steady_restart_loop",
             )},
             "artifact_baseline": {"outcome": "success" if rollback_sha else "failure"},
             "lease": {
@@ -2370,6 +2412,109 @@ def test_dev_deploy_compensation_quarantined_predecessor_heartbeat_restores_base
     assert "RELEASED" in lease_events
 
 
+@pytest.mark.parametrize("scenario,exit_code", [("primary403", 0), ("secondary429", 0),
+                                                ("permission403", 75), ("pending", 79)])
+def test_rate_limited_compensation_runs_real_lease_cli_before_exact_baseline_restore(tmp_path, scenario, exit_code):
+    """Execute the workflow shell and real acquire/verify code; only clock,
+    GitHub authority, heartbeat transport and hosted artifact I/O are fixtures.
+    This is source acceptance, not a claim of hosted recovery.
+    """
+    env, invocations, summary = _setup_mock_compensation_environment(
+        tmp_path, initial_bff_sha="c" * 40, initial_fe_sha="f" * 40,
+        rollback_bff_sha="a" * 40, rollback_fe_sha="f" * 40)
+    cli = tmp_path / ".lease-controller/scripts/dev_environment_lease.py"
+    authority = tmp_path / "rate-authority.json"
+    deploy = tmp_path / ".agora-gate-controller/scripts/deploy_nonprod_vm.sh"
+    authorize_restore = (
+        f"import json; from pathlib import Path; p=Path({str(authority)!r}); "
+        'd=json.loads(p.read_text()); assert d["verified"]; '
+        'assert d["writes"] == ["1"*40, "2"*40]; '
+        'd["restore_authorized"]=True; p.write_text(json.dumps(d))'
+    )
+    deploy.write_text(deploy.read_text().replace(
+        "set -euo pipefail\n", "set -euo pipefail\npython3 -c " + shlex.quote(authorize_restore) + "\n", 1))
+    prelude = r'''
+if command in ("acquire", "verify"):
+    from datetime import datetime, timedelta
+    sys.path.insert(0, SCRIPTS_PATH)
+    import dev_environment_lease as production
+    import test_dev_environment_lease as fixtures
+    ledger_path = Path(AUTHORITY_PATH)
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {
+        "now": fixtures.NOW.isoformat(), "state": fixtures.state_for(
+            owner="previous-deploy", heartbeat=fixtures.NOW - timedelta(seconds=400)),
+        "sha": "1" * 40, "writes": [], "waits": [], "verified": False}
+    client = fixtures.FakeClient()
+    client.now = datetime.fromisoformat(ledger["now"])
+    client.state, client.content_sha = ledger["state"], ledger["sha"]
+    def advance(seconds):
+        ledger["waits"].append(seconds)
+        client.now += timedelta(seconds=seconds)
+    client.sleep = advance
+    original_ref, original_get, original_put = client.get_ref, client.get_content, client.put_content
+    def limited_ref(*args):
+        if not ledger.get("acquire_limit_seen"):
+            ledger["acquire_limit_seen"] = True
+            if SCENARIO == "permission403":
+                raise production.classify_github_http_error(403, "Permission denied")
+            status = 429 if SCENARIO == "secondary429" else 403
+            reset = client.now + timedelta(seconds=4000 if SCENARIO == "pending" else 60)
+            raise production.GitHubRateLimitError(status, "API rate limit exceeded",
+                remaining=0, reset_at=reset, server_now=client.now,
+                retry_after_seconds=60 if status == 429 else None)
+        return original_ref(*args)
+    client.get_ref = limited_ref
+    def limited_get(*args):
+        if command == "verify" and not ledger.get("verify_limit_seen"):
+            ledger["verify_limit_seen"] = True
+            raise production.GitHubRateLimitError(429, "secondary rate limit",
+                retry_after_seconds=400, server_now=client.now)
+        return original_get(*args)
+    client.get_content = limited_get
+    def put(*args, **kwargs):
+        ledger["writes"].append(kwargs["expected_sha"])
+        _, written_at = original_put(*args, **kwargs)
+        client.content_sha = str(len(ledger["writes"]) + 1) * 40
+        return client.content_sha, written_at
+    client.put_content = put
+    production.manager_from_args = lambda args: fixtures.manager(client)
+    try:
+        result = production.run()
+        if command == "verify": ledger["verified"] = True
+        raise SystemExit(result)
+    except production.RateLimitedRollbackPending as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(79)
+    except production.LeaseError as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(75)
+    finally:
+        ledger.update(now=client.now.isoformat(), state=client.state, sha=client.content_sha)
+        ledger_path.write_text(json.dumps(ledger))
+'''.replace("SCRIPTS_PATH", repr(str(SCRIPTS))).replace("AUTHORITY_PATH", repr(str(authority))).replace("SCENARIO", repr(scenario))
+    cli.write_text(FAKE_DEV_ENVIRONMENT_LEASE_CLI.replace('if command == "acquire":', prelude + '\nif command == "acquire":', 1))
+    result = subprocess.run(["bash", "-euo", "pipefail", "-c", _extract_deploy_compensation_run_script()],
+                            cwd=tmp_path, env=env, text=True, capture_output=True, timeout=30)
+    assert result.returncode == exit_code, result.stderr
+    ledger = json.loads(authority.read_text())
+    if exit_code == 0:
+        assert ledger["writes"] == ["1" * 40, "2" * 40]  # two fresh CAS acquisitions
+        assert len(ledger["waits"]) == 2
+        assert ledger["waits"][0] >= 60 and ledger["waits"][1] >= 400
+        assert ledger["verified"]
+        assert ledger["restore_authorized"]
+        assert '--artifact-restore' in invocations.read_text()
+        assert (tmp_path / "mock_bff_sha.txt").read_text().strip() == "a" * 40
+        assert (tmp_path / "mock_fe_sha.txt").read_text().strip() == "f" * 40
+        assert "Artifact restore proved exact prior images and FE bytes" in summary.read_text()
+    else:
+        assert ledger["writes"] == [] and not ledger["verified"]
+        assert not invocations.exists()
+        if exit_code == 79:
+            assert "rate_limited_rollback_pending" in result.stderr
+            assert "rollback incomplete" not in result.stderr
+
+
 def test_dev_deploy_compensation_active_predecessor_heartbeat_stopped_and_recovered_e2e(tmp_path: Path) -> None:
     """Positive E2E test proving that when an optional hosted probe fails before public_smoke
     while the predecessor heartbeat is STILL ACTIVE and renewing in the background, deploy_compensation
@@ -3059,13 +3204,17 @@ def test_candidate_protection_removal_is_detected(tmp_path, monkeypatch, mutatio
         oracle(tmp_path)
 
 
-def test_restart_admission_removal_is_detected(monkeypatch):
-    test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+@pytest.mark.parametrize(("component", "paper_requested"), [
+    ("root", True), ("root", False), ("auto", True), ("auto", False), ("bff", False),
+])
+def test_restart_admission_removal_is_detected(monkeypatch, component, paper_requested):
+    test_deployment_completion_retains_real_checks_without_provider_gate(component, None, paper_requested)
+    test_deployment_completion_retains_real_checks_without_provider_gate(component, "PUBLIC_SMOKE_OUTCOME", paper_requested)
     source = _workflow()
-    assert "${AGORA_OUTCOME}" in source
-    monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${AGORA_OUTCOME}", "success"))
-    with pytest.raises(AssertionError):
-        test_deployment_completion_retains_real_checks_without_provider_gate("root", "AGORA_OUTCOME")
+    assert source.count("${PUBLIC_SMOKE_OUTCOME}") == 1
+    monkeypatch.setitem(globals(), "_workflow", lambda: source.replace("${PUBLIC_SMOKE_OUTCOME}", "success"))
+    with pytest.raises(AssertionError, match=r"completion must be false; got true \(PUBLIC_SMOKE_OUTCOME\)"):
+        test_deployment_completion_retains_real_checks_without_provider_gate(component, "PUBLIC_SMOKE_OUTCOME", paper_requested)
 
 
 _VISIBILITY_FLAGS = (
@@ -3147,6 +3296,7 @@ def _run_compensation_verify(tmp_path: Path, relative: str, scenario: str, *, fl
         "state_file": str(state_file),
         "rollback_state_file": str(state_file),
         "LEASE_STATE_FILE": str(state_file),
+        "rollback_rate_wait": "3900",
     }
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", command + ">/dev/null"],
@@ -3167,40 +3317,71 @@ def _step_text(name: str, next_name: str) -> str:
     return text[start:end]
 
 
-def test_release_case_retirement_runs_after_both_compensation_paths() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
-    admit = _step_text(
-        "Retire non-served dev paper release cases",
-        "Upload accepted or compensated release evidence",
-    )
-    assert "steps.frontend_release.outcome == 'success' || steps.compensation.outcome == 'success'" in admit
-    assert "'accepted' || 'compensated'" in admit
-    assert text.index("name: Compensate rejected release to exact hosted baseline") < text.index(
-        "name: Retire non-served dev paper release cases"
-    )
-    deploy = _step_text(
-        "Retire this run's dev paper release case after deploy compensation",
-        "Upload dev paper release case retirement evidence",
-    )
-    assert "steps.deploy_compensation.outcome == 'success'" in deploy
-    assert "RELEASE_OUTCOME: compensated" in deploy
-    assert text.index("id: deploy_compensation") < text.index(
-        "name: Retire this run's dev paper release case after deploy compensation"
-    )
-    for step in (admit, deploy):
-        assert "continue-on-error: true" in step
-        assert "--new-case-key" in step and "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in step
-        assert "dev-paper-release-case-retire.json" in step
-        assert "timeout --kill-after" in step
+def test_release_case_retirement_precedes_restore_and_accepted_cleanup_follows_verification() -> None:
+    import yaml
+
+    deploy = _dev_steps()
+    coordinate = yaml.safe_load(_workflow())["jobs"]["coordinate-dev-release"]["steps"]
+    retirements = []
+    for steps, retire_id, restore_id in (
+        (deploy, "retire_release_cases", "deploy_compensation"),
+        (coordinate, "roundtrip_retire_release_case", "roundtrip_baseline_restore"),
+        (coordinate, "rollback_retire_release_case", "compensation"),
+    ):
+        ids = [step.get("id") for step in steps]
+        assert ids.index(retire_id) < ids.index(restore_id)
+        retire = steps[ids.index(retire_id)]
+        assert retire["env"]["RELEASE_OUTCOME"] == "pre_restore"
+        assert "paper_bootstrap_requested == 'true'" in retire["if"].lower()
+        assert f"steps.{restore_id}.outcome" not in retire["if"]
+        assert '"preparation_only":true' in retire["run"]
+        retirements.append(retire)
+
+    ids = [step.get("id") for step in coordinate]
+    accepted = coordinate[ids.index("retire_release_cases")]
+    assert ids.index("final_artifact_verify") < ids.index("retire_release_cases")
+    assert accepted["env"]["RELEASE_OUTCOME"] == "accepted"
+    assert "steps.frontend_release.outcome == 'success'" in accepted["if"]
+    assert "steps.final_artifact_verify.outcome == 'success'" in accepted["if"]
+    assert "paper_bootstrap_requested == 'true'" in accepted["if"]
+    assert "!inputs.run_exact_artifact_roundtrip" in accepted["if"]
+    assert "steps.compensation.outcome" not in accepted["if"]
+    for step in (*retirements, accepted):
+        assert step["continue-on-error"] is True
+        assert "--new-case-key" in step["run"]
+        assert "dev-paper-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" in step["run"]
+        assert "dev-paper-release-case-retire.json" in step["run"]
+        assert "timeout --kill-after" in step["run"]
 
 
-def test_release_case_retirement_uses_only_the_retire_action() -> None:
+@pytest.mark.parametrize("outcome", ["accepted", "pre_restore", "compensated"])
+def test_release_case_retirement_uses_only_the_provisioning_coordinator(outcome: str) -> None:
+    from scripts.test_retire_dev_paper_release_cases import Coordinator, KEYS, Rec, _run, _store
+
     script = (SCRIPTS / "retire_dev_paper_release_cases.py").read_text(encoding="utf-8")
     code = script.split('"""', 2)[2]
-    assert '/retire"' in code
+    assert 'getattr(service, "retire_persona_provisioning_case", None)' in code
+    assert "retire_case(" in code
+    assert "/api/deployment-sagas" not in code
     assert "/failure" not in code and "/transition" not in code
     assert "/api/runtime-bindings" not in code
     assert "psycopg" not in code and "DELETE" not in code.upper().replace("DELETION", "")
+
+    store = _store()
+    store.records.append(Rec("operator-case", "2026-10-05", tenant_id="operator-tenant", persona_id="operator"))
+    coordinator = Coordinator()
+    calls = []
+
+    def retire_case(tenant_id, persona_id, *, reason):
+        calls.append((tenant_id, persona_id))
+        return coordinator(tenant_id, persona_id, reason=reason)
+
+    result = _run(store, retire_case, outcome=outcome, new_case_key=KEYS[3])
+    expected = store.records[:3] if outcome == "accepted" else [store.records[3]]
+    assert calls == [(case.tenant_id, case.persona_id) for case in expected]
+    assert result["retire"] == [case.idempotency_key for case in expected]
+    assert result["status"] == "retired"
+    assert result["preparation_only"] is (outcome == "pre_restore")
 
 
 def test_workflow_has_no_hard_coded_ssh_host_fallback() -> None:
@@ -3238,11 +3419,12 @@ def test_market_refresh_runs_under_held_lease_after_candidate_stack_deploy() -> 
     assert steps[refresh]["id"] == "market_refresh"
 
     text = steps[refresh]["run"]
-    # Existing refresh-only path under the pinned wrapper; no second lease or implementation.
-    assert text.count('run_with_dev_environment_lease.sh" \\\n') - 1 == 2  # minus the checksum printf
-    assert text.count('"${controller}/scripts/run_with_dev_environment_lease.sh" \\\n') - 1 == text.count(
-        'bash "${deploy_script}"'
-    )
+    # Existing refresh-only path under the pinned wrapper (through guarded_advisory,
+    # which is the only caller of the wrapper); no second lease or implementation.
+    assert "guarded_advisory() {" in text
+    assert text.count("guarded_advisory ") == 2  # the two refresh-only calls
+    assert text.count('run_with_dev_environment_lease.sh" "$@"') == 1  # strict path
+    assert text.count('bash -c \'rcfile=') == 1  # advisory path wraps the guarded child so it exits 0
     assert text.count('bash "${deploy_script}"') == 2
     assert '--refresh-only --output "${outcome_dir}/refresh.json"' in text
     assert '--refresh-only --preflight-only --output "${outcome_dir}/preflight.json"' in text
@@ -3265,13 +3447,19 @@ def test_market_refresh_failure_is_a_post_switch_failure_handled_by_compensation
     assert names.index("Capture actual prior artifacts under pinned dev lease") < names.index(MARKET_REFRESH_STEP)
     assert names.index("Deploy dev VM stack under lease") < names.index(MARKET_REFRESH_STEP)
     refresh = steps[names.index(MARKET_REFRESH_STEP)]
+    # continue-on-error is not enough for a lease-guarded step; the step itself
+    # exits 0 in advisory mode (see guarded_advisory) and records its result.
     assert "continue-on-error" not in refresh
+    assert "guarded_advisory" in refresh["run"]
     # The baseline and lifecycle steps are not `always()` steps: they never run after this failure.
     for later in ("Ensure governed dev paper baseline under lease",):
         assert "always()" not in str(steps[names.index(later)].get("if", ""))
     compensation = next(step for step in steps if step.get("id") == "deploy_compensation")
     assert "steps.artifact_baseline.outcome == 'success'" in compensation["if"]
-    assert "steps.market_refresh.outcome == 'failure'" in compensation["if"]
+    # Functional checks are advisory: neither market refresh nor the paper
+    # baseline nor the Agora smoke is a compensation trigger any more.
+    assert "steps.market_refresh" not in compensation["if"]
+    assert "steps.functional_gate.outcome == 'failure'" in compensation["if"]
 
 
 def test_market_refresh_skips_for_refresh_bootstrap_and_non_paper_modes() -> None:
@@ -3311,8 +3499,8 @@ def test_whole_stack_scope_is_forwarded_and_only_the_roundtrip_keeps_three_image
     for step in ("id: deploy_compensation", "id: compensation"):
         assert "PANTHEON_DEV_ARTIFACT_SCOPE" not in workflow.split(step, 1)[1].split("\n      - name:", 1)[0]
     compensation = workflow.split("id: compensation\n", 1)[1].split("- name:", 1)[0]
-    assert "timeout-minutes: 60" in compensation
-    # The shared compensation script bounds its deploy inside the 60 minute step.
+    assert "timeout-minutes: 100" in compensation
+    # The shared compensation script bounds its deploy inside the 100 minute step.
     assert '--deadline-seconds "${DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS:-1500}"' in (
         SCRIPTS / "compensate_cross_repo_release.sh").read_text(encoding="utf-8")
 
@@ -3378,7 +3566,7 @@ def test_compensation_drill_feeds_the_existing_compensation_step_only() -> None:
     deploy = _job(workflow, "deploy-dev", "isolated-l12-provider-qualification")
     comp = deploy.split("id: deploy_compensation", 1)[1].split("- name:", 1)[0]
     assert "steps.compensation_drill.outcome == 'failure'" in comp
-    assert "steps.deploy.outcome != 'success'" in comp and "steps.agora.outcome != 'success'" in comp
+    assert "steps.deploy.outcome != 'success'" in comp and "steps.agora" not in comp
     assert "COMPENSATION DRILL" in comp and "compensation-drill.json" in comp
     assert deploy.count("Compensate dev deployment failure") == 1
     assert workflow.count("--artifact-${PANTHEON_DEV_ARTIFACT_OPERATION}") == 1
@@ -3390,3 +3578,29 @@ def test_compensation_drill_has_its_own_run_name() -> None:
     assert "format('Dev compensation drill {0} + {1}'" in head
     assert "inputs.compensation_drill &&" in head
     assert "format('Dev release {0} + {1}'" in head
+
+
+def test_acceptance_stage_is_advisory_and_lease_scoped():
+    """The acceptance job follows coordinate-dev-release, never fails the run, never uses the
+    lease guard wrapper (a guarded step cannot be advisory) and takes the lease only for mutating checks."""
+    import yaml
+
+    workflow = _workflow()
+    job = yaml.safe_load(workflow)["jobs"]["dev-acceptance-stage"]
+    assert job["needs"] == ["deploy-dev", "coordinate-dev-release"]
+    assert job["continue-on-error"] is True
+    assert "needs.coordinate-dev-release.result == 'success'" in job["if"]
+    steps = {step.get("name"): step for step in job["steps"]}
+    acquire = steps["Acquire qualification lease and start identity-bound heartbeat"]
+    assert acquire["if"] == "${{ steps.plan.outputs.mutating == 'true' }}"
+    assert "--mode qualification" in acquire["run"]
+    body = workflow.split("  dev-acceptance-stage:\n", 1)[1].split("  isolated-l12-provider-qualification:\n", 1)[0]
+    assert ".lease-controller/scripts/run_with_dev_environment_lease.sh\"" not in body
+    assert "exec \"${controller}/scripts/run_with_dev_environment_lease.sh\"" not in body
+    run = steps["Run acceptance checks and probes"]
+    assert run["continue-on-error"] is True and "|| true" in run["run"] and run["run"].rstrip().endswith("exit 0")
+    assert "latest.json" in steps["Publish verdict beside the hosted deployment manifest"]["run"]
+    assert steps["Upload acceptance verdict"]["with"]["retention-days"] == 30
+    # no other job depends on the acceptance verdict: it cannot gate or roll back a deploy
+    for name, other in yaml.safe_load(workflow)["jobs"].items():
+        assert "dev-acceptance-stage" not in (other.get("needs") or [])

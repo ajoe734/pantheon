@@ -126,6 +126,44 @@ Recommendation mapping:
 | overall < 35 | suspend persona |
 | overall < 25 | retire persona |
 
+The scheduled evaluator applies every matching row of this table, including
+overlapping lifecycle advice. All four ranking scores must be finite numbers
+in [0, 100]; absent metrics produce no recommendation and a persisted reason.
+The agent may explain the fixed actions but cannot select, omit, or add them.
+An unavailable rationale provider leaves the factual rule explanation intact.
+
+Owner routing (PM12-RECOMMENDATION-ROUTING-20261112):
+
+- Research/tool advice creates a draft `tool_profile` harness patch against the
+  active base and the recorded persona session. It references ranking evidence,
+  preserves the existing tool ceiling, and requests review under the paper cap;
+  this scheduler never activates the patch or grants a permission.
+- Retraining selects the active pool member with the lowest recorded virtual
+  book Sharpe (artifact ID breaks ties). All active members need dated,
+  checksum-bound books; tenant, binding, runtime and approved registry identity
+  must match. The existing Evolution pool-member proposal contract receives a
+  paper retrain request, not an immediate training execution.
+- Reduction advice is attached as `recommendation_inputs` to the persona's
+  pool-health provenance in the existing closed-quarter paper allocation input.
+  Capital recomputes targets from the admitted snapshot under its existing
+  policy; a recommendation does not supply a target weight or authorize real
+  capital. No configured paper pool leaves a recorded pending route.
+- Freeze/suspend/retire remain operator lifecycle proposals. Suspend targets
+  the owner's `frozen` state because there is no separate suspended owner state.
+  Unsupported current-state transitions remain unsubmitted with a reason.
+- Canary candidacy retains the unique rank-one, closed-quarter sample and
+  identity checks, and additionally must pass this table's 85/70/65 thresholds.
+  Before operator submission, the existing `trial_admission` panel requires
+  both risk and red-team personas for the `paper_canary_candidacy` scope.
+  The published committee memo and their sourced conclusions are bound to the
+  exact snapshot, included in proposal evidence and content digest, and
+  projected in promotion-review readback. Pending/missing memos prevent submission.
+
+Owner HTTP requests are persisted before POST and retried with their original
+identity and content after an unknown outcome. Existing owner credentials are
+required; missing owner configuration is a recorded hold, never an authority
+fallback. Source verification and runtime credential readiness are separate.
+
 Stage-aware interpretation:
 
 - For `paper_running`, `promote_to_canary_candidate` opens a

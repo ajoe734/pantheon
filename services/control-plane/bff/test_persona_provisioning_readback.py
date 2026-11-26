@@ -724,6 +724,9 @@ def test_coordinate_persona_create_propagates_monotonic_deadline_with_response_r
             active.state = "paper_running"
             return active
 
+        def provision_persona_agent(self, persona_id: str) -> dict[str, Any]:
+            return {"status": "ready", "agent_id": persona_id}
+
     monkeypatch.setattr(personas_service, "_persona_provisioning_store", lambda: FakeStore())
     monkeypatch.setattr(personas_service, "PersonaProvisioningCoordinator", FakeCoordinator)
     monkeypatch.setattr(personas_service, "_register_persona_cron_required", fake_register_cron)
@@ -1849,6 +1852,8 @@ def test_provisioned_paper_persona_readback_retains_expression_policy_and_future
         "gross_limit": 2.0,
         "net_limit": 2.0,
         "max_leverage": 2.0,
+        "max_single_name_weight": 0.2,
+        "min_cash_reserve_pct": 0.1,
         "allowed_asset_classes": ["equity", "future"],
     }
 

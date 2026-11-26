@@ -1,0 +1,8 @@
+{
+  "task": "PERSONA-OBSERVE-MEMORY-RERANK-COST-20261124",
+  "change": "hindsight HINDSIGHT_API_RERANKER_PROVIDER=rrf (docker-compose.yml)",
+  "verified": {"provider_supported_in_hindsight_api_slim_1.2.1": true, "compose_test": "scripts/test_current_l12_compose_wiring.py::test_hindsight_recall_reranker_is_model_free passed"},
+  "quality_lost": "cross-encoder relevance re-scoring; RRF fusion order retained",
+  "pending_hosted": ["mem_probe.py six concurrent recalls <5s", "CPU seconds per recall before/after", "2026-11-25T10:00Z terminal_packet_today for three trading personas"],
+  "review_independence_exception": "other model families at quota until 2026-11-27T10:03Z; same-family reviewer permitted"
+}

@@ -601,6 +601,25 @@ class DependencyContractBatchTests(unittest.TestCase):
         self.assertEqual(self._run(batch)[1]['status'], 'replayed')
         self.assertEqual(self._snapshot(), after)
 
+    def test_unschedulable_in_progress_allows_dependency_revision(self):
+        dep = self.state['tasks'][0]
+        dep['status'] = 'in_progress'
+        self._seed()
+        code, _ = self._run(self._request())
+        self.assertEqual(code, 0)
+        updated = ai_status.get_task(self._snapshot()['state'], 'DEP')
+        self.assertEqual(updated['status'], 'in_progress')
+        self.assertEqual(updated['depends_on'], ['COVERAGE'])
+
+    def test_schedulable_in_progress_with_satisfied_dependencies_is_busy(self):
+        dep = self.state['tasks'][0]
+        dep.update(status='in_progress', depends_on=['COVERAGE'])
+        self._seed()
+        before = self._snapshot()
+        batch = self._request([('DEP', ['COVERAGE', 'READ'])])
+        self.assertEqual(self._run(batch)[0], 75)
+        self.assertEqual(self._snapshot(), before)
+
     def test_stale_second_row_or_protected_field_changes_commit_nothing(self):
         for field, value in [('generation', 2), ('owner', 'Codex2'), ('status', 'blocked'), ('acceptance', ['changed'])]:
             with self.subTest(field=field):
@@ -8313,6 +8332,802 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     _command_reconcile_merged_done(self.state, [task["id"], "Must reject."])
                 self.assertEqual(task["status"], "review_approved")
 
+    def _init_regime_artifact_publication_repo(
+        self,
+        root: Path,
+        *,
+        task_id: str = "REGIME-DATA-HOSTED-ACCEPTANCE-20261114",
+        pub_task_id: str = "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+        evidence_payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, str]:
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Antigravity"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "antigravity-agent@pantheon.local"],
+            cwd=root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"],
+            cwd=root,
+            check=True,
+        )
+        readme = root / "README.md"
+        readme.write_text("# Pantheon\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial base"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        base_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+
+        subprocess.run(
+            ["git", "checkout", "-b", f"task/{pub_task_id}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        evidence_rel = f"docs/deployment/evidence/{task_id}/evidence.json"
+        pub_manifest_rel = f"docs/deployment/evidence/{pub_task_id}/evidence.json"
+        payload = dict(
+            evidence_payload
+            or {
+                "schema_version": "pantheon.regime-data-hosted-observation.v1",
+                "task_id": task_id,
+                "probe_result": "stored_history_measured",
+                "accepted_release": {
+                    "root_workflow": 44915049855,
+                    "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+                    "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+                    "gate": "44918407417",
+                    "pair_id": "a3a38db06b52f24e57eaa69bc033e32c55bac631b466ebbf059390b2f0b6a1aa",
+                    "ready": 200,
+                },
+                "read_only_commands_and_method": [
+                    "GET public Dev /deployment.json, /bff/version and /bff/readyz"
+                ],
+            }
+        )
+        evidence_text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        evidence_file = root / evidence_rel
+        evidence_file.parent.mkdir(parents=True, exist_ok=True)
+        evidence_file.write_text(evidence_text, encoding="utf-8")
+        evidence_sha256 = hashlib.sha256(evidence_file.read_bytes()).hexdigest()
+
+        pub_manifest_file = root / pub_manifest_rel
+        pub_manifest_file.parent.mkdir(parents=True, exist_ok=True)
+        pub_manifest_file.write_text(
+            json.dumps(
+                {
+                    "schema_version": "pantheon.task-evidence.v1",
+                    "task_id": pub_task_id,
+                    "published_acceptance_evidence": {
+                        "path": evidence_rel,
+                        "publish_sha256": evidence_sha256,
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "add", evidence_rel, pub_manifest_rel],
+            cwd=root,
+            check=True,
+        )
+        commit_msg = (
+            f"{pub_task_id}: publish regime evidence\n\n"
+            f"LLM-Agent: Antigravity\n"
+            f"Task-ID: {pub_task_id}\n"
+            f"Reviewer: Codex2\n"
+        )
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        pub_head_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        pub_manifest_blob = subprocess.check_output(
+            ["git", "rev-parse", f"HEAD:{pub_manifest_rel}"], cwd=root, text=True
+        ).strip()
+        evidence_blob = subprocess.check_output(
+            ["git", "rev-parse", f"HEAD:{evidence_rel}"], cwd=root, text=True
+        ).strip()
+
+        subprocess.run(
+            ["git", "checkout", "dev"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "merge",
+                "--no-ff",
+                f"task/{pub_task_id}",
+                "-m",
+                f"Merge pull request #7732 from ajoe734/task/{pub_task_id}",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+        pub_merge_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/dev", pub_merge_sha],
+            cwd=root,
+            check=True,
+        )
+        return {
+            "base_sha": base_sha,
+            "pub_head_sha": pub_head_sha,
+            "pub_merge_sha": pub_merge_sha,
+            "evidence_rel": evidence_rel,
+            "evidence_sha256": evidence_sha256,
+            "evidence_blob": evidence_blob,
+            "pub_manifest_rel": pub_manifest_rel,
+            "pub_manifest_blob": pub_manifest_blob,
+        }
+
+    def _setup_regime_human_ops_artifact_acceptance(
+        self,
+        delivery_root: Path,
+        *,
+        evidence_payload: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        task_id = "REGIME-DATA-HOSTED-ACCEPTANCE-20261114"
+        pub_task_id = "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121"
+        repo_info = self._init_regime_artifact_publication_repo(
+            delivery_root,
+            task_id=task_id,
+            pub_task_id=pub_task_id,
+            evidence_payload=evidence_payload,
+        )
+        evidence_rel = repo_info["evidence_rel"]
+        evidence_sha256 = repo_info["evidence_sha256"]
+        pub_head_sha = repo_info["pub_head_sha"]
+        pub_merge_sha = repo_info["pub_merge_sha"]
+
+        pub_task = {
+            "id": pub_task_id,
+            "title": "Publish the measured Regime inventory under the evidence budget",
+            "phase": "Acceptance",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+            "status": "done",
+            "terminal_outcome": "completed",
+            "generation": 1,
+            "depends_on": [],
+            "artifacts": [
+                evidence_rel,
+                f"docs/deployment/evidence/{pub_task_id}/",
+            ],
+            "acceptance": [
+                "Publish the formatted evidence at docs/deployment/evidence/REGIME-DATA-HOSTED-ACCEPTANCE-20261114/evidence.json."
+            ],
+            "review_file": repo_info["pub_manifest_rel"],
+            "review_binding": {
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "head_branch": f"task/{pub_task_id}",
+                "base": "dev",
+            },
+            "delivery_binding": {
+                "kind": "pull_request",
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "head_branch": f"task/{pub_task_id}",
+                "base": "dev",
+                "base_sha": repo_info["base_sha"],
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {
+                    "path": repo_info["pub_manifest_rel"],
+                    "blob_sha": repo_info["pub_manifest_blob"],
+                },
+            },
+            "integration_receipt": {
+                "version": 1,
+                "result": "landed",
+                "pr": 7732,
+                "head_sha": pub_head_sha,
+                "merge_commit_sha": pub_merge_sha,
+                "target_branch": "dev",
+                "task_generation": 1,
+            },
+            "delivery": {
+                "repository_id": "pantheon",
+                "repository_slug": "ajoe734/pantheon",
+                "repository_path": str(delivery_root),
+                "commit": pub_head_sha,
+                "merge_target_ref": "origin/dev",
+                "merge_target_sha": pub_merge_sha,
+                "head_merged_to_target": True,
+            },
+        }
+        task_archive.archive_task_snapshot(
+            pub_task,
+            handoffs=[],
+            blockers=[],
+            archived_at="2026-11-21T18:52:19Z",
+        )
+        self.state[ai_status.TERMINAL_FACTS_KEY] = {
+            pub_task_id: {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": 1,
+                "recorded_at": "2026-11-21T18:52:19Z",
+            }
+        }
+
+        task = self.state["tasks"][0]
+        task.clear()
+        task.update(
+            {
+                "id": task_id,
+                "title": "Hosted acceptance of the regime input datasets after an accepted Dev release",
+                "phase": "Acceptance",
+                "owner": "Human/Ops",
+                "reviewer": "Codex2",
+                "status": "review_approved",
+                "generation": 4,
+                "depends_on": [],
+                "artifacts": [evidence_rel],
+                "acceptance": [
+                    "On hosted dev after an accepted release the stored history depth is measured read-only",
+                    "evidence.json records the release identity and the read-only commands and contains no credential",
+                ],
+                "completion_tracks": {
+                    "hosted": {
+                        "status": "done",
+                        "evidence": [
+                            evidence_rel,
+                            "https://github.com/ajoe734/pantheon/actions/runs/44915049855/artifacts/14713494901",
+                            "https://github.com/ajoe734/pantheon/actions/runs/44915049855/artifacts/14714227520",
+                            "https://github.com/ajoe734/pantheon/pull/7732",
+                        ],
+                        "message": (
+                            "Hosted data inventory accepted on Root 44915049855 with exact FE "
+                            "84ac2ac67fd2abc56ba22230fa7065f0c97342e8 / BFF "
+                            "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c. Original required "
+                            f"evidence.json is present at merged {pub_merge_sha}, SHA256 "
+                            f"{evidence_sha256}, independently reviewed in #7732."
+                        ),
+                        "updated_at": "2026-11-22T00:43:23Z",
+                        "updated_by": "Human/Ops",
+                    }
+                },
+                "last_update": "2026-11-22T00:56:54Z",
+                "next": "Independent Codex2 review passes.",
+            }
+        )
+        contract = ai_status._delivery_contract_payload(task)
+        delivery_binding = {
+            "kind": "artifact_contract",
+            **contract,
+            "contract_sha256": ai_status._canonical_json_sha256(contract),
+        }
+        task[ai_status.DELIVERY_BINDING_KEY] = delivery_binding
+
+        handoff_msg = (
+            "Handoff to Codex2: Review the hosted inventory criteria and milestone. "
+            f"Report is published on dev in PR #7732 at {pub_merge_sha}, {evidence_rel}, "
+            f"SHA256 {evidence_sha256}. Verify against accepted Root 44915049855."
+        )
+        handoff_event = ai_status._activity_event(
+            {
+                "ts": "2026-11-22T00:54:09Z",
+                "agent": "Human/Ops",
+                "type": "handoff",
+                "task_id": task_id,
+                "message": handoff_msg,
+                "delivery_binding": deepcopy(delivery_binding),
+            }
+        )
+        approval_msg = (
+            "Independent Codex2 review passes all hosted inventory acceptance criteria. "
+            "Verified official Root 44915049855 success; exact BFF "
+            "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c, FE "
+            f"84ac2ac67fd2abc56ba22230fa7065f0c97342e8. Evidence SHA256 {evidence_sha256} "
+            f"is byte-identical at PR 7732 head {pub_head_sha} and merged dev {pub_merge_sha}."
+        )
+        approval_event = ai_status._activity_event(
+            {
+                "ts": "2026-11-22T00:56:54Z",
+                "agent": "Codex2",
+                "type": "review_approved",
+                "task_id": task_id,
+                "message": approval_msg,
+                "status_command": {
+                    "worker_lease": {
+                        "schema_version": 1,
+                        "task_id": task_id,
+                        "actor": "Codex2",
+                        "task_generation": 4,
+                    }
+                },
+            }
+        )
+        self._test_log_file.write_text(
+            json.dumps(handoff_event) + "\n" + json.dumps(approval_event) + "\n",
+            encoding="utf-8",
+        )
+        self.state["handoffs"] = [
+            {
+                "task_id": task_id,
+                "from": "Human/Ops",
+                "to": "Codex2",
+                "message": handoff_msg,
+                "status": "done",
+                "created_at": "2026-11-22T00:54:09Z",
+                "resolved_at": "2026-11-22T00:56:54Z",
+            },
+            {
+                "task_id": task_id,
+                "from": "Codex2",
+                "to": "Human/Ops",
+                "message": approval_msg,
+                "status": "pending",
+                "created_at": "2026-11-22T00:56:54Z",
+            },
+        ]
+        return task, repo_info
+
+    def test_reconcile_merged_done_closes_human_ops_owned_artifact_acceptance_and_emits_archive_receipt(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-closeout-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                with self.assertRaisesRegex(
+                    RuntimeError, "local Human/Ops cannot authorize done"
+                ):
+                    ai_status.validate_active_status_command_lease(
+                        "done",
+                        [task["id"], "Normal owner done is blocked for local Human/Ops."],
+                    )
+                _command_reconcile_merged_done(
+                    self.state,
+                    [
+                        task["id"],
+                        "Human/Ops closed peer-approved hosted artifact acceptance.",
+                    ],
+                )
+                self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+
+            self.assertIsNone(ai_status.get_task(self.state, task["id"]))
+            terminal_fact = self.state[ai_status.TERMINAL_FACTS_KEY][task["id"]]
+            self.assertEqual(terminal_fact["status"], "done")
+            self.assertEqual(terminal_fact["terminal_outcome"], "completed")
+            self.assertEqual(terminal_fact["generation"], 4)
+            self.assertEqual(
+                terminal_fact["completion_tracks"]["hosted"]["status"], "done"
+            )
+            receipt = self.state[ai_status.ARCHIVE_RECEIPTS_KEY][task["id"]]
+            self.assertEqual(
+                receipt["schema_version"], ai_status.ARCHIVE_RECEIPT_SCHEMA_VERSION
+            )
+            archived = ai_status.load_archived_snapshot(task["id"])
+            self.assertIsNotNone(archived)
+            self.assertEqual(archived["terminal_status"], "done")
+            self.assertEqual(archived["terminal_outcome"], "completed")
+            archived_task = archived["task"]
+            self.assertEqual(archived_task["owner"], "Human/Ops")
+            self.assertEqual(archived_task["reviewer"], "Codex2")
+            self.assertEqual(
+                archived_task["completion_tracks"]["hosted"]["status"], "done"
+            )
+            self.assertEqual(archived_task["review_file"], repo_info["evidence_rel"])
+            self.assertNotIn("review_binding", archived_task)
+            self.assertEqual(
+                archived_task["delivery_binding"]["kind"], "artifact_contract"
+            )
+            self.assertTrue(
+                archived_task["delivery"][
+                    "reconciled_from_human_ops_owner_review_approved"
+                ]
+            )
+            self.assertTrue(
+                archived_task["delivery"][
+                    "reconciled_from_human_ops_owner_artifact_review_approved"
+                ]
+            )
+            self.assertEqual(
+                archived_task["delivery"]["evidence_manifest"]["sha256"],
+                repo_info["evidence_sha256"],
+            )
+            self.assertEqual(
+                archived_task["delivery"]["publication_task"]["task_id"],
+                "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+            )
+
+    def test_artifact_contract_review_approval_preserved_across_ordinary_note(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-note-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            note_event = ai_status._activity_event(
+                {
+                    "ts": "2026-11-22T01:00:00Z",
+                    "agent": "Codex2",
+                    "type": "note",
+                    "task_id": task["id"],
+                    "message": (
+                        "No changes requested on the already approved evidence; "
+                        "ready for Human/Ops closeout."
+                    ),
+                }
+            )
+            with self._test_log_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(note_event) + "\n")
+
+            active_handoff, active_approval = (
+                ai_status._verified_artifact_contract_review_approval(
+                    task,
+                    delivery_binding=task[ai_status.DELIVERY_BINDING_KEY],
+                )
+            )
+            self.assertEqual(active_handoff["agent"], "Human/Ops")
+            self.assertEqual(active_approval["agent"], "Codex2")
+
+            env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                _command_reconcile_merged_done(
+                    self.state,
+                    [
+                        task["id"],
+                        "Human/Ops closed peer-approved hosted artifact acceptance after note.",
+                    ],
+                )
+                self.assertTrue(ai_status.recover_status_archive_outbox(self.state))
+
+            self.assertIsNone(ai_status.get_task(self.state, task["id"]))
+            self.assertEqual(
+                self.state[ai_status.TERMINAL_FACTS_KEY][task["id"]]["status"],
+                "done",
+            )
+            self.assertIn(task["id"], self.state[ai_status.ARCHIVE_RECEIPTS_KEY])
+
+    def test_reconcile_merged_done_human_ops_artifact_closeout_preserves_rejections(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="regime-artifact-rejects-") as tmp:
+            delivery_root = Path(tmp) / "pantheon"
+            base_task, repo_info = self._setup_regime_human_ops_artifact_acceptance(
+                delivery_root
+            )
+            base_state = deepcopy(self.state)
+            base_log = self._test_log_file.read_text(encoding="utf-8")
+            pub_archive_path = (
+                task_archive.ARCHIVE_TASKS_DIR
+                / "REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121.json"
+            )
+            base_pub_archive = pub_archive_path.read_text(encoding="utf-8")
+            base_evidence_bytes = (
+                delivery_root / repo_info["evidence_rel"]
+            ).read_bytes()
+            base_env = {
+                "AI_NAME": "Human/Ops",
+                "PANTHEON_LOCAL_HUMAN_OPS": "1",
+                "ORCH_RUN_ID": "",
+                "RECONCILE_EVIDENCE_FILE": "",
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/pantheon",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": repo_info["pub_merge_sha"],
+            }
+
+            def reset_fixture() -> dict[str, Any]:
+                self.state = deepcopy(base_state)
+                self._test_log_file.write_text(base_log, encoding="utf-8")
+                pub_archive_path.write_text(base_pub_archive, encoding="utf-8")
+                (delivery_root / repo_info["evidence_rel"]).write_bytes(
+                    base_evidence_bytes
+                )
+                return self.state["tasks"][0]
+
+            def append_audit_event(payload: dict[str, Any]) -> None:
+                ev = ai_status._activity_event(payload)
+                with self._test_log_file.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(ev) + "\n")
+
+            def mutate_reopen(_t: dict[str, Any]) -> None:
+                append_audit_event(
+                    {
+                        "ts": "2026-11-22T01:00:00Z",
+                        "agent": "Codex2",
+                        "type": "reopen",
+                        "task_id": base_task["id"],
+                        "message": "Reopened after approval.",
+                    }
+                )
+
+            def mutate_prose_approval(_t: dict[str, Any]) -> None:
+                lines = base_log.strip().splitlines()
+                prose_approval = ai_status._activity_event(
+                    {
+                        "ts": "2026-11-22T00:56:54Z",
+                        "agent": "Codex2",
+                        "type": "review_approved",
+                        "task_id": base_task["id"],
+                        "message": "Looks good, arbitrary prose approval without digest.",
+                        "status_command": {
+                            "worker_lease": {
+                                "schema_version": 1,
+                                "task_id": base_task["id"],
+                                "actor": "Codex2",
+                                "task_generation": 4,
+                            }
+                        },
+                    }
+                )
+                self._test_log_file.write_text(
+                    lines[0] + "\n" + json.dumps(prose_approval) + "\n",
+                    encoding="utf-8",
+                )
+
+            def mutate_non_evidence_artifact(t: dict[str, Any]) -> None:
+                t["artifacts"] = [
+                    repo_info["evidence_rel"],
+                    "services/control-plane/bff",
+                ]
+                contract = ai_status._delivery_contract_payload(t)
+                t[ai_status.DELIVERY_BINDING_KEY] = {
+                    "kind": "artifact_contract",
+                    **contract,
+                    "contract_sha256": ai_status._canonical_json_sha256(contract),
+                }
+
+            def mutate_superseded_pub_task(_t: dict[str, Any]) -> None:
+                snap = json.loads(base_pub_archive)
+                snap["terminal_outcome"] = "superseded"
+                snap["task"]["terminal_outcome"] = "superseded"
+                pub_archive_path.write_text(json.dumps(snap), encoding="utf-8")
+
+            def mutate_borrowed_source_pr(_t: dict[str, Any]) -> None:
+                snap = json.loads(base_pub_archive)
+                snap["task"]["artifacts"] = [
+                    "docs/deployment/evidence/REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121/"
+                ]
+                pub_archive_path.write_text(json.dumps(snap), encoding="utf-8")
+
+            cases = (
+                (
+                    "foreign_owner",
+                    lambda t: t.update(owner="Codex"),
+                    {},
+                    "only Human/Ops-owned tasks",
+                ),
+                (
+                    "wrong_actor",
+                    lambda _t: None,
+                    {"AI_NAME": "Codex2", "PANTHEON_LOCAL_HUMAN_OPS": ""},
+                    "Only explicit local Human/Ops",
+                ),
+                (
+                    "missing_local_flag",
+                    lambda _t: None,
+                    {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": ""},
+                    "Only explicit local Human/Ops",
+                ),
+                (
+                    "missing_independent_reviewer",
+                    lambda t: t.update(reviewer="Human/Ops"),
+                    {},
+                    "independent peer reviewer",
+                ),
+                (
+                    "absent_review_event",
+                    lambda _t: self._test_log_file.write_text(
+                        base_log.splitlines()[0] + "\n", encoding="utf-8"
+                    ),
+                    {},
+                    "no unrevoked audited review_approved event",
+                ),
+                (
+                    "superseded_by_reopen",
+                    mutate_reopen,
+                    {},
+                    "no unrevoked audited",
+                ),
+                (
+                    "wrong_review_actor",
+                    lambda t: t.update(reviewer="Claude"),
+                    {},
+                    "does not match the current assigned reviewer",
+                ),
+                (
+                    "wrong_generation",
+                    lambda t: t.update(generation=5),
+                    {},
+                    "does not match current task generation",
+                ),
+                (
+                    "arbitrary_prose_approval",
+                    mutate_prose_approval,
+                    {},
+                    "does not bind the exact published evidence SHA-256",
+                ),
+                (
+                    "missing_hosted_track",
+                    lambda t: t.pop("completion_tracks", None),
+                    {},
+                    "declared hosted completion must be done with evidence",
+                ),
+                (
+                    "pending_hosted_track",
+                    lambda t: t.update(
+                        completion_tracks={"hosted": {"status": "external_wait"}}
+                    ),
+                    {},
+                    "declared hosted completion must be done with evidence",
+                ),
+                (
+                    "naked_hosted_done_marker",
+                    lambda t: t.update(
+                        completion_tracks={
+                            "hosted": {
+                                "status": "done",
+                                "evidence": ["hosted ok"],
+                                "message": "done",
+                            }
+                        }
+                    ),
+                    {},
+                    "completion_tracks.hosted.evidence must cite the task evidence artifact",
+                ),
+                (
+                    "mismatched_artifact_contract",
+                    lambda t: t["acceptance"].append("unapproved extra criterion"),
+                    {},
+                    "artifact delivery contract is missing or stale",
+                ),
+                (
+                    "non_evidence_code_artifact",
+                    mutate_non_evidence_artifact,
+                    {},
+                    "restricted to task-scoped evidence artifacts",
+                ),
+                (
+                    "mismatched_env_review_file",
+                    lambda _t: None,
+                    {"REVIEW_FILE": "docs/deployment/evidence/OTHER/evidence.json"},
+                    "does not match expected task evidence path",
+                ),
+                (
+                    "mutated_working_evidence_bytes",
+                    lambda _t: (
+                        delivery_root / repo_info["evidence_rel"]
+                    ).write_text("{\"task_id\": \"tampered\"}\n", encoding="utf-8"),
+                    {},
+                    "working evidence file differs",
+                ),
+                (
+                    "wrong_delivery_commit",
+                    lambda _t: None,
+                    {"RECONCILE_DELIVERY_COMMIT": repo_info["base_sha"]},
+                    "absent at commit",
+                ),
+                (
+                    "missing_publication_task",
+                    lambda _t: pub_archive_path.unlink(),
+                    {},
+                    "separate publication task .* is not archived as completed",
+                ),
+                (
+                    "superseded_publication_task",
+                    mutate_superseded_pub_task,
+                    {},
+                    "separate publication task .* is not completed",
+                ),
+                (
+                    "borrowed_source_pr_without_evidence_artifact",
+                    mutate_borrowed_source_pr,
+                    {},
+                    "does not declare the acceptance evidence artifact",
+                ),
+                (
+                    "borrowed_publication_pr_on_acceptance_task",
+                    lambda t: t.update(
+                        review_binding={
+                            "pr": 7732,
+                            "head_sha": repo_info["pub_head_sha"],
+                            "head_branch": "task/REGIME-DATA-HOSTED-EVIDENCE-PUBLISH-20261121",
+                            "base": "dev",
+                        }
+                    ),
+                    {},
+                    "carries pull-request delivery identity",
+                ),
+                (
+                    "protected_product_closeout_task",
+                    lambda t: t.update(requires_human_ops_signoff=True),
+                    {},
+                    "protected product closeout task .* requires exact-head PR delivery",
+                ),
+            )
+
+            for label, mutate, env_override, pattern in cases:
+                with self.subTest(label=label):
+                    task = reset_fixture()
+                    mutate(task)
+                    with (
+                        mock.patch.dict(
+                            os.environ, {**base_env, **env_override}, clear=False
+                        ),
+                        self.assertRaisesRegex(SystemExit, pattern),
+                    ):
+                        _command_reconcile_merged_done(
+                            self.state, [task["id"], "Must reject."]
+                        )
+                    self.assertEqual(task["status"], "review_approved")
+
+            # Also verify rejection when the committed evidence file has a wrong task_id
+            pub_archive_path.unlink(missing_ok=True)
+            other_root = Path(tmp) / "pantheon-wrong-task"
+            wrong_task, wrong_repo = self._setup_regime_human_ops_artifact_acceptance(
+                other_root,
+                evidence_payload={
+                    "schema_version": "pantheon.regime-data-hosted-observation.v1",
+                    "task_id": "REGIME-ENGINE-HOSTED-ACCEPTANCE-20261115",
+                    "accepted_release": {
+                        "root_workflow": 44915049855,
+                        "bff": "20ad89fe3cddc6c1426ea3b139a9de3c94a1fc7c",
+                        "frontend": "84ac2ac67fd2abc56ba22230fa7065f0c97342e8",
+                    },
+                },
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        **base_env,
+                        "RECONCILE_DELIVERY_ROOT": str(other_root),
+                        "RECONCILE_DELIVERY_COMMIT": wrong_repo["pub_merge_sha"],
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    SystemExit, "published evidence file task_id .* does not match"
+                ),
+            ):
+                _command_reconcile_merged_done(
+                    self.state, [wrong_task["id"], "Must reject wrong task_id."]
+                )
+
     def test_reconcile_merged_done_tooling_mode_rejects_product_task(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "blocked"
@@ -9953,6 +10768,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         binding_fe = ai_status.resolve_handoff_delivery_binding(fe_sidecar_task, {})
         self.assertEqual(binding_fe["kind"], "artifact_contract")
         self.assertEqual(binding_fe["artifacts"], ["support/sidecars/evidence.json"])
+
+    def test_dev_bridge_source_task_requires_pr_delivery_binding_at_handoff(self) -> None:
+        source_task = {
+            "id": "BRIDGE-SRC-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["pantheon:services/control-plane/bff/main.py"],
+            "acceptance": ["Supervisor PR to dev"],
+            "dev_bridge": {"work_class": "functional"},
+        }
+        self.assertTrue(ai_status.requires_pr_delivery_binding(source_task))
+        with self.assertRaisesRegex(SystemExit, "requires a PR delivery binding at handoff"):
+            ai_status.resolve_handoff_delivery_binding(source_task, {})
+
+        readonly_task = {
+            "id": "BRIDGE-RO-001",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "target_repo": "pantheon",
+            "artifacts": ["docs/review.md"],
+            "acceptance": ["Read-only verification"],
+            "dev_bridge": {"work_class": "read_only"},
+        }
+        self.assertFalse(ai_status.requires_pr_delivery_binding(readonly_task))
 
     def test_command_handoff_rejects_conflicting_ambiguous_and_unknown_target_repo(self) -> None:
         self.state["tasks"][0]["status"] = "in_progress"
@@ -12154,6 +12994,298 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     commit_timestamp="2026-07-20T00:00:00+00:00",
                 )
 
+    # --- SUP-REVIEWER-REASSIGNMENT-RECORD-AND-DONE-GATE-20261117 ---
+    def _post_reassignment_task(self, *, status: str = "review_approved", head: str = "a" * 40, approved: str | None = None) -> dict[str, Any]:
+        return {
+            "id": "REG-002",
+            "owner": "Claude",
+            "reviewer": "Claude2",
+            "status": status,
+            "review_binding": {"head_sha": approved if approved is not None else head},
+        }
+
+    def _reassigned_before_commit_log(self, tmpdir: str) -> Path:
+        event = audited_reassignment_event(
+            task_id="REG-002", old_owner="Claude", new_owner="Claude",
+            old_reviewer="Antigravity2", new_reviewer="Claude2",
+            timestamp="2026-11-17T06:00:00Z",
+        )
+        log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+        log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        return log_file
+
+    def test_done_accepts_reassignment_before_commit_with_exact_head_approval(self) -> None:
+        head = "a" * 40
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                result = ai_status._verified_done_reviewer_reassignment(
+                    self._post_reassignment_task(head=head),
+                    commit_reviewer="Antigravity2",
+                    current_reviewer="Claude2",
+                    commit_timestamp="2026-11-17T07:00:00+00:00",
+                    delivered_head=head,
+                )
+        self.assertTrue(result["approved_head_binding"])
+        self.assertEqual(result["new_reviewer"], "Claude2")
+
+    def test_done_refuses_reassignment_before_commit_without_matching_approval(self) -> None:
+        head = "a" * 40
+        cases = {
+            "mismatching head": self._post_reassignment_task(head=head, approved="b" * 40),
+            "missing approval": {**self._post_reassignment_task(head=head), "review_binding": {}},
+            "not approved": self._post_reassignment_task(head=head, status="review"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            for label, task in cases.items():
+                with self.subTest(label), mock.patch.object(ai_status, "LOG_FILE", log_file):
+                    with self.assertRaisesRegex(
+                        SystemExit, "reviewer reassignment must follow the delivered commit"
+                    ):
+                        ai_status._verified_done_reviewer_reassignment(
+                            task,
+                            commit_reviewer="Antigravity2",
+                            current_reviewer="Claude2",
+                            commit_timestamp="2026-11-17T07:00:00+00:00",
+                            delivered_head=head,
+                        )
+
+    def test_done_still_refuses_trailer_that_was_never_reviewer_even_with_approval(self) -> None:
+        head = "a" * 40
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            with mock.patch.object(ai_status, "LOG_FILE", log_file):
+                with self.assertRaisesRegex(SystemExit, "does not bind the commit reviewer"):
+                    ai_status._verified_done_reviewer_reassignment(
+                        self._post_reassignment_task(head=head),
+                        commit_reviewer="Codex",
+                        current_reviewer="Claude2",
+                        commit_timestamp="2026-11-17T07:00:00+00:00",
+                        delivered_head=head,
+                    )
+
+    def test_handoff_rejects_head_trailer_naming_replaced_reviewer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = self._reassigned_before_commit_log(tmpdir)
+            repo = Path(tmpdir) / "repo"
+            repo.mkdir()
+            def git(*a: str) -> str:
+                return subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                "REG-002: x\n\nLLM-Agent: Claude\nTask-ID: REG-002\nReviewer: Antigravity2")
+            head = git("rev-parse", "HEAD")
+            task = {"id": "REG-002", "owner": "Claude", "reviewer": "Claude2"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(SystemExit, rf"commit {head}.*Reviewer trailer is `Claude2`"):
+                    ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": head})
+                # Trailer naming an agent that never was the reviewer is left to done-time.
+                git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                    "REG-002: y\n\nReviewer: Codex")
+                ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
+                git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m",
+                    "REG-002: z\n\nReviewer: Claude2")
+                ai_status.reject_stale_reviewer_trailer_at_handoff(task, {"head_sha": git("rev-parse", "HEAD")})
+
+    def _owner_trailer_repo(
+        self,
+        tmpdir: str,
+        messages: list[str],
+        commit_date: str = "2026-11-18T05:00:00Z",
+    ) -> tuple[Path, str, str]:
+        repo = Path(tmpdir) / "repo"
+        repo.mkdir()
+
+        def git(*a: str) -> str:
+            return subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q")
+        ident = ("-c", "user.name=Claude2", "-c", "user.email=c2@t")
+        env = {**os.environ, "GIT_COMMITTER_DATE": commit_date, "GIT_AUTHOR_DATE": commit_date}
+
+        def commit(message: str) -> None:
+            subprocess.run(
+                ["git", *ident, "commit", "-q", "--allow-empty", "-m", message],
+                cwd=repo, check=True, capture_output=True, text=True, env=env,
+            )
+
+        commit("base")
+        base = git("rev-parse", "HEAD")
+        for message in messages:
+            commit(message)
+        return repo, base, git("rev-parse", "HEAD")
+
+    def test_handoff_rejects_owner_trailer_replay_taifex_shape(self) -> None:
+        # Real shape: PR 7554, author Claude2, `LLM-Agent: Claude`, owner never changed
+        # away from Claude2 and no task_reassigned event exists.
+        task_id = "TW-TAIFEX-TX-DAILY-CSV-RESPONSE-20261118"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: deliver\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            binding = {"head_sha": head, "base_sha": base}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, rf"commit {head}.*LLM-Agent: Claude.*owner is Claude2.*`Claude2`"
+                ):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(task, binding)
+
+    def test_handoff_owner_trailer_checks_whole_range_and_amend(self) -> None:
+        task_id = "COLLECTOR-LISTING-MODULE-SHIPPED-20261117"
+        good = f"{task_id}: a\n\nLLM-Agent: Claude2\nTask-ID: {task_id}\nReviewer: Codex"
+        bad = good.replace("LLM-Agent: Claude2", "LLM-Agent: Claude")
+        unrelated = "OTHER-1: z\n\nLLM-Agent: Codex\nTask-ID: OTHER-1"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(tmpdir, [bad, unrelated, good])
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                # An earlier commit in the range is caught even though the head is clean.
+                with self.assertRaisesRegex(SystemExit, "LLM-Agent: Claude`"):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+                # Head-only binding (no base) sees only the clean head.
+                ai_status.reject_owner_trailer_mismatch_at_handoff(task, {"head_sha": head})
+
+    def test_handoff_reads_owner_audit_once_for_multiple_prior_owner_commits(self) -> None:
+        task_id = "REG-002"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [
+                    f"{task_id}: {part}\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"
+                    for part in ("main change", "review findings")
+                ],
+            )
+            event = audited_reassignment_event(
+                task_id=task_id, old_owner="Claude", new_owner="Claude2",
+                old_reviewer="Codex", new_reviewer="Codex",
+                timestamp="2026-11-18T06:00:00Z",
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+                mock.patch.object(
+                    ai_status, "_audited_reassignment_events", wraps=ai_status._audited_reassignment_events
+                ) as read_audit,
+                mock.patch.object(
+                    ai_status,
+                    "_verified_done_owner_reassignment",
+                    wraps=ai_status._verified_done_owner_reassignment,
+                ) as verify_commit,
+            ):
+                ai_status.reject_owner_trailer_mismatch_at_handoff(
+                    task, {"head_sha": head, "base_sha": base}
+                )
+                read_audit.assert_called_once()
+                self.assertEqual(verify_commit.call_count, 2)
+
+    def test_handoff_refuses_prior_owner_trailer_after_reassignment(self) -> None:
+        task_id = "REG-002"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: a\n\nLLM-Agent: Claude\nTask-ID: {task_id}\nReviewer: Codex"],
+                commit_date="2026-11-18T07:00:00Z",
+            )
+            event = audited_reassignment_event(
+                task_id=task_id, old_owner="Claude", new_owner="Claude2",
+                old_reviewer="Codex", new_reviewer="Codex",
+                timestamp="2026-11-18T06:00:00Z",
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Codex"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(SystemExit, "LLM-Agent: Claude.*owner is Claude2"):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+
+    def test_handoff_rejects_owner_trailer_replay_collector_listing_shape(self) -> None:
+        # Real shape: PR 7551 head ff5784500, owner Claude2, reviewer Antigravity,
+        # git author Codex, trailers Task-ID / LLM-Agent: Claude / Reviewer: Antigravity,
+        # no task_reassigned event.
+        task_id = "COLLECTOR-LISTING-MODULE-SHIPPED-20261117"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, base, head = self._owner_trailer_repo(
+                tmpdir,
+                [f"{task_id}: ship\n\nTask-ID: {task_id}\nLLM-Agent: Claude\nReviewer: Antigravity"],
+            )
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text("", encoding="utf-8")
+            task = {"id": task_id, "owner": "Claude2", "reviewer": "Antigravity"}
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status.Path, "cwd", return_value=repo),
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, rf"commit {head}.*LLM-Agent: Claude.*owner is Claude2"
+                ):
+                    ai_status.reject_owner_trailer_mismatch_at_handoff(
+                        task, {"head_sha": head, "base_sha": base}
+                    )
+
+    def test_same_family_reassignment_records_independence_exception(self) -> None:
+        event = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Antigravity2", new_reviewer="Claude2",
+            )
+        )
+        record = event["review_independence_exception"]
+        self.assertEqual(record["owner_family"], "claude")
+        self.assertEqual({c["family"] for c in record["considered"]}, {"antigravity", "codex", "copilot", "piastra"})
+        self.assertLess(len(json.dumps(record)), 1024)
+        # Still a valid canonical event: the extra field is outside the digest.
+        self.assertIsNotNone(task_machine.validate_assignment_activity_event(event))
+        with_evidence = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Antigravity2", new_reviewer="Claude2",
+            ),
+            {"codex": "Codex2:terminal_quota:codex"},
+        )
+        reasons = {c["family"]: c["reason"] for c in with_evidence["review_independence_exception"]["considered"]}
+        self.assertEqual(reasons["codex"], "Codex2:terminal_quota:codex")
+
+    def test_cross_family_reassignment_records_no_exception(self) -> None:
+        event = ai_status.attach_review_independence_exception(
+            audited_reassignment_event(
+                task_id="REG-002", old_owner="Claude", new_owner="Claude",
+                old_reviewer="Claude2", new_reviewer="Codex",
+            )
+        )
+        self.assertNotIn("review_independence_exception", event)
+
+    def test_every_configured_agent_has_a_model_family(self) -> None:
+        config = json.loads((Path(__file__).resolve().parents[1] / ".orchestrator" / "config.json").read_text())
+        names = set(config.get("agents", {})) | set(ai_status.KNOWN_AGENTS)
+        missing = sorted(n for n in names if n != "Human/Ops" and ai_status.agent_family(n) is None)
+        self.assertEqual(missing, [])
+
     def test_done_reviewer_reassignment_ignores_pre_delivery_cycle(self) -> None:
         pre_cycle_one = audited_reassignment_event(
             task_id="REG-002", old_owner="Antigravity", new_owner="Antigravity",
@@ -13226,6 +14358,169 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["commit_metadata_ref"], authored_parent)
         self.assertEqual(delivery["commit_metadata_source"], "approved_merge_first_parent")
         self.assertTrue(delivery["head_merged_to_target"])
+
+    def _multi_refresh_closeout(
+        self,
+        *,
+        trailer_owner: str,
+        trailer_reviewer: str,
+        event: dict[str, Any],
+        authored_at: str,
+        tip_at: str = "2026-11-15T18:48:00+00:00",
+    ) -> dict[str, Any]:
+        tip, m2, m1, authored = "a" * 40, "d" * 40, "e" * 40, "b" * 40
+        frozen_base = "c" * 40
+        task = {
+            "id": "REG-002",
+            "owner": "Codex",
+            "reviewer": "Claude2",
+            "status": "review_approved",
+            "artifacts": [],
+            ai_status.APPROVAL_BINDING_KEY: {
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+            },
+            ai_status.DELIVERY_BINDING_KEY: {
+                "kind": "pull_request",
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "base_sha": frozen_base,
+                "required_merge_method": "MERGE",
+                "evidence_manifest": {"path": "evidence.json", "blob_sha": "d" * 40},
+            },
+            ai_status.GITHUB_REVIEW_BRIDGE_KEY: {
+                "decision": "approve",
+                "mode": "pull_request_review",
+                "pr": 152,
+                "head_sha": tip,
+                "head_branch": "task/REG-002",
+                "base": "dev",
+                "github_review_id": 99,
+                "review_proof_ref": f"refs/tags/pantheon-review/approve/{tip}",
+            },
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
+                ("rev-parse", "HEAD"): "f" * 40,
+                ("rev-parse", tip): tip,
+                ("show", "-s", "--format=%P", tip): f"{m2} {frozen_base}",
+                ("show", "-s", "--format=%P", m2): f"{m1} {frozen_base}",
+                ("show", "-s", "--format=%P", m1): f"{authored} {frozen_base}",
+                ("show", "-s", "--format=%P", authored): "",
+                ("show", "-s", "--format=%s", authored): "REG-002: deliver reviewed fix",
+                ("show", "-s", "--format=%b", authored): (
+                    f"LLM-Agent: {trailer_owner}\nTask-ID: REG-002\n"
+                    f"Reviewer: {trailer_reviewer}\n"
+                ),
+                ("show", "-s", "--format=%an", authored): "Codex",
+                ("show", "-s", "--format=%ae", authored): "codex@example.com",
+                ("show", "-s", "--format=%aI", authored): authored_at,
+                ("show", "-s", "--format=%aI", tip): tip_at,
+                ("status", "--porcelain"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "e" * 40,
+            }
+            try:
+                return responses[tuple(args)]
+            except KeyError as exc:
+                raise AssertionError(f"unexpected git command: {args}") from exc
+
+        def fake_git_command_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{tip}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", tip, "origin/dev"]:
+                return True
+            if args[:2] == ["merge-base", "--is-ancestor"]:
+                return True
+            if args[:2] == ["cat-file", "-e"]:
+                return True
+            raise AssertionError(f"unexpected git predicate: {args}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "ai-activity-log.jsonl"
+            log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "LOG_FILE", log_file),
+                mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+                mock.patch.object(
+                    ai_status, "git_command_succeeds", side_effect=fake_git_command_succeeds
+                ),
+            ):
+                return ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collect_done_reviewer_reassignment_orders_against_metadata_commit(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T17:15:00Z",
+        )
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex",
+            trailer_reviewer="Claude",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        proof = delivery["commit_reviewer_reassignment"]
+        self.assertEqual(proof["commit_timestamp"], "2026-11-15T16:22:00+00:00")
+        self.assertEqual(delivery["commit_metadata_ref"], "b" * 40)
+        self.assertEqual(delivery["commit_timestamp_ref"], "b" * 40)
+
+    def test_collect_done_reviewer_reassignment_before_metadata_commit_bound_by_approval(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T15:48:00Z",
+        )
+        # SUP-REVIEWER-REASSIGNMENT-RECORD-AND-DONE-GATE-20261117: the reassignment
+        # precedes the commit, but the current reviewer's canonical approval binds
+        # the exact delivered head, so the audited chain is accepted. Refusals for
+        # a missing/mismatching approval are covered in the focused unit tests.
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex",
+            trailer_reviewer="Claude",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        self.assertTrue(delivery["commit_reviewer_reassignment"]["approved_head_binding"])
+
+    def test_collect_done_reviewer_stale_trailer_without_event_refused(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._multi_refresh_closeout(
+                trailer_owner="Codex",
+                trailer_reviewer="Claude",
+                event={},
+                authored_at="2026-11-15T16:22:00+00:00",
+            )
+
+    def test_collect_done_owner_reassignment_orders_against_metadata_commit(self) -> None:
+        event = audited_reassignment_event(
+            old_owner="Codex2",
+            new_owner="Codex",
+            old_reviewer="Claude2",
+            new_reviewer="Claude2",
+            timestamp="2026-11-15T17:15:00Z",
+        )
+        delivery = self._multi_refresh_closeout(
+            trailer_owner="Codex2",
+            trailer_reviewer="Claude2",
+            event=event,
+            authored_at="2026-11-15T16:22:00+00:00",
+        )
+        proof = delivery["commit_owner_reassignment"]
+        self.assertEqual(proof["commit_timestamp"], "2026-11-15T16:22:00+00:00")
+        self.assertEqual(delivery["commit_timestamp_ref"], "b" * 40)
 
     def test_approved_closeout_metadata_rejects_wrong_merge_base(self) -> None:
         approved_head = "a" * 40
@@ -16589,6 +17884,53 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertNotIn(
             "github_review_gate_missing",
             {item["type"] for item in mismatches},
+        )
+
+    def _active_tasks_without_workers(self, config: dict[str, Any]) -> set[str]:
+        tasks = [
+            {
+                "id": f"{owner.upper().replace('/', '-')}-ACTIVE-001",
+                "owner": owner,
+                "reviewer": "Claude",
+                "status": "in_progress",
+                "last_update": "2026-11-16T14:00:00Z",
+            }
+            for owner in ("Human/Ops", "Copilot", "Antigravity2")
+        ]
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+        with mock.patch.object(
+            status_projection._ai_status_module(), "load_config", return_value=config
+        ):
+            _workers, mismatches = ai_status.detect_truth_mismatches(
+                {"tasks": tasks}, [], [], {"pending": []}, resolver, {}
+            )
+        return {
+            item["task_id"]
+            for item in mismatches
+            if item["type"] == "active_task_without_worker"
+        }
+
+    def test_active_task_without_worker_skips_owners_that_never_get_auto_workers(self) -> None:
+        flagged = self._active_tasks_without_workers(
+            {
+                "agents": {
+                    "antigravity2": {"max_parallel": 4},
+                    "copilot": {"max_parallel": 0},
+                }
+            }
+        )
+
+        # Human/Ops is not an agent with worker capacity and Copilot has none,
+        # so their in-progress tasks are not missing a worker.
+        self.assertEqual(flagged, {"ANTIGRAVITY2-ACTIVE-001"})
+
+    def test_active_task_without_worker_keeps_flagging_without_a_capacity_table(self) -> None:
+        flagged = self._active_tasks_without_workers({})
+
+        self.assertEqual(
+            flagged,
+            {"HUMAN-OPS-ACTIVE-001", "COPILOT-ACTIVE-001", "ANTIGRAVITY2-ACTIVE-001"},
         )
 
     def test_dashboard_flags_merged_delivery_that_still_needs_closeout(self) -> None:

@@ -1,0 +1,265 @@
+{
+  "task": "INSTRUMENT-EXPRESSION-HOSTED-ACCEPTANCE-20261107",
+  "verdict": "pass_with_operator_amended_clauses",
+  "measured_at": "2026-11-09T20:46:00Z to 2026-11-13T02:20:00Z",
+  "operator_decision": {
+    "decided_at": "2026-11-13",
+    "choice": "修改條款後今天結案 (Recommended)",
+    "option_text": "第 2、3 條用已合併 PR 的 CI 測試當證據；第 4 條用 11/10 的實看文字紀錄；第 5 條用每次部署都通過的 lifecycle probe，all-12 留給下一條鏈；第 1 條改成跨 persona。",
+    "reason": "the three successor personas closed every position on the 2026-11-12 bar; no natural over-limit or stale order occurred; the last hosted all-12 chain (4923, 2026-11-05) predates this feature"
+  },
+  "deployed_pair": {
+    "bff": "bee62bc2978618539984aff9db136b064adc14a0",
+    "frontend": "acf3efaeb9141e1abd80375c9c2a357328c02c79",
+    "deployment_run": "https://github.com/ajoe734/pantheon/actions/runs/43123219914",
+    "deployment_state": "accepted",
+    "deployed_at": "2026-11-11T23:53:25Z"
+  },
+  "accepted_releases_in_window": [
+    {
+      "run": 42685389066,
+      "pantheon": "e88fcf0a9",
+      "frontend": "f6d528080",
+      "prs": [
+        7096,
+        7097,
+        7098,
+        7099
+      ]
+    },
+    {
+      "run": 42731056862,
+      "pantheon": "39f80bb95",
+      "frontend": "fe5899413",
+      "prs": [
+        7103
+      ]
+    },
+    {
+      "run": 42747427456,
+      "pantheon": "a51fd808c",
+      "frontend": "fe5899413",
+      "prs": []
+    },
+    {
+      "run": 42774607596,
+      "pantheon": "cdea24152",
+      "frontend": "fe5899413",
+      "prs": []
+    },
+    {
+      "run": 42788400465,
+      "pantheon": "85477d05b",
+      "frontend": "5f13f6ec3",
+      "prs": [
+        7118,
+        7119,
+        7121
+      ],
+      "frontend_prs": [
+        979
+      ]
+    },
+    {
+      "run": 42806011305,
+      "pantheon": "8173ab180",
+      "frontend": "5f13f6ec3",
+      "prs": [
+        7120,
+        7124
+      ]
+    },
+    {
+      "run": 43123219914,
+      "pantheon": "bee62bc29",
+      "frontend": "acf3efaeb",
+      "prs": []
+    }
+  ],
+  "clauses": {
+    "1_cash_future_no_trade": {
+      "result": "pass_across_personas",
+      "limitation": "no single persona has both a cash-share and a stock-future choice",
+      "opening_decisions_2026_11_10": [
+        {
+          "runtime": "rt-ad81501b",
+          "instrument_id": "eq:2330",
+          "side": "buy",
+          "quantity": 43,
+          "price": 2285.0,
+          "reason_code": "long_cash",
+          "decision_id": "dec-rb-3823397e125e4579ba5f4174067087ed-b5fa95075d12d756f69c821b"
+        },
+        {
+          "runtime": "rt-3252fa75",
+          "instrument_id": "eq:2317",
+          "side": "buy",
+          "quantity": 414,
+          "price": 241.5,
+          "reason_code": "long_cash",
+          "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-a50703b94234de51d32eae4f"
+        },
+        {
+          "runtime": "rt-3b65a843",
+          "instrument_id": "ssf:SRF:202611",
+          "side": "buy",
+          "quantity": 2,
+          "price": 97.1,
+          "reason_code": "long_lever",
+          "margin": 17400,
+          "fee": 16.0,
+          "tax": 3.884,
+          "decision_id": "dec-rb-3516fc86e6f84649a499fc89f3c562b3-b16d6712794d6cec3472fe30"
+        }
+      ],
+      "no_trade_bar": "2026-11-11T23:08Z all three already_at_target with reason_code and decision_id",
+      "close_decisions_2026_11_12": [
+        {
+          "runtime": "rt-ad81501b",
+          "instrument_id": "eq:2330",
+          "side": "sell",
+          "quantity": 43,
+          "price": 2340.0,
+          "reason_code": "close_leg",
+          "decision_id": "dec-rb-3823397e125e4579ba5f4174067087ed-9b94b348a3939290c1b9be56"
+        },
+        {
+          "runtime": "rt-3b65a843",
+          "instrument_id": "ssf:SRF:202611",
+          "side": "sell",
+          "quantity": 2,
+          "price": 103.55,
+          "reason_code": "close_leg",
+          "trade_date": "2026-11-11",
+          "decision_id": "dec-rb-3516fc86e6f84649a499fc89f3c562b3-c4faf828699570379a4246c3"
+        },
+        {
+          "runtime": "rt-3252fa75",
+          "instrument_id": "eq:2317",
+          "side": "sell",
+          "quantity": 414,
+          "price": 240.0,
+          "reason_code": "close_leg",
+          "decision_id": "dec-rb-7f3c1be55a224fdaa36bbdd7a7532b4b-f397f39718fc81991f83be1e"
+        }
+      ],
+      "events_carrying_ids": [
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "order_submitted",
+        "order_accepted",
+        "paper_fill_simulated",
+        "position_snapshot",
+        "reconciliation_completed"
+      ]
+    },
+    "2_daily_mark_and_expiry": {
+      "result": "daily_mark_pass_hosted; expiry_by_ci",
+      "srf_marks": [
+        {
+          "mark": 97.1,
+          "settlement_session": "2026-11-09",
+          "observed": "valuation on 85477d05b 2026-11-10T09:46Z"
+        },
+        {
+          "mark": 99.7,
+          "settlement_session": "2026-11-10",
+          "observed": "11/11 bar signal trade_date 2026-11-10 with session_settlement_prices; MarkFuturesSession applied once"
+        },
+        {
+          "mark": 103.55,
+          "settlement_session": "2026-11-11",
+          "observed": "date=2026-11-12 partition; unrealized 12900; pnl 12880.116"
+        }
+      ],
+      "drift_status": "ok on all three bindings at every check",
+      "valuation_failure_2026_11_12": null,
+      "expiry_note": "SRF:202611 closed 2026-11-12 so no position was held into the 2026-11-18 expiry"
+    },
+    "3_rejections": {
+      "result": "by_ci",
+      "hosted_stimulus": "none"
+    },
+    "4_pages": {
+      "result": "pass_amended",
+      "portfolio_book_2026_11_10": "columns 商品種類 契約月 乘數 保留保證金 present; SRF row 股票期貨 ssf:SRF:202611 202611 1,000 NT$17,400; later NT$97.10 截至 2026-11-09 and 市值 NT$194,200 on 8173ab180; screenshots lost in the 2026-11-10 22:14Z dev-host reboot",
+      "attribution_2026_11_12": {
+        "direction_hit_rate": 0.75,
+        "direction_hit_count": 6,
+        "direction_graded_count": 8,
+        "instrument_regret": 0,
+        "instrument_regret_graded_count": 8,
+        "margin_use": 215636,
+        "decision_count": 8
+      },
+      "portfolio_book_2026_11_12": "column headers 商品種類 契約月 乘數 保留保證金 決策原因 shown with zero rows because every position was closed",
+      "counterfactuals_2026_11_10_decisions": [
+        {
+          "underlying": "0050",
+          "chosen": "ssf:SRF:202611",
+          "chosen_pnl_cf": 12860.232,
+          "costs": 39.768,
+          "alternatives": {
+            "eq:0050": 3510.5,
+            "ssf:NYF:202611": 0.0
+          }
+        },
+        {
+          "underlying": "2330",
+          "chosen": "eq:2330",
+          "chosen_pnl_cf": 4730.0,
+          "alternatives": {
+            "ssf:CDF:202611": 0.0,
+            "ssf:QFF:202611": 0.0
+          }
+        },
+        {
+          "underlying": "2317",
+          "chosen": "eq:2317",
+          "chosen_pnl_cf": 207.0,
+          "alternatives": {
+            "ssf:DHF:202611": 0.0
+          }
+        }
+      ]
+    },
+    "5_probe_all12_baseline": {
+      "result": "pass_amended",
+      "lifecycle_probe": "Dev canonical paper lifecycle hosted probe step passed in all seven accepted releases; on 43123219914 mode natural outcome passed; BFF readback passed with loop_run and trade_journey live ready no_order",
+      "instrument_class_baselines": {
+        "2330_cash_share": 0.00235,
+        "0050_stock_future": 0.1245,
+        "2317_cash_share": 0.00021,
+        "pr": 7103
+      },
+      "all12": "not run with this feature; the isolated gate and hosted all-12 jobs were skipped in all seven accepted releases; last chain h12-claude-20261027-4923 E_close 41962827263 on 2026-11-05; deferred to the next chain run"
+    }
+  },
+  "ci_tests": {
+    "rerun_on": "origin/dev bee86402b on 2026-11-13",
+    "result": "23 passed",
+    "log_sha256": "de54a032b03bc19d124b094f02deacc2d7eb1fa56a294ed14713b0a18fde86bd",
+    "branch_ci_dev_run": "https://github.com/ajoe734/pantheon/actions/runs/43347244276",
+    "local_only": [
+      "scripts/test_probe_dev_runtime_paper_lifecycle.py::test_paper_lifecycle_accepts_paper_futures_settled_terminal",
+      "scripts/test_probe_dev_runtime_paper_lifecycle.py::test_paper_lifecycle_settlement_still_requires_paper_only_flags"
+    ]
+  },
+  "corrections": [
+    "PAPER-PERSONA-INSTRUMENT-CUTOVER-20261107/cutover.md line 41: threshold_sweep_baselines.json holds 6 entries not 8 (2330 0.00235/0.235; 0050 0.0001245/0.1245; 2317 0.00021/0.42)",
+    "an earlier draft claimed the accepted releases passed the isolated gate and the hosted chain; those jobs were skipped"
+  ],
+  "evidence_files_sha256": {
+    "perf-attribution-2026-11-12T22-06-59-538Z.png": "560c335e535b4a55037dd69678e1c1341e6f9d60c7b06487fe9c47a48b49abae",
+    "portfolio-book-2026-11-12T22-06-59-538Z.png": "44072691f0dc954745c8d829a022a505de6641d85a7faf83aacf0ea90e1e1ca1",
+    "perf-overview-2026-11-12T22-06-59-538Z.png": "aa918c065e684040b3de2d2116e03c19d237566de7c10922f56569a9f1019d22",
+    "attribution-2026-11-12T22-06-59-538Z.json": "2f6bcbfc3997a5312bc792134a1c0616b3f5c26e91a2103df9f2629c1f362d38",
+    "holdings-2026-11-12T22-06-59-538Z.json": "4aafaef0630bcb0f7a80a6ba1277ba8ab9d8c380035de90c6a51f2cb46464c92",
+    "loop-prod-tel-002-hosted-43123219914-1.json": "9c4ce9183bd70372f9d7ae6b673c1e92fa7610ca69a6820ad70d1b8886578a2d",
+    "loop-prod-tel-002-bff-readback-43123219914-1.json": "2a5628f376bd1b0b5fc4fac0baf9a4899c395b29025612dafecae3f9c46e4257"
+  },
+  "hosted_writes": [
+    "dispatch of dev-tw-market-refresh.yml run 43315136210 on 2026-11-12T21:56Z"
+  ]
+}

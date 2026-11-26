@@ -21,7 +21,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
 
-from services.evolution.models import EvolutionProgram, ProgramStatus
+from services.evolution.models import (
+    BarFrequencyMutationError,
+    EvolutionProgram,
+    ProgramStatus,
+    reject_bar_frequency_mutation,
+)
 from services.evolution.program_store import (
     ProgramStore,
     ProgramStoreConflictError,
@@ -884,6 +889,11 @@ class ProgramService:
         })
         if clean_action not in known_actions:
             raise ProgramValidationError(f"Unsupported program action: {action_id!r}")
+        if clean_action == "create_mutation_rule":
+            try:
+                reject_bar_frequency_mutation(payload)
+            except BarFrequencyMutationError as exc:
+                raise ProgramValidationError(str(exc)) from exc
 
         effects: Dict[str, Any] = {}
         if not self._is_replay(current, clean_action, idempotency_key):

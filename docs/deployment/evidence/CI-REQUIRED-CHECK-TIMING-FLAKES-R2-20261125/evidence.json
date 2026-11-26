@@ -1,0 +1,12 @@
+{
+  "task_id": "CI-REQUIRED-CHECK-TIMING-FLAKES-R2-20261125",
+  "change": "Removed elapsed < 2.0 wall-clock assertion (failed at 2.396 s on PR #7842) and the unused 0.5 s sleep from test_backlog_of_18_infrastructure_incidents_finishes_within_budget_and_health_becomes_ready. Test-only; no production code, skip, xfail or rerun.",
+  "tick_budget_test": "test_tick_budget_bounds_slow_downstream_and_progress_is_reported already uses an injected fake clock (exactly 4 calls at 0.5 s inside 2.0 s budget); unchanged.",
+  "load_runs": {
+    "command": "6 busy-loop python processes on 12 cores; 30x: python -m pytest -q services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+    "runs": 30,
+    "failures": 0,
+    "per_run": "19 passed"
+  },
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family (Claude2)."
+}

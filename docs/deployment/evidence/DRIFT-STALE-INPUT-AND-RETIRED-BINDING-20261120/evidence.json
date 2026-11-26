@@ -1,0 +1,32 @@
+{
+ "task": "DRIFT-STALE-INPUT-AND-RETIRED-BINDING-20261120",
+ "reproduction_source": "coordinator hosted reads 2026-11-20 (read-only; BFF fb8ed951d; 67-page sweep kept by the coordinator as mgmt-readability-sweep-20261120 on the development host). Not re-read by this worker.",
+ "reproduced": {
+  "retired_binding": "rb-3823397e125e4579ba5f4174067087ed retired 2026-11-18T07:00Z, replaced by rb-eb74118dd3ca4b169496b1c239087512",
+  "open_incident": "inc-drift-5f668ec4c8d9 still open on 2026-11-20",
+  "stale_observed": "every scheduled report 2026-11-15..2026-11-18 carried observed 9.609309450237793 (observed_multiple = observed/baseline, carried forward by telemetry runtime_summary with drawdown_at)"
+ },
+ "changes": [
+  "services/reconciliation-drift/main.py: _mark_stale_drawdown_input compares summary drawdown_at to evaluation time against RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS (default = scheduler window); stale -> check status degraded, stale_input=true, never warning/critical, so no report/incident is opened or extended; tick response lists stale_input_binding_ids",
+  "services/reconciliation-drift/main.py: when the scheduled pass sees the binding retired it calls resolve-retired-binding; retired bindings are skipped so later reports open nothing",
+  "services/incidents/main.py: POST /api/incidents/resolve-retired-binding resolves open drift-cluster incidents of the binding with resolution_reason=runtime_binding_retired",
+  "services/telemetry/runtime_summary.py: unchanged; drawdown_at already exposed"
+ ],
+ "tests": {
+  "scheduler": "test_scheduled_tick_marks_unchanged_stale_drawdown_as_stale_not_breach (same drawdown over 3 ticks), test_scheduled_tick_fresh_drawdown_still_breaches, test_scheduled_tick_retirement_between_ticks_resolves_open_drift_incidents",
+  "incidents": "test_resolve_retired_binding_resolves_only_open_drift_incidents",
+  "run": "services/reconciliation-drift + services/incidents: 391 passed, 1 skipped, 1 failed (test_scheduled_reconcile_core_budget_priority_prevents_starvation_under_43_summaries_and_retry); that failure is order-dependent and reproduces identically on the unmodified base in the combined run, and passes alone and within its own file (82 passed)"
+ },
+ "runtime_budget": {
+  "unit": "per active binding per day, 300s window",
+  "drift_reports_before": "up to 288 evaluations/day re-reporting the carried-forward breach (one stable report id)",
+  "drift_reports_after": "0 from a stale drawdown; at most one per fresh breaching drawdown event",
+  "drift_incidents_before": "1 open incident per retired binding indefinitely",
+  "drift_incidents_after": "0 open once retired; none opened from stale input",
+  "basis": "derived from scheduler window config and the coordinator reads; hosted per-binding counts not re-measured by this task"
+ },
+ "residual": [
+  "retirement resolution runs only when the scheduled pass consults runtime-manager for that binding (status != ok or non-active state) and the binding is still present in telemetry summaries",
+  "a summary with no drawdown_at is not treated as stale (preserves prior behaviour)"
+ ]
+}

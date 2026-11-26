@@ -1,0 +1,40 @@
+{
+  "task_id": "BFF-DOWNSTREAM-HEALTH-STORAGE-BOUND-20261117",
+  "growth_per_day": {
+    "before": "33 targets x 2880 probes = 95040 telemetry events/day at 30s interval (about 88000 observed)",
+    "after_healthy": "33 targets x 24 hourly samples = 792 events/day, plus transitions, recoveries, incident-opening events and error-rate breaches",
+    "cap_note": "a failing target emits on first failure, at the failure threshold and hourly, not every probe; hourly sample clock is in memory so each restart adds at most 33 first-observation events"
+  },
+  "retention": {
+    "delivered_telemetry_channel_hours": 24,
+    "incident_channels_dead_letters_replay_audit_days": 7,
+    "protections": "open-incident and dependency protection query unchanged"
+  },
+  "hosted_shape_measurement": {
+    "dataset": "620000 delivered telemetry rows, 1500 byte bodies, spread over 7 days, auto_vacuum off, 33 targets",
+    "file_bytes_before": 1351196672,
+    "prune": {"batches_of_3500": 153, "total_seconds": 12.6, "worst_single_batch_seconds": 0.126},
+    "live_bytes_after_prune": 193490944,
+    "one_time_rebuild": {"seconds": 2.87, "file_bytes_after": 189767680, "auto_vacuum": "incremental"},
+    "rows_after": 88517,
+    "steady_state_after_refill_30000_rows_and_prune": {
+      "incremental_vacuum_calls": 62,
+      "worst_call_seconds": 0.009,
+      "file_bytes": 189771776,
+      "live_bytes": 189771776,
+      "file_over_live": 1.0,
+      "bound": 1.3
+    },
+    "notes": "rows_after reflects pre-change 24h of events; with the new emission rate live data falls to about 800 rows/day. The one-time VACUUM holds the writer lock about 2.9s once (probe busy timeout is 10s, probe window 30s); it is deferred while live data exceeds 192 MiB and skipped when free disk is under 2x live bytes. Ongoing steps are chunked at 256 pages with 250ms busy timeout and skip instead of waiting."
+  },
+  "rollback": "auto_vacuum is a header flag only; test opens the rebuilt file with plain sqlite3, reads, deletes and passes integrity_check. Schema is unchanged.",
+  "tests": {
+    "command": "pytest services/control-plane/bff/test_bff_downstream_health_monitor.py test_downstream_health_monitor.py test_bff_v5_loop_sentinel_contract.py",
+    "result": "204 passed, 3 failed; the 3 failures (test_v5_persona_health_returns_200, test_l12_bff_monitor_event_is_admitted_by_real_strict_telemetry_route, test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor) fail identically on unmodified HEAD in this environment",
+    "l12_recovery_retention_test": "test_l12_bff_recovery_survives_delivered_history_retention passes"
+  },
+  "residual_findings": [
+    "The three sentinel tests above fail on baseline in the worker environment (evolution reader unconfigured, 403 on replay route, strict telemetry ledger); outside this scope.",
+    "Hourly sample clock is not persisted; restarts re-emit one event per target."
+  ]
+}

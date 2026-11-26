@@ -1,0 +1,14 @@
+{
+  "task_id": "COLLECTOR-BUILD-HOST-LAYOUT-20261118",
+  "diagnosis": "PR 7551 (ff5784500) set compose context ../.. and Dockerfile COPY deploy/collector/... plus services/source_ingestion/security_listing.py. README install copies deploy/collector/* flat into /opt/pantheon-collector and systemd WorkingDirectory=/opt/pantheon-collector, so ../.. is /opt (no deploy/collector/Dockerfile, no services/, and all sibling backups would be sent as context). Documented install/upgrade could not build; host ran on a host-local Dockerfile line from the 2026-11-17 23:39Z live repair.",
+  "fix": {
+    "context": "docker-compose.yml context '.' dockerfile 'Dockerfile'; Dockerfile COPY sources are all relative to deploy/collector (no path outside /opt/pantheon-collector).",
+    "module": "deploy/collector/vendor/security_listing.py, byte-identical copy of services/source_ingestion/security_listing.py, COPY'd to /app/services/source_ingestion/security_listing.py; drift test fails on any difference.",
+    "readme": "Step 2.3 uses `cp -a deploy/collector/. /opt/pantheon-collector/`; Deployment note documents the exact upgrade packaging command, image tag backup and rollback."
+  },
+  "validation": [
+    {"command": "cd deploy/collector && python -m pytest tests/test_security_listing_module_shipped.py -q", "result": "6 passed"},
+    {"command": "cd deploy/collector && python -m pytest tests/test_collector_host_layout_build.py -q", "result": "5 passed (full deploy/collector/tests: 279 passed, 6 skipped)"}
+  ],
+  "not_verified": "No docker daemon build was run in this worker; the host layout is reproduced in a temp dir and compose context / Dockerfile COPY sources are checked."
+}

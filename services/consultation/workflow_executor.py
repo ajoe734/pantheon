@@ -27,20 +27,33 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from services.knowledge import case_file as decision_case
+
 from .provider import (
+    AgentProvisioningBlocked,
+    AgentProvisioningInProgress,
     ContributionBlocked,
     ContributionProviderError,
     HttpContributionProvider,
     QualifiedContribution,
 )
 from .workflow_state import (
+    AUTO_REDRIVE_MAX_PER_ITEM,
+    AUTO_REDRIVE_PER_TICK,
+    REDRIVE_AUTH,
+    REDRIVE_ENSURE,
     StaleWorkflowClaim,
     WorkflowClaim,
     WorkflowStateStore,
+    recoverable_kind,
+    REDRIVE_IDEMPOTENT,
+    REDRIVE_WRITEBACK,
+    recovery_exhausted,
 )
 
 
@@ -200,11 +213,13 @@ class ExecutorConfig:
     worker_id: str
     state_path: str
     database_url: str = ""
-    lease_seconds: int = 60
+    memory_url: str = ""
+    evolution_url: str = ""
+    lease_seconds: int = 120
     retry_after_seconds: int = 15
     max_blocked_attempts: int = 3
     batch_size: int = 10
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 180.0
 
     @classmethod
     def from_env(cls) -> "ExecutorConfig":
@@ -245,8 +260,18 @@ class ExecutorConfig:
                 or Path(data_dir) / "consult_workflow_state.sqlite3"
             ),
             database_url=str(os.getenv("DATABASE_URL") or ""),
+            memory_url=str(
+                os.getenv("PANTHEON_MEMORY_API_URL")
+                or os.getenv("MEMORY_SVC_URL")
+                or ""
+            ).rstrip("/"),
+            evolution_url=str(
+                os.getenv("PANTHEON_EVOLUTION_API_URL")
+                or os.getenv("EVOLUTION_URL")
+                or ""
+            ).rstrip("/"),
             lease_seconds=_env_int(
-                "CONSULTATION_WORKFLOW_LEASE_SECONDS", 60, minimum=1
+                "CONSULTATION_WORKFLOW_LEASE_SECONDS", 120, minimum=1
             ),
             retry_after_seconds=_env_int(
                 "CONSULTATION_WORKFLOW_RETRY_SECONDS", 15, minimum=0
@@ -258,7 +283,7 @@ class ExecutorConfig:
                 "CONSULTATION_WORKFLOW_BATCH_SIZE", 10, minimum=1
             ),
             timeout_seconds=float(
-                os.getenv("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "30")
+                os.getenv("CONSULTATION_WORKFLOW_EXECUTOR_TIMEOUT_SECONDS", "180")
             ),
         )
 
@@ -429,6 +454,7 @@ def _dispatch_handoff(
     *,
     request: Mapping[str, Any],
     handoff: Mapping[str, Any],
+    extra: Mapping[str, Any] | None = None,
 ) -> str:
     handoff_id = str(handoff.get("handoff_id") or "")
     if not handoff_id:
@@ -456,6 +482,7 @@ def _dispatch_handoff(
             "tenant_id": config.tenant_id,
             "request_id": request.get("request_id"),
             "handoff": dict(handoff),
+            **(dict(extra) if extra else {}),
         },
     )
     if not isinstance(response, Mapping):
@@ -485,7 +512,19 @@ def execute_claim(
     if str(request.get("tenant_id") or "") != config.tenant_id:
         raise WorkflowBlocked("ConsultRequest tenant does not match worker tenant")
 
-    recovered = _existing_acknowledged_handoff(config, claim.request_id)
+    # A panel or deliberative meeting claim never short-circuits on an acknowledged
+    # handoff: memory writeback must also complete idempotently.
+    is_panel = isinstance((request.get("metadata") or {}).get("panel"), Mapping)
+    is_meeting = (
+        str(request.get("consultation_type") or "") == "persona_meeting"
+        or str(request.get("request_type") or "") == "persona_meeting"
+        or isinstance((request.get("metadata") or {}).get("meeting"), Mapping)
+    )
+    recovered = (
+        None
+        if (is_panel or is_meeting)
+        else _existing_acknowledged_handoff(config, claim.request_id)
+    )
     if recovered is not None:
         memo_id, handoff_id = recovered
         state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
@@ -494,6 +533,28 @@ def execute_claim(
             "outcome": "completed",
             "detail": f"recovered acknowledged handoff={handoff_id}",
         }
+
+    if is_meeting:
+        return _execute_meeting_claim(
+            config=config,
+            state=state,
+            provider=provider,
+            claim=claim,
+            request=request,
+            phase_hook=phase_hook,
+        )
+
+    panel = (request.get("metadata") or {}).get("panel")
+    if isinstance(panel, Mapping):
+        return _execute_panel_claim(
+            config=config,
+            state=state,
+            provider=provider,
+            claim=claim,
+            request=request,
+            panel=panel,
+            phase_hook=phase_hook,
+        )
 
     request_type = str(request.get("request_type") or "")
     role = _request_type_to_role(request_type)
@@ -684,10 +745,1279 @@ def execute_claim(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Persona panel (consult policy): each participant persona answers through its
+# own agent independently; one synthesis; no vote; risk veto -> operator.
+# ---------------------------------------------------------------------------
+
+PANEL_SOURCE_EVENT = "consultation_closed"
+PANEL_WRITE_AUTHORITY = "consultation-svc"
+
+
+def _persona_triggers() -> Any:
+    return importlib.import_module("services.persona.consult_triggers")
+
+
+def _validated_panel(
+    request: Mapping[str, Any], panel: Mapping[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Re-derive the policy requirement and refuse an under-staffed panel."""
+
+    triggers = _persona_triggers()
+    decision = panel.get("gated_decision")
+    if not isinstance(decision, Mapping):
+        raise WorkflowBlocked("panel.gated_decision is required")
+    if str(decision.get("type") or "") != str(request.get("target_type") or "") or str(
+        decision.get("id") or ""
+    ) != str(request.get("target_id") or ""):
+        raise WorkflowBlocked(
+            "panel gated_decision must match the request target_type/target_id"
+        )
+    initiator = str(panel.get("initiator_persona_id") or "")
+    if not initiator or initiator != str(request.get("from_persona_id") or ""):
+        raise WorkflowBlocked("panel initiator must be the requesting persona")
+    required = triggers.required_consultation(
+        str(decision.get("type") or ""),
+        str(decision.get("id") or ""),
+        initiator_persona_id=initiator,
+        touches=panel.get("touches") or (),
+    )
+    if required is None:
+        raise WorkflowBlocked("panel gated_decision type is not a gated decision")
+    declared = {
+        str(item.get("persona_id")): item
+        for item in panel.get("participants") or []
+        if isinstance(item, Mapping)
+    }
+    for item in required.participants:
+        if item.persona_id not in declared:
+            raise WorkflowBlocked(
+                f"panel is missing required participant {item.persona_id} ({item.role})"
+            )
+    participants = [
+        {
+            "persona_id": item.persona_id,
+            "role": item.role,
+            "may_veto": item.may_veto,
+        }
+        for item in required.participants
+    ]
+    return participants, dict(decision)
+
+
+def _owner_read(endpoint: Any, owner: str, token_env: str, path: str, *, tenant_id: str) -> Any:
+    """One owner GET; a refusal with no credential configured names the missing credential.
+
+    A 401/403 from an owner we hold no bearer for is a configuration gap, not an owner fault: say
+    which environment credential is absent instead of the owner's bare "missing Bearer token".
+    """
+    try:
+        return decision_case.http_json(endpoint, path, tenant_id=tenant_id)
+    except decision_case.OwnerUnavailable as exc:
+        if endpoint is not None and not endpoint.token and exc.reason.startswith(("http_401", "http_403")):
+            raise WorkflowBlocked(
+                f"panel_case_file: {owner} owner credential missing: {token_env} (or {token_env}_FILE) "
+                f"is not configured for consultation-svc ({exc.reason})") from exc
+        raise
+
+
+def _compose_panel_case_file(
+    config: ExecutorConfig, request: Mapping[str, Any], decision: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve the existing request subject through owners; callers add no fields.
+
+    Canary candidacy targets a persona, so resolve its pool members rather than
+    treating the persona or ranking snapshot id as a registry artifact.
+    """
+    from dataclasses import replace
+
+    owners = decision_case.Owners.from_env()
+    if config.memory_url:
+        owners = replace(owners, memory=decision_case.OwnerEndpoint(
+            config.memory_url, memory_read_identity()[0]))
+    persona = str(request["from_persona_id"])
+    panel = request["metadata"]["panel"]
+    canary = "paper_canary_candidacy" in (panel.get("touches") or [])
+    try:
+        if decision["type"] == "trial_admission" and not canary:
+            refs = [str(decision["id"])]
+        else:
+            pool = _owner_read(
+                owners.pool, "persona", "PANTHEON_PERSONA_SERVICE_TOKEN",
+                f"/api/personas/{urllib.parse.quote(persona, safe='')}/strategy-pool",
+                tenant_id=config.tenant_id)
+            refs = [str(m["artifact_ref"]) for m in pool.get("members", [])
+                    if m.get("stage") != "removed" and m.get("artifact_ref")]
+        if not refs:
+            raise WorkflowBlocked("panel_case_file: no subject member artifacts")
+        if len(set(refs)) > decision_case.Budgets().max_items_per_group:
+            raise WorkflowBlocked("panel_case_file: subject exceeds member budget")
+        # Resolve family/spec/backtest context from registry ownership, never a model.
+        families: dict[str, list[dict[str, Any]]] = {}
+        for ref in dict.fromkeys(refs):
+            row = _owner_read(
+                owners.registry, "registry", "PANTHEON_REGISTRY_SERVICE_TOKEN",
+                f"/api/registry/entries/{urllib.parse.quote(ref, safe='')}",
+                tenant_id=config.tenant_id)
+            entry = row.get("entry", row)
+            if entry.get("registry_id") != ref or not entry.get("strategy_id"):
+                raise WorkflowBlocked("panel_case_file: registry subject binding missing")
+            if entry.get("owner_tenant", entry.get("tenant_id")) not in (config.tenant_id, "__builtin__"):
+                raise WorkflowBlocked("panel_case_file: registry tenant binding mismatch")
+            families.setdefault(str(entry["strategy_id"]), []).append(entry)
+        if os.getenv(_READ_FILE_ENV, "").strip():
+            _tok, caller_actor, caller_roles = memory_read_identity()
+        else:
+            # Legacy shared credential: explicit caller context only, never defaulted.
+            caller_actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip()
+            caller_roles = tuple(
+                x.strip() for x in os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "").split(",")
+                if x.strip())
+        caller = decision_case.Caller(
+            actor_id=caller_actor,
+            actor_roles=caller_roles,
+            session_id=f"consult-{request['request_id']}",
+            # Service caller: the shared file may NEVER include private memory.
+            persona_id="")
+        files = []
+        # Resolve the paper binding from persona-owned registry metadata, as
+        # the persona cycle does. Never infer it from a name or an unrelated
+        # same-tenant runtime. Missing or conflicting bindings stay unavailable.
+        bindings = {(e.get("metadata") or {}).get("persona_capital_binding_id")
+                    for entries in families.values() for e in entries
+                    if (e.get("metadata") or {}).get("persona_id") == persona
+                    and e.get("owner_tenant", e.get("tenant_id")) == config.tenant_id}
+        binding = next(iter(bindings)) if len(bindings) == 1 else ""
+        for family, entries in families.items():
+            metadata = [e.get("metadata") or {} for e in entries]
+            subject = decision_case.Subject(
+                decision_type="trial_admission" if decision["type"] == "trial_admission" else "consult",
+                persona_id=persona, tenant_id=config.tenant_id, strategy_family=family,
+                persona_capital_binding_id=str(binding or ""),
+                member_artifact_refs=tuple(e["registry_id"] for e in entries),
+                backtest_run_refs=tuple(dict.fromkeys(
+                    run for e in entries for run in ((e.get("lineage") or {}).get("source_run_ids") or []))),
+                underlyings=tuple(dict.fromkeys(u for m in metadata for u in m.get("underlyings", []))),
+                instrument_class=next((str(m["instrument_class"]) for m in metadata if m.get("instrument_class")), ""))
+            files.append(decision_case.compose_case_file(subject, caller, owners))
+    except (decision_case.OwnerUnavailable, decision_case.CaseFileError) as exc:
+        raise WorkflowBlocked(f"panel_case_file: {exc}") from exc
+    case = files[0]
+    # Multi-family canary pools use the same bounded library per family. Union
+    # the actual owner results, preserving unavailable reasons and item ids.
+    budgets = decision_case.Budgets()
+    for name in decision_case.GROUPS:
+        groups = [f["groups"][name] for f in files]
+        items = {i["item_id"]: i for g in groups for i in g["items"]}
+        group = case["groups"][name]
+        group["items"] = list(items.values())[:budgets.max_items_per_group]
+        group["unavailable"] = [u for g in groups for u in g["unavailable"]]
+        group["truncated"] = any(g["truncated"] for g in groups) or len(items) > len(group["items"])
+        group["status"] = ("partial" if group["unavailable"] else "ok") if group["items"] else (
+            "unavailable" if group["unavailable"] else "empty")
+        if group["status"] == "unavailable":
+            group["reason"] = "; ".join(f"{u['owner']}:{u['reason']}" for u in group["unavailable"])
+        else:
+            group.pop("reason", None)
+    case["subject"]["member_artifact_refs"] = list(dict.fromkeys(refs))
+    case["subject"]["strategy_family"] = " ".join(families)
+    case["subject"]["underlyings"] = list(dict.fromkeys(u for f in files for u in f["subject"]["underlyings"]))
+    case["subject"]["backtest_run_refs"] = list(dict.fromkeys(r for f in files for r in f["subject"]["backtest_run_refs"]))
+    while sum(len(i["excerpt"]) for g in case["groups"].values() for i in g["items"]) > budgets.max_total_chars:
+        group = max(case["groups"].values(), key=lambda g: len(g["items"]))
+        group["items"].pop()
+        group["truncated"] = True
+    case["lesson_query"] = {
+        "query": " ".join([str(decision["type"]).replace("_", " "), str(decision["id"]),
+                           str(decision.get("target_version") or ""),
+                           *panel.get("touches", []), *[f["lesson_query"]["query"] for f in files]]),
+        "tags": list(dict.fromkeys(t for f in files for t in f["lesson_query"]["tags"]))}
+    case.pop("case_file_id")
+    case.pop("digest")
+    digest = hashlib.sha256(json.dumps(case, sort_keys=True, separators=(",", ":"),
+                                      ensure_ascii=False, default=str).encode()).hexdigest()
+    return {"case_file_id": f"casefile-{digest[:24]}", "digest": digest, **case}
+
+
+PANEL_INTERPRETATION_MAX_CITATIONS = 12
+
+
+def _interpretation_rejection(record: Any) -> str | None:
+    """Every panel answer must state which mode its context came from (fail closed).
+
+    The adapter checks citations against the broker's record of the turn; here the
+    record's shape and the count limit are re-checked and nothing is truncated.
+    """
+
+    if not isinstance(record, Mapping):
+        return "interpretation_missing"
+    mode = record.get("mode")
+    citations = record.get("citations")
+    if not isinstance(citations, list) or any(not isinstance(c, str) or not c for c in citations):
+        return "interpretation_citations_malformed"
+    if len(citations) > PANEL_INTERPRETATION_MAX_CITATIONS:
+        return "interpretation_too_many_citations"
+    if mode == "interpretation":
+        if not isinstance(record.get("text"), str) or not record["text"].strip() or not record.get("run_ref"):
+            return "interpretation_incomplete"
+        return None
+    if mode == "fallback":
+        return None if record.get("reason") else "interpretation_fallback_reason_missing"
+    return "interpretation_mode_unknown"
+
+
+def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str, Any]) -> str | None:
+    """Every claim, summary and finding must cite an existing case item.
+
+    A bare global evidence array is not a citation for an individual claim.
+    Subject assertions, when supplied, must match the cited owner's fields or
+    the decision subject. This checks attribution, not semantic entailment.
+    """
+    items = {i["item_id"]: i for g in case["groups"].values() for i in g["items"]}
+    if any(not isinstance(e["id"], str) or e["id"] not in items for e in contribution.evidence):
+        return "evidence_not_in_case_file"
+    attached = {e["id"] for e in contribution.evidence}
+    claims = contribution.event_content.get("claims")
+    if not isinstance(claims, list) or not claims:
+        return "claims_missing"
+    content = contribution.event_content
+    if set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs",
+                       "interpretation"}:
+        return "unvalidated_claim_fields"
+    interpretation_problem = _interpretation_rejection(content.get("interpretation"))
+    if interpretation_problem:
+        return interpretation_problem
+    nodes = [*claims, {"claim": contribution.summary, "evidence_refs": content.get("summary_evidence_refs")},
+             *contribution.findings]
+    # A legacy free claim beside the claims list cannot escape validation.
+    if content.get("claim"):
+        nodes.append({"claim": content["claim"], "evidence_refs": content.get("evidence_refs")})
+    for node in nodes:
+        if not isinstance(node, Mapping) or not str(node.get("claim") or "").strip():
+            return "claim_malformed"
+        refs = node.get("evidence_refs")
+        if not isinstance(refs, list) or not refs:
+            return "claim_uncited"
+        if any(not isinstance(ref, str) or ref not in items for ref in refs):
+            return "case_item_unknown"
+        if any(ref not in attached for ref in refs):
+            return "case_item_not_attached"
+        fields = node.get("subject_fields", {})
+        if not isinstance(fields, Mapping):
+            return "claim_subject_malformed"
+        for field, value in fields.items():
+            if value is None or not any(
+                (field in items[ref].get("subject_fields", {}) and value == items[ref]["subject_fields"][field])
+                or (field in case["subject"] and value == case["subject"][field]) for ref in refs):
+                return "claim_subject_mismatch"
+    return None
+
+
+def _panel_contribution(
+    *,
+    claim: WorkflowClaim,
+    state: WorkflowStateStore,
+    config: ExecutorConfig,
+    provider: HttpContributionProvider,
+    request: Mapping[str, Any],
+    participant: Mapping[str, Any],
+    gathered: dict[str, dict[str, Any]],
+) -> QualifiedContribution:
+    persona_id = str(participant["persona_id"])
+    if persona_id in gathered:
+        return QualifiedContribution.from_payload(
+            gathered[persona_id],
+            expected_tenant_id=config.tenant_id,
+            expected_request_id=claim.request_id,
+        )
+    # Independence: a participant sees the request and its own role only,
+    # never another participant's answer.
+    ask = dict(request)
+    ask["participant"] = {
+        "persona_id": persona_id,
+        "role": participant["role"],
+        "agent": "persona_own_agent",
+    }
+    contribution = provider.obtain(
+        tenant_id=config.tenant_id,
+        request=ask,
+        participant_scope=persona_id,
+    )
+    if contribution.participant_type != "persona" or (
+        contribution.participant_ref != persona_id
+    ):
+        raise ContributionProviderError(
+            f"provider answered as {contribution.participant_ref!r}, "
+            f"not the asked persona {persona_id!r}"
+        )
+    if any(
+        item.get("contribution_id") == contribution.contribution_id
+        for item in gathered.values()
+    ):
+        raise ContributionProviderError("provider reused a contribution_id")
+    gathered[persona_id] = contribution.to_dict()
+    state.save_progress(
+        claim,
+        phase="panel_contribution_received",
+        contribution={"case_file": request["case_file"], "panel_contributions": gathered},
+    )
+    return contribution
+
+
+def _synthesize(
+    participants: list[dict[str, Any]],
+    contributions: list[QualifiedContribution],
+) -> tuple[dict[str, Any], str, str, list[dict[str, Any]], float]:
+    triggers = _persona_triggers()
+    by_persona = {item.participant_ref: item for item in contributions}
+    gate = triggers.evaluate_gate(
+        participants,
+        {pid: item.recommendation for pid, item in by_persona.items()},
+    )
+    lines = [
+        f"{pid} ({next(p['role'] for p in participants if p['persona_id'] == pid)})"
+        f" -> {item.recommendation}: {item.summary}"
+        for pid, item in by_persona.items()
+    ]
+    summary = "Panel synthesis (no vote). " + " | ".join(lines)
+    if gate.agreements:
+        summary += " Agreements: " + "; ".join(gate.agreements) + "."
+    if gate.disagreements:
+        summary += " Disagreements: " + "; ".join(gate.disagreements) + "."
+    summary += (
+        " Gate: " + gate.outcome + " - " + "; ".join(gate.reasons) + "."
+    )
+    findings: list[dict[str, Any]] = []
+    for text in gate.disagreements:
+        findings.append(
+            {
+                "severity": "medium",
+                "category": "panel_disagreement",
+                "claim": "Participants disagree - " + text,
+                "evidence_refs": [by_persona[next(iter(by_persona))].evidence[0]["id"]],
+                "recommendation": "Operator reads each persona answer before deciding.",
+            }
+        )
+    if gate.vetoed_by:
+        risk = by_persona[gate.vetoed_by]
+        findings.append(
+            {
+                "severity": "high",
+                "category": "risk_veto",
+                "claim": f"Risk persona {gate.vetoed_by} opposed ({risk.recommendation}).",
+                "evidence_refs": [risk.evidence[0]["id"]],
+                "recommendation": "Do not auto-adopt; route to an operator decision.",
+            }
+        )
+    elif gate.operator_decision_required:
+        findings.append(
+            {
+                "severity": "high",
+                "category": "operator_decision",
+                "claim": "; ".join(gate.reasons),
+                "evidence_refs": [contributions[0].evidence[0]["id"]] if contributions else [],
+                "recommendation": "Route to an operator decision.",
+            }
+        )
+    if gate.operator_decision_required:
+        recommendation = "escalate"
+    elif all(item.recommendation == "approve" for item in contributions):
+        recommendation = "approve"
+    else:
+        recommendation = "approve_with_conditions"
+    confidence = min((item.confidence for item in contributions), default=0.0)
+    return gate.to_dict(), summary, recommendation, findings, confidence
+
+
+def _memory_headers() -> dict[str, str]:
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    return {
+        "Accept": "application/json",
+        **resolve_runtime_manager_auth(
+            token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+            token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+            default_token="",
+        ).headers(),
+    }
+
+
+_READ_FILE_ENV = "CONSULTATION_MEMORY_READ_TOKEN_FILE"
+_READ_ACTOR_DEFAULT = "pantheon-dev-consultation-memory-reader"
+
+
+def memory_read_identity() -> tuple[str, str, tuple[str, ...]]:
+    """(bearer token, actor_id, actor_roles) for memory reads; roles never empty.
+
+    The issued read principal wins when its file is configured: actor id and
+    roles then describe that credential (memory-svc requires actor_id to equal
+    the token identity and roles to be a subset of the token roles). Without it
+    the legacy shared credential and PANTHEON_MEMORY_ACTOR_* apply. The token is
+    never logged or returned in any error text.
+    """
+    from services.runtime_auth import resolve_runtime_manager_auth
+
+    def _csv(raw: str) -> tuple[str, ...]:
+        return tuple(x.strip() for x in raw.split(",") if x.strip())
+
+    if os.getenv(_READ_FILE_ENV, "").strip():
+        auth = resolve_runtime_manager_auth(
+            token_env_key="CONSULTATION_MEMORY_READ_TOKEN",
+            token_file_env_key=_READ_FILE_ENV, default_token="")
+        actor = os.getenv("PANTHEON_MEMORY_READ_ACTOR_ID", "").strip() or _READ_ACTOR_DEFAULT
+        roles = _csv(os.getenv("PANTHEON_MEMORY_READ_ACTOR_ROLES", "")) or ("consultation_session",)
+        return auth.token, actor, roles
+    auth = resolve_runtime_manager_auth(
+        token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE", default_token="")
+    actor = os.getenv("PANTHEON_MEMORY_ACTOR_ID", "").strip() or "consultation-svc"
+    roles = _csv(os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "")) or ("consultation_session",)
+    return auth.token, actor, roles
+
+
+def _write_panel_memory(
+    config: ExecutorConfig,
+    *,
+    request: Mapping[str, Any],
+    panel: Mapping[str, Any],
+    decision: Mapping[str, Any],
+    participants: list[dict[str, Any]],
+    gate: Mapping[str, Any],
+    memo_id: str,
+    summary: str,
+    confidence: float,
+    evidence_ids: list[str],
+) -> Mapping[str, Any]:
+    """Write initiator-memory outcome + institutional cross-persona observation.
+
+    One idempotent Learn-feedback writeback: the source event id is the
+    consultation request, so a retry replays instead of duplicating.
+    """
+
+    if not config.memory_url:
+        raise WorkflowBlocked(
+            "PANTHEON_MEMORY_API_URL is not configured; "
+            "consultation outcome memory writeback is required"
+        )
+    initiator = str(panel["initiator_persona_id"])
+    others = [p["persona_id"] for p in participants if p["persona_id"] != initiator]
+    outcome = (
+        "operator decision required" if gate.get("operator_decision_required")
+        else "adopt eligible"
+    )
+    payload = {
+        "tenant_id": config.tenant_id,
+        "source_event_type": PANEL_SOURCE_EVENT,
+        "source_event_id": f"consultation:{request.get('request_id')}",
+        "write_authority": PANEL_WRITE_AUTHORITY,
+        "sponsor_persona_id": initiator,
+        "contributing_persona_ids": [initiator],
+        "summary": (
+            f"Consultation on {decision.get('type')} {decision.get('id')}: "
+            f"{outcome}. Panel: {', '.join([initiator, *others])}."
+        ),
+        "headline": f"Consultation outcome: {decision.get('type')} {decision.get('id')}",
+        "body": summary,
+        "memo_id": memo_id,
+        "outcome": gate.get("outcome"),
+        "evidence_refs": [f"consultation://memos/{memo_id}", *evidence_ids],
+        "confidence": confidence,
+        "trace_id": str(request.get("trace_id") or ""),
+        "tags": ["consult_panel", str(decision.get("type")), *[f"panel:{p}" for p in others]],
+    }
+    response = _json_request(
+        config.memory_url + "/api/memory/writebacks/learn-feedback",
+        method="POST",
+        timeout_seconds=config.timeout_seconds,
+        headers=_memory_headers(),
+        payload=payload,
+    )
+    if not isinstance(response, Mapping):
+        raise WorkflowBlocked("memory writeback response must be a JSON object")
+    return response
+
+
+def _probe(config: ExecutorConfig, base: str, label: str) -> None:
+    try:
+        _json_request(
+            base + "/health",
+            method="GET",
+            timeout_seconds=config.timeout_seconds,
+            headers={"Accept": "application/json"},
+        )
+    except Exception as exc:
+        raise WorkflowBlocked(f"{label} address is not reachable: {_error_detail(exc)}") from exc
+
+
+def _execute_panel_claim(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+    claim: WorkflowClaim,
+    request: Mapping[str, Any],
+    panel: Mapping[str, Any],
+    phase_hook: Callable[[str], None] | None,
+) -> dict[str, str]:
+    participants, decision = _validated_panel(request, panel)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(provider.ensure_agents, tenant_id=config.tenant_id,
+                                 persona_ids=[p["persona_id"] for p in participants])
+            while True:
+                try:
+                    future.result(timeout=max(0.05, config.lease_seconds / 3))
+                    break
+                except FutureTimeout:
+                    if future.done():
+                        raise
+                    claim = _renew(state, claim, config)
+    except AgentProvisioningInProgress:
+        raise
+    except ContributionProviderError as exc:
+        _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+            "request_id": claim.request_id, "event_type": "panel_agent_provisioning_blocked",
+            "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+            "content": {"reason": str(exc), "gated_decision": decision},
+            "idempotency_key": f"{claim.request_id}:agents-blocked:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
+        raise AgentProvisioningBlocked(str(exc)) from exc
+    trace_id = str(
+        request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
+    )
+    if decision.get("type") == "harness_patch":
+        if not config.evolution_url:
+            raise WorkflowBlocked(
+                "PANTHEON_EVOLUTION_API_URL is not configured for a harness patch panel"
+            )
+        _probe(config, config.evolution_url, "evolution")
+
+    saved = claim.contribution or {}
+    case = saved.get("case_file")
+    if not isinstance(case, Mapping):
+        try:
+            # Owner reads are sequential inside the knowledge library. Keep the
+            # durable lease alive during a slow composition and always join it.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_compose_panel_case_file, config, request, decision)
+                while True:
+                    try:
+                        case = future.result(timeout=max(0.05, config.lease_seconds / 3))
+                        break
+                    except FutureTimeout:
+                        if future.done():
+                            raise
+                        claim = _renew(state, claim, config)
+        except WorkflowBlocked as exc:
+            _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+                "request_id": claim.request_id, "event_type": "panel_case_file_unavailable",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": {"reason": str(exc), "gated_decision": decision},
+                "idempotency_key": f"{claim.request_id}:case-unavailable:{hashlib.sha256(str(exc).encode()).hexdigest()[:16]}"})
+            raise
+        state.save_progress(claim, phase="case_file_composed", contribution={"case_file": case})
+    case_binding = {"case_file_id": case["case_file_id"], "digest": case["digest"],
+                    "request_id": claim.request_id, "gated_decision": decision,
+                    "initiator_persona_id": panel["initiator_persona_id"]}
+    request = {**request, "case_file": case, "case_file_binding": case_binding}
+    recorded = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+        "request_id": claim.request_id, "event_type": "panel_case_file_attached",
+        "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+        "content": {**case_binding, "case_file": case},
+        "idempotency_key": f"{claim.request_id}:case-file"})
+    if not isinstance(recorded, Mapping) or not recorded.get("event_id"):
+        raise WorkflowBlocked("panel case file was not durably acknowledged")
+
+    gathered: dict[str, dict[str, Any]] = {}
+    if isinstance(claim.contribution, Mapping):
+        gathered = {
+            str(k): dict(v)
+            for k, v in (claim.contribution.get("panel_contributions") or {}).items()
+        }
+    contributions: list[QualifiedContribution] = []
+    rejected: list[dict[str, Any]] = []
+    for participant in participants:
+        claim = _renew(state, claim, config)
+        contribution = _panel_contribution(
+                claim=claim,
+                state=state,
+                config=config,
+                provider=provider,
+                request=request,
+                participant=participant,
+                gathered=gathered,
+            )
+        reason = _case_file_rejection(contribution, case)
+        if reason:
+            invalid = {"persona_id": participant["persona_id"], "contribution_id": contribution.contribution_id,
+                       "reason": reason, **case_binding}
+            rejected.append(invalid)
+            event = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
+                "request_id": claim.request_id, "event_type": "panel_contribution_rejected",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": invalid, "idempotency_key": contribution.contribution_id + ":rejected"})
+            if not isinstance(event, Mapping) or not event.get("event_id"):
+                raise WorkflowBlocked("panel rejection was not durably acknowledged")
+        else:
+            contributions.append(contribution)
+    _phase_hook(phase_hook, "panel_contributions_received")
+
+    service_actor = {"actor_type": "service", "actor_id": CONSUMER_NAME}
+    all_evidence: list[str] = []
+    for contribution in contributions:
+        participant = next(p for p in participants if p["persona_id"] == contribution.participant_ref)
+        claim = _renew(state, claim, config)
+        base = contribution.contribution_id
+        assigned = _api_post(
+            config,
+            f"/api/consult/requests/{claim.request_id}/participants",
+            {
+                "participant_type": "persona",
+                "participant_ref": contribution.participant_ref,
+                "role": participant["role"],
+                "trace_id": trace_id,
+                "initiated_by": service_actor,
+                "idempotency_key": base + ":participant",
+            },
+        )
+        if not isinstance(assigned, Mapping) or not assigned.get("participant_id"):
+            raise WorkflowBlocked("panel participant assignment was not acknowledged")
+        actor = {
+            "actor_type": "persona",
+            "actor_id": contribution.participant_ref,
+        }
+        event = _api_post(
+            config,
+            f"/api/consult/requests/{claim.request_id}/events",
+            {
+                "request_id": claim.request_id,
+                "event_type": contribution.event_type,
+                "actor": actor,
+                "content": {
+                    **contribution.event_content,
+                    "recommendation": contribution.recommendation,
+                    "role": participant["role"],
+                    **case_binding,
+                },
+                "evidence_refs": [str(i["id"]) for i in contribution.evidence],
+                "idempotency_key": base + ":event",
+            },
+        )
+        if not isinstance(event, Mapping) or not event.get("event_id"):
+            raise WorkflowBlocked("panel transcript event was not acknowledged")
+        for evidence in contribution.evidence:
+            attachment = _api_post(
+                config,
+                f"/api/consult/requests/{claim.request_id}/evidence",
+                {
+                    "evidence_ref": dict(evidence),
+                    "attached_by": actor,
+                    "trace_id": trace_id,
+                    "idempotency_key": base + ":evidence:" + str(evidence["id"]),
+                },
+            )
+            if not isinstance(attachment, Mapping) or not attachment.get("attachment_id"):
+                raise WorkflowBlocked("panel evidence was not acknowledged")
+            all_evidence.append(str(evidence["id"]))
+    state.save_progress(claim, phase="panel_recorded")
+    _phase_hook(phase_hook, "panel_recorded")
+
+    gate, summary, recommendation, findings, confidence = _synthesize(
+        participants, contributions
+    )
+    # SQLite serializes the snapshot with sorted object keys. Use stable list
+    # ordering too, so replayed synthesis events/memos retain identical payloads.
+    missing = sorted(f"{name}/{u['owner']}: {u['reason']}" for name, group in case["groups"].items()
+                     for u in group["unavailable"] if not u.get("expected"))
+    if missing:
+        gate["outcome"] = "operator_decision"
+        gate["operator_decision_required"] = True
+        gate["reasons"] = [*gate["reasons"], *missing]
+        recommendation = "escalate"
+        summary += " Case-file sources unavailable; operator decision required: " + "; ".join(missing) + "."
+    summary += f" Case file: {case['case_file_id']} digest={case['digest']}."
+    if rejected:
+        summary += " Invalid contributions excluded: " + "; ".join(
+            f"{r['persona_id']}: {r['reason']}" for r in rejected) + "."
+    synth_ref = f"consult-panel:{claim.request_id}"
+    synth_key = _stable_id("panel-synthesis", config.tenant_id, claim.request_id)
+    claim = _renew(state, claim, config)
+    assigned = _api_post(
+        config,
+        f"/api/consult/requests/{claim.request_id}/participants",
+        {
+            "participant_type": "committee",
+            "participant_ref": synth_ref,
+            "role": "observer",
+            "trace_id": trace_id,
+            "initiated_by": service_actor,
+            "idempotency_key": synth_key + ":participant",
+        },
+    )
+    if not isinstance(assigned, Mapping) or not assigned.get("participant_id"):
+        raise WorkflowBlocked("panel synthesis participant was not acknowledged")
+    synth_event = _api_post(
+        config,
+        f"/api/consult/requests/{claim.request_id}/events",
+        {
+            "request_id": claim.request_id,
+            "event_type": "panel_synthesis",
+            "actor": {"actor_type": "committee", "actor_id": synth_ref},
+            "content": {"voting": False, "gate": gate, "gated_decision": decision,
+                        **case_binding, "rejected_contributions": rejected},
+            "evidence_refs": all_evidence,
+            "idempotency_key": synth_key + ":event",
+        },
+    )
+    if not isinstance(synth_event, Mapping) or not synth_event.get("event_id"):
+        raise WorkflowBlocked("panel synthesis event was not acknowledged")
+    memo = _api_post(
+        config,
+        "/api/consult/memos",
+        {
+            "request_id": claim.request_id,
+            "memo_type": "committee_summary",
+            "author_type": "committee",
+            "author_ref": synth_ref,
+            "summary": summary,
+            "findings": findings,
+            "recommendation": recommendation,
+            "confidence": confidence,
+            "trace_id": trace_id,
+            "idempotency_key": synth_key + ":memo",
+        },
+    )
+    if not isinstance(memo, Mapping) or not memo.get("memo_id"):
+        raise WorkflowBlocked("panel synthesis memo was not acknowledged")
+    memo_id = str(memo["memo_id"])
+    state.save_progress(claim, phase="memo_submitted", memo_id=memo_id)
+    claim = _renew(state, claim, config)
+    published = _api_post(config, f"/api/consult/memos/{memo_id}/publish", {})
+    if not isinstance(published, Mapping) or published.get("status") != "published":
+        raise WorkflowBlocked("panel synthesis memo publish was not acknowledged")
+    state.save_progress(claim, phase="memo_published", memo_id=memo_id)
+    _phase_hook(phase_hook, "memo_published")
+
+    # Fail-closed hold first: persist and dispatch the gate handoff (which
+    # installs the operator-decision hold at the decision owner) before any
+    # asynchronous memory write, so a memory outage cannot leave a published
+    # veto without a hold.
+    claim = _renew(state, claim, config)
+    memo_ref = f"consultation://memos/{memo_id}"
+    handoff = _api_post(
+        config,
+        "/api/consult/handoffs",
+        {
+            "request_id": claim.request_id,
+            "target_gate": f"consultation.panel.{decision['type']}.reviewed",
+            "memo_ids": [memo_id],
+            "evidence_refs": [memo_ref, *all_evidence],
+            "trace_id": trace_id,
+            "initiated_by": service_actor,
+            "idempotency_key": synth_key + ":handoff",
+        },
+    )
+    if not isinstance(handoff, Mapping) or not handoff.get("handoff_id"):
+        raise WorkflowBlocked("panel gate handoff was not durably acknowledged")
+    handoff_id = str(handoff["handoff_id"])
+    state.save_progress(
+        claim, phase="handoff_persisted", memo_id=memo_id, handoff_id=handoff_id
+    )
+    claim = _renew(state, claim, config)
+    if handoff.get("status") == "acknowledged":
+        # A memory-only retry must not resend a handoff whose mutable status
+        # and sent_at now differ from the sink's original idempotent payload.
+        consumer_ref = "persisted-acknowledgement"
+        acknowledged = handoff
+    else:
+        consumer_ref = _dispatch_handoff(
+            config,
+            request=request,
+            handoff=handoff,
+            extra={
+                "gated_decision": decision,
+                "gate": gate,
+                "memo_evidence_ref": memo_ref,
+            },
+        )
+        acknowledged = _api_post(
+            config,
+            f"/api/consult/handoffs/{handoff_id}/acknowledge",
+            {"consumer_ref": consumer_ref},
+        )
+    if not isinstance(acknowledged, Mapping) or acknowledged.get("status") != "acknowledged":
+        raise WorkflowBlocked("panel handoff acknowledgement was not persisted")
+    state.save_progress(
+        claim, phase="handoff_acknowledged", memo_id=memo_id, handoff_id=handoff_id
+    )
+    _phase_hook(phase_hook, "handoff_acknowledged")
+
+    claim = _renew(state, claim, config)
+    _write_panel_memory(
+        config,
+        request=request,
+        panel=panel,
+        decision=decision,
+        participants=participants,
+        gate=gate,
+        memo_id=memo_id,
+        summary=summary,
+        confidence=confidence,
+        evidence_ids=all_evidence,
+    )
+    state.save_progress(claim, phase="memory_written", memo_id=memo_id)
+    _phase_hook(phase_hook, "memory_written")
+
+    state.complete(claim, memo_id=memo_id, handoff_id=handoff_id)
+    return {
+        "request_id": claim.request_id,
+        "outcome": "completed",
+        "detail": (
+            f"memo={memo_id} handoff={handoff_id} acknowledged_by={consumer_ref} "
+            f"gate={gate['outcome']}"
+        ),
+    }
+
+
+class _HttpMeetingStoreProxy:
+    """HTTP-backed store proxy so workflow_executor updates consultation-svc over its API."""
+
+    def __init__(self, config: ExecutorConfig, meeting_id: str, trace_id: str) -> None:
+        self.config = config
+        self.meeting_id = meeting_id
+        self.trace_id = trace_id
+        self._cached_meeting: dict[str, Any] | None = None
+        self._attached_ids: set[str] = set()
+
+    def get_meeting(self, meeting_id: str) -> dict[str, Any] | None:
+        if self._cached_meeting is not None and self._cached_meeting.get("meeting_id") == meeting_id:
+            return dict(self._cached_meeting)
+        resp = _api_get(self.config, f"/api/consult/meetings/{meeting_id}")
+        if isinstance(resp, Mapping):
+            self._cached_meeting = dict(resp)
+            return dict(resp)
+        return None
+
+    def put_meeting(self, meeting: Mapping[str, Any]) -> None:
+        self._cached_meeting = dict(meeting)
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"meeting": dict(meeting)},
+        )
+
+    def put_meeting_schedule(self, schedule_entry: Mapping[str, Any]) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"schedules": [dict(schedule_entry)]},
+        )
+
+    def put_meeting_refusal(self, refusal: Mapping[str, Any]) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/meetings/{self.meeting_id}/sync",
+            {"refusals": [dict(refusal)]},
+        )
+
+    def put_participant(self, participant: Any) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{participant.request_id}/participants",
+            {
+                "participant_type": participant.participant_type.value,
+                "participant_ref": participant.participant_ref,
+                "role": participant.role.value,
+                "trace_id": self.trace_id,
+                "initiated_by": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "idempotency_key": participant.participant_id,
+            },
+        )
+
+    def get_transcript(self, request_id: str) -> Any:
+        return None
+
+    def add_transcript_event(self, request_id: str, event: Any) -> None:
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{request_id}/events",
+            {
+                "request_id": request_id,
+                "event_type": event.event_type,
+                "actor": {
+                    "actor_type": event.actor.actor_type,
+                    "actor_id": event.actor.actor_id,
+                },
+                "content": dict(event.content),
+                "evidence_refs": list(event.evidence_refs),
+                "idempotency_key": event.event_id,
+            },
+        )
+
+    def get_evidence_attachment(self, attachment_id: str) -> Any:
+        return True if attachment_id in self._attached_ids else None
+
+    def put_evidence_attachment(self, attachment: Any) -> None:
+        self._attached_ids.add(str(attachment.attachment_id))
+        _api_post(
+            self.config,
+            f"/api/consult/requests/{attachment.request_id}/evidence",
+            {
+                "evidence_ref": attachment.evidence_ref.model_dump(mode="json"),
+                "attached_by": {
+                    "actor_type": attachment.attached_by.actor_type,
+                    "actor_id": attachment.attached_by.actor_id,
+                },
+                "trace_id": attachment.trace_id,
+                "idempotency_key": attachment.attachment_id,
+            },
+        )
+
+    def put_memo(self, memo: Any) -> dict[str, Any]:
+        payload = {
+            "request_id": memo.request_id,
+            "memo_type": memo.memo_type.value,
+            "author_type": memo.author_type.value,
+            "author_ref": memo.author_ref,
+            "summary": memo.summary,
+            "findings": [f.model_dump(mode="json") for f in memo.findings],
+            "recommendation": memo.recommendation.value,
+            "confidence": memo.confidence,
+            "trace_id": memo.trace_id,
+            "idempotency_key": memo.memo_id,
+        }
+        try:
+            submitted = _api_post(self.config, "/api/consult/memos", payload)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 409:
+                raise
+            # A retried step re-synthesized different text under the same stable key.
+            # The memo already recorded for this request is the record: reuse, never re-create.
+            query = urllib.parse.urlencode({"request_id": memo.request_id})
+            existing = next(
+                (
+                    row for row in (_api_get(self.config, f"/api/consult/memos?{query}") or [])
+                    if isinstance(row, Mapping)
+                    and row.get("memo_type") == payload["memo_type"]
+                    and row.get("author_ref") == payload["author_ref"]
+                ),
+                None,
+            )
+            if existing is None or not existing.get("memo_id"):
+                raise
+            submitted = existing
+        memo_id = str(submitted["memo_id"])
+        published = _api_post(
+            self.config,
+            f"/api/consult/memos/{memo_id}/publish",
+            {},
+        )
+        return dict(published) if isinstance(published, Mapping) else {"memo_id": memo_id}
+
+    def get_request(self, request_id: str) -> Any:
+        return None
+
+    def put_request(self, request_obj: Any) -> None:
+        pass
+
+
+def _execute_meeting_claim(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+    claim: WorkflowClaim,
+    request: Mapping[str, Any],
+    phase_hook: Callable[[str], None] | None,
+) -> dict[str, str]:
+    from .meetings import MeetingRefusedError, execute_persona_meeting
+
+    nonlocal_claim = claim
+
+    def _renew_cb() -> None:
+        nonlocal nonlocal_claim
+        nonlocal_claim = _renew(state, nonlocal_claim, config)
+
+    def _provider_call(call: Callable[..., Any], **kwargs: Any) -> Any:
+        # Keep the fenced claim alive while OpenClaw is working. Always join
+        # the bounded provider call, including on a renewal failure; no work
+        # may keep running after this claim has returned to the executor.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(call, **kwargs)
+            while True:
+                try:
+                    return future.result(timeout=max(0.05, config.lease_seconds / 3))
+                except FutureTimeout:
+                    if future.done():
+                        return future.result()
+                    _renew_cb()
+
+    class LeaseRenewingProvider:
+        def ensure_agents(self, **kwargs: Any) -> Any:
+            return _provider_call(provider.ensure_agents, **kwargs)
+
+        def obtain(self, **kwargs: Any) -> Any:
+            return _provider_call(provider.obtain, **kwargs)
+
+    trace_id = str(
+        request.get("trace_id") or _stable_id("trace", config.tenant_id, claim.request_id)
+    )
+    proxy_store = _HttpMeetingStoreProxy(config, claim.request_id, trace_id)
+    try:
+        completed_meeting = execute_persona_meeting(
+            store=proxy_store,
+            meeting_id=claim.request_id,
+            tenant_id=config.tenant_id,
+            provider=LeaseRenewingProvider(),
+            memory_url=config.memory_url,
+            renew_lease=_renew_cb,
+        )
+    except MeetingRefusedError as exc:
+        _api_post(
+            config,
+            f"/api/consult/meetings/{claim.request_id}/sync",
+            {
+                "request_status": "failed",
+                "completed_at": _utc_now(),
+            },
+        )
+        state.complete(nonlocal_claim, memo_id=f"refused:{exc.reason}", handoff_id="none")
+        return {
+            "request_id": claim.request_id,
+            "outcome": "completed",
+            "detail": f"meeting_refused={exc.reason}",
+        }
+
+    _api_post(
+        config,
+        f"/api/consult/meetings/{claim.request_id}/sync",
+        {
+            "meeting": completed_meeting,
+            "request_status": "published",
+            "completed_at": completed_meeting.get("closed_at") or _utc_now(),
+        },
+    )
+    memo_id = str((completed_meeting.get("minutes") or {}).get("memo_id") or f"mem-{claim.request_id}")
+    dissent_id = str((completed_meeting.get("synthesis") or {}).get("dissent_memo_id") or "none")
+    state.save_progress(nonlocal_claim, phase="meeting_completed", memo_id=memo_id)
+    _phase_hook(phase_hook, "meeting_completed")
+    state.complete(nonlocal_claim, memo_id=memo_id, handoff_id=dissent_id)
+    return {
+        "request_id": claim.request_id,
+        "outcome": "completed",
+        "detail": (
+            f"memo={memo_id} dissent={dissent_id} "
+            f"outcome={completed_meeting.get('outcome')}"
+        ),
+    }
+
+
 def _error_detail(exc: Exception) -> str:
     if isinstance(exc, urllib.error.HTTPError):
-        return f"http_error={exc.code} {exc.reason}"
+        return f"http_error={exc.code} {exc.reason} url={exc.url}"
     return str(exc)
+
+
+# Request ids whose exhausted recovery was already recorded on the request.
+_EXHAUSTION_RECORDED: set[tuple[str, str]] = set()
+
+
+def _probe_case_file_credentials(config: ExecutorConfig) -> None:
+    """Persona and registry owner reads with the executor's own credentials.
+
+    A 404 on the probe id is an answer; 401/403, 5xx or no transport is not.
+    """
+    from dataclasses import replace
+
+    owners = decision_case.Owners.from_env()
+    if config.memory_url:
+        owners = replace(owners, memory=decision_case.OwnerEndpoint(
+            config.memory_url, memory_read_identity()[0]))
+    for endpoint, path in (
+        (owners.pool, "/api/personas/consult-redrive-probe/strategy-pool"),
+        (owners.registry, "/api/registry/entries/consult-redrive-probe"),
+    ):
+        try:
+            decision_case.http_json(endpoint, path, tenant_id=config.tenant_id)
+        except decision_case.OwnerUnavailable as exc:
+            if exc.reason.startswith(("http_404", "http_400", "http_422")):
+                continue
+            raise
+
+
+WRITEBACK_PROBE_INTERVAL_SECONDS = 900.0
+# (tenant, memory_url) -> (checked monotonic seconds, error text or "" when healthy)
+_WRITEBACK_PROBE_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+
+
+def _writeback_probe_interval() -> float:
+    raw = os.getenv("CONSULTATION_WRITEBACK_PROBE_INTERVAL_SECONDS", "").strip()
+    try:
+        return max(float(raw), 0.0) if raw else WRITEBACK_PROBE_INTERVAL_SECONDS
+    except ValueError:
+        return WRITEBACK_PROBE_INTERVAL_SECONDS
+
+
+def _probe_writeback_identity(config: ExecutorConfig) -> None:
+    """Authenticate to the memory writeback with the consultation write identity.
+
+    The payload names write_authority consultation-svc and the executor tenant,
+    so it passes memory-svc's identity, authority and tenant checks, and is then
+    rejected by validation (400/422, no source_event_*) so nothing is written.
+    401/403, 5xx or no transport fails. The request is made at most once per
+    probe interval; between probes the last answer is returned without a request.
+    """
+    if not config.memory_url:
+        raise WorkflowBlocked("memory writeback address is not configured")
+    key = (config.tenant_id, config.memory_url)
+    now = time.monotonic()
+    cached = _WRITEBACK_PROBE_CACHE.get(key)
+    if cached is not None and now - cached[0] < _writeback_probe_interval():
+        if cached[1]:
+            raise WorkflowBlocked(cached[1])
+        return
+    try:
+        _json_request(
+            config.memory_url + "/api/memory/writebacks/learn-feedback",
+            method="POST",
+            timeout_seconds=config.timeout_seconds,
+            headers=_memory_headers(),
+            payload={"write_authority": "consultation-svc", "tenant_id": config.tenant_id},
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 404, 409, 422):
+            _WRITEBACK_PROBE_CACHE[key] = (now, "")
+            return
+        _WRITEBACK_PROBE_CACHE[key] = (now, _error_detail(exc)[:300])
+        raise
+    except Exception as exc:
+        _WRITEBACK_PROBE_CACHE[key] = (now, _error_detail(exc)[:300])
+        raise
+    # A 2xx would mean a write happened; still an answer from the identity check.
+    _WRITEBACK_PROBE_CACHE[key] = (now, "")
+
+
+def _request_persona_ids(config: ExecutorConfig, request_id: str) -> list[str]:
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    metadata = (request.get("metadata") or {}) if isinstance(request, Mapping) else {}
+    found: list[str] = []
+    panel = metadata.get("panel") or {}
+    meeting = metadata.get("meeting") or {}
+    for group in (panel.get("participants"), meeting.get("participants")):
+        for item in group or []:
+            if isinstance(item, Mapping):
+                value = item.get("persona_id") or item.get("id")
+            else:
+                value = item
+            if value:
+                found.append(str(value))
+    if not found:
+        meeting_row = _api_get(config, f"/api/consult/meetings/{request_id}")
+        for item in (meeting_row or {}).get("participants") or []:
+            value = item.get("persona_id") or item.get("id") if isinstance(item, Mapping) else item
+            if value:
+                found.append(str(value))
+    if not found and isinstance(request, Mapping) and request.get("from_persona_id"):
+        found.append(str(request["from_persona_id"]))
+    return list(dict.fromkeys(found))[:1]
+
+
+def _probe_ensure_route(
+    config: ExecutorConfig, provider: HttpContributionProvider, request_id: str
+) -> None:
+    persona_ids = _request_persona_ids(config, request_id)
+    if not persona_ids:
+        raise WorkflowBlocked("ensure probe has no persona to reconcile")
+    provider.ensure_agents(tenant_id=config.tenant_id, persona_ids=persona_ids)
+
+
+def _record_recovery_exhausted(
+    config: ExecutorConfig, row: Mapping[str, Any]
+) -> None:
+    """Name the failure on the request itself so readers stop treating it as pending."""
+    request_id = str(row["request_id"])
+    key = (config.tenant_id, request_id)
+    if key in _EXHAUSTION_RECORDED:
+        return
+    request = _api_get(config, f"/api/consult/requests/{request_id}")
+    if isinstance(request, Mapping) and str(request.get("status") or "") not in (
+        "failed", "published", "cancelled"
+    ):
+        reason = str(row.get("last_error") or "")[:300]
+        try:
+            _api_post(config, f"/api/consult/requests/{request_id}/events", {
+                "request_id": request_id, "event_type": "workflow_recovery_exhausted",
+                "actor": {"actor_type": "service", "actor_id": CONSUMER_NAME},
+                "content": {"reason": reason, "redrive_count": int(row.get("replay_count") or 0)},
+                "idempotency_key": f"{request_id}:recovery-exhausted"})
+        except Exception:  # the status below is the contract; the event is advisory
+            pass
+        _api_post(config, f"/api/consult/meetings/{request_id}/sync", {
+            "request_status": "failed", "completed_at": _utc_now()})
+    _EXHAUSTION_RECORDED.add(key)
+
+
+def recover_dead_letters(
+    *,
+    config: ExecutorConfig,
+    state: WorkflowStateStore,
+    provider: HttpContributionProvider,
+) -> dict[str, Any]:
+    """Redrive dead letters whose cause is fixed, bounded, once probes answer.
+
+    Per tick: at most ``AUTO_REDRIVE_PER_TICK`` items redriven, one probe per
+    reason class (one persona + one registry read for auth; one adapter ensure
+    call for ensure), nothing when there is no recoverable dead letter. An item
+    redriven ``AUTO_REDRIVE_MAX_PER_ITEM`` times stays dead_letter with its
+    reason and is named failed on its request.
+    """
+    summary: dict[str, Any] = {"redriven": [], "exhausted": [], "probe_failed": [], "errors": []}
+    rows = state.list_items(tenant_id=config.tenant_id, status="dead_letter")
+    candidates: dict[str, list[dict[str, Any]]] = {
+        REDRIVE_AUTH: [], REDRIVE_ENSURE: [], REDRIVE_WRITEBACK: [], REDRIVE_IDEMPOTENT: []}
+    for row in rows:
+        kind = recoverable_kind(row.get("last_error"))
+        if recovery_exhausted(row):
+            try:
+                _record_recovery_exhausted(config, row)
+                summary["exhausted"].append(str(row["request_id"]))
+            except Exception as exc:
+                summary["errors"].append(
+                    f"request_id={row['request_id']} exhausted_record={_error_detail(exc)}")
+        elif kind is not None:
+            candidates[kind].append(row)
+    healthy: dict[str, bool] = {}
+    for kind, items in candidates.items():
+        if not items:
+            continue
+        try:
+            if kind == REDRIVE_AUTH:
+                _probe_case_file_credentials(config)
+            elif kind == REDRIVE_WRITEBACK:
+                _probe_writeback_identity(config)
+            elif kind == REDRIVE_IDEMPOTENT:
+                pass  # retry is idempotent by recorded step keys; nothing to probe
+            else:
+                _probe_ensure_route(config, provider, str(items[0]["request_id"]))
+            healthy[kind] = True
+        except Exception as exc:
+            healthy[kind] = False
+            summary["probe_failed"].append(f"{kind}: {_error_detail(exc)}"[:300])
+    budget = AUTO_REDRIVE_PER_TICK
+    for kind, items in candidates.items():
+        if not healthy.get(kind):
+            continue
+        for row in items:
+            if budget <= 0:
+                break
+            if state.redrive_dead_letter(
+                tenant_id=config.tenant_id,
+                request_id=str(row["request_id"]),
+                max_redrives=AUTO_REDRIVE_MAX_PER_ITEM,
+            ):
+                summary["redriven"].append(str(row["request_id"]))
+                budget -= 1
+    return summary
 
 
 def run_tick(
@@ -727,6 +2057,13 @@ def run_tick(
     except Exception as exc:  # discovery failure must not hide durable backlog
         errors.append(f"discovery_error={_error_detail(exc)}")
 
+    recovery: dict[str, Any] = {}
+    try:
+        recovery = recover_dead_letters(config=config, state=state, provider=provider)
+        errors.extend(recovery.get("errors") or [])
+    except Exception as exc:  # recovery must never block the normal queue
+        errors.append(f"dead_letter_recovery_error={_error_detail(exc)}")
+
     for _ in range(config.batch_size):
         claim = state.claim_next(
             tenant_id=config.tenant_id,
@@ -753,7 +2090,9 @@ def run_tick(
                 terminal_status = state.block(
                     claim,
                     reason=reason,
-                    max_blocked_attempts=config.max_blocked_attempts,
+                    max_blocked_attempts=(max(config.max_blocked_attempts, claim.blocked_count + 2)
+                                          if isinstance(exc, AgentProvisioningBlocked)
+                                          else config.max_blocked_attempts),
                     retry_after_seconds=config.retry_after_seconds,
                 )
             except StaleWorkflowClaim as stale:
@@ -804,6 +2143,7 @@ def run_tick(
         ),
         "errors": errors,
         "outcomes": outcomes,
+        "recovery": {k: v for k, v in recovery.items() if k != "errors"},
         "state_counts": counts,
     }
 

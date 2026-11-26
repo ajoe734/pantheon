@@ -1,0 +1,5 @@
+pyarrow_spec: None
+baseline: 421c13abc87a44e2b05d1bf638d9a5866e4d8400
+services/source_ingestion/finmind_broker_backfill.py unchanged_from_dev: True
+services/source_ingestion/connectors/finmind_taiwan.py unchanged_from_dev: True
+services/source_ingestion/tests/test_finmind_broker_backfill.py unchanged_from_dev: True

@@ -38,7 +38,7 @@ Workflow: `PROD_*` variables are Environment-scoped, so they are read only in th
 
 ### Minimum control VM size: `e2-standard-8`
 
-The Prod control VM (`pantheon-prod-control`) must be at least `e2-standard-8` (8 vCPUs). Staging measurements (operator decision 2026-11-03): `e2-standard-2` saturated CPU on the full owner closure (paper-signal-producer healthcheck timeout); `e2-standard-4` took 151-155 s for the exact-pair rollback (limit 120 s); `e2-standard-8` passed at 107.7 s / 108.6 s. The workflow runs a read-only gate (`prod_preflight.py vm-size --vcpus <guestCpus>`, after auth, before the snapshot) and fails closed below 8 vCPUs, so no release is promoted onto an undersized VM.
+The Prod control VM (`pantheon-prod-control`) and Staging instance template (`deploy/staging/instance-template.json`) must be at least `e2-standard-8` (8 vCPUs, non-Spot STANDARD scheduling). Staging measurements (operator decision 2026-11-03): `e2-standard-2` saturated CPU on the full owner closure (paper-signal-producer healthcheck timeout); `e2-standard-4` took 151-155 s for the exact-pair rollback (limit 120 s); `e2-standard-8` passed at 107.7 s / 108.6 s. Both prod/staging workflows, `prod_preflight.py vm-size --vcpus/--machine-type/--instance-template`, `staging_ops.sh`, and `deploy/{production,staging}/bootstrap.sh` fail closed (`VM_SIZE_BELOW_GATE`) below 8 vCPUs or `e2-standard-8`, so no release is promoted or bootstrapped onto an undersized VM or template.
 
 #### Operator procedure: resize existing `pantheon-prod-control` (PREPARED, NOT EXECUTED)
 
@@ -86,7 +86,7 @@ Exit codes: 0 active, 1 refused/aborted before traffic, 2 rolled back, 3 rollbac
 
 First release needs explicit `PROD_BOOTSTRAP_FIRST_RELEASE=true` and no on-host `state/baseline.json`. The unmodified staging-qualified manifest may carry `rollback_baseline`, which is treated only as retained rollback ARTIFACT metadata (staging promotion requires it) and never as a healthy incumbent or rollback target; incumbent posture comes solely from genuine on-host baseline state (a declared bootstrap with an existing baseline, or a non-bootstrap release without one, is refused); failure after partial switch mutations drains any started singletons (`drain_singletons`), stops green (`stop_green`), removes `fe/current` and `active_manifest.json`, restores the explicit 503 no-active-release upstream placeholder (`respond "no production release active" 503`), reloads Caddy, and exits 4 (`prod_aborted` with `no_rollback_target`, never an invented healthy target). Application rollback is not database recovery. The production data disk is never overwritten or recreated by any script here; recovery uses snapshots and the drills below.
 
-Durable application state: runtime-manager (`/data/runtime`: `runtime_bindings.json`, `internal_api_commands.json`), governance and deployment (`/data/governance`) and the BFF session lifecycle store plus projector (`/data/bff`) use the same selected store paths as Stage, bind-mounted from `$PROD_DATA_MOUNT/{runtime,governance,bff}` (created by `bootstrap.sh`). Both BFF colors mount identical directories (governance/runtime read-only), so a color switch, container replacement or rollback neither loses nor splits acknowledged state, and nothing lives in container `/tmp`. Per-owner product stores live under `$PROD_DATA_MOUNT/product/<owner>`. Backup is the Stage-proven pair: `pg_dump -Fc` of the product database plus a tar archive of exactly `bff`, `runtime`, `governance`, `product`; restore readability is proven by restoring both (catalog hash, row counts, owner-store file manifest) into scratch targets, never over the live data disk.
+Durable application & control-plane state: `bootstrap.sh`, `prod_atomic_switch.sh`, and `prod_rollback.sh` store all secrets, active release state, baselines, journals, manifests, runtime config, proxy snippets, and FE bundles on the persistent data disk under `${PROD_DATA_MOUNT}/{secrets,state,manifests,fe,config,proxy}` (migrating any pre-existing boot-disk directories and symlinking `${PROD_ROOT}/{secrets,state,manifests,fe,config,proxy}` -> `${PROD_DATA_MOUNT}/{secrets,state,manifests,fe,config,proxy}`, verified by `prod_preflight.py boot-disk`); only immutable script binaries (`${PROD_ROOT}/bin`) and release migration material (`${PROD_ROOT}/migration`) live on the boot disk. Runtime-manager (`/data/runtime`: `runtime_bindings.json`, `internal_api_commands.json`), governance and deployment (`/data/governance`) and the BFF session lifecycle store plus projector (`/data/bff`) use the same selected store paths as Stage, bind-mounted from `$PROD_DATA_MOUNT/{runtime,governance,bff}` (created by `bootstrap.sh`). Both BFF colors mount identical directories (governance/runtime read-only), so a color switch, container replacement or rollback neither loses nor splits acknowledged state, and nothing lives in container `/tmp`. Per-owner product stores live under `$PROD_DATA_MOUNT/product/<owner>`. Backup is the Stage-proven pair: `pg_dump -Fc` of the product database plus a tar archive of exactly `bff`, `runtime`, `governance`, `product`; restore readability is proven by restoring both (catalog hash, row counts, owner-store file manifest) into scratch targets, never over the live data disk.
 
 ### Product owner closure (packaging extension)
 
@@ -99,10 +99,22 @@ The control compose packages the same existing product owners and Agora request 
 
 ## 5. Hosted drills (not executed; `external_wait`)
 
-- Backup/restore drill: restore latest snapshot to a scratch disk, record measured RPO against `PROD_RPO_SECONDS` and RTO against `PROD_RTO_SECONDS`.
-- VM replacement drill: replace the control VM from the template, attach the existing data disk, verify identities.
+- Backup/restore drill: `prod_ops.sh restore_drill` (below) measures RPO against `PROD_RPO_SECONDS` and RTO against `PROD_RTO_SECONDS`.
+- Snapshot schedule (run on an operator host with `PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_RPO_SECONDS`, active gcloud project = `PROD_GCP_PROJECT_ID`): `scripts/deploy/prod_ops.sh snapshot_schedule ensure` creates (if absent) policy `pantheon-prod-data-hourly` (hourly, 3-day retention, keep auto-snapshots on disk delete, storage location = disk region, labels `environment=production managed_by=pantheon`) and attaches it to the data disk only; `check` is read-only and prints one JSON line (`policy_present attached schedule retention_days newest_snapshot newest_age_seconds max_age_seconds`), exit 1 if the newest auto-snapshot is older than RPO + `PROD_SNAPSHOT_GRACE_SECONDS` (default 900), absent or the policy is unattached. Never deletes snapshots; never touches the boot disk. Budget: hourly incrementals, 72 kept; ~200 MB used, so storage is bounded by the 3-day window (initial full copy plus 72 deltas of observed churn).
+- Drill: on the control VM, `PROD_VM_NAME PROD_DATA_MOUNT PROD_RTO_SECONDS PROD_POSTGRES_USER PROD_POSTGRES_DB PANTHEON_POSTGRES_IMAGE` plus the above, `scripts/deploy/prod_ops.sh restore_drill`. Newest auto-snapshot to scratch disk `pantheon-prod-restore-drill-<UTC>`, attached and mounted read-only, postgres/owner stores copied to a boot-disk temp dir, throwaway digest-pinned postgres (no ports, own internal network). Proof as section 4: catalog hash and table set vs the live DB read at drill end (a difference means a migration landed after the snapshot and fails), row-count drift reported (live churns), owner-store manifest of `bff runtime governance product`. Output: one JSON line `{status snapshot rpo_seconds rto_seconds failed_stage checks cleanup}`; exit 0 ok, 2 over RPO/RTO, 3 stage failed. A trap always removes container, network, temp copy, mount and scratch disk and reads each back (`cleanup`); nothing is written under `PROD_DATA_MOUNT`.
+- VM replacement drill: replace the control VM from the `>= e2-standard-8` template, attach the existing data disk at `PROD_DATA_MOUNT`, run `bootstrap.sh` (which links `${PROD_ROOT}/{secrets,state,manifests,fe,config,proxy}` to `${PROD_DATA_MOUNT}` and reads `${PROD_DATA_MOUNT}/state/active_manifest.json`) followed by `prod_ops.sh restore_active_release <release_id>`, and verify public/local identities and subsequent rollback readiness.
 - Two non-capital production-shaped deploy/rollback drills, each with rollback under 120 s.
 - Protected exact-release publication, then a 30-minute observation window. Thresholds come from measured policy approved by the named owners; no green SLO is assumed here.
+
+## 5a. Protected drill rollback (`operation=rollback`) and per-dispatch journal
+
+Source-only contract; hosted execution still needs the genuine `production` Environment approval.
+
+**Journal per dispatch.** `prod_atomic_switch.sh` renames an existing `state/journal/<release_id>` to `<release_id>.archived-<UTC timestamp>` before any baseline check or marker write, so rollback reads only the current dispatch. A refusal before the new journal is written renames the archive back. The newest 10 archives per release id are kept (about 50 KB each).
+
+**Dispatch** (`Pantheon Production Release`): `operation=rollback`, `release_id` = the currently ACTIVE release; other release inputs are ignored. Still required: `PRODUCTION_RELEASE_ENABLED=true`, protected `production` Environment approval by a permitted reviewer (`prod_preflight.py rollback`), WIF auth and IAP transport. Skipped: FE retrieval, snapshot, bootstrap, pre-pull, migrate. This is application rollback, not data recovery.
+
+`scripts/deploy/prod_rollback.sh --protected` refuses without changing anything: exit 1 `MISSING_INPUT`; 10 `ROLLBACK_RELEASE_NOT_ACTIVE` (not the release in `state/active_manifest.json`); 11 `ROLLBACK_NO_JOURNAL`; 12 `ROLLBACK_BOOTSTRAP_JOURNAL` (would remove Production); 13 `ROLLBACK_NO_BASELINE` (no retained healthy baseline, or its FE dir/upstream is gone); 14 `ROLLBACK_NO_MANIFEST`. Otherwise it runs `prod_rollback.sh` (verifies via `baseline_health`), then `prod_ops.sh verify_rollback` (owners/singleton at baseline digest, paper-worker credential check) and prints one secret-free JSON line `{"status","from_release","to_release","elapsed_ms","rollback_budget_seconds","exit_code"}`. Exit: 0 ok, 3 restoration failed, 6 over the 120 s budget, 7 post-rollback verification failed.
 
 ## 6. Missing hosted prerequisites (recorded, not forged)
 
@@ -137,3 +149,30 @@ Dev setting.
 - Backend `PANTHEON_REAL_WRITES_ENABLED`, `PANTHEON_PROVIDER_ENABLED`, `PANTHEON_LIVE_BROKER_ENABLED` remain `false`.
 
 This is source-only; no Stage/Prod was dispatched. Hosted acceptance stays `external_wait`.
+
+## Runtime-manager caller token (Paper reconciler / signal producer)
+
+`paper-fleet-reconciler` and `paper-signal-producer` call runtime-manager
+`GET /api/runtime-fleet/desired-state` with `Bearer $PANTHEON_RUNTIME_MANAGER_TOKEN`. Runtime-manager inbound auth
+accepts only an HS256 JWT (or a structured `actor:role` token), never a raw opaque secret, so an opaque value yields
+`403 AUTH_TOKEN_FORMAT`.
+
+- `deploy/production/bootstrap.sh` derives the token on **every run** (every Production Release dispatch runs
+  bootstrap): HS256 JWT signed with `PANTHEON_RUNTIME_JWT_SECRET` from `PROD_SECRETS_ENV_FILE`, `iss`/`aud` equal to the
+  effective `PROD_JWT_ISSUER`/`PROD_JWT_AUDIENCE` that compose gives runtime-manager, `sub`
+  `svc:production-paper-runtime-caller`, `roles ["operator"]`, `tenant_id`/`allowed_tenants` = `PROD_TENANT_ID`,
+  `iat`/`nbf`/`exp`.
+- Lifetime: `PROD_RUNTIME_TOKEN_TTL_SECONDS`, default 604800 s (7 days), hard maximum 604800; a larger, zero,
+  negative or non-integer value fails bootstrap with `RUNTIME_TOKEN_MINT_FAILED` and leaves the file untouched.
+  Until the reconciler/producer mint per call (see the problem register row), the token **expires 7 days after the
+  last Production Release dispatch**; re-dispatching (or re-running bootstrap) re-mints it.
+- Only the single `PANTHEON_RUNTIME_MANAGER_TOKEN` line is rewritten (atomic replace, owner/mode preserved, all other
+  lines unchanged). Neither token nor secret is printed or logged. The atomic temp file is removed on success and
+  failure; the file stays < 1 KB-per-line constant size, with no growth.
+- Switch gate: after `activate_singletons`, the switch runs the desired-state request from inside each started
+  reconciler/producer container with that container's own token and requires HTTP 200; otherwise ACTIVATE fails
+  (naming service, HTTP status, error code) and the normal rollback runs. Product-worker Docker health is only
+  *reported* (bounded wait <= 60 s) as `product_worker_health` in the `prod_active` JSON and is not a gate.
+- Verify without printing the token:
+  `docker exec paper-fleet-reconciler python3 -c 'import os,urllib.request as u;r=u.Request("http://runtime-manager:8080/api/runtime-fleet/desired-state?stage=paper",headers={"Authorization":"Bearer "+os.environ["PANTHEON_RUNTIME_MANAGER_TOKEN"]});print(u.urlopen(r,timeout=10).status)'`
+  must print `200`.

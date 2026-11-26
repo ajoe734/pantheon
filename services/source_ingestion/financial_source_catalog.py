@@ -242,6 +242,15 @@ INITIAL_FINANCIAL_DATA_SOURCE_ENTRIES: tuple[DataSourceEntry, ...] = (
                 universe_tiers=("core_universe",),
                 notes="TWSE BWIBBU_ALL daily P/E, P/B and dividend yield.",
             ),
+            _dataset(
+                "tw_industry_classification",
+                "financial_fundamental",
+                storage_tier="normalized/features",
+                update_profile="daily_after_close",
+                storage_targets=("normalized/tw_industry_classification",),
+                universe_tiers=("core_universe", "candidate_universe"),
+                notes="Official OpenAPI company industry codes; history starts at acquisition, with no backfill.",
+            ),
         ),
         metadata={
             "preferred_role": "official_taiwan_market_reference",
@@ -1108,6 +1117,7 @@ INITIAL_FINANCIAL_DATA_SOURCE_CONFIG_TEMPLATES: tuple[dict[str, Any], ...] = (
                 "tw_monthly_revenue",
                 "tw_financial_statement",
                 "tw_valuation_bwibbu",
+                "tw_industry_classification",
             ],
         },
         "schedule": {

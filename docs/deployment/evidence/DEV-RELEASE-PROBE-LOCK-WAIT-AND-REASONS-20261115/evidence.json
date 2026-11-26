@@ -1,0 +1,18 @@
+{
+  "task": "DEV-RELEASE-PROBE-LOCK-WAIT-AND-REASONS-20261115",
+  "candidate_causes_reproduced": {
+    "lock_nb_contention": "test_reproduce_legacy_lock_contention_is_generic_reader_rejected: legacy single LOCK_SH|LOCK_NB under a held exclusive lock -> reason reader_rejected",
+    "memory_exhaustion": "test_reproduce_legacy_memory_exhaustion_is_generic_reader_rejected: MemoryError inside legacy probe has empty message -> reader_rejected; new probe -> probe_killed"
+  },
+  "change": {
+    "lock_wait_seconds": 120,
+    "new_reasons": ["lock_wait_timeout", "line_too_long", "probe_timeout", "probe_killed", "probe_no_output"],
+    "forwarding": "failure_record/remote_failure_record share SOURCE_FAILURE_REASONS, used by wrapper and driver",
+    "persisted_proof_keys": ["codec_sha256", "journal_sha256", "journal_size", "projection_sha256"]
+  },
+  "validation": [
+    {"command": "pytest scripts/test_dev_release_artifacts.py -q", "result": "172 passed, 2 skipped"},
+    {"command": "pytest scripts/test_capture_dev_artifact_baseline.py scripts/test_dev_release_artifact_driver.py -q", "result": "481 passed"}
+  ],
+  "credentials": "none recorded"
+}

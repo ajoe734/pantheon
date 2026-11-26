@@ -1,0 +1,20 @@
+{
+  "task_id": "EVOLUTION-SWEEP-SKIP-INFRA-20261125",
+  "register_instance": "RC6",
+  "verification_scope": "functional evidence only; hosted verification is left to the operator acceptance task. No VM or SSH access used.",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; reviewer is from the owner family (Claude).",
+  "operator_approval": "2026-11-25 06:2xZ, conversation 5724fc3b, names these three pages; feature freeze does not apply to this scope.",
+  "behaviour": {
+    "sweep": "run_daily_sweep skips incidents accepted by is_infrastructure_health_incident or is_monitor_agent_finding_incident (both imported from services.incident.incident) with SweepItem status=skipped reason=infrastructure_incident; critical infrastructure incidents are skipped and create no freeze proposal. DailySweepResult/DailySweepResponse gain infrastructure_skipped; scheduler log line prints it.",
+    "qualifier": "ProgramQualifier.run does not evaluate stored proposed decisions whose metadata.runtime_binding_id starts with infra-subject-; report adds excluded_infrastructure; evaluated and counts_by_first_failing_criterion cover strategy decisions only. Nothing is cancelled or rewritten (operator decision 2026-11-07: no automatic proposal closing).",
+    "unchanged": "Qualification policy thresholds and allowed signals untouched; deployment compensation incidents keep current behaviour; BFF read passes the report through and older reports without excluded_infrastructure still read."
+  },
+  "tests": {
+    "services/evolution/test_evolution_service.py": "daily sweep replays recorded-shape monitor agent incident (agent-000b205c0ef9-0000), control-plane-bff infra incident and drift incident: only drift creates a decision; critical infra incidents create nothing; strategy cooldown rule still blocks a second incident on the same target",
+    "services/evolution/test_program_qualification.py": "infra-bound stored proposal counted in excluded_infrastructure, not evaluated, still proposed in the store; strategy decision evaluated",
+    "services/control-plane/bff/tests/test_evolution_qualification_read.py": "report with and without excluded_infrastructure both read",
+    "result": "222 passed (the three files above)",
+    "existing_tests": "none weakened or deleted; no existing assertion changed"
+  },
+  "runtime_budget": "No writer or recurring job added. The sweep writes fewer decisions per tick (infrastructure incidents no longer produce proposals) and the qualifier evaluates fewer decisions per run; the added per-incident check is two in-memory predicates."
+}

@@ -156,9 +156,12 @@ def test_consultation_provider_and_functional_health_are_explicit() -> None:
 
     healthcheck = " ".join(consultation["healthcheck"]["test"])
     assert "CONSULTATION_WORKFLOW_EXECUTOR_HEALTH_FILE" in healthcheck
-    assert "functional_health" in healthcheck
-    assert "blocked_count" in healthcheck
-    assert "dead_letter_count" in healthcheck
+    assert "readyz" in healthcheck
+    assert "90" in healthcheck
+    # Functional health is not a container-health condition.
+    assert "functional_health" not in healthcheck
+    assert "blocked_count" not in healthcheck
+    assert "dead_letter_count" not in healthcheck
 
 
 def test_deployment_capital_and_evolution_use_component_contracts() -> None:
@@ -361,5 +364,86 @@ def test_paper_producer_and_reconciler_mount_taifex_ssf_dataset_read_only() -> N
         env = _env(svc)
         assert env.get("PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT") == "/data/source-ingest/market_data_store"
         assert Path(env["PANTHEON_TAIFEX_SSF_NORMALIZED_ROOT"]) / "normalized/taifex_ssf_contracts" == writer_dir
+        assert env.get("INTRADAY_STORE_ROOT") == (
+            "${INTRADAY_STORE_ROOT:-/data/source-ingest}"
+        )
+        assert env.get("SOURCE_INGEST_STORE_ROOT") == (
+            "${SOURCE_INGEST_STORE_ROOT:-/data/source-ingest}"
+        )
 
 
+def test_persona_cycle_and_quarterly_paper_allocation_owner_ports_are_wired() -> None:
+    persona_env = _env("persona")
+    assert persona_env["PANTHEON_RESEARCH_API_URL"] == (
+        "${PANTHEON_RESEARCH_API_URL:-http://research-orchestrator-svc:8101}"
+    )
+    assert persona_env["MEMORY_API_URL"] == (
+        "${MEMORY_API_URL:-http://memory:8086}"
+    )
+    assert persona_env["PANTHEON_REGISTRY_API_URL"] == (
+        "${PANTHEON_REGISTRY_API_URL:-http://registry:8087}"
+    )
+    assert persona_env["PANTHEON_EVOLUTION_API_URL"] == (
+        "${PANTHEON_EVOLUTION_API_URL:-http://evolution:8093}"
+    )
+    assert persona_env["PANTHEON_CONSULTATION_SERVICE_URL"] == (
+        "${PANTHEON_CONSULTATION_SERVICE_URL:-http://consultation-svc:8096}"
+    )
+    assert persona_env["PANTHEON_GOVERNANCE_API_URL"] == (
+        "${PANTHEON_GOVERNANCE_API_URL:-http://governance:8082}"
+    )
+    assert persona_env["PANTHEON_SEARCH_API_URL"] == (
+        "${PANTHEON_SEARCH_API_URL:-http://search-svc:8098}"
+    )
+    assert _default(persona_env["PERSONA_RESEARCH_SERVICE_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_RESEARCH_SERVICE_TOKEN"
+    )
+    assert _default(persona_env["PERSONA_MEMORY_SERVICE_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_MEMORY_SERVICE_TOKEN"
+    )
+    assert _default(persona_env["PERSONA_REGISTRY_SERVICE_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_REGISTRY_SERVICE_TOKEN"
+    )
+    assert persona_env["EVOLUTION_AUTH_TOKEN"] == (
+        "${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}"
+    )
+    assert persona_env["CONSULTATION_SERVICE_TOKEN"] == (
+        "${CONSULTATION_SERVICE_TOKEN:-pantheon-local-consultation-service}"
+    )
+    assert _default(persona_env["LESSON_RULE_PROPOSER_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/LESSON_RULE_PROPOSER_TOKEN"
+    )
+    assert _default(persona_env["PERSONA_SEARCH_SERVICE_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/PERSONA_SEARCH_SERVICE_TOKEN"
+    )
+
+    research_env = _env("research-orchestrator-svc")
+    assert research_env["RESEARCH_RETRAIN_CANONICAL_DATASET_PATH"] == (
+        "${RESEARCH_RETRAIN_CANONICAL_DATASET_PATH:-/data/bff/persona-pool-dataset-authority/canonical-dataset-version.json}"
+    )
+    assert research_env["RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH"] == (
+        "${RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH:-/workspace/services/training-session/threshold_policy.json}"
+    )
+
+    evaluator_env = _env("persona-evaluator-agent")
+    assert evaluator_env["PERSONA_EVALUATOR_PAPER_POOL_ID"] == (
+        "${PERSONA_EVALUATOR_PAPER_POOL_ID:-${PANTHEON_PAPER_POOL_ID:-pool-paper-default}}"
+    )
+
+    sweep_env = _env("evolution-daily-sweep-scheduler")
+    assert sweep_env["EVOLUTION_AUTO_CONSUMER_ENABLED"] == (
+        "${EVOLUTION_AUTO_CONSUMER_ENABLED:-false}"
+    )
+    assert _default(sweep_env["AUTO_CONSUMER_GATE_TOKEN_FILE"]) == (
+        "/run/pantheon-principals/AUTO_CONSUMER_GATE_TOKEN"
+    )
+
+
+
+
+def test_hindsight_recall_reranker_is_model_free() -> None:
+    """Observe/consult recalls must not pay a 5-10 s neural rerank on two CPU threads."""
+
+    assert _env("hindsight")["HINDSIGHT_API_RERANKER_PROVIDER"] == "rrf"
+    memory = _env("memory")
+    assert _default(memory["PANTHEON_MEMORY_HINDSIGHT_RECALL_CONCURRENCY"]) == "1"

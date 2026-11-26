@@ -1,0 +1,314 @@
+{
+  "task_id": "COLLECTOR-NEWEST-SESSION-30MIN-20261114",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "stage": "author_validation_passed_ready_for_independent_review",
+  "recorded_hosted_evidence": {
+    "provenance": "Task-scoped brief and governed show at 2026-11-14; operator read-only observations, not re-probed by this worker.",
+    "candidate": "a9284b68c",
+    "latest_priority": {
+      "key": "run-20261114T001933Z",
+      "delivered": 156,
+      "done": false,
+      "actual_trade_date": "2026-11-13"
+    },
+    "identical_bundle_sha_prefix": "e10e2bd496bd",
+    "identical_content_runs": ["run-20261113T121842Z", "run-20261113T181844Z", "run-20261114T001933Z"],
+    "preclose_run": {
+      "fetched_at": "2026-11-13T06:17:00Z",
+      "actual_trade_date": "2026-11-12"
+    },
+    "snapshots": {
+      "TWSE_latest": 392,
+      "TWSE_total_approx": 998,
+      "TPEx_latest": 456,
+      "TPEx_total_approx": 1634,
+      "2330.TW_trade_date": "2026-11-12"
+    },
+    "run_scheduled_wall_seconds_approx": 120,
+    "TWSE_rows_delivered": 156,
+    "TPEx_run_scheduled_wall_seconds": null,
+    "raw_fresh_connection_seconds": [0.14, 0.19],
+    "controller": {
+      "timeout_seconds": 30,
+      "mode": "collector_steady_pull",
+      "interval_seconds": 60,
+      "max_ticks": 0,
+      "recorded_failures_after_first_healthy_tick": 7,
+      "failure": "ControllerTickError: TimeoutError: timed out"
+    },
+    "config_journal": {
+      "bytes": 1445430,
+      "lines": 1980,
+      "sha256": "86bd1dd8530d46dbeb519f12967d91b65039b208d6dd0884193403611321482c"
+    },
+    "provided_stack_interpretation": "Controller sample proves it is waiting on POST /api/source-ingest/run-scheduled with timeout=30. A separate API sample in config-journal replay during reconciliation is not proof of the cause of that earlier scheduled request timeout."
+  },
+  "diagnosis": ["Exact a9284b68c source uses index.date for run-* trade dates and resets the delivered offset when a later run key appears. The executable candidate benchmark below reproduces the same item/hash prefix on all three recorded keys for each price-history source.", "A round-robin least-recently-attempted collector selection places the latest close behind backlog/non-market sources between continuation pulls.", "The raw read budget alone does not bound post-read per-item evidence work. Configured newest-session pulls now cap that work at 256 rows while retaining the existing 15-second shared read deadline and four raw readers.", "Verified collector native source ids include item identity and hash. Their existing dedupe key can only own that same source id, so a per-row source-dedupe metadata lookup is redundant. Removing it avoids PostgreSQL dedupe scans while retaining normal per-item writes and identity validation; no claim is made that this was the sole hosted 120-second cost.", "The final local binding cost is measured from the real controller, configured adapter, scheduler, normalization, raw/normalized persistence, source evidence, receipts and snapshot store plus virtual hosted raw-read latency. The hosted cost outside this model still needs release-coordinator verification."],
+  "implementation": {
+    "trade_date": "Maximum validated row trade_date (for a multi-date bundle); additive index/manifest trade_date must agree. Fetch-directory date and dated run ids are candidate upper bounds only, never admitted session identity.",
+    "acknowledgement": "Additive latest_priority.json trade_date and items (native item id -> content hash) retain existing source_id/key/delivered/done/held. Save only after native persistence acknowledgement. Migrate old prefixes using their original manifest and held ordering.",
+    "same_session": "Retain union of same-session bundle items, latest revision per native id. Do not resend acknowledged id/hash pairs. Re-deliver changed hashes. Keep missing undelivered tail when a new run is smaller, including after restart.",
+    "ordered_sweep": "A persisted latest-session identity is not fetched/delivered again by the older ordered sweep. Older revisions cannot overwrite later corrections. Older sessions retain cursor-ordered delivery and partition reuse.",
+    "controller": "Pending newest price sessions and due price-source discovery rank before backlog/non-market sources. Retain least-recently-attempted ordering inside each class, normal cadence and failure guards.",
+    "fixed_persisted_newest_rows_per_pull": 256,
+    "raw_read_budget_seconds": 15,
+    "newest_raw_read_concurrency": 4,
+    "unchanged": ["collector host code/request policy", "provider fetch policy", "settings/endpoints/services/queues/caches", "held-symbol ordering", "PIT/provenance/native per-item source and evidence identities", "30-second controller timeout", "tenant and capital boundaries"]
+  },
+  "exact_candidate_benchmark": {
+    "method": "Actual a9284b68c module loaded with git show; generated collector_bundle.v1 manifests/index entries and recorded run keys; exchange row/raw JSON fixtures; 0.19s virtual raw receive, 0.14s metadata receive, actual overlapping reader threads and actual raw-file writes. This is local reproduction, not hosted wall time.",
+    "measurements": [
+      {"candidate": "a9284b68c", "source": "collector-tw-twse-price-history", "rows_in_bundle": 1377, "pulls": [{"run_id": "run-20261113T121842Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.4153755800216459, "transport_seconds": 15.189999999999989}, {"run_id": "run-20261113T181844Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.4235925230314024, "transport_seconds": 15.190000000000095}, {"run_id": "run-20261114T001933Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.43202840501908213, "transport_seconds": 15.189999999999852}]},
+      {"candidate": "a9284b68c", "source": "collector-tw-tpex-price-history", "rows_in_bundle": 6090, "pulls": [{"run_id": "run-20261113T121842Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.4952722529997118, "transport_seconds": 15.189999999999989}, {"run_id": "run-20261113T181844Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.5518287770100869, "transport_seconds": 15.190000000000095}, {"run_id": "run-20261114T001933Z", "rows": 308, "delivered": 308, "done": false, "wall_seconds": 0.5117164590046741, "transport_seconds": 15.189999999999852}]}
+    ]
+  },
+  "rollback_readers": {
+    "commits": ["bee62bc29", "a9284b68c"],
+    "method": "Load the actual git objects. a9284b68c parses the additive latest_priority.json using its original reader; bee62bc29 predates the sidecar and still reads the original resume-cursor format."
+  },
+  "validation": [
+    {"command": "timeout 900 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-outcome-contract-20261114.xml services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_newest_session_progress.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 0, "summary": "509 passed, 1 skipped, 1 warning in 602.91s (0:10:02)", "counts": {"passed": 509, "skipped": 1}, "log_sha256": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7"},
+    {"command": "timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-ci-tmpfs-source-20261114.xml --basetemp=/dev/shm/pantheon-collector-ci-20261114.na9szk/pytest services/source_ingestion/tests services/source_ingestion/test_*.py", "exit_code": 0, "summary": "1964 passed, 2 skipped, 15 warnings in 863.73s (0:14:23)", "counts": {"passed": 1964, "skipped": 2}, "log_sha256": "82e5f6ea7daf404d0cfce8a932ff50860bf801a313f44ce4526ac93d6a649e71", "environment": {"SOURCE_INGEST_TEST_POSTGRES_DSN": "postgresql://pantheon:pantheon@127.0.0.1:32778/source_ingest_test", "SOURCE_INGEST_DATA_DIR": "/dev/shm/pantheon-collector-ci-20261114.na9szk/source", "TMPDIR": "/dev/shm/pantheon-collector-ci-20261114.na9szk/tmp", "pyarrow": "26.0.1; installed into the checkout-scoped venv under the existing service requirement"}, "skips": [{"test": "services.source_ingestion.tests.test_collector_bundle_connector::test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader", "reason": "private native RSS pack not provided"}, {"test": "services.source_ingestion.tests.test_taiwan_official_connectors::test_taiwan_official_live_read_only_smoke_for_one_twse_and_tpex_symbol", "reason": "Set PANTHEON_TW_OFFICIAL_LIVE_SMOKE=1 to run read-only official TWSE/TPEx network smoke."}]}
+  ],
+  "review_hold": {
+    "status": "resolved_by_authorized_test_contract_correction",
+    "previous_head": "642dd99429c6d2b6694d4ec7aeb88b318ca511ff",
+    "authorization": "Human/Ops artifact-contract additions and reopen, 2026-11-14T05:40:49Z through 05:40:59Z; governed show confirmed in_progress/Codex/Codex2 before edits.",
+    "paths": ["services/source_ingestion/tests/test_collector_bundle_connector.py", "services/source_ingestion/tests/test_scheduled_connector.py"],
+    "updates": ["Held-set changes retain cumulative progress (110, not 55 after two 55-row pulls); retain held-first ordering and no duplicate identities.", "Give rollback partial-cursor and ordered-throughput fixtures a distinct historical bundle; an already acknowledged newest-only bundle correctly returns no replay rows.", "A completed newest-only controller session restores the normal 60s interval, with no continuation pending; adapt the obsolete final 1s assertion, four-reader peak and pending-history expectations without removing persistence/receipt/PIT checks.", "After explicit rewind, only the 10 older rows replay for each price-history source; the 10 acknowledged newest rows do not. Keep byte-identical normalized partition and reuse-count assertions for the replayed older rows."],
+    "preserved": "No deleted/skipped/xfail controls or relaxed 30s/30min budgets. Held ordering, all-row identity/hash, actual bee/a928 readers, changed-row replay, persistence, receipts, PIT, partition bytes and reuse checks remain. Rewind now additionally compares every replayed item/hash/PIT identity.",
+    "scope": "Only the two authorized existing tests and this evidence changed on resumption. No further production/helper/service/cache/setting/provider/deployment changes; controller API unchanged."
+  },
+  "hosted_acceptance": {
+    "status": "not_performed_by_author",
+    "authority": "Existing release coordinator; no VM/SSH/provider/deploy operations authorized to author/reviewer.",
+    "existing_task": "TW-SAME-DAY-CLOSE-HOSTED-ACCEPTANCE-20261112",
+    "window": "2026-11-16 14:40-17:00 Asia/Taipei",
+    "required": "Deploy the independently reviewed exact source head through the existing release process, then verify healthy continuation requests under 30 seconds and all latest-session snapshots under 30 minutes."
+  },
+  "recorded_at": "2026-11-14T07:28:48.525859+00:00",
+  "recovery": {
+    "inherited_head": "9133f196fde6297e0f9c98efc563dec0a1386617",
+    "note": "Implementation inherited from committed source. Owner/reviewer above follow the current governed task row; inherited commit authorship is preserved."
+  },
+  "validated_source_blobs": {
+    "services/source_ingestion/connectors/collector_bundle.py": "675dc76b64862132288d88b6727204096ba48674",
+    "services/source_ingestion/controller_worker.py": "13a5134c6edf2ea6965540c86f711a9c379c2d9b",
+    "services/source_ingestion/pipeline.py": "ba1ade3fe8c91e1f5fda53ade9cafd0fb5984aa7",
+    "services/source_ingestion/runtime.py": "08a44a3a32f85ea7a3399690058cfff348c77cb8",
+    "services/source_ingestion/tests/test_collector_newest_session_progress.py": "d7350f8dc1d2413fff5067059df3e8884e9573c4",
+    "services/source_ingestion/tests/test_collector_bundle_connector.py": "e15f585f723d02e3b87a0ce656704268fb1341c3",
+    "services/source_ingestion/tests/test_scheduled_connector.py": "9caad9376345cffb95ceee82aea9f81920d2e5c2",
+    "services/source_ingestion/tests/test_collector_outcome_truth.py": "ad2c6fcabf63fc54d61d46bde0a979528f3a0ca3"
+  },
+  "current_controller_benchmark": {
+    "enabled_connectors": ["collector-gdelt", "collector-macro-dbnomics", "collector-news-rss", "collector-paper-arxiv", "collector-paper-nber-rss", "collector-paper-openalex", "collector-tw-cmoney-forum", "collector-tw-instagram-popular", "collector-tw-macro-cbc", "collector-tw-macro-dgbas", "collector-tw-macro-ndc", "collector-tw-tpex-price-history", "collector-tw-twse-price-history"],
+    "pulls": [
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 4.656276911031455, "transport_seconds": 13.699999999999996, "tick_seconds_upper_bound": 18.35627691103145},
+      {"source": "collector-tw-twse-price-history", "rows": 256, "wall_seconds": 4.568446347024292, "transport_seconds": 13.700000000000077, "tick_seconds_upper_bound": 18.26844634702437},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 4.692084610986058, "transport_seconds": 13.699999999999928, "tick_seconds_upper_bound": 18.392084610985986},
+      {"source": "collector-tw-twse-price-history", "rows": 256, "wall_seconds": 4.873757560970262, "transport_seconds": 13.69999999999986, "tick_seconds_upper_bound": 18.573757560970122},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 4.982707165007014, "transport_seconds": 13.699999999999868, "tick_seconds_upper_bound": 18.68270716500688},
+      {"source": "collector-tw-twse-price-history", "rows": 256, "wall_seconds": 5.143142848974094, "transport_seconds": 13.69999999999986, "tick_seconds_upper_bound": 18.843142848973955},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.07106178504182, "transport_seconds": 13.69999999999986, "tick_seconds_upper_bound": 18.77106178504168},
+      {"source": "collector-tw-twse-price-history", "rows": 256, "wall_seconds": 4.996548523020465, "transport_seconds": 13.69999999999986, "tick_seconds_upper_bound": 18.696548523020326},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.432222525996622, "transport_seconds": 13.69999999999986, "tick_seconds_upper_bound": 19.132222525996482},
+      {"source": "collector-tw-twse-price-history", "rows": 256, "wall_seconds": 5.849478098039981, "transport_seconds": 13.699999999999832, "tick_seconds_upper_bound": 19.549478098039813},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.437403934018221, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.137403934017925},
+      {"source": "collector-tw-twse-price-history", "rows": 97, "wall_seconds": 4.716458203038201, "transport_seconds": 6.709999999999752, "tick_seconds_upper_bound": 11.426458203037953},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.348319691955112, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.048319691954816},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.66167567303637, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.361675673036075},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.718626654008403, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.418626654008108},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.582403666048776, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.28240366604848},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.7637202849728055, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.46372028497251},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 5.726169912959449, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.426169912959153},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.143377211992629, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.843377211992333},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.029248033999465, "transport_seconds": 13.699999999999733, "tick_seconds_upper_bound": 19.7292480339992},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.241854897001758, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.941854897001463},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.195531099976506, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 19.89553109997621},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.388416065950878, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.088416065950582},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.524615698028356, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.22461569802806},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.520355414017104, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.220355414016808},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.614014131017029, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.314014131016734},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 7.064552232972346, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.76455223297205},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.934437196992803, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.634437196992508},
+      {"source": "collector-tw-tpex-price-history", "rows": 256, "wall_seconds": 6.764166405017022, "transport_seconds": 13.699999999999704, "tick_seconds_upper_bound": 20.464166405016726},
+      {"source": "collector-tw-tpex-price-history", "rows": 202, "wall_seconds": 6.492236576974392, "transport_seconds": 11.649999999999693, "tick_seconds_upper_bound": 18.142236576974085}
+    ],
+    "elapsed_seconds_upper_bound_including_worst_cadence_phase": 1204.0933093600634,
+    "snapshot_counts": {
+      "collector-tw-twse-price-history": 1377,
+      "collector-tw-tpex-price-history": 6090
+    },
+    "initial_config_journal": {
+      "lines": 1980,
+      "bytes": 1444844
+    },
+    "method": "Real local controller/API/scheduler, JSONL source evidence and config journal, SQLite ingest queue, raw/normalized files and latest market snapshot persistence. Virtual worst-end fresh-connection costs: raw 0.19s, metadata 0.14s, four concurrent raw readers; actual local CPU/disk/readback wall time is added conservatively. Includes a 600s worst cadence phase and 1s continuation pauses. This is a local upper-bound model, not a hosted or PostgreSQL measurement.",
+    "binding_cost": "The 256-row configured persistence cap binds full newest-session batches; raw transport at four concurrent readers contributes about 13.7s per full pull. Measured local persistence/controller/readback wall time is charged separately per pull. No blanket claim is made for unmeasured hosted database/network/lock costs.",
+    "max_tick_seconds_upper_bound": 20.76455223297205,
+    "source_totals": {
+      "collector-tw-twse-price-history": {
+        "rows": 1377,
+        "pulls": 6
+      },
+      "collector-tw-tpex-price-history": {
+        "rows": 6090,
+        "pulls": 24
+      }
+    }
+  },
+  "regression_results_by_suite": {
+    "services.source_ingestion.tests.test_collector_outcome_truth": {
+      "passed": 104,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_collector_newest_session_progress": {
+      "passed": 13,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_collector_bundle_connector": {
+      "passed": 103,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 1
+    },
+    "services.source_ingestion.tests.test_controller_worker": {
+      "passed": 200,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_scheduled_connector": {
+      "passed": 73,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_tw_close_reconcile": {
+      "passed": 16,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "pull_request": {
+    "url": "https://github.com/ajoe734/pantheon/pull/7343",
+    "state": "ready_for_independent_review_no_approval_or_merge_claimed"
+  },
+  "validation_log_sha256": {
+    "collector-newest-session-resume.log": "99c78176d5207f76eb7c9a9e06dd511397a74c87c362e75f713d3c4c6311a3c3",
+    "collector-newest-regression-resume.log": "c81aa47239980624fe23b7ca2501eb5f6051bc2e670fe612e7eb648ec0cadcda",
+    "collector-newest-fast-resume.log": "de05307398663583058299a4ce5adc4fdd717df607f4370a24ff82e327f9e9f5",
+    "collector-newest-scheduled-resume.log": "5dd9baa3858e0bc90bd8c357c7371fffd706e067c84956358ea736c844661f7c",
+    "collector-contract-scheduled.log": "00c6e18ae730204322292b6100601ad0362bde4a1cb9b54dd6010cb4719d4010",
+    "collector-contract-focused.log": "f3f28c7084f996b7746b14d16e7d14c8394f86db961a82bc00fbaecf7636b369",
+    "collector-contract-replay-fixed.log": "7daff796dd5d749351225065b52c61aac936f2602464b45d9e4e6fed06896871",
+    "collector-contract-newest.log": "d11b292fa9848092dfc1d91024d3fc1fb0bb578a9dd2388bfe35fa8a19d1fbd2",
+    "collector-contract-replay.log": "8c42682851baaa6aefb269c619bf3a383d8f5fc709e2512fdfa5468f34fe5fe1",
+    "collector-contract-fast.log": "5c252e8dc6429028d54ccf5b433254b75aa241d93ff2a78c8c6bfb44fe52d03b",
+    "collector-outcome-contract-20261114.log": "be57ca81f04f8ceeb284fda7517d0daca20e570adf70e7ba5dff5326f1e6b1b7",
+    "collector-full-ci-tmpfs-source-20261114.log": "82e5f6ea7daf404d0cfce8a932ff50860bf801a313f44ce4526ac93d6a649e71"
+  },
+  "previous_validation": [
+    {"command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s services/source_ingestion/tests/test_collector_newest_session_progress.py", "exit_code": 0, "summary": "13 passed, 1 warning in 237.62s (0:03:57)", "counts": {"passed": 13}, "failures": []},
+    {"command": "timeout 360 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 124, "status": "timed_out_incomplete_not_passed", "note": "No terminal pytest summary; this batch is not counted as a passed test run."},
+    {"command": "timeout 240 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-newest-fast.xml services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 1, "summary": "4 failed, 315 passed, 1 skipped, 1 warning in 123.69s (0:02:03)", "counts": {"failed": 4, "passed": 315, "skipped": 1}, "failures": ["services/source_ingestion/tests/test_collector_bundle_connector.py::test_held_set_change_restarts_the_session_order_instead_of_skipping_rows", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_bee62bc29_reader_parses_new_cursor_status_and_additive_readback", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_candidate_and_current_real_size_ordered_pull_measurement[collector-tw-twse-price-history]", "services/source_ingestion/tests/test_collector_bundle_connector.py::test_candidate_and_current_real_size_ordered_pull_measurement[collector-tw-tpex-price-history]"]},
+    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-newest-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 1, "summary": "3 failed, 70 passed, 1 warning in 324.94s (0:05:24)", "counts": {"failed": 3, "passed": 70}, "failures": ["services/source_ingestion/tests/test_scheduled_connector.py::test_full_size_close_through_controller_main_with_persistence", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[0]", "services/source_ingestion/tests/test_scheduled_connector.py::test_backfill_normalized_date_partition_is_unchanged_on_replay[1]"]},
+    {"command": "timeout 300 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-fast.xml services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_tw_close_reconcile.py", "exit_code": 0, "summary": "319 passed, 1 skipped, 1 warning in 97.33s (0:01:37)", "counts": {"passed": 319, "skipped": 1}, "failures": []},
+    {"command": "timeout 540 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q -s --junitxml=/tmp/collector-contract-newest.xml services/source_ingestion/tests/test_collector_newest_session_progress.py", "exit_code": 0, "summary": "13 passed, 1 warning in 213.81s (0:03:33)", "counts": {"passed": 13}, "failures": []},
+    {"command": "timeout 900 /tmp/codex2-collector-steady-review-venv/bin/python -m pytest -q --durations=5 --junitxml=/tmp/collector-contract-scheduled.xml services/source_ingestion/tests/test_scheduled_connector.py", "exit_code": 0, "summary": "73 passed, 1 warning in 318.42s (0:05:18)", "counts": {"passed": 73}, "failures": []}
+  ],
+  "previous_regression_results_by_suite": {
+    "services.source_ingestion.tests.test_collector_bundle_connector": {
+      "passed": 99,
+      "failed": 4,
+      "errors": 0,
+      "skipped": 1
+    },
+    "services.source_ingestion.tests.test_controller_worker": {
+      "passed": 200,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_tw_close_reconcile": {
+      "passed": 16,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "services.source_ingestion.tests.test_scheduled_connector": {
+      "passed": 70,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "development_checks": {
+    "focused_collector_contract": "5 passed; /tmp/collector-contract-focused.log",
+    "replay_identity_initial": "3 failed from missing local CollectorBundleAdapter import; /tmp/collector-contract-replay.log. Corrected before final validation.",
+    "replay_identity_fixed": "3 passed; /tmp/collector-contract-replay-fixed.log",
+    "existing_skip": "Unchanged test_native_recorded_rss_bundle_exact_bytes_replay_through_verified_reader: private native RSS pack not provided. No skip/xfail control was added or changed.",
+    "review": "Prior approval of af1fb638d5197683939bd255f5ffeea86626f1a7 does not approve this forthcoming head. Assigned reviewer Antigravity2 must independently review the new frozen head; CI and native integration remain required."
+  },
+  "outcome_truth_rework": {
+    "authorization": "Human/Ops artifact-contract add and reopen at 2026-11-14T06:35:25Z / 06:35:33Z, verified via governed show with AI_NAME=Codex.",
+    "prior_head": "af1fb638d5197683939bd255f5ffeea86626f1a7",
+    "current_dev_base": "98b87aae226ab797fdce316fd5a6aed2565b44cc",
+    "existing_pr": 7343,
+    "prior_failure": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py::test_priority_verified_prefix_survives_ordered_deadline --basetemp=/tmp/collector-outcome-before-20261114",
+      "exit_code": 1,
+      "summary": "1 failed in 1.60s; expected [1,1,1], actual [1,1,0]; watermark [None,run2,run2]."
+    },
+    "correction": "Keep all three completed attempts and update only obsolete replay behavior to [1,1,0]. Drive the real pipeline/scheduler across runtime restarts. Compare complete native record/item/hash/trade-date identities to both input manifests, assert unique newest and historical deliveries, actual normalized-file/receipt/raw-hash/PIT persistence, unchanged priority prefix, shared-deadline raw-read order and monotonic persisted run2 watermark plus boundary acknowledgement.",
+    "scope": "Only existing test_collector_outcome_truth.py and this evidence changed; existing PR retained. No production implementation, timeout, skip/xfail, provider/VM, integration helper or hosted acceptance changes.",
+    "focused_validation": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_collector_outcome_truth.py::test_priority_verified_prefix_survives_ordered_deadline",
+      "exit_code": 0,
+      "summary": "1 passed in 4.38s"
+    },
+    "required_validation": "Completed with terminal exit 0: outcome-truth 104 passed, all prior 405 cases passed, and full source-ingestion suite. Exact commands, counts and log digests are in validation.",
+    "environment_repair": {
+      "initial_directory_only_batch": {
+        "command": "timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-source-20261114.xml services/source_ingestion/tests",
+        "exit_code": 1,
+        "summary": "9 failed, 1880 passed, 9 skipped, 15 warnings in 897.50s (0:14:57)",
+        "cause": "All nine failures in test_finmind_broker_backfill.py are missing pyarrow; existing PostgreSQL tests also lacked a local test DSN. This initial batch did not include the root test_*.py files used by CI.",
+        "log_sha256": "6d4500f8ad64013f1143bde5fa824498ce94d2f23bc441427bbd8802277c489f"
+      },
+      "installation": {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pip install 'pyarrow>=15,<30'",
+        "exit_code": 0,
+        "version": "26.0.1",
+        "scope": "Checkout-scoped venv only; existing services/source_ingestion/requirements.txt constraint; no shared interpreter or repository dependency changes."
+      },
+      "recheck": {
+        "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py",
+        "exit_code": 0,
+        "summary": "17 passed in 7.27s",
+        "log_sha256": "061506557586a8b7469b63c938443c6e36b44c6d5250c1f85087583767e76ddf"
+      },
+      "ci_parity": "Use the exact branch-ci source scope (services/source_ingestion/tests plus services/source_ingestion/test_*.py), a fresh data directory and dedicated localhost-only postgres:16 test container. No VM/provider/deployment/product service changes.",
+      "disk_exhaustion_batch": {
+        "command": "SOURCE_INGEST_TEST_POSTGRES_DSN=<task-local postgres16> SOURCE_INGEST_DATA_DIR=<fresh task tmp dir> timeout 1200 .venv-pantheon/bin/python3 -m pytest -q --durations=5 --junitxml=/tmp/collector-full-ci-source-20261114.xml services/source_ingestion/tests services/source_ingestion/test_*.py",
+        "exit_code": 2,
+        "summary": "1 failed, 569 passed, 1 skipped, 13 warnings in 217.62s (0:03:37); interrupted and terminal-collected after confirming ENOSPC",
+        "cause": "Root filesystem reached 100%, about 280 MB free; newest-session controller state write raised OSError errno28. Not a passed or complete suite.",
+        "log_sha256": "9ce6e867a22630e58f95462c2de7f34aa4607068ec5de86e3ff452d1feb0dbb2",
+        "response": "Confirmed /dev/shm has 24GB free and host has 40GiB available RAM. Next batch uses a unique task-owned TMPDIR and pytest basetemp there, with the same code and CI test scope. No unrelated filesystem deletion performed."
+      }
+    },
+    "prior_official_failure": {
+      "provenance": "Canonical task brief / Human/Ops rework instruction",
+      "job": "https://github.com/ajoe734/pantheon/actions/runs/43563872100/job/132354029820",
+      "summary": "1954 passed, 2 skipped, 1 failed in 440.10s; the sole failure was the obsolete priority replay expectation."
+    }
+  }
+}

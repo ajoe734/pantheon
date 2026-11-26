@@ -282,6 +282,7 @@ class TestCronOrchestrator(unittest.TestCase):
                 "pantheon.retrain",
                 "pantheon.deploy",
                 PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+                "pantheon.persona.daily-cycle",
             },
         )
 

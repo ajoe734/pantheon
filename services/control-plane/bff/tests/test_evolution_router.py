@@ -717,9 +717,13 @@ def test_evolution_journal_router_view_filter_and_evidence_class():
     resp_hist = client.get("/bff/management/evolution-journal?view=history")
     assert resp_hist.status_code == 200
     data_hist = resp_hist.json()["data"]
+    # Parts add up to total: the proposed threshold decision is now counted.
     assert data_hist["auto_proposal_counts"] == {
+        "threshold": 1,
         "incident_followup": 1,
         "incident_severity": 1,
+        "other": 0,
+        "infrastructure": 0,
         "postmortem_draft": 1,
         "total": 3,
     }

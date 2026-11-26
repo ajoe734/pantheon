@@ -550,6 +550,15 @@ class _FacadeDeploymentQueries:
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
+    def get_approval_decisions(self, decision_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        return {}
+
+    def list_paper_runtime_monitoring_sessions(self) -> Sequence[Dict[str, Any]]:
+        return []
+
+    def list_telemetry_summaries(self) -> Sequence[Dict[str, Any]]:
+        return []
+
     def get_review_summary(self, plan_id: str) -> Optional[Dict[str, Any]]:
         return None
 

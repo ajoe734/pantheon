@@ -2,7 +2,7 @@
   "task_id": "BFF-TEST-ARCH-001",
   "version": "2.0",
   "description": "BFF test architecture inventory. imports_main / disposition are derived from a live AST scan of the tests on disk (see test_bff_test_architecture.py), not self-reported. live_scan_non_whitelisted_main_importer_ceiling is the process-controlled cap on non-whitelisted BFF main importers; it may only be lowered in a PR.",
-  "total_test_files": 397,
+  "total_test_files": 403,
   "migrated_in_task_count": 33,
   "composition_allowlist": [
     "auth/test_composition_root_smoke.py",
@@ -99,10 +99,10 @@
   ],
   "layer_summary": {
     "adapter": 53,
-    "application": 190,
+    "application": 191,
     "composition": 19,
     "hosted": 12,
-    "router": 121
+    "router": 125
   },
   "main_by_layer": {
     "composition": 14,
@@ -110,7 +110,7 @@
     "hosted": 1
   },
   "disposition_summary": {
-    "DECOUPLED": 331,
+    "DECOUPLED": 335,
     "MIGRATED": 45,
     "ALLOWLIST": 21
   },
@@ -1121,7 +1121,7 @@
       "layer": "router",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "rationale": "BFF-PROVISIONING-ROUTE-SECURITY-TESTS-CI-20261125: standalone router security harness with in-memory strategy persona binding count double and fail-closed 503 strategy_store_unavailable regression coverage; wired into branch-ci.yml and never imports main"
     },
     {
       "file": "test_persona_provisioning_store.py",
@@ -2066,7 +2066,7 @@
       "layer": "application",
       "imports_main": false,
       "disposition": "DECOUPLED",
-      "rationale": "Already decoupled from main composition globals"
+      "rationale": "Registered persona HTTP routes exercise v2 return-on-capital scoring, unknown provenance, allocation adaptation and historical snapshot identity using owner-read adapters; no main composition globals"
     },
     {
       "file": "tests/test_bff_rebalance_proposals.py",
@@ -2090,11 +2090,25 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_bff_capital_paper_allocation.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Composes the real capital router/command adapter and Capital owner through the owner-HTTP harness plus the real persona evaluator; no main.py import"
+    },
+    {
       "file": "tests/test_capital_router.py",
       "layer": "router",
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_cited_evidence_list.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-EVIDENCE-CITED-LIST-20261125 and BFF-EVIDENCE-CITED-NAMES-LINKS-20261125 cover GET /bff/management/evidence?scope=cited over recorded owner shapes with only owner transports replaced: withholding, redaction, per-source status, read bounds, and cited artifacts named through the real Registry entry read (strategy-keyed label directory, one read per distinct artifact in the shared item-read budget, failed/slow/other-tenant reads unnamed) linking to /management/artifacts/{artifact}; never imports main"
     },
     {
       "file": "tests/test_command_adapters_router.py",
@@ -2531,6 +2545,20 @@
       "rationale": "Already decoupled from main composition globals"
     },
     {
+      "file": "tests/test_persona_pool_publish_route.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_pool_views.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Real persona router with owner-generated pool, virtual-book, health and demand payloads; no BFF composition globals"
+    },
+    {
       "file": "tests/test_persona_provisioning_read_surface_mutation.py",
       "layer": "application",
       "imports_main": false,
@@ -2874,11 +2902,39 @@
       "rationale": "STRATEGY-METRICS-TRUTH-20261104 regression coverage for strategy metrics projection from ranking snapshot truth and capitalPoolId from registry metadata; never imports main"
     },
     {
+      "file": "tests/test_strategy_list_test_scope.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-ATTRIBUTION-HIDE-TEST-PERSONAS-20261120 regression coverage for GET /bff/strategies hiding test-scoped personas by default with meta count, include_test_personas, single directory read, the attribution hiding helper, and REGISTRY-STRATEGY-LIST-OWNER-HIDE-20261125 hosted-shape owner-side hide (one bounded owner read per filter, exact visible counts); never imports main"
+    },
+    {
+      "file": "tests/test_strategy_synthetic_stubs.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-SYNTHETIC-STUBS-20261120 regression coverage for GET /bff/strategies hiding unbound raw-seed and simulation stub strategies with meta counts, GET /bff/meetings include_failed forwarding, persona_display_names from the single directory read, and detail is_synthetic_or_stub / stub_reason; never imports main"
+    },
+    {
       "file": "tests/test_strategy_list_default_view.py",
       "layer": "router",
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-STRATEGY-LIST-DEFAULT-VIEW-20261106 regression coverage for GET /bff/strategies exclude_state=draft, meta.state_counts at 5000 real-shape rows, state=retired, unknown lifecycle visibility, and tenant isolation; never imports main"
+    },
+    {
+      "file": "tests/test_strategy_detail_overlap_reads.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125 proves GET /bff/strategies/{id} starts the spec, Persona directory, runtime bindings, ranking and rules owner reads together (gate opens only after all started; no clock), one owner call each, tenant reaching the overlapped read, degraded secondary reads keep 200, 404 and spec failure unchanged; never imports main"
+    },
+    {
+      "file": "tests/test_strategy_rules_pool_envelope.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-PERSONA-STRATEGY-VISIBILITY-20261119 rules projection on the recorded hosted envelope/member/baseline shape; never imports main"
     },
     {
       "file": "tests/test_strategy_operational_status.py",
@@ -2907,6 +2963,27 @@
       "imports_main": false,
       "disposition": "DECOUPLED",
       "rationale": "BFF-PERSONA-CASE-RETIRE-COMMAND-20261108 regression coverage for the RetirePaperPersonaCase PersonaAction command: confirm-token admission, retired/pending/not-found receipts, release-case refusal, read-only dry run plan, and the deprecated actions route; never imports main"
+    },
+    {
+      "file": "tests/test_deployments_list_bounded_stage_truth.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-DEPLOYMENTS-LIST-STAGE-TRUTH-20261114: full HTTP legacy parity, constant 200-plan owner/store reads, decision and runtime evidence precedence, request isolation, and reproducible real-port profiling; never imports main"
+    },
+    {
+      "file": "tests/test_trade_journey_readable_residuals.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-TRADE-JOURNEY-READABLE-RESIDUALS-20261120: recorded post-deploy hosted bodies; rejected flag, inferred risk stage, timeline source and expression-code mapping, persona directory TTL, indexed persona filter SQL; never imports main"
+    },
+    {
+      "file": "tests/test_list_scope_classification.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "BFF-PERSONA-ARTIFACT-LIST-SCOPE-20261125: recorded hosted persona and artifact shapes; persona listScope classification, null successRate when unrecorded or 0.0, artifact list_scope bounded join and unknown fallback; never imports main"
     }
   ],
   "live_scan_non_whitelisted_main_importer_ceiling": 0,

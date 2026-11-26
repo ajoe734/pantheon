@@ -3,6 +3,60 @@
 > Read this before wiring personas to models. The common mistake is treating it
 > as one-model-per-persona setup; it is not.
 
+## The model chain: one deployment variable
+
+The ordered model chain (first entry = primary) is held in **one** place: the
+repository/dev-environment **variable** `OPENCLAW_MODEL_CHAIN` (comma separated
+refs, e.g. `<provider>/<model>,<provider>/<model>,...`; never a workflow
+dispatch input). When it is unset or blank the one shipped default
+(`DEFAULT_MODEL_CHAIN` in `services/persona/runtime_profile.py`) applies. No other source file names a
+model as part of a chain or an allowed-model list; tests only use fixture
+values of the variable.
+
+Everything follows that chain:
+
+- the gateway default (`agents.defaults.model.primary` and `.fallbacks`) is written by
+  `scripts/openclaw-configure-shared-model-pool.sh` (every root deploy, restore,
+  return and compensation pass the variable to it; isolated qualification
+  renders the same chain in `scripts/openclaw_isolated_model_bootstrap.py`);
+- the `memory-index` and `structured-extraction` agents carry a copy of it;
+- the Management AI adapter uses the first entry as its model;
+- persona sync (`integrations/openclaw/persona_agent_sync.py`) reads the gateway
+  default chain and the registered models (`agents.defaults.models`) **at sync
+  time**: a pool-default persona gets that chain, a persona route policy
+  (`preferred_pool_model`, `hard_pin`, `fallback`) is validated against the
+  models registered in the gateway, and a persona carries its own fallback
+  list only when its route policy pins one.
+
+### How to change the chain
+
+1. Set the variable `OPENCLAW_MODEL_CHAIN` (repo or dev environment).
+2. Apply it with a dev deploy (the root deploy runs the configure step), or run
+   the configure step by hand on the host:
+   `OPENCLAW_MODEL_CHAIN='a/x,b/y' PANTHEON_DEV_REPO=$PWD bash scripts/openclaw-configure-shared-model-pool.sh`.
+   The step **restarts the gateway** because a change to
+   `agents.defaults.model.fallbacks` only takes effect after a restart on the
+   pinned image (provider and allow-list changes apply live).
+3. Re-run persona sync so persona agents copy the new chain
+   (`scripts/openclaw-sync-persona-agents.py`). An existing persona agent whose
+   *primary* changes is reported as `model_drift_update_unavailable` (recreate
+   the agent); a fallback-only change is rewritten in place.
+
+The configure step **refuses** (named error, previous chain kept, gateway never
+left without a chain, exit status 3, advisory: it does not roll a dev deploy
+back) a chain that is empty or malformed (`chain_empty`,
+`chain_model_ref_malformed`), names a model whose runtime is a CLI backend
+(`chain_model_cli_runtime`: persona tool calls lack host identity there), or
+names a ref the gateway has not registered (`chain_model_not_registered`: not in
+`agents.defaults.models`, not in a `models.providers.<p>.models` catalog and not
+in the shipped default). A CLI-runtime model never appears in a persona fallback.
+
+**Order matters per provider.** On the pinned image a `model_not_found`
+refusal puts the provider's whole auth profile into cooldown and later
+candidates of that provider are skipped without a call. A model not yet proven
+on a provider must therefore not precede another model of the same provider in
+the chain.
+
 ## Mental model
 
 Think OS processes:
@@ -23,8 +77,9 @@ The idempotent route declaration lives in
 `scripts/openclaw-configure-shared-model-pool.sh` and is applied after every
 root dev deploy (with isolated CI qualification mirrored in
 `scripts/openclaw_isolated_model_bootstrap.py`). Default routing sets
-`agents.defaults.model.primary = "anthropic/claude-opus-4-8"` with ordered
-fallbacks `["openai/gpt-5.6-sol", "openai/gpt-5.5"]`. Native provider login
+`agents.defaults.model.primary` and ordered `fallbacks` from the chain above
+(shipped default when the variable is unset: Opus, then `openai/gpt-5.6-sol`, then
+`openai/gpt-5.5`). Native provider login
 remains in the persistent OpenClaw volume; Anthropic API/workspace bindings and
 an optional product Claude setup-token come from the gateway environment, as
 described below.
@@ -221,3 +276,30 @@ repo config to simulate an extra account.
 - `integrations/openclaw/governance.md §9` — provider auth setup (Codex
   device-code OAuth, Claude CLI reuse) and the derived gateway image.
 - `integrations/openclaw/integration.md` — pin and adapter boundary.
+
+## `memory-index` agent (Hindsight background model calls)
+
+`scripts/openclaw-configure-shared-model-pool.sh` and the isolated bootstrap add
+a second deny-all agent, `memory-index` (tools deny `*`, exec security deny/ask
+always), under the same adapter policy assertions as `structured-extraction`.
+Its model is `agents.list[].model`: a copy of the one model chain (primary and
+fallbacks), written by the configure step; there are no per-agent model
+overrides any more. Hosted evidence 2026-11-18 (7 days, 576 sessions) showed
+opus-4-8 failing 295 times in this role, which is why the chain order is an
+operator decision made through the variable rather than code. Reached only through the adapter's internal
+memory LLM bridge (see `deploy/hindsight/README.md`).
+
+## OpenAI API route (`openai-api`, `openai-api-2`)
+
+Shipped default chain: Opus, `openai-api/gpt-6.2-sol`, `openai-api-2/gpt-6.2-sol`, then the subscription
+entries `openai/gpt-5.6-sol`, `openai/gpt-5.5` (`DEFAULT_MODEL_CHAIN`, `OPENCLAW_MODEL_CHAIN` overrides).
+The default agent chain, `structured-extraction` and `memory-index` all carry it.
+
+- Mechanism (pinned image 2026.7.1): one provider per key (`baseUrl https://api.openai.com/v1`, `api openai-responses`,
+  `apiKey` env SecretRef) with model-level fallback. A 401/quota/rate-limit on key 1 falls to key 2; a refusal of both
+  falls to the subscription entries. A `model_not_found` cools down the whole provider profile, so later refs on the
+  same provider are skipped. A change of `agents.defaults.model.fallbacks` needs a gateway restart (the configure step restarts).
+- Keys live in container variables `OPENCLAW_API_ROUTE_KEY_1/_2` only (never `OPENAI_API_KEY`/`CODEX_API_KEY`).
+- Missing/empty key: provider unset and its refs removed from the default chain; a requested chain naming it is refused (advisory, exit 3).
+- Isolated qualification: `scripts/openclaw_isolated_model_bootstrap.py` adds the same providers when `PANTHEON_OPENCLAW_OPENAI_API_KEY[_2]` are set.
+- Per-token billing; see `governance.md` (2026-11-18).

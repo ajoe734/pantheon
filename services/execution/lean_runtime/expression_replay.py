@@ -25,7 +25,12 @@ PnL rule (one rule for chosen and counterfactual legs)::
     pnl = side * units * multiplier * (mark - entry) - costs
     costs = units * (fee_per_unit_per_side * 2 + unit * entry * tax_rate_per_side * 2)
 
-``entry`` is the candidate ``price`` (D-1 price held in the candidate record).
+``entry`` is the candidate ``price`` (D-1 price held in the candidate record) for records that carry
+no daily fill convention.  A daily decision (``record["fill_convention"] == FILL_CONVENTION``) is
+decided from the close of session D and filled at the OPEN of D+1: its ``entry`` is
+``record["fills"][instrument_id]``, the observed D+1 open.  Without a usable open the leg has no fill:
+``pnl`` is ``None`` with ``fill_unavailable_reason = "no_open_price"``; the decision close is never
+used as the entry.
 """
 from __future__ import annotations
 
@@ -33,6 +38,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Mapping, Sequence
 
 from services.execution.lean_runtime import expression_policy as policy
+from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION, NO_OPEN_PRICE, usable_open
 
 REPLAY_INPUT_KEY = "expression_replay_input"
 COUNTERFACTUAL_EVENT_TYPE = "persona_instrument_counterfactual"
@@ -55,15 +61,30 @@ def _marks_for(record: Mapping[str, Any], instrument_id: str) -> list[Decimal]:
     return [_dec(m) for m in raw]
 
 
+def _entry_price(record: Mapping[str, Any], instrument_id: str) -> tuple[Decimal | None, str | None]:
+    """``(entry, reason)``: the candidate price, or the next-open fill of a daily decision."""
+    if record.get("fill_convention") != FILL_CONVENTION:
+        return None, None  # not a daily next-open record: keep the candidate's own price
+    price = usable_open((record.get("fills") or {}).get(instrument_id))
+    return (Decimal(str(price)), None) if price is not None else (None, NO_OPEN_PRICE)
+
+
+def unfilled_leg(reason: str) -> dict[str, Any]:
+    return {"entry": None, "mark": None, "multiplier": None, "costs": 0.0, "pnl_path": [], "pnl": None,
+            "worst_pnl": None, "margin_at_entry": None, "fill_unavailable_reason": reason}
+
+
 def leg_pnl_path(
     candidate: Mapping[str, Any],
     side: str,
     units: int,
     marks: Sequence[Decimal],
+    *,
+    entry_price: Decimal | None = None,
 ) -> dict[str, Any]:
-    """Net PnL at each mark for ``units`` of ``candidate`` opened at its price."""
+    """Net PnL at each mark for ``units`` of ``candidate`` opened at its price (or ``entry_price``)."""
     sign = Decimal(1) if side == "buy" else Decimal(-1)
-    entry = _dec(candidate["price"])
+    entry = _dec(candidate["price"]) if entry_price is None else entry_price
     multiplier = _dec(candidate.get("multiplier") or 1)
     costs = Decimal(units) * policy.round_trip_cost_per_unit(candidate)
     path = [sign * Decimal(units) * multiplier * (m - entry) - costs for m in marks]
@@ -100,12 +121,14 @@ def _apply_to_book(
     if chosen.get("reason_code") == "close_leg":
         realized: Decimal | None = None
         remaining: list[dict[str, Any]] = []
+        units_left = units
         for position in positions:
             if str(position.get("instrument_id")) != instrument_id:
                 remaining.append(position)
                 continue
             held = int(position["units"])
-            closed = min(units, held)
+            closed = min(units_left, held)
+            units_left -= closed
             entry = position.get("entry_price")
             if entry is not None:
                 sign = Decimal(1) if str(position.get("direction")).upper() == "LONG" else Decimal(-1)
@@ -117,7 +140,9 @@ def _apply_to_book(
                 )
                 realized = (realized or Decimal(0)) + gain
             if held > closed:
-                remaining.append({**position, "units": held - closed})
+                remaining.append({**position, "units": held - closed,
+                                  **({"notional": position["notional"] * (held - closed) / held}
+                                     if "notional" in position else {})})
         return remaining, realized
     opened = {
         "underlying": underlying,
@@ -128,6 +153,14 @@ def _apply_to_book(
         "multiplier": _f(_dec(candidate.get("multiplier") or 1)),
         "initial_margin_per_unit": _f(_dec(candidate.get("initial_margin_per_unit") or 0)),
     }
+    if chosen.get("policy_kind") == policy.TARGET_POLICY_KIND:
+        for index, position in enumerate(positions):
+            if position["instrument_id"] == instrument_id and position["direction"] == opened["direction"]:
+                held = int(position["units"])
+                combined = {**opened, "units": held + units}
+                if position.get("entry_price") is not None:
+                    combined["entry_price"] = (held * float(position["entry_price"]) + units * opened["entry_price"]) / (held + units)
+                return [*positions[:index], combined, *positions[index + 1:]], None
     return [*positions, opened], None
 
 
@@ -156,6 +189,24 @@ def counterfactuals(
         if feasible
         else None
     )
+    if record.get("policy_kind") == policy.TARGET_POLICY_KIND:
+        for candidate in candidates:
+            instrument_id = str(candidate.get("instrument_id"))
+            if instrument_id == chosen_instrument_id:
+                continue
+            outcome = policy.decide_for_policy(policy.TARGET_POLICY_KIND, view, [candidate],
+                record.get("book_before") or {}, record.get("budget") or {}, params)
+            if policy.is_no_trade(outcome) or outcome.get("reason_code") == "close_leg":
+                out[instrument_id] = {"units": 0, "pnl_cf": 0.0, "costs": 0.0, "entry": None, "mark": None}
+            else:
+                entry_price, reason = _entry_price(record, instrument_id)
+                leg = (unfilled_leg(reason) if reason else
+                       leg_pnl_path(candidate, outcome["side"], outcome["units"], _marks_for(record, instrument_id),
+                                    entry_price=entry_price))
+                out[instrument_id] = {"units": outcome["units"], "pnl_cf": leg["pnl"],
+                                     **{k: leg[k] for k in ("costs", "entry", "mark", "pnl_path")},
+                                     **({"fill_unavailable_reason": reason} if reason else {})}
+        return out
     feasible_ids = {str(c["instrument_id"]) for c in feasible}
     side = "buy" if direction == "LONG" else "sell"
     for candidate in candidates:
@@ -166,7 +217,9 @@ def counterfactuals(
             out[instrument_id] = {"units": 0, "pnl_cf": 0.0, "costs": 0.0, "entry": None, "mark": None}
             continue
         units = policy.clamped_units(candidate, target)
-        leg = leg_pnl_path(candidate, side, units, _marks_for(record, instrument_id))
+        entry_price, reason = _entry_price(record, instrument_id)
+        leg = (unfilled_leg(reason) if reason else
+               leg_pnl_path(candidate, side, units, _marks_for(record, instrument_id), entry_price=entry_price))
         out[instrument_id] = {
             "units": units,
             "pnl_cf": leg["pnl"],
@@ -174,6 +227,7 @@ def counterfactuals(
             "entry": leg["entry"],
             "mark": leg["mark"],
             "pnl_path": leg["pnl_path"],
+            **({"fill_unavailable_reason": reason} if reason else {}),
         }
     return out
 
@@ -204,7 +258,24 @@ def replay(
             book = {"positions": [dict(p) for p in carried]}
         else:
             book = dict(record.get("book_before") or {})
-        outcome = policy.decide(view, candidates, book, budget, params)
+        kind = record.get("policy_kind", policy.POLICY_KIND)
+        row_params = ({**policy.resolved_parameters(record.get("parameters")), **dict(parameters or {})}
+                      if kind == policy.TARGET_POLICY_KIND else params)
+        if kind == policy.TARGET_POLICY_KIND:
+            allocation = record.get("bar_allocation") or {}
+            try:
+                # A counterfactual fraction must rescale the whole bar, not
+                # only one symbol's already scaled target.
+                allocation = policy.allocate_targets(allocation["views"], budget, row_params)
+                symbol = next(s for s in allocation["targets"]
+                              if s.split(".")[0] == str(view.get("underlying")))
+                view["target_notional"] = allocation["targets"][symbol]
+            except (KeyError, ValueError, StopIteration):
+                view["target_notional"] = -1
+        error = record.get("inputs_unavailable") if kind == policy.TARGET_POLICY_KIND else None
+        outcome = (policy.target_inputs_unavailable_no_trade(
+                       view, error["missing"], error.get("detail", ""), row_params)
+                   if error else policy.decide_for_policy(kind, view, candidates, book, budget, row_params))
         by_id = {str(c.get("instrument_id")): c for c in candidates}
         positions = [dict(p) for p in (book.get("positions") or [])]
         entry: dict[str, Any] = {
@@ -229,9 +300,12 @@ def replay(
                     entry["pnl"] = _f(realized)
                     entry["pnl_path"] = [_f(realized)]
             else:
-                leg = leg_pnl_path(
-                    candidate, outcome["side"], int(outcome["units"]), _marks_for(record, chosen_id)
-                )
+                entry_price, reason = _entry_price(record, chosen_id)
+                leg = (unfilled_leg(reason) if reason else leg_pnl_path(
+                    candidate, outcome["side"], int(outcome["units"]), _marks_for(record, chosen_id),
+                    entry_price=entry_price))
+                if reason:
+                    entry["fill_unavailable_reason"] = reason
                 entry.update(
                     pnl_path=leg["pnl_path"],
                     pnl=leg["pnl"],
@@ -241,7 +315,7 @@ def replay(
                     mark=leg["mark"],
                 )
         if entry["outcome"] == "NoTrade" or outcome.get("reason_code") != "close_leg":
-            cf = counterfactuals(record, params, chosen_id)
+            cf = counterfactuals({**record, "view": view}, row_params, chosen_id)
             entry["counterfactual_pnl"] = {k: v["pnl_cf"] for k, v in cf.items()}
             entry["counterfactual_detail"] = cf
         entry["positions_after"] = positions
@@ -284,7 +358,12 @@ def counterfactual_rows(
     u_entry = u_mark = None
     if underlying_leg is not None:
         marks = _marks_for(record, str(underlying_leg["instrument_id"]))
-        if marks and underlying_leg.get("price") is not None:
+        daily_entry, _ = _entry_price(record, str(underlying_leg["instrument_id"]))
+        if record.get("fill_convention") == FILL_CONVENTION:
+            # a daily decision's underlying entry is the next-open fill, not the decision close
+            if marks and daily_entry is not None:
+                u_entry, u_mark = _f(daily_entry), _f(marks[-1])
+        elif marks and underlying_leg.get("price") is not None:
             u_entry, u_mark = _f(_dec(underlying_leg["price"])), _f(marks[-1])
     chosen_id = (
         str(result["record"]["instrument_id"]) if result["outcome"] == "Chosen" else None
@@ -328,6 +407,7 @@ def counterfactual_rows(
 def records_from_events(
     events: Iterable[Mapping[str, Any]],
     marks_by_decision: Mapping[str, Mapping[str, Any]] | None = None,
+    fills_by_decision: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Rebuild replay input from recorded telemetry/signal events.
 
@@ -360,5 +440,10 @@ def records_from_events(
         marks = (marks_by_decision or {}).get(decision_id)
         if marks:
             record["marks"] = dict(marks)
+        if payload.get("fill_convention") == FILL_CONVENTION or decision_id in (fills_by_decision or {}):
+            # Daily decision: the entry is the settled next-session open, joined by decision id; a
+            # decision with no settled open keeps ``fills`` empty (no fill, never the decision close).
+            record["fill_convention"] = FILL_CONVENTION
+            record["fills"] = dict((fills_by_decision or {}).get(decision_id) or {})
         records.append(record)
     return records, parameters

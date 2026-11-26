@@ -8,9 +8,10 @@
 # pre-acquires only digest-pinned (@sha256:...) images, and never formats, mounts over, or
 # recreates the production data disk.
 #
-# Steps: migrate snapshot_preflight prepull_images baseline_health start_green stop_green
+# Utility subcommands (no release id): snapshot_schedule ensure|check; restore_drill (see runbook section 5).
+# Steps: verify_rollback migrate snapshot_preflight prepull_images baseline_health start_green stop_green
 #        gate <name> <port> drain_singletons reload_proxy activate_singletons
-#        resume_baseline_singletons verify_runtime_config post_identity
+#        resume_baseline_singletons verify_runtime_config post_identity restore_active_release
 #
 # Required env: PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST
 #   PROD_FE_HOST RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
@@ -24,6 +25,235 @@
 
 set -uo pipefail
 
+# --- operator-host / VM utility subcommands (no release id): snapshot_schedule ensure|check, restore_drill ---
+_snapshot_schedule() (
+set -uo pipefail
+# Production data-disk snapshot schedule (RPO control). Idempotent; never deletes a snapshot,
+# never touches the boot disk or any disk other than PROD_DATA_DISK.
+#   ensure : create resource policy pantheon-prod-data-hourly (hourly, 3-day retention, keep auto snapshots on
+#            source-disk delete, storage location = disk region, labels) if absent, then attach it to the data disk.
+#   check  : read-only; one JSON line {policy_present, attached, schedule, retention_days, newest_snapshot,
+#            newest_age_seconds, max_age_seconds}. Exit 1 when the newest auto-snapshot is older than
+#            PROD_RPO_SECONDS + PROD_SNAPSHOT_GRACE_SECONDS (default 900) or absent.
+# Env: PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_RPO_SECONDS [PROD_SNAPSHOT_GRACE_SECONDS] [GCLOUD_BIN]
+GCLOUD="${GCLOUD_BIN:-gcloud}"
+POLICY="pantheon-prod-data-hourly"
+fail() { printf '{"status":"refused","error_code":"%s","message":"%s"}\n' "$1" "$2" >&2; exit "${3:-1}"; }
+MODE="${1:-}"; [[ "$MODE" == ensure || "$MODE" == check ]] || fail USAGE "usage: prod_ops.sh snapshot_schedule ensure|check"
+for v in PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_RPO_SECONDS; do
+  [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required input ${v} is missing"
+done
+[[ "$PROD_RPO_SECONDS" =~ ^[0-9]+$ ]] || fail MISSING_INPUT "PROD_RPO_SECONDS must be a positive integer"
+GRACE="${PROD_SNAPSHOT_GRACE_SECONDS:-900}"
+[[ "$GRACE" =~ ^[0-9]+$ ]] || fail MISSING_INPUT "PROD_SNAPSHOT_GRACE_SECONDS must be an integer"
+PROJECT="${CLOUDSDK_CORE_PROJECT:-$("$GCLOUD" config get-value project 2>/dev/null)}"
+[[ "$PROJECT" == "$PROD_GCP_PROJECT_ID" ]] || fail WRONG_PROJECT "active project does not equal PROD_GCP_PROJECT_ID"
+DISK="$PROD_DATA_DISK"; ZONE="$PROD_GCP_ZONE"; REGION="${ZONE%-*}"
+"$GCLOUD" compute disks describe "$DISK" --project "$PROJECT" --zone "$ZONE" --format='value(name)' >/dev/null 2>&1 \
+  || fail DISK_NOT_FOUND "data disk not found in PROD_GCP_ZONE"
+
+policy_json() { "$GCLOUD" compute resource-policies describe "$POLICY" --project "$PROJECT" --region "$REGION" --format=json 2>/dev/null; }
+disk_policies() { "$GCLOUD" compute disks describe "$DISK" --project "$PROJECT" --zone "$ZONE" --format='value(resourcePolicies)' 2>/dev/null; }
+
+if [[ "$MODE" == ensure ]]; then
+  if ! policy_json >/dev/null; then
+    "$GCLOUD" compute resource-policies create snapshot-schedule "$POLICY" --project "$PROJECT" --region "$REGION" \
+      --hourly-schedule=1 --start-time=00:00 --max-retention-days=3 --on-source-disk-delete=keep-auto-snapshots \
+      --storage-location "$REGION" --snapshot-labels=environment=production,managed_by=pantheon >/dev/null \
+      || fail POLICY_CREATE_FAILED "resource policy create failed"
+  fi
+  if [[ "$(disk_policies)" != *"/resourcePolicies/${POLICY}"* ]]; then
+    "$GCLOUD" compute disks add-resource-policies "$DISK" --project "$PROJECT" --zone "$ZONE" \
+      --resource-policies "$POLICY" >/dev/null || fail POLICY_ATTACH_FAILED "resource policy attach failed"
+  fi
+  MODE=check
+fi
+
+pol="$(policy_json || true)"
+att="false"; [[ "$(disk_policies)" == *"/resourcePolicies/${POLICY}"* ]] && att="true"
+newest="$("$GCLOUD" compute snapshots list --project "$PROJECT" \
+  --filter="sourceDisk~/disks/${DISK}\$ AND autoCreated=true" --sort-by=~creationTimestamp --limit=1 \
+  --format='value(name,creationTimestamp)' 2>/dev/null || true)"
+python3 -I - "$pol" "$att" "$newest" "$PROD_RPO_SECONDS" "$GRACE" <<'PY'
+import datetime, json, sys
+pol, att, newest, rpo, grace = sys.argv[1:6]
+p = json.loads(pol) if pol.strip() else {}
+sch = (p.get("snapshotSchedulePolicy") or {})
+hourly = (sch.get("schedule") or {}).get("hourlySchedule") or {}
+ret = (sch.get("retentionPolicy") or {}).get("maxRetentionDays")
+name, age = None, None
+if newest.strip():
+    name, ts = newest.split()[:2]
+    t = datetime.datetime.fromisoformat(ts)
+    age = int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds())
+limit = int(rpo) + int(grace)
+out = {"policy_present": bool(p), "attached": att == "true",
+       "schedule": f"hourly/{hourly.get('hoursInCycle')}h" if hourly else None, "retention_days": ret,
+       "newest_snapshot": name, "newest_age_seconds": age, "max_age_seconds": limit}
+print(json.dumps(out, sort_keys=True))
+sys.exit(0 if out["policy_present"] and out["attached"] and age is not None and age <= limit else 1)
+PY
+)
+
+_restore_drill() (
+set -uo pipefail
+# Production backup/restore drill: measures RPO and RTO from the newest auto-snapshot of the data disk.
+# Read-only towards live data: the scratch disk is attached READ-ONLY and mounted read-only; postgres and the owner
+# stores are copied to a temp dir on the boot disk and a throwaway postgres (digest-pinned, no published ports, own
+# network, unique name) runs on the copy. Nothing is ever written under PROD_DATA_MOUNT.
+# Readability proof = runbook section 4: catalog hash (information_schema.columns, user schemas) + per-table row counts
+# of the restored DB, compared with the live DB read at drill end (closest available to "snapshot time": a catalog hash
+# difference means a migration landed after the snapshot and FAILS; row-count drift is reported, since live churns),
+# plus the sha256 file manifest of exactly bff runtime governance product from the restored disk vs the copy.
+# A trap always tears down (container, network, temp copy, unmount, detach, delete scratch disk) and reads back.
+# RPO_s = drill start - snapshot creation; RTO_s = drill start -> readability proven.
+# Exit: 0 ok, 1 refused, 2 RPO/RTO over budget, 3 drill stage failed. One JSON line on stdout, no secrets.
+# Env: PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_VM_NAME PROD_DATA_MOUNT PROD_RPO_SECONDS PROD_RTO_SECONDS
+#      PROD_POSTGRES_USER PROD_POSTGRES_DB PANTHEON_POSTGRES_IMAGE [PROD_DRILL_MNT_BASE=/mnt PROD_DRILL_TMP_BASE=/var/tmp PROD_DRILL_POLL_SECONDS=2]
+GCLOUD="${GCLOUD_BIN:-gcloud}"; DOCKER="${DOCKER_BIN:-docker}"
+priv() { if [[ $EUID -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+fail() { printf '{"status":"refused","error_code":"%s","message":"%s"}\n' "$1" "$2" >&2; exit 1; }
+for v in PROD_GCP_PROJECT_ID PROD_GCP_ZONE PROD_DATA_DISK PROD_VM_NAME PROD_DATA_MOUNT PROD_RPO_SECONDS PROD_RTO_SECONDS \
+         PROD_POSTGRES_USER PROD_POSTGRES_DB PANTHEON_POSTGRES_IMAGE; do
+  [[ -n "${!v:-}" ]] || fail MISSING_INPUT "required input ${v} is missing"
+done
+[[ "$PANTHEON_POSTGRES_IMAGE" == *@sha256:* ]] || fail IMAGE_NOT_PINNED "postgres image must be digest-pinned"
+PROJECT="${CLOUDSDK_CORE_PROJECT:-$("$GCLOUD" config get-value project 2>/dev/null)}"
+[[ "$PROJECT" == "$PROD_GCP_PROJECT_ID" ]] || fail WRONG_PROJECT "active project does not equal PROD_GCP_PROJECT_ID"
+ZONE="$PROD_GCP_ZONE"; DISK="$PROD_DATA_DISK"; VM="$PROD_VM_NAME"
+"$GCLOUD" compute disks describe "$DISK" --project "$PROJECT" --zone "$ZONE" --format='value(name)' >/dev/null 2>&1 \
+  || fail DISK_NOT_FOUND "data disk not found in PROD_GCP_ZONE"
+
+T0=$(date +%s); UTC="$(date -u +%Y%m%dt%H%M%Sz)"
+SCRATCH="pantheon-prod-restore-drill-${UTC}"; DEV="restore-drill-${UTC}"
+MNT="${PROD_DRILL_MNT_BASE:-/mnt}/restore-drill-${UTC}"; TMPD="${PROD_DRILL_TMP_BASE:-/var/tmp}/pantheon-restore-drill-${UTC}"
+CTR="pantheon-restore-drill-${UTC}"; NET="$CTR"
+CHECKS='{}'; STAGE=init; ATTACHED=0; CREATED=0; MOUNTED=0; CTR_UP=0; NET_UP=0; TMP_UP=0; STATUS=failed
+G="$GCLOUD"; PZ=(--project "$PROJECT" --zone "$ZONE")
+OWNER_DIRS=(bff runtime governance product)
+
+cleanup() {
+  local rc=$?; trap - EXIT
+  [[ $CTR_UP -eq 1 ]] && { priv "$DOCKER" stop "$CTR" >/dev/null 2>&1; priv "$DOCKER" rm -f "$CTR" >/dev/null 2>&1; }
+  [[ $NET_UP -eq 1 ]] && priv "$DOCKER" network rm "$NET" >/dev/null 2>&1
+  [[ $TMP_UP -eq 1 ]] && priv rm -rf -- "$TMPD" >/dev/null 2>&1
+  [[ $MOUNTED -eq 1 ]] && { priv umount "$MNT" >/dev/null 2>&1; priv rmdir "$MNT" >/dev/null 2>&1; }
+  [[ $ATTACHED -eq 1 ]] && "$G" compute instances detach-disk "$VM" "${PZ[@]}" --disk "$SCRATCH" >/dev/null 2>&1
+  [[ $CREATED -eq 1 ]] && "$G" compute disks delete "$SCRATCH" "${PZ[@]}" --quiet >/dev/null 2>&1
+  local rb_ctr rb_net rb_tmp rb_mnt rb_disk
+  rb_ctr=$(priv "$DOCKER" ps -aq --filter "name=^${CTR}\$" 2>/dev/null | wc -l)
+  rb_net=$(priv "$DOCKER" network ls -q --filter "name=^${NET}\$" 2>/dev/null | wc -l)
+  rb_tmp=0; [[ -e "$TMPD" ]] && rb_tmp=1
+  rb_mnt=0; [[ -e "$MNT" ]] && rb_mnt=1
+  rb_disk=$("$G" compute disks list --project "$PROJECT" --filter="name=${SCRATCH}" --format='value(name)' 2>/dev/null | wc -l)
+  [[ $((rb_ctr+rb_net+rb_tmp+rb_mnt+rb_disk)) -eq 0 ]] && CLEAN=true || CLEAN=false
+  [[ $CLEAN == true ]] || { STATUS=failed; rc=3; }
+  python3 -I - "$STATUS" "${SNAP:-}" "${RPO:-}" "${RTO:-}" "$STAGE" "$CHECKS" "$CLEAN" "$rb_ctr" "$rb_net" "$rb_tmp" "$rb_mnt" "$rb_disk" <<'PY'
+import json, sys
+st, snap, rpo, rto, stage, checks, clean, *rb = sys.argv[1:]
+names = ["container", "network", "temp_copy", "mount", "scratch_disk"]
+print(json.dumps({"status": st, "snapshot": snap or None, "rpo_seconds": int(rpo) if rpo else None,
+  "rto_seconds": int(rto) if rto else None, "failed_stage": None if st == "ok" else stage,
+  "checks": json.loads(checks), "cleanup": {"clean": clean == "true", **{n: int(v) for n, v in zip(names, rb)}}},
+  sort_keys=True))
+PY
+  exit "$rc"
+}
+trap cleanup EXIT
+die() { STAGE="$1"; STATUS=failed; exit 3; }
+
+STAGE=select_snapshot
+SNAP_LINE="$("$G" compute snapshots list --project "$PROJECT" --filter="sourceDisk~/disks/${DISK}\$ AND autoCreated=true" \
+  --sort-by=~creationTimestamp --limit=1 --format='value(name,creationTimestamp)' 2>/dev/null)" || die select_snapshot
+[[ -n "$SNAP_LINE" ]] || die select_snapshot
+SNAP="${SNAP_LINE%%[[:space:]]*}"; SNAP_TS="${SNAP_LINE##*[[:space:]]}"
+RPO="$(python3 -I -c 'import datetime,sys;print(int(datetime.datetime.now(datetime.timezone.utc).timestamp()-datetime.datetime.fromisoformat(sys.argv[1]).timestamp()))' "$SNAP_TS")" || die select_snapshot
+RPO=$(( RPO - ($(date +%s) - T0) ))   # RPO is measured at drill start
+
+STAGE=create_disk
+"$G" compute disks create "$SCRATCH" "${PZ[@]}" --source-snapshot "$SNAP" --labels environment=production,managed_by=pantheon,purpose=restore-drill >/dev/null 2>&1 \
+  || { "$G" compute disks describe "$SCRATCH" "${PZ[@]}" >/dev/null 2>&1 && CREATED=1; die create_disk; }
+CREATED=1
+STAGE=attach_readonly
+"$G" compute instances attach-disk "$VM" "${PZ[@]}" --disk "$SCRATCH" --mode ro --device-name "$DEV" >/dev/null 2>&1 \
+  || { ATTACHED=1; die attach_readonly; }
+ATTACHED=1
+# attach-disk can return before udev publishes the device symlink on the real VM.
+if [[ -d /dev/disk/by-id && -z "${GCLOUD_BIN:-}" ]]; then
+  for _ in $(seq 1 15); do
+    [[ -e "/dev/disk/by-id/google-${DEV}" ]] && break
+    sleep 1
+  done
+  [[ -e "/dev/disk/by-id/google-${DEV}" ]] || die mount_readonly
+fi
+STAGE=mount_readonly
+priv mkdir -p "$MNT" && priv mount -o ro,noload "/dev/disk/by-id/google-${DEV}" "$MNT" >/dev/null 2>&1 || { MOUNTED=1; die mount_readonly; }
+MOUNTED=1
+
+STAGE=copy
+priv mkdir -p "$TMPD" || die copy; TMP_UP=1
+for d in postgres "${OWNER_DIRS[@]}"; do
+  [[ -d "$MNT/$d" ]] || die copy
+  priv cp -a -- "$MNT/$d" "$TMPD/$d" || die copy
+done
+
+STAGE=start_postgres
+priv "$DOCKER" network create --internal --label purpose=restore-drill "$NET" >/dev/null 2>&1 || { NET_UP=1; die start_postgres; }
+NET_UP=1
+priv "$DOCKER" run -d --name "$CTR" --network "$NET" --label purpose=restore-drill -e "POSTGRES_USER=${PROD_POSTGRES_USER}" \
+  -e "POSTGRES_DB=${PROD_POSTGRES_DB}" -v "${TMPD}/postgres:/var/lib/postgresql/data" "$PANTHEON_POSTGRES_IMAGE" >/dev/null 2>&1 \
+  || { CTR_UP=1; die start_postgres; }
+CTR_UP=1
+ready=0; for _ in $(seq 1 60); do
+  priv "$DOCKER" exec "$CTR" pg_isready -q -U "$PROD_POSTGRES_USER" -d "$PROD_POSTGRES_DB" >/dev/null 2>&1 && { ready=1; break; }; sleep "${PROD_DRILL_POLL_SECONDS:-2}"
+done
+[[ $ready -eq 1 ]] || die start_postgres
+
+STAGE=verify
+CATALOG_SQL="select table_schema||'.'||table_name||'.'||column_name||':'||data_type from information_schema.columns where table_schema not in ('pg_catalog','information_schema') order by 1"
+TABLES_SQL="select table_schema||'.'||table_name from information_schema.tables where table_type='BASE TABLE' and table_schema not in ('pg_catalog','information_schema') order by 1"
+pq() { priv "$DOCKER" exec -i "$1" sh -c 'psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' 2>/dev/null; }
+counts() { # $1 container -> "schema.table=count" lines
+  local t; while IFS= read -r t; do printf '%s=%s\n' "$t" "$(pq "$1" <<<"select count(*) from ${t%%.*}.\"${t#*.}\"")" || return 1; done < <(pq "$1" <<<"$TABLES_SQL")
+}
+LIVE="$(priv "$DOCKER" ps -q --filter label=com.docker.compose.service=postgres | head -1)"
+[[ -n "$LIVE" ]] || die verify
+R_CAT="$(pq "$CTR" <<<"$CATALOG_SQL" | sha256sum | cut -d' ' -f1)"; L_CAT="$(pq "$LIVE" <<<"$CATALOG_SQL" | sha256sum | cut -d' ' -f1)"
+R_CNT="$(counts "$CTR")" || die verify; L_CNT="$(counts "$LIVE")" || die verify
+mani() {
+  priv bash -o pipefail -c '
+    cd "$1" || exit 1; shift
+    for d in "$@"; do
+      [[ -d "$d" ]] || exit 1
+      find "$d" -type f -print0 || exit 1
+    done | sort -z | xargs -0 -r sha256sum | sha256sum | cut -d" " -f1
+  ' bash "$1" "${OWNER_DIRS[@]}"
+}
+M_SRC="$(mani "$MNT")" || die verify
+M_COPY="$(mani "$TMPD")" || die verify
+RTO=$(( $(date +%s) - T0 ))
+CHECKS="$(python3 -I - "$R_CAT" "$L_CAT" "$R_CNT" "$L_CNT" "$M_SRC" "$M_COPY" <<'PY'
+import json, sys
+rc, lc, rcnt, lcnt, ms, mc = sys.argv[1:]
+parse = lambda s: dict(l.rsplit("=", 1) for l in s.splitlines() if l)
+r, l = parse(rcnt), parse(lcnt)
+drift = {t: int(l[t]) - int(r[t]) for t in l if t in r and l[t] != r[t]}
+print(json.dumps({"catalog_hash_equal": rc == lc, "catalog_sha256": "sha256:" + rc, "tables_restored": len(r),
+  "tables_match_live": sorted(r) == sorted(l), "row_count_drift_vs_live": drift,
+  "owner_store_manifest_equal": ms == mc, "owner_store_manifest_sha256": "sha256:" + ms}, sort_keys=True))
+PY
+)" || die verify
+python3 -I -c 'import json,sys;c=json.loads(sys.argv[1]);sys.exit(0 if c["catalog_hash_equal"] and c["tables_match_live"] and c["owner_store_manifest_equal"] and c["tables_restored"]>0 else 1)' "$CHECKS" || die verify
+STATUS=ok; STAGE=done; code=0
+if (( RPO > PROD_RPO_SECONDS )) || (( RTO > PROD_RTO_SECONDS )); then STATUS=over_budget; STAGE=budget; code=2; fi
+exit "$code"
+)
+
+case "${1:-}" in
+  snapshot_schedule) shift; _snapshot_schedule "$@"; exit $? ;;
+  restore_drill) shift; _restore_drill "$@"; exit $? ;;
+esac
+
 STEP="${1:-}"; RELEASE_ID="${2:-}"
 [[ -n "$STEP" && -n "$RELEASE_ID" ]] || { echo '{"status":"error","error_code":"USAGE"}' >&2; exit 64; }
 shift 2
@@ -35,7 +265,14 @@ SUDO="${SUDO_BIN:-sudo}"
 CADDY_CONTAINER="${PROD_CADDY_CONTAINER:-pantheon-caddy}"
 SNAPSHOT_MAX_AGE="${PROD_SNAPSHOT_MAX_AGE_SECONDS:-3600}"
 
-fail() { printf '{"status":"error","step":"%s","error_code":"%s","message":"%s"}\n' "$STEP" "$1" "$2" >&2; exit 1; }
+fail() {
+  printf '{"status":"error","step":"%s","error_code":"%s","message":"%s"}\n' "$STEP" "$1" "$2" >&2
+  # Helpers run inside $(...) subshells: an `exit` there would only end the subshell and let the caller continue
+  # with an empty value. Terminate the whole controller (the TERM trap below maps it to exit 1).
+  [[ "${BASHPID:-$$}" == "$$" ]] || kill -TERM "$$" 2>/dev/null
+  exit 1
+}
+trap 'exit 1' TERM
 need() { local v; for v in "$@"; do [[ -n "${!v:-}" ]] || fail "MISSING_INPUT" "required env ${v} is missing"; done; }
 
 run_priv() {
@@ -271,7 +508,20 @@ production_schema_gate() {
   catalog="$(live_catalog)" || { GATE_REASON="production live catalog unreadable (database unreachable)"; return 1; }
   GATE_REASON="$(printf '%s' "$catalog" | python3 -I "$MIGRATION_HELPER" migration catalog "$RELEASE_MANIFEST_PATH" "$(migration_dir)" 2>&1)" || return 1
 }
-container_of() { compose ps -q "$1" 2>/dev/null | head -n1; }
+# compose_ps_ids <service...>: container ids for the services. A compose failure (e.g. unresolved ':?' release
+# variable, unknown service, daemon error) is a COMPOSE_ERROR carrying the compose error text — never an empty/zero result.
+compose_ps_ids() {
+  local out err rc msg
+  err="$(mktemp)"
+  out="$(compose "${CORE_PROFILES[@]}" ps -q "$@" 2>"$err")"; rc=$?
+  if (( rc != 0 )); then
+    msg="$(head -c 500 "$err" | tr '\n\r"\\' '    ')"; rm -f "$err"
+    fail COMPOSE_ERROR "container lookup for $* failed (rc=${rc}): ${msg}"
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
+container_of() { local o; o="$(compose_ps_ids "$1")" || return 1; printf '%s\n' "$o" | head -n1; }
 # mint_gate_token <port> <outfile>: viewer SERVICE token for the explicit production tenant, signed inside the BFF
 # container with its own secret/issuer/audience. Written 0600; the secret is never read or printed by this script.
 mint_gate_token() {
@@ -306,13 +556,14 @@ wait_until() { # wait_until <tries> <interval> <command...>
   for _ in $(seq 1 "$tries"); do "$@" && return 0; sleep "$interval"; done
   return 1
 }
-singleton_count() { compose ps -q lifecycle-projector 2>/dev/null | grep -c . || true; }
-worker_count() { compose ps -q $PRODUCT_WORKER_SERVICE 2>/dev/null | grep -c . || true; }
+singleton_count() { local o; o="$(compose_ps_ids lifecycle-projector)" || return 1; printf '%s\n' "$o" | grep -c . || true; }
+worker_count() { local o; o="$(compose_ps_ids $PRODUCT_WORKER_SERVICE)" || return 1; printf '%s\n' "$o" | grep -c . || true; }
 # Every singleton worker (Agora request worker, Paper fleet reconciler, Paper signal producer) is exactly one.
+container_count() { local o; o="$(compose_ps_ids "$1")" || return 1; printf '%s\n' "$o" | grep -c . || true; }
 workers_each_single() {
   local svc
   for svc in $PRODUCT_WORKER_SERVICE; do
-    [[ "$(compose ps -q "$svc" 2>/dev/null | grep -c . || true)" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
+    [[ "$(container_count "$svc")" == "1" ]] || { OWNER_REASON="singleton worker ${svc} count is not exactly 1"; return 1; }
   done
 }
 # Every product owner must run the exact exported digest (candidate or retained baseline); the Agora request worker
@@ -348,6 +599,75 @@ remove_product_owners() {  # [owner_key...] (default: every product owner)
     ids="$(run_priv "$DOCKER" ps -aq --filter "label=com.docker.compose.project=pantheon-production" --filter "label=com.docker.compose.service=${svc}")" || return 1
     [[ -z "$ids" ]] || run_priv "$DOCKER" rm -f $ids >/dev/null || return 1
   done
+}
+
+# Runtime-manager caller-credential check for the product workers that read their owner at startup. Runs INSIDE the
+# started container with that container's OWN PANTHEON_RUNTIME_MANAGER_TOKEN (never printed; only "<http-status> <error-code>").
+# Gates on credential acceptance only (HTTP 200) — never on Docker health/readiness, which also encode functional state.
+WORKER_CRED_PY='
+import json, os, re, sys, urllib.error, urllib.request
+tok = os.environ.get("PANTHEON_RUNTIME_MANAGER_TOKEN", "").strip()
+if not tok:
+    print("0 TOKEN_MISSING"); sys.exit(0)
+req = urllib.request.Request("http://runtime-manager:8080/api/runtime-fleet/desired-state?stage=paper",
+                             headers={"Authorization": "Bearer " + tok})
+code, body = 0, b""
+try:
+    with urllib.request.urlopen(req, timeout=10) as r:
+        code = r.status
+except urllib.error.HTTPError as e:
+    code = e.code
+    try: body = e.read(4096)
+    except Exception: body = b""
+except Exception:
+    print("0 UNREACHABLE"); sys.exit(0)
+err = "-"
+if code != 200:
+    try:
+        v = json.loads(body.decode("utf-8", "replace")).get("code")
+        err = re.sub(r"[^A-Za-z0-9_]", "", str(v))[:64] or "-"
+    except Exception:
+        err = "-"
+print(code, err)
+'
+worker_credential_check() {
+  local k svc c out code err tries i
+  for k in paper_fleet_reconciler paper_signal_producer; do
+    # Restored-baseline mode: a worker the retained baseline never had is absent by design (never invented).
+    [[ "${PROD_BASELINE_PRODUCT_OWNERS:-present}" != "absent" && " ${PROD_BASELINE_ABSENT_KEYS:-} " != *" $k "* ]] || continue
+    svc="$(svc_of "$k")"
+    c="$(container_of "$svc")"; [[ -n "$c" ]] || fail ACTIVATE "product worker ${svc} container not found for credential check"
+    tries="${PROD_WORKER_CRED_TRIES:-15}"; code=0; err="-"
+    for i in $(seq 1 "$tries"); do
+      out="$(run_priv "$DOCKER" exec "$c" python3 -c "$WORKER_CRED_PY" 2>/dev/null)" || out="0 EXEC_FAILED"
+      code="${out%% *}"; err="${out#* }"
+      [[ "$code" =~ ^[0-9]+$ ]] || { code=0; err="EXEC_FAILED"; }
+      err="${err//[^A-Za-z0-9_-]/}"
+      # Status 0 = owner not yet reachable (just started): bounded retry. Any HTTP status is final.
+      [[ "$code" == "0" ]] || break
+      (( i < tries )) && sleep "${PROD_WORKER_CRED_INTERVAL:-2}"
+    done
+    [[ "$code" == "200" ]] || fail ACTIVATE "product worker ${svc} runtime-manager credential rejected: HTTP ${code} ${err:--}"
+  done
+}
+# Reporting only (never a gate): Docker health of every product worker after a bounded (<= 60 s) wait for "starting".
+worker_health_json() {
+  local wait="${PROD_WORKER_HEALTH_WAIT_SECONDS:-60}" waited=0 k svc c h pending rows
+  [[ "$wait" =~ ^[0-9]+$ ]] || wait=60
+  (( wait > 60 )) && wait=60
+  while :; do
+    pending=0; rows=""
+    for k in $PRODUCT_WORKER_KEY; do
+      svc="$(svc_of "$k")"; c="$(container_of "$svc")"
+      h="$(run_priv "$DOCKER" inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null | tr -d '[:space:]')"
+      h="${h//[^A-Za-z0-9_-]/}"; [[ -n "$h" ]] || h="unknown"
+      [[ "$h" == "starting" ]] && pending=1
+      rows+="${svc}=${h} "
+    done
+    (( pending == 0 || waited >= wait )) && break
+    sleep 2; waited=$((waited + 2))
+  done
+  python3 -c 'import json,sys;print(json.dumps({"status":"ok","product_worker_health":dict(p.split("=",1) for p in sys.argv[1:]),"product_worker_health_is_gate":False},sort_keys=True))' $rows
 }
 
 verify_runtime_config_internal() {
@@ -658,6 +978,8 @@ PY
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "singleton image '${simg}' != candidate '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    worker_health_json
     ;;
 
   resume_baseline_singletons)
@@ -674,11 +996,27 @@ PY
       compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail ACTIVATE "could not restore baseline core/product owner closure"
       compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail ACTIVATE "could not start baseline singleton owners"
     fi
+    if b_color="$(color_for_port "${PROD_ACTIVE_PORT:-}" 2>/dev/null)"; then
+      compose --profile "$b_color" up -d --no-build "operator-bff-${b_color}" || fail ACTIVATE "could not restore baseline operator-bff-${b_color}"
+    fi
     [[ "$(singleton_count)" == "1" ]] || fail ACTIVATE "singleton owner count is $(singleton_count), expected exactly 1"
     verify_product_owner_images || fail ACTIVATE "${OWNER_REASON}"
     sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ACTIVATE "baseline singleton container not found"
     simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ACTIVATE "baseline singleton inspect failed"
     [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ACTIVATE "restored singleton image '${simg}' != baseline '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    ;;
+
+  verify_rollback)
+    # Post-rollback proof, same checks the switch runs after activation, against the RESTORED baseline only:
+    # every product owner / singleton at the baseline digest, and the in-container runtime-manager credential check.
+    # Public FE /deployment.json + BFF /bff/version + /bff/readyz are already proven by baseline_health (not repeated).
+    baseline_env
+    verify_product_owner_images || fail ROLLBACK_VERIFY "${OWNER_REASON}"
+    sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail ROLLBACK_VERIFY "baseline singleton container not found"
+    simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail ROLLBACK_VERIFY "baseline singleton inspect failed"
+    [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail ROLLBACK_VERIFY "singleton image '${simg}' != baseline '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    printf '{"status":"rollback_verified","release_id":"%s"}\n' "$RELEASE_ID"
     ;;
 
   reload_proxy)
@@ -691,7 +1029,66 @@ PY
     ;;
 
   post_identity)
+    # Compose interpolation requires the candidate release keys (':?'); the bootstrap compose.env holds none of them.
+    release_env
     verify_public_fe_bff_pair "${PROD_TARGET_PORT:-}" "" "" "" "" "" ""
+    ;;
+
+  restore_active_release)
+    # Fresh-boot VM recovery: restore the retained active release from PROD_DATA_MOUNT without re-running a release switch.
+    run_priv "$MOUNTPOINT" -q "$PROD_DATA_MOUNT" || fail DATA_DISK_NOT_MOUNTED "${PROD_DATA_MOUNT} is not a mounted data disk"
+    for _d in secrets manifests state fe proxy config; do
+      if [[ ! -L "${PROD_ROOT}/${_d}" && ! -e "${PROD_ROOT}/${_d}" && -d "${PROD_DATA_MOUNT}/${_d}" ]]; then
+        run_priv mkdir -p "$PROD_ROOT"
+        run_priv ln -sfn "${PROD_DATA_MOUNT}/${_d}" "${PROD_ROOT}/${_d}"
+      fi
+    done
+    [[ -s "${PROD_ROOT}/state/active_manifest.json" && -s "${PROD_ROOT}/state/baseline.json" ]] \
+      || fail RESTORE_STATE_MISSING "active_manifest.json or baseline.json missing on data disk"
+    active_port="$(python3 - "${PROD_ROOT}/state/baseline.json" "${PROD_ROOT}/state/active_manifest.json" "$RELEASE_ID" <<'PY'
+import json, sys
+base = json.load(open(sys.argv[1], encoding="utf-8"))
+man = json.load(open(sys.argv[2], encoding="utf-8"))
+want = sys.argv[3]
+if base.get("release_id") != want or man.get("release_id") != want:
+    raise SystemExit(1)
+print(int(base["active_port"]))
+PY
+    )" || fail RESTORE_RELEASE_MISMATCH "retained baseline/active_manifest release_id does not match ${RELEASE_ID}"
+    color="$(color_for_port "$active_port")" || fail BAD_PORT "active_port ${active_port} is neither blue nor green"
+    RELEASE_MANIFEST_PATH="${PROD_ROOT}/state/active_manifest.json"
+    if [[ -f "${PROD_ROOT}/state/journal/${RELEASE_ID}/baseline_release.json" ]] && [[ ! -f "${PROD_ROOT}/state/journal/${RELEASE_ID}/bootstrap" ]]; then
+      baseline_env
+      for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
+                 "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
+                 "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
+        run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 \
+          || run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 \
+          || fail IMAGE_PULL_FAILED "failed to pull baseline image ${img}"
+      done
+    fi
+    release_env
+    for img in "$PANTHEON_OPERATOR_BFF_IMAGE" "$PANTHEON_RUNTIME_MANAGER_IMAGE" \
+               "$PANTHEON_GOVERNANCE_IMAGE" "$PANTHEON_DEPLOYMENT_IMAGE" \
+               "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" $(owner_images); do
+      run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 \
+        || run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 \
+        || fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img}"
+    done
+    compose --profile stateful up -d --no-build || fail RESTORE_STATEFUL "compose failed to start stateful profile"
+    compose "${CORE_PROFILES[@]}" up -d --no-build runtime-manager governance deployment $PRODUCT_CORE_SERVICES || fail RESTORE_OWNERS "could not start core/product owner closure"
+    compose "${CORE_PROFILES[@]}" up -d --no-build --no-recreate lifecycle-projector $PRODUCT_WORKER_SERVICE || fail RESTORE_SINGLETONS "could not start singleton owners"
+    compose --profile "$color" up -d --no-build "operator-bff-${color}" || fail RESTORE_BFF "compose failed to start operator-bff-${color}"
+    run_priv "$DOCKER" exec "$CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+    [[ "$(singleton_count)" == "1" ]] || fail RESTORE_SINGLETONS "singleton owner count is $(singleton_count), expected 1"
+    verify_product_owner_images || fail RESTORE_OWNERS "${OWNER_REASON}"
+    sc="$(container_of lifecycle-projector)"; [[ -n "$sc" ]] || fail RESTORE_SINGLETONS "singleton container not found"
+    simg="$(run_priv "$DOCKER" inspect -f '{{.Config.Image}}' "$sc" 2>/dev/null | tr -d '[:space:]')" || fail RESTORE_SINGLETONS "singleton inspect failed"
+    [[ "$simg" == "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE" ]] || fail RESTORE_SINGLETONS "singleton image '${simg}' != '${PANTHEON_LIFECYCLE_PROJECTOR_IMAGE}'"
+    worker_credential_check
+    wait_until "${PROD_BASELINE_READY_TRIES:-30}" "${PROD_BASELINE_READY_INTERVAL:-2}" require_ready "$active_port" || fail RESTORE_UNHEALTHY "restored release not ready on ${active_port}"
+    verify_runtime_config_internal "$RELEASE_ID"
+    verify_public_fe_bff_pair "$active_port" "" "$PANTHEON_OPERATOR_BFF_IMAGE" "$RELEASE_ID" "$PANTHEON_FRONTEND_COMMIT" "$PANTHEON_BACKEND_COMMIT" "$PANTHEON_LIFECYCLE_PROJECTOR_IMAGE"
     ;;
 
   *) fail UNKNOWN_STEP "unknown step '${STEP}'" ;;

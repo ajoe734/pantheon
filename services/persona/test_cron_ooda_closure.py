@@ -10,6 +10,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.persona.cron_ooda_closure import (  # noqa: E402
+    compact_ooda_packet_store,
+    load_packet_index,
     CronOodaClosureError,
     append_ooda_packet,
     close_persona_cron_dispatch,
@@ -79,6 +81,13 @@ def _erroring_turn(persona_id: str, prompt: str) -> PersonaOodaTurn:
 
 
 class CloseCronDispatchTests(unittest.TestCase):
+    def test_daily_cycle_cannot_bypass_controller_claims_via_legacy_closure(self):
+        runtime = FakeGatewayRuntime()
+        with self.assertRaisesRegex(CronOodaClosureError, "durable claims"):
+            close_persona_cron_dispatch("persona-tw-equity", "pantheon.persona.daily-cycle",
+                                        job_id="job-1", runtime=runtime)
+        self.assertEqual(runtime.calls, [])
+
     def test_completed_turn_closes_packet_with_real_fingerprint(self):
         runtime = FakeGatewayRuntime()
         with _tmp_store() as store_path:
@@ -108,6 +117,9 @@ class CloseCronDispatchTests(unittest.TestCase):
         self.assertEqual(result.packet["producer"]["cron_run_id"], "run-abc-1")
         self.assertEqual(result.packet["producer"]["fabricated"], False)
         self.assertIn("cron_ooda_turn", result.packet)
+        # The turn reference is evidence, never a regime record.
+        self.assertIsNone(result.packet["orient"]["regime_state_ref"])
+        self.assertTrue(any(r.startswith("cron-ooda-turn://") for r in result.packet["orient"]["evidence_bundle_refs"]))
         self.assertEqual([m for m, _ in runtime.calls][:2], ["cron.run", "cron.runs"])
 
     def test_erroring_turn_stops_honestly_at_observing(self):
@@ -210,6 +222,91 @@ class CloseCronDispatchTests(unittest.TestCase):
         self.assertEqual(found, "job-abc")
         missing = find_persona_cron_job(runtime, "persona-nope", "pantheon.deploy")
         self.assertIsNone(missing)
+
+
+def _cycle_packet(packet_id, job="job-1", at=1000, series=11000):
+    rows = [{"schema_version": "quarter_equity.v1", "status": "known", "equity": float(i)} for i in range(series)]
+    return {"packet_id": packet_id, "status": "closed", "updated_at": "2026-11-17T10:00:00Z",
+            "producer": {"cron_job_id": job, "cron_run_at_ms": at},
+            "persona_cycle": {"phase": "terminal", "observe_bundle": {
+                "pool": {"digest": "d"},
+                "telemetry": [{"runtime_id": "rt-1", "pnl": 1.5, "quarter_equity_observations": rows}]}}}
+
+
+class BoundedPacketStoreTests(unittest.TestCase):
+    def test_eleven_thousand_entry_series_persists_under_bound(self):
+        with _tmp_dir() as d:
+            path = d / "ooda_packets.json"
+            packet = _cycle_packet("p1")
+            append_ooda_packet(path, packet)
+            self.assertLess(path.stat().st_size, 5_000)
+            row = json.loads(path.read_text())[0]["payload"]["persona_cycle"]["observe_bundle"]["telemetry"][0]
+            self.assertNotIn("quarter_equity_observations", row)
+            self.assertEqual(row["pnl"], 1.5)
+            ref = row["quarter_equity_observations_elided"]
+            self.assertEqual(ref["length"], 11000)
+            self.assertEqual(ref["source_ref"], "telemetry://runtime-summaries/rt-1")
+            self.assertEqual(len(ref["sha256"]), 64)
+            # the live bundle handed to the turn is unchanged
+            self.assertEqual(len(packet["persona_cycle"]["observe_bundle"]["telemetry"][0]["quarter_equity_observations"]), 11000)
+
+    def test_pruning_keeps_watermark_so_pruned_run_is_not_replayed(self):
+        import os
+        from datetime import datetime, timedelta, timezone
+        with _tmp_dir() as d:
+            path = d / "ooda_packets.json"
+            append_ooda_packet(path, _cycle_packet("old", at=1000, series=3))
+            records = json.loads(path.read_text())
+            records[0]["recorded_at"] = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+            path.write_text(json.dumps(records))
+            append_ooda_packet(path, _cycle_packet("new", at=2000, series=3))
+            ids = [r["packet_id"] for r in json.loads(path.read_text())]
+            self.assertEqual(ids, ["new"])
+            index = load_packet_index(path)
+            self.assertEqual(index["identities"], {"new"})
+            self.assertEqual(index["watermarks"], {"job-1": 1000})
+            # later writes never lower the watermark
+            append_ooda_packet(path, _cycle_packet("newer", at=3000, series=3))
+            self.assertEqual(load_packet_index(path)["watermarks"], {"job-1": 1000})
+
+    def test_max_records_cap(self):
+        import os
+        os.environ["PANTHEON_OODA_PACKET_MAX_RECORDS"] = "2"
+        try:
+            with _tmp_dir() as d:
+                path = d / "ooda_packets.json"
+                for i in range(4):
+                    append_ooda_packet(path, _cycle_packet(f"p{i}", at=i + 1, series=1))
+                self.assertEqual([r["packet_id"] for r in json.loads(path.read_text())], ["p2", "p3"])
+                self.assertEqual(load_packet_index(path)["watermarks"], {"job-1": 2})
+        finally:
+            os.environ.pop("PANTHEON_OODA_PACKET_MAX_RECORDS", None)
+
+    def test_legacy_file_compaction_keeps_identities_and_old_reader_parses(self):
+        with _tmp_dir() as d:
+            path = d / "ooda_packets.json"
+            legacy = [{"schema_version": "ooda_loop_packet_record.v1", "record_type": "packet_snapshot",
+                       "record_id": f"r{i}", "packet_id": f"p{i}", "recorded_at": "2999-01-01T00:00:00Z",
+                       "payload": _cycle_packet(f"p{i}")} for i in range(3)]
+            path.write_text(json.dumps(legacy))
+            before = path.stat().st_size
+            stats = compact_ooda_packet_store(path)
+            self.assertLess(stats["bytes_after"], before // 50)
+            self.assertEqual(load_packet_index(path)["identities"], {"p0", "p1", "p2"})
+            # previous release reader: plain JSON array of envelopes, keyed by packet_id
+            rows = json.loads(path.read_text())
+            old = {r["packet_id"]: r["payload"] for r in rows if r.get("record_type") == "packet_snapshot"}
+            self.assertEqual(set(old), {"p0", "p1", "p2"})
+            self.assertEqual(old["p1"]["status"], "closed")
+
+    def test_index_rebuilt_when_another_writer_changed_the_file(self):
+        with _tmp_dir() as d:
+            path = d / "ooda_packets.json"
+            append_ooda_packet(path, _cycle_packet("p1", series=1))
+            rows = json.loads(path.read_text())
+            rows.append({**rows[0], "packet_id": "p9", "payload": _cycle_packet("p9", series=1)})
+            path.write_text(json.dumps(rows))  # old release appended without touching the index
+            self.assertEqual(load_packet_index(path)["identities"], {"p1", "p9"})
 
 
 import contextlib

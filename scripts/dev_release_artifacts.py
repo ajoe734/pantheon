@@ -9,6 +9,7 @@ is provided here. Docker diagnostics are not copied into public evidence.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,9 @@ STACK_SCHEMA = "pantheon.dev-stack-image-baseline.v1"
 STACK_ENV_KEYS = ("PANTHEON_TENANT_ID", "GIT_SHA")
 SERVICE_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}")
 STACK_MAX_SERVICES = 128
+# Whole-stack rollback retains these images and the Compose named volume.
+# Candidate-only containers are stopped, never removed with their volumes.
+MEMORY_INDEX_SERVICES = frozenset({"hindsight", "memory-index-postgres"})
 # Readback budget: recreated services start together, the slowest (source-ingest,
 # ~110 s) must fit with room for a second attempt. Far inside the 60 minute step.
 STACK_READBACK_SECONDS = 900
@@ -57,6 +61,7 @@ STACK_FORMAT = (
     '{"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
     '"oneoff":{{json (index .Config.Labels "com.docker.compose.oneoff")}},'
     '"image_id":{{json .Image}},"status":{{json .State.Status}},"exit_code":{{json .State.ExitCode}},'
+    '"started_at":{{json .State.StartedAt}},'
     '"health_test":{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{else}}null{{end}},'
     '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}}'
 )
@@ -93,7 +98,15 @@ PAPER_SERVICE = "paper-signal-producer"
 PAPER_ENV_KEYS = ("PANTHEON_PAPER_EXPRESSION_LAYER", "PANTHEON_CAPITAL_API_URL",
                   "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE")
 PAPER_ENV_FORMAT = _env_format(PAPER_ENV_KEYS)
+# The existing dev paper principal issuer fails closed when its authorization flag is
+# not the exact string "true"; Compose defaults it to false for a restoring caller. Record
+# only these three nonsecret names (never the JWT secret/issuer/audience) and restore them
+# verbatim: true stays true, false stays false, absent stays absent. Nothing is inferred.
+ISSUER_SERVICE = "dev-paper-principal-issuer"
+ISSUER_ENV_KEYS = ("PANTHEON_ENV", "PANTHEON_DEV_BFF_TENANT_ID", "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED")
+ISSUER_ENV_FORMAT = _env_format(ISSUER_ENV_KEYS)
 CONTROL_POSTURE = {CONTROL_SERVICE: (CONTROL_ENV_KEYS, CONTROL_ENV_FORMAT),
+                   ISSUER_SERVICE: (ISSUER_ENV_KEYS, ISSUER_ENV_FORMAT),
                    API_SERVICE: (API_ENV_KEYS, API_ENV_FORMAT),
                    PAPER_SERVICE: (PAPER_ENV_KEYS, PAPER_ENV_FORMAT)}
 RESTART_FORMAT = "{{json .HostConfig.RestartPolicy.Name}}"
@@ -118,6 +131,20 @@ class StackImageMissing(StackError):
 
 class StackMixedError(StackError):
     pass
+
+
+SOURCE_FAILURE_REASONS = frozenset({"point_schema", "checksum", "lineage", "snapshot_identity",
+                                    "schema", "journal_changed", "journal_too_large", "reader_rejected",
+                                    "unavailable", "lock_wait_timeout", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"})
+
+
+class SourceCompatibilityError(StackError):
+    def __init__(self, reason, line=None):
+        self.reason = reason if reason in SOURCE_FAILURE_REASONS else "reader_rejected"
+        self.line = line if type(line) is int and 0 < line < 100000000 else None
+        super().__init__("Source codec incompatible: " + self.reason + (
+            f" at journal line {self.line}" if self.line else ""), [API_SERVICE])
 
 
 FAILURE_CODE = "DEV_ARTIFACT_OPERATION_FAILED"
@@ -164,9 +191,17 @@ def failure_record(error: Exception, stage: str) -> dict:
         kind = "contract"
     elif isinstance(cause, (ValueError, TypeError, KeyError, AttributeError)):
         kind = "invalid-data"
-    return {"status": "error", "error_code": FAILURE_CODE,
+    record = {"status": "error", "error_code": FAILURE_CODE,
             "failure_stage": stage if isinstance(stage, str) and stage in FAILURE_STAGES else "initialize",
             "failure_kind": kind, "failure_location": location, "exit_code": code}
+    docker_detail = docker_failure_detail(cause)
+    if docker_detail:
+        record["docker"] = docker_detail
+    if isinstance(error, SourceCompatibilityError):
+        record["source_compatibility"] = {"reason": error.reason, "line": error.line}
+    if isinstance(error, StackError) and error.services:
+        record["services"] = [name for name in error.services if SERVICE_NAME.fullmatch(name)]
+    return record
 
 
 def remote_failure_record(raw: bytes) -> dict | None:
@@ -178,9 +213,25 @@ def remote_failure_record(raw: bytes) -> dict | None:
             value = _json(line)
         except (ArtifactError, ValueError, TypeError, RecursionError):
             continue
-        if not isinstance(value, dict) or set(value) != {
+        if not isinstance(value, dict) or set(value) - {"source_compatibility", "services", "docker"} != {
             "status", "error_code", "failure_stage", "failure_kind", "failure_location", "exit_code"
         }:
+            continue
+        if "source_compatibility" in value:
+            detail = value["source_compatibility"]
+            if not isinstance(detail, dict) or set(detail) != {"reason", "line"} or \
+                    not isinstance(detail["reason"], str) or detail["reason"] not in SOURCE_FAILURE_REASONS or \
+                    (detail["line"] is not None and (type(detail["line"]) is not int or not 0 < detail["line"] < 100000000)):
+                continue
+        if "docker" in value:
+            detail = value["docker"]
+            if not isinstance(detail, dict) or set(detail) != {"operation", "image", "stderr"} or \
+                    not isinstance(detail["operation"], str) or len(detail["operation"]) > 64 or \
+                    not (detail["image"] is None or (isinstance(detail["image"], str) and len(detail["image"]) <= 160)) or \
+                    not isinstance(detail["stderr"], str) or len(detail["stderr"]) > DOCKER_STDERR_LIMIT:
+                continue
+        if "services" in value and (not isinstance(value["services"], list) or len(value["services"]) > 64 or
+                                    not all(isinstance(n, str) and SERVICE_NAME.fullmatch(n) for n in value["services"])):
             continue
         stage, kind, location = (value[key] for key in ("failure_stage", "failure_kind", "failure_location"))
         if (value["status"] == "error" and value["error_code"] == FAILURE_CODE
@@ -207,6 +258,52 @@ class Docker:
         except (OSError, subprocess.SubprocessError) as exc:
             raise ArtifactError("Docker artifact operation failed") from exc
         return result.stdout
+
+
+DOCKER_STDERR_LIMIT = 4096
+_DOCKER_VERBS = frozenset({"image", "compose", "inspect", "tag", "stop", "start", "rm", "ps", "load"})
+_DOCKER_SUBVERBS = frozenset({"load", "inspect", "up", "config"})
+_DOCKER_REF = re.compile(r"(?:sha256:[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9_.\-/]{0,127}(?::[A-Za-z0-9_.\-]{1,128})?(?:@sha256:[0-9a-f]{64})?)")
+_SECRET_ASSIGN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=\S+")
+_SECRET_TOKEN = re.compile(r"(?i)\b(?:bearer|basic)\s+\S+|\b(?:gh[pousr]_|github_pat_|sk-|xox[a-z]-|AKIA)[A-Za-z0-9_\-]{8,}")
+_LONG_BLOB = re.compile(r"(?<![0-9a-f:])[A-Za-z0-9+/_\-]{40,}={0,2}")
+
+
+def redact_docker_stderr(raw, limit: int = DOCKER_STDERR_LIMIT) -> str:
+    """Bounded, redacted Docker CLI stderr: no NAME=value, tokens or long blobs."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    text = "".join(c if c == "\n" or c == "\t" or c.isprintable() else "?" for c in raw[-limit * 4:])
+    text = _SECRET_TOKEN.sub("<redacted>", text)
+    text = _SECRET_ASSIGN.sub(lambda m: m.group(0).split("=", 1)[0] + "=<redacted>", text)
+    text = _LONG_BLOB.sub("<redacted>", text)
+    text = text.strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def docker_failure_detail(cause) -> dict | None:
+    """Operation, image reference and stderr excerpt of a failed Docker CLI call."""
+    if not isinstance(cause, subprocess.CalledProcessError) or not isinstance(cause.cmd, (list, tuple)):
+        return None
+    args = [x for x in cause.cmd[1:] if isinstance(x, str)]
+    if args[:1] == ["--host"]:
+        args = args[2:]
+    words = [x for x in args if not x.startswith("-")][:6]
+    operation = [w for w in words[:1] if w in _DOCKER_VERBS]
+    operation += [w for w in words[1:] if w in _DOCKER_SUBVERBS][:1]
+    image = None
+    for word in args:
+        if _DOCKER_REF.fullmatch(word) and (word.startswith("sha256:") or ":" in word or "@" in word):
+            image = word
+            break
+    if image is None and "--input" in args:
+        i = args.index("--input")
+        if i + 1 < len(args):
+            image = Path(args[i + 1]).name[:128]
+    return {"operation": " ".join(operation) or "unknown", "image": image,
+            "stderr": redact_docker_stderr(getattr(cause, "stderr", None))}
 
 
 def _match(value, pattern, label):
@@ -311,8 +408,19 @@ def _document_bytes(path: Path) -> bytes:
 def _current(docker: Docker, service: str, *, require_healthy: bool = True) -> dict:
     ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon",
                       "--filter", f"label=com.docker.compose.service={service}").split()
-    if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{12,64}", ids[0]):
-        raise ArtifactError(f"{service}: expected exactly one Compose container")
+    if len(ids) > 1 and all(CONTAINER_ID.fullmatch(i) for i in ids):
+        rows = {service: []}
+        for container_id in ids:
+            row = _json(docker.call("inspect", "--format", STACK_FORMAT, container_id))
+            if isinstance(row, dict) and row.get("oneoff") != "True":
+                rows[service].append({**row, "container_id": container_id})
+        try:
+            _drop_never_started(docker, rows)
+        except KeyError:
+            pass
+        ids = [r["container_id"] for r in rows[service]]
+    if len(ids) != 1 or not CONTAINER_ID.fullmatch(ids[0]):
+        raise StackError(f"{service}: expected exactly one Compose container", [service])
     row = _json(docker.call("inspect", "--format", CONTAINER_FORMAT, ids[0]))
     _keys(row, ("image_id", "status", "health"), "container")
     _match(row["image_id"], IMAGE, "container image ID")
@@ -430,6 +538,39 @@ def validate_images(raw: bytes, *, expected_sha256: str, expected_source_sha: st
     return bundle
 
 
+NEVER_STARTED = "0001-01-01T00:00:00Z"
+CONTAINER_ID = re.compile(r"[0-9a-f]{12,64}")
+
+
+def _never_started(row: dict) -> bool:
+    return row["status"] == "created" and row.get("started_at") == NEVER_STARTED
+
+
+def _settled(row: dict) -> bool:
+    return row["status"] == "running" or (
+        row["status"] == "exited" and row["exit_code"] == 0 and not _has_healthcheck(row))
+
+
+def _drop_never_started(docker: Docker, rows: dict[str, list[dict]], check_lease=None) -> list[dict]:
+    """Remove interrupted-recreate leftovers: a container that was created but
+    never started, while the same service has exactly one other container that
+    is running or a completed one-shot. Anything with a start time is untouched,
+    and a never-started container that is alone in its service is kept."""
+    removed = []
+    for service, containers in sorted(rows.items()):
+        fresh = [r for r in containers if _never_started(r)]
+        others = [r for r in containers if not _never_started(r)]
+        if not fresh or len(others) != 1 or not _settled(others[0]):
+            continue
+        for row in fresh:
+            if check_lease is not None:
+                check_lease()
+            docker.call("rm", "--force", row["container_id"])
+            removed.append({"service": service, "container_id": row["container_id"]})
+        rows[service] = others
+    return removed
+
+
 def _stack_rows(docker: Docker) -> dict[str, list[dict]]:
     """Every non-one-off Compose container of the project, by service."""
     ids = docker.call("ps", "--all", "--quiet", "--filter", "label=com.docker.compose.project=pantheon").split()
@@ -437,7 +578,9 @@ def _stack_rows(docker: Docker) -> dict[str, list[dict]]:
     for container_id in ids:
         _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "container ID")
         row = _json(docker.call("inspect", "--format", STACK_FORMAT, container_id))
-        _keys(row, ("service", "oneoff", "image_id", "status", "exit_code", "health_test", "health"), "stack container")
+        # started_at is optional on input: absent means "treat as started" (never removable).
+        _keys({k: v for k, v in row.items() if k != "started_at"},
+              ("service", "oneoff", "image_id", "status", "exit_code", "health_test", "health"), "stack container")
         if row["oneoff"] == "True":
             continue
         _match(row["service"], SERVICE_NAME, "Compose service name")
@@ -476,6 +619,195 @@ def _protect_tag(service: str, image_id: str) -> str:
     return f"pantheon-protect/{service}:{image_id.removeprefix('sha256:')[:12]}"
 
 
+# Source alone owns this journal. The probe imports the codec in the exact
+# immutable image, never main/runtime (which would initialize product owners).
+# No live rows or exception text leave the isolated reader. The only writer
+# mode creates synthetic protocol witnesses in its private tmpfs, without a
+# Source volume, credentials, provider connection or application entrypoint.
+SOURCE_PATH_KEYS = ("SOURCE_INGEST_DATA_DIR", "SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH")
+SOURCE_PATH_FORMAT = _env_format(SOURCE_PATH_KEYS)
+SOURCE_SAMPLE_NAMES = frozenset({"official_daily", "collector_close", "close_reconciliation", *(
+    name + suffix for name in ("tw_price_1m", "tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m")
+    for suffix in ("", "_withdrawal"))})
+# Journal size bound, enforced identically by the probe, qualify_source_reader and
+# baseline proof validation. 4 GiB: the probe streams, so memory does not scale with it.
+# Baselines whose journal is under 256 MiB stay readable by the previous script.
+SOURCE_JOURNAL_MAX_BYTES = 4 * 1024 * 1024 * 1024
+SOURCE_JOURNAL_MAX_LINE_BYTES = 16 * 1024 * 1024
+# The Source appends under an exclusive lock and re-reads the file each time, so a
+# shared lock is briefly unavailable. Wait this long (inside the 300 s docker bound).
+SOURCE_JOURNAL_LOCK_WAIT_SECONDS = 120
+SOURCE_PROBE = r'''
+import base64, fcntl, hashlib, json, os, re, sys, time
+from pathlib import Path
+from services.source_ingestion import requirement_state as m
+mode, arg = sys.argv[1:3]
+codec = hashlib.sha256(Path(m.__file__).read_bytes()).hexdigest()
+def projection(lines):
+    values = m._market_snapshots_from_lines(lines, path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest()
+try:
+    if mode == "codec":
+        result = {}
+    elif mode == "writer":
+        samples = m.market_snapshot_writer_samples()
+        result = {"samples": samples, "projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "samples":
+        samples = json.loads(base64.b64decode(arg, validate=True))
+        result = {"projections": {k: projection(v.splitlines()) for k,v in samples.items()}}
+    elif mode == "journal":
+        path = Path(arg)
+        # Missing state is not an empty journal proof. The owner must identify
+        # an existing file; do not create directories, lock files or projections.
+        with path.open("rb") as f:
+            deadline = time.monotonic() + __LOCK_WAIT__
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("journal lock wait timed out") from None
+                    time.sleep(0.05)
+            before = os.fstat(f.fileno())
+            if before.st_size > __MAX_BYTES__:
+                raise ValueError("journal exceeds bounded qualification")
+            digest_obj, size = hashlib.sha256(), [0]
+            def stream_lines():
+                while True:
+                    line = f.readline(__MAX_LINE__ + 1)
+                    if not line:
+                        return
+                    if len(line) > __MAX_LINE__:
+                        raise ValueError("journal line too long")
+                    digest_obj.update(line)
+                    size[0] += len(line)
+                    # Same line boundaries as bytes.decode().splitlines(): a split
+                    # never falls inside a UTF-8 sequence, so decode per segment.
+                    yield from line.decode("utf-8").splitlines()
+            digest = projection(stream_lines())
+            after = os.fstat(f.fileno())
+            if (before.st_ino,before.st_size,before.st_mtime_ns) != (after.st_ino,after.st_size,after.st_mtime_ns) or size[0] != after.st_size:
+                raise ValueError("journal changed")
+        result = {"journal_sha256": digest_obj.hexdigest(), "journal_size": size[0], "projection_sha256": digest}
+    else:
+        raise ValueError("unknown probe mode")
+    print(json.dumps({"ok": True, "codec_sha256": codec, **result}, sort_keys=True))
+except Exception as error:
+    message = str(error)
+    reason = "probe_killed" if isinstance(error, MemoryError) else next((code for text,code in (
+        ("point schema", "point_schema"), ("checksum", "checksum"), ("lineage", "lineage"),
+        ("id does not match", "snapshot_identity"), ("schema", "schema"),
+        ("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),
+        ("journal exceeds", "journal_too_large"), ("journal changed", "journal_changed")) if text in message), "reader_rejected")
+    line = re.search(r"journal:(\d+)", message)
+    print(json.dumps({"ok": False, "codec_sha256": codec, "reason": reason,
+                      "line": int(line[1]) if line else None}))
+'''.replace("__MAX_BYTES__", str(SOURCE_JOURNAL_MAX_BYTES)).replace("__MAX_LINE__", str(SOURCE_JOURNAL_MAX_LINE_BYTES)).replace(
+    "__LOCK_WAIT__", str(SOURCE_JOURNAL_LOCK_WAIT_SECONDS))
+
+
+def source_probe(*, docker, image_id, mode, argument="", container_id=None, check_lease):
+    _match(image_id, IMAGE, "Source probe image")
+    # Raised from 512m to 2048m so older retained baseline images do not OOM on 200MB-450MB journals.
+    command = ["run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+               "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "2048m",
+               "--cpus", "1", "--pids-limit", "32", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+               "--env", "PYTHONDONTWRITEBYTECODE=1"]
+    if container_id is not None:
+        _match(container_id, re.compile(r"[0-9a-f]{12,64}"), "Source volume owner")
+        command.extend(("--volumes-from", container_id + ":ro"))
+    if mode not in ("codec", "journal", "writer", "samples") or (mode == "journal") != (container_id is not None):
+        raise ArtifactError("invalid Source probe scope")
+    check_lease()
+    try:
+        raw = docker.call(*command, "--entrypoint", "python3", image_id, "-c", SOURCE_PROBE, mode, argument)
+        if len(raw) > 120000:
+            raise ArtifactError("Source probe output exceeds bound")
+        result = _json(raw.encode()) if raw.strip() else None
+    except ArtifactError as error:
+        cause = error.__cause__
+        if isinstance(cause, subprocess.TimeoutExpired):
+            raise SourceCompatibilityError("probe_timeout") from None
+        if isinstance(cause, subprocess.CalledProcessError):
+            # Container killed (e.g. out of memory, 137) or crashed without a result line.
+            raise SourceCompatibilityError("probe_killed" if cause.returncode in (137, -9, 139, -11) else "unavailable") from None
+        raise SourceCompatibilityError("unavailable") from None
+    if result is None:
+        raise SourceCompatibilityError("probe_no_output")
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        reason = result.get("reason") if isinstance(result, dict) else None
+        if reason not in SOURCE_FAILURE_REASONS - {"reader_rejected", "unavailable", "probe_timeout",
+                                                   "probe_no_output"}:
+            reason = "reader_rejected"
+        line = result.get("line") if isinstance(result, dict) else None
+        raise SourceCompatibilityError(reason, line)
+    _match(result.get("codec_sha256"), DIGEST, "Source codec digest")
+    check_lease()
+    return result
+
+
+def qualify_source_reader(*, docker, image_id, check_lease):
+    rows = _stack_rows(docker).get(API_SERVICE, [])
+    if len(rows) != 1:
+        raise StackError("Source journal requires exactly one existing owner", [API_SERVICE])
+    owner = rows[0]
+    env = _stack_env(docker, owner["container_id"], SOURCE_PATH_KEYS, SOURCE_PATH_FORMAT)
+    path = env["SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH"] or str(
+        Path(env["SOURCE_INGEST_DATA_DIR"] or "/tmp/pantheon/source-ingest") / "latest_market_snapshots.jsonl")
+    if not Path(path).is_absolute() or ".." in Path(path).parts or any(c in path for c in "\r\n\0"):
+        raise StackError("Source journal path is invalid", [API_SERVICE])
+    result = source_probe(docker=docker, image_id=image_id, mode="journal", argument=path,
+                          container_id=owner["container_id"], check_lease=check_lease)
+    for key in ("journal_sha256", "projection_sha256"):
+        _match(result.get(key), DIGEST, "Source " + key)
+    if type(result.get("journal_size")) is not int or not 0 <= result["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
+        raise SourceCompatibilityError("journal_too_large")
+    if _stack_rows(docker).get(API_SERVICE) != rows:
+        raise StackError("Source owner changed during qualification", [API_SERVICE])
+    return {k: result[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+
+
+def qualify_source_writer(*, docker, retained_image, writer_image, check_lease):
+    """Reject a writer whose durable forms the required rollback reader loses.
+
+    This is a bounded Source protocol contract, not a generic compatibility
+    service. Equal codec bytes still require both real readers to replay the
+    current complete journal. Different images additionally require every
+    supported writer form through the retained decoder without projection loss.
+    """
+    for _ in range(3):
+        retained = qualify_source_reader(docker=docker, image_id=retained_image, check_lease=check_lease)
+        writer = qualify_source_reader(docker=docker, image_id=writer_image, check_lease=check_lease)
+        if (retained["journal_size"], retained["journal_sha256"]) == (writer["journal_size"], writer["journal_sha256"]):
+            if retained["projection_sha256"] != writer["projection_sha256"]:
+                raise StackError("Source readers disagree on journal identity", [API_SERVICE])
+            break
+    else:
+        raise StackError("Source readers disagree on journal identity", [API_SERVICE])
+    # Equal module bytes alone do not cover changed codec dependencies in a
+    # different image. Only an identical immutable image may omit witnesses.
+    if retained_image != writer_image:
+        witness = source_probe(docker=docker, image_id=writer_image, mode="writer", check_lease=check_lease)
+        samples, expected = witness.get("samples"), witness.get("projections")
+        _keys(samples, SOURCE_SAMPLE_NAMES, "Source writer forms")
+        _keys(expected, SOURCE_SAMPLE_NAMES, "Source writer projections")
+        if witness["codec_sha256"] != writer["codec_sha256"] or any(
+            not isinstance(v, str) or not v or len(v) > 12000 for v in samples.values()
+        ):
+            raise ArtifactError("invalid Source writer protocol witnesses")
+        for value in expected.values():
+            _match(value, DIGEST, "Source witness projection")
+        argument = base64.b64encode(manifest_bytes(samples)).decode()
+        old = source_probe(docker=docker, image_id=retained_image, mode="samples", argument=argument, check_lease=check_lease)
+        new = source_probe(docker=docker, image_id=writer_image, mode="samples", argument=argument, check_lease=check_lease)
+        if old.get("projections") != expected or new.get("projections") != expected:
+            raise StackError("Source writer forms lose snapshot/provenance identity", [API_SERVICE])
+    return {"retained_image": retained_image, "writer_image": writer_image,
+            "retained": retained, "writer": writer}
+
+
 def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], None]) -> dict:
     """Record the image of every running (or completed one-shot) Compose service.
 
@@ -488,6 +820,9 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
     _match(source_sha, SHA, "source SHA")
     check_lease()
     first = _stack_rows(docker)
+    removed = _drop_never_started(docker, first, check_lease)
+    for entry in removed:
+        print(f"removed never-started container {entry['container_id'][:12]} of service {entry['service']}", flush=True)
     services, missing = {}, []
     for service, containers in sorted(first.items()):
         if len(containers) != 1:
@@ -503,11 +838,17 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
             continue
         services[service] = {"image_id": row["image_id"], "state": "running" if row["status"] == "running" else "completed",
                              "has_healthcheck": _has_healthcheck(row),
+                             "healthy_at_capture": row["health"] == "healthy",
                              "env": _stack_env(docker, row["container_id"])}
         if service in CONTROL_POSTURE and row["status"] == "running":
             services[service]["control"] = _stack_control(docker, service, row["container_id"])
     if missing:
         raise StackImageMissing("recorded stack image is missing", missing)
+    if API_SERVICE in first:
+        if API_SERVICE not in services:
+            raise StackError("Source owner is not a capturable baseline", [API_SERVICE])
+        services[API_SERVICE]["source_snapshot"] = qualify_source_reader(
+            docker=docker, image_id=services[API_SERVICE]["image_id"], check_lease=check_lease)
     if not services or len(services) > STACK_MAX_SERVICES:
         raise ArtifactError("stack baseline service count is out of bounds")
     for service, row in services.items():
@@ -517,6 +858,7 @@ def capture_stack(*, docker: Docker, source_sha: str, check_lease: Callable[[], 
         except ArtifactError as error:
             raise StackError(f"{service}: failed to hold the recorded image", [service]) from error
     second = _stack_rows(docker)
+    _drop_never_started(docker, second, check_lease)
     for service, row in services.items():
         again = second.get(service)
         if not again or len(again) != 1 or again[0]["image_id"] != row["image_id"] or \
@@ -538,12 +880,25 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
     services = value["services"]
     if not isinstance(services, dict) or not 0 < len(services) <= STACK_MAX_SERVICES:
         raise ArtifactError("invalid stack baseline services")
+    if MEMORY_INDEX_SERVICES.intersection(services) and not MEMORY_INDEX_SERVICES.issubset(services):
+        raise ArtifactError("memory index baseline requires both hindsight and memory-index-postgres")
     for service, row in services.items():
         _match(service, SERVICE_NAME, "stack service name")
         # A running source controller/API must carry its recorded posture; nothing else may.
         controlled = service in CONTROL_POSTURE and row.get("state") == "running"
-        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ()),
+        source_snapshot = service == API_SERVICE and "source_snapshot" in row
+        # healthy_at_capture is additive: baselines captured before it existed omit it.
+        _keys(row, ("image_id", "state", "has_healthcheck", "env") + (("control",) if controlled else ())
+              + (("source_snapshot",) if source_snapshot else ())
+              + (("healthy_at_capture",) if "healthy_at_capture" in row else ()),
               "stack service")
+        if source_snapshot:
+            proof = row["source_snapshot"]
+            _keys(proof, ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256"), "Source snapshot proof")
+            for key in ("codec_sha256", "journal_sha256", "projection_sha256"):
+                _match(proof[key], DIGEST, "Source snapshot digest")
+            if type(proof["journal_size"]) is not int or not 0 <= proof["journal_size"] <= SOURCE_JOURNAL_MAX_BYTES:
+                raise ArtifactError("invalid Source snapshot proof size")
         if controlled:
             control = row["control"]
             _keys(control, ("env", "restart"), "stack control posture")
@@ -555,6 +910,9 @@ def validate_stack(value, *, bundle: dict | None = None, source_sha: str | None 
         _match(row["image_id"], IMAGE, "stack image ID")
         if row["state"] not in ("running", "completed") or type(row["has_healthcheck"]) is not bool:
             raise ArtifactError("invalid stack service state")
+        if "healthy_at_capture" in row and (type(row["healthy_at_capture"]) is not bool or
+                                            (row["healthy_at_capture"] and not row["has_healthcheck"])):
+            raise ArtifactError("invalid stack service capture health")
         if row["state"] == "completed" and row["has_healthcheck"]:
             raise ArtifactError("a completed one-shot service cannot have a healthcheck")
         _keys(row["env"], STACK_ENV_KEYS, "stack service environment")
@@ -585,7 +943,9 @@ def _stack_problems(stack: dict, current: dict[str, list[dict]]) -> tuple[dict[s
                 soft[service] = "one-shot-not-completed"
         elif row["status"] != "running":
             soft[service] = "not-running"
-        elif expected["has_healthcheck"] and row["health"] != "healthy":
+        elif expected["has_healthcheck"] and expected.get("healthy_at_capture", True) and row["health"] != "healthy":
+            # A service recorded unhealthy/starting at capture is proven by image and
+            # running state only; a baseline without the field keeps requiring healthy.
             soft[service] = "not-healthy"
     for service, containers in current.items():
         if service not in stack["services"] and any(c["status"] in ("running", "restarting", "paused") for c in containers):
@@ -631,6 +991,16 @@ def _resolved_image_id(docker: Docker, ref: str) -> str | None:
         return None
 
 
+def _residual_reason(docker: Docker, row: dict, reason: str) -> str:
+    """Named cause of a residual: oom_killed when Docker says so, else the observed state."""
+    try:
+        if _json(docker.call("inspect", "--format", "{{json .State.OOMKilled}}", row["container_id"]).encode()) is True:
+            return "oom_killed"
+    except Exception:  # diagnostics only; never turn a named residual into a crash
+        pass
+    return reason.replace("-", "_")
+
+
 def _mixed(problems: dict[str, str]) -> StackMixedError:
     return StackMixedError("stack is mixed: " + ", ".join(sorted(problems)), problems)
 
@@ -639,13 +1009,18 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
                    recreated=(), sleep: Callable[[float], None] = time.sleep,
                    monotonic: Callable[[], float] = time.monotonic,
                    budget_seconds: int = STACK_READBACK_SECONDS,
-                   compose_refs: dict[str, str] | None = None) -> dict:
+                   compose_refs: dict[str, str] | None = None,
+                   tolerate_residual: bool = False) -> dict:
     """Prove each recorded service runs its recorded image, healthy within budget.
 
     A wrong image, missing container or surviving candidate-only service fails at
     once; run/health states may heal and are polled until ``budget_seconds``.
+    With ``tolerate_residual`` a service that is on its recorded image but still not
+    running/healthy at the deadline is reported by name (``residual_unhealthy``)
+    instead of failing: the restore cannot change why it is unhealthy.
     """
     deadline = monotonic() + budget_seconds
+    residual: dict[str, str] = {}
     while True:
         check_lease()
         current = _stack_rows(docker)
@@ -655,7 +1030,11 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
         if not soft:
             break
         if monotonic() >= deadline:
-            raise _mixed(soft)
+            if not tolerate_residual:
+                raise _mixed(soft)
+            residual = {service: _residual_reason(docker, current[service][0], reason)
+                        for service, reason in soft.items()}
+            break
         sleep(STACK_POLL_SECONDS)
     if compose_refs:
         # A later "compose up" without an override must not start a candidate.
@@ -680,11 +1059,18 @@ def readback_stack(stack: dict, *, docker: Docker, check_lease: Callable[[], Non
     if drift:
         raise _mixed(drift)
     check_lease()
+    # Health is reported, not required, for services that were not healthy at capture.
+    unhealthy = {service: current[service][0]["health"] or "none"
+                 for service, row in sorted(stack["services"].items())
+                 if row["has_healthcheck"] and not row.get("healthy_at_capture", True)
+                 and current[service][0]["health"] != "healthy"}
     return {"scope": "stack",
             "services": {service: {"baseline_image_id": row["image_id"],
                                    "observed_image_id": current[service][0]["image_id"]}
                          for service, row in sorted(stack["services"].items())},
-            "candidate_only_stopped": sorted(s for s in current if s not in stack["services"])}
+            "candidate_only_stopped": sorted(s for s in current if s not in stack["services"]),
+            **({"unhealthy_at_capture": unhealthy} if unhealthy else {}),
+            **({"residual_unhealthy": residual} if residual else {})}
 
 
 def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str,
@@ -739,6 +1125,16 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             docker.call("image", "load", "--input", str(path))
             _image(docker, image_id)
 
+    # Always requalify the complete CURRENT journal, including historical lines
+    # appended after capture. A capture-time hash cannot prove restore safety.
+    # This precedes compose up, owner stop/start, and image-name re-pointing.
+    if stack is not None and API_SERVICE in stack["services"]:
+        writers = _stack_rows(docker).get(API_SERVICE, [])
+        if len(writers) != 1:
+            raise StackError("Source journal requires exactly one existing owner", [API_SERVICE])
+        qualify_source_writer(docker=docker, retained_image=stack["services"][API_SERVICE]["image_id"],
+                              writer_image=writers[0]["image_id"], check_lease=check_lease)
+
     def pinned(service: str) -> dict:
         # A recreated container must keep the tenant and GIT_SHA it ran with at
         # baseline; Compose defaults reset PANTHEON_TENANT_ID (source-ingest).
@@ -752,6 +1148,8 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             out["restart"] = row["control"]["restart"]
         return out
 
+    wait_failed: list[str] = []
+
     def compose_up(stage: str, services: dict[str, dict], tail: tuple[str, ...], names: list[str]) -> None:
         override = Path(stage) / "images.json"
         # JSON is valid YAML; the sentinel becomes Compose's "!reset null" tag.
@@ -764,7 +1162,18 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             command.extend(("-f", str(path)))
         command.extend(("-f", str(override), "up", "-d", "--no-build", "--pull", "never", *tail, *names))
         check_lease()
-        docker.call(*command)
+        try:
+            docker.call(*command)
+        except ArtifactError as error:
+            # "--wait" exits 1 when a recreated container is not healthy inside
+            # its budget (OOM/restart churn). That does not undo the recreate:
+            # keep restoring the rest. Identity and container presence are
+            # proven by the readback below, which still fails hard on a wrong
+            # image or missing container; health is polled and, if it stays
+            # bad, reported as a named residual.
+            if "--wait" not in tail or not isinstance(error.__cause__, subprocess.CalledProcessError):
+                raise
+            wait_failed.extend(names)
         override.unlink()
 
     recreated, started = [], []
@@ -833,9 +1242,22 @@ def restore_images(raw: bytes, *, expected_sha256: str, expected_source_sha: str
             raise StackError(f"{service}: failed to re-point the Compose image name", [service]) from error
     result = {"image_readback_verified": True, "services": observed}
     if stack is not None:
-        result["stack"] = readback_stack(stack, docker=docker, check_lease=check_lease,
+        proof = readback_stack(stack, docker=docker, check_lease=check_lease,
                                          recreated=recreated, sleep=sleep, monotonic=monotonic,
-                                         budget_seconds=readback_seconds, compose_refs=refs)
+                                         budget_seconds=readback_seconds, compose_refs=refs,
+                                         tolerate_residual=True)
+        # Reported beside (not inside) the strict stack proof: health is not a restore requirement here.
+        unhealthy = proof.pop("unhealthy_at_capture", None)
+        result["stack"] = proof
+        if unhealthy:
+            result["unhealthy_at_capture"] = unhealthy
+        residual = proof.pop("residual_unhealthy", None)
+        if residual:
+            result["residual_unhealthy"] = residual
+            result["verdict"] = "restored; " + "; ".join(
+                f"{service} unhealthy: {reason}" for service, reason in sorted(residual.items()))
+        if wait_failed:
+            result["restore_wait_failed"] = sorted(wait_failed)
         result["recreated_services"] = sorted(recreated)
         result["started_services"] = sorted(started)
     check_lease()

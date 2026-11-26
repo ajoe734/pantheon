@@ -36,8 +36,13 @@ RUN python -m playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
 
+# Build context is the collector directory itself (docker-compose.yml: context .), which is exactly what the
+# documented install copies to /opt/pantheon-collector; nothing outside it is needed. vendor/security_listing.py is
+# a byte-identical copy of services/source_ingestion/security_listing.py (a test fails on drift).
 COPY collector_stack /app/collector_stack
 COPY fetch-policy.json /app/fetch-policy.json
+COPY query_vocabulary.json /app/query_vocabulary.json
+COPY vendor/security_listing.py /app/services/source_ingestion/security_listing.py
 
 RUN useradd --create-home --uid 10001 collector \
     && mkdir -p /data/bundles /data/state /data/library \

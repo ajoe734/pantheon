@@ -1,0 +1,44 @@
+{
+  "task_id": "SEARCH-SVC-OOM-AFTER-DEPLOY-R3-20261124",
+  "review_independence_exception": "Other model families are at terminal quota until 2026-11-27 10:03Z; reviewer Claude2 is from the owner's family (Claude).",
+  "ac1_measurement": {
+    "hosted_status": "NOT measured on hosted: the worker host has no access to the hosted container, its heap or cgroup (kernel OOM lines are quoted from the task brief: 2026-11-24 07:18:34Z, anon-rss 13.6 GB, 13 GiB limit, ~1 h after release 524bcb241 switched). Hosted row count taken from the 11/20 register row: 86.5k source_evidence rows (~28.8k knowledge objects, ~290 MB JSON), +5k to 19k rows/day.",
+    "local_method": "scratchpad measure.py: fake psycopg table generating 4 rows per knowledge object (source_record, evidence_item with 1.8 KB body, evidence_bundle, knowledge_object); drain with the real IncrementalIndexPipeline (batch 16, chunk 4) and a counting backend; peak RSS from getrusage",
+    "old_full_load_PostgresReadOnlyEvidenceRepository": {"2000_ko_8k_rows_mb": 52.3, "8000_ko_32k_rows_mb": 70.6, "28000_ko_112k_rows_mb": 137.1},
+    "new_streaming": {"2000_ko_mb": 48.2, "8000_ko_mb": 48.3, "28000_ko_mb": 47.8},
+    "structures_scaling_with_total_rows_before": [
+      "PostgresReadOnlyEvidenceRepository: every source_record/evidence_item/bundle/knowledge_object held in 12 dicts (startup, reload, refresh; reload builds a second copy aside and swaps, so the drain/full resync holds two)",
+      "IncrementalIndexPipeline.run: list_knowledge_objects() (whole table) + current_ids + previous_ids sets + sorted checkpoint list per run (29k ids, rewritten to JSONL every run)",
+      "KeywordIndexAdapter.snapshot() in materialize: documents_for(all knowledge objects), 2 extra reads per object",
+      "/health, /status, /metrics: len(list_knowledge_objects())"
+    ],
+    "unexplained_gap": "Local synthetic growth (~90 MB per 28k objects) is far below the hosted 13.6 GB; the hosted peak also includes the 1.5 GB embedding model, concurrent request threads and Python object overhead of the real payloads. A hosted heap profile (tracemalloc/pympler on the running container) is still owed; acceptance 1 is only partially met."
+  },
+  "ac2_bound": {
+    "statement": "Resident evidence state is O(page) not O(rows): page = SEARCH_EVIDENCE_STREAM_PAGE_SIZE (200 knowledge objects), plus one batch (SEARCH_INDEX_REFRESH_BATCH_SIZE 16) and one embedding chunk (4). Startup/reload/refresh read nothing. Point reads use the unique (record_type, record_id) index or the object-id expression index owned by source-ingest.",
+    "test": "services/search/tests/test_search_memory_bound.py::test_streaming_drain_peak_memory_depends_on_batch_not_row_count (tracemalloc peak flat across 500 vs 4000 objects and below 10 pages; no wall-clock assertion); ::test_streaming_repository_startup_and_refresh_hold_no_rows; ::test_streaming_point_reads_and_scalar_summaries_do_not_load_rows; cursor resume, in-place update and legacy checkpoint tests"
+  },
+  "ac3_runtime_budget": {
+    "steady_gib": 1.7,
+    "peak_gib": 2.3,
+    "basis": "e5-large ONNX load 1.55 GB RSS + ~0.1 GB base + embedding chunk +0.57 GB (measured 2026-11-20 in SEARCH-SVC-PEAK-MEMORY-AND-STALL-SIGNAL-20261120) + page/batch state of a few MB (measured 47.8 MB process RSS without model at 28k objects)",
+    "after_one_year": "Unchanged: 5k-19k rows/day adds 1.8M-6.9M rows, none of which is held; per-run cost is DB scan time (cursor and COUNT), not memory. Pipeline JSONL lines no longer carry id lists, so history file stops growing with rows.",
+    "limit": "13 GiB unchanged",
+    "register": "docs/operations/problem-register.md RC3 WP3.1 row added"
+  },
+  "compatibility": {
+    "persisted_formats": "IndexPipelineSnapshot gains optional fields indexed_append_cursor, updates_cursor, updates_since, audit_cursor; old lines load with defaults. A legacy checkpoint id list is used once as a skip-set and carried until the cursor reaches the table end.",
+    "rollback": "SEARCH_EVIDENCE_LOAD_MODE=full restores the whole-table loader (and the legacy id-set pipeline path)."
+  },
+  "tests": {
+    "command": "pytest services/search -q --ignore=services/search/tests/test_qdrant_backend.py",
+    "result": "241 passed, 25 skipped; 3 test_zh_segmentation failures excluded (jieba missing in the local venv, pre-existing)"
+  },
+  "ac4_hosted_acceptance": "pending release. Read-only command: cid=$(docker ps -q --filter name=search-svc | head -1); cg=$(docker inspect -f '{{.Id}}' $cid); cat /sys/fs/cgroup/system.slice/docker-$cg.scope/memory.peak; journalctl -k --since '24 hours ago' | grep -i 'Memory cgroup out of memory\\|oom-kill' | grep -i 'uvicorn\\|search'. Pass: no OOM lines across the next persona daily cycle, memory.peak well below 13 GiB (expected <= ~3 GiB).",
+  "residual_findings": [
+    "Deleted knowledge objects are not detected in streaming mode (no id-set diff); source-ingest never deletes today, so removed_count stays 0.",
+    "gateway.py keyword fallback path calls list_knowledge_objects(tenant); on the streaming repository it raises past SEARCH_EVIDENCE_LIST_CAP (2000). The hosted path serves via the Postgres retrieval backend and does not use it.",
+    "The 11/20 residual (EvidenceValidationError for a collector source id at restart making /readyz 500) no longer applies to the default streaming path because nothing is validated at startup; not separately reproduced.",
+    "A COUNT(*) per 30 s and a SELECT per source-completion over source_evidence remain DB-side costs."
+  ]
+}

@@ -52,6 +52,83 @@ PROOF_STATES = (
 class ControllerError(RuntimeError):
     """Raised when the exact cross-repository transaction cannot continue."""
 
+    reason: str | None = None
+
+
+class GateFailure(ControllerError):
+    """The frontend integration gate ran to a terminal non-success conclusion."""
+
+    def __init__(self, message: str, run: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.run = run
+
+
+class RateLimitError(ControllerError):
+    """GitHub rate-limit wait budget exhausted (fail closed)."""
+
+    reason = "rate_limit"
+
+
+class TransientFetchError(ControllerError):
+    """Transient served-identity fetch retry budget exhausted (fail closed)."""
+
+    reason = "transient_fetch"
+
+
+MAX_RATE_LIMIT_WAIT_SECONDS = 3900  # 65 minutes hard ceiling
+DEFAULT_RATE_LIMIT_WAIT_SECONDS = 3900
+RATE_LIMIT_FALLBACK_WAIT_SECONDS = 60.0
+RATE_LIMIT_RESET_SLACK_SECONDS = 1.0
+FETCH_MAX_ATTEMPTS = 3
+FETCH_BACKOFF_SECONDS = 1.0
+
+
+def rate_limit_wait_seconds(
+    status: int,
+    headers: Any,
+    body: str = "",
+    *,
+    now: float | None = None,
+) -> float | None:
+    """Return seconds to wait if the response is a rate-limit exhaustion, else None.
+
+    Mirrors dev_environment_lease.classify_github_http_error: 429, or 403 with
+    x-ratelimit-remaining 0, a retry-after header, or a rate-limit message.
+    A plain 403/404 is not a rate limit and returns None.
+    """
+    if status not in (403, 429):
+        return None
+    hdrs = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
+    remaining: int | None = None
+    try:
+        remaining = int(hdrs.get("x-ratelimit-remaining", "").strip())
+    except ValueError:
+        remaining = None
+    retry_after: float | None = None
+    raw_retry = hdrs.get("retry-after", "").strip()
+    if raw_retry:
+        try:
+            retry_after = max(0.0, float(raw_retry))
+        except ValueError:
+            retry_after = None
+    has_message = "rate limit" in (body or "").lower()
+    exhausted = (
+        status == 429
+        or (remaining is not None and remaining <= 0)
+        or retry_after is not None
+        or has_message
+    )
+    if not exhausted:
+        return None
+    if retry_after is not None:
+        return retry_after + RATE_LIMIT_RESET_SLACK_SECONDS
+    try:
+        reset_epoch = float(hdrs.get("x-ratelimit-reset", "").strip())
+    except ValueError:
+        return RATE_LIMIT_FALLBACK_WAIT_SECONDS
+    current = time.time() if now is None else now
+    return max(0.0, reset_epoch - current) + RATE_LIMIT_RESET_SLACK_SECONDS
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -219,14 +296,49 @@ def validate_candidate_override(
             )
 
 
-def fetch_url_json(url: str, timeout_seconds: int = 30) -> dict[str, Any]:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "pantheon-cross-repo-release-controller"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def fetch_url_json(
+    url: str,
+    timeout_seconds: int = 30,
+    *,
+    max_attempts: int = FETCH_MAX_ATTEMPTS,
+    backoff_seconds: float = FETCH_BACKOFF_SECONDS,
+    sleep: Callable[[float], None] | None = None,
+) -> dict[str, Any]:
+    """GET JSON, retrying timeouts, connection errors and 5xx with backoff.
+
+    Non-5xx HTTP errors (e.g. 404) and malformed bodies are raised at once.
+    Exhausted retries raise TransientFetchError.
+    """
+    sleep_fn = sleep if sleep is not None else time.sleep
+    last: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "pantheon-cross-repo-release-controller"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500:
+                raise
+            last = exc
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ) as exc:
+            last = exc
+        else:
+            return json.loads(raw.decode("utf-8"))
+        if attempt < max_attempts:
+            sleep_fn(backoff_seconds * (2 ** (attempt - 1)))
+    raise TransientFetchError(
+        f"transient_fetch: {url} failed after {max_attempts} attempts: "
+        f"{type(last).__name__}: {last}"
+    ) from last
 
 
 def verify_served_identity(
@@ -247,7 +359,9 @@ def verify_served_identity(
     try:
         bff_data = fetcher(bff_version_url)
     except Exception as exc:
-        raise ControllerError(f"served identity verification failed reaching BFF: {exc}") from exc
+        raise (TransientFetchError if isinstance(exc, TransientFetchError) else ControllerError)(
+            f"served identity verification failed reaching BFF: {exc}"
+        ) from exc
 
     observed_bff_sha = exact_sha(
         bff_data.get("source_commit_sha") or bff_data.get("commit") or "",
@@ -268,7 +382,9 @@ def verify_served_identity(
         try:
             fe_data = fetcher(fe_deployment_url)
         except Exception as exc:
-            raise ControllerError(f"served identity verification failed reaching frontend: {exc}") from exc
+            raise (TransientFetchError if isinstance(exc, TransientFetchError) else ControllerError)(
+                f"served identity verification failed reaching frontend: {exc}"
+            ) from exc
 
         served_manifest = fe_data
         observed_fe_sha = exact_sha(
@@ -637,7 +753,13 @@ class GitHubClient:
         max_get_attempts: int = GET_RETRY_MAX_ATTEMPTS,
         retry_backoff_seconds: float = GET_RETRY_BASE_DELAY_SECONDS,
         sleep: Callable[[float], None] | None = None,
+        max_rate_limit_wait_seconds: float = DEFAULT_RATE_LIMIT_WAIT_SECONDS,
+        clock: Callable[[], float] | None = None,
     ) -> None:
+        if not 0 <= max_rate_limit_wait_seconds <= MAX_RATE_LIMIT_WAIT_SECONDS:
+            raise ControllerError(
+                f"max_rate_limit_wait_seconds must be within 0..{MAX_RATE_LIMIT_WAIT_SECONDS}"
+            )
         if max_get_attempts < 1:
             raise ControllerError("max_get_attempts must be at least 1")
         if retry_backoff_seconds < 0:
@@ -648,6 +770,8 @@ class GitHubClient:
         self.max_get_attempts = max_get_attempts
         self.retry_backoff_seconds = retry_backoff_seconds
         self.sleep = sleep
+        self.max_rate_limit_wait_seconds = float(max_rate_limit_wait_seconds)
+        self.clock = clock
 
     def request(
         self,
@@ -669,7 +793,10 @@ class GitHubClient:
         max_attempts = self.max_get_attempts if is_read_only else 1
         sleep_fn = self.sleep if self.sleep is not None else time.sleep
         raw = b""
-        for attempt in range(1, max_attempts + 1):
+        rate_waited = 0.0
+        attempt = 0
+        while True:
+            attempt += 1
             request = urllib.request.Request(
                 f"{self.api_url}{path}",
                 data=data,
@@ -686,6 +813,23 @@ class GitHubClient:
                     raw_detail.decode("utf-8", errors="replace").strip()
                     or str(getattr(exc, "reason", "") or "").strip()
                 )
+                wait = rate_limit_wait_seconds(
+                    exc.code,
+                    exc.headers,
+                    detail,
+                    now=self.clock() if self.clock is not None else None,
+                )
+                if wait is not None:
+                    if rate_waited + wait > self.max_rate_limit_wait_seconds:
+                        raise RateLimitError(
+                            f"rate_limit: GitHub API {method} {path} HTTP {exc.code}; "
+                            f"wait {wait:.0f}s exceeds remaining budget "
+                            f"{self.max_rate_limit_wait_seconds - rate_waited:.0f}s: {detail}"
+                        ) from exc
+                    sleep_fn(wait)
+                    rate_waited += wait
+                    attempt -= 1  # rate-limit waits do not consume transient attempts
+                    continue
                 if (
                     is_read_only
                     and exc.code in TRANSIENT_HTTP_STATUS_CODES
@@ -753,6 +897,22 @@ class GitHubClient:
         if not isinstance(payload, dict):
             raise ControllerError(f"run {run_id} response is not an object")
         return payload
+
+    def failed_job_names(self, run_id: int) -> list[str]:
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100",
+        )
+        jobs = payload.get("jobs") if isinstance(payload, dict) else None
+        if not isinstance(jobs, list):
+            raise ControllerError(f"run {run_id} jobs response is malformed")
+        return [
+            str(job.get("name"))
+            for job in jobs
+            if isinstance(job, dict)
+            and job.get("conclusion") in {"failure", "timed_out", "cancelled"}
+            and job.get("name")
+        ]
 
     def is_ancestor(self, base: str, head: str) -> bool:
         payload = self.request("GET", f"/repos/{self.repository}/compare/{base}...{head}")
@@ -843,8 +1003,9 @@ def dispatch_and_wait(
         if status == "completed":
             conclusion = str(current.get("conclusion") or "")
             if conclusion != "success":
-                raise ControllerError(
-                    f"{expected.workflow} run {run_id} concluded {conclusion or 'unknown'}"
+                raise GateFailure(
+                    f"{expected.workflow} run {run_id} concluded {conclusion or 'unknown'}",
+                    current,
                 )
             return current
         if status not in {"queued", "in_progress", "pending", "waiting", "requested"}:
@@ -853,6 +1014,51 @@ def dispatch_and_wait(
             )
         sleep(poll_seconds)
     raise ControllerError(f"timed out waiting for {expected.workflow} run {run_id}")
+
+
+FRONTEND_OWNING_CHAIN = "frontend"
+OUTCOME_ACCEPTED = "accepted"
+OUTCOME_DEPLOYED_NOT_ACCEPTED = "deployed_not_accepted"
+
+
+def served_frontend_compatible(
+    manifest_path: str | Path | None,
+    *,
+    manifest_sha256: str,
+    backend_sha: str,
+    frontend_sha: str,
+) -> tuple[bool, str]:
+    """Read the release compatibility manifest; never infer compatibility.
+
+    The manifest binds one exact backend/frontend runtime pair and states
+    compatibility through the existing deployment rules (accepted status, no
+    blocking reasons, equal contract/openapi bindings).  Anything unreadable
+    or not matching the digest fails closed.
+    """
+
+    if manifest_path is None:
+        return False, "compatibility manifest was not provided"
+    try:
+        raw = Path(manifest_path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != manifest_sha256:
+            return False, "compatibility manifest does not match its digest"
+        manifest = json.loads(raw.decode("utf-8"))
+        if not isinstance(manifest, dict):
+            return False, "compatibility manifest is not an object"
+        try:
+            from agora_compat_manifest import validate_deployment_rules
+        except ImportError:  # imported as scripts.cross_repo_release_controller
+            from scripts.agora_compat_manifest import validate_deployment_rules
+        issues = validate_deployment_rules(
+            manifest,
+            expected_backend_runtime_commit=backend_sha,
+            expected_frontend_runtime_commit=frontend_sha,
+        )
+    except Exception as exc:  # unreadable manifest: reject as today
+        return False, f"compatibility manifest cannot be read: {exc}"
+    if issues:
+        return False, "; ".join(issues)
+    return True, "manifest states the served frontend is compatible with the candidate backend"
 
 
 def coordinate_release(
@@ -876,6 +1082,8 @@ def coordinate_release(
     predecessor_bff_sha: str | None = None,
     fetch_fn: Callable[[str], dict[str, Any]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    environment: str = "dev",
+    compatibility_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     frontend_sha = exact_sha(frontend_sha, "frontend SHA")
     frontend_ref = exact_ref(frontend_ref)
@@ -930,6 +1138,7 @@ def coordinate_release(
     post_switch_verification: dict[str, Any] | None = None
     gate_run: dict[str, Any] | None = None
     deploy_run: dict[str, Any] | None = None
+    gate_failure: dict[str, Any] | None = None
     started_at = utc_now()
     try:
         if candidate_out:
@@ -953,97 +1162,157 @@ def coordinate_release(
 
         gate_title = f"Release candidate {release_candidate_id}"
 
-        gate = dispatch_and_wait(
-            client,
-            expected=ExpectedRun(
-                workflow=GATE_WORKFLOW,
-                title=gate_title,
-                head_sha=controller_sha,
-                head_branch=FRONTEND_BRANCH,
-            ),
-            inputs={
-                "fe_sha": frontend_sha,
-                "frontend_ref": frontend_ref,
-                "bff_sha": backend_sha,
-                "bff_base_url": bff_base_url,
-                "release_candidate_id": release_candidate_id,
-                "compatibility_manifest_sha256": compatibility_manifest_sha256,
-                "release_controller_run_id": controller_run_id,
-                "soft_fail": "false",
-            },
-            timeout_seconds=gate_timeout_seconds,
-            poll_seconds=poll_seconds,
-            sleep=sleep,
-        )
+        try:
+            gate = dispatch_and_wait(
+                client,
+                expected=ExpectedRun(
+                    workflow=GATE_WORKFLOW,
+                    title=gate_title,
+                    head_sha=controller_sha,
+                    head_branch=FRONTEND_BRANCH,
+                ),
+                inputs={
+                    "fe_sha": frontend_sha,
+                    "frontend_ref": frontend_ref,
+                    "bff_sha": backend_sha,
+                    "bff_base_url": bff_base_url,
+                    "release_candidate_id": release_candidate_id,
+                    "compatibility_manifest_sha256": compatibility_manifest_sha256,
+                    "release_controller_run_id": controller_run_id,
+                    "soft_fail": "false",
+                },
+                timeout_seconds=gate_timeout_seconds,
+                poll_seconds=poll_seconds,
+                sleep=sleep,
+            )
+        except GateFailure as exc:
+            # Dev: functional checks follow the switch and never roll it back.
+            # The gate re-runs the frontend's own tests; when the frontend is
+            # the one the hosted stack already serves and the compatibility
+            # manifest states it is compatible with this backend, a failure
+            # is not evidence against the backend.  Anything else is rejected.
+            unchanged = (
+                environment == "dev"
+                and candidate_profile == "read-only"
+                and predecessor_fe_sha is not None
+                and predecessor_fe_sha == frontend_sha
+            )
+            if not unchanged:
+                raise
+            compatible, reason = served_frontend_compatible(
+                compatibility_manifest_path,
+                manifest_sha256=compatibility_manifest_sha256,
+                backend_sha=backend_sha,
+                frontend_sha=frontend_sha,
+            )
+            if not compatible:
+                raise ControllerError(f"{exc}; not tolerated: {reason}") from exc
+            try:
+                failed_names = client.failed_job_names(int(exc.run["id"]))
+            except Exception:
+                failed_names = []
+            gate_failure = {
+                "failed_gates": failed_names or ["unknown"],
+                "compatibility": reason,
+            }
+            gate = exc.run
         gate_run = gate
         gate_run_id = str(validate_run(
             gate,
             ExpectedRun(GATE_WORKFLOW, gate_title, controller_sha, FRONTEND_BRANCH),
         ))
 
-        deploy_title = f"Deploy release candidate {release_candidate_id}"
-        deploy_inputs = {
-            "candidate_sha": frontend_sha,
-            "frontend_ref": frontend_ref,
-            "gate_run_id": gate_run_id,
-            "release_candidate_id": release_candidate_id,
-            "compatibility_manifest_sha256": compatibility_manifest_sha256,
-            "release_controller_run_id": controller_run_id,
-            "deployment_profile": "operator-live" if candidate_profile == "operator-live" else "read-only",
-            "proof_window_ack": "false",
-            "emergency_override": "false",
-            "rollback_drill": "false",
-            "override_reason": "",
-        }
-        # Empty-host bootstrap is deliberately an explicit read-only exception:
-        # the parent deploy job owns the transaction while its normal
-        # coordinator job is not yet schedulable. Keep ordinary deployments'
-        # exact input contract unchanged.
-        if os.environ.get("PANTHEON_DEV_BOOTSTRAP_PREDECESSOR", "").strip().lower() == "true":
-            deploy_inputs["bootstrap_predecessor"] = "true"
+        if gate_failure is not None:
+            # Deployed, not accepted: the served frontend is the accepted
+            # baseline, so no switch runs and nothing is compensated.  Re-read
+            # the served pair so the record proves what stays served.
+            if fe_base_url:
+                post_switch_verification = verify_served_identity(
+                    bff_base_url=bff_base_url,
+                    expected_candidate=candidate,
+                    fe_base_url=fe_base_url,
+                    fetch_fn=fetch_fn,
+                    expected_fe_sha=predecessor_fe_sha,
+                    expected_bff_manifest_sha=predecessor_bff_sha,
+                    require_pair_id=False,
+                )
+        else:
+            deploy_title = f"Deploy release candidate {release_candidate_id}"
+            deploy_inputs = {
+                "candidate_sha": frontend_sha,
+                "frontend_ref": frontend_ref,
+                "gate_run_id": gate_run_id,
+                "release_candidate_id": release_candidate_id,
+                "compatibility_manifest_sha256": compatibility_manifest_sha256,
+                "release_controller_run_id": controller_run_id,
+                "deployment_profile": "operator-live" if candidate_profile == "operator-live" else "read-only",
+                "proof_window_ack": "false",
+                "emergency_override": "false",
+                "rollback_drill": "false",
+                "override_reason": "",
+            }
+            # Empty-host bootstrap is deliberately an explicit read-only exception:
+            # the parent deploy job owns the transaction while its normal
+            # coordinator job is not yet schedulable. Keep ordinary deployments'
+            # exact input contract unchanged.
+            if os.environ.get("PANTHEON_DEV_BOOTSTRAP_PREDECESSOR", "").strip().lower() == "true":
+                deploy_inputs["bootstrap_predecessor"] = "true"
 
-        # Workflow code may advance while the gate runs; the admitted payload
-        # and authenticated gate artifact remain pinned to the original pair.
-        controller_sha = client.get_ref("heads/dev")
-        deploy = dispatch_and_wait(
-            client,
-            expected=ExpectedRun(
-                workflow=DEPLOY_WORKFLOW,
-                title=deploy_title,
-                head_sha=controller_sha,
-                head_branch=FRONTEND_BRANCH,
-            ),
-            inputs=deploy_inputs,
-            timeout_seconds=deploy_timeout_seconds,
-            poll_seconds=poll_seconds,
-            sleep=sleep,
-        )
-        deploy_run = deploy
-
-        # 2. Post-switch verification: verify served FE, BFF, and pair identity after atomic deploy switch
-        if fe_base_url:
-            post_switch_verification = verify_served_identity(
-                bff_base_url=bff_base_url,
-                expected_candidate=candidate,
-                fe_base_url=fe_base_url,
-                fetch_fn=fetch_fn,
+            # Workflow code may advance while the gate runs; the admitted payload
+            # and authenticated gate artifact remain pinned to the original pair.
+            controller_sha = client.get_ref("heads/dev")
+            deploy = dispatch_and_wait(
+                client,
+                expected=ExpectedRun(
+                    workflow=DEPLOY_WORKFLOW,
+                    title=deploy_title,
+                    head_sha=controller_sha,
+                    head_branch=FRONTEND_BRANCH,
+                ),
+                inputs=deploy_inputs,
+                timeout_seconds=deploy_timeout_seconds,
+                poll_seconds=poll_seconds,
+                sleep=sleep,
             )
-            if post_switch_verification.get("observed_pair_id"):
-                candidate["pair_id"] = post_switch_verification["observed_pair_id"]
+            deploy_run = deploy
+
+            # 2. Post-switch verification: verify served FE, BFF, and pair identity after atomic deploy switch
+            if fe_base_url:
+                post_switch_verification = verify_served_identity(
+                    bff_base_url=bff_base_url,
+                    expected_candidate=candidate,
+                    fe_base_url=fe_base_url,
+                    fetch_fn=fetch_fn,
+                )
+                if post_switch_verification.get("observed_pair_id"):
+                    candidate["pair_id"] = post_switch_verification["observed_pair_id"]
     finally:
         # Restore read-only profile across success, failure, cancellation, expiry, probe error
         # Refetch the served manifest for restoration verification
         refetched_manifest = None
+        refetch_transient: TransientFetchError | None = None
         if fe_base_url:
             try:
                 refetched_manifest = (fetch_fn or fetch_url_json)(f"{fe_base_url.rstrip('/')}/deployment.json")
+            except TransientFetchError as exc:
+                refetch_transient = exc
+                refetched_manifest = None
             except Exception:
                 refetched_manifest = None
 
         if candidate_profile == "operator-live":
+            if sys.exc_info()[0] is None and refetched_manifest is None and refetch_transient is not None:
+                raise TransientFetchError(
+                    f"transient_fetch: operator-live profile refetch failed: {refetch_transient}"
+                ) from refetch_transient
             if sys.exc_info()[0] is None and (refetched_manifest or {}).get("profile") != "operator-live":
                 raise ControllerError("accepted frontend did not preserve operator-live profile")
-        elif sys.exc_info()[0] is None and post_switch_verification is not None and refetched_manifest is not None:
+        elif (
+            sys.exc_info()[0] is None
+            and gate_failure is None
+            and post_switch_verification is not None
+            and refetched_manifest is not None
+        ):
             candidate = restore_read_only_profile(candidate, served_manifest=refetched_manifest)
         else:
             candidate = restore_read_only_profile(candidate)
@@ -1066,6 +1335,20 @@ def coordinate_release(
         "proof_history": state_machine.history,
         "compatibility_manifest_sha256": compatibility_manifest_sha256,
         "compatibility_status": "compatible",
+        **(
+            {
+                "acceptance": {
+                    "deployed": True,
+                    "accepted": False,
+                    "owning_chain": FRONTEND_OWNING_CHAIN,
+                    "failed_gates": gate_failure["failed_gates"],
+                    "gate_run_id": str(gate_run["id"]),
+                    "compatibility": gate_failure["compatibility"],
+                }
+            }
+            if gate_failure is not None
+            else {}
+        ),
         "controller": {
             "repository": "ajoe734/pantheon",
             "workflow": "nonprod-deploy.yml",
@@ -1094,7 +1377,9 @@ def coordinate_release(
         },
         "started_at": started_at,
         "completed_at": utc_now(),
-        "outcome": "accepted",
+        "outcome": (
+            OUTCOME_DEPLOYED_NOT_ACCEPTED if gate_failure is not None else OUTCOME_ACCEPTED
+        ),
     }
 
 
@@ -1112,12 +1397,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-out", default=None)
     parser.add_argument("--pair-id", default=None)
     parser.add_argument("--candidate-profile", default="read-only")
+    parser.add_argument("--environment", default="dev")
+    parser.add_argument("--compatibility-manifest-file", default=None)
     parser.add_argument("--predecessor-fe-sha", default=None)
     parser.add_argument("--predecessor-bff-sha", default=None)
     parser.add_argument("--api-url", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     parser.add_argument("--gate-timeout-seconds", type=int, default=10_800)
     parser.add_argument("--deploy-timeout-seconds", type=int, default=5_400)
     parser.add_argument("--poll-seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--max-rate-limit-wait-seconds",
+        type=float,
+        default=float(
+            os.environ.get("PANTHEON_RELEASE_MAX_RATE_LIMIT_WAIT_SECONDS")
+            or DEFAULT_RATE_LIMIT_WAIT_SECONDS
+        ),
+    )
     return parser
 
 
@@ -1139,6 +1434,7 @@ def main(argv: list[str] | None = None) -> int:
                 api_url=args.api_url,
                 token=token,
                 repository=FRONTEND_REPOSITORY,
+                max_rate_limit_wait_seconds=args.max_rate_limit_wait_seconds,
             ),
             frontend_sha=args.frontend_sha,
             frontend_ref=args.frontend_ref,
@@ -1156,14 +1452,34 @@ def main(argv: list[str] | None = None) -> int:
             pair_id=args.pair_id,
             candidate_profile=args.candidate_profile,
             candidate_out=args.candidate_out,
+            environment=args.environment,
+            compatibility_manifest_path=args.compatibility_manifest_file,
         )
     except ControllerError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
+        if exc.reason:
+            failure = Path(f"{args.evidence_out}.failure.json")
+            failure.parent.mkdir(parents=True, exist_ok=True)
+            failure.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "pantheon.cross-repo-release-controller-failure.v1",
+                        "release_candidate_id": args.release_candidate_id,
+                        "outcome": "rejected",
+                        "reason": exc.reason,
+                        "detail": str(exc),
+                        "failed_at": utc_now(),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
         return 1
     output = Path(args.evidence_out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
-    print(f"accepted release candidate {evidence['release_candidate_id']}")
+    print(f"{evidence['outcome']} release candidate {evidence['release_candidate_id']}")
     return 0
 
 

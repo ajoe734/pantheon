@@ -145,6 +145,26 @@ def truth_label_payload() -> Dict[str, Dict[str, Any]]:
     }
 
 
+def project_persona_cycle_health(persona: Dict[str, Any], packets: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Packet-backed per-persona overlay; never adds a canonical loop row."""
+    tenant = persona.get("tenant_id")
+    pid = persona.get("persona_id") or persona.get("id")
+    matched = [p for p in packets if tenant and p.get("tenant_id") == tenant
+               and pid in (p.get("persona_ids") or []) and isinstance(p.get("persona_cycle"), dict)]
+    if not matched:
+        return {"status": "unobserved", "last_packet_id": None, "stage": None,
+                "failure_reason": "no_daily_cycle_packet"}
+    latest = max(matched, key=lambda p: (p.get("producer", {}).get("cron_run_at_ms") or 0,
+                                         p.get("updated_at") or ""))
+    cycle = latest["persona_cycle"]
+    return {"status": "failed" if cycle.get("failure_reason") else
+            ("running" if cycle.get("phase") == "claimed" else "completed"),
+            "last_packet_id": latest["packet_id"], "stage": latest["status"],
+            "failure_reason": cycle.get("failure_reason"), "updated_at": latest["updated_at"],
+            "harness_version": cycle.get("harness_version"),
+            "risk_status": (cycle.get("risk_result") or {}).get("status", "unobserved")}
+
+
 def _load_registry() -> Dict[str, Any]:
     return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
 

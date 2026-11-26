@@ -63,13 +63,15 @@ _RESET_EPOCH_PATTERN = re.compile(
     r'"?resets?[_-]?at"?\s*[:=]\s*"?(?P<epoch>\d{10})"?',
     re.IGNORECASE,
 )
+_RESET_DURATION_UNITS = r"days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s"
+_RESET_DURATION_PART = rf"\d+\s*(?:{_RESET_DURATION_UNITS})"
 _RESET_DURATION_PATTERN = re.compile(
-    r"\breset(?:s)?\s+in\s*(?P<duration>"
-    r"(?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m)\s*)+)",
+    rf"\breset(?:s)?\s+in\s*(?P<duration>{_RESET_DURATION_PART}"
+    rf"(?:\s*{_RESET_DURATION_PART})*)\b",
     re.IGNORECASE,
 )
 _RESET_DURATION_COMPONENT_PATTERN = re.compile(
-    r"(?P<amount>\d+)\s*(?P<unit>days?|d|hours?|hrs?|h|minutes?|mins?|m)\b",
+    rf"(?P<amount>\d+)\s*(?P<unit>{_RESET_DURATION_UNITS})",
     re.IGNORECASE,
 )
 
@@ -138,17 +140,13 @@ def _extract_reset_timestamp(
     duration_match = _RESET_DURATION_PATTERN.search(raw)
     if duration_match:
         seconds = 0
+        seconds_per_unit = {"d": 24 * 60 * 60, "h": 60 * 60, "m": 60, "s": 1}
         for component in _RESET_DURATION_COMPONENT_PATTERN.finditer(
             duration_match.group("duration")
         ):
             amount = int(component.group("amount"))
-            unit = component.group("unit").lower()
-            if unit in {"d", "day", "days"}:
-                seconds += amount * 24 * 60 * 60
-            elif unit in {"h", "hr", "hrs", "hour", "hours"}:
-                seconds += amount * 60 * 60
-            else:
-                seconds += amount * 60
+            unit = component.group("unit")[0].lower()
+            seconds += amount * seconds_per_unit[unit]
         if seconds > 0:
             return _iso((now or _utc_now()) + timedelta(seconds=seconds))
     return None

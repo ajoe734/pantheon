@@ -175,6 +175,106 @@ def _is_stage_promotion(saga: Mapping[str, Any]) -> bool:
     ) in _PROMOTION_TRANSITIONS and saga.get("runtime_action") == "replace_binding"
 
 
+def _is_paper_forward_replace(saga: Mapping[str, Any]) -> bool:
+    """Same-stage paper forward replacement of an existing RuntimeBinding.
+
+    Identified only by the approved plan's own fields: paper -> paper with
+    ``replace_binding``.  It is dispatched through the existing runtime-manager
+    ``replace`` owner route, never ``deploy`` (single-runtime guard) and never
+    a second deployment route.
+    """
+    return (
+        str(saga.get("current_stage") or "") == "paper"
+        and str(saga.get("target_stage") or "") == "paper"
+        and saga.get("runtime_action") == "replace_binding"
+    )
+
+
+def _verify_replace_source(
+    *, saga: Mapping[str, Any], deploy_context: Mapping[str, Any], source: Any
+) -> Optional[str]:
+    """Fail-closed check of the verified current binding before ``replace``."""
+    if not isinstance(source, Mapping):
+        return "current binding was not found"
+    expected = {
+        "status": _ACTIVE_BINDING_STATUS,
+        "deployment_mode": "paper",
+        "capital_pool_id": saga.get("capital_pool_id"),
+        "persona_capital_binding_id": deploy_context.get("persona_capital_binding_id"),
+    }
+    mismatches = [
+        f"{field} expected {value!r}, got {source.get(field)!r}"
+        for field, value in expected.items()
+        if source.get(field) != value
+    ]
+    if not str(source.get("runtime_id") or "").strip():
+        mismatches.append("current binding has no runtime_id")
+    if (source.get("artifact_id"), source.get("artifact_version")) == (
+        saga.get("artifact_id"),
+        saga.get("artifact_version"),
+    ):
+        mismatches.append("replacement artifact pair must differ from current binding")
+    return "; ".join(mismatches) or None
+
+
+def verify_forward_replace_parent(
+    *,
+    client: Any,
+    saga: Mapping[str, Any],
+    binding: Mapping[str, Any],
+    persona_capital_binding_id: Any,
+    require_parent: bool = False,
+) -> tuple[str, tuple[Any, str, str] | None]:
+    """Independently verify the immutable admitted parent of a forward replace.
+
+    The mutable plan.binding_id is overwritten by record_binding_created, so the
+    source is recovered from child lineage and accepted only after the owner
+    confirms the parent.  Returns ``(parent_id, None)`` on success, ``("", None)``
+    when there is no distinct parent to verify, else ``("", (outcome, message,
+    code))`` (fail closed).
+    """
+    missing_parent = (
+        DispatchOutcome.TERMINAL_ERROR,
+        "RuntimeBinding authoritative readback mismatch: "
+        "replacement parent lineage is absent, empty, or self-referential",
+        "BINDING_READBACK_MISMATCH",
+    )
+    metadata = binding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return ("", missing_parent) if require_parent else ("", None)
+    parent_id = str(metadata.get("replacement_parent_binding_id") or "").strip()
+    if not parent_id or parent_id == binding.get("binding_id"):
+        return ("", missing_parent) if require_parent else ("", None)
+    try:
+        parent = client.get(parent_id)
+    except Exception as exc:  # noqa: BLE001
+        return "", (
+            _classify_runtime_manager_error(exc),
+            f"replace source lineage readback failed: {exc}",
+            "REPLACE_SOURCE_LINEAGE_READBACK_ERROR",
+        )
+    parent_ok = (
+        isinstance(parent, Mapping)
+        and parent.get("binding_id") == parent_id
+        and parent.get("deployment_mode") == "paper"
+        and parent.get("capital_pool_id") == saga.get("capital_pool_id")
+        and bool(str(persona_capital_binding_id or "").strip())
+        and parent.get("persona_capital_binding_id") == persona_capital_binding_id
+        and bool(str(parent.get("runtime_id") or "").strip())
+        and parent.get("runtime_id") == binding.get("runtime_id")
+        and (parent.get("artifact_id"), parent.get("artifact_version"))
+        != (saga.get("artifact_id"), saga.get("artifact_version"))
+    )
+    if not parent_ok:
+        return "", (
+            DispatchOutcome.TERMINAL_ERROR,
+            "RuntimeBinding authoritative readback mismatch: "
+            "replacement parent lineage failed independent verification",
+            "BINDING_READBACK_MISMATCH",
+        )
+    return parent_id, None
+
+
 def validate_authoritative_readback(
     *,
     saga: Dict[str, Any],
@@ -222,6 +322,13 @@ def validate_authoritative_readback(
             f"got {metadata.get('strategy_id')!r}"
         )
     is_promotion = _is_stage_promotion(saga)
+    if _is_paper_forward_replace(saga):
+        if metadata.get("replacement_kind") != "forward":
+            mismatches.append("metadata.replacement_kind expected 'forward'")
+        if metadata.get("replacement_parent_binding_id") != expected_source_binding_id:
+            mismatches.append(
+                "metadata.replacement_parent_binding_id does not match saga source_binding_id"
+            )
     attestation_key = (
         "authoritative_promotion_attestation"
         if is_promotion
@@ -494,6 +601,35 @@ def dispatch_to_runtime_manager(
                 error_code="BINDING_NOT_FOUND_AFTER_SAGA_RECORDED",
             )
 
+        replay_source_binding_id = deploy_context.get("current_binding_id")
+        if (
+            _is_paper_forward_replace(saga)
+            and replay_source_binding_id == existing_binding_id
+            and isinstance(binding.get("metadata"), Mapping)
+        ):
+            # record_binding_created overwrites the mutable plan.binding_id with
+            # the NEW binding, so the plan can no longer name the admitted
+            # source.  Recover it from the immutable child lineage, but only
+            # accept it after independently verifying the parent in the owner.
+            parent_id, parent_error = verify_forward_replace_parent(
+                client=client,
+                saga=saga,
+                binding=binding,
+                persona_capital_binding_id=deploy_context.get(
+                    "persona_capital_binding_id"
+                ),
+            )
+            if parent_error is not None:
+                return DispatchResult(
+                    outcome=parent_error[0],
+                    binding_id=existing_binding_id,
+                    binding=binding if parent_error[2] == "BINDING_READBACK_MISMATCH" else None,
+                    error_message=parent_error[1],
+                    error_code=parent_error[2],
+                )
+            if parent_id:
+                replay_source_binding_id = parent_id
+
         mismatch = validate_authoritative_readback(
             saga=saga,
             binding=binding,
@@ -503,7 +639,7 @@ def dispatch_to_runtime_manager(
             ),
             expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
             expected_authority_report=expected_authority_report,
-            expected_source_binding_id=deploy_context.get("current_binding_id"),
+            expected_source_binding_id=replay_source_binding_id,
             allow_plan_lifecycle_recovery=True,
         )
         if mismatch:
@@ -525,7 +661,33 @@ def dispatch_to_runtime_manager(
     # --- New dispatch: create paper or atomically promote one stage ---
     try:
         request = _build_deploy_request(saga=saga, deploy_context=deploy_context)
-        if is_promotion:
+        if _is_paper_forward_replace(saga):
+            source_binding_id = str(
+                deploy_context.get("current_binding_id") or ""
+            ).strip()
+            if not source_binding_id:
+                raise RuntimeManagerClientError(
+                    "current_binding_id is required for paper forward replace",
+                    status_code=422,
+                    error_code="REPLACE_SOURCE_BINDING_REQUIRED",
+                )
+            source = client.get(source_binding_id)
+            source_error = _verify_replace_source(
+                saga=saga, deploy_context=deploy_context, source=source
+            )
+            if source_error:
+                return DispatchResult(
+                    outcome=DispatchOutcome.TERMINAL_ERROR,
+                    error_message=(
+                        f"paper forward replace source binding rejected: {source_error}"
+                    ),
+                    error_code="REPLACE_SOURCE_BINDING_MISMATCH",
+                )
+            request["current_binding_id"] = source_binding_id
+            request["runtime_id"] = source["runtime_id"]
+            replace_result = client.replace(source["runtime_id"], request)
+            binding = replace_result.get("new_binding")
+        elif is_promotion:
             source_binding_id = str(
                 deploy_context.get("current_binding_id") or ""
             ).strip()

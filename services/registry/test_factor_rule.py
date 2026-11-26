@@ -36,6 +36,27 @@ from services.registry.strategy_artifact import (
 )
 
 
+def test_direct_factor_interpreters_cannot_ignore_a_screen():
+    from services.registry.test_candidate_pool import screen_artifact, recorded_market
+    from services.registry.candidate_pool import MARKET_FEATURE_KEY
+
+    artifact = screen_artifact()
+    with pytest.raises(FactorRuleValidationError, match="decision symbol"):
+        evaluate_factor_rule_view(artifact, [1, 2], decision_time="2026-09-02")
+    view = evaluate_factor_rule_view(
+        artifact, None, symbol="2317.TW", decision_time="2026-09-02",
+        features={MARKET_FEATURE_KEY: recorded_market()},
+    )
+    assert view["action"] == "BUY"
+    assert "candidate_pool_digest" in view
+
+
+def test_screen_cadence_uses_source_catalogue_dataset_and_provider_periods():
+    assert get_feature_definition("tw_macro_cbc", "policy_rate").release_cadence == "monthly"
+    assert get_feature_definition("tw_macro_cbc", "usd_twd").release_cadence == "daily"
+    assert get_feature_definition("tw_macro_dgbas", "gdp_yoy").release_cadence == "quarterly"
+
+
 def _sample_factor_rule_artifact() -> dict[str, Any]:
     return {
         "artifact_schema_version": "1.0",
@@ -753,3 +774,21 @@ def test_repeated_mutation_decisions_register_unique_family_revisions_in_the_rea
             assert post(stale).status_code == 409
     finally:
         reset_store()
+
+
+def test_regime_index_and_breadth_features_are_governed_inputs() -> None:
+    for dataset, field in (("tw_index_daily", "close"), ("tw_index_daily", "open"),
+                           ("tw_market_breadth_daily", "whole_market_advancers"),
+                           ("tw_market_breadth_daily", "stocks_limit_down")):
+        definition = get_feature_definition(dataset, field)
+        assert definition is not None and definition.min_availability_lag_days == 0
+    assert get_feature_definition("tw_index_daily", "volume") is None
+
+
+def test_tx_daily_front_month_series_are_mirrored_with_declared_lag() -> None:
+    from services.source_ingestion.feature_catalogue import lag_days_for
+
+    for name in ("tx_front_month_settlement_price", "tx_total_open_interest"):
+        definition = get_feature_definition("taifex_market_tx_daily", name)
+        assert definition.min_availability_lag_days == lag_days_for("taifex_market_tx_daily", name) == 0
+        assert definition.release_cadence == "daily"

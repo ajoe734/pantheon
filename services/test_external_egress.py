@@ -342,7 +342,12 @@ def test_every_production_connector_uses_guarded_transport() -> None:
     configured = (root / "services/source_ingestion/configured.py").read_text(encoding="utf-8")
     assert "return open_external_url(request, caller=caller, timeout=timeout)" in configured
     assert 'network_scope == "internal_service"' in configured
-    assert "_InternalServiceRedirectHandler" in configured
+    assert "open_internal_service_url(" in configured
+    egress = (root / "services/external_egress.py").read_text(encoding="utf-8")
+    assert "class InternalServiceRedirectHandler" in egress
+    assert "InternalServiceRedirectHandler(allowed_prefixes" in egress
+    agora = (root / "services/source_ingestion/connectors/agora_owner.py").read_text(encoding="utf-8")
+    assert "open_internal_service_url(" in agora
 
 
 def test_connector_fetch_helpers_are_denied_before_outbound_transport(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,3 +398,188 @@ def test_only_source_ingest_may_use_collector_host_steady_egress() -> None:
 
 def test_unset_collector_host_leaves_steady_mode_deny() -> None:
     assert resolve_mode({"PANTHEON_EXTERNAL_EGRESS": ""}) == "deny"
+
+
+def _stalled_listener():
+    import threading
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    held: list[socket.socket] = []
+
+    def accept() -> None:
+        try:
+            while True:
+                conn, _ = server.accept()
+                held.append(conn)
+        except OSError:
+            return
+
+    threading.Thread(target=accept, daemon=True).start()
+    return server, held
+
+
+def test_operation_deadline_bounds_a_stalled_tls_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    server, held = _stalled_listener()
+    real_connect = socket.create_connection
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda target, timeout, source_address=None: real_connect(
+            ("127.0.0.1", server.getsockname()[1]), timeout, source_address
+        ),
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            # per-recv timeout (30s) alone would wait; the whole-operation deadline must not.
+            open_external_url(
+                "https://api.example.com/x",
+                caller="t",
+                timeout=30.0,
+                env=_allowlist("api.example.com"),
+                resolver=_resolver("8.8.8.8"),
+                deadline=time.monotonic() + 0.4,
+            )
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+    assert time.monotonic() - started < 5.0
+
+
+def test_deadline_watchdog_cuts_dribbled_headers_and_chunk_framing() -> None:
+    import http.client
+    import threading
+    import time
+
+    from services.external_egress import _DeadlineWatchdog
+
+    for payload in (
+        b"HTTP/1.1 200 OK\r\nX-A: 1\r\n",  # headers never finish
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab",  # chunk body stalls
+    ):
+        client, peer = socket.socketpair()
+        peer.sendall(payload)
+        watchdog = _DeadlineWatchdog(time.monotonic() + 0.3)
+        watchdog.track(client)
+        watchdog.start()
+        started = time.monotonic()
+        # keep dribbling bytes so a per-recv timeout would never fire
+        stop = threading.Event()
+
+        def dribble() -> None:
+            while not stop.is_set():
+                try:
+                    peer.sendall(b" ")
+                except OSError:
+                    return
+                time.sleep(0.05)
+
+        threading.Thread(target=dribble, daemon=True).start()
+        response = http.client.HTTPResponse(client)
+        try:
+            from services.external_egress import _WatchedResponse
+
+            with pytest.raises(TimeoutError):
+                # a deadline close may read as clean EOF; it must still never be data
+                response.begin()
+                _WatchedResponse(response, watchdog).read()
+        finally:
+            stop.set()
+            watchdog.stop()
+            peer.close()
+        assert watchdog.expired
+        assert time.monotonic() - started < 5.0
+
+
+def test_delayed_connect_then_stalled_tls_uses_remaining_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Connect consumes most of the budget; the handshake must not get a fresh per-recv timeout."""
+    import time
+
+    server, held = _stalled_listener()
+    real_connect = socket.create_connection
+
+    def slow_connect(target, timeout, source_address=None):
+        time.sleep(0.3)
+        return real_connect(("127.0.0.1", server.getsockname()[1]), timeout, source_address)
+
+    monkeypatch.setattr(socket, "create_connection", slow_connect)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            open_external_url(
+                "https://api.example.com/x",
+                caller="t",
+                timeout=30.0,
+                env=_allowlist("api.example.com"),
+                resolver=_resolver("8.8.8.8"),
+                deadline=started + 0.5,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        for conn in held:
+            conn.close()
+    assert elapsed < 0.65, elapsed
+
+
+def test_keepalive_client_guards_each_connection_and_refuses_rebinding(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.external_egress import GuardedKeepAliveClient
+
+    answers = {"addr": "8.8.8.8"}
+    lookups: list[str] = []
+
+    def resolver(host, port, *, type):
+        lookups.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers["addr"], port))]
+
+    connected: list[str] = []
+
+    class Sock:
+        def settimeout(self, value): ...
+        def shutdown(self, how): ...
+        def close(self): ...
+        def gettimeout(self):
+            return 2
+
+    def create_connection(target, timeout, source_address):
+        connected.append(target[0])
+        return Sock()
+
+    class FakeContext:
+        def wrap_socket(self, sock, *, server_hostname, **kw):
+            return sock
+
+    class Conn(_PinnedHTTPSConnection):
+        def __init__(self, host, *, policy, timeout):
+            super().__init__(host, policy=policy, timeout=timeout, context=FakeContext())
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    client = GuardedKeepAliveClient(
+        "api.example.com", caller="test", max_connections=2, timeout=2,
+        env=_allowlist("api.example.com"), resolver=resolver, connection_factory=Conn,
+    )
+    conn = client._new_connection(
+        _RedirectPolicy(caller="test", env=_allowlist("api.example.com"), resolver=resolver, max_redirects=3)
+    )
+    conn.connect()
+    assert connected == ["8.8.8.8"]
+    # A reconnect re-runs the DNS guard: a rebinding to a private address is refused.
+    answers["addr"] = "10.0.0.5"
+    other = client._new_connection(
+        _RedirectPolicy(caller="test", env=_allowlist("api.example.com"), resolver=resolver, max_redirects=3)
+    )
+    with pytest.raises(ExternalEgressBlocked) as err:
+        other.connect()
+    assert err.value.reason_code == "target_ip_forbidden"
+    assert connected == ["8.8.8.8"]
+    # Allowlist is enforced on the first request.
+    denied = GuardedKeepAliveClient("evil.example.com", caller="test", max_connections=1, timeout=2,
+                                    env=_allowlist("api.example.com"), resolver=resolver)
+    with pytest.raises(ExternalEgressBlocked):
+        denied.open("https://evil.example.com/x")
+    client.close()

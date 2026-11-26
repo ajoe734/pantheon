@@ -234,7 +234,7 @@ Agora 清理依賴是為了先完成同區域的刪除，避免並行改寫；�
 
 - 排名建議與 promotion review 的狀態唯一來源是 evaluator 已存的 `governance_request.decision_id` 對應的 Governance `ApprovalDecision`（`personas/service.py::_lifecycle_owner_review_state`）。BFF 不建立、不投票、不翻譯任何第二份核准紀錄。
 - 已刪除舊的 `submit_quarterly_ranking_recommendation` 服務分支；`POST …/recommendations/{id}/submit` 只回 410（`ACTION_RETIRED`），不產生 command。
-- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已 decided）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
+- 狀態集合：`advisory_report`（無提案，不可執行）、`pending_human_gate`（owner 提案存在，尚未 decided，含首票）、`decision_accepted`（owner 已核准）、`decision_rejected`（owner 已退回）、`decision_revoked`／`decision_superseded`（owner 終態；`decision_status` 為 `revoked`／`superseded`，保留 owner readback，`links.human_inbox` 為 null）、`owner_unavailable`（owner 讀不到，或 tenant／persona／proposal_id／target_type／subject（persona、from_state、to_state）／proposal_content_digest 與已存提案不符；ranking 與 review 的 `links.human_inbox` 此時皆為 null）。`recommended_not_submitted` 不再出現。
 - `POST /bff/management/promotion-reviews/{id}/decisions` 已退役，只回 410（`ACTION_RETIRED`，replacement `/bff/approvals/{decision_id}/decide`），不產生 command；review item 不再提供 `links.decisions`／`allowed_decisions`。收件匣不再有 `promotion_review` 來源（舊 command-log 的 `QuarterlyRankingRecommendationSubmit`／`HumanGate*` 列不再投影），待決提案只以 `approval:{decision_id}` 出現。
 - Human Inbox：owner 提案尚未 decided 時 `links.human_inbox`／`human_inbox_id` 指向既有 `approval:{decision_id}` 項目（`source_type=approval`）；decided 後該項目已離開 approval queue，故兩者為 null，改以 `links.owner_decision`（`/api/v1/approval-decisions/{decision_id}`）作最終決議讀回。owner subject 讀自 `ApprovalDecision.metadata.subject`。
 
@@ -248,3 +248,77 @@ resolves saved recommendations against that durable snapshot; missing/unavailabl
 saved snapshots return 503. Replay retains creation time and rejects content or
 evidence-assertion divergence. No new service, store or scheduler is introduced;
 Persona tenant visibility and the single Governance decision consumer are unchanged.
+
+
+### 季末 paper → canary 候選提案（PAPER-CANARY-PROMOTION-PROPOSAL-20261112）
+
+既有 evaluator 排程在 paper allocation cycle 的同一輪讀取同一個已結束季度的
+最後 admitted snapshot。即使 AI 不可用，snapshot admission 仍保留，季末固定規則
+仍執行。每 tenant／季度至多提名一位：paper 排名第一、沒有 exclusion codes、
+eligible 為 true，且已知的季度排名指標完整；第一名同分（含不同 rank 但同分）、
+未知公式／指標、樣本不足均不提名，也不改提第二名。Persona owner 身分與 tenant
+必須可確認，release／acceptance probe 一律排除。
+
+預設門檻為 30 個有 owner quarter-equity 觀測的不同 UTC 日期，以及 20 張在季度內
+送出且有正成交數量的不同訂單；觀測日以 retained quarter-equity evidence 的實際
+observed_at 計數，不把季度經過天數當樣本；訂單依 runtime／binding／order identity
+去重，partial fills 算一張，累積 fill count 不當訂單數。此樣本是觀測覆蓋門檻，
+不宣稱完整交易所日曆或完整日內歷史。可設定
+`PERSONA_EVALUATOR_PROMOTION_MIN_TRADING_DAYS` 與
+`PERSONA_EVALUATOR_PROMOTION_MIN_FILLED_ORDERS`；缺少季度 observation／order facts
+或無效設定時 fail closed。原因、snapshot id、rule summary 保存在 evaluator state，
+可從既有 `/api/persona-evaluator/recommendations` 的 `last_promotion` 和
+`result.promotion_nomination` 讀取。
+
+AI 不能再從 ACTIONS 選 `promote_to_canary_candidate`；提名先由規則確定，AI 只能
+補理由文字。AI 不可用仍以 factual rule summary 送出 `paper_canary_candidacy`。
+subject 綁定 persona、paper→canary_candidate、quarter、ranking snapshot 與 content digest。
+完整 request 在 POST 前保存；decision id 與 idempotency key 綁定 tenant＋季度，
+rerun／catch-up／HTTP 結果未知的重試均沿用同一筆，退回後也不自動另提。
+
+Human Inbox 沿用 `approval:{decision_id}`，由既有 approvals decide 路由核准／退回；
+promotion review 只讀 Governance owner，依結果顯示 `pending_human_gate` →
+`decision_accepted`／`decision_rejected`，終態以 owner decision 連結讀回。
+freeze／retire 仍使用 `persona_lifecycle_transition`。
+候選核准只留決議，不改 Persona lifecycle、不建立 binding／allocation／rebalance、
+不動 runtime；沒有 consumer 執行新 target。真實資金 canary allocation 必須等正式
+環境開放後另案處理，本任務不授予 L1 canary deployment 權限。
+
+### Agora 委員會與記憶審核恢復（AGORA-COMMITTEE-MEMORY-RESTORE-20261112）
+
+依 persona cycle reconnect 設計 §6.7／D11，恢復已刪除的讀取與 owner 指令入口。
+BFF 不保存 committee、memo、memory 或 quarantine 清單。前端仍由 `execute-plans`
+另行交付；本節記錄 backend source，不代表 hosted 或前端驗收。
+
+| BFF 路由 | 唯一業務 owner 與行為 |
+| --- | --- |
+| `GET /bff/agora/committee/sessions` | Consultation `/api/consult/requests`，只投影同 tenant 的 `persona_panel` |
+| `GET /bff/agora/committee/sessions/{session_id}` | 同 owner request 明細，核對 tenant、request id 與 panel 類型 |
+| `GET /bff/agora/committee/sessions/{session_id}/memos` | Consultation `/api/consult/memos?request_id=...`，先確認 panel 歸屬 |
+| `POST /bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish` | 先讀回並核對 memo 所屬 panel，再轉既有 Consultation publish；資格檢查、持久化與重試語意由 owner 負責 |
+| `GET /bff/agora/memory` | Memory `/api/memory/retrieve` 加同 persona 的 `/api/memory/trade-lessons`；`scope` 為 persona／institutional／both，persona/both 必填 `persona_id` |
+| `POST /bff/agora/memory/{memory_id}/actions/quarantine` | paper lesson candidate 轉 Memory `/api/memory/trade-lessons/{id}/decide` 的 quarantine，保留 caller、reason、audit receipt 與 Idempotency-Key |
+
+所有入口先做既有 BFF role／tenant admission。Consultation 只使用已配置的 service
+credential 並傳送選定 tenant；缺 credential 不呼叫 owner。Memory 保留已驗證 caller
+bearer（或 browser-session credential），不改用更高權限身分；owner 從 token 取 roles
+並呼叫 Governance。BFF 不以查詢參數宣稱 session persona。回應中的 persona 與所有
+entry tenant 必須吻合；未帶 tenant 的舊 entry 不當成可讀取的私人或機構記憶。
+institutional-only 不讀 lesson candidates。viewer 的 Memory 權限仍由 Memory／
+Governance 決定，不因 BFF 可以讀其他畫面而升權。
+
+Memory owner 目前只有 lesson candidate 的 quarantine 指令，沒有一般 persona／
+institutional entry 的隔離 API。這兩種 kind 回 `unavailable` 與
+`entry_quarantine_not_supported_by_memory_owner`；不新增 owner 端點或本地旗標。
+空 owner 清單以 `status=unavailable` 與 reason 表示，連線、授權、缺資料或契約不符
+以明確 unavailable error 回應並記錄原因，皆為 `fallback_used=false`。不回 seed、
+cache 或編造資料，不啟動模型、交易、binding 或資金寫入。
+
+六個路由已列入 backend route manifest；additive Agora v1.14 bundle 保存新契約與
+SHA-256，舊版 bundle bytes 不變。整合測試沿用 production mounting hook 與 security
+stack，實際執行 Consultation／Memory client、owner HTTP app 與 Governance policy，
+僅替換 HTTP transport；證據見本 task 的 `docs/deployment/evidence/` 目錄。
+
+## 決策卷宗讀取（BFF-DECISION-CASE-FILE-VIEWS-20261113）
+
+OODA 封包詳情 `GET /bff/ooda/packets/{id}` 與 Agora 委員會 `sessions/{id}`、`sessions/{id}/memos` 在回應中加入 `case_file_view`，不新增路由。內容是 owner 已持久化的卷宗（封包紀錄的 `persona_cycle.case_files`、Consultation transcript 的 `panel_case_file_attached` 事件）：每個條目的種類、摘錄、source id、檢索模式，以及每個 claim／決策引用的條目 id；被拒絕的貢獻附 owner 記錄的拒絕原因。BFF 只轉發與投影：沒有卷宗時回 `status=unavailable` 與原因，不補假資料；其他 persona 的私有記憶一律不回傳（封包 persona 與卷宗主體不符、或面板這種共享情境，一律剔除 `persona_private` 條目）。封包詳情不再回傳原始 `persona_cycle.case_files`。

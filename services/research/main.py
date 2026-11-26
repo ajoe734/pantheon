@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import copy
+import asyncio
 import hashlib
+import heapq
 import json
 import json as _json
 import logging
@@ -15,14 +19,15 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("research-orchestrator")
 
-from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthError, TenantBoundaryError, authenticate_tenant
+from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES, AuthenticatedTenant, AuthError, TenantBoundaryError, authenticate_tenant
+from services.research.write_owner import MeetingActionError
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from services.registry.alpha_template import (
@@ -60,6 +65,7 @@ from services.research.research_memory_outbox import (
     build_research_memory_outbox_store,
     get_outbox_store,
     validate_research_memory_writeback_eligibility,
+    resolve_memory_sponsor,
 )
 from services.research.memory_writeback_worker import MemoryWritebackWorker
 from services.research.retrieval_influence import (
@@ -417,7 +423,7 @@ class RegistryWritebackBody(BaseModel):
 
 class MemoryWritebackBody(BaseModel):
     artifact_id: Optional[str] = None
-    sponsor_persona_id: str = "persona-tw-equity"
+    sponsor_persona_id: Optional[str] = None
     summary: Optional[str] = None
     headline: Optional[str] = None
     confidence: float = 1.0
@@ -454,6 +460,47 @@ class RetrievalInfluenceBody(BaseModel):
 
 
 app = FastAPI(title="Pantheon Research Orchestrator Service", version="0.1.0")
+
+
+async def _drain_memory_outbox() -> None:
+    interval = max(1, float(os.getenv("RESEARCH_MEMORY_POLL_SECONDS", "30")))
+    while True:
+        try:
+            result = await asyncio.to_thread(MemoryWritebackWorker().drain)
+            if result["total_processed"]:
+                logger.info("Research memory deliveries: %s", result)
+        except Exception:
+            logger.exception("Research memory delivery tick failed")
+        await asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def start_memory_writeback_worker() -> None:
+    if os.getenv("RESEARCH_MEMORY_WORKER_ENABLED", "false").lower() == "true":
+        app.state.memory_writeback_task = asyncio.create_task(_drain_memory_outbox())
+
+
+@app.on_event("shutdown")
+async def stop_memory_writeback_worker() -> None:
+    task = getattr(app.state, "memory_writeback_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+def _memory_sponsor(run: Dict[str, Any], requested: Optional[str] = None) -> str:
+    """Resolve attribution from the owning demand/member carried by the run/task."""
+    task = store.get_task(run["task_id"]) or {}
+    params = run.get("parameters") or {}
+    contexts = [run, params, params.get("metadata") or {}, task.get("constraints") or {}]
+    exp = params.get("experiment_run") or {}
+    contexts.extend([exp, exp.get("metadata") or {}])
+    return resolve_memory_sponsor(*contexts, requested=requested)
+
+
 store = build_research_orchestrator_store(DATA_DIR)
 def get_store() -> ResearchOrchestratorStore:
     return store
@@ -563,6 +610,7 @@ def get_write_owner() -> Any:
         from services.research.write_owner import build_research_write_owner
 
         _write_owner = build_research_write_owner()
+        _write_owner._action_evidence_reader = _meeting_ticket_evidence
         return _write_owner
     except Exception as exc:
         raise HTTPException(
@@ -574,6 +622,8 @@ def get_write_owner() -> Any:
 def set_write_owner(owner: Optional[Any]) -> None:
     global _write_owner
     _write_owner = owner
+    if owner is not None and hasattr(owner, "_action_evidence_reader"):
+        owner._action_evidence_reader = _meeting_ticket_evidence
 alpha_replication_admission_store = ReplicationAdmissionStore(ALPHA_REPLICATION_DATA_DIR)
 alpha_replication_queue = AlphaReplicationQueue(ALPHA_REPLICATION_DATA_DIR)
 register_fastapi_health_routes(
@@ -996,10 +1046,10 @@ def _structured_token_tenants(authorization: Optional[str]) -> set[str]:
     return {t.strip() for t in raw_tenants.split(",") if t.strip()}
 
 
-def _authenticated_alpha_replication_tenant(
-    authorization: Optional[str] = Header(default=None),
-    x_tenant_id: Optional[str] = Header(default=None),
-) -> str:
+def _authenticated_alpha_replication_actor(
+    authorization: Optional[str],
+    x_tenant_id: Optional[str],
+) -> AuthenticatedTenant:
     """Verified bearer identity bound to an explicit tenant; anonymous or cross-tenant is denied."""
     try:
         verified = authenticate_tenant(
@@ -1007,18 +1057,35 @@ def _authenticated_alpha_replication_tenant(
             tenant_id=x_tenant_id,
             service_prefix="RESEARCH",
             required_roles=_ALPHA_REPLICATION_READ_ROLES,
-        ).tenant_id
+        )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except TenantBoundaryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     structured_tenants = _structured_token_tenants(authorization)
-    if structured_tenants and "*" not in structured_tenants and verified not in structured_tenants:
+    if structured_tenants and "*" not in structured_tenants and verified.tenant_id not in structured_tenants:
         raise HTTPException(
             status_code=403,
-            detail=f"Authenticated actor is not authorized for tenant {verified!r}.",
+            detail=f"Authenticated actor is not authorized for tenant {verified.tenant_id!r}.",
         )
     return verified
+
+
+def _authenticated_alpha_replication_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    return _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+
+
+def _authenticated_persona_demand_writer_tenant(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> str:
+    actor = _authenticated_alpha_replication_actor(authorization, x_tenant_id)
+    if actor.actor_id != "persona-pool-cycle":
+        raise HTTPException(status_code=403, detail="Persona demand writes require the persona-pool-cycle principal.")
+    return actor.tenant_id
 
 
 def _build_alpha_replication_entry(
@@ -1036,6 +1103,8 @@ def _build_alpha_replication_entry(
     return {
         "admission_id": admission.get("admission_id"),
         "tenant_id": admission.get("tenant_id"),
+        "persona_id": admission.get("persona_id") or (q.get("persona_id") if has_q else None),
+        "demand_ref": admission.get("demand_ref") or (q.get("demand_ref") if has_q else None),
         "strategy_spec_id": admission.get("strategy_spec_id"),
         "strategy_id": admission.get("strategy_id") or (q.get("strategy_id") if has_q else None),
         "spec_version": admission.get("spec_version") or (q.get("spec_version") if has_q else None),
@@ -1071,15 +1140,21 @@ def list_alpha_replication_entries(
     tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
 ) -> List[Dict[str, Any]]:
     """Return every replication admission of the authenticated tenant joined with its queue entry."""
-    admissions = alpha_replication_admission_store.list_admissions(tenant_id=tenant_id)
+    admissions = list(alpha_replication_admission_store.list_admissions(tenant_id=tenant_id))
     queue_store = (
         alpha_replication_queue
         if getattr(alpha_replication_queue, "_data_dir", None)
         == getattr(alpha_replication_admission_store, "_data_dir", None)
         else AlphaReplicationQueue(alpha_replication_admission_store._data_dir)
     )
+    queue_entries = list(queue_store.list_all())
+    active_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    if active_dir != getattr(alpha_replication_admission_store, "_data_dir", None):
+        admissions.extend(ReplicationAdmissionStore(active_dir).list_admissions(tenant_id=tenant_id))
+        queue_entries.extend(AlphaReplicationQueue(active_dir).list_all())
+
     queue_by_key: Dict[tuple[str, str], Dict[str, Any]] = {}
-    for entry in queue_store.list_all():
+    for entry in queue_entries:
         if not isinstance(entry, dict):
             continue
         entry_tenant = str(entry.get("tenant_id") or "").strip()
@@ -1088,6 +1163,7 @@ def list_alpha_replication_entries(
             queue_by_key[(entry_tenant, entry_spec_id)] = entry
 
     results: List[Dict[str, Any]] = []
+    seen_specs: set[str] = set()
     for admission in admissions:
         if not isinstance(admission, dict):
             continue
@@ -1095,14 +1171,48 @@ def list_alpha_replication_entries(
         if adm_tenant != tenant_id:
             continue
         spec_id = str(admission.get("strategy_spec_id") or "").strip()
+        if not spec_id or spec_id in seen_specs:
+            continue
+        seen_specs.add(spec_id)
         queue_entry = queue_by_key.get((adm_tenant, spec_id))
         results.append(_build_alpha_replication_entry(admission, queue_entry))
+
+    for demand in research_demand_store.list(tenant_id):
+        attempts = ((demand.get("discovery") or {}).get("template_search") or {}).get("attempts") or {}
+        for receipt in attempts.values():
+            if not isinstance(receipt, dict):
+                continue
+            reg = receipt.get("registration")
+            artifact = receipt.get("artifact")
+            if not isinstance(reg, dict) or reg.get("status") != "approved" or not isinstance(artifact, dict):
+                continue
+            spec_id = str(reg.get("source_strategy_spec_id") or (artifact.get("lineage") or {}).get("source_strategy_spec_id") or "").strip()
+            if not spec_id or spec_id in seen_specs:
+                continue
+            seen_specs.add(spec_id)
+            adm = {
+                "admission_id": reg.get("admission_id") or f"adm-tpl-{spec_id}",
+                "tenant_id": tenant_id,
+                "persona_id": demand.get("persona_id"),
+                "demand_ref": demand.get("demand_id"),
+                "strategy_spec_id": spec_id,
+                "strategy_id": artifact.get("strategy_id"),
+                "spec_version": artifact.get("version"),
+                "checksum": reg.get("checksum"),
+                "approval_decision_id": reg.get("approval_decision_id"),
+                "requested_by": "persona-pool-cycle",
+                "review_ref": f"review://{reg.get('approval_decision_id')}",
+                "mode": "initial",
+                "status": "admitted",
+            }
+            results.append(_build_alpha_replication_entry(adm, {**adm, "status": "completed"}))
     return results
 
 
 @app.get("/api/research-orchestrator/tasks")
 def list_tasks(status: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
-    tasks = store.list_tasks()
+    _expire_collector_query_plans()
+    tasks = store.list_tasks() + query_plan_store.list_tasks()
     return [task for task in tasks if str(task.get("status") or "").lower() == status.lower()] if status else tasks
 
 
@@ -1132,7 +1242,8 @@ def create_task(body: CreateTaskBody) -> Dict[str, Any]:
 
 @app.get("/api/research-orchestrator/tasks/{task_id}")
 def get_task(task_id: str) -> Dict[str, Any]:
-    task = store.get_task(task_id)
+    _expire_collector_query_plans()
+    task = store.get_task(task_id) or query_plan_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="research task not found")
     return task
@@ -1158,6 +1269,30 @@ def cancel_task(task_id: str, body: Optional[CancelRunBody] = None) -> Dict[str,
     return task
 
 
+def _deferred_retry_cadence_seconds() -> int:
+    """One evolution cadence (the scheduler interval; default one day)."""
+    try:
+        return max(1, int(os.getenv("EVOLUTION_SCHEDULER_INTERVAL_SECONDS", "86400")))
+    except ValueError:
+        return 86400
+
+
+def _deferred_retry_due(run: Dict[str, Any]) -> bool:
+    """True when an ``operator_decision_required`` run may be re-executed: one cadence after its last deferral.
+
+    Uses the orchestrator's own clock, never a caller-supplied time. A run deferred before ``deferred_at`` was
+    recorded (or with an unreadable stamp) is due, so the gate can never strand an older deferral."""
+    stamp = str(run.get("deferred_at") or "")
+    if not stamp:
+        return True
+    try:
+        deferred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (now - deferred).total_seconds() >= _deferred_retry_cadence_seconds()
+
+
 @app.post("/api/research-orchestrator/tasks/{task_id}/runs", status_code=201)
 def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
     task = store.get_task(task_id)
@@ -1165,6 +1300,17 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="research task not found")
     existing = _idempotent_match(store.list_runs(), body.idempotency_key)
     if existing:
+        if existing.get("outcome") == "operator_decision_required" and existing.get("status") == "queued":
+            if not _deferred_retry_due(existing):
+                # REQUALIFY-REFUSAL-NOT-CRASH-20261125: a deferred run is re-executed at most once per cadence.
+                # The dispatch worker re-submits on every claim-lease expiry; before the cadence is due the run is
+                # returned unchanged so no attempt, owner read or pool decision version is produced.
+                return existing
+            existing["attempt_number"] = int(existing.get("attempt_number") or 1) + 1
+            existing["updated_at"] = body.requested_at or utc_now()
+            store.put_run(existing)
+            _trigger_retrain_execution(existing["run_id"], existing.get("parameters") or body.parameters)
+            return store.get_run(existing["run_id"]) or existing
         return existing
 
     timestamp = body.requested_at or utc_now()
@@ -1378,6 +1524,7 @@ def dispatch_run(task_id: str, body: DispatchRunBody) -> Dict[str, Any]:
         and _is_retrain_action(body.parameters)
     ):
         _trigger_retrain_execution(run["run_id"], body.parameters)
+        run = store.get_run(run["run_id"]) or run
     if not rejected and is_stage_backend and (body.parameters.get("stage") or (body.parameters.get("plan") and body.parameters["plan"].get("stages"))):
         _progress_plan_stages(body.parameters.get("plan") or {}, run, body.actor_id, store, timestamp)
     return run
@@ -1757,6 +1904,7 @@ def _retrain_prior_state(run_id: str, params: Dict[str, Any], tenant_id: str) ->
         "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
         "baseline_metrics", "candidate_metrics", "persona_id", "parameter_updates",
         "candidate_artifact_id", "candidate_proof_ref", "outcome", "outcome_reason",
+        "evolution_case_file", "evolution_child_context", "evolution_children",
     )
     related = []
     for other in get_store().list_runs():
@@ -1793,6 +1941,69 @@ _RETRAIN_SEARCH_BUDGET_ENV = "RESEARCH_RETRAIN_SEARCH_BUDGET"
 _RETRAIN_TRIAL_COUNTER_ENV = "RESEARCH_REPLICATION_TRIAL_COUNTER_PATH"
 
 
+def _pool_owner(params):
+    if not params.get("pool_member"):
+        return None
+    from services.evolution.auto_consumer_runtime import PoolOwner
+    env = dict(os.environ, EVOLUTION_SCHEDULER_TENANT_ID=params["tenant_id"])
+    return PoolOwner(env)
+
+
+def _admit_evolution_child(params, child_id):
+    owner = _pool_owner(params)
+    if owner is not None:
+        ctx = params["pool_member"]
+        parent = next((m for m in owner.pool(ctx["persona_id"])["members"]
+                       if m["artifact_ref"] == ctx["artifact_ref"]), None)
+        if parent is None or parent["stage"] != "active" or any(
+                parent.get(k) != ctx.get(k) for k in ("checksum", "joined_at")):
+            raise _RetrainFailure("pool_trial", "approved parent membership changed")
+        owner.admit_child(ctx, child_id, params["decision_id"])
+
+
+def _evolution_member_case_context(run_id, parent, params):
+    """Persist the owner-composed case file even when a child is refused."""
+    if not params.get("pool_member"):
+        return None, {}
+    from services.research.alpha_replication import evolution_executor as executor
+
+    try:
+        case_file = executor.compose_member_case_file(
+            parent, params=params, tenant_id=params["tenant_id"],
+            decision_id=params["decision_id"], parent_registry_ref=params["target_artifact_id"],
+        )
+        _retrain_record(run_id, evolution_case_file=case_file)
+        declaration = params.get("addresses_lessons", params["pool_member"].get("addresses_lessons"))
+        context = executor.child_lesson_context(case_file, declaration)
+    except executor.ExecutorRefusal as exc:
+        _retrain_record(run_id, evolution_case_file_refusal={"reason": exc.reason})
+        raise _RetrainFinished(exc.outcome, exc.reason) from None
+    _retrain_record(run_id, evolution_child_context=context)
+    return case_file, context
+
+
+@app.get("/api/research/evolution/families/{family_id}")
+def evolution_family_state(family_id: str, bar_frequency: Optional[str] = None,
+                           tenant_id: str = Depends(_authenticated_alpha_replication_tenant)):
+    from services.research.alpha_replication.shared_stores import SharedFamilyTrialCounterStore
+    from services.research.replication.gate import family_trial_key
+    # The same family counter used by the real gate is durable across workers.
+    views = _retrain_call(step="family_state", service="registry", method="GET",
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", tenant_id=tenant_id,
+        url=os.getenv("REGISTRY_URL", "http://registry:8087").rstrip("/") +
+            "/api/registry/strategies/" + urllib.parse.quote(family_id, safe="") + "/strategy-artifacts")
+    if not any(((v or {}).get("entry") or {}).get("owner_tenant") == tenant_id for v in views or []):
+        raise HTTPException(status_code=404, detail="family not found")
+    # Frequency-scoped key (SD §9 K8); omitted/daily keeps the legacy bare family key.
+    # `trials` stays frequency-isolated; the O-17 lifetime cap (500) is enforced on the
+    # aggregate family total across every frequency bucket.
+    store = SharedFamilyTrialCounterStore(_retrain_trial_counter_path())
+    trials = store.get(family_trial_key(family_id, bar_frequency))
+    total = store.family_total(family_id)
+    return {"family_id": family_id, "bar_frequency": (bar_frequency or "").strip().lower() or None, "trials": trials,
+            "family_total_trials": total, "status": "tried" if total >= 500 else "available"}
+
+
 def _retrain_trial_counter_path() -> Path:
     """Authoritative family counter: the file OOS admission's gate also uses."""
     explicit = os.environ.get(_RETRAIN_TRIAL_COUNTER_ENV)
@@ -1800,8 +2011,16 @@ def _retrain_trial_counter_path() -> Path:
 
 
 def _default_retrain_dataset_loader(parent_artifact: Dict[str, Any], params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    dataset_path = os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH") or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
-    policy_path = os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH") or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+    dataset_path = (
+        os.environ.get("RESEARCH_RETRAIN_CANONICAL_DATASET_PATH")
+        or os.environ.get("TRAINING_SESSION_CANONICAL_DATASET_PATH")
+        or os.environ.get("PERSONA_POOL_CANONICAL_DATASET_PATH")
+    )
+    policy_path = (
+        os.environ.get("RESEARCH_RETRAIN_THRESHOLD_POLICY_PATH")
+        or os.environ.get("TRAINING_SESSION_THRESHOLD_POLICY_PATH")
+        or os.environ.get("PERSONA_POOL_THRESHOLD_POLICY_PATH")
+    )
     if not dataset_path or not policy_path:
         return None
     training_dir = str(Path(__file__).resolve().parent.parent / "training-session")
@@ -1843,8 +2062,10 @@ def _retrain_search_update(
         dataset = _RETRAIN_DATASET_LOADER(parent_artifact, params)
     if not isinstance(dataset, dict):
         raise _RetrainFinished("no_candidate", "in_sample_dataset_unavailable")
-    budget = int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
+    budget = 50 if params.get("pool_member") else int(os.environ.get(_RETRAIN_SEARCH_BUDGET_ENV) or search.DEFAULT_SEARCH_BUDGET)
     family_id = str(parent_artifact.get("strategy_id") or parent_artifact.get("artifact_id"))
+    if params.get("pool_member") and search.shared_family_trial_counter(_retrain_trial_counter_path()).family_total(family_id) >= 500:
+        raise _RetrainFinished("no_candidate", "family_tried")
     from services.research.vectorbt.adapter.vectorbt_adapter import VectorbtBackend
 
     prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
@@ -1981,10 +2202,15 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     state = _retrain_prior_state(run_id, params, tenant_id)
     if state.get("candidate_artifact_id") or state.get("outcome") in _RETRAIN_OUTCOMES:
         # The decision already reached its outcome: adopt it, change nothing.
+        if params.get("pool_member") and state.get("candidate_artifact_id") and not state.get("evolution_child_context"):
+            raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
         carried = {k: v for k, v in state.items() if k in {
             "session_id", "baseline_job_id", "baseline_eval_id", "candidate_job_id", "candidate_eval_id",
-            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id"}}
+            "baseline_metrics", "candidate_metrics", "candidate_artifact_id", "candidate_proof_ref", "persona_id",
+            "evolution_case_file", "evolution_child_context", "evolution_children"}}
         _retrain_record(run_id, **carried)
+        if state.get("candidate_artifact_id"):
+            _admit_evolution_child(params, state["candidate_artifact_id"])
         raise _RetrainFinished(
             str(state.get("outcome") or "candidate_created"),
             str(state.get("outcome_reason") or "resumed_from_recorded_outcome"),
@@ -2010,6 +2236,8 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     persona_id = str(metadata.get("persona_id") or "").strip()
     if not persona_id:
         raise _RetrainFinished("evaluation_rejected", "target_has_no_persona")
+
+    _case_file, child_context = _evolution_member_case_context(run_id, parent_artifact, params)
 
     # 2. One Teaching session for this decision (resumed, never duplicated).
     session_id = str(state.get("session_id") or "")
@@ -2152,10 +2380,14 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             try:
                 child, _descriptor = search.build_child_artifact(
                     parent_artifact, decision_id=decision_id, kind="retrain", parameter_updates=proposed,
-                    source_run_ids=source_runs, child_version=new_version,
+                    source_run_ids=source_runs, child_version=new_version, parent_registry_ref=target_artifact_id,
                 )
-            except search.EvolutionSearchError as exc:
+                if child_context:
+                    child["artifact_id"] = new_artifact_id
+            except (search.EvolutionSearchError, StrategyArtifactValidationError) as exc:
                 raise _RetrainFinished("no_candidate", f"retrain_child_invalid: {exc}") from None
+            if child_context:
+                _retrain_record(run_id, evolution_children={new_artifact_id: child_context})
             prev_backend = os.environ.get("PANTHEON_VECTORBT_BACKEND")
             os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
             try:
@@ -2171,16 +2403,29 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
             if not verdict["passed"]:
                 raise _RetrainFinished("no_candidate", "children_failed_out_of_sample_gate")
             try:
+                registration_url = f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate"
+                registration_body = {
+                    "new_artifact_id": new_artifact_id,
+                    "new_version": new_version,
+                    "parameter_updates": proposed,
+                    "source_run_ids": [decision_id, *source_runs],
+                }
+                if child_context:
+                    # The existing full registration API preserves proposal
+                    # metadata; the parameter-only mutation API has no such field.
+                    registration_url = f"{registry_url}/api/registry/strategy-artifacts"
+                    registration_body = {
+                        "registry_id": new_artifact_id, "artifact_state": "candidate",
+                        "strategy_artifact": child,
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
+                        ),
+                        "metadata": {"persona_id": persona_id, **child_context},
+                    }
                 child_view = _retrain_call(
                     step="register_candidate", service="registry", method="POST", token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN",
-                    url=f"{registry_url}/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}/mutate",
-                    tenant_id=tenant_id,
-                    body={
-                        "new_artifact_id": new_artifact_id,
-                        "new_version": new_version,
-                        "parameter_updates": proposed,
-                        "source_run_ids": [decision_id, *source_runs],
-                    },
+                    url=registration_url, tenant_id=tenant_id, body=registration_body,
                 )
                 break
             except _OwnerRejection as exc:
@@ -2200,6 +2445,7 @@ def _execute_retrain(run_id: str, params: Dict[str, Any]) -> None:
     writebacks = list(run.get("registry_writebacks") or [])
     writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
     _retrain_record(run_id, candidate_artifact_id=child_id, registry_writebacks=writebacks)
+    _admit_evolution_child(params, child_id)
     raise _RetrainFinished("candidate_created", "candidate_passed_gate_and_beat_baseline")
 
 
@@ -2250,15 +2496,492 @@ def _evolution_oos_context(
     if not isinstance(dataset, dict):
         raise _RetrainFinished("evaluation_rejected", "governed_dataset_unavailable")
 
+    if params.get("pool_member") and _evolution_action(params) == "revalidate":
+        try:
+            dataset = executor.post_admission_dataset(dataset, params["pool_member"]["joined_at"])
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
+
     data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
     backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
-    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    gate = _ProofCapturingGate(
+        SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+    )
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        run_id = backtests.record(evaluation)
+        if run_id:
+            gate.evaluations[run_id] = copy.deepcopy(evaluation)  # the exact evaluation the gate judges
+            _bind_backtest_run_owner(data_dir, run_id, tenant_id=tenant_id, decision_id=decision_id)
+        return run_id
+
     factory = executor.build_gate_request_factory(
         spec=spec, dataset=dataset, decision_id=decision_id, tenant_id=tenant_id,
-        record_backtest=backtests.record, family_id=family_id, timestamp=utc_now(),
+        record_backtest=_record_owned, family_id=family_id, timestamp=utc_now(),
     )
 
     return gate, factory
+
+
+class _ProofCapturingGate:
+    """Delegates to the real gate and keeps each response so registration can send the real proof.
+
+    The proof/evaluation transport is scoped to this gate (one executing run); a rejected
+    judgement is released immediately and everything else dies with the gate.
+    """
+
+    def __init__(self, gate: Any) -> None:
+        self._gate = gate
+        self.proofs: Dict[str, Dict[str, Any]] = {}
+        self.evaluations: Dict[str, Dict[str, Any]] = {}
+
+    def release(self, run_id: Any) -> None:
+        self.proofs.pop(str(run_id or ""), None)
+        self.evaluations.pop(str(run_id or ""), None)
+
+    def get_family_trial_count(self, family_id: str) -> int:
+        return self._gate.get_family_trial_count(family_id)
+
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        # The real gate always provides the aggregate; minimal gate doubles fall back to the bare key.
+        total = getattr(self._gate, "get_family_total_trial_count", None)
+        return total(family_id) if callable(total) else self._gate.get_family_trial_count(family_id)
+
+    def record_family_trial(self, family_id: str) -> int:
+        record = getattr(self._gate, "record_family_trial", None)
+        return record(family_id) if callable(record) else self._gate.get_family_trial_count(family_id)
+
+    def evaluate_candidate(self, request: Any) -> Any:
+        try:
+            response = self._gate.evaluate_candidate(request)
+        except BaseException:
+            self.proofs.clear()
+            self.evaluations.clear()
+            raise
+        for result in getattr(response, "results", []) or []:
+            if getattr(result, "criterion_id", "") == "real_backtest_validation":
+                run_id = str((getattr(result, "details", None) or {}).get("backtest_run_id") or "")
+                if not run_id:
+                    continue
+                if getattr(response, "passed", False) and callable(getattr(response, "to_dict", None)):
+                    self.proofs[run_id] = response.to_dict()
+                else:
+                    self.release(run_id)
+        # Evaluations recorded for runs that never produced a passing proof are not retained.
+        for run_id in [r for r in self.evaluations if r not in self.proofs]:
+            self.evaluations.pop(run_id, None)
+        return response
+
+
+def _producer_proof_registration(
+    *, data_dir: Path, child: Dict[str, Any], verdict: Dict[str, Any], decision_id: str, run_id: str,
+    gate: Any = None,
+) -> Dict[str, Any]:
+    """Registration fields for a gate-passed child: the real proof, its run evaluation and lineage.
+
+    Records the actual gate verdict (trial/mandate context + digest) in the server-owned run
+    record so the Registry can authenticate it through the owner-binding readback.
+    """
+    from services.registry.promotion.gate import real_backtest_verdict_digest
+    backtest_run_id = str(verdict.get("backtest_run_id") or "")
+    proof = getattr(gate, "proofs", {}).pop(backtest_run_id, None)
+    results = (proof or {}).get("results") if isinstance(proof, dict) else None
+    details = next(
+        (r.get("details") for r in results or [] if r.get("criterion_id") == "real_backtest_validation"), None
+    )
+    evaluation = getattr(gate, "evaluations", {}).pop(backtest_run_id, None)
+    summary = {
+        "out_of_sample_gate": dict(verdict),
+        "decision_id": decision_id,
+    }
+    if not isinstance(details, dict) or not evaluation:
+        return {"evaluation_summary": summary, "producer_run_id": run_id}
+    wire = json.loads(json.dumps(proof, default=str))
+    wire["replication_results"] = wire.pop("results")
+    wire["backtest_run_id"] = backtest_run_id
+    full = json.loads(json.dumps(evaluation, default=str))
+    summary.update(
+        backtest_run_id=backtest_run_id, out_of_sample_sharpe_ratio=details.get("out_of_sample_sharpe_ratio"),
+        max_drawdown=abs(float(details.get("out_of_sample_max_drawdown"))),
+        round_trips=details.get("out_of_sample_round_trips"),
+        fill_convention=details.get("fill_convention"),
+    )
+    wire["evaluation_summary"] = summary
+    _bind_backtest_run_gate_verdict(
+        data_dir, backtest_run_id,
+        {"admission_status": wire.get("admission_status"), "trial_count": details.get("trial_count"),
+         "mandate_max_drawdown": details.get("mandate_max_drawdown"), "family_id": details.get("family_id"),
+         "verdict_digest": real_backtest_verdict_digest(json.loads(json.dumps(details, default=str)))},
+    )
+    # The artifact checksum is fixed before the run exists, so the exact backtest run is the producer run.
+    return {
+        "evaluation_summary": summary, "producer_run_id": backtest_run_id, "replication_proof": wire,
+        "backtest_evaluation": full,
+    }
+
+
+def _unadmitted_requalified_entries(
+    family_entries: List[Dict[str, Any]],
+    *,
+    legacy_ref: str,
+    decision_id: str,
+    tenant_id: str,
+    pool: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Registry entries this decision registered to replace ``legacy_ref`` that the pool never admitted.
+
+    Returns the one entry the next attempt reuses (approved, checksum-bound, never in pool history; the
+    highest version when several exist) and every other such entry as a visible residual for the operator.
+    """
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+
+    in_pool = {str(m.get("artifact_ref")) for m in pool.get("members") or []}
+    usable: List[Dict[str, Any]] = []
+    residuals: List[Dict[str, Any]] = []
+    for e in family_entries:
+        meta = e.get("metadata") if isinstance(e.get("metadata"), dict) else {}
+        art = meta.get("strategy_artifact") if isinstance(meta.get("strategy_artifact"), dict) else None
+        parents = list(((art or {}).get("lineage") or {}).get("parent_registry_ids") or [])
+        if (
+            str(meta.get("replaces_registry_id") or "") != legacy_ref
+            or str(meta.get("demand_ref") or "") != decision_id
+            or legacy_ref not in parents
+            or str(e.get("registry_id") or "") in in_pool
+        ):
+            continue
+        reason = None
+        if str(e.get("owner_tenant") or meta.get("tenant_id") or "") != tenant_id:
+            reason = "owner_tenant_mismatch"
+        elif e.get("artifact_state") != "approved":
+            reason = "not_approved:" + str(e.get("artifact_state"))
+        else:
+            try:
+                if strategy_artifact_checksum(art) != e.get("checksum"):
+                    reason = "checksum_mismatch"
+            except Exception as exc:  # noqa: BLE001 - an unreadable artifact is a residual, never a reuse
+                reason = "artifact_invalid:" + type(exc).__name__
+        if reason is None:
+            usable.append(e)
+        else:
+            residuals.append({"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": reason})
+
+    def _vkey(e: Dict[str, Any]) -> Tuple[int, ...]:
+        try:
+            return tuple(int(p) for p in str(e.get("version") or "0").split("."))
+        except ValueError:
+            return (0,)
+
+    usable.sort(key=_vkey)
+    chosen = usable.pop() if usable else None
+    residuals.extend(
+        {"registry_id": e.get("registry_id"), "version": e.get("version"), "reason": "superseded_unadmitted_requalified_entry"}
+        for e in usable
+    )
+    return chosen, residuals
+
+
+def _execute_legacy_member_requalification(
+    *,
+    run_id: str,
+    params: Dict[str, Any],
+    tenant_id: str,
+    decision_id: str,
+    target_artifact_id: str,
+    entry: Dict[str, Any],
+    entry_meta: Dict[str, Any],
+    parent: Dict[str, Any],
+    ctx: Dict[str, Any],
+    baseline: Dict[str, Any],
+    registry_url: str,
+    read: Any,
+) -> None:
+    """Re-qualify a live legacy decision-close-fill pool member under next-open fills (2026-11-16 decision)."""
+    from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+    from services.research.candidate_registration import TemplateCandidateRegistrar
+    from urllib.parse import urlsplit
+
+    owner = _pool_owner(params)
+    if owner is None:
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": "pool_owner_unavailable"})
+    try:
+        pool = owner.pool(ctx["persona_id"])
+    except Exception as exc:  # noqa: BLE001
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": str(exc)}) from None
+    member = next(
+        (
+            m for m in pool["members"]
+            if m["artifact_ref"] == ctx["artifact_ref"]
+            and m["checksum"] == ctx["checksum"]
+            and m["joined_at"] == ctx["joined_at"]
+        ),
+        None,
+    )
+    if member is None:
+        raise executor.RequalifyDeferred("owner_read_failed:persona", {"detail": "member_not_found_in_pool"})
+    if member["stage"] == "removed":
+        raise _RetrainFinished("no_candidate", str(member.get("removal_reason") or "member_already_removed"))
+
+    spec_id = str(
+        (parent.get("lineage") or {}).get("source_strategy_spec_id")
+        or (entry.get("lineage") or {}).get("source_strategy_spec_id")
+        or (entry_meta or {}).get("strategy_spec_id")
+        or ""
+    )
+    spec = None
+    if spec_id:
+        try:
+            spec_view = read("read_strategy_spec", f"/api/registry/strategy-specs/{urllib.parse.quote(spec_id, safe='')}")
+            spec_entry = (spec_view or {}).get("entry") or {}
+            if (
+                spec_entry.get("artifact_state") == "approved"
+                and str(spec_entry.get("owner_tenant") or (spec_entry.get("metadata") or {}).get("tenant_id") or "") == tenant_id
+                and isinstance((spec_entry.get("metadata") or {}).get("strategy_spec"), dict)
+            ):
+                spec = dict((spec_entry.get("metadata") or {})["strategy_spec"])
+        except _OwnerRejection as exc:
+            if exc.status != 404:
+                raise executor.RequalifyDeferred("owner_read_failed:strategy_spec", {"detail": exc.detail}) from None
+        except _RetrainFailure as exc:
+            raise executor.RequalifyDeferred("owner_read_failed:strategy_spec", {"detail": exc.detail}) from None
+
+    try:
+        family_views = read(
+            "read_family_versions",
+            f"/api/registry/strategies/{urllib.parse.quote(str(parent.get('strategy_id') or ''), safe='')}/strategy-artifacts",
+        )
+        family_entries = [
+            (v or {}).get("entry") or {}
+            for v in (family_views if isinstance(family_views, list) else [])
+            if isinstance((v or {}).get("entry"), dict)
+        ]
+        existing_versions = [
+            str(((v or {}).get("entry") or {}).get("version") or "")
+            for v in (family_views if isinstance(family_views, list) else [])
+        ]
+    except _OwnerRejection as exc:
+        if exc.status == 404:
+            family_entries = []
+            existing_versions = []
+        else:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+    except _RetrainFailure as exc:
+        raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+
+    dataset = params.get("dataset") if isinstance(params.get("dataset"), dict) else None
+    if dataset is None and callable(_RETRAIN_DATASET_LOADER):
+        try:
+            dataset = _RETRAIN_DATASET_LOADER(parent, params)
+        except Exception as exc:  # noqa: BLE001
+            raise executor.RequalifyDeferred("governed_dataset_unavailable", {"detail": str(exc)}) from None
+
+    pending, residuals = _unadmitted_requalified_entries(
+        family_entries, legacy_ref=str(ctx["artifact_ref"]), decision_id=decision_id, tenant_id=tenant_id, pool=pool,
+    )
+    residual_detail = {"requalified_residuals": residuals} if residuals else {}
+
+    def _replace_with_requalified(registration: Dict[str, Any], artifact: Dict[str, Any], verdict: Dict[str, Any]) -> None:
+        """Admit the registered requalified entry; a stated pool refusal defers instead of failing the run."""
+        try:
+            replace_receipt = owner.replace_requalified_member(
+                ctx,
+                new_artifact=artifact,
+                new_checksum=registration["checksum"],
+                dataset=dataset,
+            )
+        except executor.RequalifyDeferred as deferred:
+            # The live member stays; the registered entry is kept for the next cadence to reuse.
+            raise executor.RequalifyDeferred(
+                deferred.reason,
+                {
+                    **deferred.detail,
+                    "pending_replacement": {
+                        "registry_id": str(registration["registry_id"]),
+                        "checksum": registration["checksum"],
+                        "version": artifact.get("version"),
+                        "resume": "next_cadence_reuses_registered_entry",
+                        "verdict": verdict,
+                    },
+                    **residual_detail,
+                },
+            ) from None
+        new_id = str(registration["registry_id"])
+        run = get_store().get_run(run_id) or {}
+        writebacks = list(run.get("registry_writebacks") or [])
+        writebacks.append({"registry_id": new_id, "artifact_state": "approved", "created_at": utc_now()})
+        _retrain_record(
+            run_id,
+            operator_decision_required=False,
+            candidate_artifact_id=new_id,
+            registry_writebacks=writebacks,
+            evolution_result={
+                **verdict,
+                "replacement": registration,
+                "pool_replacement_receipt": replace_receipt,
+                **residual_detail,
+            },
+        )
+        raise _RetrainFinished("revalidation_passed", "replaced_by_requalified_entry")
+
+    if pending is not None:
+        # An earlier attempt of this decision registered and approved the requalified entry but the pool refused
+        # it. Reuse that exact entry: no second registration, version or gate trial for the same decision.
+        from services.research.rebaseline_next_open import is_synthetic_or_fixture_dataset
+
+        dataset_refusal = is_synthetic_or_fixture_dataset(dataset)
+        if dataset_refusal is not None:
+            raise executor.RequalifyDeferred(dataset_refusal, {"reused_registry_id": pending["registry_id"], **residual_detail})
+        prior = ((get_store().get_run(run_id) or {}).get("evolution_result") or {}).get("pending_replacement") or {}
+        verdict = prior.get("verdict") if prior.get("registry_id") == pending["registry_id"] else None
+        reused_artifact = dict(pending["metadata"]["strategy_artifact"])
+        _replace_with_requalified(
+            {
+                "registry_id": pending["registry_id"],
+                "checksum": pending["checksum"],
+                "artifact_state": pending.get("artifact_state"),
+                "reused_unadmitted_entry": True,
+            },
+            reused_artifact,
+            dict(verdict) if isinstance(verdict, dict) else {
+                "passed": True,
+                "legacy_registry_id": str(ctx["artifact_ref"]),
+                "legacy_checksum": ctx.get("checksum"),
+                "requalified_artifact_id": pending["registry_id"],
+                "requalified_checksum": pending["checksum"],
+                "evaluation_summary": pending.get("evaluation_summary"),
+            },
+        )
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtests = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(), backtest_run_store=backtests)
+
+    def _record_owned(evaluation: Dict[str, Any]) -> Optional[str]:
+        bt_id = backtests.record(evaluation)
+        if bt_id:
+            _bind_backtest_run_owner(data_dir, bt_id, tenant_id=tenant_id, decision_id=decision_id)
+        return bt_id
+
+    prev = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        result = executor.requalify_legacy_member(
+            artifact=parent,
+            entry=entry,
+            member=ctx,
+            baseline=baseline,
+            dataset=dataset,
+            gate=gate,
+            spec=spec,
+            decision_id=decision_id,
+            tenant_id=tenant_id,
+            existing_versions=existing_versions,
+            record_backtest=_record_owned,
+            timestamp=utc_now(),
+        )
+    finally:
+        if prev is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = prev
+
+    verdict = result["verdict"]
+    if result["outcome"] == "revalidation_failed":
+        removed_receipt = owner.remove_member(
+            pool,
+            member,
+            reason="requalification_failed_next_open_fill",
+            verdict_ref=verdict["verdict_ref"],
+            verdict=verdict,
+        )
+        family_id = str(parent.get("strategy_id") or parent.get("artifact_id") or "")
+        memory_receipt = owner.learn_member_removal(
+            persona_id=ctx["persona_id"],
+            artifact_ref=ctx["artifact_ref"],
+            decision_id=decision_id,
+            verdict_ref=verdict["verdict_ref"],
+            families=[family_id] if family_id else [],
+            detail="requalification_failed_next_open_fill",
+        )
+        _retrain_record(
+            run_id,
+            operator_decision_required=False,
+            evolution_result={
+                **verdict,
+                "pool_removal_receipt": removed_receipt,
+                "memory_writeback": memory_receipt,
+                **residual_detail,
+            },
+        )
+        raise _RetrainFinished("revalidation_failed", "requalification_failed_next_open_fill")
+
+    def _requalify_owner_call(
+        *,
+        step: str,
+        service: str,
+        method: str,
+        url: str,
+        tenant_id: str,
+        token_variable: str,
+        body: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
+        timeout: float = 15.0,
+    ) -> Any:
+        parsed = urlsplit(url)
+        path = parsed.path + (("?" + parsed.query) if parsed.query else "")
+        has_token = bool(os.getenv(token_variable, "").strip() or os.getenv(token_variable + "_FILE", "").strip())
+        if service == "governance" and not has_token:
+            res = owner.call("GOVERNANCE", method, path, body, optional=(method == "GET"))
+            if res is None and method == "GET":
+                raise _OwnerRejection(404, "not found")
+            return res
+        if service == "registry" and not has_token and owner.env.get("AUTO_CONSUMER_REGISTRY_TOKEN"):
+            res = owner.call("REGISTRY", method, path, body, optional=(method == "GET"))
+            if res is None and method == "GET":
+                raise _OwnerRejection(404, "not found")
+            return res
+        return _retrain_call(
+            step=step,
+            service=service,
+            method=method,
+            url=url,
+            tenant_id=tenant_id,
+            token_variable=token_variable,
+            body=body,
+            extra_headers=extra_headers,
+            timeout=timeout,
+        )
+
+    adm_store = (
+        alpha_replication_admission_store
+        if getattr(alpha_replication_admission_store, "_data_dir", None) == data_dir
+        else ReplicationAdmissionStore(data_dir)
+    )
+    q_store = (
+        alpha_replication_queue
+        if getattr(alpha_replication_queue, "_data_dir", None) == data_dir
+        else AlphaReplicationQueue(data_dir)
+    )
+    registrar = TemplateCandidateRegistrar(
+        data_dir=data_dir,
+        owner_call=_requalify_owner_call,
+        registry_url=registry_url,
+        proposer_id=owner.env.get("AUTO_CONSUMER_PROPOSER_ID") or os.getenv("RESEARCH_GOVERNANCE_PROPOSER_ID"),
+        gate_id=owner.env.get("AUTO_CONSUMER_GATE_ID") or os.getenv("RESEARCH_GOVERNANCE_GATE_ID"),
+        admission_store=adm_store,
+        queue_store=q_store,
+        backtest_run_store=backtests,
+    )
+    registration = registrar.register_requalified_member(
+        tenant_id=tenant_id,
+        persona_id=ctx["persona_id"],
+        decision_id=decision_id,
+        legacy_entry=entry,
+        requalified_artifact=result["requalified_artifact"],
+        gate_response=result["gate_response"],
+        backtest_evaluation=result["backtest_evaluation"],
+    )
+    _replace_with_requalified(registration, result["requalified_artifact"], verdict)
 
 
 def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
@@ -2273,6 +2996,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     """
     from services.registry.strategy_artifact import strategy_artifact_checksum
     from services.research.alpha_replication import evolution_executor as executor
+    from services.research.alpha_replication import evolution_search as search
 
     action = _evolution_action(params)
     decision_id = str(params["decision_id"])
@@ -2291,6 +3015,12 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     ]
     if prior:  # an earlier attempt of this decision already reached its terminal outcome: adopt it
         done = max(prior, key=lambda r: str(r.get("updated_at") or ""))
+        if params.get("pool_member"):
+            if done["outcome"] == "candidate_created" and not done.get("evolution_child_context"):
+                raise _RetrainFinished("no_candidate", "recorded_child_case_file_missing")
+            _retrain_record(run_id, **{k: done[k] for k in (
+                "evolution_case_file", "evolution_child_context", "evolution_result", "evolution_case_file_refusal"
+            ) if k in done})
         raise _RetrainFinished(str(done["outcome"]), str(done.get("outcome_reason") or "resumed_from_recorded_outcome"))
 
     def read(step: str, path: str) -> Any:
@@ -2299,17 +3029,55 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
             url=f"{registry_url}{path}", tenant_id=tenant_id,
         )
 
+    is_requalify_mode = str((params.get("pool_member") or {}).get("mode") or "") == "requalify_legacy_baseline"
     try:
         view = read("read_target_artifact", f"/api/registry/strategy-artifacts/{urllib.parse.quote(target_artifact_id, safe='')}")
     except _OwnerRejection as exc:
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
         raise _RetrainFinished("evaluation_rejected", f"target artifact rejected by Registry: {exc.detail}") from None
+    except _RetrainFailure as exc:
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": exc.detail}) from None
+        raise
     entry = (view or {}).get("entry") if isinstance(view, dict) else None
     entry_meta = (entry or {}).get("metadata") if isinstance(entry, dict) else None
     parent = (entry_meta or {}).get("strategy_artifact") if isinstance(entry_meta, dict) else None
     if not isinstance(parent, dict):
+        if is_requalify_mode:
+            raise executor.RequalifyDeferred("owner_read_failed:registry", {"detail": "Registry entry carries no strategy_artifact"})
         raise _RetrainFailure("read_target_artifact", "Registry entry carries no strategy_artifact")
     family_id = str(parent.get("strategy_id") or parent.get("artifact_id"))
+    if params.get("pool_member") and action == "revalidate":
+        from services.evolution.approved_baselines import resolve_member_baseline
+        ctx = params["pool_member"]
+        baseline = resolve_member_baseline(tenant_id=tenant_id, persona_id=ctx["persona_id"],
+            artifact_ref=ctx["artifact_ref"], checksum=ctx["checksum"], entry=entry)
+        if baseline.get("reason") == "baseline_computed_under_decision_close_fill":
+            _execute_legacy_member_requalification(
+                run_id=run_id, params=params, tenant_id=tenant_id, decision_id=decision_id,
+                target_artifact_id=target_artifact_id, entry=entry or {}, entry_meta=entry_meta or {},
+                parent=parent, ctx=ctx, baseline=baseline, registry_url=registry_url, read=read,
+            )
+        dataset = _RETRAIN_DATASET_LOADER(parent, params) if callable(_RETRAIN_DATASET_LOADER) else None
+        if not isinstance(dataset, dict):
+            raise _RetrainFinished("evaluation_rejected", "governed_post_admission_dataset_unavailable")
+        try:
+            result = executor.revalidate_member(artifact=parent, dataset=dataset, member=ctx, baseline=baseline)
+        except executor.ExecutorRefusal as exc:
+            raise _RetrainFinished(exc.outcome, exc.reason) from None
+        if result["outcome"] == "revalidation_failed":
+            owner = _pool_owner(params)
+            pool = owner.pool(ctx["persona_id"])
+            member = next((m for m in pool["members"] if m["artifact_ref"] == ctx["artifact_ref"]
+                           and m["checksum"] == ctx["checksum"] and m["joined_at"] == ctx["joined_at"]), None)
+            if member is None:
+                raise _RetrainFailure("pool_revalidation", "approved member identity changed")
+            owner.remove_member(pool, member, reason="evolution:" + decision_id)
+        _retrain_record(run_id, evolution_result=result["verdict"])
+        raise _RetrainFinished(result["outcome"], result["reason"])
 
+    case_file, child_context = _evolution_member_case_context(run_id, parent, params) if action == "mutate" else (None, {})
     gate, factory = _evolution_oos_context(
         parent=parent, entry_meta=entry_meta, params=params, tenant_id=tenant_id, decision_id=decision_id,
         family_id=family_id, read=read,
@@ -2336,8 +3104,11 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         "artifact_state": "candidate",
                         "strategy_artifact": child,
                         "producer_run_id": run_id,
-                        "evaluation_summary": {"out_of_sample_gate": verdict, "decision_id": decision_id},
-                        "metadata": {k: v for k, v in entry_meta.items() if k == "persona_id"},
+                        **_producer_proof_registration(
+                            data_dir=Path(ALPHA_REPLICATION_DATA_DIR), child=child, verdict=verdict,
+                            decision_id=decision_id, run_id=run_id, gate=gate,
+                        ),
+                        "metadata": {**{k: v for k, v in entry_meta.items() if k == "persona_id"}, **child_context},
                     },
                 )
             except _OwnerRejection as exc:
@@ -2351,11 +3122,14 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                         raise RegistryVersionConflict(str(exc.detail)) from None
                 else:
                     raise _RetrainFinished("evaluation_rejected", f"candidate rejected by Registry: {exc.detail}") from None
-        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") != "candidate":
+        getattr(gate, "release", lambda _run: None)(verdict.get("backtest_run_id"))  # adopted/registered: release
+        if str(((existing or {}).get("entry") or {}).get("artifact_state") or "") not in (
+                {"candidate", "approved"} if params.get("pool_member") else {"candidate"}):
             raise _RetrainFailure("register_candidate", "Registry did not report the child as a candidate")
         run = get_store().get_run(run_id) or {}
         writebacks = list(run.get("registry_writebacks") or [])
         writebacks.append({"registry_id": child_id, "artifact_state": "candidate", "created_at": utc_now()})
+        _admit_evolution_child(params, child_id)
         _retrain_record(run_id, registry_writebacks=writebacks, candidate_artifact_id=child_id)
         return existing
 
@@ -2367,6 +3141,10 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
                 parent, decision_id=decision_id, family_id=family_id, gate=gate,
                 request_factory=factory, register_child=register_child,
                 family_versions=lambda: _registry_family_versions(registry_url, tenant_id, parent),
+                children=50 if params.get("pool_member") else 1,
+                parent_registry_ref=target_artifact_id,
+                case_file=case_file,
+                declare_lessons=lambda _child, _case: child_context.get("addresses_lessons"),
             )
         else:
             result = executor.execute_revalidate(parent, family_id=family_id, gate=gate, request_factory=factory)
@@ -2382,7 +3160,7 @@ def _execute_evolution_gate(run_id: str, params: Dict[str, Any]) -> None:
     _retrain_record(
         run_id, evolution_result=result.get("detail") or result.get("verdict"),
         parent_artifact_checksum=strategy_artifact_checksum(parent),
-        family_trial_count=gate.get_family_trial_count(family_id),
+        family_trial_count=gate.get_family_trial_count(search.artifact_trial_key(family_id, parent)),
     )
     raise _RetrainFinished(result["outcome"], result["reason"])
 
@@ -2404,112 +3182,438 @@ def _trigger_retrain_execution(run_id: str, params: dict) -> None:
         _retrain_active_runs.add(run_id)
 
     def run_worker():
+        from services.research.alpha_replication import evolution_executor as executor
+
         rstore = get_store()
+        template_run = _is_template_search_run(rstore.get_run(run_id) or {})
+        regime_run = _is_regime_fit_run(rstore.get_run(run_id) or {})
+        label = "Template search" if template_run else ("Regime model fit" if regime_run else "Retrain")
         try:
-            if _evolution_action(params) == "retrain":
+            if regime_run:
+                _execute_regime_fit(run_id, params)
+            elif template_run:
+                _execute_template_search(run_id, params)
+            elif _evolution_action(params) == "retrain":
                 _execute_retrain(run_id, params)
             else:
                 _execute_evolution_gate(run_id, params)
+        except executor.RequalifyDeferred as deferred:
+            _retrain_record(
+                run_id,
+                status="queued",
+                outcome="operator_decision_required",
+                outcome_reason=deferred.reason,
+                operator_decision_required=True,
+                deferred_at=utc_now(),
+                retry_not_before_seconds=_deferred_retry_cadence_seconds(),
+                evolution_result={
+                    "status": "could_not_evaluate",
+                    "operator_decision_required": True,
+                    "reason": deferred.reason,
+                    **deferred.detail,
+                },
+            )
+            cur = rstore.get_run(run_id) or {}
+            task = rstore.get_task(str(cur.get("task_id") or "")) if cur.get("task_id") else None
+            if task:
+                task.update(status="queued", updated_at=utc_now())
+                rstore.put_task(task)
         except _RetrainFinished as done:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(run_id, outcome=done.outcome, outcome_reason=done.reason)
             _finish_run(
                 run_id, "completed",
-                f"Retrain completed: outcome={done.outcome}, outcome_reason={done.reason}.",
+                f"{label} completed: outcome={done.outcome}, outcome_reason={done.reason}.",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except _RetrainFailure as failure:
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
             _retrain_record(
                 run_id, failed_step=failure.step,
                 rejection={"reason": "retrain_failed", "step": failure.step, "detail": failure.detail},
             )
             _finish_run(
-                run_id, "failed", f"Retrain failed at step {failure.step}: {failure.detail}",
+                run_id, "failed", f"{label} failed at step {failure.step}: {failure.detail}",
                 _RETRAIN_SOURCE_SERVICE,
             )
         except Exception as exc:  # noqa: BLE001 - every attempt must reach a terminal state.
-            logger.exception("retrain executor crashed for %s", run_id)
+            if template_run and (rstore.get_run(run_id) or {}).get("cancellation_fence"):
+                return
+            logger.exception("%s executor crashed for %s", label, run_id)
             detail = f"{type(exc).__name__}: {exc}"
             if rstore.get_run(run_id):
                 _retrain_record(
                     run_id, failed_step="executor",
                     rejection={"reason": "retrain_failed", "step": "executor", "detail": detail},
                 )
-                _finish_run(run_id, "failed", f"Retrain failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
+                _finish_run(run_id, "failed", f"{label} failed at step executor: {detail}", _RETRAIN_SOURCE_SERVICE)
         finally:
             with _retrain_active_lock:
                 _retrain_active_runs.discard(run_id)
 
-    threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
+    if str((params.get("pool_member") or {}).get("mode") or "") == "requalify_legacy_baseline":
+        run_worker()
+    else:
+        threading.Thread(target=run_worker, name=f"retrain-executor-{run_id}").start()
 
 
-# --- Discovery allocator: daily paper-only run inside this orchestrator ---
-DISCOVERY_ALLOCATOR_TENANT = os.getenv("DISCOVERY_ALLOCATOR_TENANT_ID", "default")
-def _discovery_owner_call(service: str, method: str, url: str, body: Optional[Dict[str, Any]]) -> Any:
-    from services.research import discovery_allocator as _da
+# --- Persona-written research demands (research_demand.v1) ---
+# The persona's daily pool cycle writes demands here; this owner keeps and serves
+# them. Nothing in this service allocates capital or binds personas to discovery.
+from services.research.research_demand import DemandError, ResearchDemandStore  # noqa: E402
+from services.research.query_plan import QueryPlanError, QueryPlanStore  # noqa: E402
 
-    token_variable = {
-        "persona": "RESEARCH_PERSONA_SERVICE_TOKEN",
-        "provisioning": "RESEARCH_BFF_SERVICE_TOKEN",
-        "registry": "RESEARCH_REGISTRY_SERVICE_TOKEN",
-        "capital": "RESEARCH_CAPITAL_SERVICE_TOKEN",
-    }[service]
+research_demand_store = ResearchDemandStore(store.data_dir / "research_demands.json", influence_store=get_influence_store())
+query_plan_store = QueryPlanStore(store.data_dir / "collector_query_plans.json")
+
+
+def _load_template_search_governed_dataset(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Governed market dataset for template search, from the stored daily bars (read-only), or fail closed.
+
+    TEMPLATE-SEARCH-MARKET-BOUNDARY-20261125: the symbol boundary is the governed market boundary
+    (``governed_market_dataset.build_market_boundary``), not a persona list. The result carries
+    ``market_boundary`` (counts and exclusion reasons) and ``boundary_exclusions`` (symbol -> reason).
+    Readable ``<code>: <detail>`` reasons of ``GovernedMarketDatasetError`` are re-raised as ValueError.
+    This runs in the run's worker thread, never on an API event loop."""
+    if _RETRAIN_DATASET_LOADER in (None, _default_retrain_dataset_loader):
+        from services.research import governed_market_dataset as _governed
+
+        try:
+            boundary = _governed.build_market_boundary()
+            dataset = _governed.dataset_for(boundary, strategy_id=str(demand["demand_id"]))
+            dataset["boundary_exclusions"] = dict(boundary.exclusions)
+            return dataset
+        except _governed.GovernedMarketDatasetError as exc:
+            raise ValueError(str(exc)) from exc
+    dataset = _RETRAIN_DATASET_LOADER({"strategy_id": demand["demand_id"]}, {}) if callable(_RETRAIN_DATASET_LOADER) else None
+    if not dataset:
+        raise ValueError("governed_market_data_missing")
+    return dataset
+
+
+def _template_search_context(demand: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the persona identity, the governed market boundary and the registered templates from their owners.
+
+    The persona owner read only proves the tenant and persona identity; ``market_scope`` and
+    ``traits.instruments`` are never read as a boundary (SD_STRATEGY_SCREEN_ENTRY_EXIT 2026-11-12 section 2)."""
+    tenant_id = demand["tenant_id"]
+    persona_url = os.getenv("PERSONA_API_URL", "http://persona:8002").rstrip("/")
+    persona = _retrain_call(
+        step="template_mandate", service="persona", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_PERSONA_SERVICE_TOKEN",
+        url=f"{persona_url}/api/personas/{urllib.parse.quote(demand['persona_id'], safe='')}")
+    if persona.get("tenant_id") != tenant_id or persona.get("persona_id") != demand["persona_id"]:
+        raise ValueError("template_mandate_owner_mismatch")
+    dataset = _load_template_search_governed_dataset(demand)
+    universe = sorted({str(r["instrument"]) for r in dataset.get("records") or []})
+    registry_url = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+    templates = _retrain_call(
+        step="template_registry", service="registry", method="GET", tenant_id=tenant_id,
+        token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=f"{registry_url}/api/registry/alpha-templates?scope=time_series")
+    return {"universe": universe, "dataset": dataset, "templates": templates}
+
+
+def _is_template_search_run(run: Dict[str, Any]) -> bool:
+    # This adapter is only recorded by authenticated demand reconciliation;
+    # dispatch_run rejects it as unknown. Caller-supplied stub parameters do
+    # not grant execution on startup or retry.
+    return (run.get("adapter") == "template_demand_gate"
+            and (run.get("parameters") or {}).get("action_type") == "template_search")
+
+
+def _execute_template_search(run_id: str, params: Dict[str, Any]) -> None:
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    demand = next((row for row in research_demand_store.list(params["tenant_id"], params["persona_id"])
+                   if row["demand_id"] == params["demand_id"]), None)
+    if not demand:
+        raise _RetrainFailure("template_search", "research_demand_missing")
+    run.update(status="running", updated_at=utc_now())
+    store.put_run(run)
+    from services.research.candidate_registration import TemplateCandidateRegistrar
+    from services.research.template_demand_search import TemplateDemandSearch
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore, SharedReplicationGate
+
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    backtest_store = SharedBacktestRunStore(data_dir / "backtest_runs.json")
+    gate = SharedReplicationGate(trial_counter_path=_retrain_trial_counter_path(),
+                                 backtest_run_store=backtest_store)
+    adm_store = (
+        alpha_replication_admission_store
+        if getattr(alpha_replication_admission_store, "_data_dir", None) == data_dir
+        else ReplicationAdmissionStore(data_dir)
+    )
+    q_store = (
+        alpha_replication_queue
+        if getattr(alpha_replication_queue, "_data_dir", None) == data_dir
+        else AlphaReplicationQueue(data_dir)
+    )
+    registrar = TemplateCandidateRegistrar(
+        data_dir=data_dir,
+        owner_call=_retrain_call,
+        admission_store=adm_store,
+        queue_store=q_store,
+        backtest_run_store=backtest_store,
+    )
+    search = TemplateDemandSearch(store=research_demand_store, gate=gate,
+                                  context_loader=_template_search_context, lock_path=data_dir / "template_search.lock",
+                                  registrar=registrar, run_budget=1)
+    row = search.run(demand)
+    result = (row.get("discovery") or {}).get("template_search") or {}
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run["template_search"] = {"demand_ref": demand["demand_id"], **result}
+    store.put_run(run)
+    reason = result.get("reason", "demand_closed")
+    if reason.startswith("template_search_unavailable:"):
+        raise _RetrainFailure("template_search", reason)
+    raise _RetrainFinished("template_search_completed", reason)
+
+
+def _search_demand_templates(rows: List[Dict[str, Any]]) -> None:
+    """Record normal Research runs; never perform owner I/O or backtests here."""
+    for row in rows:
+        if row["status"] != "open":
+            continue
+        # An unconfigured owner cannot execute a search. Record the same
+        # unavailable outcome without creating Research tasks that can never
+        # start; credential-file validation and all owner I/O stay in worker.
+        missing = next((name for name in ("RESEARCH_PERSONA_SERVICE_TOKEN", "RESEARCH_REGISTRY_SERVICE_TOKEN")
+                        if not (os.getenv(name, "").strip() or os.getenv(name + "_FILE", "").strip())), None)
+        if missing:
+            research_demand_store.record_template_search(
+                row["tenant_id"], row["demand_id"],
+                {"run_at": utc_now(), "attempts": {}, "paper_only": True,
+                 "reason": "template_search_unavailable:owner_credential_unconfigured:" + missing})
+            continue
+        with _plan_progress_lock:
+            runs = store.list_runs()
+            matching = [r for r in runs if _is_template_search_run(r)
+                        and (r.get("parameters") or {}).get("demand_id") == row["demand_id"]
+                        and r.get("tenant_id") == row["tenant_id"]]
+            active = next((r for r in matching if r.get("status") in ACTIVE_STATUSES), None)
+            if active:
+                run = active
+            else:
+                if sum(r.get("status") in ACTIVE_STATUSES for r in runs) >= MAX_ACTIVE_RUNS:
+                    continue  # next normal persona cycle retries; no separate queue
+                timestamp = utc_now()
+                task = create_task(CreateTaskBody(
+                    title="Search registered templates for " + row["demand_id"],
+                    objective="Compile mandate-compatible templates through the replication gate",
+                    actor_id="persona-pool-cycle",
+                    constraints={"tenant_id": row["tenant_id"], "persona_id": row["persona_id"]},
+                    idempotency_key="template-search:" + row["tenant_id"] + ":" + row["demand_id"]))
+                if task.get("cancellation_fence"):
+                    continue
+                run_id = _next_id("rrun", timestamp, {r["run_id"] for r in runs})
+                event = _event(timestamp, "run_queued", "Template search queued for the replication gate.",
+                               "persona-pool-cycle", run_id, [])
+                run = {"id": run_id, "run_id": run_id, "task_id": task["task_id"],
+                       "adapter": "template_demand_gate", "requested_mode": "replication_gate",
+                       "dispatch_mode": "replication_gate", "production_activation": "disabled",
+                       "status": "queued", "tenant_id": row["tenant_id"], "created_by": "persona-pool-cycle",
+                       "paper_only": True, "attempt_number": 1, "parent_run_id": None, "root_run_id": run_id,
+                       "parameters": {"action_type": "template_search", "tenant_id": row["tenant_id"],
+                                      "persona_id": row["persona_id"], "demand_id": row["demand_id"]},
+                       "created_at": timestamp, "updated_at": timestamp, "events": [event],
+                       "artifact_refs": [], "proposal_refs": [], "registry_writebacks": []}
+                task.update(status="running", updated_at=timestamp)
+                store.put_task(task)
+                store.put_run(run)
+                store.append_event(event)
+        _trigger_retrain_execution(run["run_id"], run["parameters"])
+
+
+# --- Regime classifier research (REGIME-RESEARCH-CLASSIFIER-20261115) ---
+# Fits and walk-forward validates the regime axis models over governed index/breadth/chip rows
+# and registers them as registry model_artifact entries (candidate, or approved for paper only
+# when validation passed). Runs as a normal Research run requested by the persona pool cycle,
+# like template search. Paper only; no language model; no placeholder history.
+_REGIME_FIT_ADAPTER = "regime_classifier_fit"
+
+
+def _is_regime_fit_run(run: Dict[str, Any]) -> bool:
+    # Recorded only by the authenticated request route below; dispatch_run rejects the adapter
+    # as unknown, so a caller-supplied run can never start this executor.
+    return (run.get("adapter") == _REGIME_FIT_ADAPTER
+            and (run.get("parameters") or {}).get("action_type") == "regime_classifier_fit")
+
+
+def _regime_store_root() -> Path:
+    explicit = os.getenv("RESEARCH_REGIME_STORE_ROOT") or os.getenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT")
+    return Path(explicit or "/data/source-ingest/market_data_store")
+
+
+class _RegimeRegistryClient:
+    """Registry owner calls over the authenticated retrain transport (no direct store access)."""
+
+    def __init__(self, tenant_id: str) -> None:
+        self.tenant_id = tenant_id
+        self.base = os.getenv("PANTHEON_REGISTRY_URL", "http://registry:8087").rstrip("/")
+
+    def _call(self, step: str, method: str, path: str, body: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> Any:
+        return _retrain_call(step=step, service="registry", method=method, tenant_id=self.tenant_id,
+                             token_variable="RESEARCH_REGISTRY_SERVICE_TOKEN", url=self.base + path, body=body,
+                             extra_headers=headers)
+
+    def create_entry(self, payload: Dict[str, Any], *, idempotency_key: str) -> Any:
+        return self._call("register_regime_model", "POST", "/api/registry/entries", dict(payload),
+                          {"Idempotency-Key": idempotency_key})
+
+    def advance(self, registry_id: str, body: Dict[str, Any]) -> Any:
+        return self._call("advance_regime_model", "POST",
+                          f"/api/registry/entries/{urllib.parse.quote(registry_id, safe='')}/advance", dict(body))
+
+
+def _execute_regime_fit(run_id: str, params: Dict[str, Any]) -> None:
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run.update(status="running", updated_at=utc_now())
+    store.put_run(run)
+    tenant_id = str(params.get("tenant_id") or "")
+    if not tenant_id:
+        raise _RetrainFailure("resolve_tenant", "run parameters carry no tenant_id")
+    from services.research.regime.features import load_governed_observations
+    from services.research.regime.registration import run_regime_research
+
+    root = _regime_store_root()
+    if not root.is_dir():
+        raise _RetrainFinished("unavailable", "governed_regime_data_missing:store_root_not_found")
+    observations, notes = load_governed_observations(root)
+    pinned = os.environ.get("RESEARCH_REGIME_TRUSTED_NOW")
+    decision_time = pinned or datetime.now(timezone.utc).isoformat()
     try:
-        return _retrain_call(
-            step=f"discovery_allocator_{service}", service=service, method=method, url=url,
-            tenant_id=DISCOVERY_ALLOCATOR_TENANT, token_variable=token_variable, body=body,
-        )
+        result = run_regime_research(observations, decision_time=decision_time, client=_RegimeRegistryClient(tenant_id),
+                                     source_run_id=run_id)
     except _OwnerRejection as exc:
-        raise _da.OwnerRejected(service, int(getattr(exc, "status", None) or getattr(exc, "code", 0) or 0), str(getattr(exc, "detail", exc))) from None
-    except _RetrainFailure as exc:
-        raise _da.OwnerUnreachable(service, str(exc)) from None
+        raise _RetrainFinished("registry_rejected", f"HTTP {exc.status}: {exc.detail}") from None
+    run = get_run(run_id)
+    if run.get("cancellation_fence"):
+        return
+    run["regime_fit"] = {**result, "data_notes": notes}
+    store.put_run(run)
+    reason = "approved:" + ",".join(result["approved"]) if result["approved"] else (
+        "candidates_only" if result["status"] == "completed" else "governed_regime_data_unavailable")
+    raise _RetrainFinished("regime_fit_" + result["status"], reason)
 
 
-def _build_discovery_allocator_ports() -> Dict[str, Any]:
-    from services.research import discovery_allocator as _da
+@app.post("/api/research/regime-models/fit", status_code=202)
+def request_regime_model_fit(
+    body: Dict[str, Any] = Body(default_factory=dict),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    """Queue a regime model fit as a normal Research run; idempotent per tenant, market and day."""
+    market = str(body.get("market") or "TW")
+    if market != "TW":
+        raise HTTPException(status_code=422, detail="only the TW market is supported")
+    demand_id = body.get("demand_id")
+    if demand_id is not None and not any(
+            row["demand_id"] == demand_id for row in research_demand_store.list(tenant_id, status="open")):
+        raise HTTPException(status_code=404, detail="research demand is not open for this tenant")
+    day = utc_now()[:10]
+    key = f"regime-fit:{tenant_id}:{market}:{day}"
+    with _plan_progress_lock:
+        runs = store.list_runs()
+        active = next((r for r in runs if _is_regime_fit_run(r) and r.get("tenant_id") == tenant_id
+                       and r.get("idempotency_key") == key and r.get("status") in ACTIVE_STATUSES), None)
+        if active:
+            return {"run_id": active["run_id"], "status": active["status"], "replayed": True}
+        if sum(r.get("status") in ACTIVE_STATUSES for r in runs) >= MAX_ACTIVE_RUNS:
+            raise HTTPException(status_code=429, detail="research run capacity reached; retry later")
+        timestamp = utc_now()
+        task = create_task(CreateTaskBody(
+            title="Fit regime classifier models for " + market,
+            objective="Fit and walk-forward validate regime axis models over governed data; register as model_artifact",
+            actor_id="persona-pool-cycle", constraints={"tenant_id": tenant_id},
+            idempotency_key=key + ":" + timestamp))
+        run_id = _next_id("rrun", timestamp, {r["run_id"] for r in runs})
+        event = _event(timestamp, "run_queued", "Regime model fit queued.", "persona-pool-cycle", run_id, [])
+        run = {"id": run_id, "run_id": run_id, "task_id": task["task_id"], "adapter": _REGIME_FIT_ADAPTER,
+               "requested_mode": "regime_research", "dispatch_mode": "regime_research",
+               "production_activation": "disabled", "status": "queued", "tenant_id": tenant_id,
+               "created_by": "persona-pool-cycle", "paper_only": True, "attempt_number": 1, "parent_run_id": None,
+               "root_run_id": run_id, "idempotency_key": key,
+               "parameters": {"action_type": "regime_classifier_fit", "tenant_id": tenant_id, "market": market,
+                              **({"demand_id": demand_id} if demand_id else {})},
+               "created_at": timestamp, "updated_at": timestamp, "events": [event],
+               "artifact_refs": [], "proposal_refs": [], "registry_writebacks": []}
+        task.update(status="running", updated_at=timestamp)
+        store.put_task(task)
+        store.put_run(run)
+        store.append_event(event)
+    _trigger_retrain_execution(run["run_id"], run["parameters"])
+    return {"run_id": run["run_id"], "status": "queued", "replayed": False}
 
-    return _da.make_production_ports(
-        call=_discovery_owner_call,
-        persona_url=os.getenv("DISCOVERY_ALLOCATOR_PERSONA_URL", "http://persona:8002"),
-        provisioning_url=os.getenv("DISCOVERY_ALLOCATOR_BFF_URL", "http://operator-bff:8001"),
-        registry_url=os.getenv("REGISTRY_URL", "http://registry:8087"),
-        capital_url=os.getenv("DISCOVERY_ALLOCATOR_CAPITAL_URL", "http://capital:8092"),
-        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
-        paper_capital_cap=float(os.getenv("DISCOVERY_ALLOCATOR_PAPER_CAPITAL_CAP", "50000")),
-        per_persona_capital=float(os.getenv("DISCOVERY_ALLOCATOR_PER_PERSONA_CAPITAL", "10000")),
-    )
+
+def _refresh_collector_query_plan(tenant_id: str) -> None:
+    try:
+        query_plan_store.refresh(tenant_id, research_demand_store.list(tenant_id, status="open"))
+    except QueryPlanError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-# Module-level so tests can inject; the default is the real production wiring
-# (persona service reader, active-binding reader, scorer, BFF provisioner).
-discovery_allocator_ports: Dict[str, Any] = _build_discovery_allocator_ports()
+def _expire_collector_query_plans() -> None:
+    # Demand expiry is time-based and has no write event: re-evaluate on read.
+    for tenant_id in query_plan_store.tenants():
+        try:
+            _refresh_collector_query_plan(tenant_id)
+        except HTTPException:
+            pass
 
 
-def run_discovery_allocator_once() -> Dict[str, Any]:
-    from services.research import discovery_allocator as _da
-
-    return _da.run_scheduled_allocation(
-        enabled=_da.allocator_enabled(os.environ),
-        allocator_factory=discovery_allocator_ports["allocator_factory"],
-        list_admitted=lambda: [
-            e for e in alpha_replication_admission_store.list_admissions(DISCOVERY_ALLOCATOR_TENANT)
-            if e.get("status") == "admitted"
-        ],
-        list_personas=discovery_allocator_ports["list_personas"],
-        list_active_bindings=discovery_allocator_ports["list_active_bindings"],
-        resolve_admitted=discovery_allocator_ports.get("resolve_admitted"),
-        tenant_id=DISCOVERY_ALLOCATOR_TENANT,
-        record_path=store.data_dir / "discovery_allocator_runs.jsonl",
-    )
+@app.post("/api/research/persona-demands", status_code=201)
+def open_persona_research_demand(
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    try:
+        result = research_demand_store.open(tenant_id, body)
+        _refresh_collector_query_plan(tenant_id)
+        return result
+    except DemandError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.on_event("startup")
-def start_discovery_allocator_schedule() -> None:
-    from services.research import discovery_allocator as _da
+@app.get("/api/research/persona-demands")
+def list_persona_research_demands(
+    persona_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    tenant_id: str = Depends(_authenticated_alpha_replication_tenant),
+) -> Dict[str, Any]:
+    rows = research_demand_store.list(tenant_id, persona_id, status)
+    return {"demands": rows, "count": len(rows)}
 
-    _da.start_daily_scheduler(
-        run_discovery_allocator_once,
-        interval_seconds=float(os.getenv("DISCOVERY_ALLOCATOR_INTERVAL_SECONDS", str(_da.DAILY_INTERVAL_SECONDS))),
-    )
+
+@app.post("/api/research/persona-demands/reconcile")
+def reconcile_persona_research_demands(
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    persona_id = str(body.get("persona_id") or "")
+    if not persona_id:
+        raise HTTPException(status_code=422, detail="persona_id is required")
+    rows = research_demand_store.reconcile(tenant_id, persona_id, list(body.get("members") or []))
+    _search_demand_templates(rows)
+    _refresh_collector_query_plan(tenant_id)
+    return {"demands": rows, "count": len(rows)}
+
+
+@app.post("/api/research/persona-demands/{demand_id}/actions")
+def record_persona_research_demand_discovery(
+    demand_id: str,
+    body: Dict[str, Any] = Body(...),
+    tenant_id: str = Depends(_authenticated_persona_demand_writer_tenant),
+) -> Dict[str, Any]:
+    try:
+        return research_demand_store.record_discovery(tenant_id, demand_id, body)
+    except DemandError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 409, detail=str(exc)) from exc
 
 
 @app.on_event("startup")
@@ -2518,15 +3622,17 @@ def resume_retrain_runs() -> None:
 
     The run, its session and its evaluation job ids are the ones already
     recorded: the same executor continues from them, so no new run, second
-    session or second child is created.  A non-retrain run is not touched.
+    session or second child is created. Template searches use this same worker.
     """
     for record in get_store().list_runs():
         status = str(record.get("status") or "").lower()
         params = record.get("parameters") or {}
-        if status not in {"queued", "running"} or not isinstance(params, dict) or not _is_retrain_action(params):
+        if status not in {"queued", "running"} or not isinstance(params, dict) or not (_is_retrain_action(params) or _is_template_search_run(record)):
             continue
         if record.get("cancellation_fence"):
             continue
+        if record.get("outcome") == "operator_decision_required" and status == "queued" and not _deferred_retry_due(record):
+            continue  # a deferred run waits for its cadence; the dispatch worker re-submits it when due
         _trigger_retrain_execution(str(record["run_id"]), params)
 
 
@@ -2545,7 +3651,7 @@ def repair_retrain_tasks_left_running() -> None:
         params = run.get("parameters") or {}
         if (
             not isinstance(params, dict)
-            or not _is_retrain_action(params)
+            or not (_is_retrain_action(params) or _is_template_search_run(run))
             or str(run.get("status") or "").lower() not in {"completed", "failed"}
         ):
             continue
@@ -2558,13 +3664,67 @@ def repair_retrain_tasks_left_running() -> None:
             _set_task_terminal(task_id, str(run["status"]).lower(), utc_now())
 
 
+RUN_PAGE_MAX = 200
+
+
+def _run_page_key(run: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(run.get("created_at") or ""), str(run.get("run_id") or run.get("id") or ""))
+
+
+def _encode_run_cursor(key: Tuple[str, str]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(list(key)).encode("utf-8")).decode("ascii")
+
+
+def _decode_run_cursor(cursor: str) -> Tuple[str, str]:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+        if isinstance(value, list) and len(value) == 2 and all(isinstance(v, str) for v in value):
+            return value[0], value[1]
+    except (ValueError, UnicodeError):
+        pass
+    raise HTTPException(status_code=422, detail="invalid cursor")
+
+
 @app.get("/api/research-orchestrator/runs")
-def list_runs(task_id: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    return [
+def list_runs(
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=RUN_PAGE_MAX),
+    cursor: Optional[str] = None,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Any:
+    """Run list. Without ``limit``/``cursor``: the unscoped list for existing callers.
+
+    With ``limit`` (1..``RUN_PAGE_MAX``) or ``cursor``: the caller tenant's runs only
+    (verified bearer bound to ``X-Tenant-Id``), newest first by (created_at, run_id), as
+    ``{items, count, limit, order, next_cursor}``; only runs stamped with the tenant.
+    """
+    matches = (
         r for r in store.list_runs()
         if (not task_id or r.get("task_id") == task_id)
         and (not status or str(r.get("status") or "").lower() == status.lower())
-    ]
+    )
+    if limit is None and not cursor:
+        return list(matches)
+    tenant_id = _authenticated_alpha_replication_actor(authorization, x_tenant_id).tenant_id
+    page_size = limit or 50
+    after = _decode_run_cursor(cursor) if cursor else None
+    mine = (
+        r for r in matches
+        if str(r.get("tenant_id") or "").strip() == tenant_id
+        and (after is None or _run_page_key(r) < after)
+    )
+    window = heapq.nlargest(page_size + 1, mine, key=_run_page_key)
+    items = window[:page_size]
+    return {
+        "tenant_id": tenant_id,
+        "items": items,
+        "count": len(items),
+        "limit": page_size,
+        "order": "created_at_desc",
+        "next_cursor": _encode_run_cursor(_run_page_key(items[-1])) if len(window) > page_size else None,
+    }
 
 
 @app.get("/api/research-orchestrator/runs/{run_id}")
@@ -2649,6 +3809,8 @@ def _finish_run(
                 else {}
             )
             try:
+                if (exp_meta.get("replication_gate") or {}).get("passed") is not True:
+                    raise ResearchMemoryEligibilityError("Replication gate has not passed; memory finding refused")
                 outbox_store = get_outbox_store()
                 outbox_id = _next_id(
                     "mout",
@@ -2662,7 +3824,7 @@ def _finish_run(
                     artifact_id=str(bt_summary.get("backtest_run_id") or "") or None,
                     source_event_type="research_finding_published",
                     source_event_id=str(exp_run.get("run_id") or run_id),
-                    sponsor_persona_id="persona-tw-equity",
+                    sponsor_persona_id=_memory_sponsor(run),
                     summary=summary,
                     headline=f"Replicated Taiwan strategy {exp_run.get('strategy_id') or ''}",
                     confidence=1.0,
@@ -2707,8 +3869,10 @@ def _finish_run(
                     },
                 )
                 outbox_store.create_record(outbox_record)
-            except Exception:
-                pass
+            except Exception as exc:
+                run["memory_writeback_error"] = str(exc)
+                store.put_run(run)
+                logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
     return run
 
 
@@ -2807,7 +3971,7 @@ def retry_run(run_id: str, body: Optional[RetryRunBody] = None) -> Dict[str, Any
     adapter = new_run.get("adapter", "stub")
     supported_stage_backends = {"vectorbt", "statsmodels", "quantlib", "openclaw_result_synthesis", "prototype_backtest", "econometric_validation", "derivatives_pricing_risk", "evidence_synthesis"}
     is_stage_backend = adapter in supported_stage_backends or params.get("stage") is not None
-    if _is_retrain_action(params):
+    if _is_retrain_action(params) or _is_template_search_run(new_run):
         _trigger_retrain_execution(new_run["run_id"], params)
     elif is_stage_backend and (params.get("stage") or (params.get("plan") and params["plan"].get("stages"))):
         _progress_plan_stages(params.get("plan") or {}, new_run, b.actor_id, store, timestamp)
@@ -3077,7 +4241,7 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                 artifact_id=artifact["artifact_id"],
                 source_event_type="research_finding_published",
                 source_event_id=run_id,
-                sponsor_persona_id=_first_text(body.metadata.get("sponsor_persona_id"), run.get("sponsor_persona_id"), "persona-tw-equity") or "persona-tw-equity",
+                sponsor_persona_id=_memory_sponsor(run, body.metadata.get("sponsor_persona_id")),
                 summary=_first_text(artifact.get("title"), f"Reviewed research finding from {run_id}") or f"Reviewed research finding from {run_id}",
                 headline=_first_text(artifact.get("title"), f"Research Finding {artifact['artifact_id']}") or f"Research Finding {artifact['artifact_id']}",
                 confidence=float(body.metadata.get("confidence") or 1.0),
@@ -3096,11 +4260,14 @@ def writeback_run_artifact(run_id: str, body: RegistryWritebackBody) -> Dict[str
                     "registry_id": entry["registry_id"],
                     "actor_id": body.actor_id,
                     "auto_enqueued": True,
+                    "tenant_id": run.get("tenant_id"),
                 },
             )
             outbox_store.create_record(outbox_record)
-    except Exception:
-        pass
+    except Exception as exc:
+        run["memory_writeback_error"] = str(exc)
+        store.put_run(run)
+        logger.warning("Memory enqueue refused for %s: %s", run_id, exc)
 
     return writeback
 
@@ -3121,6 +4288,10 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
     except ResearchMemoryEligibilityError as exc:
         raise HTTPException(status_code=400, detail={"reason": "memory_writeback_not_eligible", "detail": str(exc)})
 
+    try:
+        _memory_sponsor(run, body.sponsor_persona_id)
+    except ResearchMemoryEligibilityError as exc:
+        raise HTTPException(status_code=400, detail={"reason": "memory_attribution_missing_or_conflicting", "detail": str(exc)}) from exc
     outbox_store = get_outbox_store()
     timestamp = body.created_at or utc_now()
     existing = outbox_store.find_by_source_event("research_finding_published", run_id)
@@ -3139,7 +4310,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
         artifact_id=artifact.get("artifact_id"),
         source_event_type="research_finding_published",
         source_event_id=run_id,
-        sponsor_persona_id=body.sponsor_persona_id,
+        sponsor_persona_id=_memory_sponsor(run, body.sponsor_persona_id),
         summary=body.summary or str(artifact.get("title") or f"Reviewed finding for {run_id}"),
         headline=body.headline or str(artifact.get("title") or f"Finding {run_id}"),
         confidence=body.confidence,
@@ -3158,6 +4329,7 @@ def writeback_run_memory(run_id: str, body: MemoryWritebackBody) -> Dict[str, An
             **body.metadata,
             "actor_id": body.actor_id,
             "idempotency_key": body.idempotency_key,
+            "tenant_id": run.get("tenant_id"),
         },
     )
     saved = outbox_store.create_record(record)
@@ -4107,6 +5279,113 @@ _ARTIFACT_READ_ROLES = tuple(dict.fromkeys(
 ))
 
 
+_BACKTEST_OWNER_READ_ROLES = tuple(dict.fromkeys(("registry-writer", *AUTHENTICATED_SERVICE_ROLES)))
+
+
+def _backtest_owner_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "backtest_run_owners.json"
+
+
+def _update_backtest_owner_file(data_dir: Path, mutate: Any) -> None:
+    """Serialised reload/merge/atomic-replace of the authoritative owner file.
+
+    An interprocess flock spans the whole cycle, the temp file is unique per writer, and a
+    present-but-corrupt file fails closed (never reset to empty, which would drop other tenants).
+    """
+    import fcntl
+    import tempfile
+
+    path = _backtest_owner_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_name(path.name + ".lock"), "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise ValueError(f"{path.name} is not a JSON object")
+            else:
+                loaded = {}
+            if mutate(loaded) is False:
+                return
+            fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(loaded, indent=2, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_name, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _bind_backtest_run_owner(data_dir: Path, run_id: str, *, tenant_id: str, decision_id: str) -> None:
+    """Server-side tenant/decision binding written by the code that ran the protocol."""
+    def mutate(loaded: Dict[str, Any]) -> None:
+        loaded[run_id] = {"tenant_id": tenant_id, "decision_id": decision_id}
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+def _bind_backtest_run_gate_verdict(data_dir: Path, run_id: str, gate_verdict: Dict[str, Any]) -> None:
+    """Persist the real gate decision context beside the run owner record (server-side only)."""
+    def mutate(loaded: Dict[str, Any]) -> Optional[bool]:
+        owner = loaded.get(run_id)
+        if not isinstance(owner, dict):
+            return False  # an unbound run never gains a verdict
+        owner["gate_verdict"] = gate_verdict
+        return None
+
+    _update_backtest_owner_file(data_dir, mutate)
+
+
+@app.get("/api/research-orchestrator/backtest-runs/{run_id}/owner-binding")
+def read_backtest_run_owner_binding(
+    run_id: str,
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Dict[str, Any]:
+    """Read-only producer proof of a recorded backtest run, bound to the authenticated tenant.
+
+    The caller bearer is verified by the strict Research verifier (viewer roles are
+    not admitted).  The run is returned only when the server-owned run owner record
+    names the same tenant; foreign or unbound runs are 404, never disclosed.
+    """
+    try:
+        verified = authenticate_tenant(
+            authorization=authorization, tenant_id=x_tenant_id, service_prefix="RESEARCH",
+            required_roles=_BACKTEST_OWNER_READ_ROLES,
+        ).tenant_id
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except TenantBoundaryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    data_dir = Path(ALPHA_REPLICATION_DATA_DIR)
+    from services.research.alpha_replication.shared_stores import SharedBacktestRunStore
+
+    record = SharedBacktestRunStore(data_dir / "backtest_runs.json").get(run_id)
+    try:
+        owners = json.loads(_backtest_owner_path(data_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        owners = {}
+    owner = owners.get(run_id) if isinstance(owners, dict) else None
+    if not record or not isinstance(owner, dict) or owner.get("tenant_id") != verified:
+        raise HTTPException(status_code=404, detail="backtest run not found for tenant")
+    return {
+        "backtest_run_id": run_id, "tenant_id": verified, "decision_id": owner.get("decision_id"),
+        "status": record.get("status"), "artifact_checksum": record.get("artifact_checksum"),
+        "dataset_id": record.get("dataset_id"), "source_dataset_refs": record.get("source_dataset_refs"),
+        "artifact_ref": record.get("artifact_ref"), "evaluation_digest": record.get("evaluation_digest"),
+        "gate_verdict": owner.get("gate_verdict"),
+    }
+
+
 def _authenticated_artifact_tenant(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None),
@@ -4123,9 +5402,69 @@ def _authenticated_artifact_tenant(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+_ARTIFACT_PAGE_TOKEN_PREFIX = "k1:"
+
+
+def _artifact_page_key(row: Dict[str, Any]) -> Tuple[str, str]:
+    return (str(row.get("created_at") or ""), str(row.get("artifact_id") or ""))
+
+
+def _encode_artifact_page_token(key: Tuple[str, str]) -> str:
+    import base64
+
+    raw = json.dumps([key[0], key[1]], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    return _ARTIFACT_PAGE_TOKEN_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_artifact_page_token(token: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Keyset anchor ``(created_at, artifact_id)`` of the last row served; ``None`` for the first page."""
+    import base64
+
+    text = str(token).strip() if token is not None else ""
+    if not text:
+        return None
+    if not text.startswith(_ARTIFACT_PAGE_TOKEN_PREFIX):
+        raise HTTPException(status_code=400, detail="Invalid page_token")
+    body = text[len(_ARTIFACT_PAGE_TOKEN_PREFIX):]
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode("ascii"))
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+    if not (isinstance(decoded, list) and len(decoded) == 2 and all(isinstance(v, str) for v in decoded)):
+        raise HTTPException(status_code=400, detail="Invalid page_token")
+    return (decoded[0], decoded[1])
+
+
+def _saved_artifact_page(rows: List[Dict[str, Any]], page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
+    """One bounded page of already tenant-filtered, newest-first rows: exact total + stable keyset token."""
+    anchor = _decode_artifact_page_token(page_token)
+    start = 0 if anchor is None else next(
+        (i for i, r in enumerate(rows) if _artifact_page_key(r) < anchor), len(rows)
+    )
+    items = rows[start:start + page_size]
+    more = start + len(items) < len(rows) and bool(items)
+    token = _encode_artifact_page_token(_artifact_page_key(items[-1])) if more else None
+    return {
+        "items": items,
+        "total": len(rows),
+        "page_size": page_size,
+        "next_page_token": token,
+        "page_info": {"total": len(rows), "page_size": page_size, "next_page_token": token},
+    }
+
+
 @app.get("/api/research/artifacts")
-def list_saved_research_artifacts(tenant_id: str = Depends(_authenticated_artifact_tenant)) -> List[Dict[str, Any]]:
-    return _visible_saved_artifacts(tenant_id)
+def list_saved_research_artifacts(
+    page_size: Optional[int] = Query(default=None, ge=1, le=500),
+    page_token: Optional[str] = Query(default=None),
+    tenant_id: str = Depends(_authenticated_artifact_tenant),
+) -> Any:
+    """Caller-tenant saved outputs. Without ``page_size``/``page_token`` the legacy bare list is kept for the
+    previous release; with either, one bounded page ordered ``(created_at, artifact_id)`` descending."""
+    rows = _visible_saved_artifacts(tenant_id)
+    if page_size is None and not (page_token or "").strip():
+        return rows
+    return _saved_artifact_page(rows, page_size if page_size is not None else 50, page_token)
 
 
 @app.get("/api/research/artifacts/{artifact_id}")
@@ -4136,39 +5475,112 @@ def get_saved_research_artifact(artifact_id: str, tenant_id: str = Depends(_auth
     raise HTTPException(status_code=404, detail=f"Research artifact '{artifact_id}' not found")
 
 
-@app.post("/api/research/tickets")
-def create_research_ticket(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def _optional_ticket_actor(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+) -> Optional[AuthenticatedTenant]:
+    # Anonymous ordinary RW-01 callers keep their existing contract. Meeting
+    # rows enforce auth again at the owner, including direct in-process calls.
+    if authorization is None and x_tenant_id is None:
+        return None
     try:
-        return get_write_owner().create_research_ticket(
-            title=str(body.get("title") or ""), description=str(body.get("description") or ""),
-            priority=str(body.get("priority") or "medium"), owner=str(body.get("owner") or ""),
-            actor_id=str(body.get("actor_id") or "operator"), created_at=body.get("created_at"), ticket_id=body.get("ticket_id"),
-        )
+        actor = authenticate_tenant(authorization=authorization, tenant_id=x_tenant_id,
+            service_prefix="RESEARCH", required_roles=(*AUTHENTICATED_SERVICE_ROLES, "viewer", "reviewer", "human", "persona"))
+        tenants = _structured_token_tenants(authorization)
+        if tenants and "*" not in tenants and actor.tenant_id not in tenants:
+            raise TenantBoundaryError("Authenticated actor is not authorized for tenant")
+        return actor
+    except (AuthError, TenantBoundaryError) as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def _meeting_ticket_evidence(ref: Dict[str, Any], tenant_id: str, ticket_id: str) -> Optional[Dict[str, Any]]:
+    """Re-read original scoped owners, never fetch caller URLs or trust inline receipts."""
+    if ref["kind"] == "research_artifact":
+        artifact = store.get_artifact(ref["artifact_id"])
+        if not artifact or _saved_artifact_tenant(artifact) != tenant_id:
+            return None
+        return {"tenant_id": tenant_id, "checksum": artifact.get("checksum")}
+    if ref["kind"] == "research_note":
+        # Meeting-bound notes are written only by the authenticated note branch
+        # below; legacy notes cannot self-assert a meeting binding.
+        note = get_write_owner()._notes_store.get(ref["artifact_id"])
+        binding = (note or {}).get("_meeting_binding") or {}
+        if binding.get("tenant_id") == tenant_id and binding.get("ticket_id") == ticket_id:
+            return {"tenant_id": tenant_id, "checksum": note.get("_meeting_digest")}
+    return None
+
+
+def _ticket_call(operation: Any) -> Any:
+    try:
+        return operation()
+    except MeetingActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _ticket_body_actor(body: Dict[str, Any], context: Optional[AuthenticatedTenant]) -> str:
+    if context:
+        for candidate in (body.get("actor_id"), (body.get("patch") or {}).get("actor_id") if isinstance(body.get("patch"), dict) else None):
+            if candidate is not None and candidate != context.actor_id:
+                raise HTTPException(status_code=403, detail="actor_id must match authenticated principal")
+        if body.get("tenant_id") is not None and body["tenant_id"] != context.tenant_id:
+            raise HTTPException(status_code=403, detail="tenant_id must match authenticated tenant")
+    nested = (body.get("patch") or {}).get("actor_id") if isinstance(body.get("patch"), dict) else None
+    return str(body.get("actor_id") or nested or (context.actor_id if context else "operator"))
+
+
+@app.post("/api/research/tickets")
+def create_research_ticket(body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    actor = _ticket_body_actor(body, context)
+    kwargs = {"title": str(body.get("title") or ""), "description": str(body.get("description") or ""),
+              "priority": str(body.get("priority") or "medium"), "owner": str(body.get("owner") or ""),
+              "actor_id": actor, "created_at": body.get("created_at"), "ticket_id": body.get("ticket_id")}
+    if "meeting_action" in body:
+        if body["meeting_action"] is None:
+            raise HTTPException(status_code=400, detail="meeting_action cannot be null")
+        kwargs.update(meeting_action=body["meeting_action"], context=context)
+    return _ticket_call(lambda: get_write_owner().create_research_ticket(**kwargs))
+
+
 @app.patch("/api/research/tickets/{ticket_id}")
-def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+def patch_research_ticket(ticket_id: str, body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    actor = _ticket_body_actor(body, context)
     patch = body.get("patch") if isinstance(body.get("patch"), dict) else body
-    result = get_write_owner().patch_research_ticket(
-        ticket_id, patch=patch, actor_id=str(body.get("actor_id") or patch.get("actor_id") or "operator"),
-        updated_at=body.get("updated_at") or patch.get("updated_at"),
-    )
+    kwargs = {"patch": patch, "actor_id": actor, "updated_at": body.get("updated_at") or patch.get("updated_at")}
+    if context is not None:
+        kwargs["context"] = context
+    result = _ticket_call(lambda: get_write_owner().patch_research_ticket(ticket_id, **kwargs))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return result
 
 
 @app.get("/api/research/tickets")
-def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+def list_research_tickets(status: Optional[str] = Query(default=None), owner: Optional[str] = Query(default=None),
+    meeting_linked: bool = Query(default=False), meeting_type: Optional[str] = Query(default=None),
+    human_actionable: bool = Query(default=False),
+    subject_ref: Optional[str] = Query(default=None), action_state: Optional[str] = Query(default=None),
+    due_before: Optional[str] = Query(default=None), submitted_after: Optional[str] = Query(default=None),
+    updated_after: Optional[str] = Query(default=None), page_size: int = Query(default=50, ge=1, le=100),
+    page_token: Optional[str] = Query(default=None), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor),
+) -> Any:
     statuses = [item.strip() for item in status.split(",") if item.strip()] if status else None
-    return get_write_owner().list_research_tickets(statuses=statuses, owner=owner)
+    kwargs = {"statuses": statuses, "owner": owner}
+    if meeting_linked:
+        kwargs.update(context=context, meeting_linked=True, meeting_type=meeting_type, subject_ref=subject_ref,
+            action_states=action_state.split(",") if action_state else None, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after, human_actionable=human_actionable,
+            page_size=page_size, page_token=page_token)
+    elif any((meeting_type, subject_ref, action_state, due_before, submitted_after, updated_after, page_token, human_actionable)):
+        raise HTTPException(status_code=400, detail="Meeting filters require meeting_linked=true")
+    return _ticket_call(lambda: get_write_owner().list_research_tickets(**kwargs))
 
 
 @app.get("/api/research/tickets/{ticket_id}")
-def get_research_ticket(ticket_id: str) -> Dict[str, Any]:
-    result = get_write_owner().get_research_ticket(ticket_id)
+def get_research_ticket(ticket_id: str, context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().get_research_ticket(ticket_id, **({"context": context} if context else {})))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research ticket '{ticket_id}' not found")
     return result
@@ -4221,8 +5633,8 @@ def invalidate_research_experiment(experiment_id: str, body: Optional[Dict[str, 
 
 
 @app.post("/api/research/notes")
-def create_research_note(body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    result = get_write_owner().create_research_note(body)
+def create_research_note(body: Dict[str, Any] = Body(...), context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().create_research_note(body, **({"context": context} if context else {})))
     if result is None:
         raise HTTPException(status_code=400, detail="Invalid note payload")
     return result
@@ -4234,8 +5646,8 @@ def list_research_notes() -> List[Dict[str, Any]]:
 
 
 @app.get("/api/research/notes/{note_id}")
-def get_research_note(note_id: str) -> Dict[str, Any]:
-    result = get_write_owner().get_research_note(note_id)
+def get_research_note(note_id: str, context: Optional[AuthenticatedTenant] = Depends(_optional_ticket_actor)) -> Dict[str, Any]:
+    result = _ticket_call(lambda: get_write_owner().get_research_note(note_id, **({"context": context} if context else {})))
     if not result:
         raise HTTPException(status_code=404, detail=f"Research note '{note_id}' not found")
     return result
@@ -4285,11 +5697,9 @@ def list_alpha_template_evaluations_endpoint(
 ) -> Dict[str, Any]:
     registry_service = RegistryService(get_registry_store())
     ensure_builtin_alpha_templates(registry_service)
-    entries = [
-        v
-        for v in registry_service.list_all_entries()
-        if v.entry.artifact_type == ArtifactType.ALPHA_TEMPLATE
-    ]
+    from services.research.alpha_templates import list_alpha_template_views
+
+    entries = list_alpha_template_views(registry_service)
     items: List[Dict[str, Any]] = []
     for view in entries:
         meta = view.entry.metadata or {}

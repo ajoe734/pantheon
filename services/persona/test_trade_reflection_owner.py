@@ -425,3 +425,17 @@ def test_openclaw_provider_request_schema_is_the_canonical_slice(monkeypatch: py
     sent = _patch_transport(monkeypatch)
     OpenClawReflectionProvider(adapter_url="http://adapter:8104", token="explicit").reflect(facts={}, trigger="ep-1")
     assert json.loads(sent[0].data)["extraction_schema"] == provider_extraction_schema()
+
+
+class _StubLessonRegistrar:
+    """Test double for the memory service lesson registry (these tests do not exercise registration)."""
+    configured = True
+
+    def register(self, candidates, authorization):
+        return {"registered": [c["lesson_candidate_id"] for c in candidates], "already_registered": []}
+
+
+@pytest.fixture(autouse=True)
+def _stub_lesson_registrar(monkeypatch):
+    import services.persona.write_owner as write_owner
+    monkeypatch.setattr(write_owner, "MemoryLessonRegistrar", _StubLessonRegistrar)

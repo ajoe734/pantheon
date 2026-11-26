@@ -1,0 +1,133 @@
+{
+  "task_id": "DEV-REFRESH-WORKFLOW-FIXTURES-20261113",
+  "owner": "Codex2",
+  "assigned_independent_reviewer": "Claude",
+  "delivery_scope": "Existing workflow test maintenance and this evidence only; no runtime or hosted acceptance.",
+  "base_sha": "8472268bb82c9eddad0f12db3b583be3154dacbb",
+  "anchor_commit": "5605002e4bcfb40a53ab6768d093bed852381443",
+  "primary_audit": {
+    "path": "/tmp/pantheon-goal-resume-20261111/goal-five-refresh-workflow-baseline-static-audit-20261113.json",
+    "sha256": "41fad803c248d76c647f2e94e0a50e0e5b4fd1a4db14564c744a7a8f315b1dd6"
+  },
+  "original_restore_evidence": {
+    "path": "docs/deployment/evidence/DEV-REFRESH-RESTORE-EXACT-READY-20261113/evidence.json",
+    "blob": "767b118b7b2178df4dcaa52e6d20b7c12f8182ba",
+    "sha256": "c322a2387b8eab55f800b9db7f2861372ebb9e8d01754c94f795d2e3f24ea5fd",
+    "merge_commit": "35c396704ea346f421fdb2ed052de7a4239ecac0"
+  },
+  "original_terminal_logs_verified": [
+    {
+      "path": "/tmp/DEV-REFRESH-RESTORE-EXACT-READY-20261113-workflow.log",
+      "bytes": 5293,
+      "sha256": "0243a76094ea59fe0ab65b1fd799a3be6c303cfb5aa0015abdd6d96b7327483d",
+      "matches_committed_terminal_output_sha256": true,
+      "terminal": "5 failed, 15 passed, 110 deselected in 18.99s",
+      "verified_against_merged_evidence_key": "workflow"
+    },
+    {
+      "path": "/tmp/DEV-REFRESH-RESTORE-EXACT-READY-20261113-workflow-before.log",
+      "bytes": 5275,
+      "sha256": "81090b5c51443a7367da4274e080afd733ac4969eaee2ce69d641c9fa5adbc79",
+      "matches_committed_terminal_output_sha256": true,
+      "terminal": "5 failed, 9 passed in 9.38s",
+      "verified_against_merged_evidence_key": "workflow-before"
+    }
+  ],
+  "baseline_classification": {
+    "frozen_base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+    "original_frozen_base_terminal": "5 failed, 9 passed; exit 1",
+    "original_restore_terminal": "5 failed, 15 passed, 110 deselected; exit 1",
+    "preserved_failure_names": [
+      "test_refresh_skips_without_touching_containers_when_no_taiwan_symbols",
+      "test_refresh_never_replaces_steady_scheduler_or_projector[0-0]",
+      "test_refresh_never_replaces_steady_scheduler_or_projector[1-1]",
+      "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[0]",
+      "test_refresh_pauses_and_restarts_same_steady_containers_with_own_state[1]"
+    ],
+    "recorded_source": "35c396704ea346f421fdb2ed052de7a4239ecac0",
+    "reproduction_source": "8472268bb82c9eddad0f12db3b583be3154dacbb",
+    "identity_check": "deploy_nonprod_vm.sh and legacy workflow test bytes at recorded 35c and initial current-dev 847 are identical; original audit/evidence/log hashes and evidence blob independently verified.",
+    "conclusion": "The five original failures predate restore. No new restore runtime regression or new release gate is established."
+  },
+  "implementation": [
+    "Keep exact skipped/no_active_taiwan_symbols, official connector identity and empty log assertion; no Docker call is permitted.",
+    "Stub the maintained compose ps --status running query with configured steady scheduler/projector IDs and per-container environment; keep running/compose image and built-projector revision guards.",
+    "Extract maintained entrypoint, wait, log/redaction and dataset helpers from current source. Delimit functions by the next shell function so Python heredoc closing braces do not truncate them. Existing HTTP/preflight/readback/runtime boundaries remain simulated; DLQ recovery is explicitly outside these lifecycle cases.",
+    "The scheduler succeeds and the projector uses the requested exit code so both existing success/failure cases execute two bounded runs. Assert captured deploy values, failure log/outcome, restore and named one-shot cleanup; reject steady recreate/remove/restart and obsolete ps-a selection.",
+    "A valid sibling with distinct tenant and Git SHA completes both runs and restores the same steady IDs. With only NO_DEPLOY_VALUES toggled, tenant guard fails before stop/start/build/run/remove/runtime mutation; verify inspected steady ID and failed outcome.",
+    "Correct two additional obsolete state assertions exposed after setup repair: preserve same steady containers, shared authoritative controller journal/volume and isolated bounded liveness. Do not restore the split state-path bug."
+  ],
+  "state_contract_origin": {
+    "commit": "60a7d7bf8f19b75dea152ea49794d0b5fc035be3",
+    "task_id": "DEV-TW-REFRESH-AUTHORITATIVE-STATE-20261008",
+    "maintained_regression": "scripts/test_dev_tw_market_refresh.py::test_bounded_refresh_controller_writes_the_authoritative_readback_state",
+    "proof": "Existing focused regression retains split-path negative (stale identity/sequence) and shared-journal positive (fresh identity/sequence with retained history). This task changes neither runtime nor that regression."
+  },
+  "verified_input_sha256": {
+    "scripts/deploy_nonprod_vm.sh": "e78446dd8e24d2625e5b2021ebfe54306766bd3a67a6d206c4903117765287fb",
+    "scripts/test_dev_tw_market_refresh_workflow.py": "618bbc528444186b26484f11f751f85f715670bdbcd586a1cda56d389625df0c",
+    "scripts/test_dev_tw_market_refresh.py": "e35a3e2173d89b04d7ad296d2208f23de1be405c4c7e0baaee8dd4af59fe2bec",
+    "scripts/test_deploy_nonprod_vm.py": "d8c42accf0c7fbc1b4c89b7612e2908505b7d01add482430ec8a5e714f3be396",
+    "docker-compose.yml": "80d8608e358a219099272951c5dd180529b0b03527959833241fe9e4d7bc2428"
+  },
+  "verification": [
+    {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py",
+      "stage": "pre-edit reproduction",
+      "exit_status": 1,
+      "result": "5 failed, 9 passed in 4.13s",
+      "terminal_log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-before.log",
+      "sha256": "d4b31d94cd337eb76234fc0376137398ddcd5651c015e8c2a0e61fc72950fd0f"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh_workflow.py scripts/test_deploy_nonprod_vm.py -k 'workflow or source_refresh or collector_host_gate_steady_restore_and_refresh_guard'",
+      "exit_status": 0,
+      "result": "31 passed, 117 deselected in 14.45s",
+      "coverage": "All fourteen existing workflow cases plus seventeen affected deployment/diagnostic assertions; no skip or deletion.",
+      "terminal_log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-workflow-final.log",
+      "sha256": "07062d93511063ed4fdd832f17a7e91668874f5a1c3e0fbc66df39c059f924a7"
+    },
+    {
+      "command": "timeout 210 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py -k 'refresh_entrypoint or bounded_refresh_restore or exact_restore or terminating_signal or authoritative_readback_state or steady_container_selection or projector_image'",
+      "exit_status": 0,
+      "result": "43 passed, 73 deselected in 156.08s (0:02:36)",
+      "coverage": "Tenant and image guards, running-only selection, real authoritative state positive/negative, Source exact environment and restore/readiness failures, signals and failure cleanup.",
+      "terminal_log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-focused.log",
+      "sha256": "827b19c9cbf3a1149972dca691dbabf3f61e0d4e5a2ce93f40b69ad29bab6b58"
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+      "exit_status": 0
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD",
+      "exit_status": 0
+    }
+  ],
+  "development_iterations": [
+    {
+      "log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-after.log",
+      "exit_status": 1,
+      "result": "6 failed, 8 passed; new dataset-helper extraction cut a Python heredoc, corrected before acceptance.",
+      "sha256": "988423f8b7b94f44fc4e586d03770c09ffbb8c1bcb3d54ccdece500e39ff04e4"
+    },
+    {
+      "log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-corrected.log",
+      "exit_status": 1,
+      "result": "2 failed, 12 passed; setup reached obsolete split-state assertions, synchronized to maintained 60a7 contract.",
+      "sha256": "8adc57677c05eb3371b81e8792b8961884f686332f22eb58d3528f052f89ef45"
+    },
+    {
+      "log": "/tmp/DEV-REFRESH-WORKFLOW-FIXTURES-20261113-workflow.log",
+      "exit_status": 0,
+      "result": "14 passed in 8.69s; final sibling refinement then verified in final 31-case batch.",
+      "sha256": "3bfce6b8769e89d114138c4d5361766077b367290e72f4df56ed07c5fa5d886f"
+    }
+  ],
+  "delivery_limits": [
+    "This is owner evidence; assigned independent exact-head review, required CI, native integration and owner DONE remain pending at evidence creation.",
+    "No runtime/workflow/CI/service/provider/model/data/VM/SSH/secret/production/trading change or deployment dispatch.",
+    "Independent existing test debt adds no gate on Root433624 or ordinary Dev release and does not extend DEV-BOUNDED-PUBLISHED-SESSION-FRONTIER-20261113.",
+    "Original Pattern9aeb/all49 closure is preserved; all real hosted and financial obligations remain with their existing owners."
+  ]
+}

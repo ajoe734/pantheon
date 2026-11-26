@@ -1,0 +1,32 @@
+{
+  "task_id": "BFF-DATASOURCE-READ-BUDGET-20261112",
+  "scope": "source-only; hosted seven-row GUI/role readback remains with the original publisher",
+  "original_failures_retained": {
+    "operator_b_gui": "/tmp/pantheon-compat-residual-20261111/hosted-readonly/four-profile-1fMqnm/result.json (datasources unavailable 0)",
+    "viewer_api": "/tmp/pantheon-compat-residual-20261111/hosted-readonly/four-profile-RF6321/result.json (source=unavailable reason=read_timeout)",
+    "owner_comparison": "/tmp/pantheon-compat-residual-20261111/datasource-owner-readonly-result.json: registry 1213.65/1253.43/702.15ms vs BFF 0.75s budget"
+  },
+  "change": {
+    "file": "services/control-plane/bff/main.py",
+    "function": "_management_data_sources_read_timeout_seconds",
+    "dev_default_seconds": 2.5,
+    "dev_environments": ["dev", "development", "local"],
+    "non_dev_default_seconds": 0.75,
+    "override": "PANTHEON_BFF_DATA_SOURCES_READ_TIMEOUT_SECONDS still wins; invalid value falls back to environment default",
+    "bound": "below 4s evidence-owner HTTP timeout; 2-slot bounded executor and typed unavailable reasons unchanged",
+    "no_new": ["registry", "reader", "cache", "service", "index", "compat fallback"]
+  },
+  "tests": {
+    "file": "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+    "moved_from": "services/control-plane/bff/tests/test_management_read_budget.py (migrated suite; importing main violated test_bff_test_architecture; required CI Smoke 130880359989 failed at head 26d54094)",
+    "result": "test_bff_test_architecture.py + test_management_read_budget.py + budget cases pass; one unrelated pre-existing failure test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals fails identically without this change",
+    "covers": [
+      "env-specific defaults and override",
+      "dev 1.0s healthy slow registry completes as service_client",
+      "staging same 1.0s read stays unavailable/read_timeout",
+      "dev read beyond budget stays read_timeout with no connectors",
+      "full capacity yields read_capacity_saturated"
+    ]
+  },
+  "not_claimed": "hosted acceptance, seven settled rows, role readback, logout invalidation (publisher-owned); strategy p50 and Fleet p95 thresholds unchanged"
+}

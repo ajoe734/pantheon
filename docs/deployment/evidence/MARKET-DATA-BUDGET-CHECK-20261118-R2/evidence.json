@@ -1,0 +1,253 @@
+{
+  "task": "MARKET-DATA-BUDGET-CHECK-20261118-R2",
+  "design": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md",
+  "volume": {
+    "batch": 500,
+    "listed_symbols": 22500,
+    "listed_warrants": 20200,
+    "snapshot_closes": 60,
+    "trading_days": 500
+  },
+  "commands": [
+    {
+      "cmd": "python3 scripts/check_market_data_budget.py --output <report>",
+      "exit": 0,
+      "checks": 33,
+      "passed": 25,
+      "waived": 8,
+      "failed": 0,
+      "elapsed_seconds": 13.7
+    },
+    {
+      "cmd": "python3 -m pytest -q scripts/test_check_market_data_budget.py",
+      "exit": 0,
+      "passed": 17
+    },
+    {
+      "cmd": "python3 -m unittest scripts.test_branch_ci_gate_selection",
+      "exit": 0,
+      "passed": 16
+    }
+  ],
+  "stores_touched": [
+    "none (read-only check; generated data in temp dirs)"
+  ],
+  "stores_not_touched": "every store in design sections 6 and 6A; no product writer or reader changed",
+  "budget_rows": [
+    {
+      "store": "daily_bars",
+      "metric": "day_bytes",
+      "measured": 1093332.0,
+      "limit": 1600000.0,
+      "status": "pass"
+    },
+    {
+      "store": "daily_bars",
+      "metric": "day_bytes_alarm",
+      "measured": 1093332.0,
+      "limit": 2500000.0,
+      "status": "pass"
+    },
+    {
+      "store": "daily_bars",
+      "metric": "total_bytes_500_days",
+      "measured": 546666000.0,
+      "limit": 1000000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "lineage",
+      "metric": "day_bytes",
+      "measured": 2479.0,
+      "limit": 300000.0,
+      "status": "pass"
+    },
+    {
+      "store": "lineage",
+      "metric": "total_bytes_500_days",
+      "measured": 1239500.0,
+      "limit": 150000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "max_record_bytes",
+      "measured": 3623.0,
+      "limit": 16000.0,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "live_bytes_22500_keys",
+      "measured": 80171390.0,
+      "limit": 270000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "file_over_live_ratio",
+      "measured": 1.151,
+      "limit": 1.3,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "wal_bytes",
+      "measured": 0.0,
+      "limit": 64000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "writer_txn_ms_max",
+      "measured": 30.204,
+      "limit": 500.0,
+      "status": "pass"
+    },
+    {
+      "store": "market_snapshot_current",
+      "metric": "reader_call_ms_max",
+      "measured": 25.893,
+      "limit": 100.0,
+      "status": "pass"
+    },
+    {
+      "store": "listing_allowlist",
+      "metric": "day_bytes",
+      "measured": 229918.0,
+      "limit": 2000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "listing_allowlist",
+      "metric": "total_bytes",
+      "measured": 229918.0,
+      "limit": 20000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_index_daily",
+      "metric": "day_bytes",
+      "measured": 276.0,
+      "limit": 100000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_index_ohlc_daily",
+      "metric": "day_bytes",
+      "measured": 223.0,
+      "limit": 100000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_market_breadth_daily",
+      "metric": "day_bytes",
+      "measured": 52.0,
+      "limit": 10000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_institutional_flow",
+      "metric": "day_bytes",
+      "measured": 49779.0,
+      "limit": 300000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_margin_short_balance",
+      "metric": "day_bytes",
+      "measured": 15342.0,
+      "limit": 200000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_broker_top",
+      "metric": "day_bytes",
+      "measured": 26453.0,
+      "limit": 200000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_broker_branch_detail",
+      "metric": "day_bytes",
+      "measured": 52379.0,
+      "limit": 5000000.0,
+      "status": "pass"
+    },
+    {
+      "store": "taifex_ssf_contracts",
+      "metric": "day_bytes",
+      "measured": 4786.0,
+      "limit": 100000.0,
+      "status": "pass"
+    },
+    {
+      "store": "taifex_tx_daily",
+      "metric": "day_bytes",
+      "measured": 76.0,
+      "limit": 10000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_macro_series",
+      "metric": "day_bytes",
+      "measured": 387.0,
+      "limit": 10000.0,
+      "status": "pass"
+    },
+    {
+      "store": "tw_community_daily",
+      "metric": "day_bytes",
+      "measured": 18417.0,
+      "limit": 200000.0,
+      "status": "pass"
+    },
+    {
+      "store": "collector_news",
+      "metric": "day_bytes",
+      "measured": 1132.0,
+      "limit": 20000000.0,
+      "status": "pass"
+    }
+  ],
+  "waivers": [
+    {
+      "store": "compat journal export (phase S2 only)",
+      "reason": "no exporter exists before phase S2 (T3b); nothing to measure"
+    },
+    {
+      "store": "ingest_schedule.jsonl",
+      "reason": "receipt writer has no hosted-shaped generator here; its row is owned by the T2 receipts task"
+    },
+    {
+      "store": "raw/normalized run files (transition only)",
+      "reason": "legacy files, removed by T4; time based alarm, not a byte bound"
+    },
+    {
+      "store": "tw_price_1m",
+      "reason": "owned by the 2026-11-11 IntradayStore design and its own tests"
+    },
+    {
+      "store": "source_evidence, distillation",
+      "reason": "no per-close evidence store exists to measure; owned by the M4 baseline task"
+    },
+    {
+      "store": "in-memory receipt replay",
+      "reason": "RSS bound from measurement M6; not a persisted store"
+    },
+    {
+      "store": "other datasets",
+      "reason": "pointer row to section 6A, every 6A row is checked individually"
+    },
+    {
+      "store": "features/returns",
+      "reason": "limit is 0 (not stored); removal is task T4, there is no writer to measure after it"
+    }
+  ],
+  "findings": [
+    "market_snapshot_current at SQLite default page_size 4096 measures file/live 1.316 for the design-shape 3.6 KB record (over the 1.3 alarm); 8192 gives 2.63; 16384 gives 1.15. The design pragma list has no page_size; the check uses 16384 and T3 must set it.",
+    "6A dataset rows are measured as zlib JSON proxy bytes at the design's row counts because no keyed writer exists for them yet; daily_bars and market_snapshot_current rows are measured on the real store and the design-shape SQLite table respectively."
+  ],
+  "persisted_format_change": false,
+  "credentials": "none read or recorded"
+}

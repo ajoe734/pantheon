@@ -32,7 +32,10 @@ from .models import (
 )
 from .pg_store import DivergentCommandReplayError
 from .storage import (
+    DISCOVERY_MAX_PAGE_SIZE,
     _validate_strategy_summary_page_args,
+    decode_discovery_page_token,
+    encode_discovery_page_token,
     build_lineage_graph,
     persona_binding_counts,
     project_strategy_spec_summary_page,
@@ -359,6 +362,53 @@ class RegistryService:
     def list_all_entries(self) -> list[RegistryEntryView]:
         return [self._to_view(e) for e in self.store.list_all_entries()]
 
+    def card_admission_draft_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        page_size: int,
+        after_registry_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        """One bounded page of admissible card drafts; ``next_page_token`` is the last registry_id."""
+        rows = self.store.list_card_admission_drafts(
+            visible_tenants=visible_tenants, tenant_id=tenant_id,
+            limit=int(page_size) + 1, after_registry_id=after_registry_id,
+        )
+        page = rows[: int(page_size)]
+        return {
+            "items": [{"entry": e.to_dict()} for e in page],
+            "next_page_token": page[-1].registry_id if len(rows) > len(page) and page else None,
+        }
+
+    def discovery_candidate_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        page_size: int,
+        page_token: Optional[str] = None,
+    ) -> dict[str, object]:
+        """One bounded discovery page (REGISTRY-DISCOVERY-SPEC-PAGE-20261125).
+
+        Same keyset as :meth:`card_admission_draft_page`; the token is opaque and
+        bound to the view and ``tenant_id`` (``ValueError`` "Invalid page_token"
+        for any other token, including a card admission cursor).
+        """
+        size = max(1, min(int(page_size), DISCOVERY_MAX_PAGE_SIZE))
+        after = decode_discovery_page_token(page_token, tenant_id) if page_token else None
+        rows = self.store.list_discovery_candidates(
+            visible_tenants=visible_tenants, limit=size + 1, after_registry_id=after,
+        )
+        page = rows[:size]
+        return {
+            "items": [{"entry": row} for row in page],
+            "next_page_token": (
+                encode_discovery_page_token(tenant_id, page[-1]["registry_id"])
+                if len(rows) > len(page) and page else None
+            ),
+        }
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:
@@ -394,9 +444,32 @@ class RegistryService:
         )
 
     def list_strategy_spec_summary_index_rows(
-        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected by the owner store for Phase 1 of strategy_summary_page."""
+        extra: dict[str, bool] = {}
+        if include_title:
+            extra["include_title"] = True
+        if include_scope:
+            extra["include_scope"] = True
+        if include_scope:
+            # A store that cannot project the scope leaf must not silently drop
+            # it: hiding on a partial row would misclassify.
+            return self.store.list_strategy_spec_summary_index_rows(
+                visible_tenants=visible_tenants, artifact_type=artifact_type, **extra,
+            )
+        if include_title:
+            try:
+                return self.store.list_strategy_spec_summary_index_rows(
+                    visible_tenants=visible_tenants, artifact_type=artifact_type, **extra,
+                )
+            except TypeError:
+                pass
         return self.store.list_strategy_spec_summary_index_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
         )
@@ -422,21 +495,35 @@ class RegistryService:
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        query: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[Sequence[str]] = None,
     ) -> dict[str, object]:
-        """Owner-filtered and paged canonical strategy summary page."""
+        """Owner-filtered and paged canonical strategy summary page.
+
+        ``hide_stubs`` / ``hide_persona_ids`` are the owner-side hide input: the
+        same candidate pass excludes and counts the hidden rows.
+        """
         _validate_strategy_summary_page_args(
             state=state,
             exclude_state=exclude_state,
             page_token=page_token,
             page_size=page_size,
         )
+        has_query = bool(query is not None and str(query).strip() != "")
+        hide_kwargs: dict[str, object] = (
+            {"hide_stubs": True, "hide_persona_ids": hide_persona_ids} if hide_stubs else {}
+        )
         if hasattr(self.store, "list_strategy_spec_summary_index_rows") and hasattr(
             self.store, "get_strategy_spec_summary_rows_by_ids"
         ):
             index_rows = self.list_strategy_spec_summary_index_rows(
-                visible_tenants=visible_tenants, artifact_type=artifact_type,
+                visible_tenants=visible_tenants,
+                artifact_type=artifact_type,
+                include_title=has_query or hide_stubs,
+                include_scope=hide_stubs,
             )
             return project_strategy_spec_summary_page(
                 index_rows,
@@ -444,11 +531,13 @@ class RegistryService:
                 state=state,
                 exclude_state=exclude_state,
                 persona_id=persona_id,
+                query=query,
                 page_token=page_token,
                 page_size=page_size,
                 full_row_loader=lambda reg_ids: self.get_strategy_spec_summary_rows_by_ids(
                     reg_ids, visible_tenants=visible_tenants, artifact_type=artifact_type
                 ),
+                **hide_kwargs,
             )
         rows = self.list_strategy_spec_summary_rows(
             visible_tenants=visible_tenants, artifact_type=artifact_type,
@@ -459,8 +548,10 @@ class RegistryService:
             state=state,
             exclude_state=exclude_state,
             persona_id=persona_id,
+            query=query,
             page_token=page_token,
             page_size=page_size,
+            **hide_kwargs,
         )
 
     def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:

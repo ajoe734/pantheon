@@ -1,0 +1,197 @@
+{
+  "task_id": "TW-REFRESH-SESSION-RULES-AND-TESTS-IN-CI-20261119",
+  "problem_register_class": "TW-MARKET-REFRESH",
+  "runtime_budget": {
+    "status": "none",
+    "detail": "No new recurring job, emitter, or persistent writer added; workflow schedules and dev host timers are unchanged."
+  },
+  "finmind_fundamentals_reproduction": {
+    "window_checked_since": "2026-11-10",
+    "workflow": ".github/workflows/dev-tw-market-refresh.yml",
+    "step_name": "Execute bounded FinMind fundamentals refresh",
+    "step_id": "finmind_fundamentals_refresh",
+    "has_passed_since_2026_11_10": false,
+    "runs_with_step_total": 14,
+    "runs_skipped_due_to_prior_step_failure_or_cancel": 13,
+    "runs_executed": [
+      {
+        "run_id": 44156597251,
+        "run_started_at_utc": "2026-11-17T19:15:18Z",
+        "step_started_at_utc": "2026-11-17T19:22:27Z",
+        "step_completed_at_utc": "2026-11-17T19:27:46Z",
+        "step_started_at_taipei": "2026-11-18T03:22:27+08:00",
+        "github_step_conclusion": "success (masked by continue-on-error: true; inner shell exited with code 1)",
+        "inner_process_exit_code": 1,
+        "observed_execution": {
+          "tw-finmind-monthly-revenue": {
+            "preflight_decision": "proceed (dataset_missing)",
+            "prepared_run_date": "2026-11-17",
+            "prepare_rule_used": "latest_published_broker_session (18:00 Taipei)",
+            "ingest_run_id": "ingest-6950e836ee63",
+            "normalized_records_ingested": 72,
+            "latest_source_record": {
+              "source_id": "finmind:tw_monthly_revenue:TWSE:2330:3cc25dbbec5d8679",
+              "metadata_date": "2026-10-31",
+              "metadata_as_of_date": "2026-11-17",
+              "metadata_ingest_job_run_date": "2026-11-17",
+              "metadata_refresh_coverage_window_end": "2026-11-17",
+              "metadata_available_time": "2026-11-10T10:00:00Z",
+              "provenance_event_time": "2026-10-31"
+            }
+          },
+          "tw-finmind-quarterly-statements": {
+            "hosted_readback_status": "never_ingested (loop aborted when tw-finmind-monthly-revenue exited 1)"
+          },
+          "tw-finmind-valuation": {
+            "hosted_readback_status": "never_ingested (loop aborted when tw-finmind-monthly-revenue exited 1)"
+          }
+        },
+        "compared_values_and_defects_identified": [
+          {
+            "defect": "publication_rule_mismatch",
+            "detail": "prepare_bounded_source_refresh_dataset used latest_published_broker_session (18:00 Taipei) for all FinMind connectors, but check_taiwan_refresh_preflight and verify_bounded_source_refresh_readback fell through to the 13:30 Taipei market-close cutoff for tw-finmind-monthly-revenue, tw-finmind-quarterly-statements, and tw-finmind-valuation."
+          },
+          {
+            "defect": "different_kind_date_comparison",
+            "detail": "FinMindTaiwanFundamentalsAdapter stamps metadata.date / normalized_row.date with the period-end date ('2026-10-31' month-end for tw_monthly_revenue, '2026-09-30' quarter-end for tw_financial_statement) while stamping metadata.as_of_date, metadata.ingest_job.run_date, and metadata.refresh_coverage.window_end with the trading session run_date ('2026-11-17'). Preflight and readback compared metadata.date ('2026-10-31') directly against the trading session date ('2026-11-17')."
+          },
+          {
+            "defect": "source_id_prefix_mismatch",
+            "detail": "FinMindTaiwanFundamentalsAdapter stamps source_id with prefix 'finmind:<dataset>:' (e.g. 'finmind:tw_monthly_revenue:TWSE:2330:3cc25dbbec5d8679'), whereas preflight and readback required 'tw-official:<dataset>:'."
+          }
+        ]
+      }
+    ],
+    "fix_applied": {
+      "publication_rule": "check_taiwan_refresh_preflight and verify_bounded_source_refresh_readback now use latest_published_broker_session (18:00 Taipei cutoff) for profile['base'] == 'tw-finmind-fundamentals', matching prepare_bounded_source_refresh_dataset.",
+      "same_kind_comparison": "expected_finmind_fundamental_period_ends compares period-end against period-end for tw_monthly_revenue (month-end) and tw_financial_statement (quarter-end) and session against session for tw_valuation_bwibbu and metadata.as_of_date / ingest_job.run_date / refresh_coverage.window_end.",
+      "source_id_prefix": "Preflight and readback accept 'finmind:<dataset>:' (as well as 'tw-official:<dataset>:') for profile['base'] == 'tw-finmind-fundamentals'."
+    }
+  },
+  "chip_provider_session_rule": {
+    "function": "services.source_ingestion.chip_publication_schedule.evaluate_chip_provider_session",
+    "scheduled_profiles_covered": [
+      "tw-official-twse-margin-balances",
+      "tw-official-tpex-margin-balances",
+      "tw-official-tpex-institutional-flow",
+      "tw-taifex-institutional-positions",
+      "tw-taifex-put-call",
+      "tw-taifex-tx-daily",
+      "tw-taifex-futures-options-chip"
+    ],
+    "verdicts_when_provider_session_newer_than_expected": {
+      "published_early": "provider_session > expected_session and provider_session is a trading session day <= latest closed Taipei date (today when now_t >= 13:30 Taipei, else yesterday) -> status='published_early', reason='published_early', is_failure=False",
+      "future_session": "provider_session > latest closed Taipei date (after today's Taipei date, or today before 13:30 Taipei close) -> status='future_session', reason='future_session', is_failure=True",
+      "session_mismatch": "provider_session is missing, malformed, or a non-session day (weekend/holiday) -> status='session_mismatch', reason='provider_session_mismatch', is_failure=True"
+    }
+  },
+  "test_dev_tw_market_refresh_triage": {
+    "baseline_collected": 130,
+    "isolated_non_git_copy_failures_pre_pr_7599": 42,
+    "isolated_non_git_copy_failures_post_pr_7599": 50,
+    "git_worktree_failures_post_pr_7599": 13,
+    "tests_removed": [],
+    "failure_classes": [
+      {
+        "class": "non_git_directory_copy_refresh_only_guard",
+        "affected_count": 37,
+        "cause": "scripts/deploy_nonprod_vm.sh line 7146 ran 'git rev-parse --is-inside-work-tree >/dev/null' unconditionally even for PANTHEON_DEPLOY_COMPONENT=refresh-only. When the test suite was run from an isolated directory copy without a .git directory, every test invoking 'deploy_nonprod_vm.sh --refresh-only' exited 128 before execute_bounded_source_refresh_entrypoint started.",
+        "fix": "Guarded 'git rev-parse --is-inside-work-tree >/dev/null' in scripts/deploy_nonprod_vm.sh with 'if [[ \"${PANTHEON_DEPLOY_COMPONENT}\" != refresh-only ]]; then', since refresh-only already validates -f \"${PANTHEON_REMOTE_DIR}/docker-compose.yml\" and does not use git."
+      },
+      {
+        "class": "restore_readiness_retry_budget_37_attempts",
+        "tests": [
+          "test_exact_restore_readiness_timeout_prevents_success_and_next_connector"
+        ],
+        "cause": "Test asserted 13 /readyz attempts (1 + 12 retries), whereas scripts/deploy_nonprod_vm.sh line 2821 uses 'curl_with_retry .../readyz 36 5' (37 attempts = 180s).",
+        "fix": "Updated expected /readyz attempt count in test_exact_restore_readiness_timeout_prevents_success_and_next_connector to 37."
+      },
+      {
+        "class": "pre_preflight_readiness_vs_restore_readiness_failure",
+        "tests": [
+          "test_exact_restore_readiness_failure_is_not_nonblocking_connector_success"
+        ],
+        "cause": "Test set readiness_always_fails=True, which triggered the pre-preflight /readyz check before any container mutation (where --non-blocking exits 0) instead of testing post-restore /readyz failure.",
+        "fix": "Added readiness_fails_on_restore=True in _MockSourceIngestHandler so pre-preflight and bounded-recreate /readyz return 200 and post-restore /readyz fails all 37 attempts with 503."
+      },
+      {
+        "class": "taifex_ssf_next_morning_0650_taipei_publication_schedule",
+        "tests": [
+          "test_preflight_morning_calendar_boundaries[2026-11-12T16:30:00+00:00-2026-11-12-profile0]",
+          "test_preflight_distinct_close_and_publication_cutoffs[2026-11-13T05:30:00+00:00-2026-11-13-2026-11-12]",
+          "test_preflight_distinct_close_and_publication_cutoffs[2026-11-13T09:59:59+00:00-2026-11-13-2026-11-12]",
+          "test_preflight_distinct_close_and_publication_cutoffs[2026-11-13T10:00:00+00:00-2026-11-13-2026-11-13]"
+        ],
+        "cause": "Asserted the pre-PR-#7599 13:30 Taipei same-day cutoff for tw-taifex-futures-options-chip instead of the governed 06:50 Taipei T+1 publication schedule.",
+        "fix": "Updated test_preflight_morning_calendar_boundaries and test_preflight_distinct_close_and_publication_cutoffs to assert the 06:50 Taipei T+1 cutoff (22:50:00Z) for tw-taifex-futures-options-chip and 18:00 Taipei T cutoff (10:00:00Z) for tw-finmind-broker-daily-report."
+      },
+      {
+        "class": "published_early_and_future_session_readback_verdicts",
+        "tests": [
+          "test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforces_ssf_readback",
+          "test_taifex_terminal_verifier_binds_requested_session_and_scope[2026-11-13T02:48:00Z-meta1-requested session]",
+          "test_taifex_terminal_verifier_binds_requested_session_and_scope[2026-11-13T02:48:00Z-meta2-requested session]",
+          "test_taifex_terminal_verifier_binds_requested_session_and_scope[2026-11-13T05:30:00Z-meta4-None]",
+          "test_taifex_terminal_verifier_binds_requested_session_and_scope[2026-11-13T05:29:59Z-meta6-requested session]"
+        ],
+        "cause": "evaluate_chip_provider_session previously rejected any provider_session > expected_session as session_mismatch and omitted the word 'session' after '!= requested' in failure details.",
+        "fix": "Implemented published_early and future_session in evaluate_chip_provider_session with '!= requested session' in failure details."
+      },
+      {
+        "class": "finmind_missing_secret_regex_widened_to_include_fundamentals",
+        "tests": [
+          "test_finmind_prepare_and_missing_secret_paths_exist"
+        ],
+        "cause": "Pinned old single-connector substring '== \"tw-finmind-broker-daily-report\" && -z \"${FINMIND_API_TOKEN:-}\"' after deploy_nonprod_vm.sh widened the check to include the three FinMind fundamentals connectors.",
+        "fix": "Updated substring check in test_finmind_prepare_and_missing_secret_paths_exist to match the widened regex in scripts/deploy_nonprod_vm.sh."
+      },
+      {
+        "class": "chip_and_finmind_fundamentals_terminal_verifier_matrix",
+        "tests": [
+          "test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session"
+        ],
+        "cause": "Looped over all 9 profiles in TW_CHIP_REFRESH_PROFILES at 2026-11-13T11:00:00Z assuming 2026-11-12 was always stale and using trading session dates and tw-official: prefixes for FinMind fundamentals.",
+        "fix": "Updated test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session so scheduled chip profiles test published (2026-11-12), published_early (2026-11-13), provider_publication_late (2026-11-11), and future_session (2026-11-14), while FinMind fundamentals profiles test finmind: prefixes, period-end dates (2026-10-31 and 2026-09-30), and as_of_date session bindings."
+      }
+    ]
+  },
+  "ci_wiring": {
+    "matrix_file": ".github/pantheon-stage0-matrix.json",
+    "global_paths_entry": "scripts/test_dev_tw_market_refresh.py",
+    "baseline_command": "python3 -m pytest -q scripts/test_dev_tw_market_refresh.py"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "bash -n scripts/deploy_nonprod_vm.sh",
+        "status": "passed",
+        "exit_code": 0
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m unittest scripts/test_ci_stage0.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 23
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_chip_publication_schedule.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 67
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 198,
+        "skipped_count": 2
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_tw_market_refresh.py",
+        "status": "passed",
+        "exit_code": 0,
+        "passed_count": 131
+      }
+    ]
+  }
+}

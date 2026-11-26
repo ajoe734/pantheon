@@ -1,0 +1,18 @@
+{
+  "task": "PAPER-COUNTERFACTUAL-GRADED-ONCE-20261125",
+  "class": "RC2",
+  "tests": {
+    "focused": "test_counterfactual_graded_once.py 5 passed; with carry check disabled test_delayed_release... fails (row carried twice)",
+    "regression": "test_daily_settlement_integration, test_intraday_paper_grading, test_paper_signal_producer: 185 passed total with focused"
+  },
+  "acceptance": {
+    "1": "carry record + liveness check in collect_counterfactual_grading; tests drive real producer/store over 4 daily decisions incl. delayed release and expired carrier",
+    "2": "rows carry graded_session; event created_at = that session; _ingest check in test asserts byte-identical duplicates (mirrors ingest exact-duplicate rule over event_id/type/created_at/payload)",
+    "3": "legacy parked rows lack graded_session; at release _drop_already_graded_rows strips rows whose #grading record is carried by another signal, so only the first release emits them; unit-tested, hosted proof pending after 2026-11-25 23:35Z",
+    "4": "no grading value/selection/sizing/order change; no new writer (reuses decision-record store)"
+  },
+  "review_independence_exception": "other model families at terminal quota until 2026-11-27 10:03Z; reviewer may be same family as owner",
+  "residuals": [
+    "Legacy rows already emitted once by an earlier release keep the old carrier created_at; a deterministic re-emission would conflict with them, which is why legacy rows are dropped rather than re-emitted."
+  ]
+}

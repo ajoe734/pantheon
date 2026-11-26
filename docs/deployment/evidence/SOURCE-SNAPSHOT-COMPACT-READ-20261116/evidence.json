@@ -1,0 +1,37 @@
+{
+  "task": "SOURCE-SNAPSHOT-COMPACT-READ-20261116",
+  "scope": "read-only acceptance of compact v2 storage encoding; writer and compaction stay v1; hosted verification deferred to operator acceptance task",
+  "encoding": {
+    "v2_schema_version": "source_ingest_latest_market_snapshot.v2",
+    "dispatch": "LatestMarketSnapshot.from_dict accepts v1 or v2 so _market_snapshots_from_lines is unchanged (deployed-reader byte-identity test still holds)",
+    "derivable_fields_dropped": [
+      "snapshot_id",
+      "event_time",
+      "closes",
+      "lineage"
+    ],
+    "shared_provenance_interned": [
+      "source_id",
+      "connector_id",
+      "ingest_run_id",
+      "market",
+      "collector_source_id",
+      "exchange_endpoint"
+    ],
+    "trade_date_omitted_when_equal_to_taipei_date_of_event_time": true
+  },
+  "sizes_bytes_daily_60_points_with_collector_lineage": {
+    "v1_line": 71121,
+    "v2_line": 25574,
+    "ratio": 0.3596
+  },
+  "tests": {
+    "new_file": "services/source_ingestion/tests/test_market_snapshot_compact_encoding.py",
+    "new_tests": 23,
+    "new_tests_runtime_seconds": "~2",
+    "smoke_command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300",
+    "smoke_result": "954 passed, 9 skipped; ran 2133 (skipped 22) of 2133 collected"
+  },
+  "existing_tests_changed": "none weakened or deleted",
+  "writer_changed": false
+}

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .config import SourceFetchPolicy
+from .config import SourceFetchPolicy, load_collector_config
 from .privacy import assert_privacy_compliant, scrub_item_pii
 
 BUNDLE_SCHEMA_VERSION = "collector_bundle.v1"
@@ -108,10 +108,12 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
 class BundleWriter:
     """Writes collector bundles and maintains bundles/index.json and status.json."""
 
-    def __init__(self, root_dir: Path | str, *, collector_version: str = "1.0.0") -> None:
+    def __init__(self, root_dir: Path | str, *, collector_version: str = "1.0.0",
+                 policies: Mapping[str, SourceFetchPolicy] | None = None) -> None:
         self.root_dir = Path(root_dir)
         self.bundles_dir = self.root_dir / "bundles"
         self.collector_version = collector_version
+        self.policies = dict(policies if policies is not None else load_collector_config(env={}).sources)
 
     def write_bundle(
         self,
@@ -307,6 +309,14 @@ class BundleWriter:
             "skipped_items": skipped_count,
             "reason": reason,
         }
+        # Include sources that have never run, retaining the legacy per-run fields.
+        # Fetch capability comes solely from policy plus host credential/timer evidence.
+        for sid, policy in self.policies.items():
+            entry = sources_map.setdefault(sid, {
+                "source_id": sid, "status": "not_run", "last_run_at": None,
+                "last_run_id": None, "paused_reason": None, "cadence_seconds": policy.cadence_seconds,
+            })
+            entry.update(policy.offering(os.environ))
         payload = {
             "updated_at": last_run_at,
             "collector_version": self.collector_version,

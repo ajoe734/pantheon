@@ -1,0 +1,11 @@
+[Unit]
+Description=Pantheon Collector daily security listing refresh (Taipei 08:30, retry 10:30; before the 13:30 T86/price-history runs)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:30:00 Asia/Taipei
+OnCalendar=Mon..Fri *-*-* 10:30:00 Asia/Taipei
+Persistent=false
+Unit=pantheon-collector-listing.service
+
+[Install]
+WantedBy=timers.target

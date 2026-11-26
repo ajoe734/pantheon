@@ -808,3 +808,183 @@ def test_us_price_daily_requirement_is_unsupported_in_every_environment(
     assert connector_store.get_config("dev-paper-us-equity-simulation") is None
     assert schedule_store.get_schedule("dev-paper-us-equity-simulation") is None
 
+
+
+# --- COLLECTOR-HOSTED-ADMISSION-20261112: Collector sources provisioned from their ConnectorDefinition ---
+
+
+def _collector_persona(*definition_ids: str) -> dict:
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    requirements = []
+    for definition_id in definition_ids:
+        collector = get_connector_definition(definition_id).metadata["collector"]
+        requirements.append(
+            {
+                "dataset": collector["dataset"],
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [definition_id],
+                "policy_gates": ["require_connector_approved", "require_schedule_active", "no_live_capital"],
+            }
+        )
+    return {
+        "persona_id": "persona-collector",
+        "name": "Collector intake",
+        "mandate": "Admit Collector sources",
+        "lifecycle_state": "research_only",
+        "created_at": "2026-06-01T00:00:00Z",
+        "required_data_sources": requirements,
+    }
+
+
+_SOCIAL = (
+    "collector-tw-threads",
+    "collector-tw-instagram-popular",
+    "collector-tw-cmoney-forum",
+    "collector-tw-ptt-stock",
+    "collector-youtube-finance",
+)
+
+
+def test_collector_requirements_provision_one_connector_per_source_from_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.source_ingestion.connector_definitions import get_connector_definition
+    from services.source_ingestion.connectors.collector_bundle import COLLECTOR_BUNDLE_ADAPTER_TOKEN
+
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "Collector.Example.Test")
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    ids = (*_SOCIAL, "collector-news-rss", "collector-tw-macro-ndc", "collector-tw-twse-price-history", "strategy-seed-paper-corpus")
+
+    result = reconciler.reconcile_persona(_collector_persona(*ids))
+
+    assert result.summary["mutated"] == len(ids)
+    assert [a.connector_id for a in result.actions] == list(ids)  # five social platforms stay five connectors
+    assert len({a.idempotency_key for a in result.actions}) == len(ids)
+    for definition_id in ids:
+        definition = get_connector_definition(definition_id)
+        collector = definition.metadata["collector"]
+        config = connector_store.get_config(definition_id)
+        assert config.connector.metadata["definition_id"] == definition_id
+        assert config.connector.metadata["persona_source_reconciliation"]["managed_by"]
+        assert config.fetch["mode"] == "provider_owned_adapter"
+        assert config.fetch["adapter"] == COLLECTOR_BUNDLE_ADAPTER_TOKEN
+        assert config.fetch["max_records"] == definition.default_limits["max_records"]
+        assert config.fetch["adapter_config"]["host"] == "collector.example.test"
+        assert config.fetch["adapter_config"]["source_id"] == collector["source_id"]
+        assert config.fetch["adapter_config"]["source_type"] == collector["source_type"]
+        assert config.fetch["allow_empty"] is False  # an empty Collector pull is never masked
+        schedule = schedule_store.get_schedule(definition_id)
+        assert schedule.enabled is True and schedule.interval_seconds == collector["cadence_seconds"]
+    for definition_id in _SOCIAL:
+        assert connector_store.get_config(definition_id).fetch["max_records"] == 50  # test volume (O-6)
+
+    second = reconciler.reconcile_persona(_collector_persona(*ids))
+    assert second.summary["satisfied"] == len(ids)
+    assert {a.connector_action for a in second.actions} == {"verified"}
+
+
+def test_collector_requirements_are_not_provisioned_without_collector_host_and_say_why(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PANTHEON_COLLECTOR_HOST", raising=False)
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+
+    results = reconciler.reconcile_personas([_collector_persona("collector-tw-ptt-stock", "collector-gdelt")])
+
+    for action in results[0].actions:
+        assert action.status == "skipped"
+        assert action.connector_action == "collector_host_not_configured"
+        assert "PANTHEON_COLLECTOR_HOST" in action.details["reason"]
+    assert connector_store.get_config("collector-tw-ptt-stock") is None
+    assert schedule_store.get_schedule("collector-tw-ptt-stock") is None
+    assert not (tmp_path / "connector_config.jsonl").exists() or _line_count(tmp_path / "connector_config.jsonl") == 0
+
+
+def test_collector_requirement_with_unsupported_dataset_is_not_provisioned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "collector.example.test")
+    reconciler, connector_store, _ = _reconciler(tmp_path)
+    persona = _collector_persona("collector-tw-ptt-stock")
+    persona["required_data_sources"][0]["dataset"] = "tw_price_daily"
+
+    result = reconciler.reconcile_persona(persona)
+
+    assert result.actions[0].status == "unsupported"
+    assert connector_store.get_config("collector-tw-ptt-stock") is None
+
+
+def test_collector_requirements_leave_official_price_requirement_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "collector.example.test")
+    reconciler, connector_store, schedule_store = _reconciler(tmp_path)
+    official = _persona(connector_candidates=["tw-twse-tpex-official-market"], dataset="tw_price_daily")
+    official["required_data_sources"].extend(_collector_persona("collector-tw-twse-price-history")["required_data_sources"])
+    official["required_data_sources"][-1]["dataset"] = "tw_price_daily"
+
+    result = reconciler.reconcile_persona(official)
+
+    by_connector = {a.connector_id: a for a in result.actions}
+    assert set(by_connector) == {"tw-twse-tpex-official-market", "collector-tw-twse-price-history"}
+    assert by_connector["tw-twse-tpex-official-market"].status == "mutated"
+    assert schedule_store.get_schedule("tw-twse-tpex-official-market").interval_seconds == 86400
+    assert connector_store.get_config("tw-twse-tpex-official-market").fetch["allow_empty"] is True
+
+
+def test_dbnomics_and_individual_paper_bundle_sources_are_provisioned(tmp_path, monkeypatch):
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", "collector.example.test")
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    ids = ("collector-macro-dbnomics", "collector-paper-arxiv", "collector-paper-openalex",
+           "collector-paper-nber-rss")
+    result = reconciler.reconcile_persona(_collector_persona(*ids))
+    assert result.summary["unsupported"] == 0
+    for cid in ids:
+        assert connectors.get_config(cid).fetch["adapter_config"]["source_id"] == cid
+        assert schedules.get_schedule(cid).enabled
+
+
+def test_default_chip_requirements_provision_independent_idempotent_daily_instances(tmp_path, monkeypatch):
+    import json
+    from services.source_ingestion.connector_definitions import (
+        TW_CHIP_REFRESH_PROFILES, TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS,
+    )
+    monkeypatch.delenv('PANTHEON_COLLECTOR_HOST', raising=False)
+    desired = json.loads((Path(__file__).parents[1] / 'default_desired_state.json').read_text())
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    first = reconciler.reconcile_personas(desired['personas'])
+    assert all(r.summary['conflicts'] == 0 and r.summary['unsupported'] == 0 for r in first)
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        cfg = connectors.get_config(cid)
+        assert cfg.fetch['request']['dataset'] == profile['dataset']
+        # Official chip profiles hold the whole session (full-market budget); the rest stay at 500.
+        assert cfg.fetch['max_records'] == (
+            TW_OFFICIAL_CHIP_FULL_MARKET_MAX_RECORDS if 'venues' in profile else 500
+        )
+        assert cfg.fetch['allow_empty'] is False
+        if profile['base'] == 'tw-finmind-fundamentals':
+            # Symbols and run date come from the active-universe fanout job, never the stored request.
+            assert 'symbols' not in cfg.fetch['request']
+        elif 'venues' in profile:
+            assert cfg.fetch['request']['venues'] == profile['venues']
+        else:
+            assert cfg.fetch['request']['contracts'] == profile['contracts']
+        assert schedules.get_schedule(cid).enabled
+        assert schedules.get_schedule(cid).interval_seconds == 86400
+    assert connectors.get_config('tw-twse-tpex-official-market').fetch['request']['dataset'] == 'tw_price_daily'
+    assert connectors.get_config('tw-taifex-futures-options-chip') is None  # SSF remains the existing refresh path.
+    counts = (_line_count(tmp_path / 'connector_config.jsonl'), _line_count(tmp_path / 'connector_schedule.jsonl'))
+    second = reconciler.reconcile_personas(desired['personas'])
+    assert all(r.summary['mutated'] == 0 for r in second)
+    assert counts == (_line_count(tmp_path / 'connector_config.jsonl'), _line_count(tmp_path / 'connector_schedule.jsonl'))
+
+
+@pytest.mark.parametrize('cid', ['tw-official-tpex-institutional-flow', 'tw-taifex-institutional-positions', 'tw-taifex-put-call', 'tw-taifex-tx-daily'])
+def test_chip_profile_cannot_provision_an_unrelated_dataset(tmp_path, cid):
+    reconciler, connectors, schedules = _reconciler(tmp_path)
+    result = reconciler.reconcile_persona(_persona(connector_candidates=[cid], dataset='tw_price_daily'))
+    assert result.actions[0].status == 'unsupported'
+    assert connectors.get_config(cid) is None

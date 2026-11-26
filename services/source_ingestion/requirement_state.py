@@ -17,13 +17,32 @@ import json
 import math
 import os
 import re
+import sys
 import threading
+import time
+import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+from .snapshot_current_store import (
+    SnapshotStoreError,
+    SnapshotWriteBusy,
+    SqliteSnapshotBackend,
+)
+from .tw_close_reconcile import (
+    COLLECTOR_CLOSE_KEY,
+    OUTCOME_AGREE,
+    OUTCOME_MISMATCH,
+    collector_close_lineage,
+    compare_close,
+    merge_reconciliation,
+    taipei_date,
+)
 
 
 SCHEMA_VERSION = "source_ingest_requirement_snapshot.v1"
@@ -357,6 +376,9 @@ RequirementStateStore = RequirementSnapshotStore
 # normalized market records; paper workers only consume this bounded, stored
 # projection through the Source API.
 MARKET_SNAPSHOT_SCHEMA_VERSION = "source_ingest_latest_market_snapshot.v1"
+# Compact storage encoding of the same logical state. Readers accept it; the writer still emits v1
+# until a separate task switches it (the previous accepted release must be able to read what is written).
+MARKET_SNAPSHOT_COMPACT_SCHEMA_VERSION = "source_ingest_latest_market_snapshot.v2"
 MARKET_SNAPSHOT_BATCH_SCHEMA_VERSION = "source_ingest_latest_market_snapshot_batch.v1"
 MARKET_SNAPSHOT_CHECKSUM_ALGORITHM = "sha256"
 _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS = frozenset(
@@ -371,10 +393,50 @@ _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS = frozenset(
         "points",
     }
 )
-_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence", "market"})
+_MARKET_SNAPSHOT_STATE_OPTIONAL_FIELDS = frozenset({"calendar_evidence", "market", "close_reconciliation", "dataset"})
 _MARKET_SNAPSHOT_ENVELOPE_FIELDS = frozenset(
     {"state", "checksum_algorithm", "checksum"}
 )
+_MARKET_SNAPSHOT_COMPACT_REQUIRED_FIELDS = frozenset(
+    {"schema_version", "symbol", "observed_at", "sources", "connectors", "runs", "points"}
+)
+_MARKET_SNAPSHOT_COMPACT_OPTIONAL_FIELDS = frozenset(
+    {"calendar_evidence", "market", "close_reconciliation", "dataset", "markets", "collectors", "endpoints"}
+)
+
+
+# SD_INTRADAY_MINUTE_BARS §9 K4: latest-snapshot storage is keyed by (symbol, dataset).
+DAILY_SNAPSHOT_DATASET = "tw_price_daily"
+MINUTE_SNAPSHOT_DATASET = "tw_price_1m"
+_FREQUENCY_SNAPSHOT_DATASETS: Mapping[str, str] = MappingProxyType(
+    {"1d": DAILY_SNAPSHOT_DATASET, "1m": MINUTE_SNAPSHOT_DATASET,
+     "5m": "tw_price_5m", "15m": "tw_price_15m", "30m": "tw_price_30m", "60m": "tw_price_60m"}
+)
+_SNAPSHOT_DATASET_FIELDS = ("dataset", "normalized_target", "normalized_dataset", "storage_dataset")
+_INTRADAY_SNAPSHOT_DATASETS = frozenset(
+    d for d in _FREQUENCY_SNAPSHOT_DATASETS.values() if d != DAILY_SNAPSHOT_DATASET
+)
+
+
+_MARKET_SNAPSHOT_WITHDRAWAL_FIELDS = frozenset(
+    {"schema_version", "symbol", "dataset", "observed_at", "withdrawn"}
+)
+
+
+def snapshot_dataset_for_frequency(frequency: Any) -> str:
+    """Map a ``frequency`` query value to its dataset; unknown values fail closed."""
+    if not isinstance(frequency, str) or frequency not in _FREQUENCY_SNAPSHOT_DATASETS:
+        raise MarketSnapshotStateError(
+            f"unsupported snapshot frequency {frequency!r}; allowed: "
+            + ", ".join(_FREQUENCY_SNAPSHOT_DATASETS)
+        )
+    return _FREQUENCY_SNAPSHOT_DATASETS[frequency]
+
+
+def _snapshot_dataset(value: Any) -> str:
+    if not isinstance(value, str) or value not in _FREQUENCY_SNAPSHOT_DATASETS.values():
+        raise MarketSnapshotStateError(f"unsupported snapshot dataset {value!r}")
+    return value
 
 
 class MarketSnapshotStateError(RuntimeError):
@@ -468,8 +530,33 @@ class MarketSnapshotPoint:
     content_ref: str
     ingest_run_id: str
     market: str | None = None
+    # Lineage of a close relayed by the collector from the exchange website (provisional, not official).
+    collector_close: Mapping[str, Any] | None = None
+    # Official session open of the same bar, carried only when the official row states it.
+    # The paper daily settlement fills at the next session's open; it never substitutes a close.
+    open: float | None = None
 
     def __post_init__(self) -> None:
+        if self.open is not None:
+            if (
+                isinstance(self.open, bool)
+                or not isinstance(self.open, (int, float))
+                or not math.isfinite(float(self.open))
+                or float(self.open) <= 0
+                or self.collector_close is not None
+            ):
+                object.__setattr__(self, "open", None)
+            else:
+                object.__setattr__(self, "open", float(self.open))
+        if self.collector_close is not None:
+            if not isinstance(self.collector_close, Mapping) or set(self.collector_close) != {
+                "collector_source_id", "exchange_endpoint", "bundle_sha256", "trade_date"
+            }:
+                raise MarketSnapshotStateError("collector close lineage schema is invalid")
+            validated = collector_close_lineage({COLLECTOR_CLOSE_KEY: {**dict(self.collector_close), "provisional": True, "official": False}})
+            if validated is None:
+                raise MarketSnapshotStateError("collector close lineage must name collector source, exchange endpoint and bundle digest")
+            object.__setattr__(self, "collector_close", validated)
         object.__setattr__(
             self,
             "event_time",
@@ -507,7 +594,15 @@ class MarketSnapshotPoint:
         }
         if self.market is not None:
             data["market"] = self.market
+        if self.collector_close is not None:
+            data["collector_close"] = dict(self.collector_close)
+        if self.open is not None:
+            data["open"] = self.open
         return data
+
+    @property
+    def is_provisional(self) -> bool:
+        return self.collector_close is not None
 
     @classmethod
     def from_dict(cls, value: Any) -> "MarketSnapshotPoint":
@@ -521,8 +616,10 @@ class MarketSnapshotPoint:
             "content_ref",
             "ingest_run_id",
         }
-        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market"}):
+        if not required_keys.issubset(value) or not set(value).issubset(required_keys | {"market", "collector_close", "open"}):
             raise MarketSnapshotStateError("market snapshot point schema is invalid")
+        if "collector_close" in value and not isinstance(value["collector_close"], Mapping):
+            raise MarketSnapshotStateError("collector close lineage schema is invalid")
         return cls(
             event_time=value["event_time"],
             close=value["close"],
@@ -531,6 +628,8 @@ class MarketSnapshotPoint:
             content_ref=value["content_ref"],
             ingest_run_id=value["ingest_run_id"],
             market=value.get("market"),
+            collector_close=value.get("collector_close"),
+            open=value.get("open"),
         )
 
 
@@ -544,9 +643,18 @@ class LatestMarketSnapshot:
     schema_version: str = MARKET_SNAPSHOT_SCHEMA_VERSION
     calendar_evidence: Mapping[str, Any] | None = None
     market: str | None = None
+    # Official-vs-collector close comparisons for retained sessions (official always wins).
+    close_reconciliation: tuple[Mapping[str, Any], ...] = ()
+    dataset: str = DAILY_SNAPSHOT_DATASET
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "dataset", _snapshot_dataset(self.dataset))
         object.__setattr__(self, "symbol", _market_snapshot_symbol(self.symbol))
+        recon = tuple(dict(e) for e in (self.close_reconciliation or ()))
+        for entry in recon:
+            if entry.get("outcome") not in (OUTCOME_AGREE, OUTCOME_MISMATCH) or not entry.get("trade_date"):
+                raise MarketSnapshotStateError("close reconciliation entry is invalid")
+        object.__setattr__(self, "close_reconciliation", recon)
         points = tuple(self.points)
         if not points:
             raise MarketSnapshotStateError("market snapshot requires at least one normalized point")
@@ -616,13 +724,18 @@ class LatestMarketSnapshot:
         return tuple(point.close for point in self.points)
 
     @property
-    def lineage(self) -> dict[str, list[str]]:
-        return {
+    def lineage(self) -> dict[str, list[Any]]:
+        lineage: dict[str, list[Any]] = {
             "source_ids": sorted({point.source_id for point in self.points}),
             "connector_ids": sorted({point.connector_id for point in self.points}),
             "content_refs": sorted({point.content_ref for point in self.points}),
             "ingest_run_ids": sorted({point.ingest_run_id for point in self.points}),
         }
+        provisional = [dict(point.collector_close) for point in self.points if point.collector_close is not None]
+        if provisional:
+            # Names the collector source, exchange endpoint and bundle digest of every relayed close.
+            lineage["collector_close"] = provisional
+        return lineage
 
     @property
     def snapshot_id(self) -> str:
@@ -638,6 +751,8 @@ class LatestMarketSnapshot:
             canonical["calendar_evidence"] = self.calendar_evidence
         if self.market is not None:
             canonical["market"] = self.market
+        if self.dataset != DAILY_SNAPSHOT_DATASET:  # daily ids stay byte-identical
+            canonical["dataset"] = self.dataset
         return f"mss-{sha256(_canonical_json(canonical).encode('utf-8')).hexdigest()[:24]}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -655,6 +770,10 @@ class LatestMarketSnapshot:
             state["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
             state["market"] = self.market
+        if self.close_reconciliation:
+            state["close_reconciliation"] = [dict(e) for e in self.close_reconciliation]
+        if self.dataset != DAILY_SNAPSHOT_DATASET:
+            state["dataset"] = self.dataset
         return state
 
     def to_public_dict(self, *, requested_symbol: Any | None = None) -> dict[str, Any]:
@@ -676,14 +795,165 @@ class LatestMarketSnapshot:
             "lineage": self.lineage,
             "source_ref": f"source-ingest://snapshots/{self.snapshot_id}",
         }
+        opens = [
+            {"event_time": point.event_time, "open": point.open}
+            for point in self.points
+            if point.open is not None
+        ]
+        if opens:
+            public["opens"] = opens
         if self.calendar_evidence is not None:
             public["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
         if self.market is not None:
             public["market"] = self.market
+        if self.close_reconciliation:
+            from .tw_close_reconcile import reconciliation_readback
+
+            public["close_reconciliation"] = reconciliation_readback(self.close_reconciliation)
+        if self.dataset != DAILY_SNAPSHOT_DATASET:
+            public["dataset"] = self.dataset
         return public
+
+    def to_compact_dict(self) -> dict[str, Any]:
+        """Storage-only v2 encoding: no derivable field, shared provenance interned once per snapshot."""
+        tables: dict[str, dict[str, int]] = {
+            name: {} for name in ("sources", "connectors", "runs", "markets", "collectors", "endpoints")
+        }
+
+        def intern(name: str, value: str) -> int:
+            return tables[name].setdefault(value, len(tables[name]))
+
+        rows: list[list[Any]] = []
+        for point in self.points:
+            collector: list[Any] | None = None
+            if point.collector_close is not None:
+                cc = point.collector_close
+                derived = cc["trade_date"] == _taipei_trade_date(point.event_time)
+                collector = [
+                    intern("collectors", cc["collector_source_id"]),
+                    intern("endpoints", cc["exchange_endpoint"]),
+                    cc["bundle_sha256"],
+                    None if derived else cc["trade_date"],
+                ]
+            row: list[Any] = [
+                point.event_time,
+                point.close,
+                intern("sources", point.source_id),
+                intern("connectors", point.connector_id),
+                point.content_ref,
+                intern("runs", point.ingest_run_id),
+                None if point.market is None else intern("markets", point.market),
+                collector,
+                point.open,
+            ]
+            while row[-1] is None:
+                row.pop()
+            rows.append(row)
+        state: dict[str, Any] = {
+            "schema_version": MARKET_SNAPSHOT_COMPACT_SCHEMA_VERSION,
+            "symbol": self.symbol,
+            "observed_at": self.observed_at,
+            "sources": list(tables["sources"]),
+            "connectors": list(tables["connectors"]),
+            "runs": list(tables["runs"]),
+            "points": rows,
+        }
+        for name in ("markets", "collectors", "endpoints"):
+            if tables[name]:
+                state[name] = list(tables[name])
+        if self.calendar_evidence is not None:
+            state["calendar_evidence"] = _market_snapshot_calendar_evidence(self.calendar_evidence)
+        if self.market is not None:
+            state["market"] = self.market
+        if self.close_reconciliation:
+            state["close_reconciliation"] = [dict(e) for e in self.close_reconciliation]
+        if self.dataset != DAILY_SNAPSHOT_DATASET:
+            state["dataset"] = self.dataset
+        return state
+
+    @classmethod
+    def from_compact_dict(cls, value: Any) -> "LatestMarketSnapshot":
+        if (
+            not isinstance(value, Mapping)
+            or not _MARKET_SNAPSHOT_COMPACT_REQUIRED_FIELDS.issubset(value)
+            or not set(value).issubset(
+                _MARKET_SNAPSHOT_COMPACT_REQUIRED_FIELDS | _MARKET_SNAPSHOT_COMPACT_OPTIONAL_FIELDS
+            )
+        ):
+            raise MarketSnapshotStateError("market snapshot state schema is invalid")
+        if value.get("schema_version") != MARKET_SNAPSHOT_COMPACT_SCHEMA_VERSION:
+            raise MarketSnapshotStateError("unsupported market snapshot schema")
+        tables: dict[str, list[str]] = {}
+        for name in ("sources", "connectors", "runs", "markets", "collectors", "endpoints"):
+            table = value.get(name, [])
+            if not isinstance(table, list) or any(not isinstance(item, str) for item in table):
+                raise MarketSnapshotStateError("market snapshot compact table is invalid")
+            tables[name] = table
+
+        def lookup(name: str, index: Any) -> str:
+            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(tables[name]):
+                raise MarketSnapshotStateError("market snapshot compact table reference is invalid")
+            return tables[name][index]
+
+        rows = value.get("points")
+        if not isinstance(rows, list):
+            raise MarketSnapshotStateError("market snapshot points must be a list")
+        points: list[MarketSnapshotPoint] = []
+        for row in rows:
+            if not isinstance(row, list) or not 6 <= len(row) <= 9:
+                raise MarketSnapshotStateError("market snapshot point schema is invalid")
+            row = row + [None] * (9 - len(row))
+            event_time, close, src, conn, ref, run, market, collector, open_ = row
+            collector_close: dict[str, str] | None = None
+            if collector is not None:
+                if not isinstance(collector, list) or len(collector) != 4:
+                    raise MarketSnapshotStateError("collector close lineage schema is invalid")
+                trade_date = collector[3]
+                if trade_date is None:
+                    if not isinstance(event_time, str):
+                        raise MarketSnapshotStateError("market snapshot point schema is invalid")
+                    trade_date = _taipei_trade_date(_market_snapshot_timestamp(event_time, field_name="point event_time"))
+                collector_close = {
+                    "collector_source_id": lookup("collectors", collector[0]),
+                    "exchange_endpoint": lookup("endpoints", collector[1]),
+                    "bundle_sha256": collector[2],
+                    "trade_date": trade_date,
+                }
+            points.append(
+                MarketSnapshotPoint(
+                    event_time=event_time,
+                    close=close,
+                    source_id=lookup("sources", src),
+                    connector_id=lookup("connectors", conn),
+                    content_ref=ref,
+                    ingest_run_id=lookup("runs", run),
+                    market=None if market is None else lookup("markets", market),
+                    collector_close=collector_close,
+                    open=open_,
+                )
+            )
+        if "close_reconciliation" in value and (
+            not isinstance(value["close_reconciliation"], list)
+            or any(not isinstance(e, Mapping) for e in value["close_reconciliation"])
+        ):
+            raise MarketSnapshotStateError("close reconciliation schema is invalid")
+        if "dataset" in value and value["dataset"] == DAILY_SNAPSHOT_DATASET:
+            raise MarketSnapshotStateError("daily snapshot state must not carry an explicit dataset")
+        return cls(
+            symbol=value.get("symbol"),
+            points=tuple(points),
+            observed_at=value.get("observed_at"),
+            calendar_evidence=value.get("calendar_evidence"),
+            market=value.get("market"),
+            close_reconciliation=tuple(value.get("close_reconciliation") or ()),
+            dataset=value.get("dataset", DAILY_SNAPSHOT_DATASET),
+        )
 
     @classmethod
     def from_dict(cls, value: Any) -> "LatestMarketSnapshot":
+        """Accept the logical v1 state or its compact v2 storage encoding (same snapshot either way)."""
+        if isinstance(value, Mapping) and value.get("schema_version") == MARKET_SNAPSHOT_COMPACT_SCHEMA_VERSION:
+            return cls.from_compact_dict(value)
         if (
             not isinstance(value, Mapping)
             or not _MARKET_SNAPSHOT_STATE_REQUIRED_FIELDS.issubset(value)
@@ -697,13 +967,22 @@ class LatestMarketSnapshot:
         points_value = value.get("points")
         if not isinstance(points_value, list):
             raise MarketSnapshotStateError("market snapshot points must be a list")
+        if "close_reconciliation" in value and (
+            not isinstance(value["close_reconciliation"], list)
+            or any(not isinstance(e, Mapping) for e in value["close_reconciliation"])
+        ):
+            raise MarketSnapshotStateError("close reconciliation schema is invalid")
         snapshot = cls(
             symbol=value.get("symbol"),
             points=tuple(MarketSnapshotPoint.from_dict(point) for point in points_value),
             observed_at=value.get("observed_at"),
             calendar_evidence=value.get("calendar_evidence"),
             market=value.get("market"),
+            close_reconciliation=tuple(value.get("close_reconciliation") or ()),
+            dataset=value.get("dataset", DAILY_SNAPSHOT_DATASET),
         )
+        if "dataset" in value and value["dataset"] == DAILY_SNAPSHOT_DATASET:
+            raise MarketSnapshotStateError("daily snapshot state must not carry an explicit dataset")
         if value.get("event_time") != snapshot.event_time:
             raise MarketSnapshotStateError("market snapshot event_time does not match points")
         if value.get("closes") != list(snapshot.closes):
@@ -715,12 +994,18 @@ class LatestMarketSnapshot:
         return snapshot
 
 
+def _taipei_trade_date(timestamp: str) -> str:
+    from .tw_close_reconcile import taipei_date
+
+    return taipei_date(timestamp)
+
+
 def _market_snapshots_from_lines(
     lines: Iterable[str],
     *,
     path: Path,
-) -> dict[str, LatestMarketSnapshot]:
-    snapshots: dict[str, LatestMarketSnapshot] = {}
+) -> dict[tuple[str, str], LatestMarketSnapshot]:
+    snapshots: dict[tuple[str, str], LatestMarketSnapshot] = {}
     for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
@@ -742,14 +1027,222 @@ def _market_snapshots_from_lines(
             raise MarketSnapshotStateError("market snapshot envelope state or checksum is invalid")
         if _SHA256_RE.fullmatch(checksum) is None or not hmac.compare_digest(checksum, _checksum(state)):
             raise MarketSnapshotStateError("market snapshot checksum mismatch")
+        if state.get("withdrawn") is True:
+            # Durable invalidation tombstone: the (symbol, dataset) is no longer published.
+            if set(state) != _MARKET_SNAPSHOT_WITHDRAWAL_FIELDS or state.get(
+                "schema_version"
+            ) != MARKET_SNAPSHOT_SCHEMA_VERSION:
+                raise MarketSnapshotStateError(
+                    f"market snapshot withdrawal is invalid at {path}:{line_number}"
+                )
+            _market_snapshot_timestamp(state["observed_at"], field_name="withdrawal observed_at")
+            snapshots.pop(
+                (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
+            )
+            continue
         try:
             snapshot = LatestMarketSnapshot.from_dict(state)
         except MarketSnapshotStateError as exc:
             raise MarketSnapshotStateError(
                 f"market snapshot state is invalid at {path}:{line_number}: {exc}"
             ) from exc
-        snapshots[snapshot.symbol] = snapshot
+        snapshots[(snapshot.symbol, snapshot.dataset)] = snapshot
     return snapshots
+
+
+MARKET_SNAPSHOT_STORE_ENV = "MARKET_SNAPSHOT_STORE"
+MARKET_SNAPSHOT_STORE_MODES = ("journal", "dual", "sqlite")
+# Design SD_MARKET_DATA_ONE_WRITE_PER_DAY §5.3: aggregated frequencies are derived on read, never stored.
+DERIVED_ON_READ_SNAPSHOT_DATASETS = frozenset({"tw_price_5m", "tw_price_15m", "tw_price_30m", "tw_price_60m"})
+NOT_STORED_DERIVE_ON_READ = "not_stored_derive_on_read"
+# §6 budget row `market_snapshot_current` (phase 1).
+SNAPSHOT_RECORD_BUDGET_BYTES = 12 * 1024
+SNAPSHOT_RECORD_ALARM_BYTES = 16 * 1024
+SNAPSHOT_LIVE_BUDGET_BYTES = 128 * 1024 * 1024
+SNAPSHOT_LIVE_CEILING_BYTES = 270 * 1024 * 1024
+SNAPSHOT_FILE_BUDGET_RATIO = 1.1
+SNAPSHOT_FILE_ALARM_RATIO = 1.3
+SNAPSHOT_WAL_BUDGET_BYTES = 64 * 1024 * 1024
+
+
+# Set only while market_snapshot_writer_samples() writes the previous-reader protocol witnesses
+# (journal bytes for every historical dataset name, including the never-stored derived ones).
+_PROTOCOL_WITNESS_ACTIVE = False
+
+
+class MarketSnapshotWriteBusy(MarketSnapshotStateError):
+    """A second writer waited out the busy timeout; the caller may retry (never a data fault)."""
+
+    retryable = True
+
+
+def _window_digest(compact: Mapping[str, Any]) -> str:
+    """sha256 of the canonical window; ``observed_at`` is not part of the window."""
+    body = {key: value for key, value in compact.items() if key != "observed_at"}
+    return sha256(_canonical_json(body).encode("utf-8")).hexdigest()
+
+
+def _snapshot_row(snapshot: "LatestMarketSnapshot") -> tuple[str, bytes, str]:
+    """(window digest, zlib-compressed canonical compact JSON, observed_at); the digest covers the JSON."""
+    compact = snapshot.to_compact_dict()
+    return _window_digest(compact), zlib.compress(_canonical_json(compact).encode("utf-8"), 6), snapshot.observed_at
+
+
+def _snapshot_from_row(key: tuple[str, str], row: tuple[str, bytes, str]) -> "LatestMarketSnapshot":
+    digest, blob, observed_at = row
+    try:
+        state = json.loads(zlib.decompress(blob).decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+    except (json.JSONDecodeError, _DuplicateJsonKey, zlib.error, UnicodeError) as exc:
+        raise MarketSnapshotStateError(f"market snapshot record is malformed for {key[0]}/{key[1]}: {exc}") from exc
+    if not isinstance(state, Mapping) or not hmac.compare_digest(digest, _window_digest(state)):
+        raise MarketSnapshotStateError(f"market snapshot record checksum mismatch for {key[0]}/{key[1]}")
+    snapshot = LatestMarketSnapshot.from_dict(state)
+    if (snapshot.symbol, snapshot.dataset) != key or snapshot.observed_at != observed_at:
+        raise MarketSnapshotStateError(f"market snapshot record does not match its key {key[0]}/{key[1]}")
+    return snapshot
+
+
+@contextmanager
+def _sqlite_errors(what: str):
+    try:
+        yield
+    except SnapshotWriteBusy as exc:
+        raise MarketSnapshotWriteBusy(str(exc)) from exc
+    except SnapshotStoreError as exc:
+        raise MarketSnapshotStateError(f"market snapshot {what} failed: {exc}") from exc
+
+
+MARKET_SNAPSHOT_COMPACT_FACTOR = 3
+MARKET_SNAPSHOT_COMPACT_MIN_BYTES = 8 * 1024 * 1024
+# The deployment capture probe rejects journals above this size (scripts/dev_release_artifacts.py).
+MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES = 256 * 1024 * 1024
+MARKET_SNAPSHOT_WARN_BYTES = MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES * 3 // 4
+_COMPACT_CHUNK_BYTES = 4 * 1024 * 1024
+
+
+_TAIL_CHECK_BYTES = 4096
+
+
+def _complete_journal_lines(fd: int, start: int, end: int) -> Iterable[tuple[int, str]]:
+    """Yield (end_offset, text) per newline-terminated line in [start, end); a partial tail is never yielded."""
+    offset, carry = start, b""
+    while offset < end:
+        chunk = os.pread(fd, min(_COMPACT_CHUNK_BYTES, end - offset), offset)
+        if not chunk:
+            break
+        offset += len(chunk)
+        data = carry + chunk
+        position = 0
+        while (newline := data.find(b"\n", position)) != -1:
+            yield offset - len(data) + newline + 1, data[position:newline].decode("utf-8")
+            position = newline + 1
+        carry = data[position:]
+
+
+def _journal_lines(fd: int, start: int, end: int) -> Iterable[tuple[int, bytes]]:
+    """Yield (offset, line-with-newline) for [start, end) using pread only."""
+    offset, carry, carry_offset = start, b"", start
+    while offset < end:
+        chunk = os.pread(fd, min(_COMPACT_CHUNK_BYTES, end - offset), offset)
+        if not chunk:
+            break
+        offset += len(chunk)
+        data = carry + chunk
+        position = 0
+        while (newline := data.find(b"\n", position)) != -1:
+            yield carry_offset + position, data[position : newline + 1]
+            position = newline + 1
+        carry, carry_offset = data[position:], carry_offset + position
+    if carry:
+        yield carry_offset, carry + b"\n"
+
+
+def _pwrite_all(fd: int, data: bytes, offset: int) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.pwrite(fd, view, offset)
+        offset += written
+        view = view[written:]
+
+
+def _compact_journal_in_place(fd: int, *, path: Path) -> dict[tuple[str, str], int]:
+    """Rewrite the journal to its newest line per (symbol, dataset) on the same inode.
+
+    The caller holds the exclusive flock on ``fd`` (opened without O_APPEND).
+    Every intermediate file state is a journal the unchanged reader accepts
+    with the identical projection, so an interrupted rewrite is safe:
+
+    1. append the compacted block after the old bytes (newest line wins);
+    2. overwrite the old bytes with blank lines at line boundaries
+       (the reader skips blank lines);
+    3. copy the block to the front over the blank region;
+    4. truncate to the compacted length.
+
+    Returns the byte length of the kept line per key.
+    """
+    size = os.fstat(fd).st_size
+    last: dict[tuple[str, str], tuple[int, int]] = {}
+    boundaries = [0]
+    for offset, raw in _journal_lines(fd, 0, size):
+        if offset - boundaries[-1] >= _COMPACT_CHUNK_BYTES:
+            boundaries.append(offset)
+        text = raw.decode("utf-8")
+        if not text.strip():
+            continue
+        one = _market_snapshots_from_lines([text], path=path)
+        if one:
+            (key,) = one
+            last.pop(key, None)
+            last[key] = (offset, len(raw))
+        else:  # withdrawal tombstone
+            state = json.loads(text)["state"]
+            last.pop((_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None)
+    boundaries.append(size)
+    kept_lengths = {key: length for key, (_offset, length) in last.items()}
+    compacted = sum(kept_lengths.values())
+    if compacted >= size:
+        return kept_lengths
+
+    # 1. compacted block after the old bytes
+    position = size
+    batch: list[bytes] = []
+    pending = 0
+    for offset, length in last.values():
+        batch.append(os.pread(fd, length, offset))
+        pending += length
+        if pending >= _COMPACT_CHUNK_BYTES:
+            _pwrite_all(fd, b"".join(batch), position)
+            position += pending
+            batch, pending = [], 0
+    if batch:
+        _pwrite_all(fd, b"".join(batch), position)
+    os.fsync(fd)
+    # 2. blank the old bytes, whole lines at a time
+    for begin, finish in zip(boundaries, boundaries[1:]):
+        if finish > begin:
+            _pwrite_all(fd, b" " * (finish - begin - 1) + b"\n", begin)
+            os.fsync(fd)
+    # 3. copy the block to the front (compacted <= size, so no overlap)
+    destination = 0
+    batch, pending = [], 0
+    for _offset, raw in _journal_lines(fd, size, size + compacted):
+        batch.append(raw)
+        pending += len(raw)
+        if pending >= _COMPACT_CHUNK_BYTES:
+            _pwrite_all(fd, b"".join(batch), destination)
+            os.fsync(fd)
+            destination += pending
+            batch, pending = [], 0
+    if batch:
+        _pwrite_all(fd, b"".join(batch), destination)
+        os.fsync(fd)
+    # 4. drop the blank region and the tail copy
+    os.ftruncate(fd, compacted)
+    os.fsync(fd)
+    return kept_lengths
+
+
+_READER_SWITCH_INTERVAL_SECONDS = 0.005
 
 
 class LatestMarketSnapshotStore:
@@ -759,41 +1252,783 @@ class LatestMarketSnapshotStore:
     opens no connector, does no provider I/O, and has no scheduler dependency.
     """
 
-    def __init__(self, path: str | Path, *, max_closes: int = 60) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        max_closes: int = 60,
+        compact_factor: int = MARKET_SNAPSHOT_COMPACT_FACTOR,
+        compact_min_bytes: int = MARKET_SNAPSHOT_COMPACT_MIN_BYTES,
+        store_mode: str | None = None,
+        sqlite_path: str | Path | None = None,
+        export_min_interval_seconds: float = 0.0,
+    ) -> None:
+        mode = store_mode if store_mode is not None else (os.getenv(MARKET_SNAPSHOT_STORE_ENV) or "journal")
+        mode = str(mode).strip().lower() or "journal"
+        if mode not in MARKET_SNAPSHOT_STORE_MODES:
+            raise ValueError(
+                f"{MARKET_SNAPSHOT_STORE_ENV} must be one of {', '.join(MARKET_SNAPSHOT_STORE_MODES)}; got {mode!r}"
+            )
         if type(max_closes) is not int or max_closes < 2:
             raise ValueError("max_closes must be an integer >= 2")
+        if type(compact_factor) is not int or compact_factor < 2:
+            raise ValueError("compact_factor must be an integer >= 2")
+        if type(compact_min_bytes) is not int or compact_min_bytes < 0:
+            raise ValueError("compact_min_bytes must be a non-negative integer")
         self.path = Path(path)
+        self.store_mode = mode
+        self.sqlite_path = Path(sqlite_path) if sqlite_path is not None else Path(str(self.path) + ".current.sqlite3")
+        self.export_min_interval_seconds = float(export_min_interval_seconds)
+        self._backend: SqliteSnapshotBackend | None = None
+        self._mismatch_count = 0
+        self._shadow_error: str | None = None
+        self._last_export_at: str | None = None
+        self._last_export_monotonic: float | None = None
+        self._last_export_error: str | None = None
+        self._export_pending = False
+        self._export_lock = threading.Lock()
         self.max_closes = max_closes
+        self.compact_factor = compact_factor
+        self.compact_min_bytes = compact_min_bytes
         self._lock = threading.RLock()
-        self._latest_by_symbol: dict[str, LatestMarketSnapshot] = {}
-        self.reload()
+        self._latest_by_symbol: dict[tuple[str, str], LatestMarketSnapshot] = {}
+        self._live_symbols_cache: tuple[Any, dict[str, tuple[str, ...]]] | None = None
+        # (inode, size, mtime_ns) of the journal exactly as this store last
+        # read or wrote it; None forces a full re-parse under the next lock.
+        self._journal_signature: tuple[int, int, int] | None = None
+        # Incremental read position: inode, consumed byte offset (always just past a
+        # newline), consumed line count, and the bytes right before the offset.  The
+        # tail proves the prefix is unchanged, because in-place compaction keeps the inode.
+        self._consumed: tuple[int, int, int, bytes] | None = None
+        self._appended_lines = 0
+        # Bytes of the newest line per live key; None until first needed.
+        self._line_bytes: dict[tuple[str, str], int] | None = None
+        self._last_compaction_at: str | None = None
+        self._last_compaction_error: str | None = None
+        # Optional active-universe hooks (snapshot_universe.py): ``admission`` decides which
+        # symbols the daily projection keeps; ``stats_extra`` adds universe state to journal_stats.
+        self.admission: Callable[[str], bool] | None = None
+        self.stats_extra: Callable[[], Mapping[str, Any]] | None = None
+        if mode != "journal":
+            with _sqlite_errors("open"):
+                self._backend = SqliteSnapshotBackend(self.sqlite_path)
+                # A reader call re-acquires the GIL several times (sqlite step, inflate, parse); against a
+                # CPU-bound ingest thread each wait is one switch interval (default 5 ms). Only ever lower it.
+                if sys.getswitchinterval() > _READER_SWITCH_INTERVAL_SECONDS:
+                    sys.setswitchinterval(_READER_SWITCH_INTERVAL_SECONDS)
+        if mode == "sqlite":
+            self._seed_sqlite_from_journal()
+        else:
+            self._reload_journal()
+            self.compact(force=False)  # startup: same size trigger as every append
+            if mode == "dual":
+                self._dual_resync()
 
-    def reload(self) -> dict[str, LatestMarketSnapshot]:
+    @staticmethod
+    def _signature(fd: int) -> tuple[int, int, int]:
+        status = os.fstat(fd)
+        return (status.st_ino, status.st_size, status.st_mtime_ns)
+
+    def _invalidate(self) -> None:
+        self._journal_signature = None
+        self._consumed = None
+        self._line_bytes = None
+
+    @staticmethod
+    def _open_exclusive(path: Path):
+        """Open read/write without O_APPEND so one fd serves append and compaction."""
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            return os.fdopen(fd, "r+", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _mark_consumed(self, fd: int, size: int, lines: int) -> None:
+        """Record that the journal bytes [0, size) are folded into memory (size is at a line end)."""
+        keep = min(_TAIL_CHECK_BYTES, size)
+        self._consumed = (os.fstat(fd).st_ino, size, lines, os.pread(fd, keep, size - keep))
+
+    def _fold_new_lines(
+        self, current: dict[tuple[str, str], LatestMarketSnapshot], lines: Iterable[str]
+    ) -> None:
+        """Apply appended lines on top of ``current`` using the unchanged journal reader.
+
+        The reader only builds a map from scratch, so runs of snapshot lines are parsed as one
+        batch (last line per key wins) and a withdrawal tombstone, which that map cannot
+        express, is validated by the same reader and then applied here in order.
+        """
+        run: list[str] = []
+        for text in lines:
+            if '"withdrawn"' not in text:
+                run.append(text)
+                continue
+            if run:
+                current.update(_market_snapshots_from_lines(run, path=self.path))
+                run = []
+            parsed = _market_snapshots_from_lines([text], path=self.path)
+            if parsed:
+                current.update(parsed)
+                continue
+            if text.strip():
+                state = json.loads(text)["state"]
+                current.pop(
+                    (_market_snapshot_symbol(state["symbol"]), _snapshot_dataset(state["dataset"])), None
+                )
+        if run:
+            current.update(_market_snapshots_from_lines(run, path=self.path))
+
+    def _sync_locked(self, fd: int) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Fold journal bytes not yet consumed into a copy of memory; full rebuild if the prefix changed.
+
+        Caller holds a flock.  Only newline-terminated rows are consumed, so a writer's
+        partial tail is read once, after it is finished.
+        """
+        status = os.fstat(fd)
+        size = status.st_size
+        base: dict[tuple[str, str], LatestMarketSnapshot] | None = None
+        offset = lines = 0
+        if self._consumed is not None:
+            inode, offset, lines, tail = self._consumed
+            if (
+                inode == status.st_ino
+                and offset <= size
+                # Same bytes, new mtime: a same-size rewrite, never an append.
+                and (size > offset or self._signature(fd) == self._journal_signature)
+                and os.pread(fd, len(tail), offset - len(tail)) == tail
+            ):
+                base = dict(self._latest_by_symbol)
+            else:
+                offset = lines = 0
+        end, count = offset, lines
+
+        def _counted() -> Iterable[str]:
+            nonlocal end, count
+            for line_end, text in _complete_journal_lines(fd, offset, size):
+                end = line_end
+                count += 1
+                yield text
+
+        if base is not None:
+            try:
+                current = base
+                self._fold_new_lines(current, _counted())
+            except MarketSnapshotStateError:
+                # Re-read from zero so the failure carries the exact line number of a fresh read.
+                base = None
+                offset = lines = end = count = 0
+        if base is None:
+            current = _market_snapshots_from_lines(_counted(), path=self.path)
+        if base is None or end != offset:
+            self._line_bytes = None
+        self._mark_consumed(fd, end, count)
+        self._journal_signature = self._signature(fd)
+        self._publish(dict(current))
+        return current
+
+    def _current_locked(self, handle: Any) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Latest state under the exclusive lock; parse only bytes appended since the last read."""
+        fd = handle.fileno()
+        if self._journal_signature is not None and self._signature(fd) == self._journal_signature:
+            return dict(self._latest_by_symbol)
+        return self._sync_locked(fd)
+
+    @staticmethod
+    def _envelope_line(state: Mapping[str, Any]) -> str:
+        return _canonical_json(
+            {
+                "state": state,
+                "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
+                "checksum": _checksum(state),
+            }
+        )
+
+    def _note_line(self, key: tuple[str, str], line: str | None) -> None:
+        self._appended_lines += 1
+        if self._line_bytes is None:
+            return
+        if line is None:
+            self._line_bytes.pop(key, None)
+        else:
+            self._line_bytes[key] = len(line.encode("utf-8")) + 1
+
+    def _commit_locked(
+        self, handle: Any, current: dict[tuple[str, str], LatestMarketSnapshot]
+    ) -> None:
+        handle.flush()
+        fd = handle.fileno()
+        os.fsync(fd)
+        previous = self._consumed
+        self._publish(current)
+        self._journal_signature = self._signature(fd)
+        # _current_locked synced to EOF under this lock, so our appended lines are the
+        # only new bytes and each ends with a newline.
+        if previous is not None:
+            self._mark_consumed(fd, os.fstat(fd).st_size, previous[2] + self._appended_lines)
+        self._appended_lines = 0
+        self._maybe_compact_locked(fd, current)
+
+    def _maybe_compact_locked(
+        self, fd: int, current: Mapping[tuple[str, str], LatestMarketSnapshot]
+    ) -> None:
+        size = os.fstat(fd).st_size
+        if size <= self.compact_min_bytes:
+            return
+        if self._line_bytes is None:
+            self._line_bytes = {
+                key: len(self._envelope_line(snapshot.to_dict()).encode("utf-8")) + 1
+                for key, snapshot in current.items()
+            }
+        if size <= self.compact_factor * max(sum(self._line_bytes.values()), 1):
+            return
+        try:
+            kept = _compact_journal_in_place(fd, path=self.path)
+        except OSError:
+            # Every intermediate state is a valid journal; just stop and re-read next time.
+            self._invalidate()
+            return
+        self._line_bytes = kept
+        self._journal_signature = self._signature(fd)
+        if os.fstat(fd).st_size != size:
+            self._mark_consumed(fd, os.fstat(fd).st_size, len(kept))
+        self._last_compaction_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    def compact(self, *, force: bool = True) -> bool:
+        """Compact now (startup hook); reuses ``_compact_journal_in_place``, never a second path."""
+        if self.store_mode == "sqlite":
+            return False  # the journal file is a one-line-per-key export; SQLite replaces rows in place
+        with self._lock:
+            if not self.path.exists():
+                return False
+            try:
+                with self._open_exclusive(self.path) as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        before = os.fstat(handle.fileno()).st_size
+                        current = self._current_locked(handle)
+                        if not force:
+                            self._maybe_compact_locked(handle.fileno(), current)
+                            return False
+                        kept = _compact_journal_in_place(handle.fileno(), path=self.path)
+                        after = os.fstat(handle.fileno()).st_size
+                        self._line_bytes = kept
+                        self._journal_signature = self._signature(handle.fileno())
+                        if after != before:
+                            self._mark_consumed(handle.fileno(), after, len(kept))
+                        self._publish(dict(current))
+                        if after < before:
+                            self._last_compaction_at = (
+                                datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                            )
+                        self._last_compaction_error = None
+                        return after < before
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except (MarketSnapshotStateError, OSError, UnicodeError) as exc:
+                self._invalidate()
+                self._last_compaction_error = f"compaction failed: {type(exc).__name__}"
+                return False
+
+    def journal_stats(self) -> dict[str, Any]:
+        """Journal size readback; ``warning`` precedes the deployment capture bound."""
+        try:
+            consumed = self._consumed  # one reference read; the tuple is replaced, never edited
+            if self.store_mode != "sqlite" and consumed is not None:
+                # Size and line count as of this store's last sync or write.  The health endpoint
+                # reads memory only: no stat, no 500 MB scan, nothing that waits on a fsync or an
+                # in-place compaction.  A foreign writer shows up after the next sync.
+                size, lines = consumed[1], consumed[2]
+            else:
+                size = self.path.stat().st_size
+                lines = 0
+                if self.store_mode != "sqlite":  # the sqlite-mode file is the compat export: one line per key
+                    with self.path.open("rb") as handle:
+                        lines = sum(1 for raw in handle if raw.strip())
+        except OSError:
+            size, lines = 0, 0
+        current_stats = self.snapshot_current_stats()
+        stats: dict[str, Any] = {
+            "store_mode": self.store_mode,
+            "journal_bytes": size,
+            "journal_lines": lines,
+            "live_snapshot_count": current_stats.get("record_count", len(self._latest_by_symbol))
+            if self.store_mode == "sqlite"
+            else len(self._latest_by_symbol),
+            "last_compaction_at": self._last_compaction_at,
+            "capture_bound_bytes": MARKET_SNAPSHOT_CAPTURE_BOUND_BYTES,
+            "warn_bytes": MARKET_SNAPSHOT_WARN_BYTES,
+            "warning": "journal_near_capture_bound" if size >= MARKET_SNAPSHOT_WARN_BYTES else None,
+        }
+        if self.store_mode != "journal":
+            stats["snapshot_current"] = current_stats
+        if self._last_compaction_error:
+            stats["last_compaction_error"] = self._last_compaction_error
+        if self.stats_extra is not None:
+            try:
+                stats["snapshot_universe"] = dict(self.stats_extra())
+            except Exception as exc:  # stats must never fail the health surface
+                stats["snapshot_universe"] = {"state": "unreadable", "reason": f"stats_failed:{type(exc).__name__}"}
+        return stats
+
+    def reload(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        """Every live snapshot by (symbol, dataset): the journal's view, or SQLite's in ``sqlite`` mode."""
+        if self.store_mode == "sqlite":
+            return self._sqlite_snapshots()
+        snapshots = self._reload_journal()
+        if self.store_mode == "dual":
+            self._dual_resync()
+        return snapshots
+
+    def _reload_journal(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
         with self._lock:
             if not self.path.exists():
                 self._latest_by_symbol = {}
+                self._invalidate()
                 return {}
             try:
-                with self.path.open("r", encoding="utf-8") as handle:
+                with self.path.open("rb") as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
                     try:
-                        snapshots = _market_snapshots_from_lines(handle, path=self.path)
+                        snapshots = self._sync_locked(handle.fileno())
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             except MarketSnapshotStateError:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise
             except (OSError, UnicodeError) as exc:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise MarketSnapshotStateError(
                     f"market snapshot log is unreadable: {self.path}"
                 ) from exc
-            self._latest_by_symbol = snapshots
             return dict(snapshots)
 
-    def get(self, symbol: str) -> LatestMarketSnapshot | None:
+    # -- SQLite current-record backend (modes ``dual`` and ``sqlite``) ----------------------
+    def _sqlite_snapshots(self) -> dict[tuple[str, str], LatestMarketSnapshot]:
+        with _sqlite_errors("read"):
+            return {key: _snapshot_from_row(key, row) for key, row in self._backend.iter_records()}
+
+    def _sqlite_get(self, key: tuple[str, str]) -> LatestMarketSnapshot | None:
+        with _sqlite_errors("read"):
+            row = self._backend.get(*key)
+        return None if row is None else _snapshot_from_row(key, row)
+
+    def _push_snapshots(self, snapshots: Mapping[tuple[str, str], LatestMarketSnapshot], deletes: Sequence[tuple[str, str]] = ()) -> None:
+        """Write rows in transactions of at most 500 keys (a collector batch)."""
+        items = [(key, _snapshot_row(snap)) for key, snap in snapshots.items()]
+        with _sqlite_errors("write"):
+            for start in range(0, len(items), 500):
+                self._backend.apply(dict(items[start : start + 500]))
+            for start in range(0, len(deletes), 500):
+                self._backend.apply({}, deletes[start : start + 500])
+
+    def _seed_sqlite_from_journal(self) -> None:
+        """First start in ``sqlite`` mode: an empty database adopts the existing journal; otherwise SQLite is the record."""
         with self._lock:
-            return self._latest_by_symbol.get(_market_snapshot_lookup_symbol(symbol))
+            if self._backend.stats()["record_count"] > 0 or not self.path.exists():
+                return
+            snapshots = self._reload_journal()  # a corrupt journal fails closed here
+            self._push_snapshots(snapshots)
+            self._latest_by_symbol = {}
+            self._invalidate()
+
+    def _dual_digests(self) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+        journal = {key: _window_digest(snap.to_compact_dict()) for key, snap in self._latest_by_symbol.items()}
+        with _sqlite_errors("read"):
+            return journal, self._backend.digests()
+
+    def _dual_resync(self) -> None:
+        """Shadow phase: make SQLite equal the journal, then count what still differs (target 0)."""
+        with self._lock:
+            try:
+                journal, stored = self._dual_digests()
+                changed = {
+                    key: snap
+                    for key, snap in self._latest_by_symbol.items()
+                    if stored.get(key) != journal[key]
+                }
+                self._push_snapshots(changed, [key for key in stored if key not in journal])
+                journal, stored = self._dual_digests()
+                self._mismatch_count = sum(1 for key in journal.keys() | stored.keys() if journal.get(key) != stored.get(key))
+                self._shadow_error = None
+            except MarketSnapshotStateError as exc:
+                self._shadow_error = str(exc)
+                self._mismatch_count = max(self._mismatch_count, 1)
+
+    def _shadow_apply(
+        self, upserts: Mapping[tuple[str, str], LatestMarketSnapshot], deletes: Sequence[tuple[str, str]]
+    ) -> None:
+        """``dual``: the journal commit already succeeded; mirror it into SQLite (a failure is counted, not raised)."""
+        if self.store_mode != "dual" or not (upserts or deletes):
+            return
+        try:
+            self._push_snapshots(upserts, list(deletes))
+        except MarketSnapshotStateError as exc:
+            self._shadow_error = str(exc)
+            self._mismatch_count += len(upserts) + len(deletes)
+
+    def delete_symbols(self, symbols: Iterable[str], *, reason: str, observed_at: str | None = None) -> list[str]:
+        """Delete every dataset's record of symbols the caller marked ``delisted`` or ``expired``.
+
+        In ``sqlite`` mode this is one transaction; the listing lookup belongs to the caller.
+        Returns the symbols that had at least one record.
+        """
+        if reason not in ("delisted", "expired"):
+            raise MarketSnapshotStateError("snapshot delete reason must be 'delisted' or 'expired'")
+        wanted = sorted({_market_snapshot_lookup_symbol(sym) for sym in symbols})
+        if not wanted:
+            return []
+        removed: set[str] = set()
+        if self.store_mode == "sqlite":
+            datasets = sorted(_FREQUENCY_SNAPSHOT_DATASETS.values())
+            with self._lock:
+                with _sqlite_errors("delete"), self._backend.transaction() as tx:
+                    for lookup in wanted:
+                        for dataset in datasets:
+                            if tx.delete((lookup, dataset)):
+                                removed.add(lookup)
+                if removed:
+                    self._backend.maintain()
+                    self._export_after_write()
+            return sorted(removed)
+        for dataset in sorted(_FREQUENCY_SNAPSHOT_DATASETS.values()):
+            removed.update(
+                _market_snapshot_lookup_symbol(sym)
+                for sym in self.withdraw_symbols(wanted, dataset=dataset, observed_at=observed_at)
+            )
+        return sorted(removed)
+
+    # -- compat export for the previous reader (``sqlite`` mode) ------------------------------
+    def _export_after_write(self) -> None:
+        """Interval 0: export before the write returns (tests, small stores). Otherwise at most once per
+        interval, from a daemon thread that holds no writer lock (design 4.2 S2: never blocks the writer)."""
+        self._export_pending = True
+        if self.export_min_interval_seconds <= 0:
+            self.export_compat()
+            return
+        due = (
+            self._last_export_monotonic is None
+            or time.monotonic() - self._last_export_monotonic >= self.export_min_interval_seconds
+        )
+        if due and not self._export_lock.locked():
+            threading.Thread(target=self.export_compat, name="snapshot-compat-export", daemon=True).start()
+
+    def flush_export(self) -> bool:
+        """Export now if a write is not yet in the old-format file (shutdown, rollback preparation)."""
+        return self.export_compat() if self._export_pending or not self.path.exists() else False
+
+    def export_compat(self) -> bool:
+        """Write the previous format (one v1 line per key) by temp file, fsync, rename.
+
+        Never raises: the SQLite commit is the record, the export is a rollback courtesy; a failure
+        is reported in ``journal_stats``.  Returns ``True`` when the file was replaced.
+        """
+        if self.store_mode != "sqlite":
+            return False
+        with self._export_lock:
+            tmp = self.path.with_name(self.path.name + ".export.tmp")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                # One short read transaction takes a consistent copy of the raw rows; decoding then runs
+                # outside it (a long read transaction would pin the WAL) and yields the GIL regularly so
+                # the ingest writer and API readers sharing this process are not starved.
+                rows = []
+                for number, item in enumerate(self._backend.iter_records(), start=1):
+                    rows.append(item)
+                    if number % 100 == 0:
+                        time.sleep(0.001)
+                with tmp.open("w", encoding="utf-8") as handle:
+                    for number, (key, row) in enumerate(rows, start=1):
+                        snapshot = _snapshot_from_row(key, row)
+                        handle.write(self._envelope_line(snapshot.to_dict()) + "\n")
+                        if number % 25 == 0:
+                            time.sleep(0.002)
+                        if number % 100 == 0:
+                            # Flush in ~0.4 MB slices: one ~40 MB fsync at the end would stall the writer's
+                            # commit fsync on the same filesystem (journal contention, measured ~500 ms).
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, self.path)
+                directory_fd = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except (OSError, SnapshotStoreError, MarketSnapshotStateError) as exc:
+                self._last_export_error = f"export failed: {type(exc).__name__}: {exc}"
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+                return False
+            self._export_pending = False
+            self._last_export_error = None
+            self._last_export_monotonic = time.monotonic()
+            self._last_export_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            return True
+
+    def snapshot_current_stats(self) -> dict[str, Any]:
+        """Record count, live bytes, file bytes, mismatch count, last export time and the budget alarms."""
+        if self._backend is None:
+            return {"store_mode": self.store_mode}
+        try:
+            stats = self._backend.stats()
+        except SnapshotStoreError as exc:
+            return {"store_mode": self.store_mode, "state": "unreadable", "reason": str(exc)}
+        live = stats["live_bytes"]
+        alarms = []
+        if stats["max_record_bytes"] > SNAPSHOT_RECORD_ALARM_BYTES:
+            alarms.append("snapshot_record_over_16kb")
+        if live > SNAPSHOT_LIVE_CEILING_BYTES:
+            alarms.append("snapshot_live_over_ceiling")
+        if live and stats["db_bytes"] > SNAPSHOT_FILE_ALARM_RATIO * live and stats["db_bytes"] > 8 * 1024 * 1024:
+            alarms.append("snapshot_file_over_1_3x_live")
+        if stats["wal_bytes"] > SNAPSHOT_WAL_BUDGET_BYTES:
+            alarms.append("snapshot_wal_over_budget")
+        result = {
+            "store_mode": self.store_mode,
+            **stats,
+            "mismatch_count": self._mismatch_count,
+            "last_export_at": self._last_export_at,
+            "export_pending": self._export_pending,
+            "budget_alarms": alarms,
+        }
+        if self._last_export_error:
+            result["last_export_error"] = self._last_export_error
+        if self._shadow_error:
+            result["shadow_error"] = self._shadow_error
+        return result
+
+    def _publish(self, current: dict[tuple[str, str], LatestMarketSnapshot]) -> None:
+        """Writer-side publish: build the sorted per-dataset symbol lists first, then swap the map."""
+        by_dataset: dict[str, list[str]] = {}
+        for sym, ds in current:
+            by_dataset.setdefault(ds, []).append(sym)
+        self._live_symbols_cache = (current, {ds: tuple(sorted(v)) for ds, v in by_dataset.items()})
+        self._latest_by_symbol = current
+
+    def get(self, symbol: str, dataset: str = DAILY_SNAPSHOT_DATASET) -> LatestMarketSnapshot | None:
+        """Latest snapshot for ``symbol`` in ``dataset`` (default: daily; never crosses datasets).
+
+        The journal view is read without ``self._lock``.  That is safe because the published map
+        ``self._latest_by_symbol`` is only ever replaced by assigning a new dict (one reference
+        store, atomic under the GIL) and is never mutated in place, and ``LatestMarketSnapshot``
+        values are immutable.  A reader therefore sees the map from before or after a batch,
+        never a partial one, and does not wait for an append, fsync or compaction.  After a
+        failed read the writer publishes ``{}``; a reader then gets ``None`` as before.
+        """
+        key_dataset = _snapshot_dataset(dataset)
+        key = (_market_snapshot_lookup_symbol(symbol), key_dataset)
+        if self.store_mode == "sqlite":
+            return self._sqlite_get(key)
+        if self.store_mode == "dual":
+            # Reads SQLite and compares with the journal; a difference is counted and reported.
+            journal_view = self._latest_by_symbol.get(key)  # lock-free, see the journal branch below
+            current = self._sqlite_get(key)
+            if (current is None) != (journal_view is None) or (
+                current is not None and current.to_dict() != journal_view.to_dict()
+            ):
+                self._mismatch_count += 1
+            return current
+        return self._latest_by_symbol.get(key)
+
+    def withdraw_sessions(
+        self,
+        symbol: str,
+        dataset: str,
+        session_dates: Iterable[str],
+        *,
+        observed_at: str | None = None,
+    ) -> bool:
+        """Durably remove published points of the given Asia/Taipei sessions (intraday only).
+
+        Appends a checksummed replacement snapshot without those points, or a withdrawal
+        tombstone when nothing remains, so the invalidation survives a reload/restart.
+        Returns ``True`` when something was withdrawn.  The daily dataset is never touched.
+        """
+        dataset = _snapshot_dataset(dataset)
+        if dataset == DAILY_SNAPSHOT_DATASET:
+            raise MarketSnapshotStateError("daily snapshots are not withdrawn by session")
+        days = {str(day) for day in session_dates}
+        observed = _market_snapshot_timestamp(
+            observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            field_name="observed_at",
+        )
+        lookup = _market_snapshot_lookup_symbol(symbol)
+        taipei = timezone(timedelta(hours=8))
+
+        def _session(point: MarketSnapshotPoint) -> str:
+            parsed = datetime.fromisoformat(point.event_time.replace("Z", "+00:00"))
+            return parsed.astimezone(taipei).date().isoformat()
+
+        def _without(prior: LatestMarketSnapshot) -> LatestMarketSnapshot | None:
+            kept = tuple(pt for pt in prior.points if _session(pt) not in days)
+            if not kept:
+                return None
+            return LatestMarketSnapshot(
+                symbol=prior.symbol,
+                points=kept,
+                observed_at=observed,
+                calendar_evidence=prior.calendar_evidence,
+                market=prior.market,
+                dataset=dataset,
+            )
+
+        if self.store_mode == "sqlite":
+            with self._lock:
+                key = (lookup, dataset)
+                with _sqlite_errors("withdrawal"), self._backend.transaction() as tx:
+                    row = tx.get(key)
+                    prior = _snapshot_from_row(key, row) if row else None
+                    if prior is None or not any(_session(pt) in days for pt in prior.points):
+                        return False
+                    candidate = _without(prior)
+                    if candidate is None:
+                        tx.delete(key)
+                    else:
+                        tx.put(key, _snapshot_row(candidate))
+                self._backend.maintain()
+                self._export_after_write()
+                return True
+        with self._lock:
+            try:
+                if not self.path.exists():
+                    return False
+                with self._open_exclusive(self.path) as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        current = self._current_locked(handle)
+                        prior = current.get((lookup, dataset))
+                        if prior is None or not any(_session(pt) in days for pt in prior.points):
+                            self._publish(current)
+                            return False
+                        kept = tuple(pt for pt in prior.points if _session(pt) not in days)
+                        if kept:
+                            candidate = LatestMarketSnapshot(
+                                symbol=prior.symbol,
+                                points=kept,
+                                observed_at=observed,
+                                calendar_evidence=prior.calendar_evidence,
+                                market=prior.market,
+                                dataset=dataset,
+                            )
+                            state = candidate.to_dict()
+                            current[(lookup, dataset)] = candidate
+                        else:
+                            state = {
+                                "schema_version": MARKET_SNAPSHOT_SCHEMA_VERSION,
+                                "symbol": prior.symbol,
+                                "dataset": dataset,
+                                "observed_at": observed,
+                                "withdrawn": True,
+                            }
+                            current.pop((lookup, dataset), None)
+                        line = self._envelope_line(state)
+                        handle.seek(0, os.SEEK_END)
+                        handle.write(line + "\n")
+                        self._note_line((lookup, dataset), None if state.get("withdrawn") else line)
+                        self._commit_locked(handle, current)
+                        self._shadow_apply(
+                            {} if state.get("withdrawn") else {(lookup, dataset): current[(lookup, dataset)]},
+                            [(lookup, dataset)] if state.get("withdrawn") else (),
+                        )
+                        return True
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except MarketSnapshotStateError:
+                self._latest_by_symbol = {}
+                self._invalidate()
+                raise
+            except (OSError, UnicodeError) as exc:
+                self._invalidate()
+                raise MarketSnapshotStateError(
+                    f"market snapshot withdrawal failed: {self.path}"
+                ) from exc
+
+    def live_symbols(self, dataset: str = DAILY_SNAPSHOT_DATASET) -> list[str]:
+        """Stored symbols of ``dataset`` currently live in the projection."""
+        key_dataset = _snapshot_dataset(dataset)
+        if self.store_mode != "journal":
+            with _sqlite_errors("read"):
+                return [symbol for symbol, _ds in self._backend.keys(key_dataset)]
+        published = self._latest_by_symbol  # lock-free: published maps are never mutated in place
+        cached = self._live_symbols_cache  # (map, {dataset: sorted symbols}): a tuple, replaced whole
+        if cached is not None and cached[0] is published:
+            return list(cached[1].get(key_dataset, ()))  # built by the writer at publish: O(n) copy, no walk
+        return sorted(sym for (sym, ds) in published if ds == key_dataset)  # error-path {} / unprimed map
+
+    def withdraw_symbols(
+        self,
+        symbols: Iterable[str],
+        *,
+        dataset: str = DAILY_SNAPSHOT_DATASET,
+        observed_at: str | None = None,
+    ) -> list[str]:
+        """Remove whole symbols from the projection with the existing withdrawal tombstone.
+
+        Returns the symbols actually removed.  The tombstone is the line the deployed reader
+        already understands, so no reader/writer rollout ordering is involved.
+        """
+        dataset = _snapshot_dataset(dataset)
+        observed = _market_snapshot_timestamp(
+            observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            field_name="observed_at",
+        )
+        wanted = sorted({_market_snapshot_lookup_symbol(sym) for sym in symbols})
+        if not wanted:
+            return []
+        removed: list[str] = []
+        if self.store_mode == "sqlite":
+            with self._lock:
+                with _sqlite_errors("withdrawal"), self._backend.transaction() as tx:
+                    for lookup in wanted:
+                        row = tx.get((lookup, dataset))
+                        if row is not None and tx.delete((lookup, dataset)):
+                            removed.append(lookup)  # rows are stored under the canonical symbol
+                if removed:
+                    self._backend.maintain()
+                    self._export_after_write()
+            return removed
+        with self._lock:
+            try:
+                if not self.path.exists():
+                    return []
+                with self._open_exclusive(self.path) as handle:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    try:
+                        current = self._current_locked(handle)
+                        handle.seek(0, os.SEEK_END)
+                        for lookup in wanted:
+                            prior = current.get((lookup, dataset))
+                            if prior is None:
+                                continue
+                            state = {
+                                "schema_version": MARKET_SNAPSHOT_SCHEMA_VERSION,
+                                "symbol": prior.symbol,
+                                "dataset": dataset,
+                                "observed_at": observed,
+                                "withdrawn": True,
+                            }
+                            line = self._envelope_line(state)
+                            handle.write(line + "\n")
+                            current.pop((lookup, dataset), None)
+                            self._note_line((lookup, dataset), None)
+                            removed.append(prior.symbol)
+                        self._commit_locked(handle, current)
+                        self._shadow_apply({}, [(lookup, dataset) for lookup in wanted])
+                    finally:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except MarketSnapshotStateError:
+                self._latest_by_symbol = {}
+                self._invalidate()
+                raise
+            except (OSError, UnicodeError) as exc:
+                self._invalidate()
+                raise MarketSnapshotStateError(f"market snapshot withdrawal failed: {self.path}") from exc
+        return removed
 
     @staticmethod
     def _point_from_record(
@@ -801,12 +2036,26 @@ class LatestMarketSnapshotStore:
         *,
         ingest_run_id: str,
         default_market: str | None = None,
+        dataset: str = DAILY_SNAPSHOT_DATASET,
     ) -> tuple[str, MarketSnapshotPoint, dict[str, Any] | None] | None:
         metadata = getattr(record, "metadata", None)
         if not isinstance(metadata, Mapping):
             return None
         normalized = metadata.get("normalized_row")
         row = normalized if isinstance(normalized, Mapping) else metadata
+        declared = {
+            str(src[field]).strip()
+            for src in (row, metadata)
+            for field in _SNAPSHOT_DATASET_FIELDS
+            if src.get(field) not in (None, "")
+        }
+        if dataset == DAILY_SNAPSHOT_DATASET:
+            # A daily projection never accepts a minute/intraday-dataset record.
+            if declared & _INTRADAY_SNAPSHOT_DATASETS:
+                return None
+        elif declared != {dataset}:
+            # Intraday projections require an explicit, unambiguous dataset declaration.
+            return None
         symbol = row.get("symbol_canonical") or row.get("symbol") or metadata.get("symbol_canonical") or metadata.get("symbol")
         close = row.get("close") if row.get("close") is not None else metadata.get("close")
         event_time = (
@@ -853,11 +2102,29 @@ class LatestMarketSnapshotStore:
                 content_ref=getattr(record, "content_ref", None),
                 ingest_run_id=ingest_run_id,
                 market=record_market,
+                open=row.get("open"),
             )
             # Prefer the normalized market row because it is the exact
             # source-selected record.  The metadata fallback preserves the
             # contract for connectors that place shared calendar proof beside
             # their normalized row.
+            collector_lineage = None
+            if isinstance(metadata.get(COLLECTOR_CLOSE_KEY), Mapping):
+                collector_lineage = collector_close_lineage(metadata)
+                if collector_lineage is None:
+                    return None  # a relayed close without complete lineage is never admitted
+            if collector_lineage is not None:
+                point = MarketSnapshotPoint(
+                    event_time=point.event_time,
+                    close=point.close,
+                    source_id=point.source_id,
+                    connector_id=point.connector_id,
+                    content_ref=point.content_ref,
+                    ingest_run_id=point.ingest_run_id,
+                    market=point.market,
+                    collector_close=collector_lineage,
+                    open=None,
+                )
             calendar_evidence = _market_snapshot_calendar_evidence(
                 row.get("calendar_evidence")
                 if row.get("calendar_evidence") is not None
@@ -867,6 +2134,97 @@ class LatestMarketSnapshotStore:
             return None
         return normalized_symbol, point, calendar_evidence
 
+    @staticmethod
+    def _merge_point(
+        by_time: dict[str, tuple[MarketSnapshotPoint, Any]],
+        symbol: str,
+        point: MarketSnapshotPoint,
+        evidence: Any,
+        reconciled: list[dict[str, Any]],
+    ) -> None:
+        """Official wins: a collector close never replaces or hides an official row for the same date.
+
+        Official rows (OpenAPI) and collector rows carry different event-time stamps for one session,
+        so they are matched on the Asia/Taipei trade date. When an official row lands on a date
+        that holds a provisional collector close, the official row replaces it and the pair is
+        compared (agreement or typed mismatch is recorded).
+        """
+        day = taipei_date(point.event_time)
+        same_day = {t: pe for t, pe in by_time.items() if taipei_date(t) == day}
+        if point.is_provisional:
+            if any(not p.is_provisional for p, _ in same_day.values()):
+                return  # official row exists for this session: the collector row is dropped
+            for t in same_day:
+                del by_time[t]  # a newer collector row replaces an older collector row
+            by_time[point.event_time] = (point, evidence)
+            return
+        for t, (existing, _ev) in list(same_day.items()):
+            if existing.is_provisional and existing.collector_close is not None:
+                reconciled.append(
+                    compare_close(
+                        symbol=symbol,
+                        trade_date=day,
+                        collector_close=existing.close,
+                        official_close=point.close,
+                        lineage=existing.collector_close,
+                    )
+                )
+                del by_time[t]
+        by_time[point.event_time] = (point, evidence)
+
+    def _project_symbol(
+        self,
+        symbol: str,
+        prior: LatestMarketSnapshot | None,
+        incoming: Sequence[tuple[MarketSnapshotPoint, dict[str, Any] | None]],
+        dataset: str,
+        observed: str,
+    ) -> LatestMarketSnapshot | None:
+        """The next version of one key, or ``None`` when the window is unchanged (nothing to write)."""
+        points_by_event_time = {
+            point.event_time: (point, prior.calendar_evidence)
+            for point in (prior.points if prior is not None else ())
+        }
+        reconciled: list[dict[str, Any]] = []
+        for point, calendar_evidence in incoming:
+            # A newer normalized record for an already-seen trading day replaces that day's
+            # lineage. This keeps closes chronologically distinct while retaining the exact
+            # official record selected by the latest successful ingest run.
+            self._merge_point(points_by_event_time, symbol, point, calendar_evidence, reconciled)
+        points_with_evidence = tuple(
+            sorted(points_by_event_time.values(), key=lambda item: item[0].key)[-self.max_closes :]
+        )
+        points = tuple(point for point, _evidence in points_with_evidence)
+        # Collector closes carry no calendar evidence; keep the newest governed
+        # evidence rather than letting a collector point erase it.
+        calendar_evidence = next((ev for _pt, ev in reversed(points_with_evidence) if ev is not None), None)
+        # PIT: out-of-order/idempotent reprojection must never relabel retained newer points
+        # as available earlier.
+        snapshot_observed = observed
+        if dataset != DAILY_SNAPSHOT_DATASET and prior is not None and prior.observed_at > observed:
+            snapshot_observed = prior.observed_at
+        candidate = LatestMarketSnapshot(
+            symbol=symbol,
+            points=points,
+            observed_at=snapshot_observed,
+            calendar_evidence=calendar_evidence,
+            close_reconciliation=merge_reconciliation(
+                prior.close_reconciliation if prior is not None else (),
+                reconciled,
+                oldest_trade_date=taipei_date(points[0].event_time),
+            ),
+            dataset=dataset,
+        )
+        if (
+            prior is not None
+            and prior.points == candidate.points
+            and prior.calendar_evidence == candidate.calendar_evidence
+            and prior.market == candidate.market
+            and prior.close_reconciliation == candidate.close_reconciliation
+        ):
+            return None
+        return candidate
+
     def append_normalized_records(
         self,
         records: Sequence[Any],
@@ -875,9 +2233,23 @@ class LatestMarketSnapshotStore:
         observed_at: str | None = None,
         default_market: str | None = None,
         connector: Any | None = None,
+        dataset: str = DAILY_SNAPSHOT_DATASET,
+        record_context: Sequence[tuple[str, str | None]] | None = None,
+        enforce_admission: bool = True,
     ) -> dict[str, Any]:
-        """Project normalized stored closes into one bounded snapshot per symbol."""
+        """Project normalized stored closes into one bounded snapshot per (symbol, dataset).
 
+        ``record_context`` (seeding only) gives each record its own (ingest_run_id, default_market)
+        so a replay of stored partitions builds the same points a live run would have built.
+        With ``enforce_admission`` the daily projection keeps only symbols the active-universe
+        admission hook accepts; seeding passes ``False`` because the caller already admitted it.
+        """
+
+        dataset = _snapshot_dataset(dataset)
+        if dataset in DERIVED_ON_READ_SNAPSHOT_DATASETS and not _PROTOCOL_WITNESS_ACTIVE:
+            raise MarketSnapshotStateError(
+                f"{NOT_STORED_DERIVE_ON_READ}: {dataset} is derived from tw_price_1m on read and is never stored"
+            )
         run_id = _market_snapshot_text(ingest_run_id, field_name="ingest_run_id")
         observed = _market_snapshot_timestamp(
             observed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -890,17 +2262,30 @@ class LatestMarketSnapshotStore:
 
         grouped: dict[str, list[tuple[MarketSnapshotPoint, dict[str, Any] | None]]] = {}
         accepted_record_count = 0
-        for record in records:
+        skipped_non_member: set[str] = set()
+        admission = self.admission if (enforce_admission and dataset == DAILY_SNAPSHOT_DATASET) else None
+        if record_context is not None and len(record_context) != len(records):
+            raise ValueError("record_context must align with records")
+        for index, record in enumerate(records):
             if bool(getattr(record, "is_rejected", False)):
                 continue
+            rec_run_id, rec_market = (
+                (_market_snapshot_text(record_context[index][0], field_name="ingest_run_id"), record_context[index][1])
+                if record_context is not None
+                else (run_id, default_market)
+            )
             candidate = self._point_from_record(
                 record,
-                ingest_run_id=run_id,
-                default_market=default_market,
+                ingest_run_id=rec_run_id,
+                default_market=rec_market,
+                dataset=dataset,
             )
             if candidate is None:
                 continue
             symbol, point, calendar_evidence = candidate
+            if admission is not None and not admission(symbol):
+                skipped_non_member.add(symbol)
+                continue
             grouped.setdefault(symbol, []).append((point, calendar_evidence))
             accepted_record_count += 1
 
@@ -911,65 +2296,57 @@ class LatestMarketSnapshotStore:
                 "accepted_record_count": 0,
                 "updated_snapshot_count": 0,
                 "snapshots": [],
+                **({"non_member_symbol_count": len(skipped_non_member)} if skipped_non_member else {}),
             }
 
         updated: list[LatestMarketSnapshot] = []
+        if self.store_mode == "sqlite":
+            with self._lock:
+                # Phase 1 (no write lock held): read the current versions and build the next ones.
+                prepared: dict[tuple[str, str], tuple[str | None, LatestMarketSnapshot, tuple[str, str, str]]] = {}
+                for symbol in sorted(grouped):
+                    # Yield the GIL between keys: encode/compress work must not stall in-process readers.
+                    time.sleep(0)
+                    key = (symbol, dataset)
+                    with _sqlite_errors("read"):
+                        row = self._backend.get(*key)
+                    candidate = self._project_symbol(
+                        symbol, _snapshot_from_row(key, row) if row else None, grouped[symbol], dataset, observed
+                    )
+                    if candidate is not None:
+                        prepared[key] = (row[0] if row else None, candidate, _snapshot_row(candidate))
+                # Phase 2: ONE short transaction per batch; rows another writer changed meanwhile are a retryable conflict.
+                if prepared:
+                    with _sqlite_errors("append"):
+                        with self._backend.transaction() as tx:
+                            tx.put_many({key: (prior, new_row) for key, (prior, _c, new_row) in prepared.items()})
+                        self._backend.maintain()
+                    # a row whose digest equals the stored one was left untouched by put_many
+                    updated.extend(cand for key, (prior, cand, row) in prepared.items() if prior != row[0])
+                if updated:
+                    self._export_after_write()
+            return self._batch_result(run_id, accepted_record_count, updated, skipped_non_member)
         with self._lock:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 file_preexisted = self.path.exists()
-                with self.path.open("a+", encoding="utf-8") as handle:
+                with self._open_exclusive(self.path) as handle:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
                     try:
-                        handle.seek(0)
-                        current = _market_snapshots_from_lines(handle, path=self.path)
+                        current = self._current_locked(handle)
                         for symbol in sorted(grouped):
-                            prior = current.get(symbol)
-                            points_by_event_time = {
-                                point.event_time: (point, prior.calendar_evidence)
-                                for point in (prior.points if prior is not None else ())
-                            }
-                            for point, calendar_evidence in grouped[symbol]:
-                                # A newer normalized record for an already-seen
-                                # trading day replaces that day's lineage. This
-                                # keeps closes chronologically distinct while
-                                # retaining the exact official record selected
-                                # by the latest successful ingest run.
-                                points_by_event_time[point.event_time] = (point, calendar_evidence)
-                            points_with_evidence = tuple(
-                                sorted(
-                                    points_by_event_time.values(),
-                                    key=lambda item: item[0].key,
-                                )[-self.max_closes :]
+                            candidate = self._project_symbol(
+                                symbol, current.get((symbol, dataset)), grouped[symbol], dataset, observed
                             )
-                            points = tuple(point for point, _evidence in points_with_evidence)
-                            calendar_evidence = points_with_evidence[-1][1]
-                            candidate = LatestMarketSnapshot(
-                                symbol=symbol,
-                                points=points,
-                                observed_at=observed,
-                                calendar_evidence=calendar_evidence,
-                            )
-                            if (
-                                prior is not None
-                                and prior.points == candidate.points
-                                and prior.calendar_evidence == candidate.calendar_evidence
-                                and prior.observed_at == candidate.observed_at
-                                and prior.market == candidate.market
-                            ):
+                            if candidate is None:
                                 continue
-                            state = candidate.to_dict()
-                            envelope = {
-                                "state": state,
-                                "checksum_algorithm": MARKET_SNAPSHOT_CHECKSUM_ALGORITHM,
-                                "checksum": _checksum(state),
-                            }
+                            line = self._envelope_line(candidate.to_dict())
                             handle.seek(0, os.SEEK_END)
-                            handle.write(_canonical_json(envelope) + "\n")
-                            current[symbol] = candidate
+                            handle.write(line + "\n")
+                            current[(symbol, dataset)] = candidate
+                            self._note_line((symbol, dataset), line)
                             updated.append(candidate)
-                        handle.flush()
-                        os.fsync(handle.fileno())
+                        self._commit_locked(handle, current)
                     finally:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
                 if not file_preexisted:
@@ -978,25 +2355,102 @@ class LatestMarketSnapshotStore:
                         os.fsync(directory_fd)
                     finally:
                         os.close(directory_fd)
-                self._latest_by_symbol = current
             except MarketSnapshotStateError:
                 self._latest_by_symbol = {}
+                self._invalidate()
                 raise
             except (OSError, UnicodeError) as exc:
+                self._invalidate()
                 raise MarketSnapshotStateError(
                     f"market snapshot append failed: {self.path}"
                 ) from exc
+            self._shadow_apply({(snap.symbol, snap.dataset): snap for snap in updated}, ())
 
+        return self._batch_result(run_id, accepted_record_count, updated, skipped_non_member)
+
+    @staticmethod
+    def _batch_result(
+        run_id: str,
+        accepted_record_count: int,
+        updated: Sequence[LatestMarketSnapshot],
+        skipped_non_member: set[str],
+    ) -> dict[str, Any]:
         return {
             "schema_version": MARKET_SNAPSHOT_BATCH_SCHEMA_VERSION,
             "ingest_run_id": run_id,
             "accepted_record_count": accepted_record_count,
             "updated_snapshot_count": len(updated),
             "snapshots": [snapshot.to_public_dict() for snapshot in updated],
+            **({"non_member_symbol_count": len(skipped_non_member)} if skipped_non_member else {}),
         }
 
 
+def market_snapshot_writer_samples() -> dict[str, str]:
+    """Isolated protocol witnesses, written by the real store, never provider replay.
+
+    Artifact admission executes this in a network-disabled container with only a
+    scratch /tmp. Extend this bounded contract whenever a persisted form changes.
+    The existing extended-v1 bytes and their snapshot/PIT/receipt IDs stay intact;
+    no downgrade serializer exists for provisional points or withdrawals.
+    """
+    import tempfile
+    from .connectors.base import SourceRecord
+
+    observed = "2026-11-12T08:00:00Z"
+    lineage = {
+        "collector_source_id": "collector-tw-twse-price-history",
+        "exchange_endpoint": "https://www.twse.com.tw/exchangeReport/MI_INDEX",
+        "bundle_sha256": "a" * 64, "trade_date": "2026-11-12",
+    }
+
+    def record(*, provisional=False, dataset=DAILY_SNAPSHOT_DATASET):
+        metadata = {"symbol": "2330.TWSE", "event_time": "2026-11-12T05:30:00Z",
+                    "close": 100.0, "market": "TW", "dataset": dataset}
+        if provisional:
+            metadata[COLLECTOR_CLOSE_KEY] = {**lineage, "provisional": True, "official": False}
+        return SourceRecord(
+            source_id=lineage["collector_source_id"] if provisional else "official-fixture",
+            connector_id="protocol-fixture", source_type="market",
+            title="isolated protocol witness", content_ref="fixture://source/protocol",
+            metadata=metadata, created_at=observed,
+        )
+
+    samples = {}
+    saved_mode = os.environ.get("MARKET_SNAPSHOT_STORE")
+    os.environ["MARKET_SNAPSHOT_STORE"] = "journal"  # witnesses are journal bytes whatever the flag says
+    globals()["_PROTOCOL_WITNESS_ACTIVE"] = True
+    try:
+        with tempfile.TemporaryDirectory(prefix="source-protocol-") as scratch:
+            for name in ("official_daily", "collector_close", "close_reconciliation", *_INTRADAY_SNAPSHOT_DATASETS):
+                path = Path(scratch) / (name + ".jsonl")
+                store = LatestMarketSnapshotStore(path)
+                dataset = name if name in _INTRADAY_SNAPSHOT_DATASETS else DAILY_SNAPSHOT_DATASET
+                provisional = name in ("collector_close", "close_reconciliation")
+                store.append_normalized_records([record(provisional=provisional, dataset=dataset)],
+                    ingest_run_id="fixture-provisional" if provisional else "fixture-official",
+                    observed_at=observed, dataset=dataset)
+                if name == "close_reconciliation":
+                    store.append_normalized_records([record()], ingest_run_id="fixture-official",
+                                                    observed_at=observed)
+                samples[name] = path.read_text(encoding="utf-8")
+                if dataset != DAILY_SNAPSHOT_DATASET:
+                    if not store.withdraw_sessions("2330.TWSE", dataset, ["2026-11-12"], observed_at=observed):
+                        raise MarketSnapshotStateError("protocol witness did not exercise withdrawal")
+                    samples[name + "_withdrawal"] = path.read_text(encoding="utf-8")
+    finally:
+        globals()["_PROTOCOL_WITNESS_ACTIVE"] = False
+        if saved_mode is None:
+            os.environ.pop("MARKET_SNAPSHOT_STORE", None)
+        else:
+            os.environ["MARKET_SNAPSHOT_STORE"] = saved_mode
+    return dict(sorted(samples.items()))
+
+
 __all__ = [
+    "DERIVED_ON_READ_SNAPSHOT_DATASETS",
+    "NOT_STORED_DERIVE_ON_READ",
+    "MarketSnapshotWriteBusy",
+    "MARKET_SNAPSHOT_STORE_MODES",
     "CHECKSUM_ALGORITHM",
     "SCHEMA_VERSION",
     "RequirementSnapshot",
@@ -1004,10 +2458,14 @@ __all__ = [
     "RequirementStateError",
     "RequirementStateStore",
     "MARKET_SNAPSHOT_SCHEMA_VERSION",
+    "MARKET_SNAPSHOT_COMPACT_SCHEMA_VERSION",
     "MARKET_SNAPSHOT_BATCH_SCHEMA_VERSION",
     "MARKET_SNAPSHOT_CHECKSUM_ALGORITHM",
     "MarketSnapshotStateError",
     "MarketSnapshotPoint",
     "LatestMarketSnapshot",
     "LatestMarketSnapshotStore",
+    "DAILY_SNAPSHOT_DATASET",
+    "MINUTE_SNAPSHOT_DATASET",
+    "snapshot_dataset_for_frequency",
 ]

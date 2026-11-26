@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, Query
@@ -41,6 +41,12 @@ try:
         _extract_detail,
     )
     from services.control_plane.bff.research.service import ResearchRouterService
+    from services.control_plane.bff.strategies.routes.common import (
+        PersonaStateLookup,
+        STUB_TEST_PERSONA_PROBE,
+        read_persona_state_lookup,
+        strategy_stub_reason,
+    )
 except (ImportError, ValueError):
     from ...auth.policy import (
         bff_error as _policy_bff_error,
@@ -59,6 +65,12 @@ except (ImportError, ValueError):
         _extract_detail,
     )
     from ..service import ResearchRouterService  # type: ignore[no-redef]
+    from ...strategies.routes.common import (  # type: ignore[no-redef]
+        PersonaStateLookup,
+        STUB_TEST_PERSONA_PROBE,
+        read_persona_state_lookup,
+        strategy_stub_reason,
+    )
 
 _ORCHESTRATOR_URL_ENVS: Tuple[str, ...] = (
     "PANTHEON_RESEARCH_ORCHESTRATOR_API_URL",
@@ -112,6 +124,177 @@ def _resolve_task_name(task: Dict[str, Any], task_id: str) -> str:
     return task_id
 
 
+_NON_REAL_RUN_MODES = {"stub": "stub_run", "manual": "manual_record"}
+_NON_REAL_DATA_SCOPES = {"test", "acceptance", "synthetic"}
+_COLLECTOR_QUERY_PLAN = "collector_query_plan"
+
+
+def _is_blank_name(task: Dict[str, Any]) -> bool:
+    return not any(str(task.get(k) or "").strip() for k in ("title", "objective"))
+
+
+def _first_reference(values: Any, *, dataset_only: bool = False) -> Optional[str]:
+    if isinstance(values, (list, tuple)):
+        for value in values:
+            if isinstance(value, dict):
+                if dataset_only and value.get("type") not in ("dataset", "dataset_ref", "dataset_version", "dataset_version_id"):
+                    continue
+                value = value.get("id") or value.get("dataset_id") or value.get("ref") or value.get("uri")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _classify_non_real(
+    task: Dict[str, Any],
+    latest_run: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Return non_real_reason for acceptance/stub/manual records, else None."""
+    title = str(task.get("title") or "").strip()
+    if title.upper().startswith("ACCEPTANCE TEST"):
+        return "acceptance_test"
+    constraints = task.get("constraints") if isinstance(task.get("constraints"), dict) else {}
+    scopes = [task.get("data_scope"), constraints.get("data_scope")]
+    if isinstance(latest_run, dict):
+        scopes.append(latest_run.get("data_scope"))
+        params = latest_run.get("parameters")
+        if isinstance(params, dict):
+            scopes.append(params.get("data_scope"))
+    if any(str(sc or "").strip().lower() in _NON_REAL_DATA_SCOPES for sc in scopes):
+        return "acceptance_test"
+    if isinstance(latest_run, dict):
+        for key in ("adapter", "dispatch_mode"):
+            reason = _NON_REAL_RUN_MODES.get(str(latest_run.get(key) or "").strip().lower())
+            if reason:
+                return reason
+    return None
+
+
+def _build_display_summary(
+    task: Dict[str, Any],
+    latest_run: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Structured summary from recorded fields only; missing values stay null."""
+    constraints = task.get("constraints") if isinstance(task.get("constraints"), dict) else {}
+    params = (
+        latest_run.get("parameters")
+        if isinstance(latest_run, dict) and isinstance(latest_run.get("parameters"), dict)
+        else {}
+    )
+    symbol = params.get("symbol") or constraints.get("symbol")
+    dataset_ref = (
+        _first_reference(latest_run.get("input_refs") if isinstance(latest_run, dict) else None, dataset_only=True)
+        or (str(constraints.get("dataset_ref")).strip() if constraints.get("dataset_ref") else None)
+    )
+    return {
+        "task_kind": task.get("task_type") or None,
+        "subject_ref": _first_reference(task.get("source_refs")),
+        "symbol": str(symbol).strip() if symbol else None,
+        "dataset_ref": dataset_ref,
+    }
+
+
+def _default_persona_directory_snapshot(tenant_id: str, *, snapshot_at: Optional[str] = None) -> Any:
+    """The existing persona owner read the Persona and Strategy routes use (lazy: avoids an import cycle)."""
+    try:
+        from services.control_plane.bff.personas.service import _get_persona_directory_snapshot
+    except (ImportError, ValueError):
+        from ...personas.service import _get_persona_directory_snapshot  # type: ignore[no-redef]
+    return _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
+
+
+_TEMPLATE_SEARCH_ACTION = "template_search"
+_RAPID_EVAL = "rapid_eval"
+_DEMANDS_PATH = "/api/research/persona-demands?status=open"
+
+
+def _is_template_search_run(run: Dict[str, Any]) -> bool:
+    params = run.get("parameters") if isinstance(run.get("parameters"), dict) else {}
+    return params.get("action_type") == _TEMPLATE_SEARCH_ACTION and bool(str(params.get("demand_id") or "").strip())
+
+
+def _run_reason_code(run: Dict[str, Any]) -> Optional[str]:
+    """Reason recorded on a template-search run: the failure detail, else the search outcome."""
+    rejection = run.get("rejection") if isinstance(run.get("rejection"), dict) else {}
+    result = run.get("template_search") if isinstance(run.get("template_search"), dict) else {}
+    for candidate in (rejection.get("detail"), result.get("reason")):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _demand_join(
+    task_runs: Sequence[Dict[str, Any]],
+    all_runs_by_demand: Dict[str, List[Dict[str, Any]]],
+    demands_by_id: Optional[Dict[str, Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Demand object for a template-search task, from recorded run fields only."""
+    search_runs = sorted((r for r in task_runs if _is_template_search_run(r)), key=_run_sort_key)
+    if not search_runs:
+        return None
+    latest = search_runs[-1]
+    params = latest["parameters"]
+    demand_id = str(params["demand_id"]).strip()
+    attempts = all_runs_by_demand.get(demand_id) or search_runs
+    demand = (demands_by_id or {}).get(demand_id)
+    return {
+        "demand_id": demand_id,
+        "persona_id": params.get("persona_id"),
+        "attempt_count": len(attempts),
+        "last_reason_code": _run_reason_code(latest),
+        "short_measure": demand.get("short_measure") if demand else None,
+        "status": demand.get("status") if demand else None,
+    }
+
+
+def _project_demand(demand: Dict[str, Any], lookup: Optional[PersonaStateLookup]) -> Dict[str, Any]:
+    discovery = demand.get("discovery") if isinstance(demand.get("discovery"), dict) else {}
+    template = discovery.get("template_search") if isinstance(discovery.get("template_search"), dict) else {}
+    last_run = discovery.get("last_run") if isinstance(discovery.get("last_run"), dict) else {}
+    persona_id = demand.get("persona_id")
+    names = lookup.display_names_by_id if lookup is not None and lookup.available else {}
+    return {
+        "demand_id": demand.get("demand_id"),
+        "persona_id": persona_id,
+        "persona_display_name": names.get(str(persona_id)) or None,
+        "short_measure": demand.get("short_measure"),
+        "tried_families": list(demand.get("tried_families") or []),
+        "missing_datasets": list(demand.get("missing_datasets") or []),
+        "mandate": demand.get("mandate"),
+        "created_at": demand.get("created_at"),
+        "expires_at": demand.get("expires_at"),
+        "status": demand.get("status"),
+        "evidence_ref": demand.get("evidence_ref"),
+        "last_template_search_reason": template.get("reason"),
+        "last_discovery_reason": last_run.get("reason"),
+    }
+
+
+def _lineage_persona_ids(task: Dict[str, Any], run: Optional[Dict[str, Any]]) -> List[str]:
+    """Personas named by the run's (else the task's) recorded dataset_lineage."""
+    for record in (run, task):
+        if not isinstance(record, dict):
+            continue
+        meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        lineage = next((v for v in (record.get("dataset_lineage"), meta.get("dataset_lineage"))
+                        if isinstance(v, dict)), None)
+        if lineage is None:
+            continue
+        raw = lineage.get("persona_ids")
+        raw = raw if isinstance(raw, list) else [lineage.get("persona_id")]
+        return sorted({str(p).strip() for p in raw if p is not None and str(p).strip()})
+    return []
+
+
+def _persona_is_test(lookup: PersonaStateLookup, persona_id: str) -> bool:
+    """Owner data_scope test, or the existing release-probe predicate on the owner's name."""
+    if lookup.is_test_scoped([persona_id]):
+        return True
+    name = lookup.display_names_by_id.get(persona_id)
+    return bool(name) and strategy_stub_reason({"title": name}, None) == STUB_TEST_PERSONA_PROBE
+
+
 def _run_sort_key(run: Dict[str, Any]) -> Tuple[str, str, str]:
     return (
         str(run.get("created_at") or ""),
@@ -146,12 +329,37 @@ def _project_run_detail(run: Dict[str, Any]) -> Dict[str, Any]:
 def _project_task_item(
     task: Dict[str, Any],
     task_runs: Sequence[Dict[str, Any]],
+    *,
+    persona_lookup: Optional[PersonaStateLookup] = None,
+    runs_by_demand: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    demands_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     task_id = str(task.get("task_id") or task.get("id") or "").strip()
     item_id = str(task.get("id") or task_id).strip()
     ordered_runs = sorted(task_runs, key=_run_sort_key)
     latest_run = _project_latest_run(ordered_runs[-1]) if ordered_runs else None
+    latest_raw = ordered_runs[-1] if ordered_runs else None
+    non_real_reason = _classify_non_real(task, latest_raw)
+    if non_real_reason is None and task.get("task_type") == _RAPID_EVAL:
+        # Only an owner-read persona set can prove test scope; an unreadable owner leaves the row visible.
+        ids = _lineage_persona_ids(task, latest_raw)
+        if ids and persona_lookup is not None and persona_lookup.available \
+                and all(_persona_is_test(persona_lookup, pid) for pid in ids):
+            non_real_reason = "acceptance_test"
+    demand = _demand_join(ordered_runs, runs_by_demand or {}, demands_by_id)
+    persona_ids = sorted({*_lineage_persona_ids(task, latest_raw),
+                          *([str(demand["persona_id"])] if demand and demand.get("persona_id") else [])})
+    summary = _build_display_summary(task, latest_raw)
+    if demand is not None:
+        summary["task_kind"] = summary["task_kind"] or _TEMPLATE_SEARCH_ACTION
+        summary["subject_ref"] = summary["subject_ref"] or demand["demand_id"]
     return {
+        "is_non_real": non_real_reason is not None,
+        "non_real_reason": non_real_reason,
+        "name_is_fallback_id": _is_blank_name(task),
+        "display_summary": summary,
+        "demand": demand,
+        "persona_ids": persona_ids,
         "id": item_id,
         "task_id": task_id,
         "name": _resolve_task_name(task, task_id),
@@ -165,15 +373,17 @@ def _project_task_item(
         "source_refs": list(task.get("source_refs") or []),
         "run_count": len(ordered_runs),
         "latest_run": latest_run,
+        **({"query_plan": task["query_plan"]} if task.get("task_type") == _COLLECTOR_QUERY_PLAN else {}),
     }
 
 
 def _project_task_detail(
     task: Dict[str, Any],
     task_runs: Sequence[Dict[str, Any]],
+    **join: Any,
 ) -> Dict[str, Any]:
     ordered_runs = sorted(task_runs, key=_run_sort_key)
-    item = _project_task_item(task, ordered_runs)
+    item = _project_task_item(task, ordered_runs, **join)
     return {
         **item,
         "constraints": task.get("constraints") if isinstance(task.get("constraints"), dict) else {},
@@ -199,6 +409,7 @@ def create_research_tasks_router(
     get_capabilities: Optional[Callable[[Any], Any]] = None,
     http_get: HttpGetFn = _default_http_get,
     base_url: Optional[str] = None,
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     del read_store, get_read_store, require_operator_role, dataset_surface_status, build_experiment_summary, get_capabilities
 
@@ -214,6 +425,7 @@ def create_research_tasks_router(
         source: str,
         excluded_unscoped_count: int = 0,
         message: Optional[str] = None,
+        hidden_non_real_count: Optional[int] = None,
     ) -> Dict[str, Any]:
         base = dict(snapshot_meta_fn(snapshot_at) or {"snapshot_at": snapshot_at})
         surfaces = dict(base.get("surfaces") or {})
@@ -229,7 +441,36 @@ def create_research_tasks_router(
         base["surfaces"] = surfaces
         base["status"] = status
         base["excluded_unscoped_count"] = excluded_unscoped_count
+        if hidden_non_real_count is not None:
+            base["hidden_non_real_count"] = hidden_non_real_count
+            surface_payload["hidden_non_real_count"] = hidden_non_real_count
         return base
+
+    def _persona_lookup(tenant_id: str, snapshot_at: str) -> PersonaStateLookup:
+        """One persona directory read per request; the owner record is the only truth."""
+        return read_persona_state_lookup(
+            directory_snapshot=persona_directory_snapshot or _default_persona_directory_snapshot,
+            projected_state=lambda _record: "unknown",
+            operational_states=(),
+            tenant_id=tenant_id,
+            snapshot_at=snapshot_at,
+        )
+
+    def _read_open_demands(
+        resolved_base_url: str, caller_tenant: str
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+        """Open demands of the caller tenant from the Research owner, or a visible failure reason."""
+        try:
+            ok, payload = http_get(f"{resolved_base_url}{_DEMANDS_PATH}")
+        except Exception as exc:  # noqa: BLE001 - denied/unauthorised callers stay a visible state
+            return None, f"owner_read_failed:{type(exc).__name__}"
+        rows = payload.get("demands") if isinstance(payload, dict) else None
+        if not ok or not isinstance(rows, list):
+            return None, "owner_read_failed" if not ok else "demands_payload_invalid"
+        if any(not isinstance(d, dict) or d.get("tenant_id") != caller_tenant or d.get("status") != "open"
+               for d in rows):
+            return None, "demand_scope_or_status_mismatch"
+        return rows, None
 
     def _not_found(task_id: str) -> Exception:
         return bff_error(
@@ -244,6 +485,8 @@ def create_research_tasks_router(
         status: Optional[str] = Query(default=None),
         page_token: Optional[str] = Query(default=None),
         page_size: int = Query(default=20, ge=1, le=200),
+        include_non_real: bool = Query(default=False),
+        view: Literal["all", "research", "collector_checks"] = Query(default="all"),
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
@@ -337,6 +580,28 @@ def create_research_tasks_router(
             )
 
             excluded_unscoped_count = 0
+            hidden_non_real_count = 0
+            runs_by_demand: Dict[str, List[Dict[str, Any]]] = {}
+            for raw_run in raw_runs:
+                if _is_template_search_run(raw_run) and str(raw_run.get("tenant_id") or caller_tenant) == caller_tenant:
+                    runs_by_demand.setdefault(str(raw_run["parameters"]["demand_id"]).strip(), []).append(raw_run)
+
+            demand_rows: Optional[List[Dict[str, Any]]] = None
+            demand_reason: Optional[str] = None
+            if view == "research":
+                demand_rows, demand_reason = _read_open_demands(resolved_base_url, caller_tenant)
+            demands_by_id = (
+                {str(d.get("demand_id")): d for d in demand_rows} if demand_rows is not None else None
+            )
+
+            # At most one persona directory read per request, only when a persona-bearing row needs it.
+            lookup_cache: List[PersonaStateLookup] = []
+
+            def lookup() -> PersonaStateLookup:
+                if not lookup_cache:
+                    lookup_cache.append(_persona_lookup(caller_tenant, snapshot_at))
+                return lookup_cache[0]
+
             scoped_items: List[Dict[str, Any]] = []
             for raw_task in raw_tasks:
                 task_id = str(raw_task.get("task_id") or raw_task.get("id") or "").strip()
@@ -348,16 +613,49 @@ def create_research_tasks_router(
                     continue
                 if task_tenant != caller_tenant:
                     continue
+                is_collector_check = raw_task.get("task_type") == _COLLECTOR_QUERY_PLAN
+                if view != "all" and is_collector_check != (view == "collector_checks"):
+                    continue
                 if allowed_statuses is not None and str(raw_task.get("status") or "") not in allowed_statuses:
                     continue
-                scoped_items.append(_project_task_item(raw_task, runs_by_task.get(task_id, ())))
+                task_runs = runs_by_task.get(task_id, ())
+                needs_personas = raw_task.get("task_type") == _RAPID_EVAL
+                projected = _project_task_item(
+                    raw_task, task_runs,
+                    persona_lookup=lookup() if needs_personas else None,
+                    runs_by_demand=runs_by_demand, demands_by_id=demands_by_id,
+                )
+                if projected["is_non_real"] and not include_non_real:
+                    hidden_non_real_count += 1
+                    continue
+                scoped_items.append(projected)
 
             scoped_items.sort(
                 key=lambda item: (str(item.get("created_at") or ""), str(item.get("task_id") or "")),
                 reverse=True,
             )
             page_items, next_page_token = page_slice_fn(scoped_items, page_token, page_size)
+            extra: Dict[str, Any] = {}
+            meta = _build_meta(
+                snapshot_at,
+                status="ok",
+                source="research_orchestrator",
+                excluded_unscoped_count=excluded_unscoped_count,
+                hidden_non_real_count=hidden_non_real_count,
+            )
+            if view == "research":
+                demand_lookup = lookup() if demand_rows else None
+                extra["open_demands"] = (
+                    [_project_demand(d, demand_lookup) for d in demand_rows] if demand_rows is not None else []
+                )
+                meta["surfaces"]["research_demands"] = (
+                    {"status": "ok", "source": "research_owner", "reason": None, "snapshot_at": snapshot_at}
+                    if demand_rows is not None
+                    else {"status": "unavailable", "source": "research_owner",
+                          "reason": demand_reason, "snapshot_at": snapshot_at}
+                )
             return {
+                **extra,
                 "data": page_items,
                 "items": page_items,
                 "tasks": page_items,
@@ -367,12 +665,7 @@ def create_research_tasks_router(
                     "page_size": page_size,
                     "total": len(scoped_items),
                 },
-                "meta": _build_meta(
-                    snapshot_at,
-                    status="ok",
-                    source="research_orchestrator",
-                    excluded_unscoped_count=excluded_unscoped_count,
-                ),
+                "meta": meta,
             }
         finally:
             if tenant_ctx is not None:
@@ -461,7 +754,16 @@ def create_research_tasks_router(
                 for run in raw_runs
                 if str(run.get("task_id") or "").strip() == resolved_id
             ]
-            detail = _project_task_detail(raw_task, task_runs)
+            runs_by_demand = {}
+            for raw_run in raw_runs:
+                if _is_template_search_run(raw_run):
+                    runs_by_demand.setdefault(str(raw_run["parameters"]["demand_id"]).strip(), []).append(raw_run)
+            detail = _project_task_detail(
+                raw_task, task_runs,
+                persona_lookup=_persona_lookup(caller_tenant, snapshot_at)
+                if raw_task.get("task_type") == _RAPID_EVAL else None,
+                runs_by_demand=runs_by_demand,
+            )
             return {
                 **detail,
                 "data": detail,

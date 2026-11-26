@@ -20,7 +20,12 @@ from __future__ import annotations
 import ipaddress
 import http.client
 import os
+import io
 import socket
+import ssl
+import threading
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
@@ -319,6 +324,97 @@ class _RedirectPolicy:
     env: Mapping[str, str] | None
     resolver: DNSResolver
     max_redirects: int
+    watchdog: "_DeadlineWatchdog | None" = None
+
+
+class _DeadlineWatchdog:
+    """Whole-operation deadline for one guarded request.
+
+    Closes every socket opened for the request when the monotonic deadline passes, so a
+    stalled connect, TLS handshake, header read or chunk-framing read fails promptly
+    instead of resetting a per-recv timeout forever.  Never yields partial data: the
+    blocked call raises and the caller converts it to TimeoutError.
+    """
+
+    def __init__(self, deadline: float) -> None:
+        self.deadline = deadline
+        self.expired = False
+        self._lock = threading.Lock()
+        self._socks: list[Any] = []
+        self._timer = threading.Timer(max(deadline - time.monotonic(), 0.0), self._fire)
+        self._timer.daemon = True
+
+    def start(self) -> None:
+        self._timer.start()
+
+    def remaining(self) -> float:
+        return self.deadline - time.monotonic()
+
+    def track(self, sock: Any) -> None:
+        with self._lock:
+            self._socks.append(sock)
+            expired = self.expired
+        if expired:
+            self._close(sock)
+
+    def _close(self, sock: Any) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.expired = True
+            socks = list(self._socks)
+        for sock in socks:
+            self._close(sock)
+
+    def stop(self) -> None:
+        self._timer.cancel()
+
+
+class _WatchedResponse:
+    """Keeps the watchdog alive for the body; stops it on close."""
+
+    def __init__(self, response: Any, watchdog: _DeadlineWatchdog) -> None:
+        self._response = response
+        self._watchdog = watchdog
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+    def __enter__(self) -> "_WatchedResponse":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+    def _guard(self, fn: Callable[[], Any]) -> Any:
+        try:
+            result = fn()
+            if self._watchdog.expired:
+                # A deadline close can surface as a clean EOF; never treat it as data.
+                raise TimeoutError("external request exceeded the operation deadline")
+            return result
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            if self._watchdog.expired:
+                raise TimeoutError("external request exceeded the operation deadline") from exc
+            raise
+
+    def read(self, *args: Any) -> bytes:
+        return self._guard(lambda: self._response.read(*args))
+
+    def read1(self, *args: Any) -> bytes:
+        return self._guard(lambda: self._response.read1(*args))
+
+    def close(self) -> None:
+        self._watchdog.stop()
+        self._response.close()
 
 
 class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -428,18 +524,50 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         last_error: OSError | None = None
         for address in addresses:
             try:
+                watchdog = self._egress_policy.watchdog
+                connect_timeout = self.timeout
+                if watchdog is not None:
+                    left = watchdog.remaining()
+                    if left <= 0:
+                        raise TimeoutError("external request exceeded the operation deadline")
+                    connect_timeout = left if connect_timeout is None else min(connect_timeout, left)
                 self.sock = socket.create_connection(
                     (address, self.port),
-                    self.timeout,
+                    connect_timeout,
                     self.source_address,
                 )
+                if watchdog is not None:
+                    watchdog.track(self.sock)
                 break
             except OSError as exc:
                 last_error = exc
         else:
             assert last_error is not None
             raise last_error
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+        watchdog = self._egress_policy.watchdog
+        raw_sock = self.sock
+        if watchdog is None:
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+            return
+        try:
+            # wrap_socket detaches the raw socket, so track the SSL socket BEFORE the
+            # handshake and bound the handshake by the actual remaining deadline.
+            ssl_sock = self._context.wrap_socket(
+                raw_sock, server_hostname=self.host, do_handshake_on_connect=False
+            )
+            self.sock = ssl_sock
+            watchdog.track(ssl_sock)
+            left = watchdog.remaining()
+            if left <= 0:
+                raise TimeoutError("external request exceeded the operation deadline")
+            steady_timeout = ssl_sock.gettimeout()
+            ssl_sock.settimeout(left if steady_timeout is None else min(steady_timeout, left))
+            ssl_sock.do_handshake()
+            ssl_sock.settimeout(steady_timeout)
+        except OSError as exc:
+            if watchdog.expired or watchdog.remaining() <= 0:
+                raise TimeoutError("external request exceeded the operation deadline") from exc
+            raise
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
@@ -462,17 +590,325 @@ def open_external_url(
     env: Mapping[str, str] | None = None,
     resolver: DNSResolver = socket.getaddrinfo,
     max_redirects: int = 3,
+    deadline: float | None = None,
 ) -> Any:
-    """Open an external HTTPS request through the guarded redirect client."""
+    """Open an external HTTPS request through the guarded redirect client.
+
+    ``deadline`` (``time.monotonic()`` seconds) bounds the WHOLE operation: connect, TLS,
+    headers, redirects and the response body.  Passing it returns a response whose reads
+    raise ``TimeoutError`` once it passes.
+    """
 
     if max_redirects < 0 or max_redirects > 10:
         raise ValueError("max_redirects must be between 0 and 10")
     url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
     guard_external_url(url, caller=caller, env=env, resolver=resolver)
-    policy = _RedirectPolicy(caller=caller, env=env, resolver=resolver, max_redirects=max_redirects)
+    watchdog = _DeadlineWatchdog(deadline) if deadline is not None else None
+    policy = _RedirectPolicy(
+        caller=caller, env=env, resolver=resolver, max_redirects=max_redirects, watchdog=watchdog
+    )
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}),
         _GuardedRedirectHandler(policy),
         _PinnedHTTPSHandler(policy),
     )
+    if watchdog is None:
+        return opener.open(request, timeout=timeout)
+    if watchdog.remaining() <= 0:
+        raise TimeoutError("external request exceeded the operation deadline")
+    watchdog.start()
+    try:
+        response = opener.open(request, timeout=min(timeout, max(watchdog.remaining(), 0.001)))
+        if watchdog.expired:
+            response.close()
+            raise TimeoutError("external request exceeded the operation deadline")
+    except BaseException as exc:
+        watchdog.stop()
+        if (watchdog.expired or watchdog.remaining() <= 0) and not isinstance(exc, TimeoutError):
+            raise TimeoutError("external request exceeded the operation deadline") from exc
+        raise
+    return _WatchedResponse(response, watchdog)
+
+
+def _url_has_allowed_prefix(url: str, allowed_prefixes: Sequence[str]) -> bool:
+    return any(url.startswith(prefix) for prefix in allowed_prefixes)
+
+
+class InternalServiceRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects that leave internal hosts or the allowed URL prefixes."""
+
+    def __init__(self, allowed_prefixes: Sequence[str], error_cls: type[Exception] = ValueError) -> None:
+        super().__init__()
+        self.allowed_prefixes = list(allowed_prefixes)
+        self.error_cls = error_cls
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute_url = urljoin(req.full_url, newurl)
+        host = urlsplit(absolute_url).hostname or ""
+        if not is_internal_host(host) or not _url_has_allowed_prefix(absolute_url, self.allowed_prefixes):
+            raise self.error_cls("internal_service redirect escaped its internal URL allowlist")
+        redirected = super().redirect_request(req, fp, code, msg, headers, absolute_url)
+        if redirected is not None and _request_origin(req.full_url) != _request_origin(absolute_url):
+            _strip_cross_origin_credentials(redirected)
+        return redirected
+
+
+def open_internal_service_url(
+    request: urllib.request.Request,
+    *,
+    timeout: float,
+    allowed_prefixes: Sequence[str],
+    error_cls: type[Exception] = ValueError,
+):
+    """Open an internal-service URL; the single guard shared by all callers.
+
+    The host must be internal and every redirect must stay internal and inside
+    ``allowed_prefixes``.  Refusal happens before any connection is opened.
+    """
+
+    host = urlsplit(request.full_url).hostname or ""
+    if not is_internal_host(host):
+        raise error_cls("internal_service redirect escaped to an external host")
+    opener = urllib.request.build_opener(InternalServiceRedirectHandler(allowed_prefixes, error_cls))
     return opener.open(request, timeout=timeout)
+
+
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_REUSE_RESET_ERRORS = (
+    ConnectionError,
+    http.client.RemoteDisconnected,
+    http.client.BadStatusLine,
+    http.client.CannotSendRequest,
+    http.client.ResponseNotReady,
+    ssl.SSLError,
+    BrokenPipeError,
+)
+
+
+class _PooledResponse(_WatchedResponse):
+    """Watched response that hands its connection back to the pool on close."""
+
+    def __init__(self, response: Any, watchdog: _DeadlineWatchdog, release: Callable[[bool], None]) -> None:
+        super().__init__(response, watchdog)
+        self._release = release
+        self._released = False
+
+    def close(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        self._watchdog.stop()
+        # Reusable only when the body was consumed to EOF and the peer keeps the socket open.
+        reusable = bool(
+            self._response.isclosed() and not self._response.will_close and not self._watchdog.expired
+        )
+        try:
+            self._response.close()
+        finally:
+            self._release(reusable)
+
+
+class GuardedKeepAliveClient:
+    """Read several paths from ONE allowlisted host over a bounded set of kept-alive connections.
+
+    Every connection is created by ``_PinnedHTTPSConnection.connect`` which re-runs the DNS
+    answer check (all answers globally routable), pins the socket to the validated IP and
+    verifies the certificate for the hostname, exactly as ``open_external_url`` does: one guard
+    decision per connection. ``guard_external_url`` runs once at construction for the scheme,
+    port, allowlist and internal-host rules. Every request is checked against the same host;
+    redirects are NOT followed here: a redirect response is replayed through
+    ``open_external_url`` so the existing redirect policy applies unchanged.
+
+    At most ``max_connections`` connections exist at once (also the in-flight request bound).
+    ``close()`` closes every connection; callers must call it at the end of the operation.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        caller: str,
+        max_connections: int,
+        timeout: float,
+        env: Mapping[str, str] | None = None,
+        resolver: DNSResolver = socket.getaddrinfo,
+        max_redirects: int = 3,
+        connection_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        if max_connections < 1 or max_connections > 64:
+            raise ValueError("max_connections must be between 1 and 64")
+        self.host = _clean(host).lower().rstrip(".")
+        self.caller = caller
+        self.timeout = timeout
+        self.env = env
+        self.resolver = resolver
+        self.max_redirects = max_redirects
+        self.max_connections = max_connections
+        self._factory = connection_factory or _PinnedHTTPSConnection
+        self._guarded = False
+        self._slots = threading.BoundedSemaphore(max_connections)
+        self._lock = threading.Lock()
+        self._idle: list[Any] = []
+        self._all: list[Any] = []
+        self._closed = False
+        self.connections_opened = 0
+
+    def _check_url(self, url: str) -> str:
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme.lower() != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in (None, 443)
+            or _clean(parsed.hostname).lower().rstrip(".") != self.host
+        ):
+            raise _blocked(
+                url=url,
+                caller=self.caller,
+                env=self.env,
+                reason_code="keepalive_host_mismatch",
+                detail="kept-alive client serves exactly one guarded host",
+            )
+        return parsed.path or "/"
+
+    def _new_connection(self, policy: _RedirectPolicy) -> Any:
+        conn = self._factory(self.host, policy=policy, timeout=self.timeout)
+        with self._lock:
+            self._all.append(conn)
+            self.connections_opened += 1
+        return conn
+
+    def _discard(self, conn: Any) -> None:
+        try:
+            conn.close()
+        finally:
+            with self._lock:
+                if conn in self._all:
+                    self._all.remove(conn)
+
+    def _release(self, conn: Any, reusable: bool) -> None:
+        self._return_conn(conn, reusable)
+        self._slots.release()
+
+    def _return_conn(self, conn: Any, reusable: bool) -> None:
+        keep = False
+        if reusable:
+            with self._lock:
+                if not self._closed:
+                    self._idle.append(conn)
+                    keep = True
+        if not keep:
+            self._discard(conn)
+
+    def open(
+        self,
+        request: str | urllib.request.Request,
+        *,
+        deadline: float | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
+        path = self._check_url(url)
+        if not self._guarded:  # scheme/port/allowlist/internal-host/DNS rules, once per client
+            guard_external_url(f"https://{self.host}/", caller=self.caller, env=self.env, resolver=self.resolver)
+            self._guarded = True
+        query = urlsplit(url).query
+        target = f"{path}?{query}" if query else path
+        if isinstance(request, urllib.request.Request):
+            headers = {k: v for k, v in request.header_items()}
+        else:
+            headers = {}
+        timeout = self.timeout if timeout is None else timeout
+        if deadline is not None and deadline - time.monotonic() <= 0:
+            raise TimeoutError("external request exceeded the operation deadline")
+        wait = None if deadline is None else max(deadline - time.monotonic(), 0.0)
+        if not self._slots.acquire(timeout=wait):
+            raise TimeoutError("external request exceeded the operation deadline")
+        try:
+            return self._request(url, target, headers, deadline, timeout, request)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def _request(self, url, target, headers, deadline, timeout, request):  # noqa: ANN001
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("kept-alive client is closed")
+            conn = self._idle.pop() if self._idle else None
+        reused = conn is not None
+        for attempt in (0, 1):
+            watchdog = _DeadlineWatchdog(deadline) if deadline is not None else None
+            policy = _RedirectPolicy(
+                caller=self.caller, env=self.env, resolver=self.resolver,
+                max_redirects=self.max_redirects, watchdog=watchdog,
+            )
+            if conn is None:
+                conn = self._new_connection(policy)
+            conn._egress_policy = policy
+            if watchdog is not None:
+                watchdog.start()
+                if conn.sock is not None:
+                    watchdog.track(conn.sock)
+            try:
+                effective = timeout if watchdog is None else min(timeout, max(watchdog.remaining(), 0.001))
+                conn.timeout = effective
+                if conn.sock is not None:
+                    conn.sock.settimeout(effective)
+                conn.request("GET", target, headers=headers)
+                response = conn.getresponse()
+                if watchdog is not None and watchdog.expired:
+                    response.close()
+                    raise TimeoutError("external request exceeded the operation deadline")
+            except BaseException as exc:
+                if watchdog is not None:
+                    watchdog.stop()
+                self._discard(conn)
+                conn = None
+                if watchdog is not None and (watchdog.expired or watchdog.remaining() <= 0) \
+                        and not isinstance(exc, TimeoutError):
+                    raise TimeoutError("external request exceeded the operation deadline") from exc
+                if reused and attempt == 0 and isinstance(exc, _REUSE_RESET_ERRORS):
+                    reused = False  # reconnect once; connect() runs the guard again
+                    continue
+                raise
+            break
+        if response.status in _REDIRECT_STATUSES:
+            if watchdog is not None:
+                watchdog.stop()
+            response.close()
+            self._discard(conn)
+            # Existing redirect policy, unchanged. The fallback response owns its own one-off
+            # connection (rare path); this client's slot is freed only after it opened.
+            fallback = open_external_url(
+                request, caller=self.caller, timeout=timeout, env=self.env,
+                resolver=self.resolver, max_redirects=self.max_redirects, deadline=deadline,
+            )
+            self._slots.release()
+            return fallback
+        if response.status >= 400:
+            body = response.read()
+            if watchdog is not None:
+                watchdog.stop()
+            self._return_conn(conn, response.isclosed() and not response.will_close)
+            raise urllib.error.HTTPError(url, response.status, response.reason, response.msg, io.BytesIO(body))
+        if watchdog is None:
+            watchdog = _DeadlineWatchdog(float("inf"))  # never started: inert stop()
+        return _PooledResponse(response, watchdog, lambda ok, c=conn: self._release(c, ok))
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            conns = list(self._all)
+            self._idle.clear()
+            self._all.clear()
+        for conn in conns:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def __enter__(self) -> "GuardedKeepAliveClient":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()

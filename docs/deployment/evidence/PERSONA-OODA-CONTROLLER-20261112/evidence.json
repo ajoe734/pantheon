@@ -1,0 +1,149 @@
+{
+  "task_id": "PERSONA-OODA-CONTROLLER-20261112",
+  "kind": "source_implementation_evidence",
+  "owner": "Codex",
+  "assigned_reviewer": "Claude",
+  "independent_review": "pending",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md#61-per-persona-ooda-controller-c1",
+  "composition_base": "c733c0b99d47d7efec4f789b8fadeda66b355d50",
+  "hosted_behavior_claimed": false,
+  "acceptance_evidence": {
+    "1_daily_registration_repair": [
+      "services/control-plane/cron/persona_cron_registrar.py::PersonaCronRegistrar.reconcile_daily_cycles",
+      "services/persona/test_persona_cycle_controller.py::test_registration_repairs_duplicates_drift_and_orphans_preserves_first_evaluation"
+    ],
+    "2_one_turn_one_logical_packet": [
+      "services/persona/test_persona_cycle_controller.py::test_two_consecutive_cron_cycles_duplicate_provider_outage_and_restart",
+      "services/persona/test_persona_cycle_controller.py::test_concurrent_run_consumers_buy_only_one_turn",
+      "services/persona/test_persona_cycle_controller.py::test_restart_does_not_retry_an_uncertain_provider_or_risk_attempt",
+      "services/persona/test_cron_ooda_closure.py::CloseCronDispatchTests.test_daily_cycle_cannot_bypass_controller_claims_via_legacy_closure"
+    ],
+    "3_observe_harness_proposals_decisions_receipts_learn": [
+      "services/persona/persona_cycle_controller.py::CycleOwners.observe",
+      "integrations/openclaw/persona_ooda_runtime.py::CycleTurnOutput",
+      "services/persona/test_persona_cycle_controller.py::test_human_teaching_refs_use_actual_owner_consent_and_scope_without_private_content",
+      "services/persona/test_persona_cycle_controller.py::test_teaching_cursor_preserves_same_timestamp_remainder"
+    ],
+    "4_owner_only_actions": [
+      "services/persona/persona_cycle_controller.py::CycleOwners.risk",
+      "services/persona/test_persona_cycle_controller.py::test_schema_failure_stops_at_observing_and_never_executes_model_commands",
+      "services/persona/test_persona_cycle_controller.py::test_two_consecutive_cron_cycles_duplicate_provider_outage_and_restart"
+    ],
+    "5_model_failure_preserves_risk_rules": [
+      "services/persona/test_persona_cycle_controller.py::test_provider_outage_still_removes_member_using_real_deterministic_drawdown_rule",
+      "services/persona/test_persona_cycle_controller.py::test_trading_pool_risk_owner_runs_when_observe_and_agent_are_unavailable"
+    ],
+    "6_existing_process_and_credentials": [
+      "services/control-plane/persona/main.py::persona_lifespan",
+      "docker-compose.yml persona service environment and shared bff-data mount",
+      "services/openclaw-gateway-adapter/test_main.py::TestCronServiceAuthentication.test_cron_runs_reads_only_exact_daily_cycle_job_with_bounded_pagination",
+      "services/openclaw-gateway-adapter/test_main.py::TestCronServiceAuthentication.test_cron_runs_refuses_legacy_workflow_and_drifted_daily_job"
+    ],
+    "7_overlay_and_management_health": [
+      "docs/deployment/loop-catalog.registry.json composite_overlays/per_persona_ooda",
+      "services/persona/test_persona_cycle_controller.py::test_management_cycle_health_and_private_packet_tenant_fencing",
+      "services/persona/test_persona_cycle_controller.py::test_private_packet_routes_do_not_trust_foreign_tenant_header"
+    ],
+    "8_real_entry_integration_with_openclaw_http_simulated": [
+      "services/persona/test_persona_cycle_controller.py::test_two_consecutive_cron_cycles_duplicate_provider_outage_and_restart",
+      "Real registrar, AdapterCronRuntime, controller, Persona/harness/pool application owners, AtomicJson registry record fixtures and RuntimeSummaryProjectionStore. Only OpenClaw HTTP is simulated. This is local source-boundary proof, not a real hosted/model claim."
+    ]
+  },
+  "verification": [
+    {
+      "command": "timeout 120s /tmp/persona-pool-codex-review-venv/bin/python -m pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py integrations/openclaw/test_persona_ooda_runtime.py services/control-plane/cron/test_persona_cron_registrar.py services/control-plane/cron/test_cron.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/control-plane/ooda/test_jsonl_store.py services/openclaw-gateway-adapter/test_main.py::TestCronServiceAuthentication services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py -q -k 'not test_loop_health_registry_only_lists_all_loops_without_live_claim and not test_loop_runs_control_room_and_downstream_replay' --tb=short",
+      "result": "198 passed, 2 deselected, 45 subtests passed; exit 0; 62.71 seconds",
+      "output": "composed-regression.txt"
+    },
+    {
+      "command": "timeout 60s /tmp/persona-pool-codex-review-venv/bin/python -m pytest services/persona/test_persona_cycle_controller.py -q --tb=short",
+      "result": "14 passed; exit 0; includes the additional same-timestamp teaching cursor case and final tenant-scope heartbeat composition",
+      "output": "controller-final.txt"
+    },
+    {
+      "command": "timeout 60s /tmp/persona-pool-codex-review-venv/bin/python -m pytest services/control-plane/bff/test_loop_health_read_model_contract.py::test_loop_health_registry_only_lists_all_loops_without_live_claim services/control-plane/bff/tests/test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay -q --tb=short",
+      "working_directory": "git archive of untouched starting base b59cc3d8f in /tmp/persona-ooda-baseline-20261112",
+      "result": "2 failed; exit 1; reproduces the same pre-existing consultation catalog and downstream replay tenant-fixture failures",
+      "output": "baseline-tests.txt"
+    },
+    {
+      "command": "timeout 60s /tmp/persona-pool-codex-review-venv/bin/python scripts/bff_route_manifest_backend.py --check",
+      "result": "routes match snapshot; exit 0"
+    },
+    {
+      "command": "timeout 30s docker compose config --quiet",
+      "result": "exit 0"
+    },
+    {
+      "command": "git diff --check; python -m py_compile for modified runtime modules; python scripts/git/diff_budget.py --base origin/dev",
+      "result": "exit 0"
+    }
+  ],
+  "resumption_validation": {
+    "base": "c733c0b99d47d7efec4f789b8fadeda66b355d50",
+    "author_evidence_only": true,
+    "verification": [
+      {
+        "command": "timeout 60s python3 scripts/dev/provision_python_distribution.py",
+        "result": "exit 0; checkout-scoped interpreter inherits the supervisor-provided dependency interpreter; foreign-cwd imports verified"
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest services/persona/test_persona_cycle_controller.py -q --tb=short",
+        "result": "20 passed; exit 0; 18.78 seconds",
+        "output": "resumed-controller.txt"
+      },
+      {
+        "command": "timeout 120s .venv-pantheon/bin/python -m pytest services/persona/test_persona_cycle_controller.py services/persona/test_cron_ooda_closure.py integrations/openclaw/test_persona_ooda_runtime.py services/control-plane/cron/test_persona_cron_registrar.py services/control-plane/cron/test_cron.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/persona/test_pool_policy.py services/control-plane/ooda/test_jsonl_store.py services/openclaw-gateway-adapter/test_main.py::TestCronServiceAuthentication services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/tests/test_control_loops_router.py -q --tb=short",
+        "result": "2 failed, 205 passed, 45 subtests passed; exit 1; 54.46 seconds; no exclusions and not a passing batch",
+        "output": "resumed-composed.txt"
+      },
+      {
+        "command": "timeout 60s .venv-pantheon/bin/python -m pytest services/control-plane/bff/test_loop_health_read_model_contract.py::test_loop_health_registry_only_lists_all_loops_without_live_claim services/control-plane/bff/tests/test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay -q --tb=short",
+        "working_directory": "Untouched git archive of current origin/dev c733c0b99d47d7efec4f789b8fadeda66b355d50 in /tmp/persona-ooda-current-dev-tSdzZv, independently provisioned using the same supervisor dependency interpreter",
+        "result": "2 failed; exit 1; 1.53 seconds; identical consultation catalog and downstream replay fixture failures",
+        "output": "current-dev-baseline.txt"
+      },
+      {
+        "command": "timeout 30s docker compose config --quiet && timeout 60s .venv-pantheon/bin/python scripts/bff_route_manifest_backend.py --check && git diff --check",
+        "result": "exit 0; routes match snapshot"
+      },
+      {
+        "command": "timeout 30s .venv-pantheon/bin/python -m py_compile services/persona/persona_cycle_controller.py services/persona/test_persona_cycle_controller.py services/control-plane/persona/main.py services/openclaw-gateway-adapter/main.py services/control-plane/bff/control_loops/router.py services/control-plane/bff/ports/ooda_management.py && timeout 30s .venv-pantheon/bin/python scripts/git/diff_budget.py --base origin/dev",
+        "result": "exit 0"
+      }
+    ],
+    "additional_coverage": [
+      "Exact-tenant, foreign tenant, header spoof, absent claims, absent scope and later unscoped requests through actual packet list/detail routers",
+      "Actual deployed Persona app lifespan enabled/disabled, real cron/controller entry point, one turn and packet, existing writer SDK tenant heartbeat and awaited stop; HTTP and final database write are fixture boundaries"
+    ],
+    "not_proven": "Independent review, native integration, hosted three-persona turns/private memory/consultation and real database heartbeat remain unclaimed"
+  },
+  "delivery_boundaries": {
+    "schedule_executor": "OpenClaw only; the persona service polls existing terminal run identities",
+    "model_authority": "Schema-validated proposals only; no order, broker or capital route",
+    "risk_owner": "Existing PersonaStrategyPoolStore.decide application owner; pool versions do not assert execution publication",
+    "other_proposals": "Staged as requires_owner_gate; no invented consultation/admission/harness approval",
+    "memory_candidates": "Staged packet references only; no fabricated canonical write receipt",
+    "teaching": "Existing Agora inbox owner; consented learning references only, no private content/user IDs",
+    "restart": "Interrupted claims stop at observing with outcome unknown; never retry uncertain side effects",
+    "packet_store": "Existing JSON or JSONL envelopes, shared with BFF; one logical packet can have claim and terminal snapshots",
+    "credentials": "Reuse configured existing gateway, adapter, telemetry, database and registry read credentials; none issued or rotated"
+  },
+  "delivery_admission": {
+    "status": "ready_for_fresh_exact_head_handoff",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7274",
+    "reason": "Human/Ops admitted all nine integration paths at 2026-11-12T22:35:07Z and reopened the same task; owner re-read the governed canonical row",
+    "record": "delivery-hold.md",
+    "review_or_merge_claimed": false
+  },
+  "remaining_hosted_obligation": {
+    "status": "pending",
+    "required": [
+      "Independent assigned review, current-head required checks and native source merge",
+      "Exact admitted hosted deployment identities and configuration readback",
+      "Actual three-persona daily cycles through the real OpenClaw agents with private-memory materialization",
+      "Required real hosted consultation/cycle evidence retained by the existing canonical task contract"
+    ],
+    "waiver": false
+  }
+}

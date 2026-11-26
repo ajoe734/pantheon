@@ -17,7 +17,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
 
@@ -47,8 +47,60 @@ _SPAN_SCHEMA: dict[str, Any] = {
 }
 
 
+_PREDICTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["statement", "observable", "test_kind", "expected_sign", "window", "cited_spans"],
+    "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "observable": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["dataset", "field"],
+            "properties": {
+                "dataset": {"type": "string", "pattern": r"^[A-Za-z0-9_.\-]{1,80}$"},
+                "field": {"type": "string", "minLength": 1, "maxLength": 120},
+            },
+        },
+        "test_kind": {"enum": ["event_window", "regime_split", "dose_response", "lead_lag", "cross_symbol_sign"]},
+        "expected_sign": {"enum": ["+", "-", "0"]},
+        "window": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["before", "after"],
+            "properties": {
+                "before": {"type": "integer", "minimum": 0},
+                "after": {"type": "integer", "minimum": 0},
+            },
+        },
+        "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
+        # Code stamps this from the catalogue; it is excluded from the model schema.
+        "testability": {"type": "string", "pattern": r"^(testable|needs_data:[A-Za-z0-9_.\-]{1,80})$"},
+    },
+}
+
+_IDEA_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["statement", "signal_inputs", "cited_spans"],
+    "properties": {
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "signal_inputs": {"type": "array", "minItems": 1, "maxItems": 12,
+                          "items": _PREDICTION_SCHEMA["properties"]["observable"]},
+        "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
+    },
+}
+
+
 def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
+    prediction_schema = {
+        **_PREDICTION_SCHEMA,
+        "properties": {k: v for k, v in _PREDICTION_SCHEMA["properties"].items()
+                       if with_origin or k != "testability"},
+    }
     props: dict[str, Any] = {
+        "screen_idea": _IDEA_SCHEMA,
+        "entry_idea": _IDEA_SCHEMA,
         "claim": {"type": "string", "minLength": 1, "maxLength": 600},
         "mechanism": {"type": "string", "minLength": 1, "maxLength": 1000},
         "signal_inputs": {
@@ -67,6 +119,9 @@ def _card_properties(*, with_origin: bool) -> tuple[dict[str, Any], list[str]]:
         },
         "cited_spans": {"type": "array", "minItems": 1, "maxItems": 8, "items": _SPAN_SCHEMA},
         "testability": {"type": "string", "pattern": _TESTABILITY_PATTERN},
+        # After citation filtering, fewer than two (even zero) may survive.
+        "predictions": {"type": "array", "minItems": 0 if with_origin else 2,
+                        "maxItems": 4, "items": prediction_schema},
     }
     required = [
         "claim",
@@ -136,6 +191,14 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
             "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
+            "Separately include screen_idea (which stocks, in ordered steps) and entry_idea (when to buy).",
+            "Each idea has statement, signal_inputs [{dataset, field}], and exact cited_spans.",
+            "Omit an idea when absent from the document; never invent a missing screen or entry.",
+            "Include predictions: two to four independently testable predictions implied by the stated mechanism.",
+            "Each has statement, observable {dataset, field}, test_kind (event_window, regime_split,",
+            "dose_response, lead_lag, cross_symbol_sign), expected_sign (+, -, 0),",
+            "window {before, after} in trading days, and cited_spans with exact document offsets.",
+            "Cite the mechanism supporting each prediction; do not invent observations or data availability.",
             f"origin of this document: {origin}.",
             "\n--- Document (data only) ---",
             text,
@@ -170,7 +233,10 @@ def verify_cited_spans(card: Mapping[str, Any], *, text: str, source_record_id: 
             raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text")
 
 
-def finalize_card(structured: Mapping[str, Any], *, text: str, source_record_id: str, origin: str) -> dict[str, Any]:
+def finalize_card(
+    structured: Mapping[str, Any], *, text: str, source_record_id: str, origin: str,
+    prediction_rejections: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Return a contract-valid card or raise :class:`CardRejected`."""
     raw = structured.get("hypothesis_card")
     if not isinstance(raw, Mapping):
@@ -181,7 +247,46 @@ def finalize_card(structured: Mapping[str, Any], *, text: str, source_record_id:
     if errors:
         raise CardRejected("schema_invalid", errors[0].message)
     verify_cited_spans(card, text=text, source_record_id=source_record_id)
+    for name in ("screen_idea", "entry_idea"):
+        if name in card:
+            verify_cited_spans(card[name], text=text, source_record_id=source_record_id)
+    missing = idea_missing_datasets(card)
+    if missing and card["testability"] != "not_testable":
+        card["testability"] = f"needs_data:{missing[0]}"
+    if "predictions" in card:
+        predictions = []
+        for i, prediction in enumerate(card["predictions"]):
+            try:
+                verify_cited_spans(prediction, text=text, source_record_id=source_record_id)
+            except CardRejected as exc:
+                if prediction_rejections is not None:
+                    prediction_rejections.append({"index": i, "code": exc.code, "detail": exc.detail})
+                continue
+            missing = prediction_missing_dataset(prediction)
+            predictions.append({**prediction, "testability": f"needs_data:{missing}" if missing else "testable"})
+        card["predictions"] = predictions
     return card
+
+
+def idea_missing_datasets(card: Mapping[str, Any]) -> list[str]:
+    """Both unknown datasets and unknown fields are unmet data requirements."""
+    from services.registry.factor_rule import get_feature_definition
+
+    return sorted({
+        item["dataset"]
+        for name in ("screen_idea", "entry_idea") if name in card
+        for item in card[name]["signal_inputs"]
+        if get_feature_definition(item["dataset"], item["field"]) is None
+    })
+
+
+def prediction_missing_dataset(prediction: Mapping[str, Any]) -> str:
+    """Unknown datasets AND unknown fields fail closed against the rule catalogue."""
+    from services.registry.factor_rule import get_feature_definition
+
+    observable = prediction["observable"]
+    dataset, feature = observable["dataset"], observable["field"]
+    return dataset if get_feature_definition(dataset, feature) is None else ""
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +298,39 @@ def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+TICK_BUDGET_ENV = "PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS"
+DEFAULT_TICK_BUDGET_SECONDS = 120.0
+MAX_TICK_BUDGET_SECONDS = 600.0
+
+
+def l2_extraction_tick_budget_seconds() -> float:
+    """Extraction time one distillation tick may spend before deferring the rest.
+
+    A tick then lasts at most this plus one call deadline, which keeps it
+    inside the controller's 300 s health window at the defaults (120 + 90 s).
+    """
+    try:
+        value = float(os.environ.get(TICK_BUDGET_ENV) or DEFAULT_TICK_BUDGET_SECONDS)
+    except (TypeError, ValueError):
+        value = DEFAULT_TICK_BUDGET_SECONDS
+    if value != value:
+        value = DEFAULT_TICK_BUDGET_SECONDS
+    return min(MAX_TICK_BUDGET_SECONDS, max(1.0, value))
+
+
+def l2_extraction_enabled() -> bool:
+    return str(os.environ.get(ENABLED_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def l2_extraction_tick_ceiling_seconds() -> float:
+    """Longest extraction share of one tick (0 when extraction is off)."""
+    if not l2_extraction_enabled():
+        return 0.0
+    from services.source_ingestion.semantic_extraction import hypothesis_card_deadline_seconds
+
+    return l2_extraction_tick_budget_seconds() + hypothesis_card_deadline_seconds()
+
+
 def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
     try:
         return max(0, int(os.environ.get(DAILY_CAP_ENV, default)))
@@ -200,8 +338,28 @@ def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
         return default
 
 
+# Per record version: at most this many model calls a UTC day and in total.
+MAX_RECORD_ATTEMPTS_PER_DAY = 3
+MAX_RECORD_ATTEMPTS_TOTAL = 6
+# Attempt rows of records untouched this long are pruned (the record has long
+# been closed or carded by then: 6 attempts at 3 a day take 2 days).
+RECORD_ATTEMPT_RETENTION_DAYS = 30
+
+RESERVED = "reserved"
+DAILY_CAP_REACHED = "daily_cap"
+RECORD_DAILY_LIMIT = "record_daily_limit"
+RECORD_TOTAL_LIMIT = "record_total_limit"
+
+
 class ExtractionLedger:
-    """SQLite-backed daily call counter and outcome record."""
+    """SQLite-backed daily call counter, per-record attempts and outcome record.
+
+    Every model call is counted against the daily cap, including a retry of the
+    same record on the same day (a failing provider must not spend past the
+    cap). A record version is called at most 3 times a UTC day and 6 times in
+    total; the ledger also counts calls that ended in a timeout or a
+    billing-only provider failure.
+    """
 
     def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
         self._path = str(path) if path else ":memory:"
@@ -214,6 +372,14 @@ class ExtractionLedger:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+            cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
+            for name in ("timeouts", "billing", "unavailable"):
+                if name not in cols:
+                    c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+            if "cap" not in cols:
+                # The cap in force when the day's last call was reserved, so a
+                # reader in another process reports the writer's cap.
+                c.execute("ALTER TABLE calls ADD COLUMN cap INTEGER")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
@@ -221,6 +387,14 @@ class ExtractionLedger:
             c.execute(
                 "CREATE TABLE IF NOT EXISTS cards (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " card TEXT NOT NULL, PRIMARY KEY(source_id, digest))"
+            )
+            # The former "one free reservation per record and day" table let a
+            # failing provider retry the same record without counting it.
+            c.execute("DROP TABLE IF EXISTS reservations")
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS record_attempts (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
+                " total INTEGER NOT NULL, day TEXT NOT NULL, day_n INTEGER NOT NULL,"
+                " last_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, digest))"
             )
 
     @property
@@ -240,18 +414,97 @@ class ExtractionLedger:
         finally:
             conn.close()
 
-    def reserve_call(self) -> bool:
-        """Atomically consume one call; False once the daily cap is reached."""
+    def reserve_attempt(self, source_id: str = "", digest: str = "") -> str:
+        """Atomically reserve one model call; returns ``RESERVED`` or why not.
+
+        Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
+        record version already had 3 calls today) and ``record_total_limit``
+        (6 calls in total). A refusal consumes nothing.
+        """
         with self._lock, self._conn() as c:
-            row = c.execute("SELECT n FROM calls WHERE day=?", (_today(),)).fetchone()
-            used = row[0] if row else 0
-            if used >= self._daily_cap:
-                return False
+            # Serialize the read/check/increment across processes sharing the
+            # production ledger, not only threads in this extractor instance.
+            c.execute("BEGIN IMMEDIATE")
+            day = _today()
+            row = None
+            if source_id:
+                row = c.execute(
+                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
+                    (source_id, digest),
+                ).fetchone()
+                if row is not None:
+                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
+                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                        return RECORD_TOTAL_LIMIT
+                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                        return RECORD_DAILY_LIMIT
+            used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
+            if (used_row[0] if used_row else 0) >= self._daily_cap:
+                return DAILY_CAP_REACHED
             c.execute(
-                "INSERT INTO calls(day, n) VALUES(?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1",
+                "INSERT INTO calls(day, n, cap) VALUES(?, 1, ?)"
+                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap",
+                (day, self._daily_cap),
+            )
+            if source_id:
+                c.execute(
+                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,?,1,?,1)"
+                    " ON CONFLICT(source_id, digest) DO UPDATE SET total = total + 1,"
+                    " day_n = CASE WHEN day = excluded.day THEN day_n + 1 ELSE 1 END, day = excluded.day",
+                    (source_id, digest, day),
+                )
+                cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
+                c.execute("DELETE FROM record_attempts WHERE day < ?", (cutoff,))
+            return RESERVED
+
+    def reserve_call(self, source_id: str = "", digest: str = "") -> bool:
+        """Consume one call; False when the cap or a per-record limit refuses."""
+        return self.reserve_attempt(source_id, digest) == RESERVED
+
+    def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:
+        """Count a spent call that yielded nothing, and keep the record's reason."""
+        column = {"timeout": "timeouts", "provider_billing": "billing"}.get(failure_code, "unavailable")
+        with self._lock, self._conn() as c:
+            c.execute(
+                f"INSERT INTO calls(day, n, {column}) VALUES(?, 0, 1)"
+                f" ON CONFLICT(day) DO UPDATE SET {column} = {column} + 1",
                 (_today(),),
             )
-            return True
+            if source_id:
+                c.execute(
+                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=?",
+                    (reason[:500], source_id, digest),
+                )
+
+    def record_attempts(self, source_id: str, digest: str = "") -> dict[str, Any]:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT total, day, day_n, last_reason FROM record_attempts WHERE source_id=? AND digest=?",
+                (source_id, digest),
+            ).fetchone()
+        if row is None:
+            return {"total": 0, "today": 0, "last_reason": ""}
+        return {
+            "total": int(row[0]),
+            "today": int(row[2]) if row[1] == _today() else 0,
+            "last_reason": str(row[3] or ""),
+        }
+
+    def summary(self) -> dict[str, Any]:
+        """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT n, timeouts, billing, unavailable FROM calls WHERE day=?", (_today(),)
+            ).fetchone()
+        n, timeouts, billing, unavailable = (int(v or 0) for v in (row or (0, 0, 0, 0)))
+        return {
+            "day": _today(),
+            "calls": n,
+            "daily_cap": self._daily_cap,
+            "timeout_calls": timeouts,
+            "billing_failed_calls": billing,
+            "unavailable_calls": unavailable,
+        }
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:
         with self._conn() as c:
@@ -292,6 +545,11 @@ class ExtractionLedger:
 # Eligibility
 # ---------------------------------------------------------------------------
 
+# Failure codes that mean the model or adapter could not answer: retry them.
+# A billing-only failure (every provider key skipped for billing) is retried
+# with backoff, never recorded as "no hypothesis".
+UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
+
 _TEXT_KEYS = ("body", "text", "abstract", "excerpt", "summary")
 
 
@@ -301,6 +559,15 @@ def stored_text(metadata: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value
     return ""
+
+
+def assess_source_relevance(source: Any) -> Any:
+    """Deterministic finance relevance of one record (no model call)."""
+    from services.source_ingestion.l2_relevance import assess_relevance, hosted_listed_codes
+
+    return assess_relevance(
+        source.source_type.value, source.title, source.metadata, listed_codes=hosted_listed_codes,
+    )
 
 
 def extraction_origin(source_type: str, metadata: Mapping[str, Any]) -> Optional[str]:
@@ -326,7 +593,10 @@ def extraction_origin(source_type: str, metadata: Mapping[str, Any]) -> Optional
 
 @dataclass(frozen=True)
 class ExtractionOutcome:
-    status: str  # card | no_hypothesis | budget_exhausted | rejected | admission_denied | failed
+    # card | no_hypothesis | budget_exhausted | rejected | admission_denied | irrelevant
+    # | attempts_deferred (3 calls today: next UTC day) | attempts_exhausted (6 calls: close)
+    # | unavailable (model/adapter down: retry) | failed (model answered unusably)
+    status: str
     card: Optional[dict[str, Any]] = None
     detail: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -343,18 +613,26 @@ class HypothesisExtractor:
     def ledger(self) -> ExtractionLedger:
         return self._ledger
 
+    @property
+    def call_deadline_seconds(self) -> float:
+        """Longest one extraction call can take (the HYPOTHESIS_CARD deadline)."""
+        from services.source_ingestion.semantic_extraction import hypothesis_card_deadline_seconds
+
+        value = getattr(self._client, "hypothesis_deadline_seconds", None)
+        return float(value) if isinstance(value, (int, float)) else hypothesis_card_deadline_seconds()
+
     def extract(self, source: Any, *, digest: str = "") -> ExtractionOutcome:
         """Extract (or replay the cached card for) one source version."""
         if digest:
             cached = self._ledger.get_card(source.source_id, digest)
             if cached is not None:
                 return ExtractionOutcome("card", card=cached, detail="cached")
-        outcome = self._extract(source)
+        outcome = self._extract(source, digest)
         if digest and outcome.card is not None:
             self._ledger.put_card(source.source_id, digest, outcome.card)
         return outcome
 
-    def _extract(self, source: Any) -> ExtractionOutcome:
+    def _extract(self, source: Any, digest: str = "") -> ExtractionOutcome:
         from services.source_ingestion.semantic_extraction import (
             ExtractionTaskType,
             SemanticExtractionAdmission,
@@ -369,6 +647,10 @@ class HypothesisExtractor:
         text = stored_text(meta)
         if not text:
             return self._done(sid, "no_hypothesis", "no_text")
+        # Deterministic finance relevance comes before admission and budget.
+        relevance = assess_source_relevance(source)
+        if not relevance.relevant:
+            return self._done(sid, "irrelevant", relevance.reason)
         prompt_text = text[:MAX_PROMPT_TEXT_CHARS]
         request = SemanticExtractionRequest(
             source_id=sid,
@@ -386,27 +668,63 @@ class HypothesisExtractor:
         # Admission first: a denied record costs no budget and no model call.
         admission = SemanticExtractionAdmission.check(request)
         if not admission.admitted:
-            return self._done(sid, "admission_denied", admission.denial_code or "denied", {"reason": admission.denial_reason})
-        if not self._ledger.reserve_call():
+            # The recorded detail explains the denial: which rule matched where,
+            # a masked preview, and whether it is a secret class.
+            explanation = {
+                "code": admission.denial_code or "denied",
+                "matches": [dict(item) for item in getattr(admission, "explanations", ())],
+            }
+            if not explanation["matches"]:
+                explanation["reason"] = admission.denial_reason
+            return self._done(
+                sid, "admission_denied", json.dumps(explanation, sort_keys=True, ensure_ascii=False),
+                {"reason": admission.denial_reason, "code": admission.denial_code},
+            )
+        reservation = self._ledger.reserve_attempt(sid, digest)
+        if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
-        result = self._client.extract(request)
+        if reservation in (RECORD_DAILY_LIMIT, RECORD_TOTAL_LIMIT):
+            attempts = self._ledger.record_attempts(sid, digest)
+            if reservation == RECORD_DAILY_LIMIT:
+                return self._done(
+                    sid, "attempts_deferred",
+                    f"{MAX_RECORD_ATTEMPTS_PER_DAY} calls today; last: {attempts['last_reason'] or 'unknown'}",
+                )
+            return self._done(
+                sid, "attempts_exhausted",
+                f"{attempts['total']} calls; last: {attempts['last_reason'] or 'unknown'}",
+            )
+        try:
+            result = self._client.extract(request)
+        except Exception as exc:  # noqa: BLE001 - an unreachable adapter is not "no hypothesis"
+            detail = f"{type(exc).__name__}: {exc}"
+            self._ledger.note_call_failure(sid, digest, "transport_error", detail)
+            return self._done(sid, "unavailable", detail)
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
-            return self._done(sid, "failed", f"{result.failure_code}: {result.failure_message}")
+            detail = f"{result.failure_code}: {result.failure_message}"
+            if result.failure_code in UNAVAILABLE_FAILURE_CODES:
+                self._ledger.note_call_failure(sid, digest, str(result.failure_code), detail)
+                return self._done(sid, "unavailable", detail)
+            return self._done(sid, "failed", detail)
         if result.is_abstained or result.hypothesis_card is None:
             return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained")
         try:
+            prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
                 {"hypothesis_card": result.hypothesis_card},
                 text=text,
                 source_record_id=sid,
                 origin=origin,
+                prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
             return self._done(sid, "rejected", str(exc), {"code": exc.code})
+        for rejection in prediction_rejections:
+            self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
             return self._done(sid, "no_hypothesis", "not_testable")
         self._ledger.record(sid, "card", card["testability"])
-        return ExtractionOutcome("card", card=card)
+        return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
 
     def _done(self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None) -> ExtractionOutcome:
         self._ledger.record(sid, status, detail)
@@ -430,7 +748,7 @@ def card_to_strategy_seed_metadata(card: Mapping[str, Any]) -> dict[str, Any]:
 
 def extractor_from_env(client: Any | None = None, ledger_path: str | Path | None = None) -> Optional[HypothesisExtractor]:
     """Build the extractor when ``PANTHEON_L2_EXTRACTION_ENABLED`` is truthy."""
-    if str(os.environ.get(ENABLED_ENV, "")).strip().lower() not in ("1", "true", "yes", "on"):
+    if not l2_extraction_enabled():
         return None
     if client is None:
         from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
@@ -441,6 +759,8 @@ def extractor_from_env(client: Any | None = None, ledger_path: str | Path | None
 
 
 __all__ = [
+    "MAX_RECORD_ATTEMPTS_PER_DAY",
+    "MAX_RECORD_ATTEMPTS_TOTAL",
     "CardRejected",
     "DEFAULT_DAILY_CALL_CAP",
     "ExtractionLedger",

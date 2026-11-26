@@ -77,6 +77,46 @@ returns nonzero on failure; a deployed pair does not mean AI is usable, and a
 quota/auth failure is not an accepted AI journey. Do not repeat provider calls
 when a known quota limit already explains the failure.
 
+## Dev acceptance stage
+
+`dev-acceptance-stage` runs after `coordinate-dev-release` succeeded, on every
+dev release (automatic or manual, not compensation drills). It runs
+`scripts/dev_acceptance_stage.py`: the read-only `deployed-pair-identity` check,
+the checks declared in `acceptance/checks.json` and every probe in
+`acceptance/probes/` (contract: `acceptance/README.md`). It is `continue-on-error`,
+the script exits 0 on every outcome, nothing depends on the job, and it never rolls
+back: the run conclusion measures deploys, the verdict measures acceptance.
+
+- Verdict `acceptance`: `pending` (no result yet, or a required mutating check
+  could not run without the lease), `passed`, or `failed` with `failed[]` listing each
+  failing check or probe with its owning task or chain id, plus the evidence run.
+- `deploymentState` and its five readers are unchanged. The verdict is stored as a
+  sibling of the hosted `deployment.json` (`<worktree parent>/acceptance/latest.json`
+  on the dev VM), not inside it, because the exact-artifact capture pins the manifest
+  digest. It is replaced per release, never appended; the run artifact
+  `dev-acceptance-verdict-<run>-<attempt>` follows the 30-day workflow retention.
+- A check declared `mutates: true` runs only while the job holds the qualification
+  lease (same pinned controller as the hosted chain job); without it the check is
+  skipped and the verdict stays `pending`.
+- Viewer identity: release probes receive the read-only viewer identity
+  (`ACCEPTANCE_VIEWER_CLIENT_ID` from `vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID`, default
+  `pantheon-dev-viewer-v1`, and `ACCEPTANCE_VIEWER_CLIENT_SECRET` from the existing
+  `DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET`) as env of the `Run acceptance checks and probes`
+  step only, and only when the checked-out stage's `plan` declares `redacts_output`
+  (an older backend keeps skipping credentialed probes with exit 77). Probes must never
+  print it; captured output is redacted (`[redacted]`) for that secret and every
+  `*_SECRET`/`*_TOKEN`/`*_PASSWORD` env value before clipping and writing the verdict.
+  The job stays advisory.
+- Release probes only: the stage runs what the release itself can answer. Daily state
+  probes (the persona-day probe, `acceptance/persona_day.py`) run from their own daily
+  workflow and never decide a release verdict (`acceptance/README.md`, "Release probes only").
+- Accepted baseline: the accepted baseline of record is the latest release whose verdict in
+  `acceptance/latest.json` is `passed`; a `failed` or `pending` verdict leaves it where it was,
+  and the next release whose stage passes advances it. No gate is added to the deploy path and
+  nothing rolls back because of the acceptance stage.
+- Reporting: a release is `deployed` after the deploy; it is `accepted` only when
+  `acceptance=passed`. The run summary and the automatic checker report both separately.
+
 ## Deployment Script
 
 The workflow uses:
@@ -148,9 +188,20 @@ Emergency flags:
 The hourly workflow has two independent jobs: creating immutable `publish/v*`
 snapshots and reconciling the dev FE/BFF pair. `scripts/auto_deploy_dev_pair.py`
 checks both protected `dev` tips every tick, including frontend-only updates
-and ticks with no new snapshot. Both exact commits must have a successful latest
-dev-push Branch CI Gate. An active backend or frontend deployment defers the
-check without cancelling it.
+and ticks with no new snapshot. For each repository it selects the newest commit
+that has a successful dev-push Branch CI Gate run, is an ancestor of (or equal
+to) the `dev` tip, and is ahead of the commit the host serves; the tip itself
+need not be green, because `dev` merges every 5 to 10 minutes and cancels the
+previous tip's run. A repository with no such commit keeps its served commit
+while the other moves; `waiting_for_ci` is reported only when no green commit
+ahead of the host exists. `up_to_date`, `report_only_no_deploy`,
+`failed_pair_not_retried` and `superseded_before_dispatch` are evaluated against
+the selected pair, not the tips. The Nonprod Deploy workflow accepts such an
+older payload only if it is on `dev` and has a successful dev-push Branch CI run
+(a commit off `dev` or without one is refused); the workflow definition comes
+from the `dev` tip it was dispatched on, the deploy scripts from the payload
+checkout, and the lease controller from its pinned revision. An active backend
+or frontend deployment defers the check without cancelling it.
 
 A pair whose latest completed Nonprod Deploy attempt failed or timed out is not
 dispatched again; the tick reports `failed_pair_not_retried` with that run URL.
@@ -168,11 +219,61 @@ An already accepted hosted manifest and matching live BFF version produce
 `up_to_date`. Otherwise the checker explicitly dispatches `nonprod-deploy.yml`
 with both SHAs, strict auth, and the currently accepted persistent frontend
 profile (`read-only` or `operator-live`). Temporary proof profiles are never
-propagated. Automatic releases enable the existing canonical paper lifecycle
-probe, including fresh stimulus and authenticated BFF readback; historical rows
-alone cannot satisfy this acceptance. Missing or unaccepted baseline evidence requires recovery through
+propagated. Automatic releases are deploy-only: the checker no longer sends
+`run_loop_prod_tel_002_probe` (or any input that sets `PAPER_BOOTSTRAP_REQUESTED`),
+so the deploy job runs build, switch and stack health only, with no Taiwan market
+refresh, TAIFEX refresh, governed paper baseline or canonical paper lifecycle
+probe. Only an unhealthy stack rolls back. Their functional acceptance is the
+verdict of the `dev-acceptance-stage` job (see "Dev acceptance stage"). A manual
+dispatch that sets the input still runs the probe, now as an advisory check (see
+"Dev deploy: blocking set and advisory set"). Missing or unaccepted baseline evidence requires recovery through
 the existing deployment flow. The checker can run without `--apply` to inspect
 its decision without dispatching.
+
+### Dev deploy: blocking set and advisory set
+
+A dev deploy is build, switch and stack health
+(`docs/deployment/SD_DEV_DEPLOY_ACCEPTANCE_SPLIT_2026-11-17.md` section 3.1).
+
+**Blocking set** (a failure rolls back / compensates, as before): admission and
+identity, the environment lease, the prior-artifact baseline and candidate seal;
+build, migration bootstrap, `compose up`, `/readyz` at the exact SHA, source SHA,
+the auth gate, ingress, the exact component deployment check; the public BFF
+smoke (health, exact version, CORS); frontend build, artifact authentication,
+atomic switch and final verify.
+
+**Advisory set** (runs after the switch; records its real result; never rolls
+back, never fails the deploy job and is not part of `complete_success`):
+
+- workflow steps: Taiwan market refresh after candidate stack deploy, governed
+  dev paper baseline, evolution dispatch probe, canonical paper lifecycle probe,
+  Agora restart persistence smoke;
+- deploy-script checks: `verify_dev_paper_fleet`,
+  `verify_dev_evolution_daily_sweep`, `verify_trade_journey_residual_dev.sh`,
+  `verify_bounded_source_refresh_readback` (run through `run_dev_advisory_check`).
+
+Lease-guarded steps cannot use `continue-on-error`: the pinned lease guard stops
+the heartbeat and quarantines the lease whenever its command exits non-zero.
+They therefore run the guarded child through `guarded_advisory`, which hands the
+guard an exit 0 and returns the real exit code from a result file; the step
+records the real result and exits 0. The deploy script prints one
+`ADVISORY_CHECK_RESULT {json}` line per check. The step "Record advisory
+functional check results" collects both into
+`summary.json` (`deployment: deployed`, `acceptance: passed|failed|pending`,
+failing checks) in the `pantheon-dev-advisory-checks-<run>-<attempt>` artifact
+and in the run summary, so a release with failed checks is visible as deployed
+with acceptance not passed.
+
+Manual strict mode: set the repository variable
+`DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS` to `true` (unset or any other value means
+advisory; the automatic deployer never sets it). It is a variable and not a
+dispatch input because GitHub rejects a workflow with more than 25
+`workflow_dispatch` inputs and this workflow already declares 25; a 26th input
+invalidated the whole workflow on 2026-11-17. The workflow steps then keep
+today's blocking behaviour, the deploy script receives
+`--strict-functional-checks` and rolls back on the original stage names, and the
+gate step "Enforce strict functional checks when requested" fails and triggers
+the whole-stack compensation. Staging and production are unchanged.
 
 The existing release workflow admits the exact current pair before any switch.
 Once admitted, new dev merges queue work for the next tick: the active release
@@ -509,3 +610,12 @@ run and the lease ends as it does for any other pre-mutation failure.
 recorded as failed and the next tick dispatches the same pair again. A failure
 in any later step returns `failed_pair_not_retried`. The GitHub schedule itself
 is unchanged.
+
+## Dev steady-state restart-loop check
+
+After the dev switch and after a restore, every steady Compose service is sampled
+twice (>= 90 s apart, read-only `docker inspect`). Restart-count growth, OOMKilled
+or a restarting state fails the deploy as `steady_service_restart_loop` and
+triggers the normal compensation path. Healthcheck status and readiness contents
+are deliberately not criteria. Details:
+`docs/deployment/dev-exact-artifact-rollback.md`.

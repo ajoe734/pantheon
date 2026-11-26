@@ -1,0 +1,81 @@
+{
+  "task_id": "RECOMMENDED-MEASURE-CONSUMERS-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "date": "2026-11-12",
+  "base_commit": "caec3f40727c6bf7dd73c710625deff81b5fd4eb",
+  "anchors": [
+    "924003b67",
+    "7ddea4ae6"
+  ],
+  "delivery_status": "ready_for_independent_review",
+  "scope": "Exact-source candidate approval forwarding to existing review artifact owners",
+  "acceptance": [
+    {
+      "criterion": 1,
+      "proof": "Real candidate formal-approval link route dispatches all three typed owner HTTP requests; tickets retain recommending persona ownership, memory remains proposed, harness remains draft",
+      "tests": [
+        "test_real_approval_route_delivers_each_consumer_and_replays"
+      ]
+    },
+    {
+      "criterion": 2,
+      "proof": "All seven remaining measure types fail approval with a readable no-consumer reason; legacy cards without persisted measure identity refuse approval without appending a revision",
+      "tests": [
+        "test_unconsumed_measures_are_refused_at_approval",
+        "test_matching_canonical_decision_still_requires_measure_consumer"
+      ]
+    },
+    {
+      "criterion": 3,
+      "proof": "Scoped measure identity yields deterministic owner IDs; receipt and canonical approval persist in one local transaction; replay, concurrency and owner-response loss recover without another POST",
+      "tests": [
+        "test_owner_write_lost_response_is_recovered_by_id_without_duplicate",
+        "test_postgres_real_approval_restart_recovers_owner_write",
+        "test_postgres_concurrent_approval_is_one_delivery"
+      ]
+    },
+    {
+      "criterion": 4,
+      "proof": "Only POST research/tickets, memory/trade-lessons and persona/harness/patches may be called; no merge, activation, runtime or capital endpoint exists in the transport",
+      "tests": [
+        "test_real_approval_route_delivers_each_consumer_and_replays",
+        "test_persona_draft_creation_can_use_existing_service_identity",
+        "test_approved_measure_cannot_be_modified_or_redelivered"
+      ]
+    },
+    {
+      "criterion": 5,
+      "proof": "Real JWT/roles/scope, source candidate creation, binding validation, canonical approval read adapter and approval link route; seeded upstream persisted records; only consumer owner HTTP transport is replaced",
+      "tests": [
+        "test_real_approval_route_delivers_each_consumer_and_replays"
+      ]
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "exit_status": 0,
+    "passed": 79,
+    "warnings": 3,
+    "duration_seconds": 56.42,
+    "command": "timeout 120 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/control-plane/bff/tests/test_recommended_measure_consumers.py services/control-plane/bff/tests/test_agora_candidate_decisions.py services/control-plane/bff/tests/test_agora_governed_proposals.py services/control-plane/bff/agora/candidate_decisions/test_postgres_store.py services/control-plane/bff/agora/governance/test_postgres_store.py -q --disable-warnings --maxfail=2",
+    "environment": "TEST_DATABASE_URL set to isolated task-local PostgreSQL 16 on loopback; no hosted owner HTTP calls",
+    "output": "focused-tests.txt",
+    "diff_check": "git diff --check passed"
+  },
+  "hosted": {
+    "status": "not_claimed",
+    "deployment_performed": false
+  },
+  "limitations": [
+    "Requires existing strict canonical approval readback; no new approval issuer supplied",
+    "Legacy proposal approvals require exact-source candidate conversion",
+    "Memory candidates require real reflection provenance in the reviewed measure",
+    "No upstream Memory hosted acceptance is claimed",
+    "Owner-response recovery runs when the approval request is retried"
+  ],
+  "review": {
+    "status": "pending",
+    "assigned_reviewer": "Claude"
+  }
+}

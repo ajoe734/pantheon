@@ -35,6 +35,9 @@ def _accepts_idempotency_key(owner_call: Optional[Callable[..., Any]]) -> bool:
     return any(p.name == "idempotency_key" or p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
 
 
+from ..core.display_names import current_resolver
+
+
 def create_runtime_router(
     *,
     read_surface: Optional[Any] = None,
@@ -1133,6 +1136,8 @@ def create_runtime_router(
         else:
             total = len(bindings)
             bindings, next_page_token = _page_slice(bindings, page_token, page_size)
+            _names = current_resolver(read_store)
+            bindings = [_names.annotate(dict(b)) for b in bindings]
 
         meta = _snapshot_meta(snapshot_at)
         meta["total"] = 0 if surface.get("status") == "unavailable" else total
@@ -1174,6 +1179,7 @@ def create_runtime_router(
 
         meta = _snapshot_meta(snapshot_at)
         meta["surfaces"] = {"runtime": surface}
+        binding = current_resolver(read_store).annotate(dict(binding))
         return {
             "data": binding,
             "meta": meta,

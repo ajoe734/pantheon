@@ -1,0 +1,19 @@
+{
+  "task": "PERSONA-CYCLE-TURN-INPUT-BOUNDED-20261120",
+  "valued_points_kept_N": 5,
+  "prompt_budget_chars": 40000,
+  "hosted_shape": {
+    "quarter_equity_observations": 78,
+    "with_mark_refs": 37,
+    "mark_refs_chars_each": 14600
+  },
+  "observe_chars_before": 589338,
+  "prompt_chars_after_hosted_shape": 2155,
+  "prompt_chars_after_20000_observations": 2172,
+  "shared_function": "integrations/openclaw/persona_ooda_runtime.py bound_observe (used by build_brokered_cycle_prompt and cron_ooda_closure.bound_packet_payload)",
+  "packet_field": "persona_cycle.turn_input_chars (and revision_turn_input_chars)",
+  "overflow_failure_reason": "turn_context_overflow",
+  "new_writer": false,
+  "tests": "98 passed: test_persona_cycle_controller.py, test_persona_ooda_runtime.py, test_cron_ooda_closure.py",
+  "hosted_proof": "pending deploy; persona-loop owner records next daily cycle (criterion 10)"
+}

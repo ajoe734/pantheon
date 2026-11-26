@@ -813,7 +813,11 @@ def _candidate_from_seed(seed: StrategySpecSeed | Mapping[str, Any]) -> Strategy
 
 def _candidate_from_strategy_spec(spec: Mapping[str, Any]) -> StrategyCandidate:
     raw = dict(spec)
-    metadata = _mapping(raw.get("metadata"))
+    metadata = dict(_mapping(raw.get("metadata")))
+    for key in ("mechanism", "mechanism_status", "mechanism_support"):
+        # the replication gate's admission-time mechanism record travels on the spec entry
+        if key in raw and key not in metadata:
+            metadata[key] = raw[key]
     market_scope = _mapping(raw.get("market_scope"))
     execution_profile = _mapping(raw.get("execution_profile"))
     governance = _mapping(raw.get("governance"))
@@ -941,6 +945,11 @@ def _candidate_hard_blockers(
     negative_memory_match = _mapping(candidate.metadata.get("negative_memory_match"))
     if str(negative_memory_match.get("warning_level") or "").lower() == "blocking":
         blockers.append("negative_memory_blocking_match")
+    mechanism_status = _mechanism_record(candidate).get("mechanism_status") or candidate.metadata.get(
+        "mechanism_status"
+    )
+    if str(mechanism_status or "").lower() == "contradicted":
+        blockers.append("mechanism_contradicted")
     return blockers
 
 
@@ -1005,10 +1014,32 @@ def _score_backend_compatibility(
     return 0.0, ["route_policy_blocks_required_backend"]
 
 
+_MECHANISM_SUPPORT_MAX_BONUS = 3.0
+
+
+def _mechanism_record(candidate: StrategyCandidate) -> Mapping[str, Any]:
+    """Admission-time mechanism record (replication gate §3.2), if the candidate carries one."""
+    return _mapping(candidate.metadata.get("mechanism"))
+
+
+def _mechanism_support(candidate: StrategyCandidate) -> float | None:
+    """mechanism_support = supported / testable predictions; None when untested."""
+    record = _mechanism_record(candidate)
+    value = record.get("mechanism_support", candidate.metadata.get("mechanism_support"))
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(0.0, min(1.0, float(value)))
+
+
 def _score_evidence_quality(candidate: StrategyCandidate) -> float:
     base = max(0.0, min(1.0, candidate.confidence)) * 10.0
     evidence_bonus = min(5.0, len(candidate.evidence_refs) * 1.5)
-    return _round_score(base + evidence_bonus)
+    # A candidate whose card predictions were tested in-sample earns up to +3 in
+    # proportion to the supported share; mechanism_untested earns nothing, so it ranks
+    # below an otherwise equal supported candidate without being rejected.
+    support = _mechanism_support(candidate)
+    mechanism_bonus = 0.0 if support is None else support * _MECHANISM_SUPPORT_MAX_BONUS
+    return _round_score(base + evidence_bonus + mechanism_bonus)
 
 
 def _score_risk(profile: PersonaStrategyProfile, candidate: StrategyCandidate) -> float:
@@ -1314,3 +1345,80 @@ def _round_score(value: float) -> float:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# --- research-demand driven discovery (PERSONA-DISCOVERY-DEMAND-LINK-20261112) ---
+DEMAND_DISCOVERY_MAX_MATCHES = 3
+
+
+def _demand_candidate(raw: Any, kind: str) -> StrategyCandidate:
+    return _candidate_from_seed(raw) if kind == "seed" else _candidate_from_strategy_spec(raw)
+
+
+def discover_for_demand(
+    persona: Persona | Mapping[str, Any],
+    demand: Mapping[str, Any],
+    *,
+    route_policy: Mapping[str, Any] | None = None,
+    capability_snapshot: Mapping[str, Any] | None = None,
+    strategy_seeds: Sequence[StrategySpecSeed | Mapping[str, Any]] = (),
+    strategy_specs: Sequence[Mapping[str, Any]] = (),
+    created_at: str | None = None,
+    discovery_session_id: str | None = None,
+    max_matches: int = DEMAND_DISCOVERY_MAX_MATCHES,
+) -> dict[str, Any]:
+    """Run the existing scorer for one open ``research_demand.v1``.
+
+    No second scorer: candidates are pre-filtered, then ``PersonaStrategyDiscoveryService``
+    scores them unchanged. Exclusions, each recorded with its reason:
+
+    * ``tried_family``: the candidate's family is in the demand's ``tried_families``;
+    * ``negative_memory``: the seed store matched it to rejected or retired work (warning or blocking level; ``info`` is no match);
+    * ``missing_datasets_not_required``: the demand lists missing datasets and the
+      candidate requires none of them (it cannot relieve the shortage).
+
+    Matches that the scorer itself ignores are dropped. With no match left the result
+    carries a ``reason``; ``backfill_datasets`` lists the demand's missing datasets only
+    when data is what is missing (nothing matched, or the best match is blocked on data).
+    """
+    profile = extract_persona_strategy_profile(
+        persona, route_policy=route_policy, capability_snapshot=capability_snapshot)
+    tried = {_normalize_token(f) for f in demand.get("tried_families") or [] if f}
+    wanted = {_normalize_token(d) for d in demand.get("missing_datasets") or [] if d}
+    kept_seeds: list[Any] = []
+    kept_specs: list[Any] = []
+    excluded: list[dict[str, str]] = []
+    considered = 0
+    for kind, rows, bucket in (("seed", strategy_seeds, kept_seeds), ("spec", strategy_specs, kept_specs)):
+        for raw in rows:
+            considered += 1
+            candidate = _demand_candidate(raw, kind)
+            reason = None
+            if tried.intersection(_normalize_token(f) for f in candidate.strategy_families):
+                reason = "tried_family"
+            elif str(_mapping(candidate.metadata.get("negative_memory_match")).get("warning_level") or "").lower() in {"warning", "blocking"}:
+                reason = "negative_memory"
+            elif wanted and not wanted.intersection(_normalize_token(d) for d in candidate.required_data):
+                reason = "missing_datasets_not_required"
+            if reason:
+                excluded.append({"matched_object_id": candidate.matched_object_id, "reason": reason})
+            else:
+                bucket.append(raw)
+    scored = PersonaStrategyDiscoveryService().match_candidates(
+        profile, strategy_seeds=kept_seeds, strategy_specs=kept_specs, created_at=created_at,
+        discovery_session_id=discovery_session_id, include_blocked=True)
+    usable = [m for m in scored if m.status != "ignored"][:max(0, max_matches)]
+    matches = [m.to_dict() for m in usable]
+    reason = None
+    if not matches:
+        if not considered:
+            reason = "no_candidates_available"
+        elif excluded and len(excluded) == considered:
+            reason = "all_candidates_excluded:" + ",".join(sorted({e["reason"] for e in excluded}))
+        else:
+            reason = "no_candidate_fits_persona"
+    data_blocked = any(m["recommended_action"]["type"] == "request_data_backfill" for m in matches)
+    return {
+        "matches": matches, "excluded": excluded, "reason": reason, "candidates_considered": considered,
+        "backfill_datasets": sorted(demand.get("missing_datasets") or []) if (matches == [] or data_blocked) else [],
+    }

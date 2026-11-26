@@ -1,0 +1,159 @@
+{
+ "source": "2026-11-20 hosted sweep (BFF fb8ed951d), ~/claude-evidence/mgmt-readability-sweep-20261120/full/text; rows cut from the recorded strategies.txt and risk.txt shapes; meta counts follow BFF-STRATEGY-SYNTHETIC-STUBS-20261120",
+ "strategies_before_fix": {
+  "items": [
+   {
+    "id": "strat-tw-official:tw_price_daily:TWSE:2330:2026-10-15",
+    "name": "TW official tw_price_daily TWSE 2330 2026-10-15",
+    "operationalStatus": "unbound",
+    "personaIds": [],
+    "state": "approved"
+   },
+   {
+    "id": "strat-src-dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+    "name": "SIMULATION paper-only SPY anchor dev-product-20260913T040439Z-7935481ca72f49629606e01098c3a54e",
+    "operationalStatus": "unbound",
+    "personaIds": [],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-59b8a11bc277c249c89d",
+    "name": "Pantheon Dev Paper Release 43688794313 Attempt 1",
+    "operationalStatus": "running",
+    "personaIds": [
+     "persona-d64835a203ce276b8fbb"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-039ad01f8bcd2b4aa466",
+    "name": "澄川｜2317 台股 Paper 學習 R2",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-039ad01f8bcd2b4aa466"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-a81b4fd15944698341aa",
+    "name": "衡岳｜0050 台股 Paper 學習 R2",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-a81b4fd15944698341aa"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-06d4775a9b6a8f63b311",
+    "name": "青禾｜2330 台股 Paper 學習 R3",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-06d4775a9b6a8f63b311"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-0000000000000000001",
+    "name": "Pantheon Dev Paper Release 100 Attempt 1",
+    "operationalStatus": "retired",
+    "personaIds": [
+     "persona-0000000000000000001"
+    ],
+    "state": "approved"
+   }
+  ],
+  "meta": {
+   "hidden_retired_persona_count": 165
+  },
+  "page_info": {
+   "next_page_token": null,
+   "total": 7
+  }
+ },
+ "strategies_after_fix": {
+  "items": [
+   {
+    "id": "strategy-persona-039ad01f8bcd2b4aa466",
+    "name": "澄川｜2317 台股 Paper 學習 R2",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-039ad01f8bcd2b4aa466"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-a81b4fd15944698341aa",
+    "name": "衡岳｜0050 台股 Paper 學習 R2",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-a81b4fd15944698341aa"
+    ],
+    "state": "approved"
+   },
+   {
+    "id": "strategy-persona-06d4775a9b6a8f63b311",
+    "name": "青禾｜2330 台股 Paper 學習 R3",
+    "operationalStatus": "idle",
+    "personaIds": [
+     "persona-06d4775a9b6a8f63b311"
+    ],
+    "state": "approved"
+   }
+  ],
+  "meta": {
+   "hidden_unbound_stub_strategy_count": 2,
+   "hidden_test_persona_strategy_count": 166,
+   "hidden_retired_persona_count": 165
+  },
+  "page_info": {
+   "next_page_token": null,
+   "total": 3
+  }
+ },
+ "meetings_before_fix": {
+  "items": [
+   {
+    "meeting_id": "mtg-492d824b116f9ace",
+    "status": "upcoming",
+    "effective_status": "execution_failed",
+    "execution_state": {
+     "state": "dead_letter",
+     "last_error": "provider timeout"
+    },
+    "chair_persona_id": "persona-6507750312870d03a241",
+    "chair_persona_display_name": "研究員"
+   }
+  ]
+ },
+ "meetings_after_fix": {
+  "items": [
+   {
+    "meeting_id": "mtg-0001",
+    "status": "upcoming",
+    "effective_status": "upcoming",
+    "execution_state": null,
+    "chair_persona_id": "persona-6507750312870d03a241"
+   }
+  ]
+ },
+ "research_before_fix": {
+  "items": [
+   {
+    "task_id": "rt-probe-1",
+    "is_non_real": true
+   }
+  ],
+  "meta": {}
+ },
+ "research_after_fix": {
+  "items": [
+   {
+    "task_id": "rt-real-1",
+    "is_non_real": false
+   }
+  ],
+  "meta": {
+   "hidden_non_real_count": 3
+  }
+ }
+}

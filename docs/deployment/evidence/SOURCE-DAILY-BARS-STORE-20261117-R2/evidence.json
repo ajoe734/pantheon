@@ -1,0 +1,82 @@
+{
+ "task": "SOURCE-DAILY-BARS-STORE-20261117-R2",
+ "design": "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (section 4.1, 6, 9 T1)",
+ "data_shape": "generated on the worker host (NOT the hosted volume): 22500 symbols/day of which 20200 warrant-like, 500 trading days, collector batches of 500 records, 6511490 B normalized per day",
+ "commands": [
+  "/tmp/si-venv-claude2/bin/python -m pytest services/source_ingestion/tests/test_daily_bars_store.py services/source_ingestion/tests/test_daily_bars_reader.py services/source_ingestion/tests/test_market_data_storage.py -q",
+  "/tmp/si-venv-claude2/bin/python -m pytest services/source_ingestion/tests/test_market_data_foundation.py services/source_ingestion/tests/test_collector_market_provenance_bound.py services/source_ingestion/tests/test_collector_bundle_connector.py -q",
+  "bench script (scratch, not committed): shaped one-day dual write, current-reader scan, 500-day store build and reads"
+ ],
+ "pass_counts": {
+  "new_tests": "26 passed",
+  "regression_market_data_foundation_collector": "121 passed, 4 skipped"
+ },
+ "acceptance_1_reproduction_one_trade_date": {
+  "current_raw_partition": {
+   "files": 45,
+   "bytes": 356220
+  },
+  "current_normalized_partition": {
+   "files": 45,
+   "bytes": 6511490
+  },
+  "copies_of_one_close_this_day": {
+   "raw_rows": 1,
+   "normalized_rows": 1,
+   "daily_bars_rows": 1
+  },
+  "current_reader_60_closes_x_50_symbols_seconds": 9.96,
+  "note": "raw bytes are small because the generated records are tiny and gzip; real records are 1.2-1.5 KB per the design, so the byte figures understate hosted; file counts (45 run files per store per day) are the structural finding"
+ },
+ "acceptance_2_daily_bars_one_day": {
+  "files": 3,
+  "bytes": 1073534,
+  "manifest_row_count": 22500,
+  "lineage_bytes": 3469
+ },
+ "acceptance_5_reader": {
+  "read_close_window_60_closes_50_symbols_ms": {
+   "p50": 70.0,
+   "p95": 83.7,
+   "max": 95.3
+  },
+  "limit_p95_ms": 150,
+  "read_range_1_symbol_500_days_s": 0.65,
+  "read_range_500_symbols_250_days_s": 0.58,
+  "note": "design 5.2 asks 2 years x 1 symbol <= 500 ms; measured 0.65 s on this host, over that figure. It is not this task's acceptance (reader p95 for 60x50 is) and is reported for the later reader-consumer task"
+ },
+ "acceptance_8_budget_rows": {
+  "daily_bars": {
+   "limit_day_target": 1600000,
+   "limit_day_alarm": 2500000,
+   "limit_total": 1000000000,
+   "measured_max_day": 1069952,
+   "measured_total_500_days": 534976000,
+   "byte_test": "test_daily_bars_store.py::test_budget_bytes_on_hosted_shaped_day, test_budget_alarm_fields_and_enforcement"
+  },
+  "lineage": {
+   "limit_day_target": 300000,
+   "limit_day_alarm": 450000,
+   "limit_total": 150000000,
+   "measured_max_day": 114,
+   "measured_one_day_45_runs": 3469
+  },
+  "alarm_fields": "GET /api/source-ingest/health -> daily_bars.alarms and daily_bars.budget (test_market_data_storage.py::test_health_payload_carries_daily_bars_alarm_fields)",
+  "synthetic_caveat": "generated prices compress better than real ones; design estimate is 60 B/row, measured here 47 B/row; re-measure on the hosted volume at deploy"
+ },
+ "stores_not_touched": [
+  "latest_market_snapshots.jsonl (LatestMarketSnapshotStore)",
+  "ingest_schedule.jsonl receipts",
+  "raw/normalized/features run files (still written exactly as before)",
+  "source_evidence, distillation queue",
+  "tw_price_1m IntradayStore"
+ ],
+ "scope_notes": [
+  "Dual write lives in MarketDataStorageWriter.write_run for dataset tw_price_daily; a daily_bars failure is counted (dual_write_errors, last_error in health) and never raised into the ingest run, so current behaviour is unchanged.",
+  "Batches are merged into the day by key (upsert); an unchanged merged digest writes nothing; a changed one writes a new generation and swaps the manifest last. A kill at after_temp_write, after_fsync, after_lineage or before_manifest_rename leaves the previous complete set (parametrized test).",
+  "Listing allowlist (T8) does not exist yet: write_records takes an optional listing and counts skipped_not_listed; no symbol pattern rule is added. Without a listing nothing is filtered by symbol.",
+  "A record needs a trade date from trade_date/as_of_date/date/event_time; available_time and created_at are never used. Missing or contradictory market fails closed (rejected_other).",
+  "Not done here: nothing reads daily_bars except tests; runtime.py was not edited (store is created inside MarketDataStorageWriter), so the store root is the existing market data storage root."
+ ],
+ "credentials": "none"
+}

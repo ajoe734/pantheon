@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional
 import threading
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -63,8 +64,17 @@ from services.governance.promotion_readiness.signoff_api import (
 )
 from services.governance.paper_approval_scope import (
     PaperApprovalDenied,
+    RISK_POLICY_TARGET,
     PaperCandidateUnavailable,
     configured_paper_registry_reader,
+    configured_persona_paper_binding_verifier,
+    is_persona_lifecycle_decision,
+    is_risk_policy_decision,
+    require_paper_risk_policy_decision,
+    require_superseded_risk_policy_close,
+    risk_policy_candidate_failure,
+    require_paper_lifecycle_decision,
+    require_card_admission_decision,
     require_paper_owned_decision,
     resolve_dev_paper_grant,
     validate_paper_decide_body,
@@ -323,6 +333,53 @@ def _utc_now() -> str:
 # Routes — Consultation advisory handoff intake
 # ---------------------------------------------------------------------------
 
+def _validated_panel_gate(body: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist the gated decision and gate a panel handoff carries.
+
+    A risk-persona veto yields a pending operator decision at the owning gate;
+    adoption of that decision through the approval ``decide`` command is then
+    refused unless a human operator decides (see ``_consultation_veto_block``).
+    """
+
+    decision = body.get("gated_decision")
+    gate = body.get("gate")
+    if not isinstance(decision, dict) or not isinstance(gate, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="panel handoff requires gated_decision and gate",
+        )
+    decision_type = _required_string(decision.get("type"), "gated_decision.type")
+    decision_id = _required_string(decision.get("id"), "gated_decision.id")
+    outcome = _required_string(gate.get("outcome"), "gate.outcome")
+    operator_required = gate.get("operator_decision_required")
+    if not isinstance(operator_required, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="gate.operator_decision_required must be a boolean",
+        )
+    if operator_required != (outcome == "operator_decision"):
+        raise HTTPException(status_code=422, detail="gate outcome is inconsistent")
+    gated: Dict[str, Any] = {"type": decision_type, "id": decision_id}
+    for key in ("target_version", "candidate_digest"):
+        raw = decision.get(key)
+        if raw is None or raw == "":
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=f"gated_decision.{key} must be a non-empty string",
+            )
+        gated[key] = raw.strip()
+    return {
+        "gated_decision": gated,
+        "gate": dict(gate),
+        "operator_decision": {
+            "status": "pending" if operator_required else "not_required",
+            "vetoed_by": gate.get("vetoed_by"),
+        },
+    }
+
+
 @app.post(
     "/api/governance/consultation-handoffs",
     response_model=Dict[str, Any],
@@ -383,6 +440,9 @@ def accept_consultation_handoff(
             detail="Consultation handoff idempotency key is invalid",
         )
 
+    panel_gate: Optional[Dict[str, Any]] = None
+    if target_gate.startswith("consultation.panel."):
+        panel_gate = _validated_panel_gate(body)
     request_digest = hashlib.sha256(
         json.dumps(
             body,
@@ -392,6 +452,7 @@ def accept_consultation_handoff(
         ).encode("utf-8")
     ).hexdigest()
     record = {
+        **(panel_gate or {}),
         "handoff_id": handoff_id,
         "tenant_id": tenant_id,
         "request_id": request_id,
@@ -1348,6 +1409,11 @@ def _paper_registry_reader():
     return configured_paper_registry_reader()
 
 
+def _persona_paper_binding_verifier():
+    """Capital + Runtime Manager owner readers for the paper-ladder lifecycle grant."""
+    return configured_persona_paper_binding_verifier()
+
+
 def _approval_reader(authorization: Optional[str]) -> AuthContext:
     ctx = _approval_principal(authorization)
     _dev_paper_grant(ctx)
@@ -1363,6 +1429,92 @@ def _tenant_approval(decision_id: str, ctx: AuthContext) -> ApprovalDecision:
     if decision is None or decision.tenant_id != ctx.claims['tenant_id']:
         raise HTTPException(404, 'Approval decision not found')
     return decision
+
+
+# Explicit owner mapping: which approval target types are the adoption path of
+# each consult-gated decision type. A veto is only ever matched or consumed by
+# an approval of a mapped target type with the same id (and, when the panel
+# bound one, the same version/candidate digest).
+CONSULT_GATED_APPROVAL_TARGETS: Dict[str, frozenset] = {
+    "trial_admission": frozenset({"registry_entry", "paper_canary_candidacy"}),
+    "envelope_publication": frozenset({"allocation_policy", "registry_entry"}),
+    "harness_patch": frozenset(
+        {"persona_training_target", "evolution_proposal", "evolution_execute"}
+    ),
+}
+
+
+def _consultation_veto_block(
+    tenant_id: str, target_id: str, target_type: str = "",
+    target_version: str = "", candidate_digest: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Return a pending vetoed panel handoff bound to this exact approval."""
+
+    for item in consultation_handoff_store.list_all():
+        gate = item.get("gate") or {}
+        op = item.get("operator_decision") or {}
+        gated = item.get("gated_decision") or {}
+        mapped = CONSULT_GATED_APPROVAL_TARGETS.get(str(gated.get("type") or ""), frozenset())
+        bound_version = str(gated.get("target_version") or "")
+        bound_digest = str(gated.get("candidate_digest") or "")
+        if (
+            item.get("tenant_id") == tenant_id
+            and gated.get("id") == target_id
+            and str(target_type) in mapped
+            and (not bound_version or bound_version == str(target_version or ""))
+            and (not bound_digest or bound_digest == str(candidate_digest or ""))
+            and gate.get("operator_decision_required")
+            and op.get("status") == "pending"
+        ):
+            return item
+    return None
+
+
+def _resolve_consultation_veto(
+    handoff: Dict[str, Any], *, actor_id: str, decision_id: str, outcome: str
+) -> None:
+    """Durably record the human operator decision on a vetoed panel handoff."""
+
+    resolved = {
+        **handoff,
+        "operator_decision": {
+            **(handoff.get("operator_decision") or {}),
+            "status": "decided",
+            "decided_by": actor_id,
+            "approval_decision_id": decision_id,
+            "outcome": outcome,
+            "decided_at": _utc_now(),
+        },
+    }
+    consultation_handoff_store.compare_and_set(handoff, resolved)
+
+
+# Endorsed-lesson conversions that need a human or committee decision. They are
+# pure decision records: approving one never changes a gate, pool policy,
+# execution, risk or capital limit by itself; the owning service applies it
+# through its own route afterwards.
+LESSON_RULE_TARGETS: Dict[str, str] = {
+    "lesson_gate_check_proposal": "gate_check",
+    "pool_policy_parameter_proposal": "pool_policy",
+}
+LESSON_RULE_SUBJECT_FIELDS = ("proposal_kind", "lesson_ids", "case_file_id", "proposal_digest")
+
+
+def lesson_rule_proposal_errors(body: Any) -> List[str]:
+    """Fail-closed shape check for lesson-derived proposals (empty for other targets)."""
+    target = str(getattr(body.target_type, "value", body.target_type))
+    if target not in LESSON_RULE_TARGETS:
+        return []
+    subject = body.subject or {}
+    errors = [f"subject.{name} is required" for name in LESSON_RULE_SUBJECT_FIELDS
+              if not str(subject.get(name) or "").strip()]
+    if subject.get("proposal_kind") and subject["proposal_kind"] != LESSON_RULE_TARGETS[target]:
+        errors.append(f"subject.proposal_kind must be {LESSON_RULE_TARGETS[target]}")
+    if str(getattr(body.risk_level, "value", body.risk_level)) not in ("high", "critical"):
+        errors.append("risk_level must be high or critical so an automated gate cannot decide")
+    if not str(body.persona_id or "").strip():
+        errors.append("persona_id is required")
+    return errors
 
 
 def _approval_command(operation, decision_id, body, authorization, idempotency_key):
@@ -1382,8 +1534,13 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             raise HTTPException(403, 'Proposal owner and tenant must match verified principal')
         if body.expected_version != 0:
             raise HTTPException(409, 'Proposal expected_version must be zero')
+        rule_errors = lesson_rule_proposal_errors(body)
+        if rule_errors:
+            raise HTTPException(422, '; '.join(rule_errors))
     elif role not in ctx.roles or body.actor_id != ctx.actor_id:
         raise HTTPException(403, 'Body actor and role must match verified principal')
+    if operation == 'close_superseded' and (grant is None or role != 'automated_gate'):
+        raise HTTPException(403, 'Only the paper automated gate may close a superseded proposal')
     now = datetime.now(timezone.utc)
     if grant is not None:
         if operation == 'revoke':
@@ -1394,7 +1551,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             except PaperApprovalDenied as exc:
                 raise HTTPException(exc.status_code, str(exc)) from exc
     command = {
-        'operation': operation, 'decision_id': decision_id,
+        # The close shares the review audit/receipt shape (state change, actor = the gate); `close_superseded`
+        # keeps its command identity distinct from a review.
+        'operation': 'review' if operation == 'close_superseded' else operation,
+        **({'close_superseded': True} if operation == 'close_superseded' else {}),
+        'decision_id': decision_id,
         'tenant_id': ctx.claims['tenant_id'], 'actor_id': ctx.actor_id, 'actor_role': role,
         'expected_version': body.expected_version, 'idempotency_key': idempotency_key,
         'body': body.model_dump(mode='json'),
@@ -1403,7 +1564,10 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         # The owner-stamped scope is part of the command identity, so a replay
         # under a different scope can never match the original receipt.
         command['authorization_scope'] = grant.authorization_scope
+    vetoed_handoff: List[Dict[str, Any]] = []
+
     def mutate(decision):
+        lifecycle_evidence = None
         if operation == 'propose':
             if decision is not None:
                 raise ApprovalCommandConflict('Approval decision already exists')
@@ -1419,16 +1583,78 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             return proposed
         if decision is None:
             raise ApprovalCommandNotFound('Approval decision not found')
+        if operation == 'close_superseded':
+            # Close-only authority: every precondition is read from Governance's own records here.
+            current = decision.to_dict()
+            evidence = require_superseded_risk_policy_close(
+                current, grant=grant, now=now,
+                pool_decisions=[d.to_dict() for d in store.list_all(
+                    tenant_id=ctx.claims['tenant_id'], target_type=RISK_POLICY_TARGET, target_id=decision.target_id)])
+            decision.superseded_by = evidence['superseded_by']
+            decision.decision_state = DecisionState.SUPERSEDED
+            decision.rationale = evidence['reason']
+            decision.actor_role = ActorRole.AUTOMATED_GATE
+            decision.actor_id = ctx.actor_id
+            decision.authorization_scope = grant.authorization_scope
+            errors = decision.validate()
+            if errors:
+                raise ValueError('; '.join(errors))
+            return decision
         if grant is not None:
             # Owner reads run inside the CAS mutate callback: after auth/claim
             # admission and after the durable replay short-circuit, so an
             # original receipt is replayed exactly while a fresh transition
             # always rechecks the actual candidate.
             current = decision.to_dict()
-            require_paper_owned_decision(current, grant=grant, now=now)
-            if operation == 'decide':
-                validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
-            verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+            if is_persona_lifecycle_decision(current):
+                # Paper-ladder persona lifecycle widening (operator decision
+                # 2026-11-15): proposer, transition and owner-verified paper
+                # bindings are rechecked on every review/decide.
+                lifecycle_evidence = require_paper_lifecycle_decision(
+                    current, grant=grant, now=now, binding_verifier=_persona_paper_binding_verifier())
+                # The dedicated subject never holds an unscoped decision: stamp
+                # the exact grant scope on the lifecycle decision it acts on.
+                decision.authorization_scope = grant.authorization_scope
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+            elif is_risk_policy_decision(current, grant) and grant.risk_policy is not None:
+                # Pool risk-policy widening (operator decision P-4): identity is rechecked on every
+                # review/decide; approval additionally needs the policy inside the outer bounds, so an
+                # out-of-bounds candidate can only be rejected, with the named failing field.
+                lifecycle_evidence = require_paper_risk_policy_decision(current, grant=grant, now=now)
+                decision.authorization_scope = grant.authorization_scope
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+                    if str(getattr(body.outcome, 'value', body.outcome)) == 'approved':
+                        failure = risk_policy_candidate_failure(current)
+                        if failure is not None:
+                            raise PaperApprovalDenied('Paper risk policy outside bounds or unverified: ' + failure, 422)
+            else:
+                require_paper_owned_decision(current, grant=grant, now=now)
+                widening = grant.card_admission
+                if (widening is not None and current.get('owner_user_id') == widening.proposer_subject
+                        and current.get('owner_user_id') != grant.subject):
+                    # Card admission widening (design 6A): the research-owned decision is admitted by the
+                    # widened grant content only; stamp the exact grant scope as for the lifecycle target.
+                    decision.authorization_scope = grant.authorization_scope
+                    lifecycle_evidence = require_card_admission_decision(current, grant=grant, now=now)
+                if operation == 'decide':
+                    validate_paper_decide_body(body.model_dump(mode='json'), decision=current, now=now)
+                verify_paper_candidate_for_decision(current, reader=_paper_registry_reader())
+        if operation == 'decide' and str(getattr(body.outcome, 'value', body.outcome)) in (
+                'approved', 'approved_with_conditions'):
+            veto_block = _consultation_veto_block(
+                ctx.claims['tenant_id'], decision.target_id,
+                str(getattr(decision.target_type, 'value', decision.target_type)),
+                str(getattr(decision, 'target_version', '') or ''),
+                str(getattr(decision, 'candidate_digest', '') or ''))
+            if veto_block is not None:
+                if role == 'automated_gate' or 'operator' not in ctx.roles:
+                    raise ApprovalCommandConflict(
+                        'risk persona opposed in consultation panel '
+                        + str(veto_block.get('handoff_id'))
+                        + '; adoption refused, human operator decision required')
+                vetoed_handoff.append(veto_block)
         if operation == 'decide' and decision.decision_state == DecisionState.PROPOSED:
             decision.accept_review(actor_role=role, actor_id=ctx.actor_id)
         if operation == 'review':
@@ -1438,6 +1664,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
         else:
             fields = body.model_dump(mode='json', exclude={'expected_version', 'actor_role', 'actor_id', 'evidence_refs'})
             refs = [EvidenceRef(**ref.model_dump()) for ref in (body.evidence_refs or [])]
+            if lifecycle_evidence is not None:
+                # The decision record carries the grant id and verified bindings.
+                refs.append(EvidenceRef(
+                    ref_type='audit_log_entry', ref_id=lifecycle_evidence['grant_id'],
+                    note=json.dumps(lifecycle_evidence, sort_keys=True, separators=(',', ':'))))
             decision.decide(actor_role=role, actor_id=ctx.actor_id, evidence_refs=refs or None, **fields)
         errors = decision.validate()
         if errors:
@@ -1446,7 +1677,12 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     if not hasattr(store, 'execute_command'):
         raise HTTPException(503, 'Approval commands require PostgreSQL decision and audit stores')
     try:
-        return ApprovalDecisionResponse(**store.execute_command(command=command, mutate=mutate, audit_store=audit_store))
+        result = store.execute_command(command=command, mutate=mutate, audit_store=audit_store)
+        if vetoed_handoff:
+            _resolve_consultation_veto(
+                vetoed_handoff[-1], actor_id=ctx.actor_id, decision_id=decision_id,
+                outcome=str(getattr(body.outcome, 'value', body.outcome)))
+        return ApprovalDecisionResponse(**result)
     except ApprovalCommandNotFound as exc:
         raise HTTPException(404, str(exc)) from exc
     except ApprovalCommandConflict as exc:
@@ -1454,7 +1690,7 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
     except PaperApprovalDenied as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     except PaperCandidateUnavailable as exc:
-        raise HTTPException(503, 'Registry candidate read unavailable') from exc
+        raise HTTPException(503, 'Candidate or binding owner read unavailable') from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
@@ -1605,6 +1841,25 @@ def record_decision(decision_id: str, body: DecideRequest,
                  idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
     return _approval_command('decide', decision_id, body, authorization, idempotency_key)
 
+
+
+class CloseSupersededRequest(BaseModel):
+    """Close-only command: the superseding decision and the reason are derived by Governance, never supplied."""
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    actor_role: ActorRole
+    actor_id: str
+
+
+@app.post(
+    "/api/governance/approvals/{decision_id}/close-superseded",
+    response_model=ApprovalDecisionResponse,
+    summary="Close a paper risk-policy proposal superseded by the pool's bound gate-approved policy",
+)
+def close_superseded_proposal(decision_id: str, body: CloseSupersededRequest,
+                 authorization: Optional[str] = Header(None),
+                 idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")) -> ApprovalDecisionResponse:
+    return _approval_command('close_superseded', decision_id, body, authorization, idempotency_key)
 
 
 @app.post(

@@ -1,0 +1,90 @@
+2026-11-23 required_data integration correction
+Source/test anchor: 6147b4be9; current dev 0c806ffed already contained.
+Isolated loopback-only disposable postgres:16; fresh schema per test.
+Actual Research HTTP routes and PostgreSQL JSONB store, strict signed JWT.
+All commands below reached terminal exit 0; no timeout counted as pass.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+....................................                                     [100%]
+36 passed, 361 warnings in 24.04s
+Exit status: 0
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres16> timeout 180s .venv-pantheon/bin/python3 -m pytest -q tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py services/control-plane/bff/test_rw01_research_ticket_contract.py services/control-plane/bff/test_kw02_research_notes_contract.py services/control-plane/bff/tests/test_recommended_measure_consumers.py --disable-warnings
+........................................................................ [ 36%]
+........................................................................ [ 73%]
+...........................................ssss......                    [100%]
+193 passed, 4 skipped, 723 warnings in 99.05s (0:01:39)
+Exit status: 0
+
+$ timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 4.114s
+
+OK
+Exit status: 0
+
+$ python3 scripts/check_storage_manifest.py
+{
+  "bound_status": {
+    "bounded": 17,
+    "unbounded": 21,
+    "unreviewed": 336
+  },
+  "discovered": {
+    "compose_path": 82,
+    "jsonl": 90,
+    "schema_table": 59,
+    "sqlite": 14,
+    "sqlite_connect": 14,
+    "table": 118
+  },
+  "entries": 374,
+  "failures": [],
+  "passed": true,
+  "schema_version": "storage_manifest_check.v1",
+  "waivers": 3
+}
+Exit status: 0
+
+The four skips are existing optional candidate-consumer TEST_DATABASE_URL cases; all 36 meeting-action HTTP/PostgreSQL cases ran.
+
+$ git diff --check
+No whitespace errors. Exit status: 0
+
+No hosted, merged, deployed or accepted claim. Fresh independent Antigravity review is required.
+
+Delivery admission (separate from passing product validation):
+$ AI_NAME=Codex REVIEW_PR=7760 REVIEW_HEAD_SHA=bead9792126c68844970b86778cfab15aedaa693 REVIEW_FILE=docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/evidence.json "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" handoff RESEARCH-MEETING-ACTION-TICKETS-20261123 Antigravity <recorded validation summary>
+Observed 306 seconds in locks_lock_inode_wait on coordination-root/.orchestrator/task-state.lock. Interrupted only this worker's waiting process. Terminal exit: 130.
+Traceback: main -> canonical_external_mutation_preflight -> read_task_snapshot -> canonical_task_state_lock(shared=True) -> canonical_task_state_lock_file -> stable_sidecar_lock -> fcntl.flock(handle.fileno(), operation) -> KeyboardInterrupt.
+No canonical admission/mutation reached; not counted as a passed command.
+
+$ AI_NAME=Codex timeout 20s "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" blocker RESEARCH-MEETING-ACTION-TICKETS-20261123 <same lock/admission failure and published evidence summary> Gemini
+No terminal stdout/stderr. Terminal exit: 124 (timeout), not a successful blocker transition.
+
+Disposition: existing supervisor/TaskStore maintenance owner must reconcile the central lock; no lock/runtime/canonical JSON edits performed. Published code and evidence remain review-ready, but formal handoff/review/merge is pending. New head requires a fresh exact-head handoff after recovery. CI on bead97921 was queued/pending, not passed (Branch CI Gate 45127035729, Stage 0 45127035401, Canonical Review Gate 45127035412).
+
+2026-11-23 resumed worker, refresh commit 488097d5b
+Governed AI_NAME=Codex show returned terminal exit 0: canonical in_progress.
+Merged current dev a4f2f0b4e2b657afbc68f0a76bf755023169e063 without conflicts.
+No product code changes; upstream provider quota changes preserved exactly.
+
+$ RESEARCH_MEETING_TEST_DSN=<isolated-loopback-postgres16> timeout 120s .venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_meeting_action_tickets.py --disable-warnings
+....................................                                     [100%]
+36 passed, 361 warnings in 27.69s
+Terminal exit status: 0 (including process teardown).
+
+$ timeout 60s .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest
+Ran 10 tests in 3.453s; OK. Terminal exit status: 0.
+$ timeout 30s .venv-pantheon/bin/python3 scripts/check_storage_manifest.py
+374 entries; failures=[]; passed=true. Terminal exit status: 0.
+$ python3 scripts/git/diff_budget.py --base origin/dev --head HEAD
+production +621/-31 net +590; test +703/-0 net +703;
+docs/evidence +1320/-6 net +1314 (before this recovery record).
+Terminal exit status: 0.
+$ git diff --check
+No whitespace errors. Terminal exit status: 0.
+
+Fresh canonical exact-head handoff/review remains required after publication.
+No merged/deployed/accepted claim; previous admission failures remain historical.

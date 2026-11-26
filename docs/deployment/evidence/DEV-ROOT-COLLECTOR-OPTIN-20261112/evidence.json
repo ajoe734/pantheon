@@ -1,0 +1,18 @@
+{
+  "task_id": "DEV-ROOT-COLLECTOR-OPTIN-20261112",
+  "change": {
+    "file": ".github/workflows/nonprod-deploy.yml",
+    "step": "Deploy dev VM stack under lease",
+    "added_env": "SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}",
+    "lines_added": 3,
+    "reason": "vars context is not shell env; deploy_nonprod_vm.sh reads SOURCE_INGEST_STEADY_COLLECTOR_PULL from env but the workflow never exported it"
+  },
+  "unchanged": ["deploy_nonprod_vm.sh", "controller/adapter", "production/staging profiles", "egress allowlists and quotas", "PANTHEON_COLLECTOR_HOST mapping", "strict auth"],
+  "local_verification": {
+    "missing_mapping_old_fails": "test_dev_deploy_step_maps_steady_collector_pull_var_to_env failed with mapping removed",
+    "with_mapping": "passes",
+    "existing_activation_tests": "-k 'steady or collector' on test_deploy_nonprod_vm.py + env_parity: 12 passed (unset/true/no-host/validator cases)",
+    "full_files_run": "128 passed, 16 failed, 2 skipped; failures are local missing modules (pydantic, jsonschema) in a bare venv, not related to this change"
+  },
+  "not_claimed": ["hosted ingestion", "three governed source days", "live Ops opt-in/config", "deploy"]
+}

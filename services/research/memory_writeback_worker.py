@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional
 
+from services.runtime_auth import resolve_runtime_manager_auth
+
 from services.research.research_memory_outbox import (
     ResearchMemoryOutboxRecord,
     ResearchMemoryOutboxStore,
@@ -27,11 +29,15 @@ class MemoryWritebackWorker:
             memory_svc_url
             or os.getenv("MEMORY_SVC_URL")
             or os.getenv("PANTHEON_MEMORY_URL")
-            or "http://memory-svc:8089"
+            or "http://memory:8086"
         ).rstrip("/")
         self.direct_writeback = direct_writeback
 
     def deliver_record(self, outbox_id: str) -> Dict[str, Any]:
+        with self.outbox_store.delivery_lock:
+            return self._deliver_record(outbox_id)
+
+    def _deliver_record(self, outbox_id: str) -> Dict[str, Any]:
         record = self.outbox_store.get_record(outbox_id)
         if not record:
             return {"status": "not_found", "outbox_id": outbox_id, "error": "outbox record not found"}
@@ -66,12 +72,16 @@ class MemoryWritebackWorker:
             "trace_id": record.trace_id,
             "tags": record.metadata.get("tags") or ["research_finding"],
         }
+        if record.metadata.get("tenant_id"):
+            payload["tenant_id"] = record.metadata["tenant_id"]
 
         try:
             if self.direct_writeback is not None:
                 receipt = self.direct_writeback(payload)
             else:
                 receipt = self._post_http(payload)
+            if not isinstance(receipt, dict) or not receipt.get("persona_memory_ids") or not receipt.get("institutional_entry_id"):
+                raise ValueError("Memory response lacks persisted persona/institutional receipt identifiers")
 
             record.status = "delivered"
             record.delivered_at = utc_now()
@@ -104,7 +114,14 @@ class MemoryWritebackWorker:
         req = urllib.request.Request(
             f"{self.memory_svc_url}/api/memory/writebacks/learn-feedback",
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                **resolve_runtime_manager_auth(
+                    token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+                    token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+                    default_token="",
+                ).headers(),
+            },
             method="POST",
         )
         try:
@@ -121,7 +138,7 @@ class MemoryWritebackWorker:
         records = self.outbox_store.list_records()
         candidates = [
             r for r in records
-            if r.status in {"pending", "failed"} and r.retry_count < r.max_retries
+            if r.status in {"pending", "failed", "in_flight"} and r.retry_count < r.max_retries
         ][:max_records]
 
         results: List[Dict[str, Any]] = []
@@ -144,9 +161,16 @@ class MemoryWritebackWorker:
         }
 
     def retry(self, outbox_id: str) -> Dict[str, Any]:
+        with self.outbox_store.delivery_lock:
+            return self._retry(outbox_id)
+
+    def _retry(self, outbox_id: str) -> Dict[str, Any]:
         record = self.outbox_store.get_record(outbox_id)
         if not record:
             return {"status": "not_found", "outbox_id": outbox_id, "error": "outbox record not found"}
+        if record.status == "delivered":
+            return self.deliver_record(outbox_id)
+        record.retry_count = 0
         record.status = "pending"
         self.outbox_store.update_record(record)
         return self.deliver_record(outbox_id)

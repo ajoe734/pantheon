@@ -1,0 +1,60 @@
+{
+  "task_id": "PAPER-ALLOCATION-QUARTERLY-RUN-20261112",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "base": "2e9d3f284",
+  "evidence_boundary": "Local source and test evidence only. No hosted access, deployment, proposal or capital mutation was attempted. PERSONA_EVALUATOR_PAPER_POOL_ID is unset by default, so the cycle stays inactive until an operator configures a paper pool.",
+  "design": {
+    "trigger": "persona-evaluator-agent paper_cycle_once, after run_once on every interval; acts only when a quarter before the current one has a persisted ranking snapshot (state.latest) and no applied cycle is recorded",
+    "route": "evaluator POST /bff/management/allocation-policy/evaluate (authority_mode=governed_paper_quarterly_cycle, operator) -> existing CapitalOwnerWriter.evaluate_allocation -> Capital owner POST /api/allocation-evaluations; no new BFF route or adapter method (keeps the task artifact contract)",
+    "owner_cycle": "services/capital/main.py run_paper_allocation_cycle: recompute from the admitted snapshot, policy persona-paper-quarterly-allocation-v1, create one rebalance proposal per tenant+quarter+pool, apply automatically inside the paper ledger (approval_ref paper-auto:<id>), receipt + audit_ref + rollback_target",
+    "idempotency": "rebalance_id derived from tenant|quarter|pool; an existing cycle is returned, an unapplied one is only completed; evaluator also records applied cycles in its state",
+    "policy": "calculate_paper_competition_allocations reuses calculate_target_allocations (score share, tier caps S25/A15/B8, +25% increase cap, exclusions) with paper_running as the positive stage; retained weight of held allocations without a line (departed/skipped personas) is reserved and targets are scaled down (paper_total_budget_scale) so the projected owner portfolio never exceeds 1.0; the owner also refuses any cycle whose projection would exceed it",
+    "pool_health": "evaluator derives risk_budget_factor = min(1, gross_utilisation/budget_full) and capacity_factor only from the O-21 capacity fact (budget full plus admitted candidates waiting). No persisted source for that fact exists in pool health, so capacity_factor stays 1.0 with reason capacity_observation_unavailable and status is partial/unavailable, never known; idle_day_share is not substituted (O-21/AC4 fallback)",
+    "real_capital_unchanged": "calculate_target_allocations defaults, real evaluate endpoint, human approval and apply path are untouched; factor fields are context fields only for the paper quarterly policy; the cycle refuses non-paper pools, non-dev environments and non-paper lines"
+  },
+  "acceptance": {
+    "1": "test_bff_capital_paper_allocation.py::test_quarter_close_runs_one_paper_cycle...; ::test_catch_up_with_lost_evaluator_state_is_idempotent_at_the_owner; test_persona_evaluator_agent.py::test_quarter_close_triggers_exactly_one_cycle...",
+    "2": "test_allocation_policy.py paper competition tests; services/capital/test_service.py::test_next_quarter_respects_the_25_percent_increase_cap_and_exclusions",
+    "3": "services/capital/test_service.py::test_cycle_shares_the_paper_pool...; integration test asserts applied status, receipt, rollback target and changed allocations",
+    "4": "services/capital/test_service.py::test_pool_health_factors_scale_scores...; test_persona_evaluator_agent.py pool health tests",
+    "5": "services/capital/test_service.py::test_unknown_inputs_fail_closed_and_real_scope_is_never_reachable and ::test_paper_environment_is_required; test_allocation_lineage_integrity.py new tests; integration ::test_real_capital_path_is_unchanged...",
+    "6": "integration ::test_management_rebalance_read_shows_the_cycle_proposal_lines_and_reasons (GET /bff/rebalances and /bff/rebalances/{id})",
+    "7": "integration test_bff_capital_paper_allocation.py: evaluator run_once + paper_cycle_once, three personas, real BFF capital router and command adapter, real Capital owner service with real lineage; faked: owner HTTP hop (harness urlopen to in-process Capital app), the evaluator's own HTTP seam (in-process BFF client, canned upstream quarterly-ranking and persona-pool reads) and the Rankings store (one in-memory admitted-snapshot store shared by evaluator and owner)"
+  },
+  "verification": [
+    {
+      "command": "pytest services/capital services/persona-evaluator-agent services/rankings",
+      "result": "474 passed, 12 skipped"
+    },
+    {
+      "command": "pytest test_bff_capital_paper_allocation.py test_capital_router.py test_allocation_lineage_live_route.py test_bff_test_architecture.py test_main_composition_seam_extraction_006.py",
+      "result": "passed (see commit trailer)"
+    },
+    {
+      "command": "python3 scripts/bff_route_manifest_backend.py --check",
+      "result": "routes match snapshot (no new BFF route)"
+    },
+    {
+      "command": "pytest test_capital_owner_forwarding.py test_persona_paper_onboarding_capital_integration.py scripts/test_bff_route_diff.py",
+      "result": "13 failed; identical set fails on base 2e9d3f284 (pre-existing, not caused by this task)"
+    },
+    {
+      "command": "pytest test_ppl_alloc_012_ranking_projection.py test_ppl_alloc_009_paper_eligibility_proof.py test_bff_pm12_persona_league.py",
+      "result": "5 failed; identical set fails on base 2e9d3f284 (pre-existing)"
+    }
+  ],
+  "review_fixes": [
+    "P1: services/capital/main.py reserves retained holdings and the policy scales targets so retained+targets <= 1; verify_rebalance_lineage reproduces the evaluation with simulation.retained_weight; regression test_retained_holdings_of_departed_or_skipped_personas_count_toward_the_paper_total",
+    "P2: owner refuses a cycle before UTC quarter end (main._quarter_end); regressions test_open_or_future_quarter_is_refused_by_the_owner... (owner) and test_direct_operator_post_before_quarter_close_is_refused... (BFF)"
+  ],
+  "review_fix_verification": "pytest services/capital: 387 passed, 12 skipped; persona-evaluator-agent + test_bff_capital_paper_allocation.py: 54 passed",
+  "decisions_for_review": [
+    "capacity_factor stays 1.0 with a recorded reason because the addendum's capacity fact (budget full plus admitted candidates waiting) has no persisted source yet; when one is published the evaluator should consume it. Regression covers known utilisation and idle share with absent capacity facts",
+    "Only the latest closed quarter with a persisted snapshot is cycled; older missed quarters are not replayed",
+    "The evaluator's BFF token must carry the operator role (and tenant scope) to call the write route; no token change was made here",
+    "Personas without paper_ledger_id on the ranking item or without exactly one active paper_owner binding are skipped with a recorded reason (simulation.skipped); no eligible persona refuses the cycle",
+    "With three tier-3 personas the 8% tier cap leaves most of the paper pool unallocated; this is the existing policy, not changed here",
+    "The cycle trigger reuses the existing evaluation route and owner endpoint (mode switch) instead of new routes, to stay inside the declared task artifact contract; a dedicated route can be split out later if reviewers prefer"
+  ]
+}

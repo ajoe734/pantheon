@@ -45,6 +45,14 @@ class ContributionBlocked(ContributionProviderError):
         self.retryable = retryable
 
 
+class AgentProvisioningBlocked(ContributionBlocked):
+    """Retryable dependency hold; no participant has been dispatched yet."""
+
+
+class AgentProvisioningInProgress(AgentProvisioningBlocked):
+    """The adapter is still provisioning; not a failed attempt, retry later."""
+
+
 def _blocked_http_response(exc: urllib.error.HTTPError) -> ContributionBlocked:
     """Translate the provider endpoint's typed blocked envelope when present."""
 
@@ -212,12 +220,56 @@ class HttpContributionProvider:
         self.service_actor = service_actor.strip()
         self.timeout_seconds = timeout_seconds
 
+    def ensure_agents(self, *, tenant_id: str, persona_ids: list[str]) -> None:
+        """Reconcile each panel participant on every attempt before asking anyone."""
+        from urllib.parse import urlsplit, urlunsplit
+        if not self.endpoint or not self.bearer_token:
+            raise ContributionBlocked("consultation agent ensure: provider URL/token is not configured")
+        parts = urlsplit(self.endpoint)
+        endpoint = urlunsplit((parts.scheme, parts.netloc,
+                               "/api/openclaw-adapter/consultation/agents/ensure", "", ""))
+        pending: list[str] = []
+        for persona_id in dict.fromkeys(persona_ids):
+            request = urllib.request.Request(endpoint, method="POST",
+                data=json.dumps({"tenant_id": tenant_id, "persona_id": persona_id}).encode(),
+                headers={"Authorization": f"Bearer {self.bearer_token}", "Content-Type": "application/json",
+                         "X-Pantheon-Service-Actor": self.service_actor, "X-Pantheon-Tenant-Id": tenant_id})
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    result = json.load(response)
+            except urllib.error.HTTPError as exc:
+                raise _blocked_http_response(exc) from exc
+            except TimeoutError:
+                # The adapter keeps provisioning after we stop waiting; ask again later.
+                pending.append(persona_id)
+                continue
+            except (OSError, ValueError) as exc:
+                if isinstance(getattr(exc, "reason", None), TimeoutError):
+                    pending.append(persona_id)
+                    continue
+                raise ContributionBlocked(f"consultation agent ensure transport failed for {persona_id}") from exc
+            if isinstance(result, Mapping) and result.get("status") == "in_progress":
+                pending.append(persona_id)
+                continue
+            if (not isinstance(result, Mapping) or result.get("status") != "ready"
+                or result.get("tenant_id") != tenant_id or result.get("persona_id") != persona_id):
+                raise ContributionBlocked(f"consultation agent ensure did not acknowledge {persona_id}")
+        if pending:
+            raise AgentProvisioningInProgress(
+                "consultation agent provisioning in progress for " + ", ".join(pending))
+
     def obtain(
         self,
         *,
         tenant_id: str,
         request: Mapping[str, Any],
+        participant_scope: str = "",
     ) -> QualifiedContribution:
+        """Fetch one contribution.
+
+        ``participant_scope`` distinguishes independent per-persona asks for the
+        same request so each gets its own provider idempotency key.
+        """
         if not self.endpoint:
             raise ContributionBlocked(
                 "CONSULTATION_PROVIDER_URL is not configured",
@@ -230,7 +282,9 @@ class HttpContributionProvider:
             )
         request_id = str(request.get("request_id") or "")
         idempotency_key = "consultation-provider:" + sha256(
-            f"{tenant_id}\0{request_id}".encode("utf-8")
+            f"{tenant_id}\0{request_id}\0{participant_scope}".encode("utf-8")
+            if participant_scope
+            else f"{tenant_id}\0{request_id}".encode("utf-8")
         ).hexdigest()
         payload = json.dumps(
             {

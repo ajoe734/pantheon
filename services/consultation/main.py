@@ -8,8 +8,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -29,6 +30,7 @@ from .models import (
     ConsultRequestStatus,
     ConsultRequestType,
     ConsultTranscript,
+    ConvenePersonaMeetingRequest,
     CreateConsultRequest,
     CreateGateHandoffRequest,
     CreatePolicyLearningCandidateIntakeRequest,
@@ -37,6 +39,7 @@ from .models import (
     MemoType,
     PostTranscriptEventRequest,
     Recommendation,
+    RecordMeetingEvidenceRequest,
     RecordSponsorDecisionRequest,
     SubmitMemoRequest,
     TranscriptEvent,
@@ -46,6 +49,19 @@ from .models import (
     ParticipantType,
     validate_consult_memo_against_request,
 )
+from .meetings import (
+    MeetingRefusedError,
+    convene_persona_meeting,
+    execute_persona_meeting,
+    get_meeting_catalogue_view,
+    get_meeting_detail_view,
+    list_meeting_proposals_view,
+    list_meetings_view,
+    record_chair_new_evidence,
+    record_meeting_operator_review,
+    resolve_meeting_type_spec,
+)
+from services.persona import consult_triggers
 from .store import build_consultation_store
 from .auth import (
     ConsultationAuthError,
@@ -115,6 +131,87 @@ async def consultation_identity_boundary(
         return await call_next(request)
     finally:
         reset_identity(token)
+
+
+def _authorize_panel_open(create_payload: Dict[str, Any]) -> None:
+    """A persona opens a panel only as a service caller carrying its own id.
+
+    The requested panel must also satisfy the consult policy: the executor
+    re-derives the same requirement, so an under-staffed panel is refused here
+    rather than blocking later.
+    """
+
+    panel = (create_payload.get("metadata") or {}).get("panel")
+    if panel is None:
+        return
+    if not isinstance(panel, dict):
+        raise HTTPException(status_code=422, detail="metadata.panel must be an object")
+    identity = current_identity()
+    persona_id = str(create_payload.get("from_persona_id") or "")
+    requested_by = create_payload.get("requested_by") or {}
+    if (
+        identity.actor_type != "service"
+        or not persona_id
+        or identity.actor_id != f"persona:{persona_id}"
+        or requested_by.get("actor_type") != "persona"
+        or requested_by.get("actor_id") != persona_id
+        or str(panel.get("initiator_persona_id") or "") != persona_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "a consult panel is opened by a service caller acting as "
+                "persona:<persona_id> for that same persona"
+            ),
+        )
+    decision = panel.get("gated_decision") or {}
+    if (
+        str(decision.get("type") or "") != str(create_payload.get("target_type") or "")
+        or str(decision.get("id") or "") != str(create_payload.get("target_id") or "")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="panel gated_decision must match the request target_type/target_id",
+        )
+    required = consult_triggers.required_consultation(
+        str(decision.get("type") or ""),
+        str(decision.get("id") or ""),
+        initiator_persona_id=persona_id,
+        touches=panel.get("touches") or (),
+    )
+    if required is None:
+        raise HTTPException(status_code=422, detail="panel gated_decision is not a gated decision type")
+    declared = {
+        str(item.get("persona_id")) for item in panel.get("participants") or [] if isinstance(item, dict)
+    }
+    missing = [item.persona_id for item in required.participants if item.persona_id not in declared]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail="panel is missing policy-required participants: " + ", ".join(missing),
+        )
+
+
+def _authorize_persona_meeting_request(create_payload: Dict[str, Any]) -> None:
+    """Validate that any request with type persona_meeting uses one of the 6 amended catalogue types."""
+    consultation_type = str(create_payload.get("consultation_type") or "").strip()
+    request_type = str(create_payload.get("request_type") or "").strip()
+    meeting_meta = (create_payload.get("metadata") or {}).get("meeting")
+    if (
+        consultation_type != "persona_meeting"
+        and request_type != "persona_meeting"
+        and meeting_meta is None
+    ):
+        return
+    meeting_type = (
+        str(meeting_meta.get("meeting_type") or "")
+        if isinstance(meeting_meta, dict) and meeting_meta.get("meeting_type")
+        else str(create_payload.get("target_type") or "")
+    )
+    try:
+        resolve_meeting_type_spec(meeting_type)
+    except MeetingRefusedError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
@@ -283,6 +380,8 @@ def create_request(req: CreateConsultRequest) -> ConsultRequest:
     if requested_tenant != identity.tenant_id:
         raise HTTPException(status_code=403, detail="ConsultRequest tenant scope denied")
     create_payload["tenant_id"] = identity.tenant_id
+    _authorize_panel_open(create_payload)
+    _authorize_persona_meeting_request(create_payload)
     fingerprint = _create_fingerprint(request_id, create_payload)
 
     with _REQUEST_COMMAND_LOCK:
@@ -1448,4 +1547,304 @@ def intake_policy_learning_candidate(
             "proposal": None,
             "replayed": False,
         }
+
+
+# --- Deliberative Persona Meetings (C1 Routes) ---
+
+meeting_provider: Any = None
+auto_run_meetings: bool = False
+
+
+@app.post("/api/consult/meetings", status_code=202)
+def post_persona_meeting(
+    req: ConvenePersonaMeetingRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+) -> JSONResponse:
+    identity = current_identity()
+    payload = _request_dict(req)
+    if payload.get("tenant_id") and str(payload["tenant_id"]) != identity.tenant_id:
+        raise HTTPException(status_code=403, detail="ConsultMeeting tenant scope denied")
+    with _REQUEST_COMMAND_LOCK:
+        try:
+            meeting, _replayed = convene_persona_meeting(
+                store=store,
+                workflow_state=workflow_state,
+                tenant_id=identity.tenant_id,
+                payload=payload,
+                idempotency_key=idempotency_key,
+            )
+            if (req.run_immediately or auto_run_meetings) and meeting_provider is not None and meeting.get("status") == "convened":
+                meeting = execute_persona_meeting(
+                    store=store,
+                    meeting_id=str(meeting["meeting_id"]),
+                    tenant_id=identity.tenant_id,
+                    provider=meeting_provider,
+                )
+        except MeetingRefusedError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "detail": exc.reason,
+                    "reason": exc.reason,
+                    "message": exc.detail,
+                    "meeting_id": exc.meeting_id,
+                    "status": "refused",
+                    "outcome": exc.reason,
+                },
+            )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "meeting_id": str(meeting["meeting_id"]),
+            "status": str(meeting["status"]),
+        },
+    )
+
+
+@app.get("/api/consult/meetings")
+def get_persona_meetings(
+    status: Optional[str] = None,
+    type: Optional[str] = Query(default=None, alias="type"),
+    meeting_type: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    cursor: Optional[str] = None,
+    limit: int = 50,
+    include_failed: bool = False,
+) -> Dict[str, Any]:
+    identity = current_identity()
+    return list_meetings_view(
+        store,
+        tenant_id=identity.tenant_id,
+        status=status,
+        meeting_type=type or meeting_type,
+        persona_id=persona_id,
+        cursor=cursor,
+        limit=limit,
+        workflow_state=workflow_state,
+        include_failed=include_failed,
+    )
+
+
+@app.get("/api/consult/meetings/proposals")
+def get_persona_meeting_proposals(
+    status: Optional[str] = None,
+    persona_id: Optional[str] = None,
+    meeting_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    identity = current_identity()
+    return list_meeting_proposals_view(
+        store,
+        tenant_id=identity.tenant_id,
+        status=status,
+        persona_id=persona_id,
+        meeting_id=meeting_id,
+    )
+
+
+@app.get("/api/consult/meetings/catalogue")
+def get_persona_meeting_catalogue() -> Dict[str, Any]:
+    identity = current_identity()
+    return get_meeting_catalogue_view(store, tenant_id=identity.tenant_id)
+
+
+@app.get("/api/consult/meetings/{meeting_id}")
+def get_persona_meeting_detail(meeting_id: str) -> Dict[str, Any]:
+    identity = current_identity()
+    detail = get_meeting_detail_view(
+        store,
+        tenant_id=identity.tenant_id,
+        meeting_id=meeting_id,
+        workflow_state=workflow_state,
+    )
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Persona meeting not found")
+    return detail
+
+
+@app.post("/api/consult/meetings/{meeting_id}/evidence")
+def post_persona_meeting_evidence(
+    meeting_id: str,
+    req: RecordMeetingEvidenceRequest,
+) -> Dict[str, Any]:
+    identity = current_identity()
+    with _REQUEST_COMMAND_LOCK:
+        try:
+            updated = record_chair_new_evidence(
+                store=store,
+                tenant_id=identity.tenant_id,
+                meeting_id=meeting_id,
+                chair_persona_id=req.chair_persona_id,
+                evidence_items=req.evidence_items,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Persona meeting not found") from exc
+        except MeetingRefusedError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
+    return get_meeting_detail_view(store, tenant_id=identity.tenant_id, meeting_id=updated["meeting_id"], workflow_state=workflow_state) or updated
+
+
+class RecordMeetingOperatorReviewRequest(BaseModel):
+    note: Optional[str] = None
+    rationale: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    tenant_id: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    actor_role: Optional[str] = None
+
+
+_ALLOWED_REVIEW_OPERATOR_ROLES = frozenset({"operator", "approver", "admin"})
+_DISALLOWED_BFF_ACTOR_IDS = frozenset({"", "viewer", "human-inbox", "anonymous", "trader"})
+
+
+@app.post("/api/consult/meetings/{meeting_id}/review")
+def post_persona_meeting_operator_review(
+    meeting_id: str,
+    req: RecordMeetingOperatorReviewRequest,
+    request: Request,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+) -> JSONResponse:
+    identity = _require_actor("service", "operator")
+    if req.tenant_id and str(req.tenant_id).strip() != identity.tenant_id:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "ConsultMeeting tenant scope denied",
+                "reason": "tenant_mismatch",
+                "meeting_id": meeting_id,
+            },
+        )
+    declared_role = str(
+        req.actor_role
+        or request.headers.get("X-Pantheon-Actor-Role")
+        or ""
+    ).strip().lower()
+    if declared_role and declared_role not in _ALLOWED_REVIEW_OPERATOR_ROLES:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Operator role is required to review a meeting",
+                "reason": "insufficient_role",
+                "meeting_id": meeting_id,
+            },
+        )
+    if identity.actor_type == "persona" or identity.actor_id.startswith("persona:"):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Persona actor is not permitted to record an operator meeting review",
+                "reason": "insufficient_role",
+                "meeting_id": meeting_id,
+            },
+        )
+    if identity.actor_id.startswith("bff:"):
+        bff_actor = identity.actor_id[len("bff:"):].strip()
+        if bff_actor.lower() in _DISALLOWED_BFF_ACTOR_IDS:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "Operator role is required to review a meeting",
+                    "reason": "insufficient_role",
+                    "meeting_id": meeting_id,
+                },
+            )
+        if req.reviewed_by and str(req.reviewed_by).strip() != bff_actor:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "reviewed_by does not match authenticated operator",
+                    "reason": "operator_mismatch",
+                    "meeting_id": meeting_id,
+                },
+            )
+        operator_id = bff_actor
+    else:
+        if (
+            identity.actor_type == "operator"
+            and req.reviewed_by
+            and str(req.reviewed_by).strip() != identity.actor_id
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": "reviewed_by does not match authenticated operator",
+                    "reason": "operator_mismatch",
+                    "meeting_id": meeting_id,
+                },
+            )
+        operator_id = str(req.reviewed_by or "").strip() or identity.actor_id
+
+    note_text = req.note if req.note is not None else (req.rationale or "")
+    eff_idem = str(idempotency_key or req.idempotency_key or "").strip() or None
+
+    with _REQUEST_COMMAND_LOCK:
+        try:
+            updated, replayed = record_meeting_operator_review(
+                store=store,
+                tenant_id=identity.tenant_id,
+                meeting_id=meeting_id,
+                reviewed_by=operator_id,
+                note=note_text,
+                reviewed_at=req.reviewed_at,
+                idempotency_key=eff_idem,
+                service_actor_id=CONSULTATION_SERVICE_ACTOR.actor_id if identity.actor_type == "service" else None,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Persona meeting not found") from exc
+        except MeetingRefusedError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "detail": exc.reason,
+                    "reason": exc.reason,
+                    "message": exc.detail,
+                    "meeting_id": meeting_id,
+                },
+            )
+
+    detail = (
+        get_meeting_detail_view(
+            store,
+            tenant_id=identity.tenant_id,
+            meeting_id=updated["meeting_id"],
+            workflow_state=workflow_state,
+        )
+        or updated
+    )
+    detail["replayed"] = replayed
+    return JSONResponse(status_code=200, content=detail)
+
+
+@app.post("/api/consult/meetings/{meeting_id}/sync")
+def sync_persona_meeting_from_executor(
+    meeting_id: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    identity = _require_actor("service", "operator")
+    with _REQUEST_COMMAND_LOCK:
+        meeting_data = payload.get("meeting")
+        if isinstance(meeting_data, dict):
+            if str(meeting_data.get("tenant_id") or identity.tenant_id) != identity.tenant_id:
+                raise HTTPException(status_code=403, detail="Tenant mismatch")
+            meeting_data["meeting_id"] = meeting_id
+            meeting_data["tenant_id"] = identity.tenant_id
+            store.put_meeting(meeting_data)
+        for sched in payload.get("schedules") or []:
+            if isinstance(sched, dict):
+                sched["tenant_id"] = identity.tenant_id
+                store.put_meeting_schedule(sched)
+        for ref in payload.get("refusals") or []:
+            if isinstance(ref, dict):
+                ref["tenant_id"] = identity.tenant_id
+                store.put_meeting_refusal(ref)
+        req_status = payload.get("request_status")
+        if req_status:
+            req_obj = store.get_request(meeting_id)
+            if req_obj is not None and req_obj.tenant_id == identity.tenant_id:
+                req_obj.status = ConsultRequestStatus(str(req_status))
+                if payload.get("completed_at"):
+                    req_obj.completed_at = str(payload["completed_at"])
+                store.put_request(req_obj)
+    return {"status": "ok", "meeting_id": meeting_id}
+
 

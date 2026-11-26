@@ -160,7 +160,7 @@ async function render({ syncFirst = false } = {}) {
     runRenderStep("planning_proposals", renderFailures, () => renderPlanningProposals(planningState, status, dashboardBundle));
     runRenderStep("workload", renderFailures, () => renderWorkload(status, orchState));
     runRenderStep("delivery_layers", renderFailures, () => renderDeliveryLayers(status, planningState, dashboardBundle));
-    runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates));
+    runRenderStep("agent_lanes", renderFailures, () => renderAgentLanes(status, agentStates, dashboardBundle));
     runRenderStep("archive_records", renderFailures, () => renderArchiveRecords(dashboardBundle));
     runRenderStep("execution_summary", renderFailures, () => renderExecutionSummary(status, orchState, dashboardBundle));
     runRenderStep("board_summary", renderFailures, () => renderBoardSummary(status, orchState, dashboardBundle));

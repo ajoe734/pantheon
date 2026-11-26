@@ -25,6 +25,7 @@ services:
 
   collector-worker:
     build:
+      # this directory (/opt/pantheon-collector on the host); the image ships vendor/security_listing.py (see Dockerfile)
       context: .
       dockerfile: Dockerfile
     image: pantheon-collector-worker:1.0.0

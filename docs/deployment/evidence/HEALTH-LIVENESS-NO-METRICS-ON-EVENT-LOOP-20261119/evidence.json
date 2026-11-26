@@ -1,0 +1,116 @@
+{
+  "task": "HEALTH-LIVENESS-NO-METRICS-ON-EVENT-LOOP-20261119",
+  "change": {
+    "file": "services/foundation/health.py",
+    "livez": "FastAPI and Flask /livez now return health_payload(service, live=True, ready=True) with no metrics/details/dependencies callables; shape unchanged (status, service, timestamp, live, ready, dependencies={}, metrics={service_up:1}, details={}); status 200.",
+    "fastapi_threadpool": "/healthz, /readyz, /metrics handlers changed from async def to def so FastAPI runs the service callables in its threadpool, off the event loop. Bodies and status codes unchanged.",
+    "no_recurring_job_no_persistent_writer": true
+  },
+  "freeze_reproduction": {
+    "method": "FastAPI app, metrics callable takes a lock held by another thread (released by a timer after 3s). A request is issued, then an asyncio.sleep(0.3) on the same loop is timed, then /livez and an unrelated /other route.",
+    "before_change(HEAD health.py, request to /livez)": [
+      {
+        "requested_sleep_s": 0.3,
+        "actual_loop_resume_s": 2.98
+      },
+      {
+        "path": "/livez",
+        "status": 200,
+        "s": 0.001
+      },
+      {
+        "path": "/other",
+        "status": 200,
+        "s": 0.001
+      }
+    ],
+    "after_change(request to /metrics)": [
+      {
+        "requested_sleep_s": 0.3,
+        "actual_loop_resume_s": 0.3
+      },
+      {
+        "path": "/livez",
+        "status": 200,
+        "s": 0.002
+      },
+      {
+        "path": "/other",
+        "status": 200,
+        "s": 0.001
+      }
+    ],
+    "reading": "Before: the loop did not resume for 2.98s (requested 0.3s), i.e. the whole service froze. After: resumes in 0.3s and /livez and /other answer in ~2ms while the blocked metrics request is pending."
+  },
+  "tests": {
+    "services/foundation/tests/test_health.py": "9 passed (6 existing + livez-no-callables FastAPI, livez-no-callables Flask, blocking callable on /metrics,/healthz,/readyz does not stall /other and /livez)",
+    "services/evolution/test_evolution_service.py::test_health_metrics_include_sweep_fields": "passed after route moved /livez -> /metrics, assertions unchanged"
+  },
+  "coordinator_decision": "Item 5 forbids service code changes outside services/foundation, not tests. Evolution test moved to /metrics with identical assertions; services/evolution/main.py unchanged. /metrics and /healthz still return sweep_last_success_at and sweep_total_proposals_created.",
+  "liveness_fields_kept": [
+    "status",
+    "service",
+    "timestamp",
+    "live",
+    "ready",
+    "dependencies",
+    "metrics.service_up",
+    "details"
+  ],
+  "liveness_fields_dropped": "Only content produced by service callables: metrics.* beyond service_up, details.*, dependencies.* contents. Only inventoried reader: evolution test_health_metrics_include_sweep_fields (moved).",
+  "consumer_inventory_livez": [
+    {
+      "consumer": "docker-compose.yml (lines ~375,1209,1893), deploy/staging/docker-compose.staging.yml:855, deploy/production/docker-compose.prod-control.yml:790",
+      "reads": "HTTP success only (urlopen().read())"
+    },
+    {
+      "consumer": "scripts/deploy/prod_ops.sh:302,562",
+      "reads": "HTTP code == 200"
+    },
+    {
+      "consumer": "scripts/deploy_nonprod_vm.sh:1591,7571",
+      "reads": "curl success / HTTP code"
+    },
+    {
+      "consumer": "scripts/wait_for_bff_lifecycle_readiness.py:520",
+      "reads": "liveness probe; test fixture uses {live: True} (BFF has its own /livez, not the shared route)"
+    },
+    {
+      "consumer": "scripts/verify_agora_current_hosted_acceptance.py:558-583",
+      "reads": "livez.live (kept)"
+    },
+    {
+      "consumer": "scripts/smoke_openclaw_activation_ready_e2e.py:328",
+      "reads": "livez.status == 'ok' (kept)"
+    },
+    {
+      "consumer": "scripts/smoke_honest_stack.py:186, scripts/openclaw-assistant-provider-smoke.sh:40",
+      "reads": "HTTP success"
+    },
+    {
+      "consumer": "scripts/check_health_endpoints.py:12",
+      "reads": "route presence in source"
+    },
+    {
+      "consumer": "services/foundation/tests/test_health.py",
+      "reads": "service, status, live, ready, metrics.service_up (all kept)"
+    },
+    {
+      "consumer": "services/channels/test_web_health.py:67-69",
+      "reads": "dependencies == {} (kept; channels/web defines its own /livez)"
+    },
+    {
+      "consumer": "services/evolution/test_evolution_service.py:2286",
+      "reads": "metrics.sweep_last_success_at, sweep_total_proposals_created -> moved to /metrics"
+    },
+    {
+      "consumer": "services/broker, router, persona, bff, paper_runtime, paper_fleet_reconciler, openclaw adapter tests, source_ingestion, consultation tests",
+      "reads": "own /livez routes or HTTP status only; do not use shared registration fields beyond status"
+    }
+  ],
+  "consumer_inventory_other_routes": "/healthz, /readyz, /metrics bodies and status codes unchanged, so every reader of them (scripts/*, compose healthchecks, deploy scripts listed by 'grep -rE /(healthz|readyz|metrics)') is unaffected.",
+  "residual_findings": [
+    "Inventory of /healthz,/readyz,/metrics readers is by route-path grep, not per-field, because those bodies are unchanged.",
+    "Services with their own hand-written /livez (broker, router, persona, channels/web, bff) are outside this shared registration and were not changed."
+  ]
+}

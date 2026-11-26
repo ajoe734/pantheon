@@ -1,0 +1,18 @@
+{
+  "task": "DEV-BOUNDED-PUBLISHED-SESSION-FRONTIER-20261113",
+  "root_cause": "prepare helper used Taipei current date for non-FinMind (enqueued run_date 2026-11-13 at 10:48, before 13:30 close) while preflight selected closed session 2026-11-12; terminal readback then counted that untouched queued item as selected-connector backlog.",
+  "changes": [
+    "scripts/deploy_nonprod_vm.sh: TAIFEX/non-FinMind run_date = latest closed (13:30 Taipei) session via governed TWSE calendar; FinMind 18:00 rule unchanged",
+    "services/source_ingestion/controller_worker.py: terminal validation reconciles unique per-connector frontier items (read separately) against the aggregate per-connector counts; any mismatch (concurrent enqueue), duplicate or malformed id fails closed; only never-attempted, error-free queued items after the latest closed/published session are deferred (stay queued/visible); no subtraction from aggregates; requested/earlier/attempted/errored items still fail",
+    "scripts/deploy_nonprod_vm.sh verify_bounded_source_refresh_readback: TAIFEX proof must carry the requested session (latest closed session at deploy start, governed calendar) and an underlying within the active symbol scope",
+    "controller_worker.py: deferral of queued later-session work now restricted to governed Taiwan connectors (_TAIWAN_SESSION_CONNECTOR_IDS); other connectors (e.g. dev-paper-us-equity-simulation/us_price_daily) keep backlog failing",
+    "deploy_nonprod_vm.sh: preparation selects the session from refresh_started_at (SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT, never future) so preparation and terminal verifier use one session across the 13:30 cutoff; observation clocks unchanged",
+    "controller_worker.py: terminal backlog eligibility is evaluated at min(observed now, SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT) so a Nov12 refresh crossing 13:30 (TAIFEX) or 18:00 (FinMind) keeps later queued Nov13 work deferred; deploy_nonprod_vm.sh passes refresh_started_at into the bounded controller container; requested-session/attempted/errored items still fail; observation clocks unchanged"
+  ],
+  "tests": {
+    "services/source_ingestion/tests/test_controller_worker.py": "190 passed after aligning _queued_actual provenance.available_time with the injected clock so fixtures no longer depend on wall-clock (adds cross-cutoff selected_at binding for TAIFEX through real _validate_terminal_readback, FinMind 18:00 eligibility case)",
+    "scripts/test_dev_tw_market_refresh.py": "-k bounded/session/controller 57 passed (197s); full-file run exceeds 2 min bounded batch and is not counted as passed",
+    "checks": "bash -n and git diff --check clean"
+  },
+  "limits": "Contract-reference rows (updated0 snapshots) are not price/fill proof. Queued frontier-a0bceb2da89b not dropped or marked done. Actual recovery/publication remains with the original hosted owner; no workflow dispatch or VM operation performed."
+}

@@ -1193,6 +1193,101 @@ class OidcJwksAndInternalPaperCallerDualPathTests(unittest.TestCase):
         self.assertEqual(res_wrong_iss.status_code, 401)
         self.assertEqual(res_wrong_iss.get_json()["error"]["code"], "AUTH_JWT_ISSUER_MISMATCH")
 
+    def test_runtime_manager_client_dynamic_jwt_and_token_file_across_clock_advances(self):
+        from runtime_manager_client import RuntimeManagerClient
+        from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+
+        clock_now = [1_700_300_000.0]
+        strict_env = {
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_SECRET": self.hs256_secret,
+            "PANTHEON_RUNTIME_JWT_ISSUER": self.hs256_issuer,
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": self.hs256_audience,
+        }
+        seen_auth_headers: list[str] = []
+
+        def _fake_urlopen(req, timeout=15):
+            auth_hdr = req.get_header("Authorization") or ""
+            seen_auth_headers.append(auth_hdr)
+            validate_request_auth(
+                authorization=auth_hdr,
+                required_roles=("operator",),
+                env=strict_env,
+                allow_shared_secret=True,
+            )
+            path = req.full_url.split("http://runtime-manager:8081", 1)[-1]
+            flask_resp = self.client.open(
+                path,
+                method=req.get_method(),
+                headers={k: v for k, v in req.header_items()},
+                data=req.data,
+            )
+            if flask_resp.status_code >= 400:
+                import io
+                import urllib.error
+
+                raise urllib.error.HTTPError(
+                    req.full_url,
+                    flask_resp.status_code,
+                    "error",
+                    flask_resp.headers,
+                    io.BytesIO(flask_resp.get_data()),
+                )
+
+            class _Resp:
+                status = flask_resp.status_code
+
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *_):
+                    return False
+
+                def read(self_inner):
+                    return flask_resp.get_data()
+
+            return _Resp()
+
+        caller_env = {
+            **strict_env,
+            "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime-manager:8081",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN": "runtime-control-internal",
+            "PANTHEON_RUNTIME_MANAGER_ACTOR_ID": "svc:paper-runtime-client",
+            "PANTHEON_RUNTIME_MANAGER_ROLES": "operator",
+            "PANTHEON_TENANT_ID": "tenant-dev",
+            "PANTHEON_RUNTIME_MANAGER_JWT_TTL_SECONDS": "30",
+        }
+        with mock.patch.dict(os.environ, caller_env, clear=False), mock.patch(
+            "time.time", side_effect=lambda: clock_now[0]
+        ), mock.patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            identity = RuntimeIdentity.from_env()
+            rm_client = RuntimeManagerClient(
+                base_url=identity.runtime_manager_url,
+                bearer_token=identity.runtime_manager_auth.token,
+            )
+            bindings_t0 = rm_client.list_all()
+            self.assertEqual(len(bindings_t0), 2)
+            first_header = seen_auth_headers[-1]
+
+            # Advance simulated clock past initial 30s TTL.
+            clock_now[0] = 1_700_300_045.0
+            with self.assertRaises(AuthError) as expired:
+                validate_request_auth(
+                    authorization=first_header,
+                    required_roles=("operator",),
+                    env=strict_env,
+                    allow_shared_secret=True,
+                )
+            self.assertEqual(expired.exception.code, "AUTH_JWT_EXPIRED")
+
+            # Same client instance mints a fresh short-lived HS256 token and succeeds.
+            binding_t1 = rm_client.get("rtb-dev-001")
+            self.assertIsNotNone(binding_t1)
+            self.assertEqual(binding_t1["binding_id"], "rtb-dev-001")
+            second_header = seen_auth_headers[-1]
+            self.assertNotEqual(second_header, first_header)
+
 
 if __name__ == "__main__":
     unittest.main()

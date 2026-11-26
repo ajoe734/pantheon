@@ -135,6 +135,28 @@ class TestFleetMembership(unittest.TestCase):
             "non_executable_missing_market_symbol",
         )
 
+    def test_pool_envelope_with_declared_symbol_list_is_fleet_ready(self):
+        binding = _b()
+        binding["metadata"].pop("symbol")
+        binding["metadata"]["symbols"] = ["2330.TW", "2317.TW"]
+
+        state = build_fleet_desired_state([binding])
+
+        self.assertEqual(state.active_count, 1)
+        self.assertEqual(state.excluded_count, 0)
+
+    def test_pool_symbol_list_with_blank_or_duplicate_is_not_fleet_ready(self):
+        for bad in (["2330.TW", ""], ["2330.TW", "2330.TW"], ["2330.TW"]):
+            binding = _b()
+            binding["metadata"].pop("symbol")
+            binding["metadata"]["symbols"] = bad
+
+            state = build_fleet_desired_state([binding])
+
+            self.assertEqual(state.active_count, 0, bad)
+            self.assertEqual(
+                state.excluded[0].exclusion_reason, "non_executable_missing_market_symbol")
+
     def test_active_live_is_excluded(self):
         state = build_fleet_desired_state([_b(deployment_mode="live", status="active")])
         self.assertEqual(state.active_count, 0)
@@ -411,6 +433,89 @@ class TestStability(unittest.TestCase):
     def test_excluded_safe_mode_empty_without_resolver(self):
         state = build_fleet_desired_state([_b(status="paused")])
         self.assertEqual(state.excluded[0].safe_mode, "")
+
+    def test_default_baseline_binding_with_canonical_approval_evidence_is_admitted(self):
+        from unittest.mock import patch
+        from services.capital.risk_policy import resolve_pool_risk_policy_binding, risk_policy_digest
+        from services.governance.test_approval_authority import SnapshotApprovalReader, approval_snapshot
+
+        pool_id = "pool-persona-paper-06d4775a9b6a8f63b311"
+        baseline_policy = {
+            "risk_policy_id": f"rp-{pool_id}",
+            "version": "1.0",
+            "status": "active",
+            "allowed_stages": ["paper"],
+            "allowed_asset_classes": ["equity", "future"],
+            "gross_limit": 2.0,
+            "net_limit": 2.0,
+            "max_leverage": 2.0,
+        }
+        decision = approval_snapshot(
+            decision_id="apv-fleet-low-001",
+            tenant_id="tenant-dev",
+            target_type="capital_pool_activation",
+            target_id=pool_id,
+            target_version="pool-digest-001",
+            owner_user_id="proposer-1",
+            risk_level="low",
+            decided_at="2026-11-20T00:00:00Z",
+            recorded_at="2026-11-20T00:00:00Z",
+            expires_at="2099-12-20T00:00:00Z",
+            metadata={
+                "subject": {
+                    "pool_id": pool_id,
+                    "risk_direction": "increase",
+                    "requested_risk": "low",
+                    "risk_policy_id": f"rp-{pool_id}",
+                    "risk_policy_version": "1.0",
+                    "risk_policy_digest": risk_policy_digest(baseline_policy),
+                },
+                "approvals": [
+                    {"actor_id": "reviewer-1", "actor_role": "governance_reviewer"},
+                    {"actor_id": "reviewer-2", "actor_role": "governance_reviewer"},
+                ],
+            },
+        )
+        reader = SnapshotApprovalReader(decision)
+        owner_res = resolve_pool_risk_policy_binding(
+            capital_pool_id=pool_id,
+            pool={
+                "pool_id": pool_id,
+                "tenant_id": "tenant-dev",
+                "approval_digest": "pool-digest-001",
+                "metadata": {
+                    "tenant_id": "tenant-dev",
+                    "requested_risk_profile": "low",
+                    "require_approved_profile_mapping": True,
+                    "profile_mapping_approval_id": "apv-fleet-low-001",
+                    "risk_policy": baseline_policy,
+                },
+            },
+            expected_tenant_id="tenant-dev",
+            approval_reader=reader,
+        )
+        self.assertTrue(owner_res.resolved)
+
+        binding = _b(
+            binding_id="rb-approved-1",
+            capital_pool_id=pool_id,
+            metadata={
+                "tenant_id": "tenant-dev",
+                "requested_risk_profile": "low",
+                "require_approved_profile_mapping": True,
+                "profile_mapping_approval_id": "apv-fleet-low-001",
+                "approval_digest": "pool-digest-001",
+                "risk_policy": baseline_policy,
+            },
+        )
+        with patch(
+            "services.governance.approval_authority.configured_approval_reader",
+            side_effect=lambda domain="runtime_manager", **kw: reader,
+        ):
+            state = build_fleet_desired_state([binding])
+        self.assertEqual(state.active_count, 1)
+        self.assertEqual(state.excluded_count, 0)
+        self.assertEqual(state.bindings[0].binding_id, "rb-approved-1")
 
 
 if __name__ == "__main__":

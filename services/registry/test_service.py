@@ -3952,3 +3952,157 @@ def test_strict_viewer_and_view_only_read_scoped_strategy_spec_views_and_preserv
     )
     assert resp_cross_detail.status_code == 403, resp_cross_detail.text
 
+
+
+def _real_gate_registration():
+    """Registration of the genuine canonical artifact + proof from the real ReplicationGate path."""
+    import json as _json
+    from pathlib import Path as _Path
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.replication.gate import ReplicationGate, create_promotion_request
+    from services.research.replication.gate_schema import ReplicationRequest
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
+
+    fixture = (_Path(__file__).resolve().parents[1] / "research" / "replication" / "fixtures"
+               / "recorded_backtest_tw_2330.json")
+    bt_eval = _json.loads(fixture.read_text(encoding="utf-8"))
+    artifact = build_canonical_tw_strategy_artifact(strategy_id="strat-tw-replication-001", symbols=("2330.TW",))
+    assert strategy_artifact_checksum(artifact) == bt_eval["strategy_artifact"]["checksum"]
+    spec = {"name": "tw_momentum", "description": "d", "signals": ["momentum"],
+            "parameters": {"lookback": 2},
+            "governance": {"approval_required": True, "policy_id": "oc-001-research-normalization"}}
+    req = ReplicationRequest(
+        candidate_id="cand-owner-seam", source_task_id="RS-002",
+        research_handoff={"source_metadata": {"api_endpoint": "https://api.openalex.org/works/W123",
+                                              "retrieved_at": "2026-11-10T00:00:00Z",
+                                              "governance_context": "Approved structured source"},
+                          "normalized_findings": {"strategy_spec": {"name": "tw_momentum"},
+                                                  "replication_notes": "n", "evaluation_hypotheses": "h"}},
+        proposed_strategy_spec=spec, backtest_evaluation=bt_eval,
+        metadata={"strategy_artifact_checksum": bt_eval["strategy_artifact"]["checksum"],
+                  "dataset_version_id": bt_eval["dataset_id"]})
+    gate = ReplicationGate()
+    gate.backtest_run_store.record(bt_eval)
+    promo = create_promotion_request(gate.evaluate_candidate(req), spec)
+    summary = promo.registry_entry["evaluation_summary"]
+    return {"registry_id": artifact["artifact_id"], "artifact_state": "candidate", "strategy_artifact": artifact,
+            "producer_run_id": summary["backtest_run_id"], "evaluation_summary": summary,
+            "replication_proof": promo.replication_proof, "backtest_evaluation": bt_eval}
+
+
+class _FakeResearchOwner:
+    """Stands in for the Research owner-binding route: serves a tenant-bound run record."""
+
+    def __init__(self, bt_eval, tenant, proof=None, **override):
+        import hashlib, json as _j
+        from services.registry.promotion.gate import real_backtest_verdict_digest
+        digest = "sha256:" + hashlib.sha256(
+            _j.dumps(bt_eval, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+        self.record = {"backtest_run_id": bt_eval["backtest_run_id"], "tenant_id": tenant, "status": "completed",
+                       "artifact_checksum": bt_eval["strategy_artifact"]["checksum"], "evaluation_digest": digest}
+        if proof is not None:  # the owner's own persisted record of the real gate decision
+            d = next(x for x in proof["replication_results"] if x["criterion_id"] == "real_backtest_validation")["details"]
+            self.record["gate_verdict"] = {
+                "admission_status": str(getattr(proof["admission_status"], "value", proof["admission_status"])),
+                "trial_count": d["trial_count"], "mandate_max_drawdown": d["mandate_max_drawdown"],
+                "family_id": d.get("family_id"), "verdict_digest": real_backtest_verdict_digest(d)}
+        self.record.update(override)
+        self.requests = []
+
+    def install(self, monkeypatch):
+        import io, json as _j, urllib.error
+        owner = self
+
+        class _Opener:
+            def open(self, request, timeout=None):
+                owner.requests.append((request.full_url, dict(request.header_items()), timeout))
+                if owner.record is None:
+                    raise urllib.error.HTTPError(request.full_url, 404, "nf", {}, io.BytesIO(b"{}"))
+                return io.BytesIO(_j.dumps(owner.record).encode())
+
+        monkeypatch.setenv("RESEARCH_ORCHESTRATOR_API_URL", "http://research.test:8101")
+        monkeypatch.setattr("services.registry.service.urllib.request.build_opener", lambda *a: _Opener())
+        return self
+
+
+def test_real_gate_proof_register_approve_get_resolver_and_rejects_forgery(strict_client, monkeypatch):
+    import copy as _copy
+    from services.evolution.approved_baselines import resolve_member_baseline
+    token = _jwt(subject="gate-owner", tenant="tenant-a")
+    other = _jwt(subject="gate-other", tenant="tenant-b")
+    reg = _real_gate_registration()
+    rid = reg["registry_id"]
+    owner = _FakeResearchOwner(reg["backtest_evaluation"], "tenant-a", reg["replication_proof"]).install(monkeypatch)
+    good_record = dict(owner.record)
+
+    # Forged / altered / foreign submissions are refused before anything is persisted.
+    def forged(mutate):
+        r = _copy.deepcopy(reg)
+        mutate(r)
+        return strict_client.post("/api/registry/strategy-artifacts", json=r, headers=_bearer(token)).status_code
+    def alter_metrics(r):
+        r["evaluation_summary"].update(out_of_sample_sharpe_ratio=999.0, max_drawdown=1e-6)
+        r["replication_proof"]["evaluation_summary"] = r["evaluation_summary"]
+        d = next(x for x in r["replication_proof"]["replication_results"]
+                 if x["criterion_id"] == "real_backtest_validation")["details"]
+        d.update(out_of_sample_sharpe_ratio=999.0, out_of_sample_max_drawdown=1e-6)
+    def fabricate_checks(r):
+        r["backtest_evaluation"]["out_of_sample"]["sharpe_ratio"] = -2.0
+    assert forged(alter_metrics) == 400
+    assert forged(fabricate_checks) == 400
+    assert forged(lambda r: r.pop("backtest_evaluation")) == 400
+    assert forged(lambda r: r["replication_proof"].update(admission_status="rejected")) == 400
+    assert forged(lambda r: r["backtest_evaluation"]["strategy_artifact"].update(checksum="sha256:other")) == 400
+
+    # Producer owner disagreement (foreign tenant, changed digest, unknown run, unconfigured) refuses the proof.
+    real = good_record["gate_verdict"]
+    for override in ({"tenant_id": "tenant-b"}, {"evaluation_digest": "sha256:changed"}, {"status": "failed"}, None,
+                     # the owner's real gate decision differs from the submitted proof (trial 50 rejected vs claimed trial)
+                     {"gate_verdict": {**real, "trial_count": real["trial_count"] + 49, "admission_status": "rejected",
+                                       "verdict_digest": "sha256:other"}},
+                     {"gate_verdict": {**real, "trial_count": real["trial_count"] + 49}},
+                     {"gate_verdict": {**real, "verdict_digest": "sha256:other"}},
+                     {"gate_verdict": None}):
+        owner.record = None if override is None else {**good_record, **override}
+        assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
+    owner.record = dict(good_record)
+    monkeypatch.delenv("RESEARCH_ORCHESTRATOR_API_URL")
+    assert strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token)).status_code == 400
+    monkeypatch.setenv("RESEARCH_ORCHESTRATOR_API_URL", "http://research.test:8101")
+    owner.requests.clear()
+
+    created = strict_client.post("/api/registry/strategy-artifacts", json=reg, headers=_bearer(token))
+    assert created.status_code == 200, created.text
+    url, hdrs, timeout = owner.requests[-1]
+    assert hdrs["Authorization"] == _bearer(token)["Authorization"] and hdrs["X-tenant-id"] == "tenant-a"
+    assert url.endswith(f"/backtest-runs/{reg['producer_run_id']}/owner-binding") and timeout and timeout <= 10
+    approved = advance_registry_http(
+        strict_client, f"/api/registry/strategy-artifacts/{rid}/advance",
+        json={"target_state": "approved", "approver": "gate-reviewer", "expected_artifact_state": "candidate"},
+        headers=_bearer(token))
+    assert approved.status_code == 200, approved.text
+    got = strict_client.get(f"/api/registry/entries/{rid}", headers=_bearer(token))
+    assert got.status_code == 200, got.text
+    entry = got.json()["entry"]
+    assert entry["replication_success"] is True
+    binding = entry["replication_proof"]["owner_verified_binding"]
+    assert binding["artifact_checksum"] == entry["checksum"]
+    assert binding["evaluation_digest"].startswith("sha256:") and binding["producer_verified"] is True
+    # The persisted GET entry is what the resolver consumes: approved, with the genuine numbers.
+    baseline = resolve_member_baseline(
+        tenant_id="tenant-a", persona_id="p1", artifact_ref=rid, checksum=entry["checksum"],
+        entry=entry, universe=("2330.TW",))
+    assert baseline["status"] == "approved", baseline
+    assert baseline["oos_sharpe"] == reg["evaluation_summary"]["out_of_sample_sharpe_ratio"]
+    # replay with different proof is not an idempotent no-op; tenant isolation preserved
+    assert strict_client.post("/api/registry/strategy-artifacts", json={**reg, "replication_proof": None,
+                              "backtest_evaluation": None}, headers=_bearer(token)).status_code in (400, 409)
+    assert strict_client.get(f"/api/registry/entries/{rid}", headers=_bearer(other)).status_code == 403
+
+
+def test_artifact_registered_without_proof_has_unknown_gate_verdict(strict_client):
+    token = _jwt(subject="gate-owner", tenant="tenant-a")
+    plain = _cross_tenant_artifact_registration(artifact_id="artifact-no-proof")
+    assert strict_client.post("/api/registry/strategy-artifacts", json=plain, headers=_bearer(token)).status_code == 200
+    unproven = strict_client.get("/api/registry/entries/artifact-no-proof", headers=_bearer(token)).json()["entry"]
+    assert unproven["replication_success"] is None and unproven["replication_proof"] is None

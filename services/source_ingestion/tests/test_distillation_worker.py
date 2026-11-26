@@ -47,7 +47,7 @@ from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 def _normalized_source(
     source_id: str = "src-tw-001",
     title: str = "LightGBM TW equity momentum factor paper",
-    source_type: str = "paper",
+    source_type: str = "internal_note",
     trust_score: float = 0.8,
     **metadata_overrides: Any,
 ) -> SourceRecord:
@@ -88,6 +88,87 @@ def _make_worker(tmp_path: Path) -> tuple[DistillationWorker, DistillationJobQue
 
 def _versioned_bundle_id(source: SourceRecord) -> str:
     return _stable_bundle_id(source.source_id, source_version_digest(source))
+
+
+@pytest.mark.parametrize("conflict", [None, "tenant", "content"])
+def test_registry_ack_replay_after_capacity_eviction_and_restart(tmp_path, monkeypatch, conflict):
+    import copy
+    from datetime import datetime, timezone
+    from services.source_ingestion.distillation_controller import (
+        DistillationControllerConfig, _make_registry_sync,
+    )
+
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state", alive_path=None,
+        job_queue_path=tmp_path / "queue.sqlite", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=tmp_path / "evidence", source_dirs=[],
+    )
+    registry = {}
+    writes = []
+
+    def post(url, payload):
+        writes.append(payload["registry_id"])
+        entry = copy.deepcopy(payload)
+        entry["artifact_type"] = "strategy_spec"
+        entry["metadata"]["strategy_spec"] = entry.pop("strategy_spec")
+        registry[payload["registry_id"]] = {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", lambda url, key: registry.get(key))
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", post)
+    clock = {"value": datetime(2026, 11, 13, 15, 17, 11, tzinfo=timezone.utc)}
+    monkeypatch.setattr("services.source_ingestion.strategy_seed_builder._utc_now", lambda: clock["value"])
+    queue = DistillationJobQueue(config.job_queue_path, now=lambda: clock["value"].timestamp())
+    store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    sync = _make_registry_sync(config)
+
+    def lost_ack(request):
+        sync(request)
+        raise RuntimeError("timed out after Registry commit before queue acknowledgement")
+
+    worker = DistillationWorker(queue, store, registry_sync=lost_ack, retry_base_seconds=0)
+    source = _normalized_source(tenant_id="test")
+    job = worker.enqueue_from_source_record(source)
+    unowned = worker.enqueue_from_source_record(_normalized_source("legacy-unowned"))
+    first = worker.run_pending(now="2026-11-13T15:17:11Z", tenant_id="test")
+    assert first.failed == first.retried == 1
+    assert len(writes) == 1
+    original_checksum = registry[writes[0]]["entry"]["checksum"]
+
+    # Exercise the real capacity eviction, then recreate both queue/store objects.
+    clock["value"] = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    eviction_worker = DistillationWorker(
+        DistillationJobQueue(tmp_path / "eviction.sqlite"), store,
+    )
+    other = _normalized_source("other-source", tenant_id="test")
+    eviction_worker.enqueue_from_source_record(other)
+    assert eviction_worker.run_pending(tenant_id="test").created == 1
+    assert store.list_by_bundle(_versioned_bundle_id(source)) == []
+    if conflict == "tenant":
+        registry[writes[0]]["entry"]["metadata"]["tenant_id"] = "foreign"
+    elif conflict == "content":
+        registry[writes[0]]["entry"]["metadata"]["strategy_spec"]["title"] = "different"
+    before = copy.deepcopy(registry)
+
+    restarted_queue = DistillationJobQueue(config.job_queue_path)
+    restarted_store = StrategySpecSeedStore(config.seed_store_path, max_total_seeds=1)
+    restarted = DistillationWorker(restarted_queue, restarted_store, registry_sync=sync, retry_base_seconds=0)
+    result = restarted.run_pending(now="2026-11-18T00:00:00Z", tenant_id="test")
+    receipt = DistillationJobQueue(config.job_queue_path).get(job.source_id, job.source_digest)
+    assert receipt is not None
+    if conflict:
+        assert result.failed == result.retried == 1
+        assert receipt.status == DistillationJobStatus.RETRY_WAIT
+        assert receipt.checksum is None
+    else:
+        assert result.registry_synced == 1
+        assert receipt.status == DistillationJobStatus.DONE
+        assert receipt.checksum == original_checksum
+        assert restarted.run_pending(tenant_id="test").processed == 0
+    assert registry == before
+    assert len(writes) == 1
+    assert restarted_queue.get(unowned.source_id, unowned.source_digest).status == DistillationJobStatus.PENDING
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +820,185 @@ class TestTransientDeadLetterRedrive:
         assert queue.redrive_transient_dead_letters(requested_by="ctl", tenant_id="tenant-missing") == []
 
 
+AUTH_401 = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"
+
+
+def _force_dead_letter(queue: DistillationJobQueue, job, reason: str = AUTH_401, attempts: int = 3) -> None:
+    """Put an admitted job into the dead-letter state the hosted rows are in."""
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute(
+            "UPDATE distillation_outbox SET status='dead_letter', attempts=?, last_error=?, processed_at=1 WHERE job_id=?",
+            (attempts, reason, job.job_id),
+        )
+        event_id = conn.execute(
+            "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+            " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (job.job_id, event_id, job.source_id, job.source_digest, "{}", attempts, reason, 1.0),
+        )
+
+
+def _force_status(queue: DistillationJobQueue, job, status: str) -> None:
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute("UPDATE distillation_outbox SET status=? WHERE job_id=?", (status, job.job_id))
+
+
+class TestAuthDeadLetterRecovery:
+    def test_is_auth_registry_failure_classification(self) -> None:
+        from services.source_ingestion.distillation_worker import (
+            is_auth_registry_failure,
+            is_transient_registry_failure,
+        )
+
+        assert is_auth_registry_failure(AUTH_401)
+        assert is_auth_registry_failure("registry_sync_failed: RuntimeError: Failed to register strategy spec: HTTP Error 403: Forbidden")
+        assert not is_auth_registry_failure("registry_sync_failed: HTTPError: HTTP Error 500: boom")
+        assert not is_auth_registry_failure("Registry artifact x exists with conflicting distillation lineage")
+        assert not is_transient_registry_failure(AUTH_401)
+
+    def test_short_auth_outage_does_not_dead_letter(self, tmp_path: Path) -> None:
+        from services.source_ingestion.distillation_worker import AUTH_RETRY_MAX_ATTEMPTS
+
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        state = {"fail": True}
+
+        def sync(request):
+            if state["fail"]:
+                raise RuntimeError("HTTPError: HTTP Error 401: Unauthorized")
+            return RegistrySyncResult(registry_id="reg-1", status="synced")
+
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=sync, retry_base_seconds=5,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        clock = [__import__("time").time()]
+        queue._now = lambda: clock[0]  # type: ignore[method-assign]
+        covered = 0.0
+        # Every attempt fails; walk the clock to each retry's availability.
+        for _ in range(AUTH_RETRY_MAX_ATTEMPTS - 1):
+            result = worker.run_pending()
+            assert result.dead_lettered == 0
+            with sqlite3.connect(queue.path) as conn:
+                status, available_at = conn.execute(
+                    "SELECT status, available_at FROM distillation_outbox"
+                ).fetchone()
+            assert status == "retry_wait"
+            covered += available_at - clock[0]
+            clock[0] = available_at
+        # Waits outlast a 60 minute credential outage (hosted: max_attempts 3, 5s base = 15s).
+        assert covered > 3600
+        state["fail"] = False
+        result = worker.run_pending()
+        assert result.registry_synced == 1
+        assert queue.metrics()["dead_letter"] == 0
+
+    def test_persistent_auth_failure_eventually_dead_letters(self, tmp_path: Path) -> None:
+        from services.source_ingestion.distillation_worker import AUTH_RETRY_MAX_ATTEMPTS
+
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: (_ for _ in ()).throw(RuntimeError("HTTPError: HTTP Error 401: Unauthorized")),
+            retry_base_seconds=5,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        clock = [__import__("time").time()]
+        queue._now = lambda: clock[0]  # type: ignore[method-assign]
+        for _ in range(AUTH_RETRY_MAX_ATTEMPTS):
+            worker.run_pending()
+            clock[0] += 1000
+        assert queue.metrics()["dead_letter"] == 1
+
+    def test_non_auth_failure_keeps_three_attempt_behaviour(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl", default_max_attempts=3)
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: (_ for _ in ()).throw(RuntimeError("HTTPError: HTTP Error 500: boom")),
+            retry_base_seconds=0,
+        )
+        worker.enqueue_from_source_record(_normalized_source())
+        for _ in range(3):
+            worker.run_pending()
+        assert queue.metrics()["dead_letter"] == 1
+        assert queue.redrive_auth_dead_letters(requested_by="ctl")["redriven"] == []
+        assert queue.dead_letter_count() == 1
+
+    def test_latest_auth_dead_letter_is_redriven_and_delivered(self, tmp_path: Path) -> None:
+        worker, queue, _ = _make_worker(tmp_path)
+        job = queue.enqueue_source_record(_normalized_source())
+        _force_dead_letter(queue, job)
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out == {"redriven": [job.job_id], "superseded": []}
+        assert queue.dead_letter_count() == 0
+        assert queue.metrics()["pending"] == 1
+        # exhausted budget: a second dead-lettering is not redriven past max_redrives
+        _force_status(queue, job, "dead_letter")
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute("UPDATE distillation_dead_letters SET resolved_at=NULL WHERE job_id=?", (job.job_id,))
+        assert queue.redrive_auth_dead_letters(requested_by="ctl", max_redrives=1)["redriven"] == []
+        assert queue.dead_letter_count() == 1
+
+    def test_superseded_by_delivered_version_is_resolved_not_delivered(self, tmp_path: Path) -> None:
+        calls: list[str] = []
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        worker = DistillationWorker(
+            queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), created_by="t",
+            registry_sync=lambda r: calls.append(r.job.job_id) or RegistrySyncResult(registry_id="r", status="synced"),
+        )
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        assert old.job_id != new.job_id
+        _force_dead_letter(queue, old)
+        _force_status(queue, new, "done")
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out == {"redriven": [], "superseded": [old.job_id]}
+        assert queue.dead_letter_count() == 0
+        assert queue.metrics()["dead_letter"] == 0
+        worker.run_pending()
+        assert calls == []  # the stale version never reaches the Registry
+        with sqlite3.connect(queue.path) as conn:
+            status, reason = conn.execute(
+                "SELECT status, skip_reason FROM distillation_outbox WHERE job_id=?", (old.job_id,)
+            ).fetchone()
+        assert status == "skipped" and new.job_id in reason
+
+    def test_newer_dead_lettered_version_handled_once_through_newest(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        _force_dead_letter(queue, old)
+        _force_dead_letter(queue, new)
+        out = queue.redrive_auth_dead_letters(requested_by="ctl")
+        assert out["redriven"] == [new.job_id]
+        assert out["superseded"] == [old.job_id]
+        assert queue.dead_letter_count() == 0
+        assert queue.redrive_auth_dead_letters(requested_by="ctl") == {"redriven": [], "superseded": []}
+
+    def test_redrive_per_call_cap(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        for i in range(5):
+            _force_dead_letter(queue, queue.enqueue_source_record(_normalized_source(f"s-{i}")))
+        assert len(queue.redrive_auth_dead_letters(requested_by="ctl", limit=2)["redriven"]) == 2
+        assert queue.dead_letter_count() == 3
+
+    def test_old_reader_reads_queue_left_by_recovery(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.jsonl")
+        old = queue.enqueue_source_record(_normalized_source(title="v1"), enqueued_at=100.0)
+        new = queue.enqueue_source_record(_normalized_source(title="v2"), enqueued_at=200.0)
+        _force_dead_letter(queue, old)
+        _force_dead_letter(queue, new)
+        queue.redrive_auth_dead_letters(requested_by="ctl")
+        with sqlite3.connect(queue.path) as conn:
+            cols_before = {r[1] for r in conn.execute("PRAGMA table_info(distillation_outbox)")}
+        # Same schema as before the change; statuses stay inside the existing CHECK set.
+        assert "skip_reason" in cols_before
+        reopened = DistillationJobQueue(queue.path)
+        assert {getattr(j.status, "value", j.status) for j in reopened.list_all()} == {"skipped", "pending"}
+
+
 def _legacy_raw_refs_digest(source: SourceRecord) -> str:
     import hashlib
 
@@ -1183,3 +1443,42 @@ class TestMarketSourceNoRegistryDrafts:
         assert queue.list_dead_letters() == []
 
 
+
+
+def test_catch_up_limit_counts_new_versions_and_preserves_pending(tmp_path):
+    worker, queue, _ = _make_worker(tmp_path)
+    old = [_normalized_source(source_id=f"old-{i}") for i in range(4)]
+    for source in old:
+        queue.enqueue_source_record(source)
+    # Known sources must not use all admission slots and starve later sources.
+    new = [_normalized_source(source_id=f"new-{i}") for i in range(3)]
+    result = worker.catch_up([*old, *new], limit=2)
+    assert result.enqueued == 2
+    assert result.processed == 6  # queued work is independent of admission
+    assert queue.get(new[2].source_id) is None
+    assert worker.catch_up([*old, *new], limit=2).enqueued == 1
+    revised = _normalized_source(source_id=old[0].source_id, title="Revised")
+    assert worker.catch_up([*old, revised], limit=1).enqueued == 1
+    assert queue.version_count(old[0].source_id) == 2
+
+
+def test_catch_up_reports_lost_leases(tmp_path, monkeypatch):
+    worker, _, _ = _make_worker(tmp_path)
+    monkeypatch.setattr(worker, "run_pending", lambda *a, **kw: DistillationRunResult(processed=0, created=0, refreshed=0, skipped=0, failed=0, lease_lost=("lost-job",)))
+    assert worker.catch_up([]).lease_lost == ("lost-job",)
+
+
+def test_outbox_exact_source_version_lookup_uses_index(tmp_path):
+    import sqlite3
+
+    from services.source_ingestion.distillation_worker import DistillationJobQueue as DistillationQueue
+
+    queue = DistillationQueue(tmp_path / "queue.sqlite3")
+    with sqlite3.connect(queue.path) as connection:
+        plan = " ".join(
+            str(row[-1]) for row in connection.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM distillation_outbox "
+                "WHERE source_id = ? AND source_digest = ?", ("s", "d"))
+        )
+    assert "SCAN" not in plan.replace("SEARCH", "")
+    assert "distillation_outbox_source_version_idx" in plan

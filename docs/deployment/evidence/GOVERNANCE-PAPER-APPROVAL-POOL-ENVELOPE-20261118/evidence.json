@@ -1,0 +1,25 @@
+{
+  "task_id": "GOVERNANCE-PAPER-APPROVAL-POOL-ENVELOPE-20261118",
+  "root_cause": "verify_paper_candidate_for_decision only understood single-strategy paper bundles (lineage.source_strategy_spec_id); persona_portfolio_v1 pool envelopes carry lineage.parent_registry_ids, so /review returned 400 and the approval stayed proposed.",
+  "change": {
+    "governance": "services/governance/paper_approval_scope.py: _verify_pool_envelope verifies each pinned member (same tenant/persona/pool, approved execution_bundle, pinned version+checksum, single-spec paper bundle rules incl. approved source spec); pool_version/pool_digest in checksummed parameters must equal owner metadata; paper-only, zero capital; no source_strategy_spec_id fabricated; empty (flat) envelope must continue an approved previous envelope.",
+    "publisher": "unchanged: deterministic decision id apv-persona-pool-<token>-v<N> means a retry GETs the existing proposed approval and reviews it (no second proposal)."
+  },
+  "tests": {
+    "unit": "services/governance/test_paper_approval_scope.py (pool envelope admit/refuse matrix, empty envelope)",
+    "end_to_end": "services/control-plane/bff/tests/test_persona_pool_publish_real_deployment.py: real publisher output -> real verify_paper_candidate_for_decision via real PaperRegistryReader over HTTP -> real DeploymentPlannerService; fails on prior code with 'bundle lineage.source_strategy_spec_id is required'.",
+    "retry": "test_retry_after_failed_review_reuses_the_proposed_approval: one propose POST, one approval object, publish succeeds on retry.",
+    "result": "366 passed (governance scope, approval authority, publisher, route, real deployment)"
+  },
+  "runtime_budget": {
+    "new_writers": 0,
+    "approvals_per_pool_version": 1,
+    "registry_entries_per_pool_version": 1,
+    "extra_reads": "one Registry GET per pinned member (plus its source spec) per review/decide",
+    "retry_throttling": "unchanged; publish retries stay throttled by the enrollment reconciler"
+  },
+  "hosted_proof": {
+    "status": "pending_deploy",
+    "expected": "after deploy during market hours the three trading personas read steps.publish published/current and active runtime binding artifact_id starts with artifact-persona-pool-; coordinator records it if the task closes before deploy"
+  }
+}

@@ -77,6 +77,11 @@ SAFETY_ENV = {
 # e2-standard-4 misses the 120s exact-pair rollback limit; e2-standard-8 is the smallest size proven in staging.
 MIN_CONTROL_VM_MACHINE_TYPE = "e2-standard-8"
 MIN_CONTROL_VM_VCPUS = 8
+MACHINE_TYPE_VCPUS_RE = re.compile(
+    r"^(?:[a-z][a-z0-9]*-(?:standard|highmem|highcpu)-([0-9]+)|(?:[a-z][a-z0-9]*-)?custom-([0-9]+)-[0-9]+)$"
+)
+UNDERSIZED_SHARED_CORE_TYPES = {"e2-micro": 2, "e2-small": 2, "e2-medium": 2, "f1-micro": 1, "g1-small": 1}
+DATA_DISK_CONTROL_DIRS = ("secrets", "state", "manifests", "fe", "config", "proxy")
 
 
 def check_control_vm_vcpus(vcpus: Any) -> int:
@@ -96,6 +101,118 @@ def check_control_vm_vcpus(vcpus: Any) -> int:
             "resize pantheon-prod-control per the production control runbook before promoting a release"
         )
     return vcpus
+
+
+def check_control_vm_machine_type(machine_type: Any) -> tuple[str, int]:
+    """Validate a GCP machineType name or selfLink meets the >= e2-standard-8 (8 vCPU) gate."""
+    if not isinstance(machine_type, str) or not machine_type.strip():
+        raise PreflightError("control VM machine type is missing or not a string")
+    raw = machine_type.strip()
+    if PLACEHOLDER_RE.search(raw):
+        raise PreflightError(f"control VM machine type {raw!r} is a placeholder")
+    name = raw.rstrip("/").rsplit("/", 1)[-1]
+    if name in UNDERSIZED_SHARED_CORE_TYPES:
+        raise PreflightError(
+            f"control VM machine type {name!r} is shared-core (< {MIN_CONTROL_VM_VCPUS} vCPUs; "
+            f"minimum is {MIN_CONTROL_VM_MACHINE_TYPE})"
+        )
+    m = MACHINE_TYPE_VCPUS_RE.fullmatch(name)
+    if not m:
+        raise PreflightError(
+            f"unrecognized control VM machine type {raw!r} (minimum is {MIN_CONTROL_VM_MACHINE_TYPE})"
+        )
+    vcpus = int(m.group(1) or m.group(2))
+    try:
+        check_control_vm_vcpus(vcpus)
+    except PreflightError as exc:
+        raise PreflightError(f"machine type {name!r} is below {MIN_CONTROL_VM_MACHINE_TYPE}: {exc}") from exc
+    return name, vcpus
+
+
+def check_instance_template(template: Any) -> dict[str, Any]:
+    """Validate an instance template (dict, JSON string, file path, or machineType) meets >= e2-standard-8."""
+    data: Any = template
+    if isinstance(template, Path):
+        try:
+            data = json.loads(template.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PreflightError(f"cannot read instance template {template}: {exc}") from exc
+    elif isinstance(template, str):
+        raw = template.strip()
+        if not raw:
+            raise PreflightError("instance template input is empty")
+        if raw.startswith("{"):
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise PreflightError(f"invalid instance template JSON: {exc}") from exc
+        elif raw.endswith(".json") or "/" in raw and Path(raw).exists():
+            p = Path(raw)
+            if not p.is_file():
+                raise PreflightError(f"instance template file {raw!r} not found")
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise PreflightError(f"cannot read instance template {raw}: {exc}") from exc
+        else:
+            mt_name, vcpus = check_control_vm_machine_type(raw)
+            return {
+                "machine_type": mt_name,
+                "vcpus": vcpus,
+                "minimum_machine_type": MIN_CONTROL_VM_MACHINE_TYPE,
+            }
+    if not isinstance(data, dict):
+        raise PreflightError("instance template must be a JSON object, file path, or machineType")
+    props = data.get("properties") if isinstance(data.get("properties"), dict) else data
+    raw_mt = (
+        props.get("machineType")
+        or props.get("machine_type")
+        or data.get("machineType")
+        or data.get("machine_type")
+    )
+    mt_name, vcpus = check_control_vm_machine_type(raw_mt)
+    sched = props.get("scheduling")
+    if isinstance(sched, dict):
+        if sched.get("preemptible") is True or str(sched.get("provisioningModel") or "").upper() == "SPOT":
+            raise PreflightError("instance template must not use preemptible or Spot scheduling")
+    return {
+        "template_name": str(data.get("name") or ""),
+        "machine_type": mt_name,
+        "vcpus": vcpus,
+        "minimum_machine_type": MIN_CONTROL_VM_MACHINE_TYPE,
+    }
+
+
+def check_boot_disk_decoupling(prod_root: Path, data_mount: Path) -> dict[str, str]:
+    """Verify durable control directories (secrets, state, manifests, fe, config, proxy) live on PROD_DATA_MOUNT."""
+    if not data_mount.is_dir():
+        raise PreflightError(f"PROD_DATA_MOUNT {data_mount} does not exist")
+    if not prod_root.is_dir():
+        raise PreflightError(f"PROD_ROOT {prod_root} does not exist")
+    root_real = prod_root.resolve()
+    data_real = data_mount.resolve()
+    if root_real == data_real:
+        raise PreflightError("PROD_ROOT and PROD_DATA_MOUNT must be distinct paths")
+    resolved: dict[str, str] = {}
+    problems: list[str] = []
+    for name in DATA_DISK_CONTROL_DIRS:
+        link_path = prod_root / name
+        target_path = data_mount / name
+        if not target_path.is_dir():
+            problems.append(f"{target_path} missing on data disk")
+            continue
+        if not link_path.is_symlink():
+            problems.append(f"{link_path} is not a symlink to {target_path} (still on boot disk)")
+            continue
+        actual_real = link_path.resolve()
+        want_real = target_path.resolve()
+        if actual_real != want_real:
+            problems.append(f"{link_path} resolves to {actual_real}, expected {want_real}")
+            continue
+        resolved[name] = str(actual_real)
+    if problems:
+        raise PreflightError("boot-disk decoupling check failed: " + "; ".join(problems))
+    return resolved
 
 
 def check_config(env: Mapping[str, str]) -> dict[str, str]:
@@ -134,6 +251,25 @@ def check_config(env: Mapping[str, str]) -> dict[str, str]:
     for key, expected in SAFETY_ENV.items():
         if (env.get(key) or "false").strip().lower() != expected:
             problems.append(f"{key} must be {expected} (safe default)")
+    for mt_key in ("PROD_MACHINE_TYPE", "PROD_INSTANCE_TEMPLATE_MACHINE_TYPE", "STAGING_MACHINE_TYPE"):
+        mt_val = (env.get(mt_key) or "").strip()
+        if mt_val:
+            try:
+                check_control_vm_machine_type(mt_val)
+            except PreflightError as exc:
+                problems.append(f"{mt_key}: {exc}")
+    for tpl_key in (
+        "PROD_INSTANCE_TEMPLATE_FILE",
+        "PROD_INSTANCE_TEMPLATE_JSON",
+        "STAGING_INSTANCE_TEMPLATE_FILE",
+        "STAGING_INSTANCE_TEMPLATE_JSON",
+    ):
+        tpl_val = (env.get(tpl_key) or "").strip()
+        if tpl_val:
+            try:
+                check_instance_template(tpl_val)
+            except PreflightError as exc:
+                problems.append(f"{tpl_key}: {exc}")
     if problems:
         raise PreflightError("production configuration preflight failed: " + "; ".join(problems))
     return values
@@ -635,8 +771,17 @@ def _cli() -> int:
     a.add_argument("--bootstrap", action="store_true")
     a.add_argument("--skip-baseline", action="store_true", help="runner-side: baseline is checked on the control VM")
     a.add_argument("--skip-approval", action="store_true", help="pre-approval validation only")
-    vm = sub.add_parser("vm-size", help="read-only: fail closed if the control VM has fewer than 8 vCPUs")
-    vm.add_argument("--vcpus", required=True, help="observed vCPU count (e.g. gcloud machineType guestCpus or nproc)")
+    rb = sub.add_parser("rollback", help="rollback operation preflight: production config + genuine Environment approval (no manifest/evidence)")
+    rb.add_argument("--approvals", type=Path, required=True)
+    rb.add_argument("--env-policy", type=Path, default=None, help="GitHub production Environment record")
+    rb.add_argument("--initiator", default="")
+    vm = sub.add_parser("vm-size", help="read-only: fail closed if the control VM or instance template has fewer than 8 vCPUs")
+    vm.add_argument("--vcpus", default=None, help="observed vCPU count (e.g. gcloud machineType guestCpus or nproc)")
+    vm.add_argument("--machine-type", default="", help="observed machineType (e.g. e2-standard-8)")
+    vm.add_argument("--instance-template", default="", help="instance template JSON file, inline JSON, or machineType")
+    bd = sub.add_parser("boot-disk", help="verify secrets, state, manifests, fe, config and proxy live on PROD_DATA_MOUNT")
+    bd.add_argument("--prod-root", type=Path, required=True)
+    bd.add_argument("--data-mount", type=Path, required=True)
     mg = sub.add_parser("migration", help="verify Stage-qualified versioned SQL / live catalog (VM-side)")
     mg.add_argument("action", choices=["verify", "names", "catalog", "catalog-sql", "render", "render-commit"])
     mg.add_argument("manifest")
@@ -646,13 +791,42 @@ def _cli() -> int:
     if args.command == "migration":
         return _migration_cli(args.action, args.manifest, args.spec_dir, args.src)
     try:
+        if args.command == "boot-disk":
+            resolved = check_boot_disk_decoupling(args.prod_root, args.data_mount)
+            print(json.dumps({"status": "boot_disk_decoupled", "directories": resolved}, sort_keys=True))
+            return 0
         if args.command == "vm-size":
-            print(json.dumps({"status": "vm_size_ok", "vcpus": check_control_vm_vcpus(args.vcpus),
-                              "minimum_machine_type": MIN_CONTROL_VM_MACHINE_TYPE}))
+            if args.vcpus is None and not args.machine_type and not args.instance_template:
+                raise PreflightError("vm-size requires at least one of --vcpus, --machine-type, or --instance-template")
+            payload: dict[str, Any] = {
+                "status": "vm_size_ok",
+                "minimum_machine_type": MIN_CONTROL_VM_MACHINE_TYPE,
+            }
+            if args.instance_template:
+                tpl_info = check_instance_template(args.instance_template)
+                payload["instance_template_machine_type"] = tpl_info["machine_type"]
+                payload["vcpus"] = tpl_info["vcpus"]
+            if args.machine_type:
+                mt_name, mt_vcpus = check_control_vm_machine_type(args.machine_type)
+                payload["machine_type"] = mt_name
+                payload["vcpus"] = mt_vcpus
+            if args.vcpus is not None:
+                payload["vcpus"] = check_control_vm_vcpus(args.vcpus)
+            print(json.dumps(payload, sort_keys=True))
             return 0
         if args.command == "config":
             check_config(os.environ)
             print(json.dumps({"status": "config_ok"}))
+            return 0
+        if args.command == "rollback":
+            check_config(os.environ)
+            try:
+                approvals = json.loads(args.approvals.read_text(encoding="utf-8"))
+                env_policy = json.loads(args.env_policy.read_text(encoding="utf-8")) if args.env_policy else None
+            except (OSError, json.JSONDecodeError) as exc:
+                raise PreflightError(f"cannot read approval record or environment policy: {exc}") from exc
+            print(json.dumps({"status": "rollback_preflight_passed",
+                              "approver": check_approval(approvals, args.initiator, env_policy)}, sort_keys=True))
             return 0
         result = run_all(
             env=os.environ,

@@ -1,0 +1,55 @@
+{
+  "bundle_version": "1.14",
+  "task_id": "AGORA-COMMITTEE-MEMORY-RESTORE-20261112",
+  "environment_ceiling": "paper",
+  "execution_authority": "none",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/sessions",
+      "owner": "consultation"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/sessions/{session_id}",
+      "owner": "consultation"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/sessions/{session_id}/memos",
+      "owner": "consultation"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish",
+      "owner": "consultation"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/memory",
+      "owner": "memory"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/memory/{memory_id}/actions/quarantine",
+      "owner": "memory"
+    }
+  ],
+  "owner_contracts": {
+    "consultation": [
+      "/api/consult/requests",
+      "/api/consult/memos",
+      "/api/consult/memos/{memo_id}/publish"
+    ],
+    "memory": [
+      "/api/memory/retrieve",
+      "/api/memory/trade-lessons",
+      "/api/memory/trade-lessons/{candidate_id}/decide"
+    ]
+  },
+  "limitations": [
+    "No BFF-owned committee or memory store",
+    "No frontend delivery or hosted acceptance claimed",
+    "Entry quarantine unavailable until the memory owner supplies an entry mutation API"
+  ]
+}

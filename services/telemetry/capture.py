@@ -75,6 +75,7 @@ class EventType(str, Enum):
     MANUAL_OVERRIDE = "manual_override"
     KILL_SWITCH_ACTION = "kill_switch_action"
     HEARTBEAT = "heartbeat"
+    RUNTIME_STATE_SNAPSHOT = "runtime_state_snapshot"
     TELEMETRY_MIRROR_MISMATCH = "telemetry_mirror_mismatch"
 
 

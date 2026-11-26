@@ -172,6 +172,17 @@ def _build_fleet(n: int, outbox_dir: str) -> list[tuple[BindingRef, InMemoryPend
             poll_interval_seconds=3600,
             max_batch_size=50,
             lifecycle_outbox_path=f"{outbox_dir}/{runtime_id}.lifecycle-outbox.json",
+            capital_pool_reader=lambda pool_id: {
+                "pool_id": pool_id,
+                "budget": 100_000.0,
+                "risk_policy": {
+                    "risk_policy_id": "rp-test",
+                    "status": "active",
+                    "gross_limit": 10.0,
+                    "net_limit": 10.0,
+                    "max_leverage": 10.0,
+                },
+            },
         )
         fleet.append((ref, store, service, telemetry))
     return fleet

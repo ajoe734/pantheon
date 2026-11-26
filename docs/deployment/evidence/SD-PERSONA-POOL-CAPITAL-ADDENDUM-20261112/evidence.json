@@ -1,0 +1,35 @@
+{
+ "task_id": "SD-PERSONA-POOL-CAPITAL-ADDENDUM-20261112",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_PERSONA_POOL_CAPITAL_ADDENDUM_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "repo_base": "origin/dev 8999306d1",
+ "hosted_readonly": {
+  "rankings_rows": 1777,
+  "quarterly_2026Q4": 1772,
+  "latest_items": 166,
+  "retired": 158,
+  "paper_running": 4,
+  "three_personas_overall_score": 62.5,
+  "components": {
+   "pnl_score": 100.0,
+   "risk_score": 95.0,
+   "execution_score": 0.0,
+   "activity_score": 25.0
+  },
+  "pnl": {
+   "hengyue_r2": 12880.116,
+   "chengchuan_r2": 207.0,
+   "qinghe_r3": 4730.0
+  },
+  "capital_allocations": 0,
+  "capital_rebalances": 0
+ },
+ "not_investigated": [
+  "why pnl_score saturates",
+  "why fill_rate and drawdown read 0",
+  "whether a scheduler triggers the quarterly cycle"
+ ],
+ "operator_correction": "the coordinator's statement that no cross-persona capital adjustment exists was wrong"
+}

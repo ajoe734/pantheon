@@ -2326,7 +2326,10 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "incident_followup": 1,
         "incident_severity": 1,
         "postmortem_draft": 2,
-        "total": 4,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
+        "total": 3,
     }
 
     # 1. Omitting view behaves identically to view=all
@@ -2375,8 +2378,9 @@ def test_view_filter_all_history_auto_proposals_and_auto_proposal_counts() -> No
         "postmortem:pm-draft-001",
         "postmortem:pm-draft-002",
     }
-    # The list and the counts agree: page_info.total == auto_proposal_counts.total
-    assert body_auto["page_info"]["total"] == expected_counts["total"] == 4
+    # The auto list still shows drafts; the proposal total excludes them and
+    # drafts are a separate labelled count.
+    assert body_auto["page_info"]["total"] == expected_counts["total"] - expected_counts["threshold"] + expected_counts["postmortem_draft"] == 4
     assert body_auto["data"]["summary"]["total_items"] == 4
     assert body_auto["data"]["auto_proposal_counts"] == expected_counts
 
@@ -2485,10 +2489,13 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
         "incident_followup": 15,
         "incident_severity": 0,
         "postmortem_draft": 1,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
         "total": 16,
     }
-    assert auto_body["page_info"]["total"] == counts["total"]
-    assert auto_body["data"]["summary"]["total_items"] == counts["total"]
+    assert auto_body["page_info"]["total"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
+    assert auto_body["data"]["summary"]["total_items"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
     seen_ids: list[str] = []
     token = auto_body["page_info"]["next_page_token"]
     seen_ids.extend(it["id"] for it in auto_body["data"]["items"])
@@ -2497,10 +2504,10 @@ def test_view_history_filter_runs_before_pagination_across_multiple_pages() -> N
             f"/bff/management/evolution-journal?view=auto_proposals&page_size=4&page_token={token}",
             headers=OPERATOR_HEADERS,
         ).json()
-        assert page["page_info"]["total"] == counts["total"]
+        assert page["page_info"]["total"] == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
         seen_ids.extend(it["id"] for it in page["data"]["items"])
         token = page["page_info"]["next_page_token"]
-    assert len(seen_ids) == len(set(seen_ids)) == counts["total"]
+    assert len(seen_ids) == len(set(seen_ids)) == counts["total"] - counts["threshold"] + counts["postmortem_draft"]
 
 
 def test_explicit_deep_link_filters_decision_mutation_review_and_persona_return_target_under_any_view() -> None:
@@ -2693,7 +2700,10 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
-            "total": 2029,
+            "threshold": 0,
+            "other": 0,
+            "infrastructure": 0,
+            "total": 2,
         }
         assert body_default["page_info"]["total"] == 2027 + 3
 
@@ -2716,7 +2726,10 @@ def test_bounded_postmortem_owner_read_with_2027_real_draft_postmortems_and_no_o
             "incident_followup": 1,
             "incident_severity": 1,
             "postmortem_draft": 2027,
-            "total": 2029,
+            "threshold": 0,
+            "other": 0,
+            "infrastructure": 0,
+            "total": 2,
         }
 
         # 3. No proposal or postmortem was deleted or changed in state
@@ -2920,7 +2933,11 @@ def test_hosted_shape_history_reports_one_row_per_decision() -> None:
     auto = client.get(
         "/bff/management/evolution-journal?view=auto_proposals&page_size=50", headers=OPERATOR_HEADERS
     ).json()
-    assert auto["page_info"]["total"] == auto["data"]["auto_proposal_counts"]["total"]
+    assert auto["page_info"]["total"] == (
+        auto["data"]["auto_proposal_counts"]["total"]
+        - auto["data"]["auto_proposal_counts"]["threshold"]
+        + auto["data"]["auto_proposal_counts"]["postmortem_draft"]
+    )
     assert auto["data"]["auto_proposal_counts"]["incident_severity"] == 0
 
 
@@ -2952,3 +2969,1000 @@ def test_summary_counts_pending_reviews_once_per_decision() -> None:
         "/bff/management/evolution-journal?source_type=mutation_review&page_size=50", headers=OPERATOR_HEADERS
     ).json()
     assert by_source_type["page_info"]["total"] == 5
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVOLUTION-JOURNAL-APPROVAL-READ-ISOLATION-20261121
+# --------------------------------------------------------------------------- #
+
+
+def test_journal_viewer_reads_history_when_governance_owner_forbids_approvals_while_operator_receives_enrichment(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """When the real Governance approval owner refuses viewer approval reads with
+    HTTP 403, GET /bff/management/evolution-journal still serves the permitted
+    history to a tenant-scoped viewer with no protected approval payload and no
+    command capability, while an authorized operator receives full approval
+    enrichment and existing owner/cross-tenant/write authorization stays enforced.
+    """
+    import io
+    import urllib.error
+    import urllib.request
+
+    from services.control_plane.bff.auth.policy import (
+        bff_error,
+        extract_identity_jwt,
+        require_operator_role,
+        require_read_role,
+    )
+    from services.control_plane.bff.core.errors import register_error_handlers
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+    from services.control_plane.bff.personas.service import _dataset_surface_status as persona_surface_status
+    from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
+    from services.control_plane.governance.approval_decision import (
+        ApprovalDecision,
+        ApprovalDecisionStore,
+    )
+    from services.governance import main as gov_main
+    from services.governance.record_store import JsonGovernanceRecordStore
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    jwt_secret = "evo-journal-approval-isolation-secret-0123456789"
+    jwt_issuer = "evo-journal-approval-isolation-issuer"
+    jwt_audience = "bff-operators"
+    tenant_dev = "tenant-dev"
+    tenant_other = "tenant-other"
+
+    for key, val in {
+        "PANTHEON_BFF_JWT_SECRET": jwt_secret,
+        "PANTHEON_BFF_JWT_ISSUER": jwt_issuer,
+        "PANTHEON_BFF_JWT_AUDIENCE": jwt_audience,
+        "PANTHEON_BFF_AUTH_MODE": "strict",
+        "PANTHEON_BFF_MFA_REQUIRED": "false",
+        "PANTHEON_GOVERNANCE_JWT_SECRET": jwt_secret,
+        "PANTHEON_GOVERNANCE_JWT_ISSUER": jwt_issuer,
+        "PANTHEON_GOVERNANCE_JWT_AUDIENCE": jwt_audience,
+        "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance.test",
+        "PANTHEON_EVOLUTION_API_URL": "http://evolution.test",
+        "EVOLUTION_AUTH_TOKEN": "svc-token-evo-journal",
+        "PANTHEON_POSTMORTEMS_API_URL": "http://postmortems.test",
+        "PANTHEON_RUNTIME_MANAGER_URL": "http://runtime.test",
+        "BFF_READ_SURFACE_STATE": "fresh",
+    }.items():
+        monkeypatch.setenv(key, val)
+    monkeypatch.delenv("PANTHEON_BFF_AUTH_STUB", raising=False)
+
+    def _mint_jwt(sub: str, roles: list[str], *, tenant_id: str = tenant_dev) -> str:
+        return encode_jwt_hs256(
+            {
+                "sub": sub,
+                "roles": roles,
+                "tenant_id": tenant_id,
+                "iss": jwt_issuer,
+                "aud": jwt_audience,
+                "exp": 4102444800,
+            },
+            secret=jwt_secret,
+        )
+
+    viewer_jwt = _mint_jwt("dev-viewer-1", ["viewer"], tenant_id=tenant_dev)
+    operator_jwt = _mint_jwt(
+        "dev-operator-a",
+        ["operator", "reviewer", "approver", "governance_reviewer"],
+        tenant_id=tenant_dev,
+    )
+    foreign_operator_jwt = _mint_jwt(
+        "other-operator-1",
+        ["operator", "reviewer", "approver", "governance_reviewer"],
+        tenant_id=tenant_other,
+    )
+
+    # Real Governance owner stores
+    gov_approval_store = ApprovalDecisionStore(storage_path=str(tmp_path / "gov_approvals.json"))
+    gov_freeze_store = JsonGovernanceRecordStore(
+        str(tmp_path / "gov_freezes.json"), id_fields=("freeze_order_id", "id")
+    )
+    gov_rollback_store = JsonGovernanceRecordStore(
+        str(tmp_path / "gov_rollbacks.json"), id_fields=("rollback_id", "id")
+    )
+    monkeypatch.setattr(gov_main, "store", gov_approval_store)
+    monkeypatch.setattr(gov_main, "freeze_order_store", gov_freeze_store)
+    monkeypatch.setattr(gov_main, "rollback_store", gov_rollback_store)
+
+    protected_rationale = "Confidential committee signoff rationale for tenant-dev"
+    protected_actor = "gov-committee-chair-secret"
+
+    def _seed_approval(decision_id: str, target_id: str, *, tenant_id: str, decided: bool) -> None:
+        appr = ApprovalDecision.create_proposed(
+            decision_id=decision_id,
+            tenant_id=tenant_id,
+            owner_user_id="evolution-proposer",
+            target_type="evolution_proposal",
+            target_id=target_id,
+            target_version="v1.0.0",
+            risk_level="medium",
+        )
+        appr.accept_review(actor_role="risk_owner", actor_id=protected_actor)
+        if decided:
+            appr.decide(
+                actor_role="risk_owner",
+                actor_id=protected_actor,
+                outcome="approved",
+                rationale=protected_rationale,
+            )
+        else:
+            appr.rationale = protected_rationale
+        appr.event_id = f"evt-{decision_id}"
+        gov_approval_store.put(appr)
+
+    dec_approved = {
+        **_hosted_all12_decision(
+            "evo-sweep-inc-drift-87d6930c62ee",
+            "approved",
+            created_by_id="evolution-daily-sweep",
+            created_at="2026-11-21T01:05:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-drift-87d",
+        "target_version": "v1.0.0",
+        "action_type": "freeze",
+    }
+    dec_reviewed = {
+        **_hosted_all12_decision(
+            "evo-reviewed-med-001",
+            "reviewed",
+            created_by_id="operator",
+            created_at="2026-11-21T01:04:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-reviewed-001",
+        "target_version": "v1.0.0",
+        "action_type": "freeze",
+    }
+    dec_executed = {
+        **_hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution-usera",
+            "executed",
+            created_by_id="operator",
+            created_at="2026-11-21T01:03:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-exec-001",
+        "target_version": "v1.0.0",
+        "action_type": "force_risk_off",
+    }
+    dec_canceled = {
+        **_hosted_all12_decision(
+            "evo-h12-01a11-20261023-9aeb-duplicate-execution",
+            "canceled",
+            created_by_id="operator",
+            created_at="2026-11-21T01:02:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "target_id": "art-cancel-001",
+        "target_version": "v1.0.0",
+    }
+    dec_thresh_proposed = {
+        **_threshold_signal_decision(
+            "evo-thresh-signal-001",
+            signal_type="performance_degradation",
+            decision_state="proposed",
+            created_at="2026-11-21T01:01:00Z",
+        ),
+        "tenant_id": tenant_dev,
+        "proposed_changes": {"summary": "Threshold signal retrain proposal"},
+    }
+    dec_auto_followup = {
+        **_real_hosted_incident_followup_decision(
+            "evo-sweep-agent-000b205c0ef9-0000",
+            created_at="2026-11-21T02:00:00Z",
+        ),
+        "tenant_id": tenant_dev,
+    }
+    dec_auto_severity = {
+        **_real_hosted_incident_severity_decision(
+            "evo-sweep-inc-severity-auto-001",
+            created_at="2026-11-21T02:01:00Z",
+        ),
+        "tenant_id": tenant_dev,
+    }
+
+    _seed_approval(dec_approved["approval_decision_id"], dec_approved["decision_id"], tenant_id=tenant_dev, decided=True)
+    _seed_approval(dec_reviewed["approval_decision_id"], dec_reviewed["decision_id"], tenant_id=tenant_dev, decided=False)
+    _seed_approval(dec_executed["approval_decision_id"], dec_executed["decision_id"], tenant_id=tenant_dev, decided=True)
+    _seed_approval("appr-foreign-tenant-001", "evo-foreign-001", tenant_id=tenant_other, decided=True)
+
+    gov_freeze_store.put(
+        {
+            "freeze_order_id": "fo-own-001",
+            "id": "fo-own-001",
+            "status": "active",
+            "scope": "artifact",
+            "target_id": dec_approved["target_id"],
+            "target_version": dec_approved["target_version"],
+            "evolution_decision_id": dec_approved["decision_id"],
+            "tenant_id": tenant_dev,
+            "reason": "Freeze order on drift breach",
+            "created_at": "2026-11-21T01:06:00Z",
+            "issued_at": "2026-11-21T01:06:00Z",
+        }
+    )
+    gov_rollback_store.put(
+        {
+            "rollback_id": "rb-own-001",
+            "id": "rb-own-001",
+            "runtime_id": "rt-own-001",
+            "status": "completed",
+            "action_type": "force_risk_off",
+            "evolution_decision_id": dec_executed["decision_id"],
+            "tenant_id": tenant_dev,
+            "reason": "Rollback completed",
+            "created_at": "2026-11-21T01:07:00Z",
+            "executed_at": "2026-11-21T01:07:00Z",
+        }
+    )
+
+    all_evo_decisions = [
+        dec_approved,
+        dec_reviewed,
+        dec_executed,
+        dec_canceled,
+        dec_thresh_proposed,
+        dec_auto_followup,
+        dec_auto_severity,
+    ]
+    evo_decisions_by_id = {d["decision_id"]: d for d in all_evo_decisions}
+
+    gov_client = TestClient(gov_main.app)
+    governance_approval_calls: list[dict[str, Any]] = []
+
+    class _UrlopenResp:
+        def __init__(self, status: int, content: bytes) -> None:
+            self.status = status
+            self.code = status
+            self._io = io.BytesIO(content)
+            self.headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        def read(self) -> bytes:
+            return self._io.read()
+
+        def __enter__(self) -> "_UrlopenResp":
+            return self
+
+        def __exit__(self, *exc: Any) -> bool:
+            return False
+
+    def _transport(req: urllib.request.Request, timeout: Optional[float] = None) -> _UrlopenResp:
+        url = req.full_url
+        method = req.get_method()
+        headers = {k: v for k, v in req.header_items()}
+        tenant = req.get_header("X-tenant-id")
+        if url.startswith("http://governance.test/"):
+            path = url[len("http://governance.test") :]
+            resp = gov_client.request(method, path, headers=headers, content=req.data)
+            if path.startswith("/api/governance/approvals"):
+                governance_approval_calls.append(
+                    {
+                        "method": method,
+                        "path": path,
+                        "status": resp.status_code,
+                        "auth": headers.get("Authorization"),
+                    }
+                )
+            if resp.status_code >= 400:
+                raise urllib.error.HTTPError(
+                    url, resp.status_code, resp.text, {}, io.BytesIO(resp.content)
+                )
+            return _UrlopenResp(resp.status_code, resp.content)
+        if url.startswith("http://evolution.test/"):
+            path = url[len("http://evolution.test") :]
+            if path == "/api/evolution/proposals":
+                items = [d for d in all_evo_decisions if d.get("tenant_id") == tenant]
+                return _UrlopenResp(200, json.dumps(items).encode("utf-8"))
+            if path.startswith("/api/evolution/proposals/"):
+                did = path.rsplit("/", 1)[-1]
+                d = evo_decisions_by_id.get(did)
+                if d is None or d.get("tenant_id") != tenant:
+                    raise urllib.error.HTTPError(url, 404, "not found", {}, io.BytesIO(b"{}"))
+                return _UrlopenResp(200, json.dumps(d).encode("utf-8"))
+        if url.startswith("http://runtime.test/"):
+            return _UrlopenResp(
+                200,
+                json.dumps(
+                    {"bindings": [{"binding_id": "rt-own-001", "runtime_id": "rt-own-001", "tenant_id": tenant_dev}]}
+                ).encode("utf-8"),
+            )
+        raise AssertionError(f"Unexpected outbound owner request: {method} {url}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _transport)
+
+    # 1. Verify the real Governance owner directly enforces read, write, and cross-tenant boundaries
+    direct_viewer_list = gov_client.get(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {viewer_jwt}"},
+    )
+    assert direct_viewer_list.status_code == 403, direct_viewer_list.text
+
+    direct_viewer_write = gov_client.post(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {viewer_jwt}", "Idempotency-Key": "idem-viewer-propose"},
+        json={
+            "tenant_id": tenant_dev,
+            "owner_user_id": "dev-viewer-1",
+            "target_type": "evolution_proposal",
+            "target_id": "evo-1",
+            "target_version": "v1",
+            "risk_level": "low",
+            "expected_version": 0,
+        },
+    )
+    assert direct_viewer_write.status_code == 403, direct_viewer_write.text
+
+    direct_operator_list = gov_client.get(
+        "/api/governance/approvals",
+        headers={"Authorization": f"Bearer {operator_jwt}"},
+    )
+    assert direct_operator_list.status_code == 200, direct_operator_list.text
+    operator_approval_ids = {item["decision_id"] for item in direct_operator_list.json()}
+    assert operator_approval_ids == {
+        dec_approved["approval_decision_id"],
+        dec_reviewed["approval_decision_id"],
+        dec_executed["approval_decision_id"],
+    }
+    assert "appr-foreign-tenant-001" not in operator_approval_ids
+
+    direct_foreign_get = gov_client.get(
+        f"/api/governance/approvals/{dec_approved['approval_decision_id']}",
+        headers={"Authorization": f"Bearer {foreign_operator_jwt}"},
+    )
+    assert direct_foreign_get.status_code == 404, direct_foreign_get.text
+
+    # 2. Mount the real BFF evolution journal route with ReadSurfacePorts and _mutation_review_projection
+    store = create_read_surface_ports()
+    postmortems_data = [
+        {
+            "postmortem_id": "pm-published-hist-001",
+            "incident_id": "inc-hist-001",
+            "title": "Published history postmortem",
+            "status": "published",
+            "created_at": "2026-11-21T01:05:30Z",
+        },
+        {
+            "postmortem_id": "pm-draft-auto-001",
+            "incident_id": "inc-draft-001",
+            "title": "Draft auto postmortem",
+            "status": "draft",
+            "created_at": "2026-11-21T02:02:00Z",
+        },
+    ]
+    store.list_postmortems = lambda **_kw: list(postmortems_data)  # type: ignore[method-assign]
+    set_ops_console_precondition_resolvers(read_surface=lambda: store)
+
+    app = FastAPI()
+    register_error_handlers(app)
+    app.add_middleware(OwnerReadContextMiddleware)
+    app.include_router(
+        create_evolution_router(
+            read_surface=store,
+            extract_identity=extract_identity_jwt,
+            require_read_role=require_read_role,
+            require_operator_role=require_operator_role,
+            bff_error=bff_error,
+            dataset_surface_status=lambda dataset, **kw: persona_surface_status(
+                dataset, read_store=store, **kw
+            ),
+            mutation_review_projection=_mutation_review_projection,
+        )
+    )
+
+    viewer_headers = {
+        "Authorization": f"Bearer {viewer_jwt}",
+        "X-Tenant-Id": tenant_dev,
+    }
+    operator_headers = {
+        "Authorization": f"Bearer {operator_jwt}",
+        "X-Tenant-Id": tenant_dev,
+    }
+
+    expected_history_ids = [
+        "rollback:rb-own-001",
+        "freeze_order:fo-own-001",
+        "postmortem:pm-published-hist-001",
+        f"evolution_decision:{dec_approved['decision_id']}",
+        f"evolution_decision:{dec_reviewed['decision_id']}",
+        f"evolution_decision:{dec_executed['decision_id']}",
+        f"evolution_decision:{dec_canceled['decision_id']}",
+        f"evolution_decision:{dec_thresh_proposed['decision_id']}",
+    ]
+    expected_auto_counts = {
+        "incident_followup": 1,
+        "incident_severity": 1,
+        "postmortem_draft": 1,
+        "threshold": 1,
+        "other": 0,
+        "infrastructure": 0,
+        "total": 3,
+    }
+
+    with TestClient(app) as client:
+        # 3. Tenant-scoped viewer reads GET /bff/management/evolution-journal?view=history&page_size=20
+        governance_approval_calls.clear()
+        viewer_resp = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=20",
+            headers=viewer_headers,
+        )
+        assert viewer_resp.status_code == 200, viewer_resp.text
+        # Confirm the Governance approval owner was genuinely called and returned 403
+        assert len(governance_approval_calls) >= 1
+        assert all(c["status"] == 403 for c in governance_approval_calls)
+
+        viewer_body = viewer_resp.json()
+        viewer_items = viewer_body["data"]["items"]
+        assert [it["id"] for it in viewer_items] == expected_history_ids
+        assert viewer_body["page_info"] == {
+            "next_page_token": None,
+            "total": 8,
+            "page_size": 20,
+        }
+        assert viewer_body["data"]["auto_proposal_counts"] == expected_auto_counts
+        assert viewer_body["data"]["summary"]["total_items"] == 8
+        assert viewer_body["data"]["summary"]["returned_items"] == 8
+        assert viewer_body["data"]["summary"]["decision_count"] == 5
+        # BFF-EVO-JOURNAL-POOL-VERSIONS: only decisions with their own review record
+        # (approval_decision_id) count as reviews; 4 of these 5 decisions have one.
+        assert viewer_body["data"]["summary"]["mutation_review_count"] == 4
+        assert viewer_body["data"]["summary"]["postmortem_count"] == 1
+        assert viewer_body["data"]["summary"]["freeze_order_count"] == 1
+        assert viewer_body["data"]["summary"]["rollback_count"] == 1
+
+        # Honest surface reporting under existing projection conventions
+        viewer_surfaces = viewer_body["meta"]["surfaces"]
+        assert viewer_surfaces["approval_decisions"]["status"] == "unavailable"
+        assert viewer_surfaces["mutation_review"]["status"] == "degraded"
+        assert viewer_surfaces["management_evolution_journal"]["status"] == "ok"
+
+        # Viewer results contain no protected approval payload and no command capability
+        assert protected_rationale not in viewer_resp.text
+        assert protected_actor not in viewer_resp.text
+        viewer_decisions_by_id = {
+            it["source_id"]: it for it in viewer_items if it["entry_type"] == "evolution_decision"
+        }
+        assert set(viewer_decisions_by_id.keys()) == {
+            dec_approved["decision_id"],
+            dec_reviewed["decision_id"],
+            dec_executed["decision_id"],
+            dec_canceled["decision_id"],
+            dec_thresh_proposed["decision_id"],
+        }
+        for did, row in viewer_decisions_by_id.items():
+            # Base decision record and history classification are preserved
+            assert row["decision"]["decision_id"] == did
+            assert row["record"]["decision_id"] == did
+            assert row["evidence_class"] in {"incident_severity", "threshold_signal"}
+            mr = row["mutation_review"]
+            assert mr["decision_id"] == did
+            assert mr["evidence_class"] == row["evidence_class"]
+            assert mr["approval_decision"] is None
+            assert mr["allowedActions"] == {
+                "canReviewMutation": False,
+                "canApproveMutation": False,
+                "canRejectMutation": False,
+                "canExecuteMutation": False,
+            }
+            if row["decision"]["decision_state"] in {"reviewed", "approved", "executed"}:
+                assert mr["meta"]["surfaces"]["mutation_review"] == "unavailable"
+            else:
+                assert mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        # 4. Viewer pagination across multiple pages preserves exact order and totals
+        v_p1 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3",
+            headers=viewer_headers,
+        )
+        assert v_p1.status_code == 200
+        v_p1_body = v_p1.json()
+        assert v_p1_body["page_info"] == {"next_page_token": "3", "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p1_body["data"]["items"]] == expected_history_ids[:3]
+
+        v_p2 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3&page_token=3",
+            headers=viewer_headers,
+        )
+        assert v_p2.status_code == 200
+        v_p2_body = v_p2.json()
+        assert v_p2_body["page_info"] == {"next_page_token": "6", "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p2_body["data"]["items"]] == expected_history_ids[3:6]
+        for row in v_p2_body["data"]["items"]:
+            assert row["mutation_review"]["approval_decision"] is None
+            assert not any(row["mutation_review"]["allowedActions"].values())
+
+        v_p3 = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=3&page_token=6",
+            headers=viewer_headers,
+        )
+        assert v_p3.status_code == 200
+        v_p3_body = v_p3.json()
+        assert v_p3_body["page_info"] == {"next_page_token": None, "total": 8, "page_size": 3}
+        assert [it["id"] for it in v_p3_body["data"]["items"]] == expected_history_ids[6:]
+
+        # 5. Authorized operator reads the same history and receives existing approval enrichment
+        governance_approval_calls.clear()
+        op_resp = client.get(
+            "/bff/management/evolution-journal?view=history&page_size=20",
+            headers=operator_headers,
+        )
+        assert op_resp.status_code == 200, op_resp.text
+        assert len(governance_approval_calls) >= 1
+        assert all(c["status"] == 200 for c in governance_approval_calls)
+
+        op_body = op_resp.json()
+        op_items = op_body["data"]["items"]
+        assert [it["id"] for it in op_items] == expected_history_ids
+        assert op_body["page_info"] == viewer_body["page_info"]
+        assert op_body["data"]["auto_proposal_counts"] == expected_auto_counts
+        assert op_body["data"]["summary"] == viewer_body["data"]["summary"]
+
+        op_surfaces = op_body["meta"]["surfaces"]
+        assert op_surfaces["approval_decisions"]["status"] == "ok"
+        assert op_surfaces["mutation_review"]["status"] == "ok"
+        assert op_surfaces["management_evolution_journal"]["status"] == "ok"
+
+        op_decisions_by_id = {
+            it["source_id"]: it for it in op_items if it["entry_type"] == "evolution_decision"
+        }
+        op_approved_mr = op_decisions_by_id[dec_approved["decision_id"]]["mutation_review"]
+        assert op_approved_mr["approval_decision"] is not None
+        assert op_approved_mr["approval_decision"]["decision_id"] == dec_approved["approval_decision_id"]
+        assert op_approved_mr["approval_decision"]["outcome"] == "approved"
+        assert op_approved_mr["approval_decision"]["rationale"] == protected_rationale
+        assert op_approved_mr["allowedActions"]["canExecuteMutation"] is True
+        assert op_approved_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        op_reviewed_mr = op_decisions_by_id[dec_reviewed["decision_id"]]["mutation_review"]
+        assert op_reviewed_mr["approval_decision"] is not None
+        assert op_reviewed_mr["approval_decision"]["decision_id"] == dec_reviewed["approval_decision_id"]
+        assert op_reviewed_mr["approval_decision"]["decision_state"] == "under_review"
+        assert op_reviewed_mr["allowedActions"]["canApproveMutation"] is True
+        assert op_reviewed_mr["allowedActions"]["canRejectMutation"] is True
+        assert op_reviewed_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        op_executed_mr = op_decisions_by_id[dec_executed["decision_id"]]["mutation_review"]
+        assert op_executed_mr["approval_decision"] is not None
+        assert op_executed_mr["approval_decision"]["decision_id"] == dec_executed["approval_decision_id"]
+        assert op_executed_mr["meta"]["surfaces"]["mutation_review"] == "fresh"
+
+        # 6. Unauthorized reads, cross-tenant requests, and viewer writes remain refused
+        unauth_resp = client.get("/bff/management/evolution-journal?view=history")
+        assert unauth_resp.status_code == 401
+
+        cross_tenant_viewer = client.get(
+            "/bff/management/evolution-journal?view=history",
+            headers={"Authorization": f"Bearer {viewer_jwt}", "X-Tenant-Id": tenant_other},
+        )
+        assert cross_tenant_viewer.status_code == 403
+        assert cross_tenant_viewer.json()["error"]["code"] == "TENANT_MISMATCH"
+
+        viewer_program_create = client.post(
+            "/bff/evolution-programs",
+            headers=viewer_headers,
+            json={"name": "Viewer unauthorized write"},
+        )
+        assert viewer_program_create.status_code == 403
+
+
+def test_journal_isolates_store_level_approval_403_and_propagates_non_403_errors() -> None:
+    """A store-level 403 on get_approval_decision is isolated during journal
+    hydration while non-403 failures still propagate rather than being masked.
+    """
+    import urllib.error
+
+    dec = _hosted_all12_decision(
+        "evo-store-403-dec-001",
+        "approved",
+        created_by_id="operator",
+        created_at="2026-11-21T03:00:00Z",
+    )
+    data = {
+        "evolution_decisions": {dec["decision_id"]: dec},
+        "approval_decisions": {},
+        "postmortems": {},
+        "freeze_orders": {},
+        "all_rollbacks": {},
+    }
+    store = _EvolutionJournalTestStore(data)
+
+    def _forbidden_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        raise urllib.error.HTTPError(
+            f"http://governance.test/api/governance/approvals/{decision_id}",
+            403,
+            "Approval read role required",
+            {},
+            None,
+        )
+
+    store.get_approval_decision = _forbidden_get_approval  # type: ignore[method-assign]
+    client = _JournalTestClient(_create_app_for_store(store), raise_server_exceptions=False)
+
+    viewer_headers = {"Authorization": "Bearer viewer-b3:viewer"}
+    resp_403 = client.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_403.status_code == 200, resp_403.text
+    body_403 = resp_403.json()
+    assert len(body_403["data"]["items"]) == 1
+    row = body_403["data"]["items"][0]
+    assert row["source_id"] == dec["decision_id"]
+    assert row["mutation_review"]["approval_decision"] is None
+    assert row["mutation_review"]["allowedActions"] == {
+        "canReviewMutation": False,
+        "canApproveMutation": False,
+        "canRejectMutation": False,
+        "canExecuteMutation": False,
+    }
+    assert row["mutation_review"]["meta"]["surfaces"]["mutation_review"] == "unavailable"
+    assert body_403["meta"]["surfaces"]["approval_decisions"]["status"] == "unavailable"
+    assert body_403["meta"]["surfaces"]["mutation_review"]["status"] == "degraded"
+
+    # Non-403 unexpected error in get_approval_decision still propagates as 500
+    def _broken_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        raise RuntimeError(f"Unexpected store corruption for {decision_id}")
+
+    store.get_approval_decision = _broken_get_approval  # type: ignore[method-assign]
+    resp_500 = client.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_500.status_code == 500
+
+    # Even when approval read fails with 403 (including a cached 403 in request_read_cache),
+    # an unrelated exception inside mutation_review_projection (e.g. get_incident) still propagates as 500
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware, cached_owner_call
+
+    dec_with_incident = {
+        **dec,
+        "linked_incident_id": "inc-unrelated-failure-001",
+    }
+    store.data["evolution_decisions"] = {dec["decision_id"]: dec_with_incident}
+
+    def _cached_forbidden_get_approval(decision_id: str) -> Optional[dict[str, Any]]:
+        return cached_owner_call(
+            ("approval_records", "Bearer viewer-b3:viewer", None),
+            lambda: (_ for _ in ()).throw(
+                urllib.error.HTTPError(
+                    f"http://governance.test/api/governance/approvals/{decision_id}",
+                    403,
+                    "Approval read role required",
+                    {},
+                    None,
+                )
+            ),
+        )
+
+    def _broken_get_incident(incident_id: str) -> Optional[dict[str, Any]]:
+        raise RuntimeError(f"Unrelated incident read failure for {incident_id}")
+
+    store.get_approval_decision = _cached_forbidden_get_approval  # type: ignore[method-assign]
+    store.get_incident = _broken_get_incident  # type: ignore[method-assign]
+    app_with_cache = _create_app_for_store(store)
+    app_with_cache.add_middleware(OwnerReadContextMiddleware)
+    client_with_cache = _JournalTestClient(app_with_cache, raise_server_exceptions=False)
+    resp_unrelated_500 = client_with_cache.get(
+        "/bff/management/evolution-journal?view=history&source_type=evolution_decision",
+        headers=viewer_headers,
+    )
+    assert resp_unrelated_500.status_code == 500
+
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-JOURNAL-POOL-VERSIONS-20261125: strategy pool versions, subject class,
+# single-counted summary. Row shapes are the hosted ones recorded in the task.
+# --------------------------------------------------------------------------- #
+import base64 as _b64
+
+PV_TENANT = "tenant-dev"
+PV_PERSONA = "persona-ee7112a829d38b9135ac"
+PV_OTHER_PERSONA = "persona-6507750312870d03a241"
+PV_MEMBER = "artifact-persona-paper-a81b4fd15944698341aa"
+PV_CHECKSUM = "sha256:" + "a" * 64
+
+
+def _pv_jwt(tenant: str = PV_TENANT) -> str:
+    def part(v: Dict[str, Any]) -> str:
+        return _b64.urlsafe_b64encode(json.dumps(v).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'none'})}.{part({'sub': 'op-1', 'tenant_id': tenant})}.sig"
+
+
+def _pv_member(weight: float = 1.0) -> Dict[str, Any]:
+    return {"artifact_ref": PV_MEMBER, "checksum": PV_CHECKSUM, "stage": "active",
+            "risk_weight": weight, "baseline_ref": None}
+
+
+def _pv_version(number: int, action: str | None, status: str | None, reasons: List[str]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {
+        "persona_id": PV_PERSONA, "tenant_id": PV_TENANT, "pool_version": number,
+        "members": [_pv_member()], "change_reason": f"paper pool {action}: {status}",
+        "created_at": f"2026-11-2{number}T00:00:00Z", "digest": f"sha256:{number:064d}",
+    }
+    if action:
+        body["decision"] = {"action": action, "status": status, "reasons": reasons}
+    return body
+
+
+# v1 initial; v2,v3 refused virtual_book_source_missing; v4,v5 refused history_missing; v6 high water.
+PV_VERSIONS = [
+    {**_pv_version(1, None, None, []), "change_reason": "initial pool"},
+    _pv_version(2, "reweight", "refused", ["virtual_book_source_missing"]),
+    _pv_version(3, "reweight", "refused", ["virtual_book_source_missing"]),
+    _pv_version(4, "reweight", "refused", ["virtual_book_history_missing"]),
+    _pv_version(5, "reweight", "refused", ["virtual_book_history_missing"]),
+    _pv_version(6, "reweight", "refused", ["virtual_book_high_water_history_missing"]),
+]
+
+
+def _pv_persona(persona_id: str, tenant: str = PV_TENANT, **extra: Any) -> Dict[str, Any]:
+    return {"persona_id": persona_id, "name": f"Name {persona_id[-4:]}", "lifecycle_state": "paper_owner",
+            "tenant_id": tenant, **extra}
+
+
+def _pv_client(*, personas, decisions=None, incidents=None, pool_reader=None, registry_reader=None):
+    from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
+    ports = create_in_memory_read_surface_ports(
+        persona_capital_runtime_kwargs={"personas": personas, "evolution_decisions": decisions or []},
+        persona_pool_versions_reader=pool_reader, registry_entry_reader=registry_reader,
+        lifecycle_telemetry_governance_kwargs={"incidents": {i["incident_id"]: i for i in incidents or []}},
+    )
+    app = FastAPI()
+    app.include_router(create_evolution_router(
+        read_surface=ports,
+        extract_identity=lambda authorization=None: type(
+            "I", (), {"operator_id": "op-1", "roles": {"viewer"}, "claims": {"tenant_id": PV_TENANT}})(),
+    ))
+    return TestClient(app), ports
+
+
+PV_HEADERS = {"Authorization": "Bearer x"}
+
+
+def _pv_decision(decision_id: str, **extra: Any) -> Dict[str, Any]:
+    return {"decision_id": decision_id, "status": "proposed", "action_type": "flag_for_review",
+            "risk_level": "low", "created_at": "2026-11-20T00:00:00Z", **extra}
+
+
+def test_pool_versions_are_listed_and_refused_versions_are_not_applied_changes() -> None:
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                           pool_reader=lambda pid, tid: {"versions": PV_VERSIONS, "refusals": []})
+    body = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    pool = sorted((i for i in body["data"]["items"] if i["entry_type"] == "pool_version"),
+                  key=lambda i: i["pool_version"])
+    assert [i["pool_version"] for i in pool] == [1, 2, 3, 4, 5, 6]
+    assert pool[0]["action"] == "initial" and pool[0]["members_before"] == []
+    assert pool[0]["members_after"] == [{"artifact_ref": PV_MEMBER, "stage": "active", "risk_weight": 1.0}]
+    for item in pool[1:]:
+        assert item["refused"] is True and item["status"] == "refused" and item["decision_status"] == "refused"
+        assert item["membership_changed"] is False
+        assert item["members_before"] == item["members_after"]
+        assert item["summary"].startswith("Refused") and "Applied" not in item["summary"]
+        assert item["persona_name"] == f"Name {PV_PERSONA[-4:]}"
+    assert pool[1]["reasons"] == ["virtual_book_source_missing"]
+    assert pool[5]["reasons"] == ["virtual_book_high_water_history_missing"]
+    assert body["data"]["summary"]["pool_version_count"] == 6
+    assert body["data"]["summary"]["refused_pool_version_count"] == 5
+    assert body["meta"]["surfaces"]["strategy_pools"]["status"] == "ok"
+
+
+def test_applied_reweight_shows_before_and_after_members() -> None:
+    changed = {**_pv_version(2, "reweight", "applied", ["ok"]), "members": [_pv_member(0.5)]}
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                           pool_reader=lambda pid, tid: {"versions": [PV_VERSIONS[0], changed]})
+    items = client.get("/bff/management/evolution-journal?view=history", headers=PV_HEADERS).json()["data"]["items"]
+    v2 = next(i for i in items if i["entry_type"] == "pool_version" and i["pool_version"] == 2)
+    assert v2["status"] == "applied" and v2["membership_changed"] is True and not v2["refused"]
+    assert v2["members_before"][0]["risk_weight"] == 1.0 and v2["members_after"][0]["risk_weight"] == 0.5
+
+
+def test_owner_failure_makes_strategy_pools_unavailable_and_other_sources_render() -> None:
+    def failing(pid: str, tid: str) -> Any:
+        raise RuntimeError("owner down")
+
+    client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)], decisions=[_pv_decision("d-1")], pool_reader=failing)
+    resp = client.get("/bff/management/evolution-journal?view=all", headers=PV_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    pools = body["meta"]["surfaces"]["strategy_pools"]
+    assert pools["status"] == "unavailable" and "RuntimeError" in pools["reason"]
+    assert [i["id"] for i in body["data"]["items"]] == ["evolution_decision:d-1"]
+
+
+def test_pool_reads_are_bounded_and_tenant_scoped() -> None:
+    calls: List[str] = []
+
+    def reader(pid: str, tid: str) -> Any:
+        calls.append(pid)
+        assert tid == PV_TENANT
+        return {"versions": [PV_VERSIONS[0]]}
+
+    personas = [_pv_persona(f"persona-{n:04d}") for n in range(30)]
+    personas.append(_pv_persona("persona-foreign", tenant="tenant-other"))
+    personas.append({**_pv_persona("persona-research"), "lifecycle_state": "research_only"})
+    client, _ = _pv_client(personas=personas, pool_reader=reader)
+    body = client.get("/bff/management/evolution-journal?view=history&page_size=200", headers=PV_HEADERS).json()
+    assert len(calls) == 20 and "persona-foreign" not in calls and "persona-research" not in calls
+    assert body["meta"]["pool_reads"]["pool_version_reads"] == 20
+    assert body["meta"]["surfaces"]["strategy_pools"]["status"] == "degraded"
+    assert "persona_limit_exceeded:10" in body["meta"]["surfaces"]["strategy_pools"]["reason"]
+
+
+def test_subject_class_from_recorded_fields_and_include_system() -> None:
+    infra_incident = {"incident_id": "agent-000b205c0ef9", "incident_cluster_id": "x:monitor-agent:agent-finding-a",
+                      "deployment_plan_id": "monitor-agent-plan"}
+    drift_incident = {"incident_id": "inc-drift-1", "incident_cluster_id": "drift:btc"}
+    deploy_incident = {"incident_id": "inc-deployment-comp-1", "incident_cluster_id": "deployment:plan-1"}
+    decisions = [
+        _pv_decision("d-infra-binding", status="completed", metadata={"runtime_binding_id": "infra-subject-x"}),
+        _pv_decision("d-infra-incident", status="completed", linked_incident_id="agent-000b205c0ef9"),
+        _pv_decision("d-strategy", status="completed", linked_incident_id="inc-drift-1"),
+        _pv_decision("d-deploy", status="completed", linked_incident_id="inc-deployment-comp-1"),
+        _pv_decision("d-test", status="completed", target_type="persona", target_id="persona-test"),
+        # a linked incident that cannot be read is never presented as a confirmed class
+        _pv_decision("d-name-only", status="completed", linked_incident_id="infra-bff-name-only"),
+    ]
+    personas = [_pv_persona("persona-test", metadata={"data_scope": "test"})]
+    client, _ = _pv_client(personas=personas, decisions=decisions,
+                           incidents=[infra_incident, drift_incident, deploy_incident])
+    default = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    ids = {i["source_id"]: i["subject_class"] for i in default["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert ids == {"d-strategy": "strategy", "d-deploy": "deployment", "d-name-only": "unclassified"}
+    summary = default["data"]["summary"]
+    assert summary["unclassified_decision_count"] == 1
+    assert summary["incident_class_reads"]["unreadable"] == 1
+    assert summary["hidden_system_counts"] == {"infrastructure": 2, "test": 1}
+    assert default["page_info"]["total"] == 3
+    shown = client.get("/bff/management/evolution-journal?view=history&include_system=true&page_size=50",
+                       headers=PV_HEADERS).json()
+    classes = {i["source_id"]: i["subject_class"] for i in shown["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert classes["d-infra-binding"] == classes["d-infra-incident"] == "infrastructure"
+    assert classes["d-test"] == "test" and shown["data"]["summary"]["hidden_system_counts"] == {"infrastructure": 0, "test": 0}
+    # a link that names one decision still opens it even when it is a system entry
+    one = client.get("/bff/management/evolution-journal?view=history&decision=d-infra-binding", headers=PV_HEADERS).json()
+    assert [i["source_id"] for i in one["data"]["items"]] == ["d-infra-binding"]
+
+
+def test_auto_proposal_parts_add_up_and_each_decision_counts_once() -> None:
+    def snap(metric: str) -> Dict[str, Any]:
+        return {"metric_name": metric, "breached": True}
+
+    decisions = [
+        _pv_decision("p-follow", threshold_snapshots=[snap("incident_followup_required")]),
+        _pv_decision("p-sev", threshold_snapshots=[snap("severity1_incident_count")]),
+        _pv_decision("p-thr", threshold_snapshots=[{"signal_type": "execution_drift", "breached": True}]),
+        _pv_decision("p-other", threshold_snapshots=[snap("runtime_state")]),
+        _pv_decision("p-infra", metadata={"runtime_binding_id": "infra-subject-y"},
+                     threshold_snapshots=[snap("incident_followup_required")]),
+        _pv_decision("done", status="completed", approval_decision_id="ad-1", proposed_changes={"x": 1}),
+        _pv_decision("done-2", status="completed", proposed_changes={"x": 1}),
+    ]
+    client, _ = _pv_client(personas=[], decisions=decisions)
+    data = client.get("/bff/management/evolution-journal?view=all&page_size=50", headers=PV_HEADERS).json()["data"]
+    counts = data["auto_proposal_counts"]
+    parts = ("threshold", "incident_followup", "incident_severity", "other", "infrastructure")
+    assert sum(counts[k] for k in parts) == counts["total"] == 5
+    assert (counts["threshold"], counts["incident_followup"], counts["incident_severity"],
+            counts["other"], counts["infrastructure"]) == (1, 1, 1, 1, 1)
+    assert "postmortem_draft" in counts and counts["postmortem_draft"] not in (None,)
+    summary = data["summary"]
+    assert summary["decision_count"] == 7
+    # only the decision with its own review record counts as a mutation review
+    assert summary["mutation_review_count"] == 1
+
+
+def test_journal_never_reads_the_full_incident_list_and_caps_incident_reads() -> None:
+    from services.control_plane.bff.evolution import service as evo_service
+
+    decisions = [
+        _pv_decision(f"d-{n}", status="completed", linked_incident_id=f"inc-x-{n}") for n in range(5)
+    ] + [_pv_decision("d-bound", status="completed", linked_incident_id="inc-b",
+                      metadata={"runtime_binding_id": "infra-subject-z"})]
+    client, ports = _pv_client(personas=[], decisions=decisions,
+                               incidents=[{"incident_id": f"inc-x-{n}", "incident_cluster_id": "deployment:p"}
+                                          for n in range(5)])
+    calls: List[str] = []
+    ports.list_incidents = lambda *a, **k: (_ for _ in ()).throw(AssertionError("full incident list read"))
+    real_get = ports.get_incident
+    ports.get_incident = lambda i: (calls.append(i), real_get(i))[1]
+    old_cap = evo_service.EVOLUTION_JOURNAL_MAX_INCIDENT_READS
+    import services.control_plane.bff.evolution.router as evo_router
+    evo_router.EVOLUTION_JOURNAL_MAX_INCIDENT_READS = 3
+    orig = evo_router.evolution_journal_incident_refs_to_read
+    evo_router.evolution_journal_incident_refs_to_read = lambda d, **kw: orig(d, cap=3, **kw)
+    try:
+        body = client.get("/bff/management/evolution-journal?view=history&page_size=50", headers=PV_HEADERS).json()
+    finally:
+        evo_router.EVOLUTION_JOURNAL_MAX_INCIDENT_READS = old_cap
+        evo_router.evolution_journal_incident_refs_to_read = orig
+    assert len(calls) == 3 and "inc-b" not in calls  # decided from runtime_binding_id, no incident read
+    classes = {i["source_id"]: i["subject_class"] for i in body["data"]["items"] if i["entry_type"] == "evolution_decision"}
+    assert sorted(v for k, v in classes.items() if k != "d-bound") == ["deployment"] * 3 + ["unclassified"] * 2
+    reads = body["data"]["summary"]["incident_class_reads"]
+    assert reads["read"] == 3 and reads["beyond_cap"] == 2 and body["data"]["summary"]["unclassified_decision_count"] == 2
+
+
+def test_hosted_registry_entry_read_uses_caller_bearer_and_registry_api_url(monkeypatch) -> None:
+    from services.control_plane.bff.core import owner_reads
+
+    for name in ("PERSONA_REGISTRY_BASE_URL", "PERSONA_REGISTRY_SERVICE_TOKEN", "PAPER_RUNTIME_REGISTRY_READ_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry.internal:9")
+    seen: Dict[str, Any] = {}
+
+    def fake_http(url, auth_token=None, tenant_id=None, timeout=None, **kw):
+        seen.update(url=url, token=auth_token, tenant=tenant_id)
+        return {"entry": {"registry_id": "artifact-a", "checksum": "c"}}
+
+    monkeypatch.setattr(owner_reads, "http_request_json", fake_http)
+    tok = owner_reads.authorization.set("Bearer caller-token")
+    try:
+        entry = owner_reads.read_registry_entry("artifact-a", PV_TENANT)
+    finally:
+        owner_reads.authorization.reset(tok)
+    assert entry["registry_id"] == "artifact-a"
+    assert seen == {"url": "http://registry.internal:9/api/registry/entries/artifact-a",
+                    "token": "caller-token", "tenant": PV_TENANT}
+
+
+# --------------------------------------------------------------------------- #
+# BFF-EVO-JOURNAL-VERSION-STRING-20261126: the frontend lower-cases
+# target.type / target.id / target.version, so each must be text or null on
+# every entry_type. Pool rows are the hosted PV_VERSIONS shapes above; the
+# other entry types come from the committed fixture pack.
+# --------------------------------------------------------------------------- #
+JOURNAL_ENTRY_TYPES = {"evolution_decision", "pool_version", "freeze_order", "postmortem", "rollback"}
+
+
+def _assert_target_text_or_null(item: Dict[str, Any]) -> None:
+    target = item["target"]
+    for key in ("type", "id", "version"):
+        assert key in target, (item["id"], key)
+        value = target[key]
+        assert value is None or isinstance(value, str), (item["entry_type"], item["id"], key, value)
+
+
+def test_journal_target_fields_are_text_or_null_for_every_entry_type() -> None:
+    seen: Dict[str, int] = {}
+    with tempfile.TemporaryDirectory() as td:
+        client = _fresh_client(td)
+        body = client.get("/bff/management/evolution-journal?view=all&page_size=200", headers=OPERATOR_HEADERS).json()
+    for item in body["data"]["items"]:
+        _assert_target_text_or_null(item)
+        seen[item["entry_type"]] = seen.get(item["entry_type"], 0) + 1
+
+    pool_client, _ = _pv_client(personas=[_pv_persona(PV_PERSONA)],
+                                pool_reader=lambda pid, tid: {"versions": PV_VERSIONS, "refusals": []})
+    pool_items = [i for i in pool_client.get("/bff/management/evolution-journal?view=history&page_size=50",
+                                             headers=PV_HEADERS).json()["data"]["items"]
+                  if i["entry_type"] == "pool_version"]
+    for item in pool_items:
+        _assert_target_text_or_null(item)
+        seen["pool_version"] = seen.get("pool_version", 0) + 1
+        # target.version is the text of the version; the pool_version field stays an integer
+        assert type(item["pool_version"]) is int
+        assert item["target"] == {"type": "persona", "id": PV_PERSONA, "version": str(item["pool_version"])}
+    assert JOURNAL_ENTRY_TYPES <= set(seen), seen
+    assert sorted(i["pool_version"] for i in pool_items) == [1, 2, 3, 4, 5, 6]
+
+
+def test_journal_numeric_owner_versions_are_returned_as_text() -> None:
+    from services.control_plane.bff.evolution import service as evo_service
+
+    rollback = evo_service.evolution_journal_rollback_item(
+        {"rollback_id": "rb-1", "runtime_id": "rt-1", "to_version": 3, "status": "completed"})
+    decision = evo_service.evolution_journal_decision_item(
+        {"decision_id": "d-1", "target_id": "a-1", "target_version": 2, "status": "proposed"})
+    freeze = evo_service.evolution_journal_freeze_order_item({"freeze_order_id": "f-1", "status": "active"})
+    assert rollback["target"]["version"] == "3"
+    assert decision["target"]["version"] == "2"
+    assert freeze["target"]["version"] is None

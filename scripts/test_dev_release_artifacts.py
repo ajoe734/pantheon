@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -50,6 +51,14 @@ class FakeDocker:
             service = args[-1].rsplit("=", 1)[1]
             index = artifacts.SERVICES.index(service) + 1
             return f"{index:064x}\n"
+        if args[0] == "inspect" and int(args[-1], 16) > len(artifacts.SERVICES) and args[2] in (
+                artifacts.ISSUER_ENV_FORMAT, artifacts.RESTART_FORMAT):
+            # Owner containers (e.g. the existing issuer) outside the sealed set: posture capture only.
+            if args[2] == artifacts.RESTART_FORMAT:
+                return json.dumps("unless-stopped")
+            return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in getattr(self, "issuer_env", {
+                "PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+                "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}).items())
         if args[0] == "inspect":
             return json.dumps(self.containers[artifacts.SERVICES[int(args[-1], 16) - 1]])
         if args[:2] == ("image", "inspect"):
@@ -124,6 +133,20 @@ def test_capture_individual_ids_and_absent_registry_metadata(image_case):
     assert len(checks) >= 5
     assert "Config.Env" not in str(docker.calls)
     assert validate(image_case) == bundle
+
+
+def test_third_party_image_without_config_labels_is_inspectable():
+    # Opt-in, real Docker regression for the official pgvector image, whose
+    # Config.Labels is null. No OCI revision may be invented from source_sha.
+    image = os.getenv("PANTHEON_RETRIEVAL_TEST_IMAGE")
+    if not image:
+        pytest.skip("Set PANTHEON_RETRIEVAL_TEST_IMAGE to an isolated local pgvector image")
+    docker = artifacts.Docker()
+    image_id = docker.call("image", "inspect", "--format", "{{.Id}}", image).strip()
+    row = artifacts._image(docker, image_id)
+    assert row["id"] == image_id
+    assert row["revision"] is None
+    assert row["repo_digests"]
 
 
 def test_capture_deduplicates_shared_image_without_inventing_revision(tmp_path):
@@ -433,7 +456,10 @@ def test_failure_record_preserves_innermost_subprocess_status_and_never_message(
     assert row["exit_code"] == (status if status > 0 else 128 - status)
     assert row["failure_kind"] == "subprocess"
     assert row["failure_location"].startswith("dev_release_artifacts.py:")
-    assert "fixture-secret" not in json.dumps(row)
+    # Only the bounded, redacted stderr excerpt is public; command/argv/message are not.
+    assert row["docker"]["stderr"] == "fixture-secret-stderr"
+    assert "fixture-secret" not in json.dumps({k: v for k, v in row.items() if k != "docker"})
+    assert "fixture-secret-command" not in json.dumps(row) and "fixture-secret-image" not in json.dumps(row)
     assert artifacts.remote_failure_record(json.dumps(row).encode()) == row
 
 
@@ -507,7 +533,7 @@ def test_save_image_persists_archive_and_rejects_empty_or_differing_overwrite(tm
 STACK_SIZE = 57
 SEALED = artifacts.SERVICES
 SCHEDULER = artifacts.CONTROL_SERVICE
-OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 3)) + ("source-ingest", SCHEDULER, "paper-signal-producer")
+OTHERS = tuple(f"svc-{index:02d}" for index in range(1, STACK_SIZE - len(SEALED) - 4)) + ("source-ingest", SCHEDULER, "paper-signal-producer", artifacts.ISSUER_SERVICE)
 # Healthy steady scheduler posture; EXCLUSIVE is absent (not empty), FORCE is empty.
 STEADY_CONTROL = {"SOURCE_INGEST_CONTROLLER_MODE": "reconcile_only", "SOURCE_INGEST_CONTROLLER_MAX_TICKS": "0",
                   "SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS": "",
@@ -529,8 +555,13 @@ STEADY_PAPER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "on", "PANTHEON_CAPITAL_API_U
                 "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": "/run/pantheon-principals/DEPLOYMENT_CAPITAL_SERVICE_TOKEN"}
 EMPTY_PAPER_CALLER = {"PANTHEON_PAPER_EXPRESSION_LAYER": "off", "PANTHEON_CAPITAL_API_URL": "http://capital:8092",
                       "DEPLOYMENT_CAPITAL_SERVICE_TOKEN_FILE": ""}
-STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API, PAPER: STEADY_PAPER}
-CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API, PAPER: EMPTY_PAPER_CALLER}
+ISSUER = artifacts.ISSUER_SERVICE
+STEADY_ISSUER = {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev",
+                 "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "true"}
+# Compose default a restoring caller without the original value produces.
+FALSE_ISSUER_CALLER = {**STEADY_ISSUER, "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"}
+STEADY = {SCHEDULER: STEADY_CONTROL, API: STEADY_API, PAPER: STEADY_PAPER, ISSUER: STEADY_ISSUER}
+CALLER = {SCHEDULER: BOUNDED_CALLER, API: BOUNDED_API, PAPER: EMPTY_PAPER_CALLER, ISSUER: FALSE_ISSUER_CALLER}
 ONE_SHOT = "minio-init"
 TENANT = "tenant-recorded-at-baseline"
 
@@ -554,7 +585,14 @@ class StackDocker:
         self.unhealthy = set()      # services that never become healthy
         self.no_stop = set()        # services that ignore "docker stop"
         self.up_calls = []
+        self.wait_fails = False     # "compose up --wait" exits 1 after recreating (health budget)
+        self.oom = set()            # services whose container reports OOMKilled
         self.pinned = {}            # service -> digest-pinned Compose image reference
+        self.source_scratch = tempfile.TemporaryDirectory(prefix="source-codec-test-")
+        self.source_journal = Path(self.source_scratch.name) / "journal.jsonl"
+        from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+        self.source_journal.write_text(market_snapshot_writer_samples()["official_daily"])
+        self.source_codecs = {}  # image id -> exact immutable Git revision
         for index, service in enumerate(self.names):
             image = _sid("a", index)
             self.add_image(image)
@@ -599,6 +637,8 @@ class StackDocker:
 
     def call(self, *args):
         self.calls.append(args)
+        if args[0] == "run":
+            return run_local_source_probe(self, args)
         if args[0] == "ps":
             rows = list(self.containers.items())
             if len(args) > 5:
@@ -607,13 +647,18 @@ class StackDocker:
             return "".join(row["cid"] + "\n" for _, row in rows)
         if args[0] == "inspect":
             service, row = self.by_cid(args[-1])
+            if args[2] == "{{json .State.OOMKilled}}":
+                return json.dumps(service in self.oom)
             if args[2] == artifacts.STACK_FORMAT:
                 return json.dumps({"service": service, "oneoff": "False", "image_id": row["image_id"],
                                    "status": row["status"], "exit_code": row["exit_code"],
                                    "health_test": row["health_test"], "health": row["health"]})
             if args[2] == artifacts.STACK_ENV_FORMAT:
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row["env"].items())
-            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT):
+            if args[2] == artifacts.SOURCE_PATH_FORMAT:
+                return json.dumps("SOURCE_INGEST_LATEST_MARKET_SNAPSHOT_PATH=" + str(self.source_journal)) + "\n"
+            if args[2] in (artifacts.CONTROL_ENV_FORMAT, artifacts.API_ENV_FORMAT, artifacts.PAPER_ENV_FORMAT,
+                           artifacts.ISSUER_ENV_FORMAT):
                 keys = artifacts.CONTROL_POSTURE[service][0]
                 return "".join(json.dumps(f"{k}={v}") + "\n" for k, v in row.get("control_env", {}).items() if k in keys)
             if args[2] == artifacts.RESTART_FORMAT:
@@ -673,8 +718,36 @@ class StackDocker:
                 row.update(image_id=override[name]["image"], env=env,
                            status="exited" if name == ONE_SHOT else "running",
                            health=None if name == ONE_SHOT else ("unhealthy" if name in self.unhealthy else "healthy"))
+            if self.wait_fails and "--wait" in args:
+                raise artifacts.ArtifactError("Docker artifact operation failed") from \
+                    subprocess.CalledProcessError(1, ["docker", *args], stderr="container is unhealthy")
             return ""
         raise AssertionError(args)
+
+
+def run_local_source_probe(docker, args):
+    """Docker transport fixture; codec and lifecycle calls execute for real.
+
+    This proves source behavior locally, not Docker isolation or hosted recovery.
+    """
+    image = args[args.index("--entrypoint") + 2]
+    code = args[args.index("-c") + 1]
+    mode, argument = args[-2:]
+    bootstrap = ""
+    if image in docker.source_codecs:
+        ref = docker.source_codecs[image]
+        bootstrap = (
+            "import sys, services.source_ingestion as package\n"
+            "from services.source_ingestion.tests.frozen_source_codec import frozen_source_codec\n"
+            f"module=frozen_source_codec({ref!r})\n"
+            "sys.modules['services.source_ingestion.requirement_state']=module\n"
+            "package.requirement_state=module\n"
+        )
+    result = subprocess.run([sys.executable, "-c", bootstrap + code, mode, argument],
+                            capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise artifacts.ArtifactError("local codec subprocess failed")
+    return result.stdout
 
 
 class Clock:
@@ -809,19 +882,80 @@ def test_unhealthy_service_fails_only_after_the_stated_budget(stack_case):
     _, docker, _, _, _, _, _ = stack_case
     docker.mutate_to_candidate()
     docker.unhealthy.add("svc-20")
+    result, clock = restore_stack(stack_case, readback_seconds=60)
+    assert clock.now >= 60  # polled for the whole stated budget before naming the residual
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}
+
+
+def _recapture_with_unhealthy(stack_case, service):
+    _, docker, lease, _, _, _, _ = stack_case
+    docker.containers[service]["health"] = "unhealthy"
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lease)
+    return docker, stack
+
+
+def test_service_unhealthy_at_capture_restored_unhealthy_passes_and_is_reported(stack_case):
+    docker, stack = _recapture_with_unhealthy(stack_case, "svc-20")
+    assert stack["services"]["svc-20"]["healthy_at_capture"] is False
+    assert stack["services"]["svc-21"]["healthy_at_capture"] is True
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    result, _ = restore_stack(stack_case, stack=stack, readback_seconds=60)
+    assert result["unhealthy_at_capture"] == {"svc-20": "unhealthy"}
+
+
+def test_service_healthy_at_capture_restored_unhealthy_still_fails_after_budget(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    assert stack["services"]["svc-20"]["healthy_at_capture"] is True
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    # Same image as baseline, health unchanged by the restore: named residual, not a stop.
+    result, _ = restore_stack(stack_case, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}
+    assert result["verdict"] == "restored; svc-20 unhealthy: not_healthy"
+    for service in docker.names:
+        assert docker.containers[service]["image_id"] == stack_case[6][service]["image_id"], service
+
+
+def test_unhealthy_at_capture_does_not_excuse_image_mismatch(stack_case):
+    docker, stack = _recapture_with_unhealthy(stack_case, "svc-20")
+    docker.mutate_to_candidate()
+    docker.stuck.add("svc-20")
     with pytest.raises(artifacts.StackMixedError) as error:
-        _, _ = restore_stack(stack_case, readback_seconds=60)
+        restore_stack(stack_case, stack=stack, readback_seconds=60)
     assert error.value.services == ("svc-20",)
 
 
+def test_baseline_without_capture_health_field_still_requires_healthy(stack_case):
+    _, docker, _, bundle, stack, _, _ = stack_case
+    legacy = copy.deepcopy(stack)
+    for row in legacy["services"].values():
+        del row["healthy_at_capture"]
+    assert artifacts.validate_stack(legacy, bundle=bundle) == legacy      # new reader reads old baseline
+    assert artifacts.validate_stack(stack, bundle=bundle) == stack        # and the new baseline
+    docker.mutate_to_candidate()
+    docker.unhealthy.add("svc-20")
+    result, _ = restore_stack(stack_case, stack=legacy, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "not_healthy"}  # still not silently healthy
+
+
+def test_previous_version_baseline_shape_is_the_new_shape_minus_one_optional_key(stack_case):
+    # A reader at the previous script version validates exactly the old key set; the
+    # new field is the only difference, and it is optional for the current reader.
+    _, _, _, _, stack, _, _ = stack_case
+    for row in stack["services"].values():
+        assert set(row) - {"healthy_at_capture"} <= {"image_id", "state", "has_healthcheck", "env", "control", "source_snapshot"}
+
+
 def test_slow_service_that_becomes_healthy_within_budget_passes(stack_case):
-    _, docker, _, _, _, _, _ = stack_case
+    _, docker, _, _, stack, _, _ = stack_case
     docker.mutate_to_candidate()
     original = docker.call
     state = {"polls": 0}
 
     def slow(*args):
-        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest":
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT and docker.by_cid(args[-1])[0] == "source-ingest" and \
+                docker.containers["source-ingest"]["image_id"] == stack["services"]["source-ingest"]["image_id"]:
             state["polls"] += 1
             if state["polls"] < 20:      # ~110 s at the 5 s poll interval
                 docker.containers["source-ingest"]["health"] = "starting"
@@ -1070,12 +1204,12 @@ def test_restore_preserves_source_scheduler_and_api_posture_against_a_bounded_ca
     assert recorded["env"]["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == ""
     assert set(stack["services"][API]["control"]["env"]) == set(artifacts.API_ENV_KEYS)
     docker.mutate_to_candidate()
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         docker.containers[service]["control_env"] = dict(CALLER[service])
         docker.containers[service].update(restart="no")
     docker.containers[SCHEDULER].update(status="exited", exit_code=1, health=None)
     result, _ = restore_stack(stack_case)
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         row = docker.containers[service]
         assert row["control_env"] == baseline[service]["control_env"] == STEADY[service]
         assert row["restart"] == "unless-stopped" and row["status"] == "running"
@@ -1110,7 +1244,7 @@ def test_matching_scheduler_posture_is_left_alone(stack_case):
     assert SCHEDULER not in result["recreated_services"] and API not in result["recreated_services"]
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER, ISSUER])
 def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     _, docker, _, _, stack, _, _ = stack_case
     docker.containers[service]["control_env"] = dict(CALLER[service])
@@ -1120,7 +1254,7 @@ def test_readback_fails_closed_on_source_posture_drift(stack_case, service):
     assert service in caught.value.services
 
 
-@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER])
+@pytest.mark.parametrize("service", [SCHEDULER, API, PAPER, ISSUER])
 def test_running_source_service_without_control_posture_is_invalid(stack_case, service):
     # No legacy shim: a capture lacking the required posture cannot prove restoration.
     stack = json.loads(json.dumps(stack_case[4]))
@@ -1138,15 +1272,16 @@ def test_real_compose_render_ignores_a_bounded_caller_for_every_recorded_key(sta
     text = next(c for c in docker.up_calls if SCHEDULER in c["names"])["text"]
     override = tmp_path / "override.yml"
     override.write_text(text)
-    caller = {**BOUNDED_CALLER, **BOUNDED_API, "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no"}
+    caller = {**BOUNDED_CALLER, **BOUNDED_API, "SOURCE_INGEST_CONTROLLER_RESTART_POLICY": "no",
+              "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"}
     repo = Path(__file__).resolve().parent.parent
     run = subprocess.run(["docker", "compose", "-f", str(repo / "docker-compose.yml"), "-f", str(override),
-                          "--profile", "root", "config", "--format", "json"],
+                          "--profile", "root", "--profile", "dev-paper-principals", "config", "--format", "json"],
                          capture_output=True, text=True, env={**os.environ, **caller}, cwd=repo)
     if run.returncode:
         pytest.skip("docker compose cannot render the repository file in this environment")
     rendered = json.loads(run.stdout)["services"]
-    for service in (SCHEDULER, API, PAPER):
+    for service in (SCHEDULER, API, PAPER, ISSUER):
         recorded = stack["services"][service]["control"]
         env = rendered[service]["environment"]
         for key, value in recorded["env"].items():
@@ -1165,3 +1300,692 @@ def test_control_posture_validation_rejects_tampering(stack_case):
         mutate(value)
         with pytest.raises(artifacts.ArtifactError):
             artifacts.validate_stack(value)
+
+
+def test_source_restore_rejects_exact_bee_before_any_owner_switch(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    root, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    docker.source_journal.write_text(samples["official_daily"] * 4882 + samples["collector_close"])
+    docker.mutate_to_candidate()
+    before_data = docker.source_journal.read_bytes()
+    before_owners = copy.deepcopy(docker.containers)
+    docker.calls.clear()
+    with pytest.raises(artifacts.SourceCompatibilityError, match="point_schema at journal line 4883") as caught:
+        restore_stack(stack_case)
+    assert docker.source_journal.read_bytes() == before_data
+    assert docker.containers == before_owners
+    assert not any(call[0] in ("compose", "stop", "start", "tag") for call in docker.calls)
+    record = artifacts.failure_record(caught.value, "restore")
+    assert record["source_compatibility"] == {"reason": "point_schema", "line": 4883}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+    assert str(root) not in json.dumps(record)
+
+
+def test_source_writer_refused_before_extended_v1_can_poison_bee(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    writer = _sid("f", 88)
+    before = docker.source_journal.read_bytes()
+    owners = copy.deepcopy(docker.containers)
+    with pytest.raises(artifacts.SourceCompatibilityError):
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                         writer_image=writer, check_lease=lambda: None)
+    assert docker.source_journal.read_bytes() == before
+    assert docker.containers == owners
+    assert not docker.up_calls
+    probes = [call for call in docker.calls if call[0] == "run"]
+    assert probes
+    for call in probes:
+        assert call[call.index("--network") + 1] == "none"
+        assert "--read-only" in call and "--cap-drop" in call
+        if call[-2] == "journal":
+            assert call[call.index("--volumes-from") + 1].endswith(":ro")
+        else:
+            assert "--volumes-from" not in call  # synthetic writer never sees owner data
+
+
+def test_compatible_retained_70a_and_current_writer_preserve_every_form(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "70a5bb860e855beacd14445c29bff64ccfa7e8f2"
+    # Both readers must consume historical extended-v1 as well as the synthetic
+    # writer protocol, using their actual complete codecs and checksums.
+    docker.source_journal.write_text("".join(market_snapshot_writer_samples().values()))
+    before = docker.source_journal.read_bytes()
+    proof = artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                             writer_image=_sid("f", 88), check_lease=lambda: None)
+    assert proof["retained"]["journal_sha256"] == hashlib.sha256(before).hexdigest()
+    assert proof["retained"]["projection_sha256"] == proof["writer"]["projection_sha256"]
+    assert docker.source_journal.read_bytes() == before
+    assert not docker.up_calls
+
+
+def test_source_capture_cannot_seal_an_already_incompatible_reader(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    docker.source_codecs[retained] = "bee62bc2978618539984aff9db136b064adc14a0"
+    docker.source_journal.write_text(market_snapshot_writer_samples()["collector_close"])
+    docker.calls.clear()
+    with pytest.raises(artifacts.SourceCompatibilityError, match="point_schema"):
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert not any(call[0] in ("compose", "stop", "start", "tag") for call in docker.calls)
+
+
+def test_exited_zero_initializer_image_still_fails_exact_stack_readback(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    expected = stack["services"][ONE_SHOT]
+    assert expected["state"] == "completed"
+    docker.containers[ONE_SHOT]["image_id"] = _sid("f", 88)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        artifacts.readback_stack(stack, docker=docker, check_lease=lambda: None)
+    assert ONE_SHOT in caught.value.services
+
+
+def test_memory_index_pair_survives_capture_and_whole_stack_rollback(tmp_path, monkeypatch):
+    # Exercise the existing arbitrary-service restore path with both new images.
+    # Keep total fixture scale unchanged and preserve the sealed three-image bundle.
+    monkeypatch.setattr(sys.modules[__name__], "OTHERS", (*OTHERS[:-2], "hindsight", "memory-index-postgres"))
+    case = stack_case.__wrapped__(tmp_path)
+    _, docker, _, _, stack, _, _ = case
+    for name in artifacts.MEMORY_INDEX_SERVICES:
+        assert name in stack["services"]
+        assert docker.tags[artifacts._protect_tag(name, stack["services"][name]["image_id"])]
+    docker.mutate_to_candidate()
+    restore_stack(case)
+    for name in artifacts.MEMORY_INDEX_SERVICES:
+        assert docker.containers[name]["image_id"] == stack["services"][name]["image_id"]
+    assert not any(call[0] in ("volume", "rm") or "--volumes" in call for call in docker.calls)
+
+
+@pytest.mark.parametrize("remaining", ["hindsight", "memory-index-postgres"])
+def test_half_memory_index_cannot_become_a_rollback_baseline(stack_case, remaining):
+    stack = copy.deepcopy(stack_case[4])
+    stack["services"][remaining] = copy.deepcopy(stack["services"]["svc-01"])
+    with pytest.raises(artifacts.ArtifactError, match="requires both"):
+        artifacts.validate_stack(stack)
+
+
+def _recapture_issuer(stack_case, value):
+    """Re-capture the baseline after setting the running issuer's recorded flag (None = absent)."""
+    root, docker, source_sha = stack_case[0], stack_case[1], None
+    env = docker.containers[ISSUER]["control_env"]
+    if value is None:
+        env.pop("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED")
+    else:
+        env["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] = value
+    stack = artifacts.capture_stack(docker=docker, source_sha=stack_case[4]["source_sha"], check_lease=lambda: None)
+    return stack
+
+
+@pytest.mark.parametrize("caller", [FALSE_ISSUER_CALLER, {"PANTHEON_ENV": "dev", "PANTHEON_DEV_BFF_TENANT_ID": "tenant-dev"}])
+def test_captured_true_issuer_flag_survives_caller_false_or_absent(stack_case, caller):
+    _, docker, _, _, stack, _, _ = stack_case
+    assert stack["services"][ISSUER]["control"]["env"] == STEADY_ISSUER
+    docker.mutate_to_candidate()
+    docker.containers[ISSUER]["control_env"] = dict(caller)
+    docker.compose_defaults[ISSUER]["control"] = dict(caller)
+    restore_stack(stack_case)
+    assert docker.containers[ISSUER]["control_env"] == STEADY_ISSUER
+
+
+@pytest.mark.parametrize("flag", ["false", None])
+def test_captured_false_or_absent_issuer_flag_never_becomes_true(stack_case, flag):
+    _, docker, _, _, _, _, _ = stack_case
+    stack = _recapture_issuer(stack_case, flag)
+    assert stack["services"][ISSUER]["control"]["env"]["PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED"] == flag
+    docker.compose_defaults[ISSUER]["control"] = dict(STEADY_ISSUER)  # a true caller must not leak in
+    docker.mutate_to_candidate()
+    stack_case = (*stack_case[:4], stack, *stack_case[5:])
+    restore_stack(stack_case)
+    assert docker.containers[ISSUER]["control_env"].get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") == flag
+
+
+def test_mismatched_restored_issuer_posture_is_rejected(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.containers[ISSUER]["control_env"] = dict(FALSE_ISSUER_CALLER)
+    docker.stuck.add(ISSUER)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack(stack_case)
+    assert ISSUER in caught.value.services
+
+
+def test_issuer_baseline_records_no_jwt_secret_or_token(stack_case, capsys):
+    _, docker, _, _, _, _, _ = stack_case
+    secret, token = "s" * 40, "t" * 40
+    # The fake filters control_env by the allowed keys exactly as the Docker inspect format does.
+    docker.containers[ISSUER]["control_env"].update(
+        PANTHEON_DEV_BFF_JWT_SECRET=secret, PANTHEON_DEV_PAPER_PRINCIPAL_TOKEN=token)
+    stack = artifacts.capture_stack(docker=docker, source_sha=stack_case[4]["source_sha"], check_lease=lambda: None)
+    text = json.dumps(stack)
+    names = ("PANTHEON_DEV_BFF_JWT_SECRET", "PANTHEON_DEV_PAPER_PRINCIPAL_TOKEN")
+    assert not any(n in text for n in names) and secret not in text and token not in text
+    assert set(stack["services"][ISSUER]["control"]["env"]) == set(artifacts.ISSUER_ENV_KEYS)
+    # Successful restore and failing diagnostic output must also exclude the names and values.
+    docker.mutate_to_candidate()
+    docker.containers[ISSUER]["control_env"].update(PANTHEON_DEV_BFF_JWT_SECRET=secret)
+    restore_stack((*stack_case[:4], stack, *stack_case[5:]))
+    docker.containers[ISSUER]["control_env"] = dict(FALSE_ISSUER_CALLER, PANTHEON_DEV_BFF_JWT_SECRET=secret)
+    docker.stuck.add(ISSUER)
+    with pytest.raises(artifacts.StackMixedError) as caught:
+        restore_stack((*stack_case[:4], stack, *stack_case[5:]))
+    out = capsys.readouterr()
+    diagnostic = str(caught.value) + repr(caught.value.services) + out.out + out.err
+    assert secret not in diagnostic and token not in diagnostic and not any(n in diagnostic for n in names)
+
+
+def test_legacy_issuer_baseline_without_posture_is_rejected_not_migrated(stack_case):
+    # Explicit limitation: a sealed baseline taken before this posture existed is never
+    # upgraded or given invented values; it recovers through its original pinned controller.
+    stack = json.loads(json.dumps(stack_case[4]))
+    del stack["services"][ISSUER]["control"]
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(stack)
+
+
+# --- Source journal streaming qualification (DEV-SOURCE-JOURNAL-QUALIFY-STREAMING-R2) ---
+
+def _run_probe(path):
+    import resource
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", artifacts.SOURCE_PROBE, "journal", str(path)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=900)
+    peak_kib = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    return json.loads(done.stdout.strip().splitlines()[-1]), peak_kib
+
+
+def _legacy_identity(raw: bytes):
+    """The previous probe's whole-file algorithm, kept as the compatibility oracle."""
+    from services.source_ingestion import requirement_state as m
+    values = m._market_snapshots_from_lines(raw.decode("utf-8").splitlines(), path=Path("journal"))
+    rows = sorted((s.to_dict() for s in values.values()), key=lambda s: (s["symbol"], s.get("dataset", "tw_price_daily")))
+    return (hashlib.sha256(raw).hexdigest(), len(raw),
+            hashlib.sha256(m._canonical_json({"snapshots": rows}).encode()).hexdigest())
+
+
+def test_source_probe_streaming_matches_legacy_identity(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    samples = market_snapshot_writer_samples()
+    raw = "".join(samples.values()).encode()
+    journal = tmp_path / "j.jsonl"
+    journal.write_bytes(raw)
+    result, _ = _run_probe(journal)
+    assert result["ok"] is True
+    assert (result["journal_sha256"], result["journal_size"], result["projection_sha256"]) == _legacy_identity(raw)
+
+
+def test_source_probe_qualifies_journal_over_old_bound_with_bounded_memory(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    line = market_snapshot_writer_samples()["official_daily"].encode()
+    journal = tmp_path / "big.jsonl"
+    target = 256 * 1024 * 1024 + 1
+    with journal.open("wb") as handle:
+        chunk = line * 4096
+        written = 0
+        while written < target:
+            handle.write(chunk)
+            written += len(chunk)
+    assert journal.stat().st_size > 256 * 1024 * 1024
+    result, peak_kib = _run_probe(journal)
+    assert result["ok"] is True, result
+    assert result["journal_size"] == journal.stat().st_size
+    assert peak_kib < 200 * 1024  # whole-file read would exceed the journal size alone
+    h = hashlib.sha256()
+    with journal.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            h.update(block)
+    assert result["journal_sha256"] == h.hexdigest()
+
+
+def test_source_probe_journal_over_new_bound_has_named_reason(tmp_path):
+    journal = tmp_path / "huge.jsonl"
+    with journal.open("wb") as handle:
+        handle.truncate(artifacts.SOURCE_JOURNAL_MAX_BYTES + 1)  # sparse
+    result, _ = _run_probe(journal)
+    assert result["ok"] is False and result["reason"] == "journal_too_large"
+    assert artifacts.SourceCompatibilityError(result["reason"]).reason == "journal_too_large"
+
+
+def test_source_journal_bound_is_documented_and_consistent():
+    assert artifacts.SOURCE_JOURNAL_MAX_BYTES >= 2 * 1024 ** 3
+    assert str(artifacts.SOURCE_JOURNAL_MAX_BYTES) in artifacts.SOURCE_PROBE
+    assert "256 * 1024 * 1024" not in artifacts.SOURCE_PROBE
+
+
+def _proof_stack(stack_case, size):
+    stack = copy.deepcopy(stack_case[4])
+    row = stack["services"][artifacts.API_SERVICE]
+    row["source_snapshot"] = {"codec_sha256": "1" * 64, "journal_sha256": "2" * 64,
+                              "journal_size": size, "projection_sha256": "3" * 64}
+    return stack
+
+
+@pytest.mark.parametrize("size", [0, 256 * 1024 * 1024, 390702732, 2 * 1024 ** 3])
+def test_baseline_proof_sizes_old_and_new_validate_unchanged(stack_case, size):
+    # Shape is unchanged; sizes <= 256 MiB are what the previous script accepts too.
+    artifacts.validate_stack(_proof_stack(stack_case, size))
+
+
+def test_baseline_proof_over_new_bound_rejected(stack_case):
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(_proof_stack(stack_case, artifacts.SOURCE_JOURNAL_MAX_BYTES + 1))
+
+
+# --- DEV-RELEASE-PROBE-LOCK-WAIT-AND-REASONS-20261115 ---------------------------------
+
+_LEGACY_LOCK = "fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)"
+
+
+def _legacy_probe():
+    """Probe as it was before this task: one non-blocking lock attempt, generic reasons."""
+    code = artifacts.SOURCE_PROBE
+    start = code.index("            deadline = time.monotonic()")
+    end = code.index("            before = os.fstat")
+    code = code[:start] + "            " + _LEGACY_LOCK + "\n" + code[end:]
+    code = code.replace('reason = "probe_killed" if isinstance(error, MemoryError) else next(', "reason = next(")
+    code = code.replace('("lock wait timed out", "lock_wait_timeout"), ("line too long", "line_too_long"),', "")
+    return code
+
+
+def _run_code(code, journal, timeout=60):
+    repo = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(repo)}
+    done = subprocess.run([sys.executable, "-c", code, "journal", str(journal)],
+                          capture_output=True, text=True, env=env, cwd=repo, timeout=timeout)
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _sample_journal(tmp_path):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    journal = tmp_path / "j.jsonl"
+    journal.write_text(market_snapshot_writer_samples()["official_daily"])
+    return journal
+
+
+def _hold_exclusive(journal, seconds):
+    holder = subprocess.Popen([sys.executable, "-c", (
+        "import fcntl,sys,time\nf=open(sys.argv[1],'rb')\nfcntl.flock(f.fileno(),fcntl.LOCK_EX)\n"
+        "print('held',flush=True)\ntime.sleep(float(sys.argv[2]))"), str(journal), str(seconds)],
+        stdout=subprocess.PIPE, text=True)
+    assert holder.stdout.readline().strip() == "held"
+    return holder
+
+
+def test_reproduce_legacy_lock_contention_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 3)
+    try:
+        legacy = _run_code(_legacy_probe(), journal)
+    finally:
+        holder.wait()
+    assert legacy["ok"] is False and legacy["reason"] == "reader_rejected"
+
+
+def test_reproduce_legacy_memory_exhaustion_is_generic_reader_rejected(tmp_path):
+    journal = _sample_journal(tmp_path)
+    boom = "digest = projection(stream_lines())"
+    for code, expected in ((_legacy_probe(), "reader_rejected"), (artifacts.SOURCE_PROBE, "probe_killed")):
+        result = _run_code(code.replace(boom, "raise MemoryError()"), journal)
+        assert result["ok"] is False and result["reason"] == expected
+
+
+def test_probe_waits_for_shared_lock_then_qualifies(tmp_path):
+    journal = _sample_journal(tmp_path)
+    holder = _hold_exclusive(journal, 1.5)
+    try:
+        result = _run_code(artifacts.SOURCE_PROBE, journal)
+    finally:
+        holder.wait()
+    assert result["ok"] is True
+
+
+def test_probe_lock_wait_bound_gives_distinct_reason(tmp_path):
+    journal = _sample_journal(tmp_path)
+    code = artifacts.SOURCE_PROBE.replace(
+        f"time.monotonic() + {artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS}", "time.monotonic() + 0.3")
+    assert code != artifacts.SOURCE_PROBE
+    holder = _hold_exclusive(journal, 3)
+    try:
+        result = _run_code(code, journal)
+    finally:
+        holder.terminate()
+        holder.wait()
+    assert result == {"ok": False, "codec_sha256": result["codec_sha256"], "reason": "lock_wait_timeout", "line": None}
+    assert artifacts.SOURCE_JOURNAL_LOCK_WAIT_SECONDS < 300
+
+
+def test_probe_line_too_long_gives_distinct_reason(tmp_path):
+    journal = tmp_path / "long.jsonl"
+    journal.write_bytes(b"x" * 64)
+    code = artifacts.SOURCE_PROBE.replace(str(artifacts.SOURCE_JOURNAL_MAX_LINE_BYTES), "32")
+    result = _run_code(code, journal)
+    assert result["ok"] is False and result["reason"] == "line_too_long"
+
+
+class _ProbeDocker:
+    def __init__(self, exc=None, out=""):
+        self.exc, self.out = exc, out
+
+    def call(self, *args):
+        if self.exc is not None:
+            raise artifacts.ArtifactError("Docker artifact operation failed") from self.exc
+        return self.out
+
+
+def _probe_reason(docker):
+    with pytest.raises(artifacts.SourceCompatibilityError) as caught:
+        artifacts.source_probe(docker=docker, image_id="sha256:" + "a" * 64, mode="codec", check_lease=lambda: None)
+    return caught.value.reason
+
+
+def test_source_probe_transport_failures_have_distinct_reasons():
+    assert _probe_reason(_ProbeDocker(subprocess.TimeoutExpired(["docker"], 300))) == "probe_timeout"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(137, ["docker"]))) == "probe_killed"
+    assert _probe_reason(_ProbeDocker(subprocess.CalledProcessError(1, ["docker"]))) == "unavailable"
+    assert _probe_reason(_ProbeDocker(out="")) == "probe_no_output"
+    for reason in ("lock_wait_timeout", "line_too_long"):
+        out = json.dumps({"ok": False, "reason": reason, "line": None})
+        assert _probe_reason(_ProbeDocker(out=out)) == reason
+
+
+@pytest.mark.parametrize("reason", ["lock_wait_timeout", "journal_too_large", "line_too_long",
+                                    "probe_timeout", "probe_killed", "probe_no_output"])
+def test_new_reasons_reach_failure_summary_through_remote_record(reason):
+    record = artifacts.failure_record(artifacts.SourceCompatibilityError(reason), "restore")
+    assert record["source_compatibility"] == {"reason": reason, "line": None}
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_persisted_source_snapshot_proof_keys_unchanged(stack_case):
+    # Proof is exactly the four keys; the previous controller validated the same shape.
+    stack = _proof_stack(stack_case, 1234)
+    artifacts.validate_stack(stack)
+    assert set(stack["services"][artifacts.API_SERVICE]["source_snapshot"]) == {
+        "codec_sha256", "journal_sha256", "journal_size", "projection_sha256"}
+    extra = copy.deepcopy(stack)
+    extra["services"][artifacts.API_SERVICE]["source_snapshot"]["probe_seconds"] = 1
+    with pytest.raises(artifacts.ArtifactError):
+        artifacts.validate_stack(extra)
+
+
+def test_previous_and_new_probe_emit_identical_proof_both_directions(tmp_path):
+    journal = _sample_journal(tmp_path)
+    old, new = _run_code(_legacy_probe(), journal), _run_code(artifacts.SOURCE_PROBE, journal)
+    assert old == new and old["ok"] is True
+    proof = {k: new[k] for k in ("codec_sha256", "journal_sha256", "journal_size", "projection_sha256")}
+    # New baseline proof validates under the unchanged exact four key check, and the
+    # previous probe reproduces the same proof from the same journal (reverse direction).
+    assert proof == {k: old[k] for k in proof}
+
+
+# --- DEV-RELEASE-ARTIFACTS-SOURCE-PROBE-RESILIENCE-20261116 ---------------------------
+
+def test_source_probe_runs_with_2048m_memory_bound(stack_case):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 89)
+    docker.calls.clear()
+    artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                    writer_image=writer, check_lease=lambda: None)
+    run_calls = [call for call in docker.calls if call[0] == "run"]
+    assert len(run_calls) >= 5
+    for call in run_calls:
+        mem_idx = call.index("--memory")
+        assert call[mem_idx + 1] == "2048m"
+        assert "512m" not in call
+
+
+def test_qualify_source_writer_retries_on_mid_probe_append_and_succeeds(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 90)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_between_first_two_probes(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_between_first_two_probes
+    proof = artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                            writer_image=writer, check_lease=lambda: None)
+    assert journal_probes == [retained, writer, retained, writer, retained, writer]
+    expected_bytes = docker.source_journal.read_bytes()
+    assert proof["retained"]["journal_size"] == proof["writer"]["journal_size"] == len(expected_bytes)
+    assert proof["retained"]["journal_sha256"] == proof["writer"]["journal_sha256"] == hashlib.sha256(expected_bytes).hexdigest()
+    assert proof["retained"]["projection_sha256"] == proof["writer"]["projection_sha256"]
+
+
+def test_qualify_source_writer_fails_closed_after_three_append_disagreements(stack_case):
+    from services.source_ingestion.requirement_state import market_snapshot_writer_samples
+    _, docker, _, _, stack, _, _ = stack_case
+    samples = market_snapshot_writer_samples()
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 91)
+    docker.source_journal.write_text(samples["official_daily"])
+    original_call = docker.call
+    journal_probes = []
+
+    def append_after_every_retained_probe(*args):
+        result = original_call(*args)
+        if args[0] == "run" and args[-2] == "journal":
+            journal_probes.append(args[args.index("--entrypoint") + 2])
+            if len(journal_probes) in (1, 3, 5):
+                with docker.source_journal.open("a", encoding="utf-8") as handle:
+                    handle.write(samples["collector_close"])
+        return result
+
+    docker.call = append_after_every_retained_probe
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert journal_probes == [retained, writer] * 3
+
+
+def test_qualify_source_writer_projection_mismatch_on_equal_journal_fails_closed_without_retry(stack_case, monkeypatch):
+    _, docker, _, _, stack, _, _ = stack_case
+    retained = stack["services"][artifacts.API_SERVICE]["image_id"]
+    writer = _sid("f", 92)
+    calls = []
+
+    def fake_qualify_source_reader(*, docker, image_id, check_lease):
+        calls.append(image_id)
+        return {
+            "codec_sha256": "1" * 64,
+            "journal_sha256": "2" * 64,
+            "journal_size": 4096,
+            "projection_sha256": "3" * 64 if image_id == retained else "4" * 64,
+        }
+
+    monkeypatch.setattr(artifacts, "qualify_source_reader", fake_qualify_source_reader)
+    with pytest.raises(artifacts.StackError, match="^Source readers disagree on journal identity$") as caught:
+        artifacts.qualify_source_writer(docker=docker, retained_image=retained,
+                                        writer_image=writer, check_lease=lambda: None)
+    assert caught.value.services == (artifacts.API_SERVICE,)
+    assert calls == [retained, writer]
+
+
+# --- never-started replacement container (interrupted Compose recreate) ---------
+
+class LeftoverDocker:
+    """One service ('worker') with arbitrary containers; records removals."""
+
+    ZERO = artifacts.NEVER_STARTED
+
+    def __init__(self, containers):
+        self.containers = containers   # cid -> dict(status, started_at, exit_code)
+        self.removed = []
+        self.image = _sid("d", 1)
+
+    def call(self, *args):
+        if args[0] == "ps":
+            return "".join(cid + "\n" for cid in self.containers)
+        if args[0] == "inspect" and args[2] == artifacts.STACK_FORMAT:
+            row = self.containers[args[-1]]
+            return json.dumps({"service": "worker", "oneoff": "False", "image_id": self.image,
+                               "status": row["status"], "exit_code": row.get("exit_code", 0),
+                               "started_at": row["started_at"], "health_test": ["CMD", "true"],
+                               "health": "healthy" if row["status"] == "running" else None})
+        if args[0] == "inspect" and args[2] == artifacts.CONTAINER_FORMAT:
+            row = self.containers[args[-1]]
+            return json.dumps({"image_id": self.image, "status": row["status"], "health": "healthy"})
+        if args[0] == "inspect" and args[2] == artifacts.STACK_ENV_FORMAT:
+            return json.dumps("GIT_SHA=" + SOURCE) + "\n"
+        if args[:2] == ("image", "inspect"):
+            return json.dumps({"id": self.image, "revision": SOURCE, "repo_digests": None})
+        if args[0] == "tag":
+            return ""
+        if args[0] == "rm":
+            assert args[1] == "--force"
+            self.removed.append(args[2])
+            del self.containers[args[2]]
+            return ""
+        raise AssertionError(args)
+
+
+STARTED = "2026-11-18T09:54:05.000000000Z"
+OLD, NEW = "a" * 12, "b" * 12
+
+
+def _two(old, new):
+    return LeftoverDocker({OLD: old, NEW: new})
+
+
+def test_capture_removes_never_started_leftover_and_lists_it(capsys):
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": LeftoverDocker.ZERO})
+    stack = artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert docker.removed == [NEW] and list(docker.containers) == [OLD]
+    assert stack["services"]["worker"]["state"] == "running"
+    assert f"removed never-started container {NEW} of service worker" in capsys.readouterr().out
+
+
+def test_capture_still_fails_for_two_started_containers():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "exited", "started_at": STARTED, "exit_code": 1})
+    with pytest.raises(artifacts.StackError, match="worker: expected exactly one") as caught:
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert caught.value.services == ("worker",) and docker.removed == []
+
+
+def test_lone_never_started_container_is_kept():
+    docker = LeftoverDocker({NEW: {"status": "created", "started_at": LeftoverDocker.ZERO}})
+    rows = artifacts._stack_rows(docker)
+    assert artifacts._drop_never_started(docker, rows) == [] and docker.removed == []
+
+
+def test_removal_never_touches_a_started_container():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": STARTED})
+    with pytest.raises(artifacts.StackError):
+        artifacts.capture_stack(docker=docker, source_sha=SOURCE, check_lease=lambda: None)
+    assert docker.removed == []
+
+
+def test_current_handles_the_same_leftover():
+    docker = _two({"status": "running", "started_at": STARTED},
+                  {"status": "created", "started_at": LeftoverDocker.ZERO})
+    assert artifacts._current(docker, "worker", require_healthy=False)["image_id"] == docker.image
+    assert docker.removed == [NEW]
+    both = _two({"status": "running", "started_at": STARTED}, {"status": "running", "started_at": STARTED})
+    with pytest.raises(artifacts.StackError) as caught:
+        artifacts._current(both, "worker")
+    assert caught.value.services == ("worker",)
+
+
+def test_failure_record_names_services_without_exception_text():
+    error = artifacts.StackError("worker: secret-detail", ["worker"])
+    row = artifacts.failure_record(error, "capture")
+    assert row["services"] == ["worker"] and "secret-detail" not in json.dumps(row)
+    assert artifacts.remote_failure_record(json.dumps(row).encode()) == row
+    bad = {**row, "services": ["bad name!"]}
+    assert artifacts.remote_failure_record(json.dumps(bad).encode()) is None
+    assert "services" not in artifacts.failure_record(artifacts.ArtifactError("x"), "capture")
+
+
+def test_replay_1123_docker_error_on_restore_and_oom_service_ends_named_not_mixed(stack_case):
+    """Candidate failed; the BFF restore group hits a Docker error; a second service OOMs."""
+    _, docker, _, _, _, _, baseline = stack_case
+    docker.mutate_to_candidate()
+    docker.wait_fails = True
+    docker.unhealthy.add("svc-20")
+    docker.oom.add("svc-20")
+    result, _ = restore_stack(stack_case, readback_seconds=60)
+    assert result["residual_unhealthy"] == {"svc-20": "oom_killed"}
+    assert result["verdict"] == "restored; svc-20 unhealthy: oom_killed"
+    assert set(SEALED) <= set(result["restore_wait_failed"])
+    # Every other service is on its recorded image: no silent mixed stack.
+    assert all(docker.containers[s]["image_id"] == baseline[s]["image_id"] for s in docker.names)
+    assert docker.containers["candidate-only"]["status"] == "exited"
+
+
+def test_wait_failure_with_wrong_or_missing_image_still_fails_hard(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    docker.wait_fails = True
+    docker.stuck.add("svc-20")
+    with pytest.raises(artifacts.StackMixedError) as error:
+        restore_stack(stack_case, readback_seconds=60)
+    assert error.value.services == ("svc-20",)
+
+
+def test_non_wait_compose_failure_is_not_tolerated(stack_case):
+    _, docker, _, _, _, _, _ = stack_case
+    docker.mutate_to_candidate()
+    original = docker.call
+
+    def failing(*args):
+        if args[0] == "compose" and "--wait" not in args and "up" in args and "--force-recreate" in args:
+            raise artifacts.ArtifactError("Docker artifact operation failed")
+        return original(*args)
+    docker.call = failing
+    with pytest.raises(artifacts.ArtifactError):
+        restore_stack(stack_case, readback_seconds=60)
+
+
+def test_failure_record_carries_bounded_redacted_docker_stderr():
+    secret = "A" * 64
+    stderr = ("Error response from daemon: write /var/lib/docker/x: no space left\n"
+              f"PANTHEON_TOKEN=hunter2 ghp_{secret} Bearer abc.def " + "x" * 9000)
+    cause = subprocess.CalledProcessError(
+        1, ["docker", "--host", "unix:///var/run/docker.sock", "image", "load", "--input", "/root/images/" + "ab" * 8 + ".tar"],
+        stderr=stderr)
+    try:
+        raise artifacts.ArtifactError("Docker artifact operation failed") from cause
+    except artifacts.ArtifactError as error:
+        record = artifacts.failure_record(error, "restore")
+    docker = record["docker"]
+    assert docker["operation"] == "image load" and docker["image"] == "ab" * 8 + ".tar"
+    assert "no space left" in docker["stderr"] or len(docker["stderr"]) <= artifacts.DOCKER_STDERR_LIMIT
+    assert len(docker["stderr"]) <= artifacts.DOCKER_STDERR_LIMIT
+    for leaked in ("hunter2", secret, "abc.def"):
+        assert leaked not in docker["stderr"]
+    assert artifacts.remote_failure_record(json.dumps(record).encode()) == record
+
+
+def test_failure_record_names_image_reference_and_rejects_forged_docker_detail():
+    image = "sha256:" + "c" * 64
+    cause = subprocess.CalledProcessError(1, ["docker", "tag", image, "pantheon-operator-bff"], stderr="boom")
+    try:
+        raise artifacts.ArtifactError("x") from cause
+    except artifacts.ArtifactError as error:
+        record = artifacts.failure_record(error, "restore")
+    assert record["docker"] == {"operation": "tag", "image": image, "stderr": "boom"}
+    forged = {**record, "docker": {**record["docker"], "stderr": "x" * 5000}}
+    assert artifacts.remote_failure_record(json.dumps(forged).encode()) is None
+    assert "docker" not in artifacts.failure_record(artifacts.ArtifactError("plain"), "restore")

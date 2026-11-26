@@ -42,14 +42,27 @@ from services.trade_journey.materializer import (
 )
 from services.trade_journey.telemetry_rows import decode_event_payload
 from services.trade_journey.projection_store import (
+    DEFAULT_RECEIPT_PRUNE_BATCH_SIZE,
+    DEFAULT_RECEIPT_PRUNE_INTERVAL_SECONDS,
+    DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN,
+    DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+    RECEIPT_PRUNE_BATCH_SIZE_ENV,
+    RECEIPT_PRUNE_ENABLED_ENV,
+    RECEIPT_PRUNE_INTERVAL_SECONDS_ENV,
+    RECEIPT_PRUNE_MAX_BATCHES_ENV,
+    RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS_ENV,
     BatchProjectionMutation,
     EventReceiptRow,
     IdentityLinkRow,
     JourneyRow,
     JourneyStageRow,
     LoopRunRow,
+    NonLifecycleReceiptPruneJob,
     ProjectionStore,
     QuarantineRow,
+    ReceiptPruneRunResult,
+    prune_non_lifecycle_receipts_on_connection,
+    run_non_lifecycle_receipt_prune,
 )
 
 
@@ -202,10 +215,23 @@ _PASSTHROUGH_FIELDS = (
     "side",
     "quantity",
     "price",
+    "reason_detail",
+    "expression_reason_code",
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+_EXPRESSION_REASON_CODES = frozenset(
+    {"long_cash", "long_lever", "short_via_future", "close_leg"}
+)
+_CASH_MARGIN_REJECT_REASONS = frozenset(
+    {"insufficient_cash", "insufficient_buying_power", "insufficient_initial_margin"}
+)
+_POSITION_REJECT_REASONS = frozenset(
+    {"insufficient_position", "sell_without_holdings"}
+)
 
 
 class LifecycleProjectionError(RuntimeError):
@@ -325,6 +351,7 @@ class RelationalLifecycleProjector:
         controller_id: str = RELATIONAL_CONTROLLER_ID,
         tenant_scope: str = RELATIONAL_CONTROLLER_TENANT_SCOPE,
         environment_scope: str = RELATIONAL_CONTROLLER_ENVIRONMENT_SCOPE,
+        persist_non_lifecycle_receipts: bool = False,
     ) -> None:
         self.store = store
         self.deployment_sha = str(deployment_sha or "unknown")
@@ -332,6 +359,7 @@ class RelationalLifecycleProjector:
         self.controller_id = str(controller_id)
         self.tenant_scope = str(tenant_scope)
         self.environment_scope = str(environment_scope)
+        self.persist_non_lifecycle_receipts = bool(persist_non_lifecycle_receipts)
         self._controller_state = self.store.get_controller_state(
             self.controller_id, self.tenant_scope, self.environment_scope
         )
@@ -1060,6 +1088,20 @@ class RelationalLifecycleProjector:
                 )
                 if value is not None:
                     event[field] = value
+            if source.get("event_type") == "reconciliation_failed":
+                event["source_event_id"] = str(source["event_id"])
+                recon_reason = _first(
+                    source.get("reason_code"), metadata.get("reason_code")
+                )
+                if recon_reason is not None:
+                    event["reason_code"] = str(recon_reason)
+                recon_missing = _first(
+                    source.get("missing_evidence"),
+                    metadata.get("missing_evidence"),
+                    metrics_map.get("missing_evidence"),
+                )
+                if recon_missing is not None:
+                    event["missing_evidence"] = recon_missing
             if contradictory_identifiers:
                 event.update(contradictory_identifiers)
             if submitted_to_broker is not None:
@@ -1078,14 +1120,109 @@ class RelationalLifecycleProjector:
             )
             if holding_qty is not None:
                 event["holding_quantity"] = holding_qty
-            if is_no_holdings_reject:
-                event["reason_code"] = "sell_without_holdings"
-                event["risk_status"] = "rejected"
-                event["submitted_to_broker"] = False
-                event["quantity"] = 0.0
-            elif source.get("event_type") in {"order_rejection", "order_rejection_simulated"}:
-                if reject_reason is not None:
-                    event["reason_code"] = str(reject_reason)
+            if is_no_holdings_reject or source.get("event_type") in {
+                "order_rejection",
+                "order_rejection_simulated",
+            }:
+                event["source_event_id"] = str(source["event_id"])
+                for reject_field in (
+                    "risk_status",
+                    "risk_gate_evaluated",
+                    "order_status",
+                    "missing_evidence",
+                ):
+                    reject_value = _first(
+                        source.get(reject_field),
+                        metadata.get(reject_field),
+                        metrics_map.get(reject_field),
+                    )
+                    if reject_value is not None:
+                        event[reject_field] = reject_value
+                raw_reason_candidates = (
+                    source.get("reject_reason"),
+                    metadata.get("reject_reason"),
+                    source.get("risk_reason"),
+                    metadata.get("risk_reason"),
+                    source.get("reason"),
+                    metadata.get("reason"),
+                    source.get("broker_submission_status"),
+                    metadata.get("broker_submission_status"),
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                )
+                for raw_candidate in (
+                    source.get("reason_code"),
+                    metadata.get("reason_code"),
+                    *raw_reason_candidates,
+                ):
+                    cleaned_candidate = _clean(raw_candidate)
+                    if (
+                        cleaned_candidate is not None
+                        and str(cleaned_candidate) in _EXPRESSION_REASON_CODES
+                    ):
+                        event["expression_reason_code"] = str(cleaned_candidate)
+                        break
+                if is_no_holdings_reject:
+                    event["reason_code"] = "sell_without_holdings"
+                    event["risk_status"] = "rejected"
+                    event["submitted_to_broker"] = False
+                    event["order_status"] = "not_submitted"
+                    event["quantity"] = 0.0
+                else:
+                    chosen_reason: str | None = None
+                    for raw_candidate in raw_reason_candidates:
+                        cleaned_candidate = _clean(raw_candidate)
+                        if (
+                            cleaned_candidate is not None
+                            and str(cleaned_candidate) not in _EXPRESSION_REASON_CODES
+                        ):
+                            chosen_reason = str(cleaned_candidate)
+                            break
+                    event["reason_code"] = chosen_reason or "reason_not_recorded"
+                    if (
+                        submitted_to_broker is False
+                        and not has_contradictory_fill_or_broker
+                    ):
+                        event["order_status"] = "not_submitted"
+                existing_detail = event.get("reason_detail")
+                reason_detail: dict[str, Any] = (
+                    dict(existing_detail)
+                    if isinstance(existing_detail, Mapping)
+                    else {}
+                )
+                for detail_key in (
+                    "required",
+                    "available",
+                    "limit",
+                    "holding_quantity",
+                    "requested_quantity",
+                ):
+                    detail_value = _first(
+                        source.get(detail_key),
+                        metadata.get(detail_key),
+                        metrics_map.get(detail_key),
+                        reason_detail.get(detail_key),
+                    )
+                    if detail_value is not None:
+                        reason_detail[detail_key] = detail_value
+                if reason_detail:
+                    event["reason_detail"] = reason_detail
+                missing_evidence: list[str] = []
+                if event.get("reason_code") == "reason_not_recorded":
+                    missing_evidence.append("reject_reason")
+                elif event.get("reason_code") in _CASH_MARGIN_REJECT_REASONS:
+                    for req_key in ("required", "available"):
+                        if reason_detail.get(req_key) is None:
+                            missing_evidence.append(req_key)
+                elif (
+                    event.get("reason_code") in _POSITION_REJECT_REASONS
+                    and not has_contradictory_fill_or_broker
+                ):
+                    for req_key in ("holding_quantity", "requested_quantity"):
+                        if reason_detail.get(req_key) is None:
+                            missing_evidence.append(req_key)
+                if missing_evidence:
+                    event["missing_evidence"] = missing_evidence
             elif is_explicit_no_trade:
                 event["reason_code"] = str(
                     explicit_noop_reason
@@ -1211,6 +1348,7 @@ class RelationalLifecycleProjector:
         mode: str,
         source_high_watermark: int | None = None,
         source_frontier_seq: int = 0,
+        persist_non_lifecycle_receipts: bool | None = None,
     ) -> ProjectionResult:
         if mode not in PROJECTION_MODES:
             raise ValueError(f"unsupported projection mode: {mode}")
@@ -1218,9 +1356,16 @@ class RelationalLifecycleProjector:
             (dict(record) for record in records),
             key=lambda row: (int(row.get("ingested_seq") or 0), self._row_event_id(row)),
         )
+        proven_frontier = int(source_frontier_seq or 0)
+        write_non_lifecycle_receipts = (
+            bool(persist_non_lifecycle_receipts)
+            if persist_non_lifecycle_receipts is not None
+            else (self.persist_non_lifecycle_receipts or proven_frontier <= 0)
+        )
         source_high = max(
             int(source_high_watermark or 0),
             int(self._controller().source_high_watermark),
+            proven_frontier,
         )
         known_receipts = self.store.get_receipts(
             [self._row_event_id(row) for row in ordered_records]
@@ -1296,16 +1441,17 @@ class RelationalLifecycleProjector:
             batch_fingerprints[event_id] = fingerprint
             created_at = _parse_iso(event["created_at"])
             if event["event_type"] not in LIFECYCLE_EVENT_TYPES:
-                receipts.append(
-                    self._receipt(
-                        event_id=event_id,
-                        ingested_seq=sequence,
-                        fingerprint=fingerprint,
-                        source_event_type=str(event["event_type"]),
-                        created_at=created_at,
-                        disposition="ignored",
+                if write_non_lifecycle_receipts:
+                    receipts.append(
+                        self._receipt(
+                            event_id=event_id,
+                            ingested_seq=sequence,
+                            fingerprint=fingerprint,
+                            source_event_type=str(event["event_type"]),
+                            created_at=created_at,
+                            disposition="ignored",
+                        )
                     )
-                )
                 ignored += 1
                 continue
             try:
@@ -1410,6 +1556,7 @@ class RelationalLifecycleProjector:
         predicted_checkpoint = max(
             int(self._controller().checkpoint_seq),
             max((int(row.get("ingested_seq") or 0) for row in ordered_records), default=0),
+            proven_frontier,
         )
         predicted_backlog = max(0, source_high - predicted_checkpoint)
         mutation = self._controller_mutation(
@@ -1707,11 +1854,15 @@ class PostgresLifecycleSource:
                         ),
                         timeout=remaining(),
                     )
-                self.last_frontier_seq = (
-                    int(rows[-1]["ingested_seq"])
-                    if rows
-                    else int(await conn.fetchval(f"SELECT COALESCE(MAX(ingested_seq), 0) FROM {self.table}"))
-                )
+                row_frontier = int(rows[-1]["ingested_seq"]) if rows else 0
+                if not rows or (not self.include_non_lifecycle and len(rows) < int(limit)):
+                    table_max = int(
+                        await conn.fetchval(f"SELECT COALESCE(MAX(ingested_seq), 0) FROM {self.table}")
+                        or 0
+                    )
+                    self.last_frontier_seq = max(row_frontier, table_max)
+                else:
+                    self.last_frontier_seq = row_frontier
         finally:
             if conn is not None:
                 close_timeout = remaining()
@@ -1968,7 +2119,47 @@ def _configured_sweeper(projector: "RelationalLifecycleProjector") -> StaleOpenS
     )
 
 
-async def run_worker() -> int:
+def _configured_receipt_pruner(
+    projector: "RelationalLifecycleProjector",
+) -> NonLifecycleReceiptPruneJob | None:
+    if os.getenv(RECEIPT_PRUNE_ENABLED_ENV, "1").strip().lower() in {"0", "false", "no", "off"}:
+        return None
+    store = getattr(projector, "store", None)
+    if store is None or not hasattr(store, "prune_non_lifecycle_receipts"):
+        return None
+    interval = _validate_source_timeout(
+        os.getenv(RECEIPT_PRUNE_INTERVAL_SECONDS_ENV, ""),
+        name=RECEIPT_PRUNE_INTERVAL_SECONDS_ENV,
+        default=DEFAULT_RECEIPT_PRUNE_INTERVAL_SECONDS,
+    )
+    batch_size = max(
+        1,
+        int(os.getenv(RECEIPT_PRUNE_BATCH_SIZE_ENV, "") or DEFAULT_RECEIPT_PRUNE_BATCH_SIZE),
+    )
+    max_batches = max(
+        1,
+        int(
+            os.getenv(RECEIPT_PRUNE_MAX_BATCHES_ENV, "")
+            or DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN
+        ),
+    )
+    statement_timeout_ms = max(
+        100,
+        int(
+            os.getenv(RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS_ENV, "")
+            or DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS
+        ),
+    )
+    return NonLifecycleReceiptPruneJob(
+        store,
+        interval_seconds=interval,
+        batch_size=batch_size,
+        max_batches_per_run=max_batches,
+        statement_timeout_ms=statement_timeout_ms,
+    )
+
+
+async def run_worker(*, include_non_lifecycle: bool | None = None) -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
@@ -1988,9 +2179,17 @@ async def run_worker() -> int:
         name="LIFECYCLE_PROJECTOR_STARTUP_TIMEOUT_SECONDS",
         default=DEFAULT_SOURCE_STARTUP_TIMEOUT_SECONDS,
     )
+    effective_include_non_lifecycle = (
+        bool(include_non_lifecycle)
+        if include_non_lifecycle is not None
+        else (
+            os.getenv("LIFECYCLE_PROJECTOR_INCLUDE_NON_LIFECYCLE", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+    )
     source = PostgresLifecycleSource(
         dsn,
-        include_non_lifecycle=True,
+        include_non_lifecycle=effective_include_non_lifecycle,
         timeout_seconds=source_timeout,
         startup_timeout_seconds=startup_timeout,
     )
@@ -2002,6 +2201,7 @@ async def run_worker() -> int:
     source_ready = False
     projector: RelationalLifecycleProjector | None = None
     sweeper: StaleOpenSweeper | None = None
+    receipt_pruner: NonLifecycleReceiptPruneJob | None = None
     sweep_configured = False
     try:
         while True:
@@ -2009,6 +2209,10 @@ async def run_worker() -> int:
             try:
                 if projector is None:
                     projector = _configured_relational_projector()
+                    if effective_include_non_lifecycle and hasattr(
+                        projector, "persist_non_lifecycle_receipts"
+                    ):
+                        projector.persist_non_lifecycle_receipts = True
                 if not source_ready:
                     await source.verify_read_contract()
                     recovery_target = await source.high_watermark()
@@ -2048,8 +2252,15 @@ async def run_worker() -> int:
                     except Exception:  # noqa: BLE001
                         logger.exception("stale-open sweep configuration invalid; sweep disabled")
                         sweeper = None
+                    try:
+                        receipt_pruner = _configured_receipt_pruner(projector)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("receipt prune configuration invalid; prune disabled")
+                        receipt_pruner = None
                 if sweeper is not None:
                     await sweeper.maybe_sweep()
+                if receipt_pruner is not None:
+                    await receipt_pruner.maybe_prune()
             except (RuntimeError, ValueError):
                 raise
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
@@ -2091,10 +2302,31 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     records = raw.get("records") if isinstance(raw, Mapping) else raw
     if not isinstance(records, list):
         raise ValueError("backfill input must be a list or {'records': [...]} object")
+    frontier = int(raw.get("source_frontier_seq") or 0) if isinstance(raw, Mapping) else 0
     projector = _configured_relational_projector()
-    result = projector.project_records(records, mode=mode)
+    result = projector.project_records(
+        records,
+        mode=mode,
+        source_frontier_seq=frontier,
+    )
     print(_canonical_json(result.__dict__))
     return 0
+
+
+def _prune_receipts(
+    *,
+    batch_size: int = DEFAULT_RECEIPT_PRUNE_BATCH_SIZE,
+    max_batches: int | None = DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN,
+    statement_timeout_ms: int = DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+) -> int:
+    projector = _configured_relational_projector()
+    result = projector.store.prune_non_lifecycle_receipts(
+        batch_size=batch_size,
+        max_batches=max_batches,
+        statement_timeout_ms=statement_timeout_ms,
+    )
+    print(_canonical_json(result.to_dict()))
+    return 0 if result.status == "ok" else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2102,14 +2334,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("run")
     subparsers.add_parser("healthcheck")
+    prune_parser = subparsers.add_parser("prune-receipts")
+    prune_parser.add_argument(
+        "--batch-size", type=int, default=DEFAULT_RECEIPT_PRUNE_BATCH_SIZE
+    )
+    prune_parser.add_argument(
+        "--max-batches", type=int, default=DEFAULT_RECEIPT_PRUNE_MAX_BATCHES_PER_RUN
+    )
+    prune_parser.add_argument(
+        "--statement-timeout-ms",
+        type=int,
+        default=DEFAULT_RECEIPT_PRUNE_STATEMENT_TIMEOUT_MS,
+    )
     for command in ("backfill", "replay"):
         child = subparsers.add_parser(command)
         child.add_argument("--input", type=Path, required=True)
+    repair_parser = subparsers.add_parser("repair-causes")
+    from services.trade_journey.cause_repair import (
+        configure_cli_parser as _configure_repair_cli_parser,
+        run_from_cli_args as _run_repair_from_cli_args,
+    )
+
+    _configure_repair_cli_parser(repair_parser)
     args = parser.parse_args(argv)
     if args.command == "run":
         return asyncio.run(run_worker())
     if args.command == "healthcheck":
         return healthcheck()
+    if args.command == "prune-receipts":
+        return _prune_receipts(
+            batch_size=args.batch_size,
+            max_batches=args.max_batches,
+            statement_timeout_ms=args.statement_timeout_ms,
+        )
+    if args.command == "repair-causes":
+        return _run_repair_from_cli_args(args)
     return _backfill(args.input, mode=args.command)
 
 

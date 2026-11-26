@@ -1,0 +1,175 @@
+{
+  "schema_version": "ranking-quarter-metric-window-evidence/v1",
+  "task_id": "RANKING-QUARTER-METRIC-WINDOW-20261112",
+  "owner": "Codex2",
+  "assigned_reviewer": "Claude",
+  "review_state": "owner_ready_for_independent_exact_head_review",
+  "base_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+  "source_anchor_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+  "formula_version": "pm12-return-on-capital-v2",
+  "formula_weights_and_sample_thresholds_changed": false,
+  "production_entry_point": "GET /bff/management/quarterly-ranking",
+  "acceptance_evidence": {
+    "1": "Retained owner quarter_equity.v1 valuations, runtime/binding identity, UTC [start,end) filtering and deduplication; real route covers quarter-open and exclusive end.",
+    "2": "Real projection -> restart -> HTTP route: 1000 opening, 800 decline, 1200 recovery gives maximum drawdown 0.2 despite current rolling drawdown 0; observations on both sides of quarter excluded.",
+    "3": "Real HTTP repeated-cumulative regression: duplicate final observations retain PnL 200, capital 1000, return 0.2 and one trade; older ledger subtracts quarter-open cumulative PnL.",
+    "4": "runtime_coverage, temporal_observation_coverage and trading_sample_sufficiency separate; no new sample threshold, weights or formula version. Snapshot digest binds quarter_window and diagnostics.",
+    "5": "HTTP null score/rank/allocation input and recorded reasons for missing marks, opening equity, series, conflicts, timezone or funding changes. Multi-runtime grid/currency and tenant/binding isolation tested.",
+    "6": "test_quarterly_http_route_retains_maximum_decline_after_recovery drives registered HTTP router using real persistent projection, reducer, scorer, adapter and snapshot identity; only owner input ports are local test data."
+  },
+  "validation": [
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/rankings/test_store.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 0,
+      "result": "292 passed, 6 warnings, 28 subtests passed in 59.97s",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/scoped-pytest.log",
+      "sha256": "51c02b1945212a1fbc91ea2c9ff94c3006ff3994a00296c7a6266927d2479920",
+      "raw_output_sha256": "51c02b1945212a1fbc91ea2c9ff94c3006ff3994a00296c7a6266927d2479920",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 1,
+      "result": "3 failed, 2 passed, 3 warnings in 8.51s",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-contract-pytest.log",
+      "sha256": "89e92e4b471619570d96c37a2c79bb5f1d88acc1dca942a9251211f00e11107c",
+      "raw_output_sha256": "6294ca0f28890a6421bce73f164f4c8be039126b6a3f182d22c39ef5479b0f9f",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture_diagnostic.py.txt",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 17.18s; proposed fixture function only, replaced in memory",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/proposed-fixture-diagnostic.log",
+      "sha256": "d23c57c5ea1567c7c7eb4e5af6329094eb73cb33f0132a730e12e103bf18d965",
+      "raw_output_sha256": "d23c57c5ea1567c7c7eb4e5af6329094eb73cb33f0132a730e12e103bf18d965",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/rankings services/telemetry services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 124,
+      "result": "Timed out without a terminal pytest summary; NOT passed",
+      "tested_source_commit": "7d4565c43437d99c3f9f54fda4be52e9da824626",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/expanded-service-timeout.log",
+      "sha256": "286d885f4188b545af137e48b3edbfe026d9d235fdf5bdeae4c9ba9dde114fea",
+      "raw_output_sha256": "14fe54adea5e1f617779946093c9883eefe4e29e769841e26fad2670bdce1d80",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 8.13s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-contract-repaired.log",
+      "sha256": "18f4a404b74739600f86f78aaa2e1ec99335751844899fc6851f3cb5067c1ca1",
+      "raw_output_sha256": "18f4a404b74739600f86f78aaa2e1ec99335751844899fc6851f3cb5067c1ca1",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/execution/lean_runtime/test_performance_telemetry.py services/telemetry/test_runtime_summary_projection.py services/rankings/test_store.py services/capital/test_allocation_lineage_integrity.py services/persona-evaluator-agent/test_persona_evaluator_agent.py",
+      "exit_code": 0,
+      "result": "292 passed, 6 warnings, 28 subtests passed in 87.28s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/refreshed-scoped.log",
+      "sha256": "393297b8e8f5e122697f3490010f820ebd2ebb28cad9806164c0584c2b581c48",
+      "raw_output_sha256": "393297b8e8f5e122697f3490010f820ebd2ebb28cad9806164c0584c2b581c48",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py services/control-plane/bff/tests/test_persona_evaluator_projection.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_governance_owner_readback.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/tests/test_promotion_review_production_defects.py services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "exit_code": 1,
+      "result": "8 failed, 162 passed, 3 warnings in 137.52s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture-callers.log",
+      "sha256": "1dc4066e54b16d7685c83d0763777d723f56408d71018bc23e7ed871c2f2fc5b",
+      "raw_output_sha256": "18dca5988c591b3a020e9f9abaead117f23f143ee6871e4c166e041b5a8181f7",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 150 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+      "exit_code": 1,
+      "result": "4 failed, 14 passed, 3 warnings in 33.26s",
+      "tested_source_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/dev-baseline.log",
+      "sha256": "e247f5833ca7847d7923d3ffccae918a60286aa5cb6eeaa024c17c202a22f52c",
+      "raw_output_sha256": "d0f74ae87916f71093b527b2e43800f520f9e21f204ad183ec3d00eaef12f7ee",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "working_directory": "/tmp/pantheon-quarter-baseline-20261112",
+      "baseline_setup": "git archive ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d | tar -x -C /tmp/pantheon-quarter-baseline-20261112; python3 scripts/dev/provision_python_distribution.py"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging",
+      "exit_code": 1,
+      "result": "3 failed, 5 passed, 3 warnings in 14.07s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/failed-callers-recheck.log",
+      "sha256": "caf0e09b3941a74dcf6456a57ac34e60176f568da67ec7b331ec9098886981e2",
+      "raw_output_sha256": "e4c8e52be6a71abeca9b8433041b6174fbdba44105674c6cd12d07ac2df02683",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/rankings services/telemetry",
+      "exit_code": 0,
+      "result": "592 passed, 1 skipped, 47 warnings, 54 subtests passed in 197.58s",
+      "tested_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+      "output": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/expanded-owners.log",
+      "sha256": "f36cb51e1b330a38daf004e80c3a7f583d338ff6c2d66d7c2fb9993553410d43",
+      "raw_output_sha256": "bd2eb84905a224a2b131829a3bdbc6b5db7c5d16f13bf418457cab63c870c9ef",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    }
+  ],
+  "limitations": [
+    "No hosted deployment, allocation, capital mutation or hosted acceptance.",
+    "Existing latest-only summaries remain unknown; historical equity/marks are never reconstructed.",
+    "Maximum drawdown is over retained observed equity, not proof of complete intraday coverage.",
+    "Older ledgers require a real quarter-opening observation; external cash flows, currency mismatch and unsynchronized runtime grids fail closed.",
+    "Owner observations are retained without silent truncation; the projection JSON grows with actual valuation history.",
+    "Broader caller suite is not wholly green: baseline-reproduced Inbox/Cockpit and portfolio failures plus timing-sensitive first-run failures are recorded without waiving assertions.",
+    "Original expanded whole-service invocation remains exit 124 / NOT passed. Fresh bounded scoped and Rankings/Telemetry batches completed separately; their totals overlap and must not be added.",
+    "Expanded owner suites report one existing skip; no tests or skip conditions were added or changed by the fixture repair.",
+    "Independent Claude approval, required CI, native supervisor integration and owner done remain pending."
+  ],
+  "fixture_source_commit": "7e7380efa6e09237a7b8b20db29457b9ab473bdd",
+  "pull_request": "https://github.com/ajoe734/pantheon/pull/7240",
+  "prior_scope_hold": {
+    "required_actor": "Human/Ops",
+    "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+    "reason": "Shared eligible-fixture builder lacks retained owner quarter series and per-metric timestamps; three real contract tests now correctly fail closed. Artifact is absent from this task contract.",
+    "candidate_patch": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/proposed-fixture-repair.patch",
+    "candidate_diagnostic": "docs/deployment/evidence/RANKING-QUARTER-METRIC-WINDOW-20261112/fixture_diagnostic.py.txt",
+    "required_action": "Add exactly the fixture file through governed artifact-contract, then reopen this existing task. Owner applies prepared patch, validates fixture callers, updates same PR, and hands off exact delivery to Claude.",
+    "authority": [
+      "scripts/ai_status.py::command_artifact_contract (Human/Ops only; todo/blocked)",
+      ".orchestrator/rewrite/task_contract.py::validate_task_artifact_diff_scope"
+    ],
+    "dependency_blocker": false,
+    "status": "resolved",
+    "resolved_by": "Human/Ops",
+    "canonical_artifact_contract_updated_at": "2026-11-12T14:02:08Z",
+    "canonical_reopened_at": "2026-11-12T14:02:15Z",
+    "resolution": "Authorized exact shared fixture file; prepared 23-line patch applied and committed as 7e7380efa; unchanged fixture contract 5/5 passes."
+  },
+  "caller_baseline_comparison": {
+    "baseline_commit": "ac4fd811db2c2c48a2e3cb870b3ec1fb15406d9d",
+    "persistent_failures_on_both_base_and_head": [
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary"
+    ],
+    "variable_failure_on_base_and_initial_head_but_passed_head_recheck": "services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health",
+    "four_timing_failures_passed_base_and_head_recheck": [
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_uses_narrow_port_without_delaying_health",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_jobs_router_returns_narrow_port_records_without_legacy_reader",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_health_stays_fast_while_alerts_read_is_slow",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py::test_alerts_timeout_returns_degraded_envelope_without_hanging"
+    ],
+    "conclusion": "All four persistent or variable non-timing failure identities reproduced on unchanged dev. No caller assertions, skips, production rules or out-of-contract sources changed. Initial failed runs remain failed evidence."
+  }
+}

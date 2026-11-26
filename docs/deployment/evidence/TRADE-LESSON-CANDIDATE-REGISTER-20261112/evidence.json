@@ -1,0 +1,30 @@
+{
+  "task_id": "TRADE-LESSON-CANDIDATE-REGISTER-20261112",
+  "verified": "local pytest, in-process apps (no hosted proof)",
+  "commands": [
+    "PYTHONPATH=$PWD /tmp/memory-writeback-wiring-venv/bin/python -m pytest -q -c pytest.ini services/persona services/memory /tmp/test_trade_lesson_candidate_register_review.py -> all pass except 6 environmental failures in untouched areas (asyncpg missing, py3.11 f-string SyntaxError in services/capital/pg_store.py, compose-render KeyError 'persona')",
+    "COMPOSE_PROFILES=core /tmp/claude-1802994780/venv/bin/python -m pytest -q services/memory services/persona -> 368 passed, 2 skipped"
+  ],
+  "acceptance": {
+    "1_register_once": "MemoryLessonRegistrar + write_owner register_lessons; duplicate -> already_registered (test_reflection_to_registered_candidate_...)",
+    "2_paper_endorse_merge": "POST /api/memory/trade-lessons/{id}/paper-endorse; risk persona review id recorded in receipt",
+    "3_sensitive_pending": "test_sensitive_lesson_stays_pending_human_endorsement",
+    "4_expired_quarantined": "test_expired_and_quarantined_never_merge; merge_to_memory rejects expired",
+    "5_doc": "PERSONA_TRADE_JOURNAL_GAP.md section 7D",
+    "6_integration": "services/memory/test_lesson_governance_api.py::test_reflection_to_registered_candidate_to_endorsement_to_merged_memory"
+  },
+  "limits": [
+    "Risk persona is the verified token identity with a risk role and distinct from the candidate persona; not cross-checked against the persona registry.",
+    "Episode regimes are caller-supplied but only counted for episodes matching candidate ids/tenant/persona; not re-fetched from telemetry.",
+    "Registration runs before reflection persistence; a lost pattern-review race can leave an orphan candidate.",
+    "No hosted PASS claimed."
+  ],
+  "reopen_fixes": {
+    "paper_scope_fail_closed": "is_sensitive_change = not is_paper_only_eligible; exact allowlist scopes {strategy,regime,pattern,execution} and no sensitive wording (position size/equity/sizing/etc.) in proposed_change; compound/unknown scopes stay pending human endorsement; tests test_paper_shortcut_fails_closed_for_capital_and_unknown_scope",
+    "unconfigured_registration": "write_owner.register_lessons now raises retryable 503 when PANTHEON_MEMORY_API_URL unset; persona docker-compose service sets PANTHEON_MEMORY_API_URL=http://memory:8086; test_unconfigured_memory_registration_fails_closed_and_persists_nothing",
+    "risk_review": "POST /trade-lessons/{id}/risk-review mints a durable review from verified risk-role identity (distinct from candidate persona); paper-endorse resolves review by id, bound to tenant/candidate/reflection_version; tests test_risk_review_is_bound_to_candidate_and_tenant",
+    "supporting_evidence": "check_evaluation_gates counts regimes only from episodes whose id is a candidate episode id with exact tenant/persona, deduped; test_pattern_gate_ignores_unrelated_episodes",
+    "scope_normalization": "lesson_governance.canonical_scope (strip+lower) is used by both is_paper_only_eligible and check_evaluation_gates; test_padded_pattern_scope_cannot_bypass_sample_and_regime_gates[strategy|regime|pattern] via real reflection->register->risk review->paper-endorse returns 422, never merged",
+    "scheduled_service_path": "lesson_governance.MemoryLessonRegistrar mints a 120s tenant-bound memory-writer HS256 JWT (PERSONA_JWT_SECRET/iss/aud from persona env) when the inbound credential is not a JWT (opaque PANTHEON_PERSONA_SERVICE_TOKEN); fails closed without secret or with !=1 tenant; memory JWT/tenant checks unchanged; tests test_scheduled_pattern_service_credential_registers_via_real_entry_points, test_registrar_service_path_fails_closed_without_secret"
+  }
+}

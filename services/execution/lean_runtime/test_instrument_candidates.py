@@ -1065,3 +1065,222 @@ def test_lookup_final_settlement_price_reads_dataset_root_and_callable(tmp_path:
     assert resolved_src is not None and resolved_src["final_settlement_price"] == 95.25
 
 
+def test_candidates_respect_single_name_net_limit_cash_reserve_and_reservations() -> None:
+    """PAPER-SIZING-BOUND-RISK-POLICY-20261121: most restrictive constraint bounds max_units_by_risk."""
+    # 1. Explicit fixture max_single_name_weight=0.25 on 100k equity -> 25,000 cap -> floor(25000 / 221) = 113
+    budget_single = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "max_single_name_weight": 0.25,
+    }
+    [cash_single] = ic.build_candidates("2317", "2026-11-19", {}, budget_single, cash_price=221.0)
+    assert cash_single["max_units_by_risk"] == 113
+
+    # With existing 100 shares (22,100) of 2317 in persona_book, remaining single-name notional is 2,900 -> 13 shares
+    book_with_2317 = {
+        "positions": [
+            {"underlying": "2317", "instrument_id": "eq:2317", "direction": "LONG", "units": 100, "notional": 22100.0}
+        ],
+        "gross_notional": 22100.0,
+    }
+    [cash_single_held] = ic.build_candidates("2317", "2026-11-19", book_with_2317, budget_single, cash_price=221.0)
+    assert cash_single_held["max_units_by_risk"] == 13
+
+    # 2. Explicit fixture min_cash_reserve_pct=0.20 on 100k -> 80,000 spendable -> floor(80000 / 221) = 361
+    budget_reserve = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "min_cash_reserve_pct": 0.20,
+    }
+    [cash_reserve] = ic.build_candidates("2317", "2026-11-19", {}, budget_reserve, cash_price=221.0)
+    assert cash_reserve["max_units_by_risk"] == 361
+
+    # 3. Explicit fixture net_limit=40,000 with existing signed_net_used=15,000 -> 25,000 remaining -> 113
+    budget_net = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 15000.0,
+        "net_limit": 40000.0,
+        "signed_net_used": 15000.0,
+    }
+    [cash_net] = ic.build_candidates("2317", "2026-11-19", {}, budget_net, cash_price=221.0)
+    assert cash_net["max_units_by_risk"] == 113
+
+    # 4. Competing cash reservation of 50,000 leaves 50,000 spendable -> floor(50000 / 221) = 226
+    budget_reserved = {
+        "equity": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "order_reservations": [
+            {"reservation_id": "r1", "underlying": "2330", "side": "buy", "kind": "cash_share", "cash_reserved": 50000.0, "notional": 49900.0}
+        ],
+    }
+    [cash_res_cap] = ic.build_candidates("2317", "2026-11-19", {}, budget_reserved, cash_price=221.0)
+    assert cash_res_cap["max_units_by_risk"] == 226
+
+    # 5. Competing futures reservation of margin=60,000 on 100,000 capital leaves 40,000 free_margin/available_cash
+    # -> deducted once across both build_expression_inputs (folded provider budget) and raw fixture budgets (floor(40000 / 221) = 180)
+    from decimal import Decimal
+    from services.capital.risk_policy import RiskPolicy
+    from services.execution.lean_runtime.expression_inputs import build_expression_inputs
+
+    fut_res = {
+        "reservation_id": "r-fut-60k",
+        "underlying": "2330",
+        "instrument_id": "ssf:CDF:202612",
+        "side": "buy",
+        "kind": "stock_future",
+        "quantity": 1,
+        "multiplier": 2000,
+        "price": 30.0,
+        "notional": 60000.0,
+        "margin_reserved": 60000.0,
+    }
+    folded_inputs = build_expression_inputs(
+        pool={"pool_id": "pool-1", "budget": 100000.0},
+        policy=RiskPolicy.from_mapping(
+            {
+                "risk_policy_id": "rp-pool-1",
+                "version": "1.0",
+                "status": "active",
+                "gross_limit": 2.0,
+                "net_limit": 2.0,
+                "max_leverage": 2.0,
+                "max_drawdown": 0.15,
+                "max_daily_loss": 0.05,
+                "allowed_asset_classes": ["equity", "future"],
+            }
+        ),
+        summary={"runtime_id": "rt-1", "binding_id": "rb-1", "ledger_fill_count": 0, "positions": [], "order_reservations": [fut_res]},
+    )
+    assert folded_inputs["risk_budget"]["free_margin"] == 40000.0
+    assert folded_inputs["risk_budget"]["available_cash"] == 40000.0
+    assert ic._available_cash(folded_inputs["risk_budget"], folded_inputs["persona_book"]) == Decimal("40000")
+    [cash_folded_fut_res] = ic.build_candidates(
+        "2317", "2026-11-19", folded_inputs["persona_book"], folded_inputs["risk_budget"], cash_price=221.0
+    )
+    assert cash_folded_fut_res["max_units_by_risk"] == 180
+
+    raw_fut_res_budget = {
+        "equity": 100000.0,
+        "raw_cash": 100000.0,
+        "available_cash": 100000.0,
+        "gross_limit": 200000.0,
+        "gross_used": 0.0,
+        "order_reservations": [fut_res],
+    }
+    assert ic._available_cash(raw_fut_res_budget, {}) == Decimal("40000")
+    [cash_raw_fut_res] = ic.build_candidates("2317", "2026-11-19", {}, raw_fut_res_budget, cash_price=221.0)
+    assert cash_raw_fut_res["max_units_by_risk"] == 180
+
+
+def test_industry_classification_and_20d_adv_readers_with_bounded_cache_and_sector_cap(
+    rows: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    ic.clear_market_fact_cache()
+    ind_dir = tmp_path / "normalized" / "tw_industry_classification" / "date=2026-11-06"
+    ind_dir.mkdir(parents=True)
+    with (ind_dir / "ingest-ind.jsonl").open("w", encoding="utf-8") as handle:
+        for sym, code_int, code_raw in (("2330", 24, "24"), ("2303", 24, "24"), ("2317", 25, "25")):
+            handle.write(
+                json.dumps(
+                    {
+                        "source_id": "tw_official_industry_classification",
+                        "symbol": sym,
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol": sym,
+                                "industry_code": code_int,
+                                "industry_code_raw": code_raw,
+                                "market": "TWSE",
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    price_dir = tmp_path / "normalized" / "tw_price_daily" / "date=2026-11-06"
+    price_dir.mkdir(parents=True)
+    with (price_dir / "ingest-price.jsonl").open("w", encoding="utf-8") as handle:
+        for day_idx in range(1, 21):
+            d_str = f"2026-10-{day_idx:02d}"
+            handle.write(
+                json.dumps(
+                    {
+                        "source_id": "tw_price_daily",
+                        "symbol": "2330",
+                        "event_time": f"{d_str}T06:00:00Z",
+                        "metadata": {
+                            "normalized_row": {
+                                "symbol": "2330",
+                                "trade_date": d_str,
+                                "close": 1000.0,
+                                "volume": 100_000.0 + day_idx * 1000.0,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    sectors = ic.read_industry_classifications(tmp_path, as_of_trading_day="2026-11-09")
+    assert sectors == {"2330": "24", "2303": "24", "2317": "25"}
+    assert ic.read_industry_classifications(tmp_path, underlying="2330.TW", as_of_trading_day="2026-11-09") == {
+        "2330": "24"
+    }
+
+    adv_2330 = ic.read_avg_daily_volume(tmp_path, "2330.TW", as_of_trading_day="2026-11-09", window_days=20)
+    expected_adv = sum(100_000.0 + i * 1000.0 for i in range(1, 21)) / 20.0
+    assert adv_2330 == pytest.approx(expected_adv)
+    assert ic.read_avg_daily_volume(tmp_path, "9999", as_of_trading_day="2026-11-09") is None
+    assert ic.market_fact_cache_stats()["entries"] >= 2
+
+    # Sector cap limits max_units_by_risk across holdings in the same Taiwan industry sector ("24").
+    book = {
+        "positions": [
+            {
+                "instrument_id": "eq:2303",
+                "underlying": "2303",
+                "direction": "LONG",
+                "units": 200,
+                "multiplier": 1,
+                "mark_price": 100.0,
+                "notional": 20_000.0,
+            }
+        ],
+        "gross_notional": 20_000.0,
+    }
+    budget = {
+        "equity": 100_000.0,
+        "available_cash": 80_000.0,
+        "gross_limit": 200_000.0,
+        "gross_used": 20_000.0,
+        "max_sector_exposure": {"24": 0.30},
+        "sector_by_underlying": sectors,
+        "liquidity_constraints": {"max_order_pct_adv": 0.05},
+    }
+    [cash_2330, *_] = ic.build_candidates(
+        "2330",
+        "2026-11-09",
+        book,
+        budget,
+        cash_price=1000.0,
+        cash_price_date="2026-11-06",
+        normalized_root=tmp_path,
+        rows_reader=lambda: rows,
+    )
+    # Sector 24 cap is 30,000 TWD; 2303 already uses 20,000 TWD -> 10,000 TWD remaining -> 10 shares @ 1000 TWD
+    assert cash_2330["max_units_by_risk"] == 10
+    assert cash_2330["liquidity"] == {"avg_daily_volume": pytest.approx(expected_adv)}
+
+
+
+
+

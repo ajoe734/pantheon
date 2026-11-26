@@ -517,6 +517,43 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def select_where(
+        self,
+        where_sql: str,
+        params: tuple = (),
+        *,
+        tail_sql: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Decoded payloads of rows matching a trusted ``where_sql``.
+
+        ``where_sql``/``tail_sql`` are code-defined (never request input);
+        request-derived values travel in ``params``.  Use this instead of
+        :meth:`list_all` when the caller can bound the result set.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE {where_sql} {tail_sql}",
+                params,
+            )
+            rows = cursor.fetchall()
+        records: List[Dict[str, Any]] = []
+        for row in rows:
+            payload = row[0] if isinstance(row, tuple) else row.get("payload")
+            decoded = self._decode_payload(payload)
+            if decoded is not None:
+                records.append(decoded)
+        return records
+
+    def count_where(self, where_sql: str = "TRUE", params: tuple = ()) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"SELECT count(*) FROM {self.table} WHERE {where_sql}", params
+            )
+            row = self._fetch_one(cursor)
+        if row is None:
+            return 0
+        return int(row[0] if isinstance(row, tuple) else list(row.values())[0])
+
     def list_all_selected(
         self,
         columns_sql: str,

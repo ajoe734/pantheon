@@ -29,6 +29,8 @@ from services.foundation.reliable_delivery import (
     build_record_store,
 )
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.persona.harness import PersistentHarnessOwner, register_harness_routes
+from services.control_plane.persona.persona_policy_resolver import evaluate_participant_action_capability
 
 
 def _utc_now() -> str:
@@ -291,6 +293,15 @@ class HttpGovernanceApprovalVerifier:
             ApprovalReader,
             ApprovalUnavailable,
         )
+        from services.governance.paper_approval_scope import (
+            ApprovalUsageContext,
+            current_environment,
+        )
+        # Explicit paper usage context: a scoped (paper-grant) decision is only
+        # admitted for the paper ladder in this runtime's environment; unscoped
+        # decisions ignore it.
+        usage_context = ApprovalUsageContext(
+            environment=current_environment(), target_stage='paper', capital_scale_pct=0)
         try:
             ApprovalReader(base_url=self._base_url, service_token=self._service_token,
                            token_provider=self._token_provider,
@@ -301,7 +312,7 @@ class HttpGovernanceApprovalVerifier:
                     'subject.persona_id': persona_id,
                     'subject.from_state': source_state,
                     'subject.to_state': target_state,
-                })
+                }, usage_context=usage_context)
         except ApprovalUnavailable:
             raise
         except ApprovalInvalid:
@@ -801,6 +812,8 @@ class PersistentPersonaOwner:
                 "Persona creation must start in 'draft'; use the governed lifecycle endpoint"
             )
         persona_id = str(request.persona_id or f"persona-{uuid.uuid4().hex[:12]}")
+        if "persona_harness" in request.metadata:
+            raise PersonaOwnerError("persona_harness metadata is owned by harness routes")
         created_at = _utc_now()
         record = PersonaBody(
             persona_id=persona_id,
@@ -820,6 +833,11 @@ class PersistentPersonaOwner:
             required_data_sources=request.required_data_sources,
             metadata=request.metadata,
         ).model_dump(mode="json")
+        from services.persona.consult_triggers import validate_panel_persona
+        try:
+            validate_panel_persona(record)
+        except ValueError as exc:
+            raise PersonaOwnerError(str(exc)) from exc
         inserted, existing = self._records.compare_and_set(persona_id, None, record)
         if not inserted:
             raise PersonaAlreadyExists(
@@ -896,6 +914,7 @@ class PersistentPersonaOwner:
         guard: Callable[[PersonaBody], bool],
         metadata_updates: Mapping[str, Any] | Callable[[PersonaBody], Mapping[str, Any]],
         actor_id: str,
+        skip_unchanged: bool = False,
     ) -> tuple[bool, PersonaBody]:
         """One CAS attempt whose precondition is checked against the exact
         snapshot it commits against.
@@ -917,6 +936,10 @@ class PersistentPersonaOwner:
         a legitimate no-op (e.g. a stale generation), not a race. Raises
         ``PersonaConcurrentUpdate`` when the CAS itself loses a race, so the
         caller can retry with a fresh read.
+
+        With ``skip_unchanged=True`` a merge that leaves metadata equal to the
+        snapshot's performs no write (updated_at/updated_by untouched) and
+        returns ``(False, current)``; the decision uses the same snapshot.
         """
 
         current_raw = self._records.get(persona_id)
@@ -928,6 +951,8 @@ class PersistentPersonaOwner:
         updates = metadata_updates(current) if callable(metadata_updates) else metadata_updates
         merged_metadata = dict(current.metadata or {})
         merged_metadata.update(updates)
+        if skip_unchanged and merged_metadata == dict(current.metadata or {}):
+            return False, current
         updated = dict(current_raw)
         updated["metadata"] = merged_metadata
         updated["updated_at"] = _utc_now()
@@ -988,6 +1013,8 @@ class PersistentPersonaOwner:
         *,
         allow_lifecycle: bool = False,
     ) -> dict[str, Any]:
+        if request.metadata and "persona_harness" in request.metadata:
+            raise PersonaOwnerError("persona_harness metadata is owned by harness routes")
         record = dict(current)
         patch_fields = request.model_fields_set - {"actor_id"}
         if "lifecycle_state" in patch_fields:
@@ -1018,6 +1045,16 @@ class PersistentPersonaOwner:
             merged_metadata = dict(record.get("metadata") or {})
             merged_metadata.update(request.metadata or {})
             record["metadata"] = merged_metadata
+        from services.persona.consult_triggers import validate_panel_persona
+        try:
+            # Validate using the old identity as well, so removing the class
+            # marker cannot turn a panel persona into a trading persona.
+            if ((current.get("metadata") or {}).get("persona_class") == "consult_panel"
+                and (record.get("metadata") or {}).get("persona_class") != "consult_panel"):
+                raise ValueError("panel personas cannot change their persona class")
+            validate_panel_persona(record)
+        except ValueError as exc:
+            raise PersonaOwnerError(str(exc)) from exc
         record["updated_at"] = _utc_now()
         record["updated_by"] = request.actor_id
         return PersonaBody.model_validate(record).model_dump(mode="json")
@@ -1089,12 +1126,17 @@ class PersistentCapabilitySnapshotOwner:
             )
         return CapabilitySnapshotBody.model_validate(record)
 
-    def get_for_persona(self, persona_id: str) -> CapabilitySnapshotBody:
+    def get_for_persona(self, persona_id: str, run_purpose: str | None = None) -> CapabilitySnapshotBody:
         matches = [
             CapabilitySnapshotBody.model_validate(record)
             for record in self._records.list_all()
             if str(record.get("persona_id") or "") == persona_id
         ]
+        if run_purpose == "daily_cycle":
+            # A later paper_advisory receipt must not shadow an explicit daily
+            # grant, denial or expiry; it is only the fallback when none exists.
+            explicit = [m for m in matches if (m.metadata or {}).get("scope") != "paper_advisory"]
+            matches = explicit or matches
         if not matches:
             raise CapabilitySnapshotNotFound(
                 f"Capability snapshot for Persona {persona_id!r} not found"
@@ -1744,6 +1786,7 @@ from services.persona.trade_reflection_pipeline import (
     provider_extraction_schema,
     reflection_schema_errors,
 )
+from services.persona.lesson_governance import MemoryLessonRegistrar, candidates_from_reflection
 from services.persona.trade_pattern_review import EpisodeLister, covered_episode_ids, review_pattern, telemetry_episode_lister
 
 
@@ -1788,6 +1831,10 @@ def create_app(
     reflection_provider: ReflectionProvider | None = None,
     telemetry_fetcher: Callable[[str, str | None, str | None], dict[str, Any] | None] | None = None,
     pattern_episode_lister: EpisodeLister | None = None,
+    harness_owner: PersistentHarnessOwner | None = None,
+    lesson_registrar: MemoryLessonRegistrar | None = None,
+    lesson_rule_converter: Any | None = None,
+    action_policy_resolver: Any | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     governance_decision_verifier = (
@@ -1801,12 +1848,52 @@ def create_app(
     active_reflection_provider = reflection_provider or OpenClawReflectionProvider()
     active_telemetry_fetcher = telemetry_fetcher or _default_telemetry_fetcher
     active_episode_lister = pattern_episode_lister or telemetry_episode_lister()
+    active_lesson_registrar = lesson_registrar or MemoryLessonRegistrar()
+
+    def register_lessons(artifact: dict[str, Any], tenant_id: str, authorization: str | None) -> dict[str, Any]:
+        """Register every lesson candidate of the reflection in memory review before it is persisted."""
+        candidates = candidates_from_reflection(artifact, tenant_id)
+        if not candidates: return {"status": "no_candidates"}
+        if not active_lesson_registrar.configured: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": "Lesson registration unavailable: PANTHEON_MEMORY_API_URL is not configured", "retryable": True}})
+        try: return {"status": "registered", **active_lesson_registrar.register(candidates, authorization)}
+        except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Lesson registration failed: {exc}", "retryable": True}}) from exc
+
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
         description="Persistent Persona registry write-owner service",
     )
     app.state.persona_owner = persistent_owner
+    active_harness = harness_owner or PersistentHarnessOwner(persistent_owner)
+    register_harness_routes(app, persistent_owner, active_harness)
+    from services.persona.lesson_rule_proposals import build_lesson_rule_converter, register_lesson_rule_routes
+    register_lesson_rule_routes(app, persistent_owner, lesson_rule_converter or build_lesson_rule_converter(active_harness))
+
+    @app.get("/api/personas/{persona_id}/action-capability")
+    def action_capability(
+        persona_id: str, run_purpose: str = "daily_cycle",
+        required_data: list[str] = Query(default=[]),
+        authorization: str | None = Header(default=None),
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        try:
+            _, admitted = resolve_persona_tenant_scope(authorization, tenant_id)
+            persona = persistent_owner.get(persona_id).model_dump(mode="json")
+            if persona.get("tenant_id") != admitted:
+                raise HTTPException(status_code=404, detail="Persona not found")
+            try:
+                snapshot = persistent_capability_owner.get_for_persona(persona_id, run_purpose).model_dump(mode="json")
+            except CapabilitySnapshotNotFound:
+                snapshot = None
+            except Exception:
+                return evaluate_participant_action_capability(persona, None, owner_available=False)
+            return evaluate_participant_action_capability(
+                persona, snapshot, run_purpose=run_purpose,
+                requirements={"required_data": required_data}, resolver=action_policy_resolver)
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=f"{exc.code}: {exc.message}") from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail="Persona not found") from exc
 
     @app.post(
         "/api/personas",
@@ -2103,8 +2190,9 @@ def create_app(
                     trade_episode_ids=(episode_id,), trigger="manual_retry", facts=raw_facts, missing_refs=episode_missing_refs(raw_facts),
                 ))
             except Exception as exc: raise HTTPException(status_code=503, detail={"error": {"code": "DEPENDENCY_UNAVAILABLE", "message": f"Reflection generation failed: {exc}", "retryable": True}}) from exc
+            lesson_registration = register_lessons(artifact, persona.tenant_id, authorization)
             resp = {
-                "data": {"receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
+                "data": {"lesson_registration": lesson_registration, "receipt_id": f"owner-{uuid.uuid4().hex[:8]}", "action": "reflection.retry", "persona_id": persona_id, "resource_id": episode_id, "status": "accepted", "facts_snapshot_ref": canon_ref, "reflection_id": artifact["reflection_id"]},
                 "audit": {"durable": True, "record_ref": f"persona-metadata:{persona_id}:reflection:{artifact['reflection_id']}"},
             }
             for _ in range(5):
@@ -2151,6 +2239,7 @@ def create_app(
         artifact = result.pop("artifact", None)
         if artifact is None: return {"data": result}
         identity, snapshot_hash = artifact["trade_episode_id"], artifact["facts_snapshot_hash"]
+        result["lesson_registration"] = register_lessons(artifact, tenant_id, authorization)
 
         def _not_yet_persisted(cur: PersonaBody) -> bool:
             rows = (cur.metadata or {}).get("trade_reflections", [])

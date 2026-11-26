@@ -94,3 +94,35 @@ def test_paper_branch_verifies_against_the_paper_simulation_evaluation(monkeypat
     forged = dict(proposal["lines"][0], target_weight=0.5)
     with pytest.raises(AllocationLineageError, match="target_weight"):
         verify_rebalance_lineage({**proposal, "lines": [forged]})
+
+
+def test_pool_health_factors_are_honoured_only_by_the_paper_quarterly_policy(snapshot):
+    snapshot_id = snapshot.snapshot["ranking_snapshot_id"]
+    row = {**ROW, "ranking_snapshot_id": snapshot_id, "capacity_factor": 0.0}
+    plain = evaluate_allocation({"ranking_snapshot_id": snapshot_id, "rows": [{**ROW, "ranking_snapshot_id": snapshot_id}]})
+    ignored = evaluate_allocation({"ranking_snapshot_id": snapshot_id, "rows": [row]})  # real evaluation drops it
+    assert ignored["lines"][0]["target_weight"] == plain["lines"][0]["target_weight"]
+    assert ignored["allocation_evaluation_id"] == plain["allocation_evaluation_id"]
+    with pytest.raises(AllocationLineageError, match="paper only"):
+        evaluate_allocation({"ranking_snapshot_id": snapshot_id, "rows": [row]}, quarterly=True)
+
+
+def test_paper_quarterly_proposal_with_a_forged_factor_is_rejected(snapshot):
+    items = [{"persona_id": "p-paper", "stage": "paper_running", "tier": "tier-1", "overall_score": 80.0, "eligible": True,
+              "evidence_ref_ids": ["ev-1"]}]
+    record = snapshot_record(items, surface="quarterly", period="2026-Q3").to_canonical_dict()
+    snapshot.snapshot = record
+    snapshot_id = record["ranking_snapshot_id"]
+    row = {"persona_id": "p-paper", "ranking_snapshot_id": snapshot_id, "capital_scope": "paper_ledger", "paper_ledger_id": "l",
+           "capital_pool_id": "pool", "binding_id": "b", "capital_sleeve_id": None, "current_weight": 0.0}
+    evaluation = evaluate_allocation({"ranking_snapshot_id": snapshot_id, "rows": [row]}, paper=True, quarterly=True)
+    proposal = _proposal(evaluation)
+    verify_rebalance_lineage(proposal)
+    forged = copy.deepcopy(proposal)
+    forged["lines"][0]["target_weight"] = 0.9
+    with pytest.raises(AllocationLineageError):
+        verify_rebalance_lineage(forged)
+    forged = copy.deepcopy(proposal)
+    forged["lines"][0]["risk_budget_factor"] = 0.1  # context field: changes the recomputation, so the digest must fail
+    with pytest.raises(AllocationLineageError):
+        verify_rebalance_lineage(forged)

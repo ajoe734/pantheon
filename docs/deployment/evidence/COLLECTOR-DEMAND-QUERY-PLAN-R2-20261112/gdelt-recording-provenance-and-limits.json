@@ -1,0 +1,69 @@
+{
+  "at": "2026-11-13T10:39:56.195333+00:00",
+  "task": "COLLECTOR-DEMAND-QUERY-PLAN-R2-20261112",
+  "actual_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=%28%22Taiwan%22%20OR%20%22semiconductor%22%29&mode=ArtList&maxrecords=10&timespan=1month&format=json",
+  "production_default_url": "https://api.gdeltproject.org/api/v2/doc/doc?query=%28%22Taiwan%22+OR+%22semiconductor%22%29&mode=ArtList&maxrecords=250&timespan=3months&format=json",
+  "parameter_difference": {
+    "maxrecords": {
+      "actual": [
+        "10"
+      ],
+      "default": [
+        "250"
+      ]
+    },
+    "timespan": {
+      "actual": [
+        "1month"
+      ],
+      "default": [
+        "3months"
+      ]
+    }
+  },
+  "same_changed_query_and_mode_format": true,
+  "status": 200,
+  "date_header": "Fri, 13 Nov 2026 08:56:50 GMT",
+  "content_type": "application/json; charset=utf-8",
+  "body_is_empty_object": true,
+  "article_count_proven": 0,
+  "body_and_headers": [
+    {
+      "file": "collector-gdelt-body.txt",
+      "original": "/tmp/collector-gdelt-body.txt",
+      "bytes": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "file": "collector-gdelt-headers.txt",
+      "original": "/tmp/collector-gdelt-headers.txt",
+      "bytes": 269,
+      "sha256": "550d3b1c869340d628e026641fe43b44d103c33bf1d5db4398a236c7cd5d8a6c"
+    }
+  ],
+  "primary_command_output": [
+    {
+      "file": "actual-command.txt",
+      "source_log": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/20261113T085049776210Z-codex-codex2_2-2c523f.log",
+      "lines": [
+        9772,
+        9774
+      ],
+      "bytes": 467,
+      "sha256": "7a5fbf3478c8be165481d72f633951ddd456d99199f78d8c5a7f8aab6368d725"
+    },
+    {
+      "file": "actual-HTTP-output.txt",
+      "source_log": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/20261113T085049776210Z-codex-codex2_2-2c523f.log",
+      "lines": [
+        9841,
+        9852
+      ],
+      "bytes": 295,
+      "sha256": "d307e903830880cc93fa8c4584d184d83e1c550f4c55a92f830c2b9d1758a442"
+    }
+  ],
+  "qualification": "Existing authentic recording for the same changed query with lower existing API limits. Original AC6 does not state nonempty/250/3months; original owner/reviewer must verify fit and preserve literal production parameters. Not automatically ACCEPTED by this audit.",
+  "limits": "No proof default250/3months succeeded, no articles/freshness/hosted ingestion PASS. Do not rewrite recording URL, invent response data, alter production limits or use another host/account to evade429. Existing default429 wait remains real.",
+  "new_provider_calls_or_source_task_changes_by_this_audit": false
+}

@@ -1,0 +1,28 @@
+{
+  "task_id": "OPS-MERGED-REVIEW-RECOVERY-RECORD-20261118",
+  "source_task_id": "SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118",
+  "record": ".orchestrator/review-evidence/source_daily_bars_value_time_status_columns_merged_recovery_20261118.md",
+  "read_only_sources": [
+    {
+      "command": "python3 over ~/pantheon-ci-deploy/runtime/task-state/task-state-events-v2.jsonl: task upserts for the source id, printing status/owner/reviewer/review_binding",
+      "output": "line 74623, committed_at 2026-11-17T18:27:20Z: review_approved, owner Claude, reviewer Claude2, review_binding {base dev, pr 7530, head caaf76763b8a001df10c3f8229521039bf04d14a}; line 74632 18:35:08Z blocked (same bindings); line 74865 2026-11-18T03:00:02Z owner Human/Ops blocked; line 74867 03:00:07Z in_progress with bindings cleared"
+    },
+    {
+      "command": "grep source id over coordination-root/ai-activity-log.jsonl and archive/logs/ai-activity-log.jsonl-*.gz, filter types task_reassigned, review_approved, blocker, reopen",
+      "output": "task_reassigned 2026-11-17T14:01:36Z (Claude/Antigravity2 -> Claude2/Claude); task_reassigned 2026-11-17T14:12:20Z (Claude2/Claude -> Claude/Claude2); review_approved Claude2 2026-11-17T18:27:20Z at caaf76763b8a001df10c3f8229521039bf04d14a; blocker Claude 2026-11-17T18:35:08Z (done refused: audited reviewer reassignment must follow the delivered commit); task_reassigned Human/Ops 2026-11-18T03:00:02Z (owner Claude -> Human/Ops, reviewer Claude2); reopen Human/Ops 2026-11-18T03:00:07Z; no family exception event found"
+    },
+    {
+      "command": "git log --no-merges --format='%H %cI %(trailers:key=Reviewer,valueonly)' d504f2df358d5c54c04abb41b3fe5916b07fa40d..caaf76763b8a001df10c3f8229521039bf04d14a",
+      "output": "96c5a6888aeee0adb5fda42705dfd3770beaae16 Antigravity2; 356fd61dcfbb01a1292872a06659e9992f201a12 Antigravity2; b877362d8ae4dc0d026889305b2352317b45233c Claude2; 52d57089ec0c415f5215e511955c64d1213865e3 Antigravity2; 0f5893106370832d80a795ee51c7d50ee484c82b Antigravity2; head merge commit caaf76763b8a001df10c3f8229521039bf04d14a Claude2"
+    },
+    {
+      "command": "git merge-base --is-ancestor caaf76763b8a001df10c3f8229521039bf04d14a origin/dev; git show -s --format='%H %P %cI' 45aab53fe",
+      "output": "ancestor yes; 45aab53feea9a2514d2debac50edc692aaa06226 parents d504f2df358d5c54c04abb41b3fe5916b07fa40d caaf76763b8a001df10c3f8229521039bf04d14a, 2026-11-18T02:30:17+08:00"
+    },
+    {
+      "command": "git rev-parse caaf76763b8a001df10c3f8229521039bf04d14a:docs/deployment/evidence/SOURCE-DAILY-BARS-VALUE-TIME-STATUS-COLUMNS-20261118/evidence.json",
+      "output": "f21819917366fb449a3ffd8971629c6a6c478f0e"
+    }
+  ],
+  "scope": "two artifact files only; no product code, no source task row, reconcile_merged_done not run"
+}

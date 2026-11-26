@@ -1,0 +1,34 @@
+{
+  "task_id": "SOURCE-INGEST-FULL-SIZE-CLOSE-TEST-DETERMINISTIC-R2-20261118",
+  "changed_files": ["services/source_ingestion/tests/test_scheduled_connector.py"],
+  "production_code_changed": false,
+  "persistent_writer_added_or_changed": false,
+  "reproduction": {
+    "schedule": "budget_spent_by_last_read: the raw read that completes a source's delivery also charges the whole 15s request budget (COLLECTOR_REQUEST_READ_BUDGET_SECONDS) on the virtual clock. Fails every time on the pre-change assertion (assert 1 == 60 at the sleep hook once both latest_priority.json say done).",
+    "observed_values": "tick 35: twse delivered its last 33 rows, latest_priority.json done=true for both sources, tick result continuation_pending=true -> sleep 1; tick 36: tpex pulled with 0 rows, continuation_pending=true (twse still owed its ordered-sweep tick) -> sleep 1; then 60.",
+    "what_varies": "the virtual clock. LatencyTransport charged max(start+0.27) over real thread overlap, so a batch cost 0.27s..1.08s depending on whether reader threads happened to overlap; on a loaded runner the pull that lands the last row may or may not have spent the 15s budget. Verified: the sequential schedule alone (no overlap) never trips this assertion but charges 3212s of virtual time, so overlap does change batch boundaries."
+  },
+  "decision": {
+    "wrong_side": "the test model, not the product",
+    "proof": "connectors/collector_bundle.py _pull_bounded (~lines 845-885): the ordered sweep runs only if done and the shared deadline has not passed (`not (op_deadline is not None and time.monotonic() >= op_deadline)`); otherwise base=None with complete=False and the result carries continuation_pending=True when `merged and (not done or not base.complete)`. controller_worker.main (~line 2476) then sleeps CONTINUATION_PAUSE_SECONDS. The extra short tick is intended: the ordered history sweep was not evaluated, so 'nothing left' cannot be claimed; the follow-up pull delivers 0 rows and restores the cadence.",
+    "replacement_assertion": "the old `seconds == interval` on the first all-done tick is replaced by: at most one extra continuation tick per source after all rows are acknowledged, every receipt after that has normalized_count 0, the last tick sleeps interval_seconds, and under the forced boundary schedule exactly len(sources) extra ticks occur."
+  },
+  "test_changes": {
+    "removed": ["time.sleep(0.002) real overlap wait", "max(start+0.27) overlap-dependent charge"],
+    "added": ["per-raw-read fixed virtual charge (270ms/4 overlapped, 270ms sequential)", "Barrier(LATEST_CLOSE_RAW_READ_CONCURRENCY) on the first raw group forces real overlap for the peak assertion", "parametrize schedule: overlapped, budget_spent_by_last_read, sequential (sequential opt-in via PANTHEON_CLOSE_TEST_SEQUENTIAL=1, ~70s)"],
+    "kept": ["peak == LATEST_CLOSE_RAW_READ_CONCURRENCY", "row counts 7467/1377/6090", "receipt, ack-id, persistence, snapshot assertions", "elapsed < 1800 for overlapped schedules (sequential asserts > 1800 instead: model sanity)"]
+  },
+  "load_proof": {
+    "load_generator": "12 parallel pytest streams (12-core host), consecutive runs each, load average 13-18; plus an earlier batch with 12 python busy loops + 4 streams (load average 18.7)",
+    "overlapped": {"runs": 216, "passed": 216, "failed": 0},
+    "budget_spent_by_last_read": {"runs": 34, "passed": 34, "failed": 0},
+    "sequential": {"runs": 1, "passed": 1, "failed": 0, "seconds": 70.6},
+    "earlier_busy_loop_batch": {"runs_of_two_params": 16, "failed": 0}
+  },
+  "duration": {"before_idle_host_seconds": 33, "after_idle_host_seconds": 25, "note": "under 30s on the idle dev host; remaining time is real API/controller/disk work for 7467 rows. Before figure measured on this host now (earlier 65-85s was loaded)."},
+  "validation": "test_scheduled_connector.py + test_controller_worker.py + test_collector_bundle_connector.py: 390 passed, 5 skipped (skips include the opt-in sequential schedule)",
+  "residual_findings": [
+    "10 slowest tests of the three source ingestion files (idle host): test_collector_bundle_connector::test_real_size_two_day_sweep_continues_and_preserves_newest_priority 39.1s; test_scheduled_connector::test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source 28.5s; full_size_close[budget_spent_by_last_read] 25.3s; full_size_close[overlapped] 25.0s; test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget 22.0s; test_steady_controller_calls_drive_real_scheduler_and_collector_adapter 6.4s; test_one_failing_collector_does_not_starve_other_admitted_sources 5.3s; test_real_controller_drains_1349_t86_rows_before_daily_cadence 5.1s; test_controller_state_failure_projection_stays_bounded_across_100_ticks 2.4s; test_steady_run_scheduled_that_never_responds_fails_within_dedicated_bound 2.0s. Owner of the CI step budget should review (other source ingestion shards not measured).",
+    "Product observation: when the final priority batch spends the request budget, each source costs one extra 1s tick before cadence is restored; harmless, intended."
+  ]
+}

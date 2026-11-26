@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import uuid
@@ -3605,7 +3606,11 @@ def _run_drawdown_tick(
         with (
             mock.patch.dict(
                 "os.environ",
-                {"RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path)},
+                {
+                    "RECONCILIATION_DRIFT_APPROVED_BASELINES_PATH": str(baselines_path),
+                    # Projected fixtures carry fixed past drawdown_at values.
+                    "RECONCILIATION_DRIFT_INPUT_MAX_AGE_SECONDS": "999999999",
+                },
             ),
             mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
             mock.patch.object(
@@ -4040,3 +4045,1041 @@ def test_class_entries_never_fall_back_to_flat_baseline(tmp_path) -> None:
     )
     assert evaluation["summary"]["baseline_metric_count"] == 0
     assert "stock_future" in evaluation["baseline_unresolved"][0]["reason"]
+
+
+# --- journey-scoped scheduled reconciliation (TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120)
+
+_HOSTED_EVALS = (
+    Path(__file__).resolve().parents[3]
+    / "docs/deployment/evidence/TRADE-JOURNEY-REJECT-AND-RECON-REASONS-20261120"
+    / "evidence.json"
+)
+
+
+def _hosted_eval(evaluated_at: str, summary: dict) -> dict:
+    evaluations = json.loads(_HOSTED_EVALS.read_text())[
+        "hosted_scheduled_evaluations_rb-3823397e"
+    ]
+    evaluation = next(e for e in evaluations if e["evaluated_at"] == evaluated_at)
+    evaluation = json.loads(json.dumps(evaluation))
+    evaluation["binding_id"] = summary["binding_id"]
+    evaluation["runtime_id"] = summary["runtime_id"]
+    return evaluation
+
+
+def _scheduled_event(evaluation: dict, timestamp: str):
+    svc = _load_service_module(tempfile.mkdtemp())
+    return svc._scheduled_lifecycle_event(
+        summary=_paper_lifecycle_summary(), evaluation=evaluation, timestamp=timestamp
+    )
+
+
+def test_hosted_degraded_then_ok_defers_then_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, reason = _scheduled_event(degraded, "2026-07-15T10:05:00Z")
+    assert event is None
+    assert reason == "reconciliation_deferred_runtime_unhealthy"
+    ok = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    event, reason = _scheduled_event(ok, "2026-07-15T10:10:00Z")
+    assert reason is None
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_hosted_drawdown_critical_with_ok_checks_completes() -> None:
+    summary = _paper_lifecycle_summary()
+    evaluation = _hosted_eval("2026-11-14T07:48:57Z", summary)
+    assert evaluation["status"] == "critical"
+    event, _ = _scheduled_event(evaluation, "2026-07-15T10:05:00Z")
+    assert event["event_type"] == "reconciliation_completed"
+
+
+def test_runtime_unhealthy_stamps_failed_after_sixty_minutes() -> None:
+    summary = _paper_lifecycle_summary()
+    degraded = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    event, _ = _scheduled_event(degraded, "2026-07-15T11:00:00Z")
+    assert event["event_type"] == "reconciliation_failed"
+    assert event["metadata"]["reason_code"] == "runtime_unhealthy_at_reconciliation"
+    names = {d["check"] for d in event["metadata"]["reason_detail"]}
+    assert names == {"runtime_state", "runtime_health_summary"}
+    assert {"detail", "observed", "threshold"} <= set(event["metadata"]["reason_detail"][0])
+
+
+def test_identity_and_other_check_failures_have_reason_codes() -> None:
+    summary = _paper_lifecycle_summary()
+    base = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    ident = json.loads(json.dumps(base))
+    ident["reconciliation_checks"][0]["status"] = "degraded"
+    event, _ = _scheduled_event(ident, "2026-07-15T10:05:00Z")
+    assert event["metadata"]["reason_code"] == "reconciliation_identity_unverified"
+    other = json.loads(json.dumps(base))
+    for c in other["reconciliation_checks"]:
+        if c["check"] == "queue_lag_ms":
+            c["status"] = "critical"
+        if c["check"] == "authoritative_actual_identity":
+            c["status"] = "ok"
+    other["reconciliation_checks"].append(
+        {"check": "position_vs_fill", "status": "critical", "detail": "x"}
+    )
+    event, _ = _scheduled_event(other, "2026-07-15T10:05:00Z")
+    assert event["metadata"]["reason_code"] == "reconciliation_check_failed"
+
+
+def _critical_drawdown_check(observed: float = 9.609309450237793):
+    return [
+        {
+            "metric": "drawdown",
+            "status": "critical",
+            "baseline": 1.0,
+            "observed": observed,
+            "relative_delta": observed - 1.0,
+        }
+    ]
+
+
+def test_scheduled_tick_marks_unchanged_stale_drawdown_as_stale_not_breach() -> None:
+    """Telemetry carries the last drawdown forward; the same old value must not re-breach each tick."""
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.609309450237793,
+            drawdown_at="2000-01-01T00:00:00Z",
+            drawdown_event_id="evt-drawdown-old",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check()),
+            mock.patch.object(svc, "_classify_drift_report_incident") as classify,
+        ):
+            payloads = [
+                client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tick_id": f"tick-stale-{n}"},
+                ).json()
+                for n in range(3)
+            ]
+        for payload in payloads:
+            assert payload["stale_input_binding_ids"] == [summary["binding_id"]]
+            assert payload["drift_report_ids"] == []
+            assert payload["incident_ids"] == []
+            assert payload["status"] != "critical"
+        classify.assert_not_called()
+        evaluation = svc.store.get_evaluation(
+            svc._tick_evaluation_id("tick-stale-2", summary["binding_id"]),
+            tenant_id=svc._configured_tenant_id() if hasattr(svc, "_configured_tenant_id") else None,
+        )
+        check = evaluation["drift_checks"][0]
+        assert check["stale_input"] is True
+        assert check["status"] == "degraded"
+        assert check["input_observed_at"] == "2000-01-01T00:00:00Z"
+
+
+def test_scheduled_tick_fresh_drawdown_still_breaches() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(
+            drawdown=9.6,
+            drawdown_at=svc.utc_now(),
+            drawdown_event_id="evt-drawdown-new",
+        )
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(svc, "_drift_checks", side_effect=lambda *a, **k: _critical_drawdown_check(9.6)),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-fresh-001"}
+            ) as classify,
+        ):
+            payload = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tick_id": "tick-fresh-001"},
+            ).json()
+        assert payload["stale_input_binding_ids"] == []
+        assert payload["incident_ids"] == ["inc-fresh-001"]
+        assert classify.call_count == 1
+
+
+def test_scheduled_tick_retirement_between_ticks_resolves_open_drift_incidents() -> None:
+    from fastapi.testclient import TestClient
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        summary = _healthy_runtime_summary(queue_lag_ms=20_000)
+        binding_id = summary["binding_id"]
+        with (
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+            mock.patch.object(
+                svc,
+                "_authoritative_runtime_binding",
+                side_effect=[
+                    {"binding_id": binding_id, "status": "active"},
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                    _retired_binding(binding_id, "2000-01-01T00:00:00Z"),
+                ],
+            ),
+            mock.patch.object(
+                svc, "_classify_drift_report_incident", return_value={"incident_id": "inc-drift-001"}
+            ) as classify,
+            mock.patch.object(
+                svc,
+                "_resolve_retired_binding_incidents",
+                return_value={"resolved_incident_ids": ["inc-drift-001"]},
+            ) as resolve,
+        ):
+            first = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-1"}
+            ).json()
+            second = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-2"}
+            ).json()
+            third = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-r-3"}
+            ).json()
+        assert first["incident_ids"] == ["inc-drift-001"]
+        assert second["retired_binding_ids"] == [binding_id]
+        assert second["retired_incident_resolutions"] == [{"resolved_incident_ids": ["inc-drift-001"]}]
+        assert third["incident_ids"] == []
+        assert classify.call_count == 1  # nothing opened after retirement
+        assert resolve.call_count == 2
+
+
+def _sweep_incident(binding_id: str, n: int) -> dict:
+    return {
+        "incident_id": f"inc-drift-sweep-{n}",
+        "binding_id": binding_id,
+        "incident_cluster_id": f"drift:{binding_id}",
+    }
+
+
+def _run_sweep(svc, incidents, lookup, *, resolve=None, env=None):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(svc.app)
+    summary = _healthy_runtime_summary()
+    resolve = resolve or mock.Mock(return_value={"resolved_incident_ids": ["x"]})
+    with (
+        mock.patch.dict(
+            os.environ,
+            {
+                "PANTHEON_INCIDENTS_API_URL": "http://incidents",
+                "PANTHEON_RUNTIME_MANAGER_URL": "http://rm",
+                **(env or {}),
+            },
+        ),
+        mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+        mock.patch.object(svc, "_get_json", return_value=incidents),
+        mock.patch.object(svc, "_authoritative_runtime_binding", side_effect=lookup) as look,
+        mock.patch.object(svc, "_resolve_retired_binding_incidents", resolve),
+    ):
+        payload = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile", json={"tick_id": "tick-sweep"}
+        ).json()
+    return payload, look, resolve, summary
+
+
+def test_sweep_resolves_incident_of_retired_binding_after_runtime_rebound() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        old = "rb-old-retired"
+        payload, look, resolve, summary = _run_sweep(
+            svc,
+            [_sweep_incident(old, 1), _sweep_incident(_healthy_runtime_summary()["binding_id"], 2)],
+            lambda bid, **kw: _retired_binding(bid, "2026-11-18T07:00:00Z"),
+        )
+        look.assert_called_once()
+        assert look.call_args.args[0] == old  # evaluated binding is not looked up
+        resolve.assert_called_once()
+        assert resolve.call_args.args[:2] == (old, "2026-11-18T07:00:00Z")
+        assert payload["retired_binding_sweep"]["retired_binding_ids"] == [old]
+        assert payload["retired_incident_resolutions"] == [{"resolved_incident_ids": ["x"]}]
+
+
+def test_sweep_lookup_failure_leaves_incident_open_and_continues() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+
+        def lookup(bid, **kw):
+            if bid == "rb-a":
+                raise RuntimeError("down")
+            return {"binding_id": bid, "status": "active"}
+
+        payload, look, resolve, _ = _run_sweep(
+            svc, [_sweep_incident("rb-a", 1), _sweep_incident("rb-b", 2)], lookup
+        )
+        resolve.assert_not_called()
+        assert payload["retired_binding_sweep"]["lookup_failures"] == 1
+        assert look.call_count == 2
+
+
+def test_sweep_lookups_are_bounded_per_pass() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        incidents = [_sweep_incident(f"rb-{i}", i) for i in range(5)]
+        payload, look, resolve, _ = _run_sweep(
+            svc,
+            incidents,
+            lambda bid, **kw: {"binding_id": bid, "status": "active"},
+            env={"PANTHEON_DRIFT_RETIRED_SWEEP_MAX_LOOKUPS": "2"},
+        )
+        assert look.call_count == 2
+        assert payload["retired_binding_sweep"]["truncated"] is True
+        resolve.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TRADE-JOURNEY-TERMINAL-REJECTION-RECONCILIATION-20261122:
+# Authoritative terminal pre-broker paper order_rejection reconciliation tests
+# ---------------------------------------------------------------------------
+
+_HISTORICAL_WITNESS_EVENTS_PATH = (
+    _REPO_ROOT
+    / "docs/deployment/evidence/PAPER-RISK-POLICY-PROVENANCE-20261121/historical-events.json"
+)
+_WITNESS_REJECTION_EVENT_ID = "91d55953-b575-4fe8-8d39-6e0cade58d59"
+_WITNESS_FILL_RECON_EVENT_ID = "48c946c8-39d1-52bd-b1a1-ce72dc7f6e14"
+
+
+def _load_witness_rejection_event() -> dict:
+    raw = json.loads(_HISTORICAL_WITNESS_EVENTS_PATH.read_text(encoding="utf-8"))
+    return json.loads(json.dumps(raw[_WITNESS_REJECTION_EVENT_ID]))
+
+
+def _witness_rejection_runtime_summary(*, include_raw_metrics_on_identity: bool = False) -> dict:
+    from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+
+    event = _load_witness_rejection_event()
+    store = RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=10_000_000_000)
+    store.project_event(event)
+    hb_event = {
+        "event_id": "hb-witness-rt-3252fa75-001",
+        "event_type": "heartbeat",
+        "created_at": "2026-11-19T23:46:30Z",
+        "tenant_id": event["tenant_id"],
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "binding_id": event["binding_id"],
+        "runtime_id": event["runtime_id"],
+        "capital_pool_id": event["capital_pool_id"],
+        "artifact_id": event["artifact_id"],
+        "artifact_version": event["artifact_version"],
+        "plan_id": event["plan_id"],
+        "persona_capital_binding_id": event["persona_capital_binding_id"],
+        "trace_id": event["trace_id"],
+        "source_mode": "live",
+        "metrics": {"queue_lag_ms": 12.0, "delivery_lag_ms": 24.0},
+        "metadata": {
+            "runtime_package": "paper_execution_runtime",
+            "runtime_heartbeat": {
+                "connectivity_status": "connected",
+                "broker_status": "paper_simulated",
+                "queue_lag_ms": 12.0,
+                "event_delivery_lag_ms": 24.0,
+                "health_summary": {
+                    "paper_runtime": "ok",
+                    "bridge": "ok",
+                    "telemetry": "ok",
+                    "broker": "not_applicable",
+                },
+            },
+        },
+    }
+    summary = json.loads(json.dumps(store.project_event(hb_event)))
+    summary["health_summary"] = {
+        "paper_runtime": "ok",
+        "bridge": "ok",
+        "telemetry": "ok",
+        "broker": "not_applicable",
+    }
+    summary["queue_lag_ms"] = 12.0
+    summary["event_delivery_lag_ms"] = 24.0
+    summary.pop("committed_position_snapshot", None)
+    if include_raw_metrics_on_identity:
+        summary["last_lifecycle_identity"]["metrics"] = json.loads(
+            json.dumps(event["metrics"])
+        )
+    return summary
+
+
+def _independent_fill_runtime_summary(*, cash_after: float = 100217.5331375) -> tuple[dict, dict]:
+    raw = json.loads(_HISTORICAL_WITNESS_EVENTS_PATH.read_text(encoding="utf-8"))
+    fill_recon = json.loads(json.dumps(raw[_WITNESS_FILL_RECON_EVENT_ID]))
+    snap_event_id = fill_recon["causal_parent_id"]
+    binding_id = fill_recon["binding_id"]
+    runtime_id = "rt-independent-fill-001"
+    envelope = dict(fill_recon["correlation_envelope"])
+    envelope.update(
+        {
+            "event_id": snap_event_id,
+            "causation_event_id": fill_recon["metadata"]["source_fill_event_id"],
+            "producer": "execution.paper_runtime",
+            "event_time": "2026-11-16T06:52:10Z",
+            "received_at": "2026-11-16T06:52:10Z",
+        }
+    )
+    meta = dict(fill_recon["metadata"])
+    for recon_key in (
+        "reconciliation_evaluation_id",
+        "reconciliation_status",
+        "reconciliation_tick_id",
+    ):
+        meta.pop(recon_key, None)
+    meta.update(
+        {
+            "correlation_envelope": envelope,
+            "sequence_no": 7,
+            "causal_parent_id": fill_recon["metadata"]["source_fill_event_id"],
+            "submitted_to_broker": True,
+            "broker_order_id": "b00575cfc62f44d18ed052dad34d23ea",
+            "side": "sell",
+            "instrument_id": "eq:2317",
+            "kind": "cash_share",
+            "multiplier": 1.0,
+            "fill_quantity": 1.0,
+            "fill_price": 218.5,
+            "fee": 0.3113625,
+            "tax": 0.6555,
+            "position_quantity_before": 1.0,
+            "position_quantity_after": 0.0,
+            "cash_before": 100000.0,
+            "cash_after": cash_after,
+        }
+    )
+    snapshot_identity = {
+        "event_id": snap_event_id,
+        "event_type": "position_snapshot",
+        "created_at": "2026-11-16T06:52:10Z",
+        "tenant_id": fill_recon["tenant_id"],
+        "environment": "paper",
+        "execution_mode": "paper",
+        "deployment_stage": "paper",
+        "binding_id": binding_id,
+        "runtime_id": runtime_id,
+        "capital_pool_id": fill_recon["capital_pool_id"],
+        "artifact_id": fill_recon["artifact_id"],
+        "artifact_version": fill_recon["artifact_version"],
+        "plan_id": fill_recon["plan_id"],
+        "persona_capital_binding_id": fill_recon["persona_capital_binding_id"],
+        "trace_id": fill_recon["trace_id"],
+        "signal_id": fill_recon["signal_id"],
+        "run_id": fill_recon["run_id"],
+        "loop_run_id": fill_recon["loop_run_id"],
+        "aggregate_type": "trade_journey",
+        "aggregate_id": fill_recon["aggregate_id"],
+        "sequence_no": 7,
+        "causal_parent_id": fill_recon["metadata"]["source_fill_event_id"],
+        "source_mode": "live",
+        "target": fill_recon["target"],
+        "authority_refs": fill_recon["authority_refs"],
+        "metadata": meta,
+        "metrics": {"position_qty": 0.0, "price": 218.5, "cash": cash_after},
+        "correlation_envelope": envelope,
+    }
+    summary = _healthy_runtime_summary(
+        tenant_id=fill_recon["tenant_id"],
+        binding_id=binding_id,
+        runtime_id=runtime_id,
+        deployment_stage="paper",
+        deployment_plan_id=fill_recon["plan_id"],
+        capital_pool_id=fill_recon["capital_pool_id"],
+        persona_capital_binding_id=fill_recon["persona_capital_binding_id"],
+        artifact_id=fill_recon["artifact_id"],
+        artifact_version=fill_recon["artifact_version"],
+        trace_id=fill_recon["trace_id"],
+        last_event_id=snap_event_id,
+        last_lifecycle_identity=snapshot_identity,
+        committed_position_snapshot=snapshot_identity,
+    )
+    broker_order = {
+        "order_id": "b00575cfc62f44d18ed052dad34d23ea",
+        "instrument_id": "eq:2317",
+        "side": "sell",
+        "qty": 1.0,
+        "status": "filled",
+        "fill_qty": 1.0,
+        "fill_price": 218.5,
+    }
+    return summary, broker_order
+
+
+def test_witness_prebroker_order_rejection_not_classified_in_flight_across_consecutive_windows_with_independent_binding() -> None:
+    import hashlib
+    from fastapi.testclient import TestClient
+
+    witness_summary = _witness_rejection_runtime_summary(include_raw_metrics_on_identity=True)
+    witness_binding = witness_summary["binding_id"]
+    witness_event_id = witness_summary["last_lifecycle_identity"]["event_id"]
+
+    # Confirm exact digests from the hosted observation (reconciliation-pending-join-20261122T133352Z.json)
+    assert hashlib.sha256(witness_binding.encode("utf-8")).hexdigest()[:16] == "526b4d060c283aa8"
+    assert hashlib.sha256(witness_event_id.encode("utf-8")).hexdigest()[:16] == "99383a35c664c529"
+    assert "committed_position_snapshot" not in witness_summary
+
+    other_summary, broker_order = _independent_fill_runtime_summary()
+    other_binding = other_summary["binding_id"]
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+
+        appended_events: list[dict] = []
+
+        def fake_append(url, event, **kwargs):
+            appended_events.append(json.loads(json.dumps(event)))
+            return _accepted_delivery()
+
+        current_summaries = [witness_summary, other_summary]
+        windows = [
+            "scheduled:tenant-dev:2026-11-22T13:20:00Z:PT300S",
+            "scheduled:tenant-dev:2026-11-22T13:25:00Z:PT300S",
+            "scheduled:tenant-dev:2026-11-22T13:30:00Z:PT300S",
+        ]
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                    "PANTHEON_PAPER_BROKER_URL": "http://broker:8102",
+                    "PANTHEON_TENANT_ID": "tenant-dev",
+                },
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                side_effect=lambda *a, **kw: json.loads(json.dumps(current_summaries)),
+            ),
+            mock.patch.object(svc, "fetch_paper_order", return_value=broker_order) as fetch_order,
+            mock.patch.object(svc, "_append_telemetry_lifecycle_event", side_effect=fake_append),
+        ):
+            # Window 1: evaluates both witness rejection binding and independent fill binding
+            r1 = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": windows[0], "window_id": windows[0]},
+            )
+            assert r1.status_code == 201
+            p1 = r1.json()
+            assert p1["status"] == "ok"
+            assert p1["evaluated_binding_count"] == 2
+            assert p1["lifecycle_retryable_errors"] == []
+            assert p1["lifecycle_ineligible_binding_ids"] == [witness_binding]
+
+            receipts_1 = {item["binding_id"]: item for item in p1["lifecycle_append_results"]}
+            w_rec_1 = receipts_1[witness_binding]
+            assert w_rec_1["status"] == "not_eligible"
+            assert w_rec_1["terminal"] is True
+            assert w_rec_1["retryable"] is False
+            assert w_rec_1["outcome"] == "not_eligible"
+            assert w_rec_1["reason"] == "lifecycle_noop_order_closed"
+            assert w_rec_1["attempt_count"] == 0
+            assert w_rec_1["event_id"] is None
+
+            o_rec_1 = receipts_1[other_binding]
+            assert o_rec_1["status"] == "accepted"
+            assert o_rec_1["terminal"] is True
+            assert o_rec_1["retryable"] is False
+            assert o_rec_1["attempt_count"] == 1
+            assert o_rec_1["event_id"] is not None
+            assert len(appended_events) == 1
+            assert appended_events[0]["binding_id"] == other_binding
+            assert appended_events[0]["event_type"] == "reconciliation_completed"
+            assert all(c["status"] == "passed" for c in appended_events[0]["metadata"]["reason_detail"])
+            fetch_order.assert_called_once()
+
+            # Projector catches up for the independent fill binding while witness binding remains at order_rejection
+            caught_up_other = json.loads(json.dumps(other_summary))
+            caught_up_other["last_event_id"] = appended_events[0]["event_id"]
+            caught_up_other["last_lifecycle_identity"] = appended_events[0]
+            caught_up_other.pop("committed_position_snapshot", None)
+            current_summaries = [_witness_rejection_runtime_summary(), caught_up_other]
+
+            # Consecutive scheduled windows 2 and 3: zero in-flight errors, zero invented events appended
+            for win_id in windows[1:]:
+                rn = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tenant_id": "tenant-dev", "tick_id": win_id, "window_id": win_id},
+                )
+                assert rn.status_code == 201
+                pn = rn.json()
+                assert pn["status"] == "ok"
+                assert pn["evaluated_binding_count"] == 2
+                assert pn["lifecycle_retryable_errors"] == []
+                assert pn["lifecycle_accepted_event_ids"] == []
+                assert set(pn["lifecycle_ineligible_binding_ids"]) == {witness_binding, other_binding}
+                receipts_n = {item["binding_id"]: item for item in pn["lifecycle_append_results"]}
+                assert receipts_n[witness_binding]["status"] == "not_eligible"
+                assert receipts_n[witness_binding]["terminal"] is True
+                assert receipts_n[witness_binding]["retryable"] is False
+                assert receipts_n[witness_binding]["reason"] == "lifecycle_noop_order_closed"
+                assert receipts_n[witness_binding]["attempt_count"] == 0
+                assert receipts_n[witness_binding]["event_id"] is None
+                assert receipts_n[other_binding]["status"] == "not_eligible"
+                assert receipts_n[other_binding]["reason"] == "lifecycle_already_reconciled"
+
+                eval_doc = svc.store.get_evaluation(
+                    svc._tick_evaluation_id(win_id, witness_binding),
+                    tenant_id="tenant-dev",
+                )
+                assert eval_doc is not None
+                assert eval_doc["lifecycle_append"]["status"] == "not_eligible"
+                assert eval_doc["lifecycle_append"]["reason"] == "lifecycle_noop_order_closed"
+                assert eval_doc["lifecycle_append"]["event_id"] is None
+
+        # Only the 1 genuine reconciliation event for the independent fill binding was ever appended
+        assert len(appended_events) == 1
+        assert appended_events[0]["binding_id"] == other_binding
+
+
+def test_independent_binding_genuine_accounting_variance_still_emits_reconciliation_failed() -> None:
+    from fastapi.testclient import TestClient
+
+    witness_summary = _witness_rejection_runtime_summary()
+    variance_summary, broker_order = _independent_fill_runtime_summary(cash_after=100172.5331375)
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+        appended: list[dict] = []
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                    "PANTHEON_PAPER_BROKER_URL": "http://broker:8102",
+                    "PANTHEON_TENANT_ID": "tenant-dev",
+                },
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                return_value=[witness_summary, variance_summary],
+            ),
+            mock.patch.object(svc, "fetch_paper_order", return_value=broker_order),
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+                side_effect=lambda _u, ev, **_k: (appended.append(ev), _accepted_delivery())[1],
+            ),
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": "tick-variance-and-witness-001"},
+            )
+        assert resp.status_code == 201
+        payload = resp.json()
+        assert payload["status"] == "ok"
+        assert payload["lifecycle_ineligible_binding_ids"] == [witness_summary["binding_id"]]
+        assert len(appended) == 1
+        assert appended[0]["binding_id"] == variance_summary["binding_id"]
+        assert appended[0]["event_type"] == "reconciliation_failed"
+        assert appended[0]["metadata"]["reason_code"] == "cash_variance"
+        cash_check = next(c for c in appended[0]["metadata"]["reason_detail"] if c["check"] == "cash_change")
+        assert cash_check["status"] == "failed"
+        assert cash_check["delta"] == pytest.approx(-45.0)
+
+
+def test_prebroker_rejection_preserves_inflight_transition_and_committed_snapshot_precedence() -> None:
+    from fastapi.testclient import TestClient
+
+    witness_summary = _witness_rejection_runtime_summary()
+    binding_id = witness_summary["binding_id"]
+
+    # 1. Sequence 2 trade_decision stays in-flight, then transitions to not_eligible on sequence 3 order_rejection
+    inflight_summary = json.loads(json.dumps(witness_summary))
+    inflight_identity = inflight_summary["last_lifecycle_identity"]
+    inflight_identity["event_id"] = "7bf9116e-7f19-57ef-b519-778ef869ce3a"
+    inflight_identity["event_type"] = "trade_decision"
+    inflight_identity["sequence_no"] = 2
+    inflight_identity["correlation_envelope"]["event_id"] = "7bf9116e-7f19-57ef-b519-778ef869ce3a"
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+        tick_id = "tick-inflight-to-rejection-001"
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083", "PANTHEON_TENANT_ID": "tenant-dev"},
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                side_effect=[[inflight_summary], [witness_summary]],
+            ),
+            mock.patch.object(svc, "_append_telemetry_lifecycle_event") as append,
+        ):
+            r_inflight = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": tick_id},
+            ).json()
+            assert r_inflight["status"] == "failure"
+            assert r_inflight["lifecycle_append_results"][0]["status"] == "pending"
+            assert r_inflight["lifecycle_append_results"][0]["reason"] == "lifecycle_in_flight"
+
+            r_rejected = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": tick_id},
+            ).json()
+            assert r_rejected["status"] == "ok"
+            assert r_rejected["lifecycle_retryable_errors"] == []
+            assert r_rejected["lifecycle_ineligible_binding_ids"] == [binding_id]
+            assert r_rejected["lifecycle_append_results"][0]["status"] == "not_eligible"
+            assert r_rejected["lifecycle_append_results"][0]["reason"] == "lifecycle_noop_order_closed"
+            assert append.call_count == 0
+
+    # 2. Committed position snapshot takes precedence over last_lifecycle_identity = order_rejection
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+        fill_summary, broker_order = _independent_fill_runtime_summary()
+        committed_snap = json.loads(json.dumps(fill_summary["committed_position_snapshot"]))
+        committed_snap["binding_id"] = binding_id
+        committed_snap["runtime_id"] = witness_summary["runtime_id"]
+        committed_snap["artifact_id"] = witness_summary["artifact_id"]
+        committed_snap["artifact_version"] = witness_summary["artifact_version"]
+        committed_snap["plan_id"] = witness_summary["plan_id"]
+        committed_snap["capital_pool_id"] = witness_summary["capital_pool_id"]
+        committed_snap["persona_capital_binding_id"] = witness_summary["persona_capital_binding_id"]
+        committed_snap["metadata"]["binding_id"] = binding_id
+
+        summary_with_committed_snap = json.loads(json.dumps(witness_summary))
+        summary_with_committed_snap["committed_position_snapshot"] = committed_snap
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083",
+                    "PANTHEON_PAPER_BROKER_URL": "http://broker:8102",
+                    "PANTHEON_TENANT_ID": "tenant-dev",
+                },
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary_with_committed_snap]),
+            mock.patch.object(svc, "fetch_paper_order", return_value=broker_order),
+            mock.patch.object(
+                svc, "_append_telemetry_lifecycle_event", return_value=_accepted_delivery()
+            ) as append,
+        ):
+            resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": "tick-committed-snap-precedence-001"},
+            ).json()
+        assert resp["status"] == "ok"
+        assert append.call_count == 1
+        emitted = append.call_args.args[1]
+        assert emitted["event_type"] == "reconciliation_completed"
+        assert emitted["causal_parent_id"] == committed_snap["event_id"]
+
+
+def test_order_rejection_absent_conflicting_or_contradictory_evidence_and_scope_boundaries() -> None:
+    from fastapi.testclient import TestClient
+
+    def _mutated_witness(mutator) -> dict:
+        summary = _witness_rejection_runtime_summary(include_raw_metrics_on_identity=True)
+        ident = summary["last_lifecycle_identity"]
+        mutator(summary, ident, ident["metadata"], ident["metrics"])
+        return summary
+
+    # Cases that must NOT qualify as terminal pre-broker rejection and must stay in-flight (pending)
+    inflight_mutations = [
+        # Absent submission evidence
+        lambda _s, ident, meta, metrics: (
+            ident.pop("submitted_to_broker", None),
+            meta.pop("submitted_to_broker", None),
+            metrics.pop("submitted_to_broker", None),
+        ),
+        lambda _s, _ident, meta, metrics: (
+            meta.update({"submitted_to_broker": None}),
+            metrics.pop("submitted_to_broker", None),
+        ),
+        # Conflicting submission evidence
+        lambda _s, _ident, meta, metrics: (
+            meta.update({"submitted_to_broker": True}),
+            metrics.update({"submitted_to_broker": True}),
+        ),
+        lambda _s, ident, _meta, _metrics: ident.update({"submitted_to_broker": True}),
+        lambda _s, _ident, meta, _metrics: meta.update({"submitted_to_broker": "false"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"submitted_to_broker": 0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"order_status": "submitted"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"order_status": "filled"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"rejection_status": "pending"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"risk_status": "succeeded"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"risk_gate_evaluated": False}),
+        lambda _s, _ident, meta, _metrics: (
+            meta.pop("risk_status", None),
+            meta.pop("risk_gate_evaluated", None),
+        ),
+        lambda _s, _ident, meta, _metrics: meta.update({"broker_outcome": "uncertain"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"reconciliation_required": True}),
+        # Missing or conflicting rejection reasons
+        lambda _s, _ident, meta, _metrics: (
+            meta.pop("reject_reason", None),
+            meta.pop("risk_reason", None),
+            meta.pop("reason", None),
+            meta.pop("broker_submission_status", None),
+        ),
+        lambda _s, _ident, meta, _metrics: (
+            meta.update(
+                {
+                    "reject_reason": "reason_not_recorded",
+                    "risk_reason": "reason_not_recorded",
+                    "reason": "reason_not_recorded",
+                    "broker_submission_status": "not_submitted",
+                }
+            ),
+        ),
+        lambda _s, _ident, meta, _metrics: meta.update({"risk_reason": "leverage_limit"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"broker_submission_status": "taiwan_broker_error"}),
+        lambda _s, _ident, meta, _metrics: meta.update(
+            {
+                "reject_reason": "taiwan_broker_error",
+                "risk_reason": "taiwan_broker_error",
+                "reason": "taiwan_broker_error",
+                "broker_submission_status": "taiwan_broker_error",
+            }
+        ),
+        lambda _s, _ident, meta, _metrics: meta.update(
+            {
+                "reject_reason": "transport_failed",
+                "risk_reason": "transport_failed",
+                "reason": "transport_failed",
+                "broker_submission_status": "transport_failed",
+            }
+        ),
+        # Contradictory fill / broker / ledger / booking evidence
+        lambda _s, _ident, meta, _metrics: meta.update({"broker_order_id": "bkr-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"fill_id": "fill-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"source_fill_event_id": "src-fill-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"broker_trade_id": "trade-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"shioaji_trade_id": "shioaji-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"ledger_entry_id": "led-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"position_id": "pos-001"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"reconciliation_id": "rec-001"}),
+        lambda _s, _ident, _meta, metrics: metrics.update({"fill_quantity": 1.0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"filled_quantity": 1.0}),
+        lambda _s, ident, _meta, _metrics: ident.update({"quantity": 1.0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"fill_price": 221.0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"cash_before": 100000.0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"position_quantity_after": 452.0}),
+        lambda _s, _ident, meta, _metrics: meta.update({"sim_fill_flag": True}),
+        lambda _s, _ident, meta, _metrics: meta.update({"ledger_committed": True}),
+        lambda _s, _ident, meta, _metrics: meta.update({"ledger_fill_count": 1}),
+        lambda _s, _ident, meta, _metrics: meta.update({"tenant_id": "tenant-other"}),
+        lambda _s, _ident, meta, _metrics: meta.update({"environment": "live"}),
+    ]
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+
+        for idx, mutator in enumerate(inflight_mutations):
+            bad_summary = _mutated_witness(mutator)
+            tick_id = f"tick-bad-rejection-{idx:03d}"
+            with (
+                mock.patch.dict(
+                    "os.environ",
+                    {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083", "PANTHEON_TENANT_ID": "tenant-dev"},
+                ),
+                mock.patch.object(svc, "fetch_runtime_summaries", return_value=[bad_summary]),
+                mock.patch.object(svc, "_append_telemetry_lifecycle_event") as append,
+            ):
+                resp = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tenant_id": "tenant-dev", "tick_id": tick_id},
+                )
+            assert resp.status_code == 201
+            payload = resp.json()
+            assert append.call_count == 0
+            receipt = payload["lifecycle_append_results"][0]
+            assert receipt["status"] == "pending", f"mutation {idx} unexpectedly eligible: {receipt}"
+            assert receipt["reason"] == "lifecycle_in_flight"
+            assert payload["lifecycle_ineligible_binding_ids"] == []
+
+        # Scope boundaries: tenant mismatch on identity and non-paper deployment_stage remain not_eligible with exact boundary reason
+        tenant_mismatch_summary = _witness_rejection_runtime_summary()
+        tenant_mismatch_summary["last_lifecycle_identity"]["tenant_id"] = "tenant-other"
+        tenant_mismatch_summary["last_lifecycle_identity"]["correlation_envelope"]["tenant_id"] = "tenant-other"
+
+        non_paper_summary = _witness_rejection_runtime_summary()
+        non_paper_summary["binding_id"] = "rb-nonpaper-rejection-001"
+        non_paper_summary["deployment_stage"] = "live"
+        non_paper_summary["last_lifecycle_identity"]["binding_id"] = "rb-nonpaper-rejection-001"
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083", "PANTHEON_TENANT_ID": "tenant-dev"},
+            ),
+            mock.patch.object(
+                svc,
+                "fetch_runtime_summaries",
+                return_value=[tenant_mismatch_summary, non_paper_summary],
+            ),
+            mock.patch.object(svc, "_append_telemetry_lifecycle_event") as append,
+        ):
+            boundary_resp = client.post(
+                "/api/reconciliation-drift/scheduled-reconcile",
+                json={"tenant_id": "tenant-dev", "tick_id": "tick-boundary-rejection-001"},
+            ).json()
+        assert append.call_count == 0
+        b_results = {item["binding_id"]: item for item in boundary_resp["lifecycle_append_results"]}
+        assert b_results[tenant_mismatch_summary["binding_id"]]["status"] == "not_eligible"
+        assert b_results[tenant_mismatch_summary["binding_id"]]["reason"] == "lifecycle_tenant_mismatch"
+        assert b_results[non_paper_summary["binding_id"]]["status"] == "not_eligible"
+        assert b_results[non_paper_summary["binding_id"]]["reason"] == "non_paper_lifecycle"
+
+
+def test_witness_prebroker_rejection_remains_visible_in_journey_route_without_fabricated_reconciliation() -> None:
+    import importlib
+    from fastapi.testclient import TestClient
+    from services.trade_journey.lifecycle_noop_order import is_noop_order
+    from services.trade_journey.lifecycle_projector import LifecycleProjector
+    from services.trade_journey.materializer import JourneyMaterializer
+
+    tj = importlib.import_module("services.control-plane.bff.trade_journeys")
+
+    witness_event = _load_witness_rejection_event()
+    # Global no-op filter is NOT liberalized: witness order_rejection is not a noop order
+    assert is_noop_order(witness_event, witness_event["metadata"]) is False
+
+    witness_summary = _witness_rejection_runtime_summary(include_raw_metrics_on_identity=True)
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        client = TestClient(svc.app)
+        svc._TENANT_CONTEXT.set("tenant-dev")
+        appended: list[dict] = []
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"PANTHEON_TELEMETRY_API_URL": "http://telemetry:8083", "PANTHEON_TENANT_ID": "tenant-dev"},
+            ),
+            mock.patch.object(svc, "fetch_runtime_summaries", return_value=[witness_summary]),
+            mock.patch.object(
+                svc,
+                "_append_telemetry_lifecycle_event",
+                side_effect=lambda _u, ev, **_k: (appended.append(ev), _accepted_delivery())[1],
+            ),
+        ):
+            for idx in range(2):
+                resp = client.post(
+                    "/api/reconciliation-drift/scheduled-reconcile",
+                    json={"tenant_id": "tenant-dev", "tick_id": f"tick-journey-route-{idx}"},
+                )
+                assert resp.status_code == 201
+                assert resp.json()["status"] == "ok"
+                assert resp.json()["lifecycle_retryable_errors"] == []
+        assert appended == []
+
+    # Project the witness journey (signal -> decision -> witness order_rejection, plus any appended events)
+    identity = {
+        "journey_id": witness_event["journey_id"],
+        "tenant_id": witness_event["tenant_id"],
+        "environment": witness_event["environment"],
+        "run_id": witness_event["run_id"],
+        "loop_run_id": witness_event["loop_run_id"],
+        "signal_id": witness_event["signal_id"],
+        "strategy_id": witness_event["metadata"]["strategy_id"],
+        "runtime_id": witness_event["runtime_id"],
+        "binding_id": witness_event["binding_id"],
+        "capital_pool_id": witness_event["capital_pool_id"],
+        "persona_id": witness_event["metadata"]["persona_id"],
+        "persona_capital_binding_id": witness_event["persona_capital_binding_id"],
+        "artifact_id": witness_event["artifact_id"],
+        "artifact_version": witness_event["artifact_version"],
+        "plan_id": witness_event["plan_id"],
+        "trace_id": witness_event["trace_id"],
+    }
+    producer_chain = [
+        (
+            1,
+            {
+                "event_id": "cbf0acd1-86af-4637-ab0e-830d2c299cb4",
+                "event_type": "signal_generation",
+                "created_at": "2026-11-19T23:46:14Z",
+                "symbol": "2317.TWSE",
+                "side": "buy",
+                "quantity": 452.0,
+                "price": 221.0,
+                "decision_id": witness_event["decision_id"],
+                "correlation_envelope": {"producer": "execution.paper_runtime"},
+            },
+        ),
+        (
+            2,
+            {
+                "event_id": witness_event["causal_parent_id"],
+                "event_type": "trade_decision",
+                "created_at": "2026-11-19T23:46:15Z",
+                "symbol": "2317.TWSE",
+                "side": "buy",
+                "quantity": 452.0,
+                "price": 221.0,
+                "decision_id": witness_event["decision_id"],
+                "metadata": {"reason_code": "long_cash"},
+                "correlation_envelope": {"producer": "execution.paper_runtime"},
+            },
+        ),
+        (3, witness_event),
+    ]
+    projected_events = []
+    for seq_no, src in producer_chain:
+        projected_events.extend(
+            LifecycleProjector._journey_events(
+                {"event": src, "identity": identity, "source_mode": "live", "sequence_no": seq_no}
+            )
+        )
+    materializer = JourneyMaterializer()
+    materializer.rebuild(projected_events)
+    proj = materializer.get(
+        witness_event["journey_id"],
+        tenant_id=witness_event["tenant_id"],
+        environment=witness_event["environment"],
+    )
+    assert proj is not None
+    personas = {
+        "persona-6507750312870d03a241": {"name": "澄川｜2317 台股 Paper 學習 R2", "is_probe": False}
+    }
+    now_dt = tj._parse_iso("2026-11-22T13:35:00Z")
+    list_row = tj._list_row(proj, now=now_dt, personas=personas)
+    assert list_row["status"] == "failed"
+    assert list_row["current_stage"] == "risk_evaluation"
+    assert list_row["quantity"] == 452.0
+    assert list_row["filled_quantity"] is None
+    assert list_row["flags"]["rejected"] is True
+    assert list_row["flags"]["mismatch"] is False
+    assert list_row["outcome"] == {
+        "kind": "rejected",
+        "rejected_stage": "risk_evaluation",
+        "reason_code": "insufficient_cash",
+        "reason_detail": {
+            "required": 100034.3461,
+            "available": 100000.0,
+            "limit": 100000.0,
+            "requested_quantity": 452.0,
+        },
+        "expression_reason_code": "long_cash",
+        "submitted_to_broker": False,
+        "order_status": "not_submitted",
+        "source_event_id": _WITNESS_REJECTION_EVENT_ID,
+    }
+    detail = tj._detail(proj, now=now_dt, personas=personas)
+    assert "reconciliation" not in detail["stages"]
+    assert detail["stages"]["risk_evaluation"]["status"] == "rejected"
+    assert detail["stages"]["risk_evaluation"]["reason_code"] == "insufficient_cash"
+    assert detail["stages"]["order_submission"]["status"] == "not_submitted"
+    assert detail["stages"]["order_submission"]["submitted_to_broker"] is False
+

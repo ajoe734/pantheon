@@ -4,6 +4,7 @@ import ast
 import fcntl
 import io
 import json
+from datetime import datetime, timezone
 import os
 import subprocess
 import sys
@@ -90,6 +91,7 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.tag_payloads: dict[str, dict[str, Any]] = {}
         self.tag_objects: dict[str, dict[str, Any]] = {}
         self.dispatches: list[dict[str, Any]] = []
+        self.workflow_runs: list[dict[str, Any]] = []
         self._next_tag_sha = 200
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
@@ -271,9 +273,28 @@ class FakeRunner(auto_integrator.CommandRunner):
             self.tag_refs.discard(ref)
             self.tag_payloads.pop(ref, None)
             return completed(command, stdout="{}")
+        if (
+            command[:2] == ["gh", "api"]
+            and "/actions/workflows/123/runs" in joined
+            and "POST" not in command
+        ):
+            return completed(
+                command,
+                stdout=auto_integrator.json.dumps({"workflow_runs": self.workflow_runs}),
+            )
         if command[:2] == ["gh", "api"] and "/actions/workflows/" in joined and "POST" in command:
             if api_payload is not None:
                 self.dispatches.append(dict(api_payload))
+                # Dispatched runs sit queued, titled with the head sha.
+                self.workflow_runs.append(
+                    {
+                        "id": 9000 + len(self.dispatches),
+                        "status": "queued",
+                        "display_title": "Canonical Review Gate "
+                        + str(api_payload.get("inputs", {}).get("head_sha")),
+                        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    }
+                )
             return completed(command)
         if command[:3] == ["git", "fetch", "origin"]:
             return completed(command)
@@ -2511,6 +2532,92 @@ class CheckClassifierTests(unittest.TestCase):
         self.assertEqual(summary.state, "green")
         self.assertEqual(summary.failing, ())
         self.assertEqual(summary.ignored_diagnostic, ("Audit signed canonical review (not required issuer) (4741)",))
+
+    PUBLISHER = {
+        "name": "Publish canonical review status",
+        "workflowName": "Canonical Review Gate",
+        "status": "COMPLETED",
+        "isRequired": False,
+    }
+
+    def _fe985_rollup(self, publisher_overrides=None, canonical="SUCCESS"):
+        rollup = [
+            {"name": "Component merge gate", "status": "IN_PROGRESS", "isRequired": True},
+            {"name": "Unit tests", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True},
+            dict(self.PUBLISHER, conclusion="CANCELLED", **(publisher_overrides or {})),
+        ]
+        if canonical:
+            rollup.append(
+                {
+                    "name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT,
+                    "state": canonical,
+                    "isRequired": True,
+                }
+            )
+        return rollup
+
+    def test_optional_cancelled_publisher_with_canonical_success_waits(self) -> None:
+        for workflow_name in ("Canonical Review Gate", "Pantheon canonical review gate"):
+            with self.subTest(workflow_name=workflow_name):
+                rollup = self._fe985_rollup({"workflowName": workflow_name})
+                summary = auto_integrator.summarize_status_rollup(rollup)
+                self.assertEqual(summary.state, "pending")
+                self.assertEqual(summary.failing, ())
+                self.assertEqual(summary.pending, ("Component merge gate",))
+                self.assertIn("Publish canonical review status", summary.ignored_diagnostic)
+                self.assertTrue(auto_integrator.is_canonical_review_gate_green(rollup))
+
+    def test_optional_cancelled_publisher_does_not_block_green_merge(self) -> None:
+        rollup = self._fe985_rollup()
+        rollup[0] = {"name": "Component merge gate", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": True}
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "green")
+
+    def test_canonical_failure_still_blocks_beside_cancelled_publisher(self) -> None:
+        rollup = self._fe985_rollup(canonical="FAILURE")
+        summary = auto_integrator.summarize_status_rollup(rollup)
+        self.assertEqual(summary.state, "red")
+        self.assertIn(auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, summary.failing)
+        self.assertFalse(auto_integrator.is_canonical_review_gate_green(rollup))
+
+    def test_missing_canonical_context_not_satisfied_by_successful_publisher(self) -> None:
+        rollup = self._fe985_rollup(canonical=None)
+        rollup[2]["conclusion"] = "SUCCESS"
+        self.assertFalse(auto_integrator.is_canonical_review_gate_green(rollup))
+        summary = auto_integrator.summarize_status_rollup(
+            rollup,
+            required_contexts=(auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT,),
+        )
+        self.assertNotEqual(summary.state, "green")
+
+    def test_cancelled_publisher_failure_modes_still_block(self) -> None:
+        cases = {
+            "required": {"isRequired": True},
+            "unknown requiredness": {"isRequired": None},
+            "unknown issuer workflow": {"workflowName": "Some Other Workflow"},
+            "failed not cancelled": {"conclusion": "FAILURE"},
+            "timed out": {"conclusion": "TIMED_OUT"},
+        }
+        for label, overrides in cases.items():
+            with self.subTest(label):
+                item = dict(self.PUBLISHER, conclusion="CANCELLED")
+                item.update(overrides)
+                if item.get("isRequired") is None:
+                    del item["isRequired"]
+                summary = auto_integrator.summarize_status_rollup([item])
+                self.assertEqual(summary.state, "red")
+
+    def test_other_optional_cancelled_check_with_same_workflow_still_blocks(self) -> None:
+        item = dict(self.PUBLISHER, conclusion="CANCELLED", name="Some other job")
+        summary = auto_integrator.summarize_status_rollup([item])
+        self.assertEqual(summary.state, "red")
+
+    def test_required_context_named_publisher_cannot_be_ignored(self) -> None:
+        item = dict(self.PUBLISHER, conclusion="CANCELLED")
+        summary = auto_integrator.summarize_status_rollup(
+            [item], required_contexts=("Publish canonical review status",)
+        )
+        self.assertEqual(summary.state, "red")
 
     def test_non_required_actual_ci_failure_still_blocks(self) -> None:
         summary = auto_integrator.summarize_status_rollup(
@@ -6006,6 +6113,59 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
         self.assertEqual(len(runner.dispatches), 1)
         self.assertEqual(runner.dispatches[0]["inputs"]["head_sha"], APPROVED_HEAD)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_queued_dispatched_gate_run_is_not_redispatched_every_tick(self) -> None:
+        """Livelock: a runner queue longer than a tick must not re-dispatch."""
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"].append(
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        )
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+        details = []
+        for _tick in range(5):
+            result = auto_integrator.integrate_candidate(
+                candidate, auto_integrator.Settings(), runner, execute=True,
+                gate=approved_gate(), config=self.REQUIRED_TRUE_REVIEW_POLICY,
+            )
+            self.assertEqual(result.action, "waiting")
+            details.append(result.detail)
+        self.assertEqual(len(runner.dispatches), 1)
+        self.assertIn("re-dispatched workflow", details[0])
+        for detail in details[1:]:
+            self.assertIn("not re-dispatching", detail)
+            self.assertIn("queued", detail)
+
+    def test_stale_gate_run_allows_one_more_dispatch(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001",
+        )
+        pr = green_pr(number=44)
+        pr["statusCheckRollup"].append(
+            {"name": auto_integrator.github_review_bridge.CANONICAL_REVIEW_CONTEXT, "conclusion": "FAILURE"}
+        )
+        runner = FakeRunner(pr=pr)
+        tag_ref = f"refs/tags/{auto_integrator.github_review_bridge.review_proof_tag_name(decision='approve', head_sha=APPROVED_HEAD)}"
+        runner.tag_payloads[tag_ref] = {"ref": tag_ref, "object": {"sha": APPROVED_HEAD, "type": "commit"}}
+        runner.workflow_runs.append(
+            {
+                "id": 1, "status": "completed",
+                "display_title": f"Canonical Review Gate {APPROVED_HEAD}",
+                "created_at": "2020-01-01T00:00:00Z",
+            }
+        )
+        result = auto_integrator.integrate_candidate(
+            candidate, auto_integrator.Settings(), runner, execute=True,
+            gate=approved_gate(), config=self.REQUIRED_TRUE_REVIEW_POLICY,
+        )
+        self.assertIn("re-dispatched workflow", result.detail)
+        self.assertEqual(len(runner.dispatches), 1)
 
     def test_canonical_review_gate_absent_with_proof_tag_re_dispatches_and_waits(self) -> None:
         candidate = auto_integrator.TaskCandidate(

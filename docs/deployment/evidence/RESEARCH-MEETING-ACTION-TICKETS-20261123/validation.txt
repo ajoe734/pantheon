@@ -1,0 +1,5 @@
+COMMAND: RESEARCH_MEETING_TEST_DSN=<isolated-local-postgres> timeout 180s .venv-pantheon/bin/python3 -m pytest tests/research_write_owner/test_research_write_owner.py services/research/tests/test_research_single_owner_routes.py services/research/tests/test_research_orchestrator_http_service.py services/research/tests/test_meeting_action_tickets.py services/persona/test_persona_demand_discovery.py -q --disable-warnings
+EXIT: 0
+........................................................................ [ 53%]
+..............................................................           [100%]
+134 passed, 493 warnings in 66.71s (0:01:06)

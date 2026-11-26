@@ -12,6 +12,8 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -37,6 +39,7 @@ from services.knowledge.evidence import (
     normalize_source_record,
 )
 from services.knowledge.evidence.models import EvidenceValidationError
+from services.knowledge.evidence.normalization import normalize_evidence_item
 
 from .connectors import (
     ConnectorStatus,
@@ -46,6 +49,7 @@ from .connectors import (
     SourceRecord,
     SourceRecordStatus,
 )
+from .connectors.collector_bundle import CollectorDelivery
 from .configured import ConfiguredConnectorFetcher, JsonlConfiguredConnectorStore, JsonlConnectorScheduleStore
 from .controller_state import read_controller_state
 from .distillation_worker import DistillationJobQueue
@@ -160,6 +164,83 @@ def compact_bulk_market_record(record: SourceRecord, storage_refs: dict[str, Any
     )
 
 
+def _collector_market_group(record: SourceRecord) -> tuple[str, ...]:
+    meta = record.metadata
+    collector = meta.get("collector") or {}
+    return (record.connector_id, record.tenant_id or "", str(collector.get("source_id") or ""),
+            str(collector.get("bundle_sha256") or ""), str(meta.get("dataset") or ""),
+            str(meta.get("trade_date") or meta.get("event_time") or "")[:10])
+
+
+def collector_market_bundle_records(result: Any, storage_refs: Mapping[str, Any]) -> list[SourceRecord]:
+    """Bound evidence by verified bundle/dataset/session, including capped deliveries.
+
+    Rows stay in normalized partitions. Directory references plus the bundle hash
+    select their exact lineage without persisting symbol/id/partition-file lists
+    proportional to row count. Recompute from disk so retries cannot double count.
+    """
+    grouped: dict[tuple[str, ...], list[SourceRecord]] = {}
+    for record in result.records:
+        if not record.is_rejected:
+            grouped.setdefault(_collector_market_group(record), []).append(record)
+    summaries = []
+    for group, records in grouped.items():
+        first = records[0]
+        dataset, day = group[-2:]
+        refs = [ref for ref in storage_refs.get("normalized_refs", ())
+                if ref.get("dataset") == dataset and ref.get("date") == day]
+        directories = sorted({str(Path(ref["uri"]).parent) for ref in refs})
+        if len(directories) != 1:
+            raise SourceEvidenceError("Collector market provenance requires one normalized date partition")
+        rows_by_id: dict[str, SourceRecord] = {}
+        for path in Path(directories[0]).glob("*.jsonl"):
+            with path.open() as handle:
+                for line in handle:
+                    row = json.loads(line)
+                    stored = SourceRecord.from_dict({**row, "source_type": "market", "title": "partition row"})
+                    if _collector_market_group(stored) == group:
+                        prior = rows_by_id.get(stored.source_id)
+                        if prior is None or str(stored.metadata["available_time"]) >= str(prior.metadata["available_time"]):
+                            rows_by_id[stored.source_id] = stored
+        if not {r.source_id for r in records}.issubset(rows_by_id):
+            raise SourceEvidenceError("Collector market provenance is missing normalized rows")
+        meta = first.metadata
+        identity = json.dumps(group, separators=(",", ":"))
+        source_id = f"collector:{group[2]}:bundle:{sha256(identity.encode()).hexdigest()}"
+        row_count = len(rows_by_id)
+        event_times = [str(r.metadata["event_time"]) for r in rows_by_id.values()]
+        available_times = [str(r.metadata["available_time"]) for r in rows_by_id.values()]
+        digest = sha256("\n".join(sorted(
+            f"{r.source_id}:{r.metadata['content_hash']}" for r in rows_by_id.values())).encode()).hexdigest()
+        # An allowlist prevents accidental retention of per-symbol numeric payloads.
+        metadata = {key: meta[key] for key in (
+            "tenant_id", "license_scope", "license_policy", "entitlement_tags", "access_scope",
+            "terms_ref", "robots_decision", "attribution_required", "attribution_text",
+            "redistribution_allowed", "direct_execution_allowed", "collector", "collector_close",
+            "pit", "governance", "schema_hash",
+        ) if key in meta}
+        metadata.update({
+            "collector_market_bundle": {"schema_version": "collector_market_bundle.v1",
+                "row_count": row_count, "rows_sha256": digest, "bundle_sha256": group[3],
+                "event_time_min": min(event_times), "event_time_max": max(event_times),
+                "available_time_min": min(available_times), "available_time_max": max(available_times)},
+            "dataset": dataset, "trade_date": day, "event_time": max(event_times),
+            "available_time": max(available_times), "content_hash": "sha256:" + group[3],
+            # Identical bundles can resume from a later Collector run directory.
+            # The exact per-row raw URI stays in the selected normalized rows.
+            "raw_uri": str(Path(str(meta["raw_uri"])).parents[2]),
+            "normalized_partition_refs": [{"uri": directories[0], "dataset": dataset, "date": day,
+                "selector": {"connector_id": group[0], "tenant_id": first.tenant_id,
+                             "collector_source_id": group[2], "bundle_sha256": group[3]}}],
+            "body": f"{group[2]} {dataset} {day}: {row_count} normalized market rows; bundle {group[3]}.",
+        })
+        metadata["pit"] = {**metadata.get("pit", {}), "event_time": max(event_times),
+                           "available_time": max(available_times), "validated": True}
+        summaries.append(replace(first, source_id=source_id, title=f"{group[2]} {dataset} {day}",
+                                 metadata=metadata))
+    return summaries
+
+
 def with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRecord:
     """Keep the producing run on the durable SourceRecord projection."""
     return SourceRecord(
@@ -175,6 +256,36 @@ def with_source_ingest_run(record: SourceRecord, ingest_run_id: str) -> SourceRe
     )
 
 
+class IngestDistillationJobQueue(DistillationJobQueue):
+    """Reuse one thread-local connection per ingest batch, keeping every durable transaction.
+
+    The queue's schema, FULL synchronous setting, identity checks, per-record
+    commit/rollback and cross-process consumer API are inherited unchanged.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._ingest_connection: ContextVar[Any] = ContextVar("ingest_distillation_connection", default=None)
+        super().__init__(*args, **kwargs)
+
+    @contextmanager
+    def _connect(self):
+        active = self._ingest_connection.get()
+        if active is not None:
+            yield active
+        else:
+            with super()._connect() as connection:
+                yield connection
+
+    @contextmanager
+    def admission_connection(self):
+        with self._connect() as connection:
+            token = self._ingest_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._ingest_connection.reset(token)
+
+
 def admit_normalized_records_to_distillation(
     distillation_job_queue: DistillationJobQueue,
     normalized_source_records: Iterable[SourceRecord],
@@ -184,25 +295,26 @@ def admit_normalized_records_to_distillation(
     # Never raises; catch_up remains the missed-event recovery path for
     # whatever admission could not enqueue here.
     admissions: dict[str, Any] = {}
-    for source in normalized_source_records:
-        if source.status != SourceRecordStatus.NORMALIZED:
-            continue
-        try:
-            job = distillation_job_queue.enqueue_source_record(
-                source,
-                requested_by="source-ingest",
-            )
-        except Exception as exc:  # noqa: BLE001 - ingest completion must remain non-blocking.
-            admissions[source.source_id] = {
-                "status": "admission_failed",
-                "error": str(exc)[:300],
-            }
-            continue
-        admissions[source.source_id] = {
-            "status": "admitted",
-            "job_id": job.job_id,
-            "source_digest": job.source_digest,
-        }
+    sources = tuple(s for s in normalized_source_records if s.status == SourceRecordStatus.NORMALIZED
+                    and not (s.source_type.value == "market" and s.metadata.get("collector_market_bundle")))
+    if not sources:
+        return admissions
+    context = (distillation_job_queue.admission_connection()
+               if isinstance(distillation_job_queue, IngestDistillationJobQueue) else nullcontext())
+    try:
+        with context:
+            for source in sources:
+                try:
+                    job = distillation_job_queue.enqueue_source_record(source, requested_by="source-ingest")
+                except Exception as exc:  # noqa: BLE001 - admission remains non-blocking.
+                    admissions[source.source_id] = {"status": "admission_failed", "error": str(exc)[:300]}
+                    continue
+                admissions[source.source_id] = {
+                    "status": "admitted", "job_id": job.job_id, "source_digest": job.source_digest,
+                }
+    except Exception as exc:  # connection setup/teardown must preserve catch-up recovery too
+        for source in sources:
+            admissions.setdefault(source.source_id, {"status": "admission_failed", "error": str(exc)[:300]})
     return admissions
 
 
@@ -252,6 +364,21 @@ def persist_source_evidence_refs(
 ) -> dict[str, Any]:
     connector = manager.get_connector(result.run.connector_id)
 
+    if (isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+            and connector is not None and connector.source_type.value == "market"
+            and result.records and not all(r.metadata.get("collector_market_bundle") for r in result.records)):
+        summaries = collector_market_bundle_records(result, storage_refs or {})
+        combined: dict[str, Any] = {"source_ids": [], "evidence_item_ids": [], "knowledge_object_ids": [],
+                                    "evidence_bundle_id": None, "evidence_bundle_ids": [], "distillation_admissions": {}}
+        for summary in summaries:
+            refs = persist_source_evidence_refs(manager, evidence_repository, evidence_builder,
+                distillation_job_queue, replace(result, records=(summary,)), storage_refs={})
+            for key in ("source_ids", "evidence_item_ids", "knowledge_object_ids"):
+                combined[key].extend(refs[key])
+            combined["evidence_bundle_id"] = refs["evidence_bundle_id"]
+            combined["evidence_bundle_ids"].append(refs["evidence_bundle_id"])
+        return combined
+
     source_records = [
         with_source_ingest_run(
             compact_bulk_market_record(record, storage_refs),
@@ -283,23 +410,50 @@ def persist_source_evidence_refs(
     connector_license_scope = connector.license_scope if connector else None
     for record in source_records:
         candidate_source = normalize_source_record(record, connector_license_scope=connector_license_scope)
+        verified_market = (
+            isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+            and record.source_type.value == "market"
+            and isinstance(record.metadata.get("collector"), Mapping)
+        )
+        if verified_market:
+            # One exchange URL describes thousands of distinct verified market
+            # items. URL-only dedupe retained the first prefix's run forever,
+            # failing the next controller tick's real record/run readback.
+            # Keep the original URL/hash/PIT/tenant, deduping by native item ID.
+            prefix = ("collector-close" if isinstance(record.metadata.get("collector_close"), Mapping) else
+                      "collector-bundle" if record.metadata.get("collector_market_bundle") else "collector-market")
+            candidate_source = replace(candidate_source, metadata={
+                **candidate_source.metadata, "source_dedupe_key": f"{prefix}:{record.source_id}",
+            })
         source_dedupe_key = str(candidate_source.metadata["source_dedupe_key"])
-        source_owner = (
+        # Verified collector market dedupe keys contain the complete native source id
+        # (including the item hash). Their owner can only be this same source id.
+        # Avoid a PostgreSQL metadata/dedupe scan per row; retain normal validation,
+        # per-item evidence ids and all repository writes below.
+        source_owner = candidate_source if verified_market else (
             evidence_repository.get_source_record_by_dedupe_key(source_dedupe_key, tenant_id=candidate_source.tenant_id)
             or source_owner_by_dedupe_key.get(source_dedupe_key)
             or candidate_source
         )
         source_owner_by_dedupe_key[source_dedupe_key] = source_owner
-        normalized = normalize_source_evidence(
-            source_record=record,
-            evidence_item=evidence_item_for_record(record, result.run),
-            connector_license_scope=connector_license_scope,
-            source_owner_id=source_owner.source_id,
-        )
-        normalized_source = source_owner if source_owner.source_id != record.source_id else normalized.source_record
+        if verified_market:
+            normalized_source = candidate_source
+            normalized_item = normalize_evidence_item(
+                candidate_source, evidence_item_for_record(record, result.run),
+                source_owner_id=source_owner.source_id,
+            )
+        else:
+            normalized = normalize_source_evidence(
+                source_record=record,
+                evidence_item=evidence_item_for_record(record, result.run),
+                connector_license_scope=connector_license_scope,
+                source_owner_id=source_owner.source_id,
+            )
+            normalized_source = source_owner if source_owner.source_id != record.source_id else normalized.source_record
+            normalized_item = normalized.evidence_item
         normalized_source_records_by_id[normalized_source.source_id] = normalized_source
-        source_by_evidence_item_id[normalized.evidence_item.evidence_item_id] = normalized_source
-        evidence_items_by_id[normalized.evidence_item.evidence_item_id] = normalized.evidence_item
+        source_by_evidence_item_id[normalized_item.evidence_item_id] = normalized_source
+        evidence_items_by_id[normalized_item.evidence_item_id] = normalized_item
     evidence_items = list(evidence_items_by_id.values())
     bundle_metadata = {
         "connector_id": result.run.connector_id,
@@ -316,7 +470,8 @@ def persist_source_evidence_refs(
         evidence_items=evidence_items,
         summary=f"Source ingest run {result.run.ingest_run_id} persisted {len(source_records)} source record(s).",
         created_by="source-ingest",
-        evidence_bundle_id=stable_ref("evbundle", result.run.ingest_run_id),
+        evidence_bundle_id=stable_ref("evbundle", source_records[0].source_id
+            if source_records[0].metadata.get("collector_market_bundle") else result.run.ingest_run_id),
         metadata=bundle_metadata,
     )
     distillation_admissions = admit_normalized_records_to_distillation(
@@ -347,6 +502,9 @@ def persist_source_evidence_refs(
                 "entitlement_tags": metadata.get("entitlement_tags"),
                 "pit": metadata.get("pit"),
                 "governance": metadata.get("governance"),
+                **({"collector_market_bundle": metadata["collector_market_bundle"],
+                    "normalized_partition_refs": metadata["normalized_partition_refs"]}
+                   if metadata.get("collector_market_bundle") else {}),
             },
         )
         knowledge_object_ids.append(knowledge_object.knowledge_object_id)
@@ -392,12 +550,119 @@ def persist_latest_market_snapshots(
             "updated_snapshot_count": 0,
             "snapshots": [],
         }
-    return latest_market_snapshot_store.append_normalized_records(
-        result.records,
+    # SD_INTRADAY_MINUTE_BARS §4/§6: tw_price_1m never enters the daily latest-close
+    # projection (a minute close would masquerade as the day's close). Permanent
+    # exclusion; K4's reconciled-only projection is a separate frequency-keyed writer.
+    records = [record for record in result.records
+               if not is_minute_bar_record(record) and not is_index_breadth_record(record)]
+    excluded = len(result.records) - len(records)
+    if connector is not None and _connector_declares_minute_dataset(connector):
+        records, excluded = [], len(result.records)
+    projected = latest_market_snapshot_store.append_normalized_records(
+        records,
         ingest_run_id=result.run.ingest_run_id,
         observed_at=run_finished_at_iso(result.run),
         connector=connector,
     )
+    if excluded:
+        projected = {**projected, "excluded_minute_record_count": excluded}
+    return projected
+
+
+class ReceiptSnapshotUnavailable(SourceEvidenceError):
+    """A receipt snapshot reference no longer resolves to its original snapshot."""
+
+
+def resolve_receipt_snapshot_bodies(
+    latest_market_snapshot_store: LatestMarketSnapshotStore,
+    batch: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve a receipt ``market_snapshots`` batch to snapshot bodies by identifier.
+
+    Receipts written before the reference format still embed bodies and are returned
+    as stored. A reference resolves only while its snapshot is still the latest one for
+    (symbol, dataset); a superseded or missing snapshot fails closed with a readable reason.
+    """
+    bodies: list[dict[str, Any]] = []
+    if not (batch or {}).get("snapshots") and (batch or {}).get("snapshot_count"):
+        refs = (batch or {}).get("snapshot_refs") or {}
+        raise ReceiptSnapshotUnavailable(
+            f"receipt carries counts and a reference only ({batch['snapshot_count']} snapshots of run "
+            f"{refs.get('ingest_run_id')}); read the bodies from the latest market snapshot store"
+        )
+    for item in (batch or {}).get("snapshots") or ():
+        if not isinstance(item, Mapping):
+            raise ReceiptSnapshotUnavailable("receipt snapshot entry is not an object")
+        if "closes" in item:
+            bodies.append(dict(item))
+            continue
+        symbol, dataset, snapshot_id = item.get("symbol"), item.get("dataset"), item.get("snapshot_id")
+        current = latest_market_snapshot_store.get(str(symbol), str(dataset)) if symbol and dataset else None
+        if current is None:
+            raise ReceiptSnapshotUnavailable(
+                f"snapshot {snapshot_id} for {symbol}/{dataset} is no longer in the latest market snapshot store"
+            )
+        if current.snapshot_id != snapshot_id:
+            raise ReceiptSnapshotUnavailable(
+                f"snapshot {snapshot_id} for {symbol}/{dataset} was superseded by {current.snapshot_id}"
+            )
+        bodies.append(current.to_public_dict())
+    return bodies
+
+
+# REGIME-DATA-INDEX-BREADTH-INTAKE: index closes and market breadth are not per-symbol
+# stock closes, so they never enter the latest-close snapshot projection.
+INDEX_BREADTH_DATASETS = frozenset({"tw_index_daily", "tw_index_ohlc_daily", "tw_market_breadth_daily"})
+INDEX_BREADTH_CONNECTOR_IDS = frozenset({"collector-tw-twse-index-breadth", "collector-tw-twse-taiex-history"})
+
+
+def is_index_breadth_record(record: Any) -> bool:
+    """True for any record that belongs to the index or market breadth datasets."""
+    if getattr(record, "connector_id", None) in INDEX_BREADTH_CONNECTOR_IDS:
+        return True
+    metadata = getattr(record, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    normalized = metadata.get("normalized_row")
+    candidates = [metadata.get("dataset"), metadata.get("normalized_target"), metadata.get("normalized_dataset"),
+                  metadata.get("storage_dataset")]
+    if isinstance(normalized, Mapping):
+        candidates.append(normalized.get("dataset"))
+    return bool(INDEX_BREADTH_DATASETS & {str(c) for c in candidates if c})
+
+
+MINUTE_BAR_DATASET = "tw_price_1m"
+MINUTE_BAR_CONNECTOR_IDS = frozenset({"tw-finmind-kbar-1m"})
+MINUTE_BAR_SOURCE_DATASETS = frozenset({"TaiwanStockKBar"})
+
+
+def is_minute_bar_record(record: Any) -> bool:
+    """True for any record that belongs to the ``tw_price_1m`` dataset."""
+    if getattr(record, "connector_id", None) in MINUTE_BAR_CONNECTOR_IDS:
+        return True
+    metadata = getattr(record, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    normalized = metadata.get("normalized_row")
+    candidates = [
+        metadata.get("dataset"), metadata.get("normalized_target"), metadata.get("normalized_dataset"),
+        metadata.get("storage_dataset"),
+    ]
+    if isinstance(normalized, Mapping):
+        candidates.append(normalized.get("dataset"))
+    if MINUTE_BAR_DATASET in {str(c) for c in candidates if c}:
+        return True
+    return str(metadata.get("source_dataset") or "") in MINUTE_BAR_SOURCE_DATASETS
+
+
+def _connector_declares_minute_dataset(connector: Any) -> bool:
+    if getattr(connector, "connector_id", None) in MINUTE_BAR_CONNECTOR_IDS:
+        return True
+    metadata = getattr(connector, "metadata", None)
+    if isinstance(metadata, Mapping) and MINUTE_BAR_DATASET in {
+        str(metadata.get("normalized_dataset") or ""), str(metadata.get("dataset") or "")}:
+        return True
+    return MINUTE_BAR_DATASET in {str(d) for d in (getattr(connector, "datasets", None) or ())}
 
 
 def run_finished_at_iso(run: Any) -> str:
@@ -871,6 +1136,7 @@ class IngestPipelineService:
     ) -> tuple[Any, dict[str, Any], dict[str, Any] | None]:
         self.runtime._assert_connector_lifecycle_allows_run(connector)
         connector_tenant = _resolve_connector_tenant(connector, runtime=self.runtime)
+        starting_watermark = self.store.get_watermark(connector.connector_id)
 
         effective_fetch_batch = fetch_batch
         if connector_tenant:
@@ -879,7 +1145,8 @@ class IngestPipelineService:
                 batch_records = fetched.records if isinstance(fetched, IngestBatch) else tuple(fetched)
                 stamped_records = tuple(stamp_source_record_tenant(r, connector_tenant) for r in batch_records)
                 if isinstance(fetched, IngestBatch):
-                    return replace(fetched, records=stamped_records)
+                    return replace(fetched, records=stamped_records, derived_records=tuple(
+                        stamp_source_record_tenant(r, connector_tenant) for r in fetched.derived_records))
                 return stamped_records
             effective_fetch_batch = tenant_stamped_fetch_batch
 
@@ -889,6 +1156,7 @@ class IngestPipelineService:
             trigger_type=trigger_type,
             fetch_batch=effective_fetch_batch,
             frontier_id=frontier_id,
+            defer_commit=True,
         )
         evidence_refs: dict[str, Any] = {
             "source_ids": [],
@@ -909,7 +1177,7 @@ class IngestPipelineService:
         try:
             self.runtime._append_audit_actions(result.audit_actions)
             post_processing_stage = "market_storage"
-            storage_refs = persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+            storage_refs = self._persist_collector_market_storage(result)
             evidence_refs["storage_refs"] = storage_refs
             post_processing_stage = "latest_market_snapshot"
             market_snapshots = persist_latest_market_snapshots(
@@ -938,10 +1206,16 @@ class IngestPipelineService:
                 evidence_refs,
                 future_tolerance_seconds=self.runtime.SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS,
             )
+            if result.run.status.value == "completed":
+                post_processing_stage = "delivery_acknowledgement"
+                if result.collector_delivery is not None:
+                    result.collector_delivery.acknowledge()
+                if result.watermark is not None:
+                    self.store.update_watermark(result.watermark)
         except Exception as exc:
             persist_ingest_receipt(
                 self.store,
-                result,
+                replace(result, watermark=starting_watermark),
                 evidence_refs,
                 status="failed",
                 typed_failure=post_processing_typed_failure(exc, stage=post_processing_stage),
@@ -961,6 +1235,63 @@ class IngestPipelineService:
             )
             record_search_refresh_event(self.store, result.run, source_search_refresh)
         return result, evidence_refs, source_search_refresh
+
+    def _persist_collector_market_storage(self, result: Any) -> dict[str, Any]:
+        """Replay verified market rows through their completed persisted receipt.
+
+        Raw cache/cursors alone never suppress a write. Reuse requires the same
+        tenant/item/hash/PIT row in an existing normalized partition and its own
+        completed receipt; new/corrected rows still use the normal writer.
+        """
+        connector = self.manager.get_connector(result.run.connector_id)
+        if (not isinstance(getattr(result, "collector_delivery", None), CollectorDelivery)
+                or connector is None or connector.source_type.value != "market"):
+            return persist_market_data_storage_refs(self.manager, self.market_data_storage_writer, result)
+        receipts = {r.ingest_run_id: r for r in self.store.read_freshness_snapshot()["receipts"]
+                    if r.status == "completed" and r.connector_id == connector.connector_id}
+        fresh, reused = [], []
+        partitions: dict[tuple[str, str], dict[tuple[Any, ...], dict[str, Any]]] = {}
+        def identity(source_id: str, meta: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (source_id, *(meta.get(k) for k in ("tenant_id", "content_hash", "dataset", "event_time", "available_time")))
+        refs_by_partition: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        for receipt in receipts.values():
+            for ref in receipt.storage_refs.get("normalized_refs", ()):
+                key = (str(ref.get("dataset") or ""), str(ref.get("date") or ""))
+                refs_by_partition.setdefault(key, {})[str(ref["uri"])] = receipt.storage_refs
+        for record in result.records:
+            key = (str(record.metadata.get("dataset") or ""), str(record.metadata.get("event_time") or "")[:10])
+            if key not in partitions:
+                partitions[key] = {}
+                for uri, stored in refs_by_partition.get(key, {}).items():
+                    try:
+                        with Path(uri).open() as handle:
+                            for line in handle:
+                                if line.strip():
+                                    row = json.loads(line)
+                                    partitions[key][identity(row["source_id"], row["metadata"])] = stored
+                    except (OSError, ValueError, KeyError) as exc:
+                        raise SourceEvidenceError("completed Collector normalized partition is missing or invalid") from exc
+            stored = partitions[key].get(identity(record.source_id, record.metadata))
+            if stored is not None:
+                reused.append(stored)
+            else:
+                fresh.append(record)
+        refs = persist_market_data_storage_refs(
+            self.manager, self.market_data_storage_writer, replace(result, records=tuple(fresh)))
+        new_count = refs["summary"]["normalized_row_count"]
+        for key in ("raw_refs", "normalized_refs", "feature_refs"):
+            by_uri = {r["uri"]: r for r in refs[key]}
+            for stored in reused:
+                for ref in stored.get(key, ()):
+                    by_uri.setdefault(ref["uri"], ref)
+            refs[key] = list(by_uri.values())
+        refs["summary"] = {
+            "raw_ref_count": len(refs["raw_refs"]), "normalized_ref_count": len(refs["normalized_refs"]),
+            "feature_ref_count": len(refs["feature_refs"]),
+            "normalized_row_count": sum(r["row_count"] for r in refs["normalized_refs"]),
+            "new_normalized_row_count": new_count, "reused_record_count": len(reused),
+        }
+        return refs
 
     def run_ingest_request(self, request: TriggerIngestJobRequest) -> dict[str, Any]:
         if len(request.records) > self.runtime.MAX_RECORDS_PER_JOB:
@@ -1227,6 +1558,8 @@ class IngestPipelineService:
                 detail=f"max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY={self.runtime.SCHEDULER_MAX_CONCURRENCY}",
             )
         schedules = self.schedule_config_store.list_schedules()
+        offerings = self.runtime._collector_offerings(self.connector_store.list_configs())
+        not_offered = {cid for cid, offering in offerings.items() if offering.get("offered") is False}
         enqueued: list[dict[str, Any]] = []
         ran: list[dict[str, Any]] = []
         skipped: list[str] = []
@@ -1251,6 +1584,9 @@ class IngestPipelineService:
         for sched in schedules:
             if exclusive_connector_ids and sched.connector_id not in exclusive_connector_ids:
                 excluded.append(sched.connector_id)
+                continue
+            if sched.connector_id in not_offered:
+                skipped.append(sched.connector_id)
                 continue
             if not sched.enabled or sched.interval_seconds <= 0:
                 if sched.connector_id in exclusive_connector_ids:
@@ -1325,7 +1661,8 @@ class IngestPipelineService:
         claimed = self.store.claim_due_frontier(
             limit=max_concurrency,
             now=now_iso,
-            connector_ids=exclusive_connector_ids or None,
+            connector_ids=((exclusive_connector_ids or {c.connector.connector_id for c in self.connector_store.list_configs()})
+                           - not_offered) if not_offered else exclusive_connector_ids or None,
         )
         for frontier in claimed:
             try:
@@ -1363,7 +1700,7 @@ class IngestPipelineService:
                 if isinstance(item, Mapping)
             }
             claimed_connector_ids = {item.connector_id for item in claimed}
-            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids):
+            for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids - not_offered):
                 failed.append({
                     "connector_id": connector_id,
                     "error": "exclusively selected connector was not runnable",

@@ -1,0 +1,39 @@
+{
+ "task_id": "SD-STRATEGY-SCREEN-ENTRY-EXIT-20261112",
+ "kind": "design_document_evidence",
+ "read_date": "2026-11-12",
+ "document": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md",
+ "hosted_behavior_claimed": false,
+ "hosted_readonly": {
+  "normalized_datasets": {
+   "tw_price_daily": {
+    "partitions": 61,
+    "first": "2026-08-12",
+    "last": "2026-11-11"
+   },
+   "taifex_ssf_contracts": {
+    "partitions": 5
+   },
+   "market": {
+    "partitions": 15,
+    "last": "2026-10-09"
+   },
+   "internal_note": {
+    "partitions": 3
+   }
+  },
+  "catalogued_but_absent": [
+   "tw_monthly_revenue",
+   "tw_quarterly_statements",
+   "tw_margin_transactions",
+   "tw_valuation_bwibbu",
+   "tw_institutional_flows",
+   "tw_macro_*",
+   "tw_community_attention"
+  ]
+ },
+ "collector_backfill_finished": "2026-11-11T12:37:04Z",
+ "not_investigated": [
+  "why catalogued datasets are absent on hosted"
+ ]
+}

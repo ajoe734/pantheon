@@ -1,0 +1,38 @@
+{
+  "task_id": "RETRIEVAL-BACKEND-ACTIVATION-R2-20261113",
+  "carried_from": [
+    "4d663c4b2",
+    "127a6885c"
+  ],
+  "operator_decision": "2026-11-13T10:24:12Z ship first, compare later",
+  "verification": {
+    "services/search/tests (query_log, activation, pg_retrieval, zh_segmentation, service_activation_contract) with real pgvector 0.8.0-pg16 + dict.txt.big": "31 passed, 7 skipped",
+    "scripts/test_dev_release_artifacts.py + scripts/test_deploy_nonprod_vm.py (one batch, 288s)": "264 passed, 4 skipped, exit 0",
+    "opt-in digest-pinned pgvector image test (PANTHEON_RETRIEVAL_TEST_IMAGE)": "2 passed",
+    "docker build -f services/search/Dockerfile (package_model fetched and checksum-verified from Qdrant repo)": "built, exit 0 (~287s)",
+    "offline init: docker run --network none, LocalEmbeddingEngine": "verify_integrity True, is_ready True, embed_query dim 1024"
+  },
+  "not_verified": [
+    "hosted deployment and the rebuild entry point against a populated evidence store",
+    "model quality: evaluation is unavailable until 150 recorded labelled queries exist",
+    "embedding vectors from fastembed are not unit-norm (|v|^2~833); pgvector cosine distance is unaffected, manifest normalize_embeddings flag is descriptive"
+  ],
+  "review_round_2_fixes": {
+    "AC4": "model-manifest.json now pins Qdrant/multilingual-e5-large-onnx@ac6781cd1cf88b8306a536d7c9d18a5bd57cc14b (flat paths); all 6 sha256 values re-verified against that revision (LFS oids + downloaded small files). Prior intfloat/multilingual-e5-large@66076b8d URL returned HTTP 404.",
+    "AC5": "persona_private = caller has a persona, independent of hits; retrieval_query_labels RLS inherits parent log-row visibility; record_label takes persona_id.",
+    "AC5/6": "query log written in main.py after SearchGateway canonical-owner/evidence/ACL validation, only served hits in served order (gateway.py untouched); log failure still fails the query (501).",
+    "AC2": "absent PANTHEON_SEARCH_BACKEND defaults to postgres_pgvector; absent DSN => unavailable (readyz non-200); jsonl only when explicitly selected.",
+    "P2": "restored misplaced assertions in test_capture_individual_ids_and_absent_registry_metadata; opt-in pgvector image test fixed."
+  },
+  "review_round_3_fixes": {
+    "P1_AC6": "run_retrieval_eval.py gains repeatable --persona scopes; each scope runs in its own RLS context (no bypass). Real pgvector test: owner scope sees 1 private row+1 label; no-persona and nonowner scopes see 0.",
+    "P2_validation": "test_retrieval_activation.py sets PANTHEON_SEARCH_BACKEND=jsonl via setdefault at collection (conftest.py is outside the artifact contract; single-file runs of legacy modules must set it explicitly); production default stays fail-closed postgres_pgvector (default test still passes). Plain `pytest services/search` (CI invocation) 157 passed/22 skipped; with real pgvector DSN 161 passed/18 skipped.",
+    "P2_ranx": "ranx==0.3.21 and its closure are pinned in services/search/requirements.lock, installed by the Dockerfile; eval invocation documented in run_retrieval_eval.py docstring. Above-threshold fixture test is wiring regression only, not quality evidence.",
+    "also": "deploy/artifacts suites 264 passed/4 skipped"
+  },
+  "review_round_4_fixes": {
+    "P1_smoke": "4 standalone source_ingestion readback tests (test_external_source_connectors, test_provider_management_coverage, test_taiwan_official_connectors, source_ingestion/test_service) now set PANTHEON_SEARCH_BACKEND=jsonl via monkeypatch inside the test; production default stays fail-closed postgres_pgvector.",
+    "verification": "4 affected files: 129 passed/3 skipped. Full services/source_ingestion locally: 1851 passed, 9 failed (test_finmind_broker_backfill.py dependency_unavailable, local environment, untouched by this change; not in CI's earlier failure list).",
+    "tested_code_head": "ccf67f0d2541ba8eb48a0395f12aba451b68ed98"
+  }
+}

@@ -21,6 +21,7 @@ class Client:
     def __init__(self, repo, sha):
         self.repository, self.sha = repo, sha
         self.ci = "success"
+        self.extra_ci = []  # (run_id, sha, conclusion) for non-tip commits
         self.active = False
         self.deploys = []
         self.failed_steps = {}
@@ -28,6 +29,7 @@ class Client:
         self.dispatches = []
         self.move_on_read = False
         self.reads = 0
+        self.dispatch_head = None  # dev tip at dispatch time, as GitHub reports it
 
     def get_ref(self, ref):
         self.reads += 1
@@ -48,11 +50,16 @@ class Client:
         if "status" in query:
             return {"workflow_runs": [{"html_url": "https://github.test/active"}] if self.active else []}
         if "branch-ci.yml" in path:
-            return {"workflow_runs": [{"id": 1, "head_sha": self.sha, "head_branch": "dev",
-                "event": "push", "status": "completed", "conclusion": self.ci}]}
-        dispatched = [{"id": 99, "head_sha": self.sha, "status": "queued",
-            "display_title": f"Dev release {B} + {F}", "html_url": "https://github.test/99"}]
-        history = self.deploys + (dispatched if self.dispatches else [])
+            ci_runs = [{"id": 1, "head_sha": self.sha, "head_branch": "dev",
+                "event": "push", "status": "completed", "conclusion": self.ci}]
+            ci_runs += [{"id": rid, "head_sha": sha, "head_branch": "dev", "event": "push",
+                "status": "completed", "conclusion": conclusion} for rid, sha, conclusion in self.extra_ci]
+            return {"workflow_runs": [item for item in ci_runs
+                if query.get("head_sha", [item["head_sha"]])[0] == item["head_sha"]]}
+        dispatched = [{"id": 99, "head_sha": self.dispatch_head or inputs["ref"], "status": "queued",
+            "display_title": f"Dev release {inputs['ref']} + {inputs['frontend_sha']}",
+            "html_url": "https://github.test/99"} for _, inputs, _ in self.dispatches[:1]]
+        history = self.deploys + dispatched
         return {"workflow_runs": [run for run in history
             if query.get("head_sha", [run["head_sha"]])[0] == run["head_sha"]]}
 
@@ -94,7 +101,13 @@ def test_backend_frontend_and_combined_changes_dispatch_exact_pair(host_b, host_
     assert inputs["ref"] == B and inputs["frontend_sha"] == F
     assert inputs["frontend_profile"] == "operator-live"
     assert inputs["component"] == "root" and inputs["allow_dirty"] == "false"
-    assert inputs["run_loop_prod_tel_002_probe"] == "true"
+    # Automatic dev releases are deploy-only: the full input set is pinned and
+    # no functional-gate / PAPER_BOOTSTRAP_REQUESTED input may be sent.
+    assert inputs == {
+        "environment": "dev", "component": "root", "ref": B, "frontend_sha": F,
+        "frontend_ref": "dev", "frontend_profile": "operator-live",
+        "dev_auth_profile": "strict", "allow_dirty": "false",
+    }
 
 
 def test_accepted_pair_is_noop_but_live_bff_drift_is_not():
@@ -139,6 +152,37 @@ def test_failed_pair_is_reported_and_not_redispatched(conclusion):
         assert result["state"] == "failed_pair_not_retried"
         assert result["run_url"] == "https://github.test/10"
     assert not backend.dispatches
+
+
+def test_dispatch_is_correlated_by_title_when_dev_advanced_past_selected_backend():
+    backend, _, _, _, run = setup_pair()
+    backend.dispatch_head = "d" * 40  # workflow_dispatch head_sha is the dev tip, not the selected backend
+    result = run(apply=True)
+    assert result["state"] == "dispatched" and result["run_url"] == "https://github.test/99"
+
+
+def test_failed_pair_whose_run_head_is_a_later_dev_tip_is_not_redispatched():
+    backend, _, _, _, run = setup_pair()
+    failed = deploy_run(10, "failure")
+    failed["head_sha"] = "d" * 40
+    backend.deploys = [failed]
+    for apply in (False, True):
+        result = run(apply=apply)
+        assert result["state"] == "failed_pair_not_retried"
+        assert result["run_url"] == "https://github.test/10"
+    assert not backend.dispatches
+
+
+def test_correlation_refuses_preexisting_or_other_pair_runs():
+    backend, _, _, _, run = setup_pair()
+    backend.dispatch_head = "d" * 40
+    backend.deploys = [{**deploy_run(10, "success", OLD, F), "status": "queued"}]
+    other = backend.request
+    backend.request = lambda m, path: ({"workflow_runs": backend.deploys}
+        if "nonprod-deploy" in path and "status" not in path else other(m, path))
+    backend.dispatch = lambda *a, **k: backend.dispatches.append(a)
+    with pytest.raises(ControllerError, match="could not be correlated"):
+        run(apply=True)
 
 
 def test_attempt_that_never_acquired_the_dev_lease_does_not_fail_the_pair():
@@ -372,3 +416,232 @@ def test_failed_drill_does_not_mask_or_clear_a_failed_normal_run():
     assert result["run_url"] == "https://github.test/10"
     backend.deploys = [drill_run(10, "failure"), deploy_run(11, "failure")]
     assert run(apply=True)["state"] == "failed_pair_not_retried"
+
+
+A1 = "a" * 40  # aeb227ff3 in the 2026-11-17 replay: green, on dev, not the tip
+
+
+def ahead(**overrides):
+    return {"status": "ahead", "ahead_by": 1, "behind_by": 0, **overrides}
+
+
+def test_selects_newest_green_ancestor_when_tip_ci_is_cancelled_replay_20261117():
+    # 00:10Z-00:55Z: six consecutive tip runs were cancelled while aeb227ff3 was green.
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success"), (2, "d" * 40, "cancelled"), (3, "e" * 40, "cancelled")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    result = run(apply=True)
+    assert result["state"] == "dispatched"
+    assert backend.dispatches[0][1]["ref"] == A1 and backend.dispatches[0][1]["frontend_sha"] == F
+    assert result["tip_backend_sha"] == B
+
+
+def test_green_commit_off_dev_or_not_ahead_of_served_is_never_selected():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(5, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = {"status": "diverged"}  # not on dev
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = {"status": "behind"}  # older than served
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    assert not backend.dispatches
+
+
+def test_served_green_commit_is_up_to_date_while_tip_waits_not_redeployed():
+    backend, _, _, _, run = setup_pair(A1, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    assert run(apply=True)["state"] == "waiting_for_ci"
+    assert not backend.dispatches
+
+
+def test_failed_pair_is_evaluated_for_the_selected_candidate_not_the_tip():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    backend.deploys = [deploy_run(10, "failure", B, F)]  # tip pair failed earlier: irrelevant
+    assert run(apply=True)["state"] == "dispatched"
+    backend.deploys = [deploy_run(11, "failure", A1, F)]
+    backend.dispatches.clear()
+    assert run(apply=True)["state"] == "failed_pair_not_retried"
+
+
+def test_tip_moving_past_an_unchanged_candidate_does_not_supersede():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.ci = "cancelled"
+    backend.extra_ci = [(0, A1, "success")]
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{A1}"] = ahead()
+    backend.comparisons[f"{A1}...{'c' * 40}"] = ahead()
+    backend.move_on_read = True
+    assert run(apply=True)["state"] == "dispatched"
+
+
+def test_workflow_accepts_older_green_payload_on_dev_and_names_script_source():
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text()
+    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in workflow
+    assert 'git merge-base --is-ancestor "${requested}" "${ref_tip}"' in workflow
+    assert "has no successful dev push Branch CI run" in workflow
+    assert '"${sha}" != "${trusted_ref}"' not in workflow.split("Compensation drill is a dev root only drill")[1].split("docker compose")[0]
+    # Older payload: deploy scripts run from .target (the payload), workflow from dev tip.
+    assert "Deploy scripts under .target/ come from that payload" in workflow
+
+
+def test_summary_reports_deployed_and_acceptance_separately():
+    from scripts.auto_deploy_dev_pair import summary_lines
+    text = summary_lines({"state": "dispatched", "run_url": "u"})
+    assert "- deployed: pending" in text and "- acceptance: pending" in text
+    assert summary_lines({"state": "up_to_date"}) == ""
+
+
+from scripts.auto_deploy_dev_pair import is_non_build_input, summary_lines
+
+
+@pytest.mark.parametrize("path", [
+    "docs/operations/problem-register.md",
+    "docs/reviews/2026-05-12-x.md",
+    "README.md",
+    ".orchestrator/skills/a.md",
+    "ai-task-archive/2026/x.json",
+    "docs/deployment/latest-dev-six-area-closure.md",
+])
+def test_non_build_input_paths(path):
+    assert is_non_build_input(path)
+
+
+@pytest.mark.parametrize("path", [
+    "docs/contracts/research_demand.v1.schema.json",  # read by services at runtime
+    "docs/deployment/loop-catalog.registry.json",
+    "docs/deployment/evidence/other/evidence.json",
+    "docs/04/x.md",
+    "docs/operations/x.json",
+    "services/research/README.md",  # services read *.md
+    ".orchestrator.py", "ai-task-archive", "scripts/x.py", "", "../README.md", "docs/operations/../../x.py",
+])
+def test_build_input_or_unproven_paths_are_not_skipped(path):
+    assert not is_non_build_input(path)
+
+
+def test_documentation_and_tooling_commit_is_not_released_and_is_reported():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    files = [{"filename": "docs/operations/problem-register.md", "status": "modified"},
+             {"filename": ".orchestrator/skills/x.md", "status": "added"}]
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=files)
+    result = run(apply=True)
+    assert result["state"] == "report_only_no_deploy"
+    assert result["changed_file_count"] == 2 and result["served_backend_sha"] == OLD
+    assert not backend.dispatches
+    text = summary_lines(result)
+    assert "skipped" in text and OLD in text and "2 file" in text
+
+
+def test_later_build_input_candidate_releases_and_carries_skipped_commits():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(
+        files=[{"filename": "docs/operations/a.md", "status": "modified"}])
+    assert run(apply=True)["state"] == "report_only_no_deploy"
+    assert not backend.dispatches
+    # the next candidate still compares against the served commit (OLD), so it covers the skipped one
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(
+        ahead_by=2, total_commits=2, commits=[{"sha": "1"}, {"sha": B}],
+        files=[{"filename": "docs/operations/a.md", "status": "modified"},
+               {"filename": "services/x/main.py", "status": "modified"}])
+    assert run(apply=True)["state"] == "dispatched"
+    assert backend.dispatches[0][1]["ref"] == B
+
+
+def test_over_300_files_and_boundary_rename_fail_open():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    many = [{"filename": f"docs/operations/{i}.md", "status": "modified"} for i in range(300)]
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=many)
+    assert run(apply=True)["state"] == "dispatched"
+    backend.dispatches.clear()
+    backend.comparisons[f"{OLD}...{B}"] = report_compare(files=[{
+        "filename": "docs/operations/a.md", "status": "renamed", "previous_filename": "docs/contracts/a.md"}])
+    assert run(apply=True)["state"] == "dispatched"
+
+
+# ---- quiet windows (DEV-DEPLOY-QUIET-WINDOWS-20261118) ----
+from datetime import datetime, timezone
+
+from scripts.auto_deploy_dev_pair import (
+    DEFAULT_QUIET_WINDOWS, load_quiet_windows, parse_quiet_windows, quiet_window_hold)
+
+
+def utc(day, hh, mm):
+    return datetime(2026, 11, day, hh, mm, tzinfo=timezone.utc)  # 11/16 is a Monday, 11/21 Saturday
+
+
+DEFAULTS = parse_quiet_windows(DEFAULT_QUIET_WINDOWS)
+
+
+def test_dispatch_inside_window_is_held_and_names_window_and_end():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    result = run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, 0))  # Wednesday
+    assert result["state"] == "held_quiet_window" and result["reason"] == "dispatch_inside_window"
+    assert result["window_ends_at"] == "2026-11-18T05:30Z" and "00:30-05:30" in result["window"]
+    assert not backend.dispatches
+
+
+def test_outside_windows_and_no_windows_dispatch_as_before():
+    for kwargs in ({"quiet_windows": DEFAULTS, "now": utc(18, 6, 0)}, {}):
+        backend, _, _, _, run = setup_pair(OLD, F)
+        assert run(apply=True, **kwargs)["state"] == "dispatched"
+        assert len(backend.dispatches) == 1
+
+
+def test_dispatch_just_before_window_is_held_by_backend_switch_lead():
+    hold = quiet_window_hold(DEFAULTS, utc(18, 0, 13))  # switch at 00:30
+    assert hold["reason"] == "backend_switch_inside_window" and hold["backend_switch_lead_minutes"] == 17
+    assert quiet_window_hold(DEFAULTS, utc(18, 0, 12)) is None
+    # persona window: 08:48 + 17 = 09:05
+    assert quiet_window_hold(DEFAULTS, utc(18, 8, 48))["window"].endswith("09:05-10:45")
+    assert quiet_window_hold(DEFAULTS, utc(18, 8, 47)) is None
+    # leaving a window: switch must also be outside, so allowed from the window end
+    assert quiet_window_hold(DEFAULTS, utc(18, 5, 30)) is None
+
+
+def test_weekend_trading_window_does_not_apply_but_persona_window_is_daily():
+    assert quiet_window_hold(DEFAULTS, utc(21, 3, 0)) is None  # Saturday
+    assert quiet_window_hold(DEFAULTS, utc(21, 9, 30)) is not None
+
+
+def test_dispatch_resumes_after_window_with_newest_green_and_no_backlog():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.extra_ci = [(0, A1, "success")]  # greens arrived during the window
+    backend.comparisons[f"{A1}...{B}"] = ahead()
+    backend.comparisons[f"{OLD}...{B}"] = ahead()
+    for minute in (0, 1, 2):
+        assert run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, minute))["state"] == "held_quiet_window"
+    assert not backend.dispatches
+    assert run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 5, 30))["state"] == "dispatched"
+    assert [d[1]["ref"] for d in backend.dispatches] == [B]
+
+
+def test_running_release_is_not_cancelled_when_window_starts():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.active = True  # release started before the window
+    result = run(apply=True, quiet_windows=DEFAULTS, now=utc(18, 3, 0))
+    assert result["state"] == "deployment_in_progress"
+    assert not backend.dispatches and not hasattr(backend, "cancelled")
+
+
+def test_malformed_variable_fails_closed_to_defaults_and_says_so():
+    for bad in ("garbage", "mon-fri 25:00-26:00", "mon-fri 05:00-04:00", "xyz 01:00-02:00", ";"):
+        windows, source = load_quiet_windows(bad)
+        assert windows == DEFAULTS and source.startswith("malformed_defaults_used")
+    assert load_quiet_windows(None) == (DEFAULTS, "default")
+    assert load_quiet_windows("  ") == (DEFAULTS, "default")
+    windows, source = load_quiet_windows("sat,sun 01:00-02:00")
+    assert source == "variable" and quiet_window_hold(windows, utc(21, 1, 30)) is not None
+
+
+def test_summary_shows_held_state():
+    text = summary_lines(quiet_window_hold(DEFAULTS, utc(18, 3, 0)) | {"state": "held_quiet_window"})
+    assert "held: quiet window" in text and "05:30" in text and "not a broken trigger" in text

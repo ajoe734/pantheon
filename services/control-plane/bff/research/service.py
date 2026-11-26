@@ -17,7 +17,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
 
 from fastapi import HTTPException
 
@@ -27,12 +27,15 @@ try:
         redact_evidence_refs,
     )
     from services.control_plane.bff.ports.research_knowledge_source import (
+        ArtifactOwnerPageResult,
         ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
         _naive_utc,
         _parse_rfc3339,
+        artifact_catalog_key,
+        encode_artifact_owner_token,
         normalize_registry_catalog_row,
         normalize_research_catalog_row,
     )
@@ -43,18 +46,62 @@ except (ImportError, ValueError):
         redact_evidence_refs,
     )
     from ..ports.research_knowledge_source import (  # type: ignore[no-redef]
+        ArtifactOwnerPageResult,
         ArtifactOwnerReadResult,
         EvidenceReadResult,
         ResearchKnowledgeSourcePort,
         ResearchWriteOwnerUnavailableError,
         _naive_utc,
         _parse_rfc3339,
+        artifact_catalog_key,
+        encode_artifact_owner_token,
         normalize_registry_catalog_row,
         normalize_research_catalog_row,
     )
     from ..ports.read_surface_ports import ReadSurfacePorts  # type: ignore[no-redef]
 
+from .client import ResearchCommandError
+
 log = logging.getLogger(__name__)
+
+_CATALOG_CURSOR_PREFIX = "m1:"
+
+
+def _encode_catalog_cursor(state: Dict[str, Dict[str, Any]]) -> str:
+    import base64
+    import zlib
+
+    raw = json.dumps(state, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+    compressed = zlib.compress(raw, level=9, wbits=-15)
+    payload = compressed if len(compressed) < len(raw) else raw
+    return _CATALOG_CURSOR_PREFIX + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_catalog_cursor(token: Optional[str]) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Per-owner ``{token, done, total}`` anchors; ``None`` for no token or one that is not a merge cursor."""
+    import base64
+    import zlib
+
+    text = str(token or "").strip()
+    if not text.startswith(_CATALOG_CURSOR_PREFIX):
+        return None
+    body = text[len(_CATALOG_CURSOR_PREFIX):]
+    try:
+        raw_bytes = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    except (ValueError, UnicodeError):
+        return None
+    for wbits in (None, -15, 15):
+        if wbits is not None and raw_bytes.startswith(b"{"):
+            continue
+        try:
+            unpacked = raw_bytes if wbits is None else zlib.decompress(raw_bytes, wbits)
+            decoded = json.loads(unpacked.decode("ascii"))
+            if isinstance(decoded, dict):
+                return decoded
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
 
 PageSlice = Callable[[List[Dict[str, Any]], Optional[str], int], Tuple[List[Dict[str, Any]], Optional[str]]]
 SnapshotMeta = Callable[[str], Dict[str, Any]]
@@ -506,6 +553,33 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
     # -------------------------------------------------------------------------
     # Research Tickets (RW-01)
     # -------------------------------------------------------------------------
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        for source in (self._read_surface, self._ks):
+            if source is not None and hasattr(source, "list_research_ticket_page"):
+                return source.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
+        raise ResearchWriteOwnerUnavailableError("Paged Research ticket owner unavailable")
+
     def list_research_tickets(
         self,
         *,
@@ -739,6 +813,18 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             source if source not in ("missing", "unavailable") else "typed_store",
         )
 
+    def read_registry_strategy_artifacts_page(self, *, page_size: int, page_token: Optional[str] = None):
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_registry_strategy_artifacts_page"):
+                return owner.read_registry_strategy_artifacts_page(page_size=page_size, page_token=page_token)
+        raise NotImplementedError("read_registry_strategy_artifacts_page")
+
+    def read_research_artifact_catalog_page(self, *, page_size: int, page_token: Optional[str] = None):
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "read_research_artifact_catalog_page"):
+                return owner.read_research_artifact_catalog_page(page_size=page_size, page_token=page_token)
+        raise NotImplementedError("read_research_artifact_catalog_page")
+
     def compare_research_artifacts(self, artifact_ids: List[str]) -> Dict[str, Any]:
         if self._read_surface is not None and hasattr(self._read_surface, "compare_research_artifacts"):
             return self._read_surface.compare_research_artifacts(artifact_ids)
@@ -960,6 +1046,103 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
             return self._read_surface.list_strategy_summaries()
         raise AttributeError("Research port operation 'list_strategy_summaries' not implemented")
 
+    def _read_surface_uses_custom_unpaged_strategy_list(self) -> bool:
+        if self._read_surface is None:
+            return False
+        if getattr(self._read_surface, "allow_local_snapshot_fallback", False):
+            return True
+        from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+        if isinstance(self._read_surface, ReadSurfacePorts):
+            return False
+        rs_dict = getattr(self._read_surface, "__dict__", {}) or {}
+        rs_cls = type(self._read_surface)
+        has_page_method = (
+            "list_strategy_summaries_page" in rs_dict
+            or "list_strategy_specs_page" in rs_dict
+            or hasattr(rs_cls, "list_strategy_summaries_page")
+            or hasattr(rs_cls, "list_strategy_specs_page")
+        )
+        if has_page_method:
+            return False
+        has_unpaged_method = (
+            "list_strategies" in rs_dict
+            or "list_strategy_summaries" in rs_dict
+            or "list_strategy_specs" in rs_dict
+            or hasattr(rs_cls, "list_strategies")
+            or hasattr(rs_cls, "list_strategy_summaries")
+            or hasattr(rs_cls, "list_strategy_specs")
+        )
+        if not has_unpaged_method:
+            return False
+        has_registry_url = bool(
+            os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL")
+        )
+        has_ks_injected = bool(getattr(self._ks, "_strategy_specs", None))
+        return not (has_registry_url or has_ks_injected)
+
+    def list_strategy_specs_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface_uses_custom_unpaged_strategy_list():
+            return None
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_specs_page"):
+            return self._read_surface.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        if self._ks is not None and hasattr(self._ks, "list_strategy_specs_page"):
+            return self._ks.list_strategy_specs_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        return None
+
+    def list_strategy_summaries_page(
+        self,
+        *,
+        state: Optional[str] = None,
+        exclude_state: Optional[str] = None,
+        persona_id: Optional[str] = None,
+        query: Optional[str] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        if self._read_surface_uses_custom_unpaged_strategy_list():
+            return None
+        if self._read_surface is not None and hasattr(self._read_surface, "list_strategy_summaries_page"):
+            return self._read_surface.list_strategy_summaries_page(
+                state=state,
+                exclude_state=exclude_state,
+                persona_id=persona_id,
+                query=query,
+                page_token=page_token,
+                page_size=page_size,
+            )
+        return self.list_strategy_specs_page(
+            state=state,
+            exclude_state=exclude_state,
+            persona_id=persona_id,
+            query=query,
+            page_token=page_token,
+            page_size=page_size,
+        )
+
     def list_personas(self) -> List[Dict[str, Any]]:
         if self._read_surface is not None and hasattr(self._read_surface, "list_personas"):
             return self._read_surface.list_personas()
@@ -974,6 +1157,21 @@ class ResearchPortWiring(ResearchKnowledgeSourcePort):
         if self._read_surface is not None and hasattr(self._read_surface, "get_persona"):
             return self._read_surface.get_persona(persona_id)
         return None
+
+    def get_strategy_labels(self) -> Dict[str, Dict[str, str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_labels"):
+                return owner.get_strategy_labels()
+        raise AttributeError("Research port operation 'get_strategy_labels' not implemented")
+
+    def get_strategy_persona_bindings(self) -> Dict[str, List[str]]:
+        for owner in (self._read_surface, self._ks):
+            if owner is not None and hasattr(owner, "get_strategy_persona_bindings"):
+                return owner.get_strategy_persona_bindings()
+            nested_ks = getattr(owner, "research_knowledge_source", None)
+            if nested_ks is not None and hasattr(nested_ks, "get_strategy_persona_bindings"):
+                return nested_ks.get_strategy_persona_bindings()
+        raise AttributeError("Research port operation 'get_strategy_persona_bindings' not implemented")
 
 
 
@@ -993,6 +1191,7 @@ class ResearchRouterService:
     build_knowledge_workbench: Optional[Callable[[], Any]] = None
     cross_entity_search_fn: Optional[Callable[..., Any]] = None
     persona_reader: Optional[Callable[[Optional[str]], Optional[Dict[str, Any]]]] = None
+    persona_directory_snapshot: Optional[Callable[..., Any]] = None
     _experiment_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def _port(self) -> ResearchKnowledgeSourcePort:
@@ -1010,6 +1209,12 @@ class ResearchRouterService:
             yield
         except (HTTPException, ResearchNotFoundError, ResearchValidationError, TypeError):
             raise
+        except ResearchCommandError as exc:
+            self._raise_error(exc.status_code, ErrorCode.FORBIDDEN if exc.status_code == 403 else
+                              ErrorCode.RESOURCE_NOT_FOUND if exc.status_code == 404 else
+                              ErrorCode.OPERATION_NOT_ALLOWED if exc.status_code == 409 else
+                              ErrorCode.DEPENDENCY_UNAVAILABLE if exc.status_code >= 500 else
+                              ErrorCode.VALIDATION_FAILED, "Research owner rejected request", str(exc))
         except ResearchWriteOwnerUnavailableError as exc:
             self._raise_error(
                 503,
@@ -1437,6 +1642,120 @@ class ResearchRouterService:
         payload["meta"] = meta
         return payload
 
+    def _list_artifact_catalog_paged(
+        self, port: Any, snapshot_at: str, page_token: Optional[str], page_size: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Cross-owner merge of one bounded page per owner; ``None`` when the port has no owner page reads.
+
+        Each owner serves its own ``(created_at, id)`` descending order and keyset token. The merged page is the
+        top ``page_size`` of both owner heads under the BFF's ordering, and each owner's next token is anchored on
+        the last row of that owner actually served, so a page boundary never skips or repeats a row. A merge token
+        (``m1:``) carries both owner anchors; a token that is not one falls back to the legacy full merge.
+        """
+        cursor = _decode_catalog_cursor(page_token)
+        if cursor is None and str(page_token or "").strip():
+            return None
+        cursor = cursor or {}
+        owners = ("registry", "research")
+        reads: Dict[str, ArtifactOwnerReadResult] = {}
+        for name in owners:
+            state = cursor.get(name) or {}
+            if state.get("done"):
+                reads[name] = ArtifactOwnerPageResult([], "ok", "typed_store", total=state.get("total"))
+                continue
+            try:
+                if name == "registry":
+                    reads[name] = port.read_registry_strategy_artifacts_page(
+                        page_size=page_size, page_token=state.get("token")
+                    )
+                else:
+                    reads[name] = port.read_research_artifact_catalog_page(
+                        page_size=page_size, page_token=state.get("token")
+                    )
+            except NotImplementedError:
+                return None
+            except AttributeError:
+                return None
+            except Exception as exc:
+                reads[name] = ArtifactOwnerPageResult([], "failed", "unavailable", str(exc))
+        reg_read, res_read = reads["registry"], reads["research"]
+
+        def _order(tagged: Tuple[str, Dict[str, Any]]):
+            row = tagged[1]
+            return (_naive_utc(_parse_rfc3339(row.get("updatedAt"))), str(row.get("id") or ""))
+
+        tagged = [("registry", r) for r in reg_read.items or []] + [("research", r) for r in res_read.items or []]
+        tagged.sort(key=_order, reverse=True)
+        served = tagged[:page_size]
+        page_items = [row for _, row in served]
+
+        next_cursor: Dict[str, Dict[str, Any]] = {}
+        any_more = False
+        for name, read in reads.items():
+            prior = cursor.get(name) or {}
+            mine = [row for tag, row in served if tag == name]
+            fetched = list(read.items or [])
+            if read.status != "ok":
+                next_cursor[name] = dict(prior)
+                continue
+            total = getattr(read, "total", None)
+            if total is None:
+                total = prior.get("total")
+            if mine:
+                token = encode_artifact_owner_token(artifact_catalog_key(mine[-1]))
+            else:
+                token = prior.get("token")
+            done = len(mine) == len(fetched) and not getattr(read, "next_page_token", None)
+            next_cursor[name] = {"token": token, "done": done, "total": total}
+            any_more = any_more or not done
+        failed_sources = [n for n, r in reads.items() if r.status == "failed"]
+        ok_sources = [n for n, r in reads.items() if r.status == "ok"]
+        meta = self.snapshot_meta(snapshot_at)
+        next_page_token = _encode_catalog_cursor(next_cursor) if any_more and page_items else None
+        if failed_sources and ok_sources:
+            surface: Dict[str, Any] = {
+                "status": "degraded",
+                "source": ok_sources[0],
+                "failed_source": failed_sources[0],
+                "failed_sources": list(failed_sources),
+                "degraded_sources": list(failed_sources),
+                "message": (
+                    f"Artifact catalog is degraded because {', '.join(failed_sources)} owner read failed."
+                ),
+            }
+            page_info: Dict[str, Any] = {"next_page_token": next_page_token, "total": None, "total_complete": False}
+            meta["total_complete"] = False
+        elif not ok_sources:
+            page_items, next_page_token = [], None
+            surface = {
+                "status": "unavailable",
+                "source": "unavailable" if failed_sources else "missing",
+                "failed_sources": list(failed_sources),
+                "message": "Artifact catalog owners are unavailable.",
+            }
+            page_info = {"next_page_token": None, "total": None if failed_sources else 0}
+        else:
+            totals = [next_cursor[n].get("total") for n in ok_sources]
+            surface = {
+                "status": "ok",
+                "source": (
+                    "service_client"
+                    if "service_client" in (reg_read.source, res_read.source)
+                    else "typed_store"
+                ),
+            }
+            page_info = {
+                "next_page_token": next_page_token,
+                "total": sum(totals) if all(isinstance(t, int) for t in totals) else None,
+            }
+        meta["surfaces"] = {"artifact_list": surface}
+        return {
+            "data": [dict(item) for item in page_items],
+            "items": [dict(item) for item in page_items],
+            "page_info": page_info,
+            "meta": meta,
+        }
+
     def list_artifact_catalog(
         self,
         *,
@@ -1445,6 +1764,10 @@ class ResearchRouterService:
     ) -> Dict[str, Any]:
         snapshot_at = self.utc_now()
         port = self._port()
+        if not str(page_token or "").strip() or str(page_token).startswith(_CATALOG_CURSOR_PREFIX):
+            paged = self._list_artifact_catalog_paged(port, snapshot_at, page_token, page_size)
+            if paged is not None:
+                return paged
         if hasattr(port, "read_registry_strategy_artifacts"):
             try:
                 reg_read = port.read_registry_strategy_artifacts()
@@ -3164,36 +3487,90 @@ class ResearchRouterService:
                 return result
             records = list(result or [])
         else:
-            records = []
             def _matches(value: Any) -> bool:
                 return not needle or needle in str(value or "").lower()
 
+            def _project_strategy_search_record(raw: Mapping[str, Any]) -> Dict[str, Any]:
+                item_id = str(raw.get("strategy_id") or raw.get("id") or "").strip()
+                name_value = raw.get("title") or raw.get("name") or item_id
+                meta_obj = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+                gov_obj = raw.get("governance") if isinstance(raw.get("governance"), dict) else {}
+                owner_val = (
+                    raw.get("owner")
+                    or gov_obj.get("owner")
+                    or meta_obj.get("owner")
+                    or "pantheon-bff"
+                )
+                return {
+                    "id": item_id,
+                    "type": "strategy",
+                    "name": str(name_value),
+                    "state": raw.get("lifecycle_state") or raw.get("state") or raw.get("status"),
+                    "owner": owner_val,
+                    "risk": "medium",
+                    "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
+                }
+
+            self.page_slice([], page_token, effective_page_size)
+            start = 0
+            if page_token is not None and str(page_token).strip() != "":
+                start = int(str(page_token).strip())
+            owner_page_token = str(start) if start > 0 else None
+
             port = self._port()
+            owner_strategy_page: Optional[Dict[str, Any]] = None
+            strategy_records: List[Dict[str, Any]] = []
             if not requested_types or "strategy" in requested_types:
-                strategy_reader = getattr(port, "list_strategies", None) or getattr(port, "list_strategy_summaries", None)
-                if callable(strategy_reader):
-                    for raw in strategy_reader() or []:
-                        item_id = str(raw.get("strategy_id") or raw.get("id") or "")
-                        name_value = raw.get("title") or raw.get("name") or item_id
-                        if _matches(item_id) or _matches(name_value):
-                            records.append({
-                                "id": item_id,
-                                "type": "strategy",
-                                "name": str(name_value),
-                                "state": raw.get("lifecycle_state") or raw.get("status"),
-                                "owner": raw.get("owner") or "pantheon-bff",
-                                "risk": "medium",
-                                "updatedAt": raw.get("updated_at") or raw.get("last_modified_at") or snap,
-                            })
+                page_reader = (
+                    getattr(port, "list_strategy_summaries_page", None)
+                    or getattr(port, "list_strategy_specs_page", None)
+                )
+                if callable(page_reader):
+                    with self._map_port_errors("list_strategy_summaries_page"):
+                        owner_strategy_page = page_reader(
+                            query=query,
+                            page_token=owner_page_token,
+                            page_size=effective_page_size,
+                        )
+                if owner_strategy_page is None:
+                    strategy_reader = (
+                        getattr(port, "list_strategies", None)
+                        or getattr(port, "list_strategy_summaries", None)
+                    )
+                    if callable(strategy_reader):
+                        with self._map_port_errors("list_strategies"):
+                            raw_strategies = strategy_reader() or []
+                        for raw in raw_strategies:
+                            if not isinstance(raw, dict):
+                                self._raise_error(
+                                    503,
+                                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                    "Invalid strategy search record",
+                                    "strategy_store_unavailable",
+                                )
+                            item_id = str(raw.get("strategy_id") or raw.get("id") or "")
+                            name_value = raw.get("title") or raw.get("name") or item_id
+                            if _matches(item_id) or _matches(name_value):
+                                strategy_records.append(_project_strategy_search_record(raw))
+            persona_records: List[Dict[str, Any]] = []
             if not requested_types or "persona" in requested_types:
                 persona_reader = getattr(port, "list_personas", None)
                 if callable(persona_reader):
-                    for raw in persona_reader() or []:
+                    with self._map_port_errors("list_personas"):
+                        raw_personas = persona_reader() or []
+                    for raw in raw_personas:
+                        if not isinstance(raw, dict):
+                            self._raise_error(
+                                503,
+                                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Invalid persona search record",
+                                "persona_store_unavailable",
+                            )
                         item_id = str(raw.get("persona_id") or raw.get("id") or "")
                         name_value = raw.get("name") or item_id
                         if _matches(item_id) or _matches(name_value):
                             metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
-                            records.append({
+                            persona_records.append({
                                 "id": item_id,
                                 "type": "persona",
                                 "name": str(name_value),
@@ -3202,14 +3579,24 @@ class ResearchRouterService:
                                 "risk": metadata.get("risk_level") or "medium",
                                 "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
                             })
+            pool_records: List[Dict[str, Any]] = []
             if not requested_types or "capital_pool" in requested_types or "capitalpool" in requested_types:
                 pool_reader = getattr(port, "list_capital_pools", None)
                 if callable(pool_reader):
-                    for raw in pool_reader() or []:
+                    with self._map_port_errors("list_capital_pools"):
+                        raw_pools = pool_reader() or []
+                    for raw in raw_pools:
+                        if not isinstance(raw, dict):
+                            self._raise_error(
+                                503,
+                                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                                "Invalid capital pool search record",
+                                "capital_pool_store_unavailable",
+                            )
                         item_id = str(raw.get("pool_id") or raw.get("id") or "")
                         name_value = raw.get("name") or item_id
                         if _matches(item_id) or _matches(name_value):
-                            records.append({
+                            pool_records.append({
                                 "id": item_id,
                                 "type": "capital_pool",
                                 "name": str(name_value),
@@ -3218,6 +3605,78 @@ class ResearchRouterService:
                                 "risk": raw.get("risk_level") or "medium",
                                 "updatedAt": raw.get("updated_at") or raw.get("created_at") or snap,
                             })
+
+            if owner_strategy_page is not None:
+                if not isinstance(owner_strategy_page, dict):
+                    self._raise_error(
+                        503,
+                        ErrorCode.DEPENDENCY_UNAVAILABLE,
+                        "Invalid strategy summary page payload",
+                        "strategy_store_unavailable",
+                    )
+                raw_page_items = owner_strategy_page.get("items")
+                raw_strategy_total = owner_strategy_page.get("total")
+                raw_next_token = owner_strategy_page.get("next_page_token")
+                if (
+                    not isinstance(raw_page_items, list)
+                    or not isinstance(raw_strategy_total, int)
+                    or isinstance(raw_strategy_total, bool)
+                    or raw_strategy_total < 0
+                    or (raw_next_token is not None and not isinstance(raw_next_token, str))
+                ):
+                    self._raise_error(
+                        503,
+                        ErrorCode.DEPENDENCY_UNAVAILABLE,
+                        "Invalid strategy summary page payload",
+                        "strategy_store_unavailable",
+                    )
+                strategy_page_items: List[Dict[str, Any]] = []
+                for raw in raw_page_items:
+                    if not isinstance(raw, dict):
+                        self._raise_error(
+                            503,
+                            ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            "Invalid strategy summary page entry",
+                            "strategy_store_unavailable",
+                        )
+                    projected = _project_strategy_search_record(raw)
+                    if not projected["id"]:
+                        self._raise_error(
+                            503,
+                            ErrorCode.DEPENDENCY_UNAVAILABLE,
+                            "Invalid strategy summary page entry",
+                            "strategy_store_unavailable",
+                        )
+                    strategy_page_items.append(projected)
+                strategy_page_items = strategy_page_items[:effective_page_size]
+                tail_records = persona_records + pool_records
+                total_records = raw_strategy_total + len(tail_records)
+                need_from_tail = max(0, effective_page_size - len(strategy_page_items))
+                tail_start = max(0, start - raw_strategy_total)
+                tail_slice = (
+                    tail_records[tail_start : tail_start + need_from_tail]
+                    if need_from_tail > 0
+                    else []
+                )
+                items = strategy_page_items + tail_slice
+                next_offset = start + effective_page_size
+                next_token = str(next_offset) if (next_offset < total_records and items) else None
+                meta = self.snapshot_meta(snap)
+                meta["surfaces"] = {
+                    "search": self._surface("personas", snapshot_at=snap, has_data=bool(total_records > 0))
+                }
+                return {
+                    "data": items,
+                    "items": items,
+                    "page_info": {
+                        "next_page_token": next_token,
+                        "total": total_records,
+                        "returned": len(items),
+                    },
+                    "meta": meta,
+                }
+
+            records = strategy_records + persona_records + pool_records
         items, next_token = self.page_slice(records, page_token, effective_page_size)
         meta = self.snapshot_meta(snap)
         meta["surfaces"] = {
@@ -3390,15 +3849,31 @@ class ResearchRouterService:
         page_token: Optional[str] = None,
         page_size: int = 20,
         snapshot_at: Optional[str] = None,
+        meeting_linked: bool = False,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
     ) -> Dict[str, Any]:
         snap = snapshot_at or self.utc_now()
         port = self._port()
-        try:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
-        except TypeError:
-            with self._map_port_errors("list_research_tickets"):
-                records = list(port.list_research_tickets() or [])
+        if meeting_linked:
+            with self._map_port_errors("list_research_ticket_page"):
+                page = port.list_research_ticket_page(
+                    statuses=statuses, owner=owner,
+                    meeting_type=meeting_type, subject_ref=subject_ref,
+                    action_state=action_state, due_before=due_before,
+                    submitted_after=submitted_after, updated_after=updated_after,
+                    human_actionable=human_actionable, page_token=page_token,
+                    page_size=page_size
+                )
+            return {**page, "meta": {**self.snapshot_meta(snap),
+                    "surfaces": {"ticket_list": {"status": "ok", "source": "research"}}}}
+        with self._map_port_errors("list_research_tickets"):
+            records = list(port.list_research_tickets(statuses=statuses, owner=owner, include_fixture_pack=False) or [])
         surface_state = self._ticket_surface_state(snapshot_at=snap)
         if surface_state == "unavailable":
             items, next_token, total = [], None, 0
@@ -3449,6 +3924,15 @@ class ResearchRouterService:
             ticket = port.get_research_ticket(ticket_id)
         if not ticket:
             self._not_found("Research ticket", ticket_id)
+
+        if ticket.get("meeting_action"):
+            # Owner alone validates state, actor, revision and idempotent replay.
+            # Preserve the full durable receipt, including input and history.
+            with self._map_port_errors("patch_research_ticket"):
+                updated = port.patch_research_ticket(ticket_id, patch=payload, actor_id=actor_id)
+            if not updated:
+                self._not_found("Research ticket", ticket_id)
+            return updated
 
         allowed_fields = {"status", "title", "description", "priority", "owner"}
         unknown_fields = sorted(set(payload) - allowed_fields)

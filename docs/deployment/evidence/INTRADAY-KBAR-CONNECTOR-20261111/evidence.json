@@ -1,0 +1,160 @@
+{
+  "task_id": "INTRADAY-KBAR-CONNECTOR-20261111",
+  "scope": "K1: TaiwanStockKBar -> tw_price_1m connector contract (source + tests). Daily truth stays official tw_price_daily; no Shioaji, no alternative source.",
+  "source_evidence": {
+    "adapter": "services/source_ingestion/connectors/finmind_taiwan.py: FinMindTaiwanKBarAdapter, FinMindLiveFetcher.fetch_kbar, fetch_kbar (budgeted), KBarHourlyBudget (4500/h, 402 stops until next hour, no retry), compute_bar_availability_ts, classify_range_probe, measure_volume_unit, observe_publication_time",
+    "registry": "connector_definitions.py: tw-finmind-kbar-1m (datasets=tw_price_1m only); connectors/__init__.py export",
+    "pit_contract": "normalized row carries provider_published_at (only if supplied, never invented), fetched_at, reconciled_at, bar_availability_ts = max(bar_end, fetched_at, reconciled_at), None (pending_reconciliation) until reconciled; raw row, request id, source hash and quota_meta (request_url stripped) are kept per record",
+    "session_rules": "Only exact local minute starts in 09:00..13:30 Asia/Taipei are normalized. Outside-session and malformed rows are counted; identical duplicates are counted. Conflicting duplicates, non-trading days and unsupported 13:31..13:39 closing shapes fail closed. Public dispatch uses the existing governed is_trading_day calendar; caller callable, closed_dates and holidays can add closures and cannot reopen governed closures. No new calendar or session tolerance is introduced.",
+    "production_path": "provider_adapters._finmind_kbar: when request has no caller payload it performs a real FinMindLiveFetcher.fetch_kbar via fetch_kbar() with the process-wide shared KBarHourlyBudget (4500/h); missing credential -> FinMindCredentialError with zero network; budget exhausted / 402 -> SourceEvidenceError (stop, no retry in window). fetched_at comes from the real response. Caller-supplied payload still accepted for replay.",
+    "review_fixes_20261111": "Initial conflict/non-trading-day fail-closed guards and handler tests. The initial weekday/caller-only calendar fallback and generic public 100-row limit were rejected by Codex2 at head 6a98de691e1f43890451208cc07c50d9a8b7c1c0 and are superseded by the public-dispatch fixes below.",
+    "raw_preservation": "KBarNormalization exposes complete raw_rows plus response_content_hash even for excluded, malformed, duplicate and non-trading-day rows. Each emitted regular bar retains raw_row, row hash and full-response hash plus normalization_summary. K2 must persist the original fetched payload/raw_rows before projecting regular records; K1 does not claim that hosted storage already persists this envelope.",
+    "adapter_registration": "services/source_ingestion/provider_adapters.py: registered FinMindTaiwanKBarAdapter token + _finmind_kbar handler. This path is now in the canonical artifact contract. Required because ConnectorDefinition rejects adapter tokens missing from the provider allowlist (module import fails otherwise). No behaviour change for other adapters.",
+    "unit_inference": "measure_volume_unit reports sample_only and reconciliation_status=not_evaluated. The 15% tolerance selects a candidate factor only. It does not replace or widen SD section 5 daily volume <=2%, OHLC <=max(0.1%,1 tick), coverage >=95% and quarantine/no-imputation. Four stock-days on two stocks do not establish universal units.",
+    "review_fixes_20261112": {
+      "complete_symbol_day": "KBar fetch_config advertises 271 records (09:00..13:30 inclusive), and public dispatch without a fetch limit defaults to the same capacity. Both configured and caller caps are honored using their minimum. Nonpositive caps fail before the handler; positive caps below actual normalized symbol-day size raise SourceEvidenceError before the generic slice, emitting no partial day. Other adapters retain their prior limit behavior.",
+      "governed_calendar": "provider_adapters._kbar_trading_day_gate delegates to existing services.execution.lean_runtime.instrument_candidates.is_trading_day. AND-composition preserves governed closures with a caller callable and unions both closed_dates and holidays; no calendar replacement or provider requests.",
+      "public_regressions": "execute_provider_owned_adapter tested with a complete 271-bar fixture ending at 13:30; absent fetch limit; fetch/request caps 100,270,271,300; nonpositive caps 0,-1; default 2026-10-09 and 2026-02-16 holidays plus Sunday; caller true cannot reopen closures; caller false and either/both holiday lists add closures."
+    }
+  },
+  "tests": {
+    "environment": "Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON. Added pyarrow 19.0.1 only to the checkout venv, within services/source_ingestion/requirements.txt declared >=15,<30.",
+    "initial_batch": {
+      "result": "166 passed, 9 failed, exit 1",
+      "cause": "All nine broker-backfill failures arose from missing local pyarrow; not counted as passed."
+    },
+    "focused_after_source_changes": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_kbar.py services/source_ingestion/tests/test_finmind_kbar_availability.py",
+      "result": "34 passed in 3.77s",
+      "exit_status": 0
+    },
+    "regression_after_source_changes": {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_kbar.py services/source_ingestion/tests/test_finmind_kbar_availability.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_provider_management_coverage.py services/source_ingestion/tests/test_connector_framework.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_registry_split.py",
+      "result": "213 passed, 1 warning in 25.23s",
+      "exit_status": 0,
+      "warning": "Existing Starlette/httpx deprecation warning in provider-management test."
+    },
+    "regression_scope": "PIT max timestamp/pending reconciliation; generic adapter exclusion; provider budget/402 stop/missing credentials; raw hashes and excluded rows; unsupported delayed close; invalid minute precision; sample volume inference; current-dev broker published-date and parquet decode regressions. Public dispatch full symbol-day preservation, configured/caller limit rejection and governed holiday composition regressions included.",
+    "evidence_class": "Local source/fixture tests only; no provider request, hosted deployment, backfill, live publication or clean-day proof.",
+    "review_defect_reproduction": {
+      "command": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_kbar.py services/source_ingestion/tests/test_finmind_kbar_availability.py",
+      "result": "15 failed, 43 passed in 3.50s before production fixes; exit 1. Reproduced truncation, default governed holidays and caller reopening of closures.",
+      "exit_status": 1
+    }
+  },
+  "real_source_probes": {
+    "status": "run",
+    "run_at_utc": "2026-11-12T01:26:54Z",
+    "executed_by": "Human/Ops inside hosted pantheon-source-ingest-1 with configured FINMIND_API_TOKEN (token never printed)",
+    "raw_artifact": "/tmp/pantheon-kbar-probe-20261112/real-finmind-kbar-probe-run1.json",
+    "raw_sha256": "f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b",
+    "account": {
+      "level": 3,
+      "level_title": "SponsorYear",
+      "api_request_limit": 6000,
+      "user_count": 410,
+      "interpretation": "Access and quota evidence only; SponsorYear is not commercial entitlement proof."
+    },
+    "range_request": {
+      "status": "run",
+      "result": "range_unsupported",
+      "http": 400,
+      "msg": "the dataset TaiwanStockKBar size is too large, we only send one day data, so end_date parameter need be none.",
+      "decision": "one (stock_id,date) per request"
+    },
+    "volume_unit": {
+      "status": "run",
+      "sample_scope": "2330 and 2317 on 2026-11-10 and 2026-11-11; four stock-days, all 267 returned rows including 14:30 after-hours.",
+      "sample_unit_factor": 1000,
+      "all_returned_rows_residual_vs_official": [
+        {
+          "symbol": "2330",
+          "date": "2026-11-10",
+          "relative_residual": "0.06492809985794704623934783978"
+        },
+        {
+          "symbol": "2330",
+          "date": "2026-11-11",
+          "relative_residual": "0.07863742039532586595134944209"
+        },
+        {
+          "symbol": "2317",
+          "date": "2026-11-10",
+          "relative_residual": "0.01632441869435260742615519359"
+        },
+        {
+          "symbol": "2317",
+          "date": "2026-11-11",
+          "relative_residual": "0.02685677678665118935871110990"
+        }
+      ],
+      "regular_session_reconciliation": "NOT_PROVEN. Original receipt aggregates all 267 rows and does not retain each raw minute. Exact 14:30 volume/regular-session close cannot be reconstructed. No accepted clean day or PIT pass is claimed, even for the one all-row volume residual below 2%. Causes of deficits remain unknown.",
+      "ohlc_check": "Original receipt reports all-returned-row OHLC equal to official on four stock-days. This does not prove OHLC after excluding 14:30.",
+      "code": "measure_volume_unit reports sample_only and reconciliation_status=not_evaluated. The 15% tolerance selects a candidate factor only. It does not replace or widen SD section 5 daily volume <=2%, OHLC <=max(0.1%,1 tick), coverage >=95% and quarantine/no-imputation. Four stock-days on two stocks do not establish universal units."
+    },
+    "session_shape": {
+      "status": "run",
+      "bars_per_day": 267,
+      "layout": "09:00-13:24 continuous, 13:30 closing-auction bar, 14:30 after-hours fixed-price bar; 13:25-13:29 absent; 0 duplicate minutes",
+      "decision": "14:30 bar is after-hours: excluded from regular-session bars and counted in dropped_outside_session (test_after_hours_1430_bar_excluded_and_counted)",
+      "limitation": "267 observed rows/closing auction presence are sample facts; they do not prove regular-session coverage or acceptance. Delayed 13:33 is documented by the provider but unsupported by the current approved 09:00..13:30 contract: retain raw/report/quarantine rather than widen the contract."
+    },
+    "quota_metadata": {
+      "status": "run",
+      "result": "responses carried no rate-limit headers; quota must come from /v2/user_info (api_request_limit, user_count)"
+    },
+    "publication_time": {
+      "status": "partial",
+      "observation": {
+        "requested_date": "2026-11-12",
+        "http": 200,
+        "msg": "success",
+        "fetched_at": "2026-11-12T01:26:55.582153+00:00",
+        "fetched_at_taipei": "09:26:55",
+        "rows": 0,
+        "distinct_dates": [],
+        "first_minute": null,
+        "last_minute": null,
+        "outside_0900_1330": 0,
+        "has_1330_bar": false,
+        "dup_minutes": 0
+      },
+      "gap": "Only actual same-day empty observation at 09:26:55 Taipei exists in the permitted receipt. Empty-to-first-nonempty publication is not proven. Existing Human/Ops/K2 bounded 13:35/14:35/15:20/15:50/16:30/17:30 Taipei observation path owns the remaining work; this source worker must not repeat probes or start a second provider workflow.",
+      "pit": "Documented approximately 15:50 is not substituted for observed availability. bar_availability_ts remains max(real bar_end,fetched_at,reconciled_at), None until reconciliation."
+    },
+    "receipt_reconciliation": {
+      "artifact": "/tmp/pantheon-root01a15322-resume-20261111/actual-existing-KBar-probe-reconciled-with-original-contract-20261112T0423.json",
+      "sha256": "38da1aec9de0b3f190c1f8969ebfeb6560aeb7dc69057780e30b312db6daee16",
+      "authority": "Explicitly allowed nonsecret read-only source/reviewer input; no new provider/VM/SSH/credential/deploy/trade authority.",
+      "verified_original_sha256": "f0e74d5c9484fcfd2a1476a0a452b33264ea0002f8e6b325f33501747a25330b"
+    }
+  },
+  "not_verified": [
+    "Actual empty-to-first-nonempty publication time and scoped licensing verification remain Human/Ops external obligations.",
+    "Exact regular-session OHLCV reconciliation cannot be derived from the aggregate receipt. Zero complete clean days/PIT passes claimed.",
+    "K2 original 200-symbol/two-year backfill, per-symbol coverage, hosted store-mount disk guard and K3 original tolerances/quarantine remain required; no full-history or hosted proof claimed.",
+    "W5 still requires 20 real clean reconciled sessions and hosted next-session paper acceptance; local fixtures do not satisfy it.",
+    "This manifest does not claim independent approval, required CI success on its eventual exact head, merge or deployment."
+  ],
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "primary_documentation": {
+    "checked_at_utc_date": "2026-11-12",
+    "technical": "https://finmind.github.io/tutor/TaiwanMarket/Technical/#taiwanstockkbar-sponsor",
+    "technical_facts": "One stock-date/request; approximately 15:50 with actual API timing authoritative; listed/OTC units lots of 1000 shares, emerging units shares. No universal unit inferred from two stocks. Delayed 13:33 auction is provider-valid but needs a governed session contract before regular normalization can accept it.",
+    "licensing": [
+      "https://finmind.github.io/CommercialUse/",
+      "https://finmind.github.io/Disclaimer/"
+    ],
+    "licensing_status": "Attribution and no-redistribution preserved. Current commercial use requires separate entitlement; SponsorYear access does not establish it. Existing vendor_research/dev/paper scope and Human/Ops licensing verification hold remain; no purchase, credential rotation or expanded use authorized."
+  },
+  "delivery": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7195",
+    "base_composition": "Includes current dev ffb30d7b9f2e55948bd9e44383af007e950ce1ec and both native-done code prerequisites; broker published-session helper and KBar generic-adapter exclusion preserved.",
+    "source_anchor": "aae690583",
+    "review_status": "Previous head 6a98de691e1f43890451208cc07c50d9a8b7c1c0 rejected by assigned Codex2. Both P1 fixes committed for fresh exact-head handoff; no owner approval claimed.",
+    "ci_status": "Required CI for this new head must be checked on GitHub; local pytest is not CI.",
+    "merge_status": "Open PR; only the existing canonical supervisor integrator may merge the approved exact head.",
+    "hosted_status": "external_wait; preserved canonical completion track; whole K1 remains incomplete."
+  }
+}

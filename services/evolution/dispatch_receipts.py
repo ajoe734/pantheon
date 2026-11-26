@@ -255,6 +255,7 @@ class ResearchPlaneAdapter:
                     "target_artifact_id": intent.get("target_id"),
                     "target_version": intent.get("target_version"),
                     "work_item_id": task_id,
+                    **({"pool_member": dict(intent["pool_member"])} if intent.get("pool_member") else {}),
                 },
                 "actor_id": "evolution-dispatch-worker",
                 "idempotency_key": f"evolution-run:{tenant_id}:{decision_id}",

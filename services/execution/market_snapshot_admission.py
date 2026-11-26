@@ -385,6 +385,26 @@ def _is_official_tw_lineage(lineage: Any) -> bool:
     return False
 
 
+def _collector_close_for_session(lineage: Any, event_date: date) -> Tuple[bool, bool]:
+    """(snapshot's newest close is collector-relayed, its lineage is complete and valid)."""
+    if not isinstance(lineage, Mapping):
+        return False, False
+    entries = lineage.get("collector_close")
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+        return False, False
+    from services.source_ingestion.tw_close_reconcile import COLLECTOR_CLOSE_KEY, collector_close_lineage
+
+    iso = event_date.isoformat()
+    matching = [e for e in entries if isinstance(e, Mapping) and str(e.get("trade_date") or "") == iso]
+    if not matching:
+        return False, False
+    valid = all(
+        collector_close_lineage({COLLECTOR_CLOSE_KEY: {**dict(e), "provisional": True, "official": False}}) is not None
+        for e in matching
+    )
+    return True, valid
+
+
 def _tw_session_close_utc(trade_date: date) -> datetime:
     hour, minute = TW_SESSION_CLOSE_LOCAL
     local_close = datetime(trade_date.year, trade_date.month, trade_date.day, hour, minute, tzinfo=TAIPEI_TZ)
@@ -418,7 +438,19 @@ def evaluate_taiwan_market_freshness(
     if event_time_dt > now_dt:
         return False, "market_input_invalid", "event_time is in the future"
 
-    if not _is_official_tw_lineage(lineage):
+    relayed, relayed_valid = _collector_close_for_session(lineage, event_time_dt.astimezone(TAIPEI_TZ).date())
+    if relayed:
+        # The newest close is the exchange-website close relayed by the collector host. It is a
+        # provisional same-day input: admissible only with complete lineage (collector source,
+        # exchange endpoint, bundle digest). Incomplete lineage is simply not a fresh close (the
+        # next official OpenAPI row restores it); it never becomes a non-official-lineage pause.
+        if not relayed_valid:
+            return (
+                False,
+                "market_input_stale",
+                "relayed collector close lineage is incomplete; awaiting the official OpenAPI row",
+            )
+    elif not _is_official_tw_lineage(lineage):
         return False, "market_input_non_official_lineage", "snapshot lineage is not an official TWSE/TPEx source"
 
     if refresh_receipt_dt is None:

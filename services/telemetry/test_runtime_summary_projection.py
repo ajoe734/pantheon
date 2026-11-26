@@ -11,6 +11,68 @@ from pathlib import Path
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 
 
+def _quarter_valuation_event(at, equity, *, runtime_id="return-runtime-0", started_at="2026-10-01T00:00:00Z", fills=1):
+    event = _event("pnl_snapshot", created_at=at)
+    event.update(runtime_id=runtime_id, event_id=f"valuation-{at}-{equity}", pnl_as_of=at)
+    event["metrics"] = {
+        "pnl": equity - 1000.0, "portfolio_value": equity, "initial_cash": 1000.0,
+        "cash": 0.0, "pnl_period_start_at": started_at, "pnl_currency": "TWD",
+        "valuation_mark_count": 1, "fill_count": fills,
+    }
+    event["metadata"].update({
+        "valuation_method": "fill_cash_ledger_mark_to_market", "valuation_as_of": at,
+        "mark_refs": [{"symbol": "TEST.US", "price": equity, "as_of": at,
+                       "source_ref": "local-owner-test-quote"}],
+    })
+    return event
+
+
+def test_quarter_equity_history_survives_replay_out_of_order_and_restart(tmp_path):
+    path = str(tmp_path / "quarter.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    last = _quarter_valuation_event("2026-12-15T00:00:00Z", 1200.0)
+    store.project_event(last)
+    decline = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(decline)
+    store.project_event({**decline, "event_id": "retry-with-new-id"})
+    summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+    assert summary["pnl"] == 200.0
+    assert [p["equity"] for p in summary["quarter_equity_observations"]] == [800.0, 1200.0]
+    assert [p["event_id"] for p in summary["quarter_equity_observations"]] == [decline["event_id"], last["event_id"]]
+
+
+def test_quarter_equity_keeps_conflicts_and_missing_mark_attempts(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    event = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    store.project_event(event)
+    store.project_event(_quarter_valuation_event("2026-11-01T00:00:00Z", 850.0))
+    heartbeat = _event(created_at="2026-11-02T00:00:00Z")
+    heartbeat["runtime_id"] = "return-runtime-0"
+    heartbeat["metadata"]["performance_telemetry"] = {"status": "marks_unavailable", "attempted_at": heartbeat["created_at"]}
+    summary = store.project_event(heartbeat)
+    assert len(summary["quarter_equity_observations"]) == 3
+    assert summary["quarter_equity_observations"][-1]["reason"] == "marks_unavailable"
+
+
+def test_quarter_equity_history_is_scoped_to_tenant_and_binding(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "quarter.json"))
+    first = _quarter_valuation_event("2026-11-01T00:00:00Z", 800.0)
+    first["tenant_id"] = "tenant-a"
+    first["metadata"]["runtime_binding_effective_at"] = "2026-10-01T00:00:00Z"
+    store.project_event(first)
+    other_tenant = _quarter_valuation_event("2026-11-01T00:00:00Z", 900.0)
+    other_tenant["tenant_id"] = "tenant-b"
+    store.project_event(other_tenant)
+    assert store.get("return-runtime-0", tenant_id="tenant-a")["quarter_equity_observations"][0]["equity"] == 800.0
+    assert store.get("return-runtime-0", tenant_id="tenant-b")["quarter_equity_observations"][0]["equity"] == 900.0
+    newer = _quarter_valuation_event("2026-12-01T00:00:00Z", 1100.0)
+    newer.update(tenant_id="tenant-a", binding_id="new-binding")
+    newer["metadata"]["runtime_binding_effective_at"] = "2026-12-01T00:00:00Z"
+    summary = store.project_event(newer)
+    assert len(summary["quarter_equity_observations"]) == 1
+    assert summary["quarter_equity_observations"][0]["binding_id"] == "new-binding"
+
+
 def _event(event_type: str = "heartbeat", *, created_at: str = "2026-05-01T00:00:00Z", stage: str = "paper"):
     return {
         "event_id": f"evt-{stage}-{event_type}",
@@ -4381,3 +4443,309 @@ class TestPositionNetPnlRecognizedCosts(unittest.TestCase):
         entry = again["_cost_by_symbol"][self._SRF]
         self.assertEqual(entry["realized_pnl"], 1800.0)
         self.assertAlmostEqual(entry["costs"], 19.884 + 14.0, places=9)
+
+
+def test_pnl_capital_and_period_are_one_observation_and_clear_on_legacy_update(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "summary.json"))
+    def pnl_event(at, **metrics):
+        event = _event("pnl_snapshot", created_at=at)
+        event["event_id"] = "pnl-" + at
+        event["metrics"] = {"pnl": 207.0, **metrics}
+        return event
+    source = pnl_event("2026-11-12T04:10:00Z", initial_cash=100000.0,
+                       pnl_period_start_at="2026-10-01T00:00:00Z")
+    summary = store.project_event(source)
+    assert summary["initial_cash"] == 100000.0
+    assert summary["pnl_period_start_at"] == "2026-10-01T00:00:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:00:00Z", initial_cash=5.0))
+    assert summary["initial_cash"] == 100000.0
+    summary = store.project_event(_event("heartbeat", created_at="2026-11-12T04:11:00Z"))
+    assert summary["initial_cash"] == 100000.0 and summary["pnl_at"] == "2026-11-12T04:10:00Z"
+    summary = store.project_event(pnl_event("2026-11-12T04:12:00Z"))
+    assert "initial_cash" not in summary and "pnl_period_start_at" not in summary
+
+
+def _order_fact_event(kind, order_id, at, quantity=None, *, filled=None, runtime_id="return-runtime-0", binding_id="test-binding", fill_id=None):
+    event = _event(kind, created_at=at)
+    event.update(runtime_id=runtime_id, binding_id=binding_id, event_id=f"{kind}-{order_id}-{fill_id or at}")
+    event["metrics"] = {}
+    if quantity is not None:
+        event["metrics"]["order_quantity"] = quantity
+    if filled is not None:
+        event["metrics"]["fill_quantity"] = filled
+    event["metadata"].update(order_id=order_id)
+    if fill_id:
+        event["metadata"]["fill_id"] = fill_id
+    return event
+
+
+def test_period_fill_rate_quantity_weighting_replay_and_window(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    path = str(tmp_path / "orders.json")
+    events = [
+        _order_fact_event("order_submitted", "large", "2026-10-01T00:00:00Z", 100),
+        _order_fact_event("paper_fill_simulated", "large", "2026-10-02T00:00:00Z", filled=-25, fill_id="part-1"),
+        _order_fact_event("paper_fill_simulated", "large", "2026-10-03T00:00:00Z", filled=25, fill_id="part-2"),
+        _order_fact_event("order_rejection", "reject", "2026-11-01T00:00:00Z", 10),
+        _order_fact_event("order_rejection", "previous", "2026-09-30T23:59:59Z", 1000),
+        _order_fact_event("order_rejection", "next", "2027-01-01T00:00:00Z", 1000),
+        _order_fact_event("paper_order_simulated", "noop", "2026-11-02T00:00:00Z"),
+    ]
+    # Out-of-order deliveries, retries with fresh event IDs, and restarts.
+    for event in [*reversed(events), *events, {**events[1], "event_id": "fresh-retry-id"}]:
+        RuntimeSummaryProjectionStore(path=path).project_event(event)
+    summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0")
+    window = {"start_at": "2026-10-01T08:00:00+08:00", "end_exclusive_at": "2027-01-01T00:00:00Z", "timezone": "UTC"}
+    result = period_fill_rate(["return-runtime-0"], [summary, summary], window)
+    assert result["fill_rate"] == 50 / 110
+    assert result["fill_rate_details"]["numerator"] == 50
+    assert result["fill_rate_details"]["denominator"] == 110
+    assert len(result["fill_rate_details"]["sources"]) == 2
+
+
+def test_fill_rate_reject_only_and_no_submissions_are_distinct(tmp_path):
+    path = str(tmp_path / "orders.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    noop = _order_fact_event("paper_order_simulated", "noop", "2026-11-02T00:00:00Z")
+    noop["metrics"]["fill_rate"] = 0.0
+    assert store.project_event(noop)["fill_rate"] is None
+    rejection = _order_fact_event("order_rejection", "reject", "2026-11-03T00:00:00Z", 10)
+    assert store.project_event(rejection)["fill_rate"] == 0.0
+    heartbeat = _order_fact_event("heartbeat", "hb", "2026-11-04T00:00:00Z")
+    heartbeat["metrics"]["fill_rate"] = 1.0
+    assert store.project_event(heartbeat)["fill_rate"] == 0.0
+
+
+def test_fill_rate_missing_or_conflicting_requests_fail_closed(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "orders.json"))
+    fill = _order_fact_event("paper_fill_simulated", "order", "2026-11-02T00:00:00Z", filled=4)
+    summary = store.project_event(fill)
+    assert summary["fill_rate"] is None
+    assert summary["fill_rate_details"]["reason"] == "missing_submitted_quantity"
+    submitted = _order_fact_event("order_submitted", "order", "2026-11-01T00:00:00Z", 10)
+    summary = store.project_event(submitted)
+    assert summary["fill_rate"] == 0.4
+    assert period_fill_rate(["return-runtime-0", "missing"], [summary])["fill_rate"] is None
+    for invalid in [None, 0, True, float("inf"), 3, 11]:
+        bad = {**submitted, "metrics": {"order_quantity": invalid}, "event_id": "conflicting"}
+        isolated = RuntimeSummaryProjectionStore(path=str(tmp_path / f"invalid-{invalid}.json"))
+        isolated.project_event(fill)
+        summary = isolated.project_event(bad)
+        # 11 is valid by itself, but conflicts with the original denominator.
+        if invalid == 11:
+            summary = isolated.project_event(submitted)
+        assert summary["fill_rate"] is None
+
+
+def test_fill_rate_isolated_by_tenant_and_binding_rollover(tmp_path):
+    path = str(tmp_path / "orders.json")
+    store = RuntimeSummaryProjectionStore(path=path)
+    event = _order_fact_event("order_rejection", "order", "2026-11-01T00:00:00Z", 10)
+    for tenant, qty in [("a", 10), ("b", 20)]:
+        store.project_event({**event, "tenant_id": tenant, "metrics": {"order_quantity": qty}})
+    for tenant, qty in [("a", 10), ("b", 20)]:
+        summary = RuntimeSummaryProjectionStore(path=path).get("return-runtime-0", tenant_id=tenant)
+        assert summary["fill_rate_details"]["denominator"] == qty
+    newer = _order_fact_event("order_rejection", "new", "2026-12-01T00:00:00Z", 3, binding_id="new-binding")
+    newer["tenant_id"] = "a"
+    newer["metadata"]["runtime_binding_effective_at"] = newer["created_at"]
+    summary = store.project_event(newer)
+    assert summary["fill_rate_details"]["denominator"] == 3
+    assert {fact["binding_id"] for fact in summary["order_execution_observations"]} == {"new-binding"}
+
+
+def test_fill_rate_malformed_sources_stay_unknown(tmp_path):
+    from copy import deepcopy
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "malformed.json"))
+    summary = store.project_event(_order_fact_event("order_rejection", "order", "2026-11-01T00:00:00Z", 10))
+    assert summary["fill_rate_at"] == "2026-11-01T00:00:00Z"
+    for key, invalid in [("quantity", True), ("quantity", float("nan")), ("binding_id", []),
+                         ("runtime_id", "other"), ("order_id", {}), ("event_id", None),
+                         ("as_of", "2026-11-01T00:00:00")]:
+        record = deepcopy(summary)
+        record["order_execution_observations"][0][key] = invalid
+        assert period_fill_rate(["return-runtime-0"], [record])["fill_rate"] is None
+    for invalid in [None, 1, {}, "bad"]:
+        assert period_fill_rate(["return-runtime-0"], [{**summary, "order_execution_observations": invalid}])["fill_rate"] is None
+
+
+def test_fill_rate_submission_cohort_excludes_cross_quarter_fills(tmp_path):
+    from services.telemetry.runtime_summary import period_fill_rate
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "cross-quarter.json"))
+    for event in [
+        _order_fact_event("order_submitted", "old", "2026-09-30T23:59:59Z", 100),
+        _order_fact_event("paper_fill_simulated", "old", "2026-10-02T00:00:00Z", filled=100),
+        _order_fact_event("order_submitted", "new", "2026-12-31T23:59:59Z", 10),
+        _order_fact_event("paper_fill_simulated", "new", "2027-01-01T00:00:00Z", filled=10),
+    ]:
+        summary = store.project_event(event)
+    window = {"start_at": "2026-10-01T00:00:00Z", "end_exclusive_at": "2027-01-01T00:00:00Z"}
+    result = period_fill_rate(["return-runtime-0"], [summary], window)
+    assert result["fill_rate"] == 0.0
+    assert result["fill_rate_details"]["denominator"] == 10
+    assert all("paper_fill_simulated" not in event_id for event_id in result["fill_rate_details"]["sources"][0]["event_ids"])
+
+
+# --- runtime_state_snapshot (PAPER-RUNTIME-STATE-SNAPSHOT-ON-CHANGE-20261117) ---
+
+_STATE_SEQUENCE = [
+    ("2026-11-02T00:00:00Z", {"status": "marks_unavailable", "attempted_at": "2026-11-02T00:00:00Z", "fill_count": 1},
+     [{"member_id": "m1", "cash": 100.0}]),
+    ("2026-11-03T00:00:00Z", {"status": "valued", "attempted_at": "2026-11-03T00:00:00Z", "fill_count": 2},
+     [{"member_id": "m1", "cash": 90.0}]),
+    ("2026-11-04T00:00:00Z", {"status": "invalid_ledger", "attempted_at": "2026-11-04T00:00:00Z", "fill_count": 2},
+     [{"member_id": "m1", "cash": 90.0}, {"member_id": "m2", "cash": 5.0}]),
+]
+
+
+def _state_event(event_type, idx, created_at, perf, books):
+    event = _event(event_type, created_at=created_at)
+    event["event_id"] = f"evt-state-{idx}"
+    event["metadata"]["performance_telemetry"] = dict(perf)
+    event["metadata"]["member_virtual_books"] = [dict(b) for b in books]
+    return event
+
+
+def _fold(tmp_path, name, events):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / name))
+    summary = None
+    for event in events:
+        summary = store.project_event(event)
+    return summary
+
+
+_COMPARED_KEYS = ("quarter_equity_observations", "member_virtual_books", "ledger_fill_count")
+
+
+def _state_events(event_type):
+    return [_state_event(event_type, i, *row) for i, row in enumerate(_STATE_SEQUENCE)]
+
+
+def test_snapshot_and_legacy_heartbeat_shapes_produce_identical_summary(tmp_path):
+    old = _fold(tmp_path, "old.json", _state_events("heartbeat"))
+    new = _fold(tmp_path, "new.json", _state_events("runtime_state_snapshot"))
+    assert old["member_virtual_books"] == new["member_virtual_books"] and new["member_virtual_books"]
+    for key in _COMPARED_KEYS:
+        assert old.get(key) == new.get(key), key
+    assert [o["reason"] for o in new["quarter_equity_observations"]] == ["marks_unavailable", "invalid_ledger"]
+
+
+def test_summary_keeps_last_state_without_new_snapshot_and_survives_heartbeat_retention(tmp_path):
+    snapshots = _state_events("runtime_state_snapshot")
+    liveness = []
+    for i in range(5):
+        hb = _event("heartbeat", created_at=f"2026-11-0{i + 2}T12:00:00Z")
+        hb["event_id"] = f"evt-live-{i}"
+        liveness.append(hb)
+    full = sorted(snapshots + liveness, key=lambda e: e["created_at"])
+    # Retention removed every heartbeat; liveness-only heartbeats carry no state.
+    retained = [e for e in full if e["event_type"] != "heartbeat"]
+    with_hb = _fold(tmp_path, "full.json", full)
+    without_hb = _fold(tmp_path, "retained.json", retained)
+    for key in _COMPARED_KEYS:
+        assert with_hb.get(key) == without_hb.get(key), key
+    assert without_hb["member_virtual_books"][-1]["member_id"] == "m2"
+    # A later liveness-only heartbeat does not erase state.
+    assert with_hb["member_virtual_books"] == without_hb["member_virtual_books"]
+
+
+# --- PAPER-RUNTIME-STATE-SNAPSHOT-CHANGE-DETECTION-20261118 ---
+
+
+def _valued_snapshots(count):
+    # a long run of change-detected snapshots followed by a final state
+    events = []
+    for i in range(count):
+        events.append(
+            _state_event(
+                "runtime_state_snapshot", i, f"2026-11-{2 + i:02d}T00:00:00Z",
+                {"status": "valued", "attempted_at": f"2026-11-{2 + i:02d}T00:00:00Z", "fill_count": i + 1},
+                [{"member_id": "m1", "cash": 100.0 - i}],
+            )
+        )
+    return events
+
+
+def test_summary_unchanged_when_retention_keeps_oldest_newest_and_unknown_status_snapshots(tmp_path):
+    events = _valued_snapshots(6)
+    events[2]["metadata"]["performance_telemetry"]["status"] = "marks_unavailable"
+    # retention rule: keep oldest, newest and quarter-equity "unknown" history per runtime
+    kept = [e for i, e in enumerate(events) if i in (0, 2, 5)]
+    full = _fold(tmp_path, "full.json", events)
+    retained = _fold(tmp_path, "kept.json", kept)
+    for key in _COMPARED_KEYS:
+        assert full.get(key) == retained.get(key), key
+
+
+def test_rollback_release_summarises_reduced_snapshot_stream(tmp_path):
+    # The projection is unchanged by this task, so the previously accepted
+    # release reads the reduced stream (only real changes) like a full one.
+    full = _valued_snapshots(6)
+    # a no-change duplicate carrying only a new attempted_at, which this change stops emitting
+    duplicate = _state_event(
+        "runtime_state_snapshot", 99, "2026-11-08T00:00:00Z",
+        {"status": "valued", "attempted_at": "2026-11-08T00:00:00Z", "fill_count": 6},
+        [{"member_id": "m1", "cash": 95.0}],
+    )
+    with_dup = _fold(tmp_path, "dup.json", full + [duplicate])
+    reduced = _fold(tmp_path, "reduced.json", full)
+    for key in ("member_virtual_books", "ledger_fill_count"):
+        assert with_dup.get(key) == reduced.get(key), key
+
+
+def test_runtime_state_snapshot_account_and_policy_facts_are_bounded_and_replay_idempotent(tmp_path):
+    store = RuntimeSummaryProjectionStore(path=str(tmp_path / "idle_facts.json"))
+    snap1 = _state_event(
+        "runtime_state_snapshot",
+        1,
+        "2026-11-25T01:00:00Z",
+        {"status": "no_fills", "attempted_at": "2026-11-25T01:00:00Z"},
+        [],
+    )
+    snap1["metadata"]["account_facts"] = {"initial_cash": 100000.0, "cash": 100000.0, "fill_count": 0}
+    snap1["metadata"]["risk_policy_facts"] = {
+        "risk_policy_id": "rp-low",
+        "risk_policy_version": "2.0",
+        "risk_policy_digest": "a" * 64,
+        "gross_limit": 0.10,
+        "max_leverage": 1.0,
+        "drawdown_risk_off": 0.10,
+        "drawdown_warn": 0.05,
+    }
+    first = store.project_event(snap1)
+    assert first["ledger_fill_count"] == 0
+    assert first["positions"] == [] and first["position_count"] == 0
+    assert first["_pool_risk_account_facts"] == {
+        "initial_cash": 100000.0,
+        "cash": 100000.0,
+        "fill_count": 0,
+        "as_of": "2026-11-25",
+    }
+    assert first["_pool_risk_policy_facts"]["gross_limit"] == 0.10
+    assert first["_pool_risk_policy_facts"]["_basis"] == "runtime_state_snapshot"
+
+    # Replay is idempotent.
+    replayed = store.project_event(dict(snap1))
+    assert replayed["_pool_risk_account_facts"] == first["_pool_risk_account_facts"]
+    assert replayed["_pool_risk_policy_facts"] == first["_pool_risk_policy_facts"]
+
+    # Newer snapshot replaces both dicts in place without growing.
+    snap2 = _state_event(
+        "runtime_state_snapshot",
+        2,
+        "2026-11-25T06:00:00Z",
+        {"status": "no_fills", "attempted_at": "2026-11-25T06:00:00Z"},
+        [],
+    )
+    snap2["metadata"]["account_facts"] = {"initial_cash": 100000.0, "cash": 100000.0, "fill_count": 0}
+    snap2["metadata"]["risk_policy_facts"] = {"unavailable_reason": "RiskPolicyError"}
+    second = store.project_event(snap2)
+    assert second["_pool_risk_policy_facts"] == {
+        "unavailable_reason": "RiskPolicyError",
+        "_basis": "runtime_state_snapshot",
+    }
+    served = store.get("rt-paper-001")
+    assert served["pool_risk_snapshots"][0]["equity"] == 100000.0
+    assert served["pool_risk_snapshots"][0]["policy_ref"] == {"unavailable_reason": "RiskPolicyError"}

@@ -84,6 +84,7 @@ Only designated services may write to either memory store. No session (interacti
 | `trainer-svc` | Yes (`episodic`, `semantic`) | No |
 | `consultation-svc` | Yes (`consultation_outcome`) | Yes (`cross_persona_observation`) |
 | `research-svc` | Yes (`strategy_lesson`) | Yes (`research_finding`) |
+| `persona-svc` | Yes (`strategy_lesson`: pool outcomes, harness experiences) | Yes (`cross_persona_observation`) |
 | `governance-svc` | No | Yes (`policy_precedent`, `regime_pattern`) |
 
 **Why this restriction:** Memory entries constitute a knowledge truth source. Allowing direct session writes would create unaudited mutation paths. All writes must go through a service that owns the triggering lifecycle event.
@@ -111,11 +112,87 @@ Write-back is the process by which platform lifecycle events cause new memory en
 |---|---|---|
 | `SessionPersona` reaches `terminated` (normal end) | `session_id`, `persona_id` | PersonaMemory `episodic` — session outcome summary |
 | `Postmortem` reaches `published` status | `postmortem_id`, `incident_id`, `persona_id` (via binding) | PersonaMemory `strategy_lesson` + InstitutionalMemory `incident_lesson` |
-| `EvolutionDecision` reaches `approved` | `evolution_decision_id`, affected `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `evolution_rationale` |
+| `EvolutionDecision` reaches `executed` with a terminal result and outcome summary | `evolution_decision_id`, affected `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `evolution_rationale` |
 | Consultation session closes | `session_id`, `persona_id` | PersonaMemory `consultation_outcome`; InstitutionalMemory `cross_persona_observation` (if committee scope) |
 | Trainer epoch completes | epoch metadata | PersonaMemory `episodic` + `semantic` |
 | Operator confirms preference | operator feedback event | PersonaMemory `preference` |
 | Research task reaches `done` | `task_id`, `persona_id` | PersonaMemory `strategy_lesson` + InstitutionalMemory `research_finding` |
+| Pool admit/remove/re-weight finishes | `pool_outcome`, source event id, owning persona, reason/evidence | PersonaMemory `strategy_lesson` + InstitutionalMemory `cross_persona_observation` |
+| Harness observation window finishes | `harness_experience`, source event id, owning persona, cue/lesson/outcome/evidence | PersonaMemory `strategy_lesson` + InstitutionalMemory `cross_persona_observation` |
+
+### 4.1.1 Deployed writeback wiring
+
+`learning-feedback-bridge` polls the Evolution and Postmortem owner APIs every
+30 seconds. Evolution reads carry the existing service bearer and tenant header.
+Only terminal executed decisions with an outcome and published postmortems are
+written. Source or attribution failures are reported, never replaced with invented
+events. Local-file fallback is available only when explicitly supplied by a caller;
+the deployed worker reads owner APIs and does not sync OpenClaw workspaces.
+
+Research enqueues findings after its existing eligibility/replication gates.
+The sponsor comes from the demand/member attribution carried by the task or run;
+missing or conflicting attribution records a failure rather than selecting a
+default persona. Its service startup owns one periodic outbox consumer in the
+same process as the producers, sharing their store and delivery lock. There is
+no second process with a stale JSON snapshot. Interrupted `in_flight` deliveries
+are replayed on restart. Failed deliveries retain their reason and retry count;
+after five attempts they remain in `dead_letter` until explicitly retried through
+the existing Research outbox retry route.
+
+Both clients send the existing `PANTHEON_MEMORY_AUTH_TOKEN` bearer, or read
+`PANTHEON_MEMORY_AUTH_TOKEN_FILE` at delivery time for rotation. These must be
+already issued credentials accepted by Memory's strict JWT configuration; the
+worker does not mint credentials or fall back to an operator-shaped string.
+For file credentials, the configured path must be mounted in the caller container.
+Missing credentials are delivery failures, not unauthenticated requests.
+The writeback route binds the verified tenant and requires an authorized writer
+role before applying the event/authority whitelist. Retrieval continues through
+the existing Governance authorization endpoint; execution never reads memory.
+
+All feedback writers use `/api/memory/writebacks/learn-feedback`, keyed by source
+event type/id. Replays return the same stable persona/institutional identifiers;
+a retry repairs either missing half of a partially persisted pair. New owner
+emitters use `persona-svc` with `pool_outcome`/`harness_experience`, and
+`consultation-svc` with `consultation_closed`. Event details such as cue, lesson,
+outcome, reason, member, harness version and memo references survive in both
+structured payloads. This registration does not implement the separate pool,
+harness or consultation lifecycle controllers.
+
+### 4.1.2 Harness experience owner and review
+
+The Persona harness owner now emits `source_event_type=harness_experience`
+after its paper observation window. This is an experience event carried by the
+existing PersonaMemory `strategy_lesson` and InstitutionalMemory
+`cross_persona_observation` types, not a separate memory database. The persona
+service is the writer (`persona-svc`); an agent cannot write it directly.
+
+Each event retains the owning tenant/persona, patch and harness version, cue,
+lesson, measured outcome (`helped`, `hurt`, `no_effect`, `confounded`), evidence
+and confidence. Its body preserves the paired owner facts, trading dates,
+criterion and confounders. The event id is stable for tenant/persona/patch;
+the existing writeback adapter repairs partial persona/institutional delivery
+and preserves the same ids on replay. Source observation facts and pending
+delivery intents remain in the Persona aggregate for audit and recovery.
+
+The default observation window is ten distinct owner-reported trading days;
+the default component cooldown is seven calendar days after review or rollback.
+These are coordinator starting values, frozen in the owner policy rather than
+agent-selected thresholds. Unresolved facts leave an explicit failed observation
+check. A complete window with unavailable paired measurements or confounders
+records `confounded`; it does not claim improvement. Harm creates a rollback
+proposal, and the Persona proposal entry point reads and cites relevant prior
+experience source events for the changed components, including negative and
+confounded experiences. Memory remains the learning retrieval source for sessions;
+execution does not read these entries.
+
+Production uses the existing authenticated Learn-feedback endpoint and existing
+service credentials. Delivery failure is visible in the harness outbox and
+replayed by the owner on observation retry (`HarnessAdoption.deliver` is also
+the bounded owner recovery entry point). No new background dispatcher, session
+write authority, or credential is introduced. The observation consumer requires
+frozen paired book facts in `Observe.harness_observation`; it does not synthesize
+that feed when upstream data is unavailable. See
+`EVOLUTION_REVIEW_AND_THRESHOLDS.md` §9.3.1 for the paper adoption boundary.
 
 ### 4.2 Write-Back Sequence (Postmortem Example)
 
@@ -177,7 +254,94 @@ Persona implementation note (2026-06-09, MPOS-P1-MEM-001):
 - Consultation sessions are filtered to `relevance_scope=persona_and_committee`, so private persona memory does not leak into committee contexts.
 - `scope=both` merges ranked persona and institutional hits and only writes `reuse_count` for returned hits.
 
-### 5.2 Retrieval Trigger Contexts
+### 5.2 Hindsight memory index (2026-11-14, MEMORY-HINDSIGHT-INDEX-20261113)
+
+Canonical stores stay owner-written and are the only truth. Hindsight is an
+internal, rebuildable index reachable only by memory-svc
+(`PANTHEON_MEMORY_HINDSIGHT_URL` / `_API_KEY`); no agent holds a credential or a
+write path, and execution never reads it. The earlier projection into the search
+service is removed (store `_project` hooks, `sync_memory_projection`,
+`backfill_memory_index`, `project_*_entry`, `retrieve_*_with_backend`).
+
+**Mirror (H3, H11).** After canonical persistence of every create, supersede,
+archive and expiry (both store implementations, including non-HTTP writers) the
+store calls `hindsight_index.schedule_mirror` outside the canonical store lock
+and commit acknowledgement. One bounded per-`(bank, canonical_id)` FIFO drains in
+lifecycle order (`retain` before `invalidate`) across a bounded background worker
+pool (`MAX_MIRROR_WORKERS`, queue capacity `MAX_PENDING_MIRRORS`; overflow records
+`hindsight_mirror_queue_full` in `DIAGNOSTICS` without blocking canonical writes).
+One Hindsight document per canonical id (`document_id` =
+canonical id) is retained into the tenant facts bank (institutional) or the
+persona interpretation bank (persona); `metadata`, event `timestamp` (=
+`written_at`), `context` (= source event type), anchor entities
+(`resolve_entities=false`) and tags (`anchor:*`, `scope:*`, `type:*`) are set.
+Superseded, archived or expired entries have their memory units invalidated
+(reversible soft retire). Failures are retried (3 attempts with backoff), logged
+as `memory_mirror_failed` with a reason, kept in bounded diagnostics
+(`hindsight_index.DIAGNOSTICS`) and never block or roll back the canonical write.
+Usefulness marks and read counters do not change the index.
+
+**Anchors (H4).** One deterministic mapping (`anchors_for`) turns canonical
+structured fields and `kind:value` tags into `strategy`, `parent_strategy`,
+`family`, `underlying`, `instrument`, `dataset`, `decision` and `regime` anchors.
+Entries without an anchor carry `anchor:none` and are counted (`anchor_none`).
+
+**Rebuild (H3).** `python -m services.memory.hindsight_index rebuild` drains
+pending mirrors first (aborting with `hindsight_mirror_drain_timeout` and without
+dropping banks if the drain fails), drops every bank known to canonical memory,
+re-retains each active entry, and drains any mirrors scheduled during rebuild in
+lifecycle order after bank repopulation; it is idempotent and reports banks,
+retained, skipped inactive, `anchor_none` and failures (exit 1 on failure). It is
+a CLI, not a route.
+
+**Retrieve (H6).** `/api/memory/retrieve` recalls each readable bank (facts bank;
+only the requested persona's own bank), adding `tag_groups` (`any_strict`) when
+the request carries `subject_anchors` (`kind:value`), `scope:committee` for
+consultation callers and a `type:` tag when a type filter is given. Observations
+map to canonical ids through `source_fact_ids`. Memory then hydrates and
+re-authorises every id from the canonical stores (tenant, persona, relevance
+scope, active/expiry, filters, anchors), applies `usefulness_score` as the final
+re-rank, and reports `retrieval_mode` (`hindsight` or `keyword_fallback`),
+`fallback_reason`, per-store `retrieval_details` and `llm_layers`
+(`disabled` until the OpenClaw memory-index bridge is configured). Keyword ranking runs only as the explicit
+fallback (empty query, `hindsight_unconfigured`, or a transport/HTTP reason).
+Wildcard tenants narrow to `default`.
+
+**LLM layers and standing questions (H5, H13).** `POST /api/memory/reflect` was removed
+(no caller used it) and nothing replaces it as a route. With the bridge configured, the
+deploy sets `PANTHEON_MEMORY_HINDSIGHT_LLM_LAYERS_ENABLED` from `MEMORY_LLM_BRIDGE_ENABLED`
+and starts Hindsight's worker. The memory service then switches each bank, before its first
+retain, to `retain_extraction_mode=verbatim` and `enable_auto_consolidation=true` (per-bank
+config; rebuild re-applies it after the bank drop), and responses report `llm_layers:
+enabled`. Unset, nothing is sent: chunks mode, no consolidation, `llm_layers: disabled`.
+A bridge refusal (429) only defers Hindsight's own background work; canonical writes and
+recall never depend on it, and a failed layer switch is retried and recorded like any
+mirror failure.
+
+Persona standing questions are Hindsight mental models in the persona's own bank
+(`pq-<key>`), reachable only through two memory-service routes:
+
+* `PUT /api/memory/persona-standing-questions` (verified `persona-svc` JWT, one tenant):
+  declares a persona's questions as an idempotent set by key (`key`, `text`, optional
+  `anchors`, `memory_types`); keys no longer declared are retired. Each model uses
+  `refresh_after_consolidation` with `min_refresh_interval_seconds` from
+  `PANTHEON_MEMORY_MENTAL_MODEL_MIN_REFRESH_SECONDS` (default 86400, a coordinator proposal)
+  and `exclude_mental_models`, so an answer rests on canonical-derived memories only.
+  The persona controller declares them at the start of each daily cycle: one question per
+  strategy family in the pool, one for risk lessons, no regime question, no new scheduler.
+  Agents hold no route to create or edit them.
+* `GET /api/memory/persona-standing-questions`: authorised exactly like persona retrieve;
+  returns that persona's answers with `refreshed_at` and citations. Hindsight reports the
+  sources of a refresh as unit ids by fact type, so each unit is read back and mapped through
+  its `document_id` to a canonical id (one level through `source_memory_ids` for
+  observations), then re-validated against the canonical persona store (same tenant and
+  persona, active, unexpired). Anything unmapped or unverified is withheld with a reason
+  (`citation_unmapped`, `canonical_source_*`, `no_sources_in_scope`, `not_refreshed`).
+  Committee-scoped sessions get 403: answers are derived from private interpretations.
+
+Answers exist only in Hindsight as derived data; nothing is written to the canonical stores.
+
+### 5.3 Retrieval Trigger Contexts
 
 | Context | Who calls retrieval | Typical query |
 |---|---|---|
@@ -306,6 +470,13 @@ Implementation storage slice (2026-06-09):
 - Institutional entries use `PANTHEON_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/institutional_memory_entries.json` in JSON mode, or `memory.institutional_memory_entries` in Postgres mode.
 - Persona entries use `PANTHEON_PERSONA_MEMORY_STORE` or `PANTHEON_MEMORY_DATA_DIR/persona_memory_entries.json` in JSON mode, or `memory.persona_memory_entries` in Postgres mode.
 - `PANTHEON_PERSONA_MEMORY_STORE_BACKEND` defaults to `PANTHEON_MEMORY_STORE_BACKEND`; persona Postgres DSN defaults through `PANTHEON_PERSONA_MEMORY_STORE_DSN`, `PANTHEON_MEMORY_STORE_DSN`, then `DATABASE_URL`.
+
+Search configuration and rebuild:
+- Configure `PANTHEON_SEARCH_API_URL` in memory (root Compose points to `http://search-svc:8098`). The retrieval database remains private to search.
+- Provision the existing authenticated service credential as `PANTHEON_SEARCH_SERVICE_TOKEN` in memory (`PANTHEON_MEMORY_SEARCH_SERVICE_TOKEN` in root Compose), with subject `memory-svc`, `system` role, appropriate tenant and persona/workspace grants, valid expiry and the configured search issuer/audience. Search and the issuer must share the configured verification key. No token is minted by memory.
+- A deployment may mount a rotating credential and set `PANTHEON_SEARCH_SERVICE_TOKEN_FILE`; the existing credential-file reader reloads it per request and fails closed for an unsafe or missing file.
+- Run `python -m services.memory.search_retrieval` inside the memory service environment to backfill both canonical stores, including inactive entries. It prints `processed`, `projected`, `tombstones` and per-entry `failures`; any failure returns exit status 1. Repeating the command upserts the same index identities without duplicating entries. Run it after index loss/rebuild, after upgrading existing stores and after reported projection failures. It creates no new privileged HTTP route.
+- The local route integration test uses a real pgvector database and the pinned jieba dictionary. Its disabled fixture embedding engine proves `lexical_only` wiring and Traditional Chinese recall over the old keyword path, not semantic quality or hosted deployment. Model evaluation remains a separate task.
 
 Retention:
 - Institutional memory entries receive `expires_at` from `PANTHEON_MEMORY_RETENTION_DAYS` on create when the writer did not provide an explicit expiration. The default is 365 days.

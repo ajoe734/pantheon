@@ -19,6 +19,8 @@ This module is deliberately stdlib-only so any service can import it.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -91,7 +93,46 @@ _INST_FIELDS = (
     ("dealer_net_shares", "dealer_net", "Dealer net shares"),
 )
 
+# Market aggregates have their own namespace. Per-symbol field contracts remain
+# unchanged. Zero-day lag still requires the provider release and first acquisition.
+MARKET_CHIP_DATASETS = {
+    "tw_market_margin_balances": "tw_margin_short_balance",
+    "tw_market_institutional_flows": "tw_institutional_flow",
+    "taifex_market_positions": "taifex_futures_chip",
+    "taifex_market_put_call": "taifex_options_chip",
+    "taifex_market_tx_daily": "taifex_tx_daily",
+}
+
 DATASET_SPECS: tuple[DatasetSpec, ...] = (
+    _ds("tw_market_margin_balances", "tw_margin_short_balance", "market", "daily", "date", 0,
+        ("twse:exchangeReport/MI_MARGN", "tpex:tpex_mainboard_margin_balance"),
+        "Complete governed TWSE/TPEx reported margin and short balance counts; not TWD credit"),
+    _ds("tw_market_institutional_flows", "tw_institutional_flow", "market", "daily", "date", 0,
+        ("twse:fund/T86 via collector bundle", "tpex:tpex_3insti_daily_trading"),
+        "Complete same-session market foreign, trust and dealer net shares"),
+    _ds("taifex_market_positions", "taifex_futures_chip", "market", "daily", "date", 0,
+        ("taifex:MarketDataOfMajorInstitutionalTradersDetailsOfFuturesContractsBytheDate",),
+        "TX/MTX institutional net open interest by investor type"),
+    _ds("taifex_market_put_call", "taifex_options_chip", "market", "daily", "date", 0,
+        ("taifex:PutCallRatio",), "Official TXO put/call volume and open-interest percentages"),
+    _ds("taifex_market_tx_daily", "taifex_tx_daily", "market", "daily", "date", 0,
+        ("taifex:DailyMarketReportFut",),
+        "TX regular-session front-month settlement price and total open interest; "
+        "the official feed serves only the latest session so history accumulates forward only"),
+    _ds("tw_index_daily", "tw_index_daily", "series", "daily", "date", 0,
+        ("twse:MI_INDEX price indices via collector bundle", "twse:TAIEX/MI_5MINS_HIST via collector bundle"),
+        "TWSE price index daily close (open/high/low where the source gives them), keyed by index name; "
+        "availability is first acquisition, never earlier"),
+    _ds("tw_market_breadth_daily", "tw_market_breadth_daily", "market", "daily", "date", 0,
+        ("twse:MI_INDEX breadth table via collector bundle",),
+        "TWSE advancers, decliners, limit and unchanged counts for the whole market and for stocks; "
+        "availability is first acquisition, never earlier"),
+    _ds("tw_industry_classification", "tw_industry_classification", "symbol", "daily", "event_time", 0,
+        ("twse:opendata/t187ap03_L", "tpex:mopsfin_t187ap03_O"),
+        "Official industry code observed prospectively; available only from acquisition, never backfilled"),
+    _ds("tw_sector_flows", "tw_sector_flow", "symbol", "daily", "event_time", 0,
+        ("tw_institutional_flows", "tw_industry_classification"),
+        "Sector total institutional net shares, projected onto each classified member; complete governed market required"),
     _ds("tw_price_daily", "tw_price_daily", "symbol", "daily", "date", 0, _PRICE_SOURCES,
         "Daily OHLCV bars for TWSE/TPEx equities"),
     _ds("tw_monthly_revenue", "tw_monthly_revenue", "symbol", "monthly", "event_time", 10,
@@ -100,7 +141,8 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
     _ds("tw_quarterly_statements", "tw_financial_statement", "symbol", "quarterly", "event_time", 45,
         ("twse:opendata/t187ap06_L_ci", "twse:opendata/t187ap07_L_ci",
          "tpex:mopsfin_t187ap06_O_ci", "tpex:mopsfin_t187ap07_O_ci"),
-        "Quarterly income statement and balance sheet ratios (Q1-Q3 deadline +45d, Q4 +90d)"),
+        "Quarterly income statement and balance sheet ratios; available no earlier than the statutory "
+        "deadline (Q1 May 15, Q2 Aug 14, Q3 Nov 14, annual report Mar 31 of the next year)"),
     _ds("tw_margin_transactions", "tw_margin_short_balance", "symbol", "daily", "date", 0,
         ("twse:exchangeReport/MI_MARGN", "tpex:tpex_mainboard_margin_balance"),
         "Daily margin purchase and short sale balances"),
@@ -131,6 +173,10 @@ for _ds_name in ("tw_price_daily",):
         _FIELDS.append(CatalogueField(_ds_name, _f, _f, _u, f"Daily {_f}"))
     _FIELDS.append(CatalogueField(_ds_name, "vwap", "vwap", "TWD", "Daily volume weighted average price"))
 _FIELDS += [
+    CatalogueField("tw_industry_classification", "industry_code", "industry_code", "category_code",
+                   "Official numeric industry category; not an ordinal score; acquired-time availability"),
+    CatalogueField("tw_sector_flows", "net_shares", "net_shares", "shares",
+                   "Sum of foreign, trust and dealer net shares across classified sector members; max constituent availability"),
     CatalogueField("tw_monthly_revenue", "yoy", "yoy", "percent", "Monthly revenue YoY (%)"),
     CatalogueField("tw_monthly_revenue", "mom", "mom", "percent", "Monthly revenue MoM (%)"),
     CatalogueField("tw_monthly_revenue", "revenue", "revenue", "TWD_thousand", "Monthly revenue"),
@@ -158,6 +204,25 @@ _FIELDS.append(
     CatalogueField("tpex_institutional_flows", "total_inst_net_shares", "total_net", "shares",
                    "TPEx total 3-institution net shares")
 )
+for _f in ("margin_balance", "short_balance"):
+    _FIELDS.append(CatalogueField("tw_market_margin_balances", _f, _f, "reported_trading_units",
+                                  "Complete governed market balance; no partial totals"))
+for _f, _src, _d in _INST_FIELDS:
+    _FIELDS.append(CatalogueField("tw_market_institutional_flows", _f, _src, "shares", _d))
+for _contract in ("tx", "mtx"):
+    for _investor in ("foreign", "trust", "dealer"):
+        _f = f"{_contract}_{_investor}_net_open_interest"
+        _FIELDS.append(CatalogueField("taifex_market_positions", _f, _f, "contracts",
+                                      "Official institutional net open interest, not volume"))
+for _f, _src in (("volume_ratio", "PutCallVolumeRatio%"), ("open_interest_ratio", "PutCallOIRatio%")):
+    _FIELDS.append(CatalogueField("taifex_market_put_call", _f, _src, "percent",
+                                  "Official reported put/call percentage; never inferred from a missing value"))
+
+_FIELDS.append(CatalogueField("taifex_market_tx_daily", "tx_front_month_settlement_price", "settlement_price",
+                               "index_points", "Official TX regular-session settlement of the nearest monthly contract"))
+_FIELDS.append(CatalogueField("taifex_market_tx_daily", "tx_total_open_interest", "open_interest", "contracts",
+                              "Sum of official TX regular-session open interest over all listed monthly contracts"))
+
 _MACRO: tuple[tuple[str, str, int, str, str], ...] = (
     ("tw_macro_cbc", "policy_rate", 1, "percent", "CBC policy discount rate"),
     ("tw_macro_cbc", "m1b_yoy", 25, "percent", "CBC M1B money supply YoY"),
@@ -185,6 +250,23 @@ _FIELDS += [
                    "engagement_weighted_sentiment", "score",
                    "Engagement-weighted bull(+1)/bear(-1) sentiment; single-author bursts down-weighted"),
 ]
+
+# Index series (key kind series, entity = index name) and market breadth (entity TW) carry
+# several fields per row, unlike the one-value-per-row macro series.
+REGIME_DATASETS = ("tw_index_daily", "tw_market_breadth_daily")
+for _f, _u, _d in (
+    ("close", "index_points", "Index daily close"),
+    ("open", "index_points", "Index daily open; present only where the source states it"),
+    ("high", "index_points", "Index daily high; present only where the source states it"),
+    ("low", "index_points", "Index daily low; present only where the source states it"),
+    ("change_points", "index_points", "Index change in points, signed from the source sign column"),
+    ("change_percent", "percent", "Index change percent as published"),
+):
+    _FIELDS.append(CatalogueField("tw_index_daily", _f, _f, _u, _d))
+for _group in ("whole_market", "stocks"):
+    for _key in ("advancers", "decliners", "limit_up", "limit_down", "unchanged", "untraded", "no_comparison"):
+        _FIELDS.append(CatalogueField("tw_market_breadth_daily", f"{_group}_{_key}", f"{_group}_{_key}",
+                                      "securities", f"TWSE {_group.replace('_', ' ')} {_key.replace('_', ' ')} count"))
 
 _SPEC_BY_NAME: dict[str, DatasetSpec] = {spec.name: spec for spec in DATASET_SPECS}
 _FIELD_BY_KEY: dict[tuple[str, str], CatalogueField] = {(f.dataset, f.field): f for f in _FIELDS}
@@ -328,6 +410,35 @@ def iso_utc(dt: datetime) -> str:
     return dt.astimezone(_UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_STATUTORY_QUARTER_DEADLINE = {3: (5, 15), 6: (8, 14), 9: (11, 14), 12: (3, 31)}
+
+
+def statutory_available_date(dataset: str, event_date: Any) -> date | None:
+    """Statutory publication deadline for slow fundamental datasets, else ``None``.
+
+    Monthly revenue is due on the 10th of the month after the revenue month. Quarterly
+    statements are due May 15 (Q1), Aug 14 (Q2), Nov 14 (Q3) and, for the annual report
+    covering Q4, Mar 31 of the next year. A fixed day offset cannot express the annual
+    deadline (Dec 31 + 90 days is Mar 30 in a leap year), so the date is explicit.
+    """
+    if dataset not in ("tw_monthly_revenue", "tw_quarterly_statements"):
+        return None
+    event = date.fromisoformat(str(event_date)[:10])
+    if dataset == "tw_monthly_revenue":
+        year, month = (event.year + 1, 1) if event.month == 12 else (event.year, event.month + 1)
+        return date(year, month, 10)
+    quarter_end_month = 3 * ((event.month - 1) // 3 + 1)
+    month, day = _STATUTORY_QUARTER_DEADLINE[quarter_end_month]
+    return date(event.year + 1 if quarter_end_month == 12 else event.year, month, day)
+
+
+def statutory_available_time(dataset: str, event_date: Any, *, hour: int = 18) -> datetime | None:
+    deadline = statutory_available_date(dataset, event_date)
+    if deadline is None:
+        return None
+    return parse_time(iso_utc(datetime.combine(deadline, time(hour, 0), tzinfo=_TAIPEI)))
+
+
 def default_available_time(event_date: str, lag_days: int, *, hour: int = 18) -> str:
     """Conservative availability: ``event_date + lag_days`` at ``hour``:00 Asia/Taipei."""
     d = date.fromisoformat(event_date[:10]) + timedelta(days=lag_days)
@@ -371,6 +482,8 @@ def observations_from_row(
     are missing are skipped rather than imputed.
     """
     spec = get_dataset_spec(dataset)
+    if dataset in MARKET_CHIP_DATASETS:
+        raise FeatureCatalogueError("market chip observations require market_chip_observations completeness checks")
     if spec.venue and str(row.get("venue") or "").upper() != spec.venue.upper():
         return []
     if row.get("dataset") not in (None, spec.normalized_dataset, dataset):
@@ -396,10 +509,10 @@ def observations_from_row(
     for f in catalogue_fields():
         if f.dataset != dataset:
             continue
-        if spec.key_kind == "series" and row.get("field") not in (None, f.field):
+        if spec.key_kind == "series" and dataset not in REGIME_DATASETS and row.get("field") not in (None, f.field):
             continue
         lag = lag_days_for(dataset, f.field)
-        value = _row_value(spec, f, row) if spec.key_kind != "series" else _number(row.get("value"))
+        value = _row_value(spec, f, row) if spec.key_kind != "series" or dataset in REGIME_DATASETS else _number(row.get("value"))
         if value is None:
             continue
         avail_raw = row.get("available_time")
@@ -408,7 +521,10 @@ def observations_from_row(
             lag = row_lag
         avail = parse_time(avail_raw) if (avail_raw and len(str(avail_raw)) > 10) else None
         floor = parse_time(default_available_time(event_date, lag))
-        if avail is None or (lag > 0 and avail < floor):
+        statutory = statutory_available_time(dataset, event_date)
+        if statutory is not None and statutory > floor:
+            floor = statutory
+        if avail is None or ((lag > 0 or statutory is not None) and avail < floor):
             avail = floor
         out.append(
             {
@@ -417,7 +533,7 @@ def observations_from_row(
                 "field": f.field,
                 "entity": entity,
                 "event_time": event_date,
-                "available_time": iso_utc(avail),
+                "available_time": avail.isoformat().replace("+00:00", "Z") if dataset == "tw_industry_classification" else iso_utc(avail),
                 "ingest_time": str(ingest),
                 "availability_lag_days": lag,
                 "value": value,
@@ -426,6 +542,169 @@ def observations_from_row(
     if spec.key_kind == "series" and not out:
         return []
     return out
+
+
+def market_chip_observations(
+    dataset: str, rows: Iterable[Mapping[str, Any]], *,
+    required_entities: Sequence[str] | None = None,
+    record_cap: int = 500, truncated: bool = False,
+) -> dict[str, Any]:
+    """Convert one session only, with a recorded fail-closed completeness result.
+
+    Equity entities are canonical venue-qualified symbols supplied by the caller's
+    governed universe, never inferred from the returned slice. TAIFEX's governed
+    sets are the six TX/MTX investor cells or the single TXO market row. Run this
+    separately for each session in a historical response. A saturated cap cannot
+    prove completeness, even when the requested subset happens to be present.
+    Raw normalized rows and their raw_row values are never changed.
+    """
+    if dataset not in MARKET_CHIP_DATASETS:
+        raise FeatureCatalogueError(f"unsupported market chip dataset: {dataset}")
+    items = list(rows)
+
+    def withheld(reason: str, **details: Any) -> dict[str, Any]:
+        return {"dataset": dataset, "status": "withheld", "reason": reason,
+                "observations": [], **details}
+
+    if isinstance(record_cap, bool) or not isinstance(record_cap, int) or record_cap <= 0:
+        raise FeatureCatalogueError("record_cap must be a positive integer")
+    if truncated or len(items) >= record_cap:
+        return withheld("record_cap_prevents_complete_market", record_cap=record_cap, received=len(items))
+    if not items:
+        return withheld("missing_session_rows")
+    if any(not isinstance(row, Mapping) for row in items):
+        return withheld("malformed_session_rows")
+    dates = set()
+    for row in items:
+        event = str(row.get("date") or "")
+        try:
+            if len(event) != 10 or date.fromisoformat(event).isoformat() != event:
+                return withheld("missing_or_invalid_source_event_time")
+        except ValueError:
+            return withheld("missing_or_invalid_source_event_time")
+        if row.get("dataset") != MARKET_CHIP_DATASETS[dataset]:
+            return withheld("source_dataset_mismatch")
+        dates.add(event)
+    if len(dates) != 1:
+        return withheld("mixed_session_rows")
+    day = dates.pop()
+    values: dict[str, float] = {}
+    constituents = []
+    if dataset in {"tw_market_margin_balances", "tw_market_institutional_flows"}:
+        entities = set(required_entities or ())
+        if not entities or any(not isinstance(e, str) or not e.endswith((".TWSE", ".TPEX")) for e in entities):
+            return withheld("governed_entity_set_missing")
+        by_entity = {}
+        for row in items:
+            entity = str(row.get("symbol_canonical") or "")
+            if entity in by_entity:
+                return withheld("duplicate_entity_rows", entity=entity)
+            by_entity[entity] = row
+        if entities - by_entity.keys():
+            return withheld("incomplete_governed_entity_set", missing_entities=sorted(entities - by_entity.keys()))
+        constituents = [by_entity[e] for e in sorted(entities)]
+        for f in catalogue_fields():
+            if f.dataset != dataset:
+                continue
+            nums = [_number(row.get(f.source_field)) for row in constituents]
+            if any(v is None or not math.isfinite(v) for v in nums):
+                return withheld("missing_or_invalid_constituent_value", field=f.field)
+            try:
+                values[f.field] = math.fsum(nums)
+            except OverflowError:
+                return withheld("nonfinite_market_total")
+    elif dataset == "taifex_market_positions":
+        investor_names = {"外資及陸資": "foreign", "外資": "foreign", "投信": "trust", "自營商": "dealer",
+                          "foreign_investors": "foreign", "investment_trust": "trust", "dealers": "dealer"}
+        by_entity = {}
+        for row in items:
+            contract = str(row.get("contract") or "").lower()
+            investor = investor_names.get(str(row.get("participant_group") or ""))
+            if contract not in {"tx", "mtx"} or investor is None:
+                return withheld("ungoverned_contract_or_investor")
+            entity = f"{contract}_{investor}_net_open_interest"
+            if entity in by_entity:
+                return withheld("duplicate_entity_rows", entity=entity)
+            raw = row.get("raw_row") or {}
+            if not isinstance(raw, Mapping):
+                return withheld("malformed_source_row")
+            # The legacy adapter defaults absent numbers to zero. Require the
+            # actual source net field before admitting that normalized value.
+            reported = next((raw[k] for k in ("OpenInterest(Net)", "多空未平倉口數淨額", "NetOpenInterest", "net_oi") if k in raw), None)
+            number = _number(reported)
+            if number is None or not math.isfinite(number) or number != _number(row.get("net_open_interest")):
+                return withheld("missing_or_invalid_constituent_value", field=entity)
+            by_entity[entity] = row
+            values[entity] = number
+        expected = {f.field for f in catalogue_fields() if f.dataset == dataset}
+        if expected != set(by_entity):
+            return withheld("incomplete_governed_entity_set", missing_entities=sorted(expected - by_entity.keys()))
+        constituents = list(by_entity.values())
+        entities = set(by_entity)
+    elif dataset == "taifex_market_tx_daily":
+        # Regular session only: after-hours rows carry no settlement or open interest.
+        # Weekly (W) and spread months are not part of the monthly front-month series.
+        tx = [r for r in items if r.get("contract") == "TX" and r.get("trading_session") == "regular"
+              and r.get("contract_month_kind") == "monthly"]
+        if not tx:
+            return withheld("missing_tx_regular_monthly_rows")
+        by_month: dict[str, Mapping[str, Any]] = {}
+        for row in tx:
+            month = str(row.get("contract_month") or "")
+            if len(month) != 6 or not month.isdigit():
+                return withheld("malformed_source_row")
+            if month in by_month:
+                return withheld("duplicate_entity_rows", entity=month)
+            raw = row.get("raw_row") or {}
+            if not isinstance(raw, Mapping):
+                return withheld("malformed_source_row")
+            oi = _number(raw.get("OpenInterest"))
+            if oi is None or not math.isfinite(oi) or oi != _number(row.get("open_interest")):
+                return withheld("missing_or_invalid_constituent_value", field="tx_total_open_interest", entity=month)
+            by_month[month] = row
+        front = by_month[min(by_month)]
+        raw = front.get("raw_row") or {}
+        settle = _number(raw.get("SettlementPrice"))
+        # Never fall through to a later month when the front month is unpriced.
+        if settle is None or not math.isfinite(settle) or settle <= 0 or settle != _number(front.get("settlement_price")):
+            return withheld("front_month_settlement_missing", entity=min(by_month))
+        values["tx_front_month_settlement_price"] = settle
+        values["tx_total_open_interest"] = math.fsum(_number(r["open_interest"]) for r in by_month.values())
+        constituents = list(by_month.values())
+        entities = {f"TX{m}" for m in by_month}
+    else:
+        if len(items) != 1 or items[0].get("contract") != "TXO":
+            return withheld("incomplete_or_duplicate_txo_market_row")
+        constituents = items
+        entities = {"TXO"}
+        raw = items[0].get("raw_row") or {}
+        if not isinstance(raw, Mapping):
+            return withheld("malformed_source_row")
+        # Use the two distinct published ratios. The adapter's legacy
+        # put_call_ratio field represents OI and cannot stand in for volume.
+        for f in catalogue_fields():
+            if f.dataset == dataset:
+                number = _number(raw.get(f.source_field))
+                if number is None or not math.isfinite(number):
+                    return withheld("missing_or_invalid_constituent_value", field=f.field)
+                values[f.field] = number
+    if any(not math.isfinite(v) for v in values.values()):
+        return withheld("nonfinite_market_total")
+    try:
+        if any(not row.get("available_time") or not row.get("ingest_time") for row in constituents):
+            return withheld("missing_point_in_time_provenance")
+        available = max(max(parse_time(row["available_time"]), parse_time(row["ingest_time"]),
+                            parse_time(default_available_time(day, 0))) for row in constituents)
+        ingest = max(parse_time(row["ingest_time"]) for row in constituents)
+    except (ValueError, TypeError):
+        return withheld("invalid_point_in_time_provenance")
+    observations = [{"schema_version": FEATURE_OBSERVATION_SCHEMA_VERSION,
+                     "dataset": dataset, "field": field, "entity": "TW", "event_time": day,
+                     "available_time": iso_utc(available), "ingest_time": iso_utc(ingest),
+                     "availability_lag_days": lag_days_for(dataset, field), "value": value,
+                     "constituent_entities": sorted(entities)} for field, value in sorted(values.items())]
+    return {"dataset": dataset, "status": "complete", "reason": "governed_session_complete",
+            "observations": observations}
 
 
 def read_feature_series(
@@ -460,6 +739,9 @@ def read_feature_series(
             continue
         if event + timedelta(days=row_lag) > decision:
             continue
+        statutory = statutory_available_time(dataset, obs["event_time"])
+        if statutory is not None and statutory > decision:
+            continue
         visible.append(dict(obs))
     visible.sort(
         key=lambda o: (parse_time(o["event_time"]), parse_time(o["available_time"]), str(o.get("ingest_time") or ""))
@@ -483,9 +765,17 @@ def feature_inputs_for_factor_rule(
     *,
     decision_time: Any,
     entity: str | None = None,
+    sector_entities: Sequence[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Build the ``features`` mapping for a factor rule from governed observations."""
     obs_list = list(observations)
+    if any(item.get("dataset") == "tw_sector_flows" for item in inputs):
+        from services.registry.sector_features import sector_flow_observations
+
+        obs_list = [o for o in obs_list if o.get("dataset") != "tw_sector_flows"]
+        obs_list.extend(sector_flow_observations(
+            obs_list, decision_time=decision_time, required_entities=sector_entities,
+        ))
     features: dict[str, list[dict[str, Any]]] = {}
     for item in inputs:
         series = read_feature_series(

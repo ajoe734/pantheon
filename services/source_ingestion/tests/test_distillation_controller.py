@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
+import copy
+from dataclasses import replace
 import pytest
 
 from services.source_ingestion.connectors.base import SourceRecord, SourceRecordStatus
@@ -41,10 +44,123 @@ class DummyLoopWriter:
         self.failures.append(kwargs)
 
 
+def _replay_fixture(tmp_path):
+    from services.source_ingestion.distillation_worker import (
+        DistillationJob, RegistrySyncRequest, _synthesize_evidence_item,
+        _synthesize_evidence_bundle,
+    )
+    from services.source_ingestion.strategy_seed_builder import StrategySpecSeedBuilder
+
+    source = _normalized_source(tenant_id="test")
+    digest = source_version_digest(source)
+    job = DistillationJob(
+        job_id="distill-fixture", source_id=source.source_id, idempotency_key=digest,
+        status=DistillationJobStatus.LEASED, source_digest=digest,
+        enqueued_at="2026-11-13T00:00:00Z",
+    )
+    item = _synthesize_evidence_item(source, digest)
+    bundle = _synthesize_evidence_bundle(source, item, digest)
+    seed = StrategySpecSeedBuilder().build_seed(
+        bundle, source_records=[source], evidence_items=[item],
+        created_at="2026-11-18T00:00:00Z",
+    )
+    request = RegistrySyncRequest(source, seed, job, item, bundle, digest)
+    config = DistillationControllerConfig(
+        database_url="unused", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state", alive_path=None,
+        job_queue_path=tmp_path / "queue", seed_store_path=tmp_path / "seeds",
+        evidence_store_path=tmp_path / "evidence", source_dirs=[],
+    )
+    return request, config
+
+
+def _stored_draft(payload):
+    entry = copy.deepcopy(payload)
+    entry["artifact_type"] = "strategy_spec"
+    entry["metadata"]["strategy_spec"] = entry.pop("strategy_spec")
+    return {"entry": entry}
+
+
+@pytest.mark.parametrize("timestamp", [
+    "2026-11-13T15:17:11Z", "2026-11-13T20:31:43Z", "2026-11-13T20:28:30Z",
+])
+@pytest.mark.parametrize("write_race", [False, True])
+def test_registry_replay_recovers_only_retained_creation_time(tmp_path, monkeypatch, timestamp, write_race):
+    from services.source_ingestion.distillation_controller import (
+        _build_registry_payload, _make_registry_sync, _registry_entry_matches_expected,
+        _versioned_registry_id,
+    )
+    request, config = _replay_fixture(tmp_path)
+    registry_id = _versioned_registry_id(request.source, request.job)
+    original = _build_registry_payload(
+        request=replace(request, seed=replace(request.seed, created_at=timestamp)),
+        registry_id=registry_id,
+    )
+    stored = _stored_draft(original)
+    before = copy.deepcopy(stored)
+    later = _build_registry_payload(request=request, registry_id=registry_id)
+    assert not _registry_entry_matches_expected(stored, later)
+    reads = iter([None, stored] if write_race else [stored])
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", lambda *a: next(reads))
+    posts = []
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", lambda *a: posts.append(a))
+    result = _make_registry_sync(config)(request)
+    assert result.status == ("synced" if write_race else "already_terminal")
+    assert result.checksum == original["checksum"] != later["checksum"]
+    assert len(posts) == int(write_race)
+    assert stored == before
+    assert request.seed.created_at == "2026-11-18T00:00:00Z"
+
+
+@pytest.mark.parametrize("field", [
+    "tenant_id", "source_digest", "source_event_version", "distillation_job_id",
+    "checksum", "strategy_id", "producer_run_id", "lineage", "storage_ref",
+    "evaluation_summary", "spec_content", "missing_timestamp", "invalid_timestamp",
+    "naive_timestamp", "unversioned", "non_draft",
+])
+def test_registry_replay_rejects_real_conflict(tmp_path, monkeypatch, field):
+    from services.source_ingestion.distillation_controller import (
+        _build_registry_payload, _make_registry_sync, _versioned_registry_id,
+    )
+    request, config = _replay_fixture(tmp_path)
+    registry_id = _versioned_registry_id(request.source, request.job)
+    original = _build_registry_payload(
+        request=request, registry_id=registry_id, created_at="2026-11-13T15:17:11Z",
+    )
+    stored = _stored_draft(original)
+    entry = stored["entry"]
+    meta = entry["metadata"]
+    if field == "tenant_id":
+        meta[field] = "other-tenant"
+    elif field in {"source_digest", "source_event_version", "distillation_job_id"}:
+        meta["distillation"][field] = "different"
+    elif field == "spec_content":
+        meta["strategy_spec"]["title"] = "different"
+    elif field.endswith("timestamp"):
+        meta["strategy_spec"]["provenance"]["created_at"] = {
+            "missing_timestamp": None, "invalid_timestamp": "invalid",
+            "naive_timestamp": "2026-11-13T15:17:11",
+        }[field]
+    elif field == "unversioned":
+        request = replace(request, job=replace(request.job, source_digest=""), version_key=None)
+        # Keep the lookup identity consistent with this legacy job.
+        entry["registry_id"] = _versioned_registry_id(request.source, request.job)
+    elif field == "non_draft":
+        entry["artifact_state"] = "candidate"
+    else:
+        entry[field] = "different"
+    before = copy.deepcopy(stored)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", lambda *a: stored)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", lambda *a: pytest.fail("must not overwrite conflict"))
+    with pytest.raises(RuntimeError, match="conflicting"):
+        _make_registry_sync(config)(request)
+    assert stored == before
+
+
 def _normalized_source(
     source_id: str = "src-tw-001",
     title: str = "LightGBM TW equity momentum factor paper",
-    source_type: str = "paper",
+    source_type: str = "internal_note",
     trust_score: float = 0.8,
     **metadata_overrides: Any,
 ) -> SourceRecord:
@@ -601,12 +717,14 @@ def test_controller_redrives_transient_dead_letters_after_registry_recovers(tmp_
     monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
     monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
 
+    # Retry pending: delivery is degraded (a failed tick).
     with pytest.raises(Exception, match="degraded"):
         run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
 
-    # Registry outage persists: still degraded, nothing redriven.
-    with pytest.raises(Exception, match="degraded"):
-        run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    # Retries exhausted: only a dead letter remains, which is working with an
+    # unresolved dead letter, not a failed tick; nothing is redriven.
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
 
     registry["up"] = True
     res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
@@ -1308,3 +1426,353 @@ def test_controller_tick_internal_note_syncs_while_market_skips_and_approved_row
 
 
 
+
+
+def test_card_dataset_binding_from_env_is_reference_only_and_fail_closed() -> None:
+    """HYPOTHESIS-CARD-GOVERNED-BINDING-20261125: an unconfigured or non-governed binding fails closed with a
+    readable reason; a fixed symbol list is neither required nor read."""
+    from services.source_ingestion.distillation_controller import card_binding_status, card_dataset_binding_from_env
+
+    assert card_dataset_binding_from_env({}) is None
+    assert card_binding_status({}) == {
+        "status": "unconfigured", "dataset_id": None,
+        "reason": "card_binding_unconfigured:PANTHEON_L2_CARD_DATASET_ID is not set"}
+    # The old persona-dataset fallback and symbol list no longer bind anything.
+    legacy = {"PERSONA_POOL_SOURCE_DATASET_ID": "dataset:x", "PANTHEON_L2_CARD_SYMBOLS": "2330.TW, 2317.TW"}
+    assert card_dataset_binding_from_env(legacy) is None
+    refused = card_binding_status({"PANTHEON_L2_CARD_DATASET_ID": "dataset:x"})
+    assert refused["status"] == "unconfigured"
+    assert refused["reason"].startswith("card_binding_not_governed_market:PANTHEON_L2_CARD_DATASET_ID='dataset:x'")
+    for governed in ("governed-market:tw-daily", "tw_price_daily", "gmd-2026-10-30-" + "a" * 40):
+        assert card_binding_status({"PANTHEON_L2_CARD_DATASET_ID": governed})["status"] == "bound"
+
+
+def test_card_binding_resolves_the_governed_boundary_once_per_day_and_fails_closed_without_store(tmp_path) -> None:
+    pytest.importorskip("pyarrow")
+    from datetime import date, timedelta
+
+    from services.research.tests.test_governed_market_dataset import row
+    from services.source_ingestion import distillation_controller as controller
+    from services.source_ingestion.daily_bars_store import DailyBarsStore
+
+    as_of = datetime(2026, 11, 25, 6, 0, tzinfo=timezone.utc)
+    store = DailyBarsStore(tmp_path / "store")
+    days, day = [], date(2026, 11, 24)
+    while len(days) < 70:
+        if day.weekday() < 5:
+            days.append(day.isoformat())
+        day -= timedelta(days=1)
+    for i, d in enumerate(sorted(days)):
+        # 2412 is illiquid (excluded by the boundary); 2330 and 2317 pass.
+        store.write_day(d, [row(s, d, 100.0 + i, traded_value=(100.0 if s == "2412.TW" else 9_000_000.0))
+                            for s in ("2330.TW", "2317.TW", "2412.TW")], ingest_run_id=f"r-{d}")
+    env = {"PANTHEON_L2_CARD_DATASET_ID": "governed-market:tw-daily", "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "store")}
+    controller._BINDING_CACHE.clear()
+    binding = controller.card_dataset_binding_from_env(env, as_of=as_of)
+    assert binding["symbols"] == ["2317.TW", "2330.TW"] and binding["scope"] == "all_governed_tw"
+    assert binding["dataset_id"].startswith("gmd-2026-11-24-") and "records" not in binding
+    assert binding["source_dataset_refs"] == [f"daily_bars:{binding['dataset_id']}"]
+    # Same job time -> same snapshot (replay-stable); today's late bars are never part of an earlier binding.
+    store.write_day("2026-11-25", [row(s, "2026-11-25", 200.0) for s in ("2330.TW", "2317.TW")], ingest_run_id="late")
+    controller._BINDING_CACHE.clear()
+    assert controller.card_dataset_binding_from_env(env, as_of=as_of) == binding
+    # A pinned snapshot is reproduced exactly.
+    pinned = {**env, "PANTHEON_L2_CARD_DATASET_ID": binding["dataset_id"]}
+    assert controller.card_dataset_binding_from_env(pinned, as_of=as_of)["dataset_id"] == binding["dataset_id"]
+    # Stale store relative to the job, and a missing store: fail closed with the store's reason; an unavailable
+    # result is kept only for the retry window, so a recovered store binds on the next attempt after it.
+    stale = controller.resolve_card_dataset_binding(as_of=as_of + timedelta(days=30), env=env)
+    assert stale["status"] == "unavailable" and "daily_bars_store_stale" in stale["reason"]
+    missing = controller.resolve_card_dataset_binding(
+        as_of=as_of, env={**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")})
+    assert missing["status"] == "unavailable" and "daily_bars_store_missing" in missing["reason"]
+    assert controller.card_dataset_binding_from_env(
+        {**env, "GOVERNED_MARKET_STORE_ROOT": str(tmp_path / "absent")}, as_of=as_of) is None
+    assert len(controller._BINDING_CACHE) <= controller._BINDING_CACHE_ENTRIES
+    recovered_root = tmp_path / "absent"
+    import shutil
+
+    shutil.copytree(tmp_path / "store", recovered_root)
+    absent_env = {**env, "GOVERNED_MARKET_STORE_ROOT": str(recovered_root)}
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "unavailable"  # window
+    for value in controller._BINDING_CACHE.values():  # the retry window passes
+        if "_retry_after" in value:
+            value["_retry_after"] = 0.0
+    assert controller.resolve_card_dataset_binding(as_of=as_of, env=absent_env)["status"] == "bound"
+
+
+AUTH_401_REASON = "registry_sync_failed: HTTPError: HTTP Error 401: Unauthorized"
+
+
+def _hosted_shape_auth_dead_letters(tmp_path):
+    """260 unresolved 401 dead letters: 153 latest of their source (15 of them
+    with a dead-lettered older version), 92 older with a done newer version."""
+    import sqlite3
+
+    queue = DistillationJobQueue(tmp_path / "job_queue.jsonl", default_max_attempts=3)
+    records = []
+
+    def dead(job):
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE distillation_outbox SET status='dead_letter', attempts=3, last_error=?, processed_at=1 WHERE job_id=?",
+                (AUTH_401_REASON, job.job_id),
+            )
+            conn.execute(
+                "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+                " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (job.job_id, event_id, job.source_id, job.source_digest, "{}", 3, AUTH_401_REASON, 1.0),
+            )
+
+    for i in range(138):  # latest only
+        rec = _normalized_source(f"only-{i}", tenant_id="test")
+        records.append(rec)
+        dead(queue.enqueue_source_record(rec, enqueued_at=100.0))
+    for i in range(15):  # older + newer both dead-lettered
+        old = _normalized_source(f"both-{i}", title="v1", tenant_id="test")
+        new = _normalized_source(f"both-{i}", title="v2", tenant_id="test")
+        records.append(new)
+        dead(queue.enqueue_source_record(old, enqueued_at=100.0))
+        dead(queue.enqueue_source_record(new, enqueued_at=200.0))
+    for i in range(92):  # older dead, newer already delivered
+        old = _normalized_source(f"done-{i}", title="v1", tenant_id="test")
+        new = _normalized_source(f"done-{i}", title="v2", tenant_id="test")
+        records.append(new)
+        dead(queue.enqueue_source_record(old, enqueued_at=100.0))
+        newjob = queue.enqueue_source_record(new, enqueued_at=200.0)
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute("UPDATE distillation_outbox SET status='done' WHERE job_id=?", (newjob.job_id,))
+    assert queue.dead_letter_count() == 260
+    return queue, records
+
+
+def test_controller_converges_hosted_shape_auth_dead_letters(tmp_path, monkeypatch) -> None:
+    queue, records = _hosted_shape_auth_dead_letters(tmp_path)
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text(
+        "".join(json.dumps({"record_type": "source_record", "payload": r.to_dict()}) + "\n" for r in records),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+        max_attempts=3,
+    )
+    state = ControllerState(
+        controller_id="test-controller",
+        controller_name="test-distillation-controller",
+        environment="test",
+        tenant_id="test",
+        deployment={"git_sha": "test-sha"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    registry = {"auth": False, "entries": {}, "gets": 0, "posts": 0, "posted_titles": []}
+
+    def get_entry(url, registry_id):
+        import urllib.error
+
+        registry["gets"] += 1
+        if not registry["auth"]:
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+        return registry["entries"].get(registry_id)
+
+    def register(url, payload):
+        registry["posts"] += 1
+        registry["posted_titles"].append((payload.get("metadata") or {}).get("source_title"))
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
+        registry["entries"][payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
+    mod = "services.source_ingestion.distillation_controller"
+    monkeypatch.setattr(f"{mod}._get_registry_entry", get_entry)
+    monkeypatch.setattr(f"{mod}._register_strategy_spec_if_absent", register)
+
+    # Credential still rejected: nothing is redriven, no write reaches the Registry.
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
+    assert queue.dead_letter_count() == 260
+    assert registry["posts"] == 0
+
+    registry["auth"] = True
+    registry["gets"] = 0
+    ticks = 0
+    per_tick_calls = []
+    size_before = (tmp_path / "job_queue.jsonl").stat().st_size
+    res = None
+    while ticks < 10:
+        ticks += 1
+        before = registry["gets"] + registry["posts"]
+        try:
+            res = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+        except Exception:
+            res = None
+        per_tick_calls.append(registry["gets"] + registry["posts"] - before)
+        if res is not None and res["status"] == "success" and not queue.dead_letter_count():
+            break
+    assert res is not None and res["status"] == "success", per_tick_calls
+    assert queue.dead_letter_count() == 0
+    assert queue.metrics()["dead_letter"] == 0
+    # 153 latest versions delivered exactly once; the 107 stale versions never written.
+    assert registry["posts"] == 153
+    assert max(per_tick_calls) <= 1 + 3 * 100  # probe + (get, post, readback) per job, 100-job catch_up
+    print("HOSTED_SHAPE ticks", ticks, "calls_per_tick", per_tick_calls, "posts", registry["posts"],
+          "size_before", size_before, "size_after", (tmp_path / "job_queue.jsonl").stat().st_size)
+
+
+def test_controller_does_not_redrive_auth_dead_letters_while_probe_rejected(tmp_path, monkeypatch) -> None:
+    queue, records = _hosted_shape_auth_dead_letters(tmp_path)
+    mod = "services.source_ingestion.distillation_controller"
+
+    def rejected(url, registry_id):
+        import urllib.error
+
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(f"{mod}._get_registry_entry", rejected)
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    held = run_controller_tick(config=config, state=state, store=store, writer=DummyLoopWriter())
+    assert held["controller_status"] == "working_with_unresolved_dead_letters"
+    assert queue.dead_letter_count() == 260
+
+
+def test_controller_bounded_admission_and_truthful_total_across_ticks(tmp_path, monkeypatch):
+    from services.source_ingestion.distillation_worker import RegistrySyncResult
+
+    monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    sources = [_normalized_source(f"source-{i}", tenant_id="test") for i in range(205)]
+    sources.extend([
+        _normalized_source("foreign", tenant_id="other"),
+        _normalized_source("market", tenant_id="test", source_type="market", collector_market_bundle=True),
+    ])
+    evidence_path.write_text("".join(json.dumps({"record_type": "source_record", "payload": s.to_dict()}) + "\n"
+                                     for s in sources))
+    config = DistillationControllerConfig(
+        database_url="postgresql://unused/test", registry_url="http://unused", interval_seconds=60,
+        max_ticks=1, state_path=tmp_path / "state.json", alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "queue.sqlite3", seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path, source_dirs=[],
+    )
+    state = ControllerState(controller_id="test-controller", controller_name="distillation",
+                            environment="test", tenant_id="test", deployment={"git_sha": "test-sha"})
+    writer = DummyLoopWriter()
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._make_registry_sync",
+                        lambda _: lambda request: RegistrySyncResult(registry_id=f"reg-{request.source.source_id}",
+                                                                    status="synced"))
+    queue = DistillationJobQueue(config.job_queue_path)
+    for size in (100, 100, 5, 0):
+        result = run_controller_tick(config=config, state=state, store=ControllerStateStore(config.state_path),
+                                     writer=writer, queue=queue)
+        assert result["status"] == "success"
+        assert result["reconcile"]["enqueued"] == size
+        assert result["reconcile"]["processed"] == size
+        assert len(result["desired"]["eligible_source_ids"]) == size
+        assert result["desired"]["eligible_source_count"] == 205
+        assert result["desired"]["eligible_source_ids_scope"] == "admission_batch"
+        assert writer.successes[-1]["desired_state"]["present"] is True
+        assert "205 eligible" in writer.successes[-1]["desired_state"]["summary"]
+    assert len(queue.list_all()) == 205
+    assert config.alive_path.exists()
+
+
+def test_lease_expired_dead_letters_wait_for_normal_work_and_status_is_truthful(
+    tmp_path, monkeypatch
+) -> None:
+    from services.source_ingestion import distillation_controller as ctl
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60, max_ticks=1, state_path=state_path,
+        alive_path=tmp_path / "alive", job_queue_path=tmp_path / "job_queue.jsonl",
+        seed_store_path=tmp_path / "seeds.jsonl", evidence_store_path=evidence_path,
+        source_dirs=[tmp_path], max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+    queue.enqueue_source_record(_normalized_source("src-oom-1", tenant_id="test"))
+    job = queue.claim_due(worker_id="w", lease_seconds=30, limit=1, tenant_id="test")[0]
+    queue.begin_job(job, lease_seconds=30)
+    queue.mark_retry_or_dead_letter(
+        job, error="lease_expired_repeatedly: 5 lease expiries",
+        base_delay_seconds=0, permanent=True,
+    )
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    monkeypatch.setattr(
+        "services.source_ingestion.distillation_controller._get_registry_entry",
+        lambda url, registry_id: (_ for _ in ()).throw(RuntimeError("registry down")),
+    )
+
+    # No normal work yet in this process: the dead letter is kept, the tick
+    # is working-with-dead-letters (not failed), health file and marker agree.
+    first = run_controller_tick(
+        config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue,
+    )
+    assert first["controller_status"] == "working_with_unresolved_dead_letters"
+    assert first["reconcile"]["lease_expired_redriven"] == 0
+    assert queue.dead_letter_count() == 1
+    assert state.consecutive_failures == 0 and state.last_failure_stage is None
+    assert config.alive_path.read_text().splitlines()[1] == "working_with_unresolved_dead_letters"
+
+    # After normal work completed in this process, it is redriven (bounded).
+    ctl._NORMAL_WORK_SEEN[str(config.job_queue_path)] = True
+    second = run_controller_tick(
+        config=config, state=state, store=store, writer=DummyLoopWriter(), queue=queue,
+    )
+    assert second["reconcile"]["lease_expired_redriven"] == 1
+    assert queue.dead_letter_count() == 0
+    import sqlite3
+    with sqlite3.connect(config.job_queue_path) as conn:
+        assert conn.execute("SELECT redrive_count FROM distillation_dead_letters").fetchone()[0] == 1

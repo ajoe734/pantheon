@@ -1565,3 +1565,146 @@ def test_infrastructure_open_keeps_producer_created_at_before_resolve():
     assert body["created_at"] < body["resolved_at"]
     stored = client.get("/api/incidents/infra-bff-open-time-001").json()
     assert stored["created_at"] == "2026-11-10T01:07:00Z"
+
+
+def test_consume_four_drift_reports_updates_summary_occurrences_and_timeline():
+    """INCIDENT-HUMAN-SUMMARY-AND-OCCURRENCES-20261120: four DriftReports for one
+    binding (cluster drift:drawdown; observed 9.609309450237793; threshold 1.25)
+    update occurrence_count, last_seen_at, and observed in place without growing
+    evidence_summary by appending whole reports, while keeping each report in the
+    incident timeline.
+    """
+    event_ids = [
+        "76586033-ad6a-4f09-ae0d-9a2e756617a5",
+        "0b7a8a43-5c02-403e-970f-1a637517a78a",
+        "94f2d4bb-75e5-4f50-ae40-53124d5872e7",
+        "bf92e54f-13a9-4a76-b7a2-875427646c5c",
+    ]
+    timestamps = [
+        "2026-11-18T11:36:14Z",
+        "2026-11-18T12:36:14Z",
+        "2026-11-18T13:36:14Z",
+        "2026-11-18T14:36:14Z",
+    ]
+    observed_values = [
+        9.100000000000000,
+        9.300000000000000,
+        9.500000000000000,
+        9.609309450237793,
+    ]
+    incident_id = None
+    for idx, (eid, ts, obs) in enumerate(zip(event_ids, timestamps, observed_values)):
+        payload = _drift_report_payload(
+            drift_report_id=f"drift-{eid}-drawdown",
+            recon_run_id=f"recon-{eid}",
+            incident_cluster_id="drift:drawdown",
+            binding_id="rb-3823397e125e4579ba5f4174067087ed",
+            scope_ref="rb-3823397e125e4579ba5f4174067087ed",
+            runtime_id="runtime-paper-persona-1",
+            telemetry_event_ids=[eid],
+            worst_metric="drawdown",
+            threshold_metric="rolling_drawdown_multiple",
+            observed=obs,
+            comparator="gt",
+            threshold_value=1.25,
+            threshold_window="paper-daily-sweep",
+            policy_source=(
+                "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; "
+                "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/"
+                "EVOLOOP-005-governed-baselines.md#governance-decision"
+            ),
+            evidence_refs=[
+                f"telemetry_event:{eid}",
+                f"drift_report:drift-{eid}-drawdown",
+                f"reconciliation_record:recon-{eid}",
+            ],
+            generated_at=ts,
+        )
+        resp = client.post("/api/incidents/consume-drift-report", json={"drift_report": payload})
+        assert resp.status_code == (201 if idx == 0 else 200), resp.text
+        incident_id = resp.json()["incident_id"]
+
+    assert len(store.list_incidents()) == 1
+    detail = client.get(f"/api/incidents/{incident_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["kind"] == "drift"
+    assert body["metric"] == "rolling_drawdown_multiple"
+    assert body["observed"] == pytest.approx(9.609309450237793)
+    assert body["threshold"] == pytest.approx(1.25)
+    assert body["comparator"] == "gt"
+    assert body["occurrence_count"] == 4
+    assert body["first_seen_at"] == "2026-11-18T11:36:14Z"
+    assert body["last_seen_at"] == "2026-11-18T14:36:14Z"
+    assert body["summary_key"] == "incident.summary.drift_threshold_breach"
+    assert body["summary"] == "Observed rolling drawdown multiple 9.61 (> 1.25) across 4 occurrences."
+    assert body["evidence_summary"].count("DriftReport drift-") == 1
+    assert f"DriftReport drift-{event_ids[-1]}-drawdown" in body["evidence_summary"]
+    assert f"DriftReport drift-{event_ids[0]}-drawdown" not in body["evidence_summary"]
+    assert len(body["timeline"]) == 4
+    assert [entry["source_ref"] for entry in body["timeline"]] == [
+        f"drift-{eid}-drawdown" for eid in event_ids
+    ]
+
+
+def test_resolve_retired_binding_resolves_only_open_drift_incidents():
+    drift = client.post("/api/incidents/consume-drift-report", json={"drift_report": _drift_report_payload()})
+    assert drift.status_code in (200, 201), drift.text
+    drift_id = drift.json()["incident_id"]
+    other = client.post("/api/incidents", json={**_BASE_PAYLOAD, "binding_id": "binding-drift-001"})
+    assert other.status_code in (200, 201), other.text
+    other_id = other.json()["incident_id"]
+
+    resp = client.post(
+        "/api/incidents/resolve-retired-binding",
+        json={"binding_id": "binding-drift-001", "retired_at": "2026-11-18T07:00:00Z"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resolved_incident_ids"] == [drift_id]
+    assert body["resolution_reason"] == "runtime_binding_retired"
+    resolved = client.get(f"/api/incidents/{drift_id}").json()
+    assert resolved["status"] == "resolved"
+    assert "runtime_binding_retired" in json.dumps(resolved)
+    assert client.get(f"/api/incidents/{other_id}").json()["status"] == "open"
+
+    again = client.post("/api/incidents/resolve-retired-binding", json={"binding_id": "binding-drift-001"})
+    assert again.json()["resolved_incident_ids"] == []
+
+
+def test_incident_delivery_read_timeout_empty_message_is_recorded_and_bounded(monkeypatch):
+    import asyncio
+    from unittest.mock import patch
+
+    import httpx
+
+    import services.incidents.main as main_mod
+    from services.incidents.main import outbox_store
+
+    monkeypatch.setenv("INCIDENTS_OUTBOX_BACKOFF_BASE_SECONDS", "0")
+    monkeypatch.setenv("INCIDENTS_OUTBOX_MAX_ATTEMPTS", "3")
+    created = client.post("/api/incidents", json={**_BASE_PAYLOAD, "incident_id": "inc-timeout-empty"})
+    assert created.status_code == 201, created.text
+    resolved = client.post("/api/incidents/inc-timeout-empty/status", json={"status": "resolved"})
+    assert resolved.status_code == 200, resolved.text
+
+    with patch("httpx.AsyncClient.post", side_effect=httpx.ReadTimeout("")) as mock_post:
+        for expected in (1, 2):
+            asyncio.run(main_mod.process_incidents_outbox())
+            records = [r for r in outbox_store.list_pending_and_failed()]
+            assert len(records) == 1
+            assert records[0].delivery_attempts == expected
+            assert records[0].status == "failed"
+            assert records[0].last_error == "ReadTimeout"
+        asyncio.run(main_mod.process_incidents_outbox())
+        assert mock_post.call_count == 3
+        assert outbox_store.list_pending_and_failed() == []
+
+
+def test_outbox_describe_exception_never_empty():
+    import httpx
+
+    from services.foundation.outbox import describe_exception
+
+    assert describe_exception(httpx.ReadTimeout("")) == "ReadTimeout"
+    assert describe_exception(ValueError("x")) == "ValueError: x"

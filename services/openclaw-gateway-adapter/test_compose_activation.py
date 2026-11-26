@@ -18,8 +18,8 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["PORT"] == "8104"
     assert adapter["environment"]["OPENCLAW_GATEWAY_URL"] == "http://openclaw-gateway:18789"
     assert (
-        adapter["environment"]["OPENCLAW_PRIMARY_MODEL"]
-        == "${OPENCLAW_PRIMARY_MODEL:-openai/gpt-5.6-sol}"
+        adapter["environment"]["OPENCLAW_MODEL_CHAIN"]
+        == "${OPENCLAW_MODEL_CHAIN:-}"
     )
     assert adapter["environment"]["OPENCLAW_UPSTREAM_RETRIES"] == "${OPENCLAW_UPSTREAM_RETRIES:-1}"
     assert adapter["environment"]["OPENCLAW_PRODUCTION_BROKER_ENABLED"] == "false"
@@ -52,7 +52,8 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
         "GOOGLE_GEMINI_CLI_NPM_VERSION": "0.51.0",
     }
     upstream_command = " ".join(upstream["command"])
-    assert "config set gateway.http.endpoints.responses.enabled true --json" in upstream_command
+    assert "config patch --stdin" in upstream_command
+    assert "gateway\":{\"http\":{\"endpoints\":{\"responses\":{\"enabled\":true" in " ".join(str(v) for v in upstream["environment"].values())
     assert 'exec node dist/index.js gateway --allow-unconfigured' in upstream_command
     assert '"$$OPENCLAW_GATEWAY_TOKEN"' in upstream_command
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
@@ -149,20 +150,11 @@ def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:
     assert f'image_ref: str = "{upstream_image}"' in runtime
     assert f'IMAGE="{upstream_image}"' in smoke
 
-    expected_models = {
-        "openai/gpt-5.6-sol",
-        "openai/gpt-5.5",
-        "anthropic/claude-opus-4-8",
-        "anthropic/claude-sonnet-4-6",
-        "google/gemini-3.1-pro-preview",
-    }
-    assert all(model_ref in model_pool for model_ref in expected_models)
+    # The script names no model; the chain is a deployment variable.
+    assert "OPENCLAW_MODEL_CHAIN" in model_pool
+    assert "agents.defaults.model.primary" in model_pool
     assert "plugins.entries.codex.enabled" in model_pool
     assert "plugins.entries.google.enabled" in model_pool
     assert '"path":"gateway.http.endpoints.responses.enabled","value":true' in model_pool
-    assert (
-        '{"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"}'
-        in model_pool
-    )
     assert 'openclaw config get agents.defaults.model.primary --json' in model_pool
     assert "openclaw-configure-shared-model-pool.sh" in deploy

@@ -13,7 +13,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 # Runtime validation must not create the bytecode it is about to inspect.
 # The supervisor also exports PYTHONDONTWRITEBYTECODE, but this executable is a
@@ -520,6 +520,7 @@ def bind_worker_sandbox(
     extra_readonly_roots: Iterable[Path | str] | None = None,
     sandbox_binary: str | None = None,
     read_only_worktree: bool = False,
+    worker_temp_dir: Path | str | None = None,
 ) -> list[str]:
     """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
 
@@ -568,6 +569,11 @@ def bind_worker_sandbox(
         p = Path(tmp_dir)
         if p.exists() and p.is_dir():
             bwrap_cmd.extend(["--bind-try", str(p), str(p)])
+
+    if worker_temp_dir:
+        wt = Path(worker_temp_dir).expanduser().resolve()
+        if wt.is_dir():
+            bwrap_cmd.extend(["--bind-try", str(wt), str(wt)])
 
     try:
         uid = os.getuid()
@@ -1108,6 +1114,22 @@ def validate_worker_entry_binding(
                 isinstance(bridge, dict) and bridge.get("work_class") in {"security", "hosted", "live"})}
 
 
+def build_worker_child_env(
+    base_env: Mapping[str, str], worker_temp_dir: Path, agent: str
+) -> dict[str, str]:
+    """Child environment: private temp dir plus the canonical agent identity.
+
+    `PANTHEON_WORKER_AGENT` lets the commit path refuse an `LLM-Agent` trailer
+    that names anyone else (scripts/git/worker_commit.py).
+    """
+
+    child_env = dict(base_env)
+    for var in ("TMPDIR", "TMP", "TEMP"):
+        child_env[var] = str(worker_temp_dir)
+    child_env["PANTHEON_WORKER_AGENT"] = str(agent)
+    return child_env
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -1256,12 +1278,17 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, forward_signal)
     signal.signal(signal.SIGINT, forward_signal)
 
+    worker_temp_dir: Path | None = None
     try:
         # Only a canonically bound wrapper may publish this receipt. Once
         # bound, startup failures use the same terminal path as child failures.
         publish("starting")
         command = bind_relative_command_to_runtime(command, command_root)
         status["command"] = command
+        from rewrite import worker_workspace as _ww
+        worker_temp_dir = _ww.create_worker_temp_dir(args.run_id, os.getpid())
+        status["worker_temp_dir"] = str(worker_temp_dir)
+        child_env = build_worker_child_env(os.environ, worker_temp_dir, agent)
         sandboxed_command = bind_worker_sandbox(
             command,
             command_root=command_root,
@@ -1269,6 +1296,7 @@ def main(argv: list[str] | None = None) -> int:
             coordination_root=coordination_root,
             read_only_worktree=binding["read_only_worktree"],
             extra_readonly_roots=binding["source_readonly_roots"],
+            worker_temp_dir=worker_temp_dir,
         )
         if workspace_path:
             os.chdir(workspace_path)
@@ -1287,6 +1315,7 @@ def main(argv: list[str] | None = None) -> int:
                 text=True,
                 cwd=str(workspace_path) if workspace_path else None,
                 start_new_session=True,
+                env=child_env,
             )
         status["child_pid"] = child.pid
         publish("running")
@@ -1470,6 +1499,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         signal.signal(signal.SIGTERM, orig_sigterm)
         signal.signal(signal.SIGINT, orig_sigint)
+        if worker_temp_dir is not None:
+            try:
+                _ww.remove_worker_temp_dir(worker_temp_dir)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

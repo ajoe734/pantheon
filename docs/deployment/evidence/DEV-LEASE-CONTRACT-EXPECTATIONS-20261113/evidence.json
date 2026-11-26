@@ -1,0 +1,345 @@
+{
+  "task_id": "DEV-LEASE-CONTRACT-EXPECTATIONS-20261113",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "local validation complete; frozen source evidence for assigned independent review",
+  "scope": [
+    "scripts/test_dev_environment_lease_deploy_contract.py",
+    "docs/deployment/evidence/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/evidence.json"
+  ],
+  "summary": "Repair existing lease-contract expectations to accepted conditional paper, pre_restore and provisioning coordinator contracts. No workflow/runtime change or deployment.",
+  "source": {
+    "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+    "frozen_base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+    "original_review_head": "1a70ff2e586389b8a054da71334f4945fc4a2b99",
+    "audit_sha256": "784c81a82f938082cb201b5936bb4b9d8901db83248ae64dc737b664a3d8e99e",
+    "frozen_base_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {"git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb", "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"},
+      ".github/workflows/nonprod-deploy.yml": {"git_blob": "c5e51cceb68fc8a4abcbfdcd49267a6321e83e5d", "sha256": "66cd2ea1a2460b96388b5362961102029662118e0323cc6987d851973eb94fcc"},
+      "scripts/deploy_nonprod_vm.sh": {"git_blob": "49a8e08d1040a315521d50c62f2717e519e34774", "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"},
+      "scripts/retire_dev_paper_release_cases.py": {"git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf", "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"},
+      "scripts/test_nonprod_dev_artifact_workflow.py": {"git_blob": "c77aa09b064f5857917967e13395e17966871df1", "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"},
+      "scripts/test_retire_dev_paper_release_cases.py": {"git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d", "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"}
+    },
+    "contract_origins": [
+      {
+        "commit": "42f5cac8e5e5f3a0bd4f34b35ebd5ea3b624a80b",
+        "task": "DEV-ROOT-PAPER-SCOPE-20261021",
+        "changed_paths": [
+          ".github/workflows/nonprod-deploy.yml",
+          "docs/deployment/evidence/DEV-ROOT-PAPER-SCOPE-20261021/evidence.json",
+          "scripts/test_nonprod_dev_artifact_workflow.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      },
+      {
+        "commit": "f459f58341bf32a1ff16f99d88b9b4a0da28cefe",
+        "task": "RETIRE-SCRIPT-USES-RETIRE-CASE-20261019",
+        "changed_paths": [
+          "docs/deployment/evidence/RETIRE-SCRIPT-USES-RETIRE-CASE-20261019/evidence.json",
+          "scripts/retire_dev_paper_release_cases.py",
+          "scripts/test_retire_dev_paper_release_cases.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      },
+      {
+        "commit": "b7d7137e3cae4a8ae0f8f1b1c070a9971efcb3cf",
+        "task": "DEV-CASE-RETIRE-BEFORE-RESTORE-20261107",
+        "changed_paths": [
+          ".github/workflows/nonprod-deploy.yml",
+          "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/evidence.json",
+          "docs/deployment/evidence/DEV-CASE-RETIRE-BEFORE-RESTORE-20261107/repair_plan.json",
+          "scripts/retire_dev_paper_release_cases.py",
+          "scripts/test_nonprod_dev_artifact_workflow.py",
+          "scripts/test_retire_dev_paper_release_cases.py"
+        ],
+        "legacy_lease_contract_test_updated": false
+      }
+    ],
+    "base_dev_files": {
+      "scripts/test_dev_environment_lease_deploy_contract.py": {"git_blob": "1926f2d9e76c1c53497e2089c7eae0534c0e7fbb", "sha256": "6a5123f8adfcd95111f7116d036c9ac0d46c66094b3ef12e0963664d062b1934"},
+      ".github/workflows/nonprod-deploy.yml": {"git_blob": "c6e7047a4891f9173c210fc4014800b1efd5b265", "sha256": "2cb43d370ecda119979976e523c47683d85f64a509b75db709f0259fe706e8fe"},
+      "scripts/deploy_nonprod_vm.sh": {"git_blob": "49a8e08d1040a315521d50c62f2717e519e34774", "sha256": "b12d29bea0e6c9c3c461670687347f8f8a00de41b22cbba9efa961827049ab37"},
+      "scripts/retire_dev_paper_release_cases.py": {"git_blob": "1948a6983b3b3abebfc6c2f4074ebed5f201b3bf", "sha256": "5632f60e90093e47a127825b70eb1910a8c59bc44cb40d54ea2015fc1fa30c43"},
+      "scripts/test_nonprod_dev_artifact_workflow.py": {"git_blob": "c77aa09b064f5857917967e13395e17966871df1", "sha256": "29b2f6217ceb988dc585a61b678ddd4a353f1c85191dda1ead648b0f95622b29"},
+      "scripts/test_retire_dev_paper_release_cases.py": {"git_blob": "ed7aeab5b38d8dcbcf1dfda16d80afcab020b65d", "sha256": "a05f2fbd16692e719da95e079bbadff3c74aa6b4466b51bc17542e2f73e22c6b"}
+    },
+    "validated_test_git_blob": "c8d8d5162505ff38b8066e73156c81bbd826f929",
+    "validated_test_sha256": "964c2ceb1a69e5329225873a9bbe7f311753b2fd68b60a5a3e0920d953b57fd3",
+    "unchanged_current_dev_paths": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/retire_dev_paper_release_cases.py",
+      "scripts/test_nonprod_dev_artifact_workflow.py",
+      "scripts/test_retire_dev_paper_release_cases.py"
+    ],
+    "review_base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+    "validation_provenance": "Historical 503-pass batch ran at a5ea2adf2 on b01bb8656; subsequent rebase onto 652d8d3c0 preserved all six tested source blobs. The historical validation record base_dev labels the later review base, not the execution base. Two BFF composition tests passed on the later base."
+  },
+  "baseline": {
+    "audit": {
+      "head": "1a70ff2e586389b8a054da71334f4945fc4a2b99",
+      "base": "ed84f639b50ba19a6a7b3f0ee9c878b08b4ab690",
+      "primary_log": {
+        "path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/coordination-root/.orchestrator/logs/20261113T030741774592Z-codex-codex1_4-bfa47c.log",
+        "observed_prefix_bytes": 484006,
+        "observed_prefix_sha256": "901a9d8464b1158e19ad174687ceacc5f202adce3a1e02f808824097f84b4177",
+        "full_batch": {
+          "lines": [
+            7138,
+            7328
+          ],
+          "byte_start": 460832,
+          "byte_end_exclusive": 473184,
+          "sha256": "7d0987f21013e2efbfc5dad2e384975db2eb6458d344994996fac249c879760f"
+        },
+        "frozen_base_control": {
+          "lines": [
+            7331,
+            7405
+          ],
+          "byte_start": 473190,
+          "byte_end_exclusive": 480221,
+          "sha256": "56eedbc0172a88914a75d925e3e0e94b4995e1ce2ce6b49000ef9f99716aca85"
+        },
+        "original_executor": "Actual configured Codex reviewer; not this auditor"
+      },
+      "recorded_results": {
+        "head_related_batch": "8 failed, 529 passed in150.77s",
+        "same8_frozen_base_control": "8 failed, 19 passed, 227 deselected in6.41s; unchanged test/deploy/retire verified",
+        "all_eight_in": "scripts/test_dev_environment_lease_deploy_contract.py",
+        "no_auditor_test_execution": true
+      },
+      "cases": [
+        {
+          "name": "test_provider_live_acceptance_is_not_a_dev_deployment_gate",
+          "class": "stale_literal",
+          "finding": "Still asserts six literal success values; actual complete_success uses success:success:${expected_paper}:success:success:success. Existing no-OpenClaw/provider-gate assertions passed; failure does not show a provider gate."
+        },
+        {
+          "name": "test_deployment_completion_retains_real_checks_without_provider_gate[None-root]",
+          "class": "stale_fixture",
+          "finding": "Fixture sets PAPER_BOOTSTRAP_OUTCOME=success but omits PAPER_BOOTSTRAP_REQUESTED. Actual helper defaults expected_paper=skipped unless explicitly requested, so returns false. Source has the applicability field bound at lease_cleanup env."
+        },
+        {
+          "name": "test_deployment_completion_retains_real_checks_without_provider_gate[None-auto]",
+          "class": "stale_fixture",
+          "finding": "Same missing applicability input as root case. bff no-failure case supplies skipped and was not in failing list; root/auto are not evidence that the runtime success path is broken."
+        },
+        {
+          "name": "test_all_third_party_actions_are_full_sha_pinned",
+          "class": "stale_cardinality",
+          "finding": "Fails only hardcoded checkout count6 versus actual7. Static inspection of frozen workflow finds all third-party uses refs full40hex; the existing subsequent per-ref validation is never reached after the obsolete count assertion."
+        },
+        {
+          "name": "test_dev_root_post_up_failure_rolls_back_to_captured_baseline_negative",
+          "class": "obsolete_applicability_predicate",
+          "finding": "Old assertion demands unconditional root/auto paper-bootstrap failure predicate. Actual compensation gates paper-bootstrap failure with PAPER_BOOTSTRAP_REQUESTED=true, matching scoped ordinary-code release behavior. Test aborts at string check before its later simulation."
+        },
+        {
+          "name": "test_restart_admission_removal_is_detected",
+          "class": "masked_mutation_oracle",
+          "finding": "The borrowed root completion fixture has the same missing applicability flag. Even replacing AGORA_OUTCOME by success remains false because unrequested paper success mismatches expected skipped; the negative assertion no longer discriminates restart removal. Actual workflow still folds AGORA_OUTCOME."
+        },
+        {
+          "name": "test_release_case_retirement_runs_after_both_compensation_paths",
+          "class": "obsolete_lifecycle_contract",
+          "finding": "Expects old accepted-or-compensated Admit cleanup and post-compensation Deploy retirement. Current workflow has candidate-only pre_restore retirement before restore and accepted-only cleanup after exact final verification; old later step-name/outcome assertions are stale too. No runtime rollback failure is demonstrated by this string mismatch."
+        },
+        {
+          "name": "test_release_case_retirement_uses_only_the_retire_action",
+          "class": "obsolete_owner_boundary_assertion",
+          "finding": "Demands old saga HTTP /retire literal. Existing helper intentionally composes BFF provisioning owner, gets retire_persona_provisioning_case and calls retire_case for the whole aggregate; no legacy HTTP fallback. Restoring the old URL would contradict the current owner boundary."
+        }
+      ],
+      "root_cause": "Workflow/helper contracts changed in their focused tests while this legacy lease-contract file independently encoded literals, old lifecycle ordering and a coupled fixture. Its duplicated assumptions were not updated, and the bad positive fixture also masks the restart negative oracle. These eight are real test-debt findings, not eight proven runtime defects.",
+      "action_pin_boundary": "The all40hex observation applies ONLY to third-party uses: action implementation SHAs (e.g. actions/checkout@34e...). It says NOTHING about each checkout with.ref repository revision. The independently documented controller with.ref:dev race is a real workflow defect; full-SHA-pinned action code does not pin the repository revision."
+    },
+    "original_reviewer_output": {
+      "full_batch": {
+        "sha256": "7d0987f21013e2efbfc5dad2e384975db2eb6458d344994996fac249c879760f",
+        "terminal_summary": "8 failed, 529 passed in 150.77s (0:02:30)",
+        "output_reference": {
+          "json_pointer": "/baseline/original_reviewer_output/full_batch/output",
+          "output_sha256": "7d0987f21013e2efbfc5dad2e384975db2eb6458d344994996fac249c879760f"
+        }
+      },
+      "frozen_base_control": {
+        "sha256": "56eedbc0172a88914a75d925e3e0e94b4995e1ce2ce6b49000ef9f99716aca85",
+        "terminal_summary": "8 failed, 19 passed, 227 deselected in 6.41s",
+        "output_reference": {
+          "json_pointer": "/baseline/original_reviewer_output/frozen_base_control/output",
+          "output_sha256": "56eedbc0172a88914a75d925e3e0e94b4995e1ce2ce6b49000ef9f99716aca85"
+        }
+      }
+    },
+    "reproductions": [
+      {
+        "label": "current-dev-before",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/.venv-pantheon/bin/python3 -m pytest -q /tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/scripts/test_dev_environment_lease_deploy_contract.py -k 'provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement_runs_after_both_compensation_paths or release_case_retirement_uses_only_the_retire_action' --tb=short -o addopts=",
+        "cwd": "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113",
+        "exit_code": 1,
+        "elapsed_seconds": 2.5,
+        "terminal_summary": "8 failed, 19 passed, 227 deselected in 1.95s",
+        "stdout_reference": {
+          "json_pointer": "/baseline/reproductions/0/stdout",
+          "output_sha256": "c956b072ad31dc017fb623300c97ef2b33902941a62a9ad57ffdfe3546a08c05"
+        }
+      },
+      {
+        "label": "frozen-base-control",
+        "command": "/tmp/pantheon-worker-worktrees/pantheon/dev-lease-contract-expectations-20261113/.venv-pantheon/bin/python3 -m pytest -q /tmp/lease-frozen-control-amqq5drm/scripts/test_dev_environment_lease_deploy_contract.py -k 'provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement_runs_after_both_compensation_paths or release_case_retirement_uses_only_the_retire_action' --tb=short -o addopts=",
+        "cwd": "/tmp/lease-frozen-control-amqq5drm",
+        "exit_code": 1,
+        "elapsed_seconds": 1.81,
+        "terminal_summary": "8 failed, 19 passed, 227 deselected in 1.31s",
+        "stdout_reference": {
+          "json_pointer": "/baseline/reproductions/1/stdout",
+          "output_sha256": "6c5f97a0ef3e3e392283bff8ba99b1833d513fae6b8606a898dde8ebc1c938c4"
+        }
+      }
+    ]
+  },
+  "implementation": [
+    "Completion exercises the maintained lease_cleanup shell with explicit requested and skipped paper for root/auto, and skipped BFF paper; all real failure checks retained.",
+    "Restart mutation first passes normal completion and true restart failure, then requires the precise erroneous true result after only AGORA_OUTCOME is replaced.",
+    "Validate all third-party action implementation uses pins without checkout cardinality assumptions. Repository with.ref is independent and its separate race is outside this scope/PR7290.",
+    "Rollback condition uses requested paper; existing compensation fixtures run the maintained compensation shell instead of a self-fulfilling Python simulation.",
+    "Use actual retirement step IDs and pre_restore ordering for inline, roundtrip, and rollback; accepted cleanup requires final verification. Execute coordinator helper with existing fixtures and check exact tenant/persona selection; no saga HTTP fallback.",
+    "Existing compensation truth-table fixture now explicitly requests paper for root/auto; paper-only failure rows are isolated from unrelated smoke failure."
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py -k 'provider_live_acceptance_is_not_a_dev_deployment_gate or deployment_completion_retains_real_checks_without_provider_gate or all_third_party_actions_are_full_sha_pinned or dev_root_post_up_failure_rolls_back_to_captured_baseline_negative or restart_admission_removal_is_detected or release_case_retirement or compensation_condition_truth_table' --tb=short",
+      "exit_code": 1,
+      "elapsed_seconds": 38.7,
+      "disposition": "Fixture SHA file included a newline; corrected comparisons with strip(), then complete lease file passed. This initial run is a real failure, not counted as passed.",
+      "terminal_summary": "1 failed, 61 passed, 212 deselected in 37.76s",
+      "stdout_reference": {
+        "json_pointer": "/validation/0/stdout",
+        "output_sha256": "a6c6ea85fd9fdf045cd786979ce656a3bbda733e5cb537cc6997ad3a1e594b88"
+      }
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py --tb=short",
+      "exit_code": 0,
+      "elapsed_seconds": 72.69,
+      "terminal_summary": "274 passed in 71.82s (0:01:11)",
+      "stdout_reference": {
+        "json_pointer": "/validation/1/stdout",
+        "output_sha256": "1e4af992f2da0d3fc253cad34e6f8026086b25e07d8c9f5fc923c704f5e37067"
+      }
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_retire_dev_paper_release_cases.py scripts/test_nonprod_dev_artifact_workflow.py --tb=short",
+      "exit_code": 0,
+      "elapsed_seconds": 50.93,
+      "terminal_summary": "229 passed, 2 warnings in 48.78s",
+      "stdout_reference": {
+        "json_pointer": "/validation/2/stdout",
+        "output_sha256": "c257b6bd3402f01ce652a1b2239f9494a1981a67883a93a495dc57660a18da23"
+      }
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py -k 'all_third_party_actions_are_full_sha_pinned or controller_checkout' --tb=short",
+      "exit_code": 0,
+      "elapsed_seconds": 1.66,
+      "terminal_summary": "2 passed, 272 deselected in 1.10s",
+      "stdout_reference": {
+        "json_pointer": "/validation/3/stdout",
+        "output_sha256": "8b27b02c25a173ded9b9d76cd8e08268ae40194f41a7f3b8c2b916fbfb2629f0"
+      }
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py scripts/test_retire_dev_paper_release_cases.py scripts/test_nonprod_dev_artifact_workflow.py --tb=short",
+      "source_head": "a5ea2adf210cb508a1394f1d256054333ec91975",
+      "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+      "exit_code": 0,
+      "elapsed_seconds": 109.53,
+      "terminal_summary": "503 passed, 2 warnings in 107.47s (0:01:47)",
+      "stdout_reference": {
+        "json_pointer": "/validation/4/stdout",
+        "output_sha256": "d9cddbadfe3167de006f0ee9c65d4075bfceaf316805039f1ea62851c385cd95"
+      }
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 /tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/semantic-experiments.py",
+      "exit_code": 0,
+      "elapsed_seconds": 2.41,
+      "cases": [
+        {
+          "case": "maintained workflow baseline",
+          "result": "passed"
+        },
+        {
+          "case": "additional full-SHA checkout is not a pin defect",
+          "result": "passed"
+        },
+        {
+          "case": "repository with.ref remains a separate property",
+          "result": "passed"
+        },
+        {
+          "case": "unpinned third-party action mutation",
+          "result": "rejected for intended action pin",
+          "assertion": "actions/upload-artifact@v4"
+        },
+        {
+          "case": "requested-paper compensation guard removal",
+          "result": "rejected by isolated existing truth-table row",
+          "assertion": "Failed for case: isolated requested paper failure (expected True, got False)"
+        }
+      ]
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_retire_dev_paper_release_cases.py -k build_runtime --tb=short",
+      "source_head": "67bd5e3ac681515d167946159c3a60b094c79271",
+      "base_dev": "652d8d3c0e9014ae546c0bcc5abf6d188bcfe2e4",
+      "exit_code": 0,
+      "elapsed_seconds": 15.08,
+      "terminal_summary": "2 passed, 46 deselected, 2 warnings in 13.04s",
+      "stdout_reference": {
+        "json_pointer": "/validation/6/stdout",
+        "output_sha256": "bd8b40f7cb5c49256fc28532fa21a93016b6c4fc392bafa9035a0639398b8060"
+      }
+    }
+  ],
+  "limitations": [
+    "Frozen-base reproduction exports only five imported/read source files and selects the original 27 cases (8 failed, 19 passed); it is not the full original 537-case reviewer batch. Original reviewer output/hashes are preserved verbatim in the immutable ancestor referenced by preserved_evidence.",
+    "Final local validation covers the changed lease-contract file and existing paper-retirement/artifact workflow suites (503 passed), plus action-pin/paper-guard semantic experiments. It is not universal deployment or hosted acceptance.",
+    "Assigned independent Claude review, required GitHub CI, native supervisor integration and owner finalization remain pending at this evidence commit. No approval or merge is claimed.",
+    "No workflow/runtime/provider/data/service/secret changes, VM SSH, Docker-service action, business call or workflow dispatch. Original all12/original49 closure and independent PR7290 publication remain unchanged."
+  ],
+  "validation_notes": [
+    "All pytest batches used the checkout-scoped provisioned .venv-pantheon interpreter. Batches used outer deadlines of 45, 90 or 300 seconds; every recorded pytest process has a terminal exit status.",
+    "An initial auxiliary semantic-experiment import via system python3 exited 1 with ModuleNotFoundError: pytest before tests ran. It was rerun successfully with the provisioned interpreter; no dependencies were installed into the system interpreter.",
+    "The 274-test full file and 229-test focused suite originally passed separately on 802df28ee; final checkout pin coverage was tightened to include job-level uses and no implicit Docker exclusion, passed targeted checks, and all 503 tests then passed together on b01bb8656.",
+    "The two RefResolver deprecation warnings are from an existing BFF dependency import, not test failures.",
+    "Latest-base check: all six tested source files are blob-identical after rebase to 652d8d3c0 (test file equals validated modified blob); two BFF composition regressions passed on that base. No unrelated source changes were introduced by this task."
+  ],
+  "semantic_experiment_sha256": "8bfd00203d3b78d41d192bbfd184b41e6edffa0947b71778406df6c4eadfc025",
+  "case_renames": {
+    "test_release_case_retirement_runs_after_both_compensation_paths": "test_release_case_retirement_precedes_restore_and_accepted_cleanup_follows_verification",
+    "test_release_case_retirement_uses_only_the_retire_action": "test_release_case_retirement_uses_only_the_provisioning_coordinator"
+  },
+  "preserved_evidence": {
+    "commit": "ece415fb31aa5c7b15a4a6355d03ecade633ec28",
+    "path": "docs/deployment/evidence/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/evidence.json",
+    "git_blob": "74c3aed3b5b4dd868662b74b7ac496dd86710cf4",
+    "sha256": "f02add42f0b78df16f2165bffd961c2b6dcdf6772d1094614894ba33c3bc01e8",
+    "note": "Immutable ancestor on this task branch preserves full original reviewer output, both owner reproductions, all validation output and experiment source. JSON pointers below select exact UTF-8 strings; output_sha256 hashes those strings. No failure evidence discarded."
+  },
+  "semantic_experiment_reference": {
+    "json_pointer": "/semantic_experiment_source",
+    "output_sha256": "8bfd00203d3b78d41d192bbfd184b41e6edffa0947b71778406df6c4eadfc025"
+  },
+  "review_revision": {
+    "request": "Claude reopen: evidence adds 563 lines exceeding the required diff-budget cap of 400.",
+    "change": "Summarize duplicate metadata and reference bulky strings by digest in the existing immutable ancestor. Existing test file and runtime are unchanged by this revision.",
+    "verification": "Resolve every referenced string from the committed ancestor and verify SHA-256; confirm tested source blobs unchanged and run diff_budget.py against current dev.",
+    "verification_result": "PASS: JSON parsed; ancestor blob and SHA-256 verified; 11 referenced strings verified; all six source hashes match recorded validation; working-tree diff-budget has production +0, test +131/-83, evidence below 400 added lines. No new pytest run for this evidence-only revision.",
+    "verification_command": "python3 /tmp/DEV-LEASE-CONTRACT-EXPECTATIONS-20261113/verify-summary.py",
+    "exit_code": 0,
+    "initial_verifier_error": "Initial helper invocation exited 1 at diff-budget collection: git_numstat requires a string head, not None. Integrity/hash checks had completed. Corrected to parse git diff --numstat origin/dev; the corrected command exited 0. This was not a test-suite run."
+  }
+}

@@ -1,0 +1,250 @@
+{
+  "schema_version": "task_review_evidence.v1",
+  "task_id": "RANKING-FILL-RATE-AGGREGATION-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "review_status": "ready_for_fresh_exact_head_assigned_review",
+  "delivery_status": "fixture_scope_repaired_source_validated_pending_review_ci_integration",
+  "base_commit": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+  "implementation_anchor": "2b5b5ecc5",
+  "implementation_source_commit": "ed2f8c9f7f7ab56b41dd072c151b50408c803e80",
+  "contract": {
+    "ratio": "sum(abs(filled_quantity))/sum(abs(submitted_quantity))",
+    "unit": "absolute_order_quantity",
+    "window": "UTC [quarter start, next quarter start); orders submitted in that interval, fills within the same interval",
+    "rejections": "Known rejected execution request quantities count in denominator, including pre-broker risk rejects",
+    "noops": "Retained with reasons; excluded from denominator",
+    "durability": "order_execution_observations retained in atomic telemetry projection; lifecycle/fill outbox identities survive runtime restart",
+    "missing_data": "Unknown; ranking admission withholds execution/overall score, rank and allocation input",
+    "formula": "Scorer AST unchanged; known-input arithmetic and weights unchanged"
+  },
+  "acceptance_evidence": [
+    {
+      "criterion": 1,
+      "tests": [
+        "test_period_fill_rate_quantity_weighting_replay_and_window",
+        "test_fill_rate_runtime_restart_reaches_real_quarterly_ranking_route"
+      ],
+      "proves": "Exposed numerator/denominator/UTC quarter/sources and persistent projection across runtime restart"
+    },
+    {
+      "criterion": 2,
+      "tests": [
+        "test_fill_rate_runtime_restart_reaches_real_quarterly_ranking_route"
+      ],
+      "observed": {
+        "partial_fill": 4,
+        "first_submitted": 10,
+        "first_rate": 0.4,
+        "rejected_submitted": 6,
+        "final_submitted": 16,
+        "final_rate": 0.25
+      }
+    },
+    {
+      "criterion": 3,
+      "tests": [
+        "test_quarterly_fill_rate_zero_and_unknown_admission",
+        "test_fill_rate_aggregates_quantities_across_runtimes_not_average_rates",
+        "test_fill_rate_submission_cohort_excludes_cross_quarter_fills"
+      ],
+      "proves": "Reject-only zero; no submissions/legacy scalar/missing quantity/outside quarter unknown; partial quantities and quantity weighting"
+    },
+    {
+      "criterion": 4,
+      "tests": [
+        "test_fill_rate_runtime_restart_reaches_real_quarterly_ranking_route"
+      ],
+      "observed_execution_score": 25.0,
+      "formula_identity": "formula-identity.json",
+      "note": "Real runtime/signal/emitter/projection/registered HTTP ranking route, local broker transport and unrelated equity-owner fixtures"
+    },
+    {
+      "criterion": 5,
+      "tests": [
+        "test_fill_rate_runtime_partial_fill_rejection_noop_and_restart"
+      ],
+      "proves": "Rejection error and no-op reason still recorded; neither event carries a fabricated scalar rate"
+    }
+  ],
+  "validations": [
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_runtime.py services/telemetry/test_runtime_summary_projection.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py",
+      "exit_code": 0,
+      "result": "293 passed, 47 warnings, 46 subtests passed in 89.58s",
+      "log": "scoped-suites.log",
+      "source_commit": "ed2f8c9f7f7ab56b41dd072c151b50408c803e80",
+      "note": "Completed before the final test-only clock freeze/native-quantity assertion. Production source is unchanged.",
+      "sha256": "d1133a57380ad667c4fa9d4f29cecd5faab7499275290757986d17be5c29162c",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/execution/lean_runtime/test_paper_runtime.py -k 'fill_rate or native_order_quantity' services/control-plane/bff/tests/test_bff_pm12_persona_league.py -k 'fill_rate or native_order_quantity'",
+      "exit_code": 0,
+      "result": "9 passed, 166 deselected, 3 warnings in 5.92s",
+      "log": "focused-refinement.log",
+      "note": "Final test-only refinement; exact final sources are SHA256-bound below. Overlaps the scoped suite.",
+      "sha256": "a14078af83b3da238554b3e9c5acda92ffdad71dba5c1f5ef64134a3aab23596",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/telemetry/test_paper_runtime_ingest_contract.py services/telemetry/test_feedback_adapter.py",
+      "exit_code": 0,
+      "result": "59 passed in 9.99s",
+      "log": "ingest-feedback.log",
+      "sha256": "60c7893249ab4cda7f8b1208cd3629a20df35bfa2819b2edc61f629844c5f3d3",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 1,
+      "result": "3 failed, 2 passed, 3 warnings in 7.75s",
+      "log": "fixture-current.log",
+      "note": "Historical pre-authorization failure; resolved in the actual task worktree by the authorized fixture patch. Retained for audit, not current delivery failure.",
+      "sha256": "70dad2029bd59ba9591c2673ab80823471b80628f0fbc5ff6c5128842b40c7bd",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 13.30s",
+      "log": "fixture-base.log",
+      "working_directory": "/tmp/ranking-fill-proof-CGGZ1b",
+      "source_commit": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+      "setup": "git archive 421c13abc | tar -x -C <isolated-copy>; python3 scripts/dev/provision_python_distribution.py",
+      "sha256": "1e743a7576955539bc3311ccf7ebf58a7953a6ddd1e83aec00cb59947debfe93",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged."
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 8.04s",
+      "log": "fixture-proposed-patch.log",
+      "working_directory": "/tmp/ranking-fill-proof-CGGZ1b",
+      "source_commit": "ed2f8c9f7f7ab56b41dd072c151b50408c803e80",
+      "setup": "Overlay git diff --binary 421c13abc ed2f8c9f7 onto baseline copy with patch -p1; apply proposed-fixture-repair.patch there only. The actual task worktree fixture remains unmodified.",
+      "sha256": "75d418a69cac5b5035690c6baf5665b3689b5f8cfd01c52510de50b4b58b6b6c",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "note": "Historical isolated-patch experiment; actual worktree repair and validation now recorded below."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    },
+    {
+      "command": "Compare AST of _pm12_persona_league_scores in git show 421c13abc:services/control-plane/bff/personas/service.py with current source (include_attributes=False)",
+      "exit_code": 0,
+      "result": "Exact AST equality",
+      "artifact": "formula-identity.json"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_pm12_eligibility_fixture_contract.py",
+      "exit_code": 0,
+      "result": "5 passed, 3 warnings in 7.92s",
+      "log": "fixture-repaired.log",
+      "sha256": "1df581c503d0ebeb5e26e430e68fa6849f0cd5fffb7385cfb18362e8a0f3fcd1",
+      "note": "Actual task worktree; all five unchanged contracts pass after exact prepared patch.",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "source_commit": "35e4e19f2ae9a8ee2120e3e4d31155156f54b06c"
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_bff_promotion_review_governance.py services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+      "exit_code": 1,
+      "result": "4 failed, 150 passed, 6 warnings in 81.10s",
+      "log": "real-callers.log",
+      "sha256": "57c6da8abbbe48e557648eb9c6f2b4ce47a24b33f792fb51319b3a014f425416",
+      "note": "Full caller suites; all four failures reproduced on unchanged delivery base, recorded below. No failures counted as passed.",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "source_commit": "35e4e19f2ae9a8ee2120e3e4d31155156f54b06c"
+    },
+    {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary",
+      "exit_code": 1,
+      "result": "4 failed, 3 warnings in 10.89s",
+      "log": "baseline-caller-failures.log",
+      "sha256": "fc12dd90897c4d988ab8a332880c8bd027a4d27b4e88f29d5707833404fcee21",
+      "note": "All four same failures reproduce on unmodified base in isolated copy, not a fill-rate regression.",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "source_commit": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+      "working_directory": "/tmp/ranking-fill-base-qLg4AT",
+      "setup": "git archive 421c13abc | tar -x -C <isolated-copy>; python3 scripts/dev/provision_python_distribution.py"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/test_bff_promotion_review_governance.py::test_promotion_reviews_list_and_detail_are_readable_by_operator services/control-plane/bff/test_bff_promotion_review_governance.py::test_promotion_review_decision_route_is_retired_without_stored_command services/control-plane/bff/test_bff_promotion_review_governance.py::test_quarterly_recommendation_submit_route_is_retired_without_stored_command",
+      "exit_code": 0,
+      "result": "57 passed, 6 warnings in 31.48s",
+      "log": "focused-callers.log",
+      "sha256": "3498ed2244516893d1e22c058907a93fba7a4f6907473623b124982c2bd1fdcf",
+      "note": "Real ranking HTTP and promotion callers, including runtime restart, zero and unknown admission. Overlaps full caller suites; do not sum.",
+      "normalization": "Trailing whitespace stripped; terminal results unchanged.",
+      "source_commit": "35e4e19f2ae9a8ee2120e3e4d31155156f54b06c"
+    }
+  ],
+  "source_sha256": {
+    "services/execution/lean_runtime/paper_runtime.py": "0643e8a22e83ed79be7ddb30b5b7bd6277cfc8e843a0abb2d6320dc315ad4020",
+    "services/execution/lean_runtime/test_paper_runtime.py": "8ffea9ceba6bc94914ea1de34a1f5a7c08d128fa41dc7330151ae509bda87f73",
+    "services/telemetry/runtime_summary.py": "df9acf9e0c497f50fca095d7a210838140a6da081d6b3b89f99a2081672f406b",
+    "services/telemetry/test_runtime_summary_projection.py": "08cc342ac1ecdf1ebc7852ceb8a4811ce615f5177cd64862b4966b5b70c83f50",
+    "services/control-plane/bff/personas/service.py": "9be4f6cc4c859e332bf334902268027080580ee64080483c655017ccebe0d354",
+    "services/control-plane/bff/tests/test_bff_pm12_persona_league.py": "8679d822c5fe9a18163faed698ae560acf72e3045e7c0b5a5767be2a53f8d23d",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py": "5ed40e3d9e0ab5222a5b68164fe9a506cfba7f834aa2e568e21984127e8ad1cf"
+  },
+  "scope_hold": {
+    "status": "resolved",
+    "required_actor": "Human/Ops",
+    "required_artifact": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+    "prepared_patch": "docs/deployment/evidence/RANKING-FILL-RATE-AGGREGATION-20261112/proposed-fixture-repair.patch",
+    "patch_sha256": "70c7cff07a46faee64e7e28571fbfd21626535794419986eab4c57f21663db5b",
+    "patch_validated_in_isolated_copy": true,
+    "authority": [
+      "AI_COLLABORATION_GUIDE.md Status Commands: artifact-contract is Human/Ops-only for todo/blocked tasks",
+      ".orchestrator/rewrite/task_contract.py::validate_task_artifact_diff_scope"
+    ],
+    "required_continuation": "Fresh exact PR/head/manifest handoff to assigned Claude review; required CI and native supervisor integration before owner done.",
+    "dependency_blocker": false,
+    "declared_dependency_status": "RANKING-QUARTER-METRIC-WINDOW-20261112 done/satisfied",
+    "resolved_by": "Human/Ops artifact-contract add and reopen; Codex2 applied exact prepared patch",
+    "authorized_at": "2026-11-12T14:58:30Z",
+    "reopened_at": "2026-11-12T14:58:37Z",
+    "applied_commit": "35e4e19f2ae9a8ee2120e3e4d31155156f54b06c",
+    "original_reason": "Shared eligible-persona fixture is scalar-only and fails unknown_fill_rate admission. Exact target is absent from canonical artifacts."
+  },
+  "limitations": [
+    "Source-only local verification; no hosted deployment, capital changes or live trading.",
+    "Four broader caller failures remain and reproduce on the unchanged base. See paired logs; not waived or counted as passed.",
+    "Legacy requests lacking quantities are not reconstructed.",
+    "Native order quantities are not converted to prices, notionals or capital.",
+    "Retained actual facts grow with order history; no silent truncation.",
+    "Test counts overlap across historical and fresh validation batches; do not sum them.",
+    "No independent reviewer approval, merge or done is claimed."
+  ],
+  "fixture_repair_source_commit": "35e4e19f2ae9a8ee2120e3e4d31155156f54b06c",
+  "pull_request": "https://github.com/ajoe734/pantheon/pull/7247",
+  "repair_integrity": {
+    "six_prior_source_hashes_unchanged": true,
+    "scorer_ast_matches_base": true,
+    "fixture_builder_ast_identical_after_removing_only_new_order_execution_observations": true,
+    "exit_code": 0,
+    "production_sources_changed_by_repair": false,
+    "prepared_patch_applied_without_modification": true
+  },
+  "preexisting_caller_failures": {
+    "tests": [
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied",
+      "services/control-plane/bff/test_bff_promotion_review_governance.py::test_cockpit_timeout_degrades_without_blocking_health",
+      "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary"
+    ],
+    "delivery_log": "real-callers.log",
+    "unchanged_base_log": "baseline-caller-failures.log",
+    "baseline_commit": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+    "status": "reproduced_on_unchanged_base_not_waived",
+    "symptoms": [
+      "human inbox elapsed 1.387s exceeds 1.0s bound",
+      "human inbox saturation surface lacks reason",
+      "cockpit timeout surface lacks reason",
+      "tenant portfolio total_pnl is None, expected 1.25"
+    ]
+  }
+}

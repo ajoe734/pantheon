@@ -903,3 +903,781 @@ def test_json_store_filters_evaluations_by_window_and_governed_breach(tmp_path: 
     assert [r["id"] for r in until] == ["e1"]
     assert {r["id"] for r in store.list_evaluations(governed_breached_only=True)} == {"e1", "e3", "e4"}
     assert len(store.list_evaluations()) == 4
+
+
+class _InMemoryPostgresOwnerStore:
+    """In-memory PostgresJsonOwnerStore replacement with real CAS delete_if_matches."""
+
+    tables: dict[str, dict[str, dict]] = {}
+    calls: list[tuple[str, str]] = []
+
+    def __init__(self, *, table: str, **_kwargs: object) -> None:
+        self.table = table
+        self.records = self.tables.setdefault(table, {})
+
+    def list_all(self) -> list[dict]:
+        self.calls.append((self.table, "list_all"))
+        return list(self.records.values())
+
+    def count(self) -> int:
+        self.calls.append((self.table, "count"))
+        return len(self.records)
+
+    def get(self, record_id: str) -> dict | None:
+        value = self.records.get(record_id)
+        return dict(value) if value is not None else None
+
+    def put(self, record_id: str, payload: dict) -> None:
+        self.records[record_id] = dict(payload)
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected: dict | None,
+        payload: dict,
+    ) -> tuple[bool, dict | None]:
+        self.calls.append((self.table, "compare_and_set"))
+        current = self.records.get(record_id)
+        if current != expected:
+            return False, dict(current) if current is not None else None
+        stored = dict(payload)
+        self.records[record_id] = stored
+        return True, dict(stored)
+
+    def delete_if_matches(self, record_id: str, expected_payload: dict) -> bool:
+        self.calls.append((self.table, "delete_if_matches"))
+        current = self.records.get(record_id)
+        if current is None or current != expected_payload:
+            return False
+        del self.records[record_id]
+        return True
+
+
+def _load_service_module_for_store_test(data_dir: Path):
+    import sys
+
+    sys.modules.pop("consumer", None)
+    sys.modules.pop("store", None)
+    sys.modules.pop("reconciliation_drift_store_service_test_main", None)
+    if str(SERVICE_DIR) not in sys.path:
+        sys.path.insert(0, str(SERVICE_DIR))
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "reconciliation_drift_store_service_test_main",
+            SERVICE_DIR / "main.py",
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["reconciliation_drift_store_service_test_main"] = module
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "RECONCILIATION_DRIFT_DATA_DIR": str(data_dir),
+                "RECONCILIATION_DRIFT_STORE_BACKEND": "json",
+                "PERSISTENCE_POSTURE": "lenient",
+            },
+        ):
+            spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.modules.pop("consumer", None)
+        sys.modules.pop("store", None)
+
+
+@pytest.mark.parametrize("backend", ["json", "postgres"])
+def test_prune_work_claims_deletes_expired_scheduled_and_consume_in_bounded_cas_batches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    module = _load_store_module()
+    _InMemoryPostgresOwnerStore.tables = {}
+    _InMemoryPostgresOwnerStore.calls = []
+    if backend == "postgres":
+        monkeypatch.setattr(module, "PostgresJsonOwnerStore", _InMemoryPostgresOwnerStore)
+        store = module.PostgresReconciliationDriftStore(
+            tmp_path,
+            dsn="postgresql://unused",
+        )
+    else:
+        store = module.ReconciliationDriftStore(tmp_path)
+
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+
+    # 1. Completed and failed scheduled_reconcile claims older than 24h -> prunable
+    for idx, age_hours in enumerate((30, 26, 25)):
+        stamp = now - timedelta(hours=age_hours)
+        claimed = store.claim_work(
+            tenant_id="tenant-a",
+            work_type="scheduled_reconcile",
+            window_id=f"sched-old-{idx}",
+            owner_id="scheduler-a",
+            lease_seconds=60,
+            now=stamp,
+        )
+        if idx % 2 == 0:
+            store.complete_work(
+                claim_id=claimed["claim"]["claim_id"],
+                lease_token=claimed["claim"]["lease_token"],
+                result={"status": "ok"},
+                now=stamp,
+            )
+        else:
+            store.fail_work(
+                claim_id=claimed["claim"]["claim_id"],
+                lease_token=claimed["claim"]["lease_token"],
+                error="timeout",
+                now=stamp,
+            )
+
+    # 2. Scheduled_reconcile claims within 24h -> retained
+    sched_recent = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="sched-recent",
+        owner_id="scheduler-a",
+        lease_seconds=60,
+        now=now - timedelta(hours=12),
+    )
+    store.complete_work(
+        claim_id=sched_recent["claim"]["claim_id"],
+        lease_token=sched_recent["claim"]["lease_token"],
+        result={"status": "ok"},
+        now=now - timedelta(hours=12),
+    )
+
+    # 3. Completed and failed telemetry_consume claims older than 7d -> prunable
+    for idx, age_days in enumerate((10, 8)):
+        stamp = now - timedelta(days=age_days)
+        claimed = store.claim_work(
+            tenant_id="tenant-a",
+            work_type="telemetry_consume",
+            window_id=f"evt-old-{idx}",
+            owner_id="consumer-a",
+            lease_seconds=60,
+            now=stamp,
+        )
+        if idx == 0:
+            store.complete_work(
+                claim_id=claimed["claim"]["claim_id"],
+                lease_token=claimed["claim"]["lease_token"],
+                result={"status": "ok", "event_id": f"evt-old-{idx}"},
+                now=stamp,
+            )
+        else:
+            store.fail_work(
+                claim_id=claimed["claim"]["claim_id"],
+                lease_token=claimed["claim"]["lease_token"],
+                error="incidents 502",
+                now=stamp,
+            )
+
+    # 4. Telemetry_consume claim within 7d -> retained
+    consume_recent = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="telemetry_consume",
+        window_id="evt-recent",
+        owner_id="consumer-a",
+        lease_seconds=60,
+        now=now - timedelta(days=3),
+    )
+    store.complete_work(
+        claim_id=consume_recent["claim"]["claim_id"],
+        lease_token=consume_recent["claim"]["lease_token"],
+        result={"status": "ok", "event_id": "evt-recent"},
+        now=now - timedelta(days=3),
+    )
+
+    assert store.count_work_claims() == 7
+
+    # Bounded batch run: batch_size=2, max_batches=2 deletes 4 of the 5 expired claims
+    first_pass = store.prune_work_claims(now=now, batch_size=2, max_batches=2)
+    assert first_pass["batches_executed"] == 2
+    assert first_pass["deleted_count"] == 4
+    assert store.count_work_claims() == 3
+
+    # Next bounded pass deletes the remaining 1 expired claim
+    second_pass = store.prune_work_claims(now=now, batch_size=2, max_batches=2)
+    assert second_pass["batches_executed"] == 1
+    assert second_pass["deleted_count"] == 1
+    assert store.count_work_claims() == 2
+
+    surviving_windows = {claim["window_id"] for claim in store.list_work_claims()}
+    assert surviving_windows == {"sched-recent", "evt-recent"}
+
+    if backend == "postgres":
+        delete_calls = [
+            call
+            for call in _InMemoryPostgresOwnerStore.calls
+            if call == ("reconciliation_drift.work_claims", "delete_if_matches")
+        ]
+        assert len(delete_calls) == 5
+
+    # Verify configurability via environment variables
+    monkeypatch.setenv("RECONCILIATION_DRIFT_SCHEDULED_CLAIM_RETENTION_HOURS", "6")
+    monkeypatch.setenv("RECONCILIATION_DRIFT_TELEMETRY_CONSUME_CLAIM_RETENTION_DAYS", "2")
+    configured_pass = store.prune_work_claims(now=now)
+    assert configured_pass["deleted_count"] == 2
+    assert configured_pass["deleted_by_work_type"] == {
+        "scheduled_reconcile": 1,
+        "telemetry_consume": 1,
+    }
+    assert store.count_work_claims() == 0
+
+
+def test_prune_work_claims_never_deletes_live_lease_or_concurrently_recovered_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_store_module()
+    _InMemoryPostgresOwnerStore.tables = {}
+    _InMemoryPostgresOwnerStore.calls = []
+    monkeypatch.setattr(module, "PostgresJsonOwnerStore", _InMemoryPostgresOwnerStore)
+    store = module.PostgresReconciliationDriftStore(tmp_path, dsn="postgresql://unused")
+
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+
+    # 1. Live lease acquired in the past but still active at `now`
+    live = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="sched-live-lease",
+        owner_id="scheduler-a",
+        lease_seconds=3600,
+        now=now - timedelta(minutes=10),
+    )
+    # 2. Failed claim older than 24h that a worker recovers right before CAS delete
+    failed_old = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="sched-failed-recovering",
+        owner_id="scheduler-a",
+        lease_seconds=60,
+        now=now - timedelta(hours=36),
+    )
+    store.fail_work(
+        claim_id=failed_old["claim"]["claim_id"],
+        lease_token=failed_old["claim"]["lease_token"],
+        error="transient",
+        now=now - timedelta(hours=36),
+    )
+    recovering_claim_id = failed_old["claim"]["claim_id"]
+
+    orig_delete = store._work_claim_records.delete_if_matches
+
+    def _concurrent_recovery_before_delete(record_id: str, expected_payload: dict) -> bool:
+        if record_id == recovering_claim_id:
+            # Competing worker recovers the failed claim with a live lease before CAS delete runs
+            recovered = store.claim_work(
+                tenant_id="tenant-a",
+                work_type="scheduled_reconcile",
+                window_id="sched-failed-recovering",
+                owner_id="scheduler-b",
+                lease_seconds=120,
+                now=now,
+            )
+            assert recovered["acquired"] is True
+        return orig_delete(record_id, expected_payload)
+
+    monkeypatch.setattr(
+        store._work_claim_records,
+        "delete_if_matches",
+        _concurrent_recovery_before_delete,
+    )
+
+    result = store.prune_work_claims(now=now)
+    assert result["deleted_count"] == 0
+    assert result["cas_conflict_count"] == 1
+    assert store.count_work_claims() == 2
+
+    live_claim = store._get_work_claim(live["claim"]["claim_id"])
+    recovered_claim = store._get_work_claim(recovering_claim_id)
+    assert live_claim is not None and live_claim["status"] == "in_progress"
+    assert recovered_claim is not None and recovered_claim["status"] == "in_progress"
+    assert recovered_claim["owner_id"] == "scheduler-b"
+
+
+def test_prune_work_claims_protects_runtime_summary_events_and_consumer_state_backlog(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+    old_time = now - timedelta(days=10)
+
+    for window_id in (
+        "evt-stopped-last",
+        "evt-stopped-hb",
+        "evt-consumer-pending",
+        "evt-consumer-dlq",
+        "evt-unreferenced-old",
+    ):
+        claimed = store.claim_work(
+            tenant_id="tenant-a",
+            work_type="telemetry_consume",
+            window_id=window_id,
+            owner_id="consumer-a",
+            lease_seconds=60,
+            now=old_time,
+        )
+        store.complete_work(
+            claim_id=claimed["claim"]["claim_id"],
+            lease_token=claimed["claim"]["lease_token"],
+            result={"status": "ok", "event_id": window_id},
+            now=old_time,
+        )
+
+    consumer_state_path = tmp_path / "consumer-worker-state.json"
+    consumer_state_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "pending": {
+                    "tenant-event-pending": {
+                        "event": {"event_id": "evt-consumer-pending", "tenant_id": "tenant-a"},
+                        "attempt_count": 1,
+                    }
+                },
+                "dead_letters": {
+                    "tenant-event-dlq": {
+                        "event": {"event_id": "evt-consumer-dlq", "tenant_id": "tenant-a"},
+                        "attempt_count": 3,
+                    }
+                },
+                "completed": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_summaries = [
+        {
+            "runtime_id": "runtime-stopped-001",
+            "binding_id": "binding-stopped-001",
+            "state": "stopped",
+            "last_event_id": "evt-stopped-last",
+            "last_heartbeat_event_id": "evt-stopped-hb",
+        }
+    ]
+
+    pruned = store.prune_work_claims(
+        now=now,
+        runtime_summaries=runtime_summaries,
+        consumer_state=consumer_state_path,
+    )
+    assert pruned["deleted_count"] == 1
+    surviving_windows = {claim["window_id"] for claim in store.list_work_claims()}
+    assert surviving_windows == {
+        "evt-stopped-last",
+        "evt-stopped-hb",
+        "evt-consumer-pending",
+        "evt-consumer-dlq",
+    }
+
+    # Re-presenting the stopped runtime's last_event_id hits the preserved receipt
+    replay = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="telemetry_consume",
+        window_id="evt-stopped-last",
+        owner_id="consumer-b",
+        lease_seconds=60,
+        now=now,
+    )
+    assert replay["acquired"] is False
+    assert replay["reason"] == "completed"
+
+    # Once the runtime summary advances and consumer state drains, the old claims are pruned
+    consumer_state_path.write_text(
+        json.dumps({"version": 2, "pending": {}, "dead_letters": {}, "completed": {}}),
+        encoding="utf-8",
+    )
+    pruned_after_advance = store.prune_work_claims(
+        now=now,
+        runtime_summaries=[
+            {
+                "runtime_id": "runtime-stopped-001",
+                "binding_id": "binding-stopped-001",
+                "state": "active",
+                "last_event_id": "evt-new-active",
+                "last_heartbeat_event_id": "evt-new-hb",
+            }
+        ],
+        consumer_state=consumer_state_path,
+    )
+    assert pruned_after_advance["deleted_count"] == 4
+    assert store.count_work_claims() == 0
+
+
+def test_representing_pruned_window_after_horizon_produces_at_most_one_evaluation_and_no_duplicate_incident(
+    tmp_path: Path,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    svc = _load_service_module_for_store_test(tmp_path)
+    client = TestClient(svc.app)
+
+    summary = {
+        "runtime_id": "runtime-sched-001",
+        "binding_id": "binding-sched-001",
+        "runtime_binding_id": "binding-sched-001",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-sched-001",
+        "capital_pool_id": "pool-sched-001",
+        "persona_capital_binding_id": "pcb-sched-001",
+        "artifact_id": "artifact-sched-001",
+        "artifact_version": "1.0.0",
+        "trace_id": "trace-sched-001",
+        "last_event_id": "evt-sched-001",
+        "last_heartbeat_event_id": "evt-hb-sched-001",
+        "state": "active",
+        "health_summary": {"telemetry": "ok", "paper_runtime": "ok"},
+        "pnl": 10.0,
+        "drawdown": 0.02,
+        "queue_lag_ms": 20_000.0,
+        "event_delivery_lag_ms": 100.0,
+    }
+    window_id = "scheduled:default:2026-11-01T00:00:00Z:PT300S"
+
+    with (
+        mock.patch.object(svc, "fetch_runtime_summaries", return_value=[summary]),
+        mock.patch.object(
+            svc,
+            "_classify_drift_report_incident",
+            return_value={"incident_id": "inc-sched-001"},
+        ) as sched_classify,
+    ):
+        first = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile",
+            json={"window_id": window_id, "tick_id": window_id},
+        )
+        assert first.status_code == 201
+        first_payload = first.json()
+        assert first_payload["evaluated_binding_count"] == 1
+        assert first_payload["incident_ids"] == ["inc-sched-001"]
+        assert sched_classify.call_count == 1
+
+        # Prune the scheduled_reconcile work claim after its 24h horizon
+        future_after_24h = datetime.now(timezone.utc) + timedelta(hours=26)
+        pruned_sched = svc.store.prune_work_claims(now=future_after_24h)
+        assert pruned_sched["deleted_by_work_type"]["scheduled_reconcile"] == 1
+        assert svc.store.count_work_claims() == 0
+
+        # Re-present the pruned window with the same tick_id -> 0 new evaluations, 0 duplicate incidents
+        re_presented_same_tick = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile",
+            json={"window_id": window_id, "tick_id": window_id},
+        )
+        assert re_presented_same_tick.status_code == 201
+        same_tick_payload = re_presented_same_tick.json()
+        assert same_tick_payload["evaluated_binding_count"] <= 1
+        assert same_tick_payload["evaluated_binding_count"] == 0
+        assert sched_classify.call_count == 1
+        assert svc.store.count_evaluations() == 1
+
+        # Prune again and re-present the same window_id with a new tick_id -> at most 1 new evaluation, 0 duplicate incidents
+        svc.store.prune_work_claims(now=future_after_24h)
+        re_presented_new_tick = client.post(
+            "/api/reconciliation-drift/scheduled-reconcile",
+            json={"window_id": window_id, "tick_id": f"{window_id}:retry"},
+        )
+        assert re_presented_new_tick.status_code == 201
+        new_tick_payload = re_presented_new_tick.json()
+        assert new_tick_payload["evaluated_binding_count"] == 1
+        assert sched_classify.call_count == 1
+
+    # Also verify telemetry_consume re-presentation after its 7d horizon
+    consume_event = {
+        "event_id": "evt-consume-pruned-001",
+        "binding_id": "binding-sched-001",
+        "runtime_id": "runtime-sched-001",
+        "deployment_stage": "live",
+        "metrics": {"pnl": 10.0},
+        "baseline_metrics": {"pnl": 100.0},
+        "thresholds": {"pnl": {"critical_relative_delta": 0.5}},
+    }
+    with mock.patch.object(
+        svc,
+        "_classify_drift_report_incident",
+        return_value={"incident_id": "inc-consume-001"},
+    ) as consume_classify:
+        first_consume = client.post(
+            "/api/reconciliation-drift/telemetry-events/consume",
+            json={"events": [consume_event]},
+        )
+        assert first_consume.status_code == 201
+        assert first_consume.json()["incident_case_count"] == 1
+        assert consume_classify.call_count == 1
+
+        # Prune after 8 days (event is not in active runtime summaries)
+        future_after_8d = datetime.now(timezone.utc) + timedelta(days=8)
+        pruned_consume = svc.store.prune_work_claims(
+            now=future_after_8d,
+            runtime_summaries=[summary],
+        )
+        assert pruned_consume["deleted_by_work_type"]["telemetry_consume"] == 1
+
+        # Re-presenting the pruned event after 7d horizon produces no duplicate incident
+        re_consumed = client.post(
+            "/api/reconciliation-drift/telemetry-events/consume",
+            json={"events": [consume_event]},
+        )
+        assert re_consumed.status_code == 201
+        re_payload = re_consumed.json()
+        assert re_payload["incident_case_count"] == 0
+        assert re_payload["duplicate_event_ids"] == ["evt-consume-pruned-001"]
+        assert consume_classify.call_count == 1
+
+
+def test_hosted_shape_150k_existing_completed_claims_pruned_to_steady_state_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 5: Measure on 150,000 existing completed claims at hosted shape (~6,000/day)."""
+    module = _load_store_module()
+    _InMemoryPostgresOwnerStore.tables = {}
+    _InMemoryPostgresOwnerStore.calls = []
+    monkeypatch.setattr(module, "PostgresJsonOwnerStore", _InMemoryPostgresOwnerStore)
+    store = module.PostgresReconciliationDriftStore(tmp_path, dsn="postgresql://unused")
+
+    now = datetime(2026, 11, 17, 0, 0, tzinfo=timezone.utc)
+    days = 25
+    scheduled_per_day = 288        # one per 300s (5 min) window
+    consume_per_day = 5712         # 288 + 5712 = 6000 claims/day * 25 days = 150,000 claims
+    records = store._work_claim_records.records
+
+    for day in range(days):
+        # Bucket timestamps inside each 24h day window before `now`:
+        # day=0 is the newest day ([now - 24h + 300s, now - 60s]), inside the 24h and 7d horizons.
+        # day=1..6 are >24h old and <=7d old.
+        # day=7..24 are >7d old.
+        day_end = now - timedelta(days=day)
+        sched_ts = (day_end - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+        for slot in range(scheduled_per_day):
+            cid = f"work-scheduled_reconcile-d{day:02d}-s{slot:03d}"
+            records[cid] = {
+                "id": cid,
+                "claim_id": cid,
+                "tenant_id": "default",
+                "work_type": "scheduled_reconcile",
+                "window_id": f"scheduled:default:d{day:02d}:s{slot:03d}",
+                "status": "completed",
+                "owner_id": "reconciliation-scheduler",
+                "lease_token": None,
+                "lease_expires_at": None,
+                "attempt_count": 1,
+                "created_at": sched_ts,
+                "updated_at": sched_ts,
+                "completed_at": sched_ts,
+                "failed_at": None,
+                "last_error": None,
+                "result": {"status": "ok"},
+            }
+        consume_ts = (day_end - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        for idx in range(consume_per_day):
+            cid = f"work-telemetry_consume-d{day:02d}-e{idx:04d}"
+            records[cid] = {
+                "id": cid,
+                "claim_id": cid,
+                "tenant_id": "default",
+                "work_type": "telemetry_consume",
+                "window_id": f"evt-d{day:02d}-e{idx:04d}",
+                "status": "completed",
+                "owner_id": "reconciliation-consumer",
+                "lease_token": None,
+                "lease_expires_at": None,
+                "attempt_count": 1,
+                "created_at": consume_ts,
+                "updated_at": consume_ts,
+                "completed_at": consume_ts,
+                "failed_at": None,
+                "last_error": None,
+                "result": {"status": "ok", "event_id": f"evt-d{day:02d}-e{idx:04d}"},
+            }
+
+    assert store.count_work_claims() == 150_000
+
+    prune_result = store.prune_work_claims(now=now, batch_size=5000)
+    expected_sched_deleted = (days - 1) * scheduled_per_day       # 24 * 288 = 6,912
+    expected_consume_deleted = (days - 7) * consume_per_day       # 18 * 5,712 = 102,816
+    expected_total_deleted = expected_sched_deleted + expected_consume_deleted  # 109,728
+    expected_steady_state = scheduled_per_day + (7 * consume_per_day)           # 288 + 39,984 = 40,272
+
+    assert prune_result["deleted_count"] == expected_total_deleted == 109_728
+    assert prune_result["deleted_by_work_type"] == {
+        "scheduled_reconcile": 6_912,
+        "telemetry_consume": 102_816,
+    }
+    assert prune_result["batches_executed"] == 22
+    assert store.count_work_claims() == expected_steady_state == 40_272
+    assert store.count_work_claims() <= 45_000
+
+    # Simulate one more full day (+6,000 claims) and prune at now + 1 day: steady state holds at 40,272
+    next_day = now + timedelta(days=1)
+    next_sched_ts = (next_day - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    for slot in range(scheduled_per_day):
+        cid = f"work-scheduled_reconcile-next-s{slot:03d}"
+        records[cid] = {
+            "id": cid,
+            "claim_id": cid,
+            "tenant_id": "default",
+            "work_type": "scheduled_reconcile",
+            "window_id": f"scheduled:default:next:s{slot:03d}",
+            "status": "completed",
+            "owner_id": "reconciliation-scheduler",
+            "lease_token": None,
+            "lease_expires_at": None,
+            "attempt_count": 1,
+            "created_at": next_sched_ts,
+            "updated_at": next_sched_ts,
+            "completed_at": next_sched_ts,
+            "failed_at": None,
+            "last_error": None,
+            "result": {"status": "ok"},
+        }
+    next_consume_ts = (next_day - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    for idx in range(consume_per_day):
+        cid = f"work-telemetry_consume-next-e{idx:04d}"
+        records[cid] = {
+            "id": cid,
+            "claim_id": cid,
+            "tenant_id": "default",
+            "work_type": "telemetry_consume",
+            "window_id": f"evt-next-e{idx:04d}",
+            "status": "completed",
+            "owner_id": "reconciliation-consumer",
+            "lease_token": None,
+            "lease_expires_at": None,
+            "attempt_count": 1,
+            "created_at": next_consume_ts,
+            "updated_at": next_consume_ts,
+            "completed_at": next_consume_ts,
+            "failed_at": None,
+            "last_error": None,
+            "result": {"status": "ok", "event_id": f"evt-next-e{idx:04d}"},
+        }
+
+    next_prune = store.prune_work_claims(now=next_day, batch_size=5000)
+    assert next_prune["deleted_count"] == 6_000
+    assert store.count_work_claims() == 40_272 <= 45_000
+
+
+def test_previous_release_store_works_against_pruned_work_claims_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 6: Previous accepted release reads and writes the pruned table cleanly."""
+    prev_source = subprocess.run(
+        ["git", "show", "ede3b8035:services/reconciliation-drift/store.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    prev_path = tmp_path / "previous_release_store.py"
+    prev_path.write_text(prev_source, encoding="utf-8")
+    prev_module = _load_module_from_path(prev_path, "previous_release_store_mod")
+    new_module = _load_store_module()
+
+    now = datetime(2026, 11, 17, 12, 0, tzinfo=timezone.utc)
+    data_dir = tmp_path / "store_data"
+
+    # Populate and prune using the new store on both JSON and Postgres backends
+    _InMemoryPostgresOwnerStore.tables = {}
+    _InMemoryPostgresOwnerStore.calls = []
+    monkeypatch.setattr(new_module, "PostgresJsonOwnerStore", _InMemoryPostgresOwnerStore)
+    monkeypatch.setattr(prev_module, "PostgresJsonOwnerStore", _InMemoryPostgresOwnerStore)
+
+    for new_store, prev_store in (
+        (
+            new_module.ReconciliationDriftStore(data_dir),
+            prev_module.ReconciliationDriftStore(data_dir),
+        ),
+        (
+            new_module.PostgresReconciliationDriftStore(data_dir, dsn="postgresql://unused"),
+            prev_module.PostgresReconciliationDriftStore(data_dir, dsn="postgresql://unused"),
+        ),
+    ):
+        old_claim = new_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="scheduled_reconcile",
+            window_id="win-expired",
+            owner_id="worker-1",
+            lease_seconds=60,
+            now=now - timedelta(hours=30),
+        )
+        new_store.complete_work(
+            claim_id=old_claim["claim"]["claim_id"],
+            lease_token=old_claim["claim"]["lease_token"],
+            result={"status": "ok", "evaluation_ids": ["eval-old"]},
+            now=now - timedelta(hours=30),
+        )
+        kept_claim = new_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="scheduled_reconcile",
+            window_id="win-kept",
+            owner_id="worker-1",
+            lease_seconds=60,
+            now=now - timedelta(hours=2),
+        )
+        new_store.complete_work(
+            claim_id=kept_claim["claim"]["claim_id"],
+            lease_token=kept_claim["claim"]["lease_token"],
+            result={"status": "ok", "evaluation_ids": ["eval-kept"]},
+            now=now - timedelta(hours=2),
+        )
+        active_claim = new_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="telemetry_consume",
+            window_id="evt-active",
+            owner_id="worker-1",
+            lease_seconds=600,
+            now=now,
+        )
+        assert active_claim["acquired"] is True
+
+        pruned = new_store.prune_work_claims(now=now)
+        assert pruned["deleted_count"] == 1
+
+        # Rollback: previous release reads kept receipt, respects active lease, and claims pruned window
+        kept_check = prev_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="scheduled_reconcile",
+            window_id="win-kept",
+            owner_id="worker-rollback",
+            lease_seconds=60,
+            now=now,
+        )
+        assert kept_check["acquired"] is False
+        assert kept_check["reason"] == "completed"
+        assert kept_check["claim"]["result"] == {"status": "ok", "evaluation_ids": ["eval-kept"]}
+
+        active_check = prev_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="telemetry_consume",
+            window_id="evt-active",
+            owner_id="worker-rollback",
+            lease_seconds=60,
+            now=now,
+        )
+        assert active_check["acquired"] is False
+        assert active_check["reason"] == "lease_active"
+
+        reclaimed = prev_store.claim_work(
+            tenant_id="tenant-a",
+            work_type="scheduled_reconcile",
+            window_id="win-expired",
+            owner_id="worker-rollback",
+            lease_seconds=60,
+            now=now,
+        )
+        assert reclaimed["acquired"] is True
+        assert reclaimed["reason"] == "acquired"
+        completed_reclaimed = prev_store.complete_work(
+            claim_id=reclaimed["claim"]["claim_id"],
+            lease_token=reclaimed["claim"]["lease_token"],
+            result={"status": "ok"},
+            now=now,
+        )
+        assert completed_reclaimed["status"] == "completed"
+

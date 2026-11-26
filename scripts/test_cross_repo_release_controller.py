@@ -114,6 +114,10 @@ class FakeClient:
         self.dispatches.append((workflow, inputs))
         self.dispatch_refs.append((workflow, ref))
 
+    def failed_job_names(self, run_id: int) -> list[str]:
+        assert run_id == 101
+        return ["Gate 1 - npm run test"]
+
     def get_ref(self, ref: str) -> str:
         assert ref == "heads/dev" or ref in {"dev", "task/candidate"}
         return self.controller_sha
@@ -634,10 +638,9 @@ def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
         "github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'"
         in deploy_job
     )
-    assert (
-        'GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}"'
-        in deploy_job
-    )
+    assert 'GITHUB_REF}" != "refs/heads/dev"' in deploy_job
+    assert "git merge-base --is-ancestor" in deploy_job
+    assert "completed:success" in deploy_job
     assert "frontend_ref:" in deploy_job
     assert "refs/heads/${FRONTEND_REF}:refs/remotes/origin/${FRONTEND_REF}" in deploy_job
     assert "requested" in deploy_job and "ref_tip" in deploy_job
@@ -990,8 +993,16 @@ def test_nonprod_workflow_outputs_candidate_auto_binding_contract() -> None:
     assert "profile:" in coordinate_job
     assert "source_mode:" in coordinate_job
     assert "expires_at:" in coordinate_job
-    assert "--pair-id" not in coordinate_job
-    assert "PAIR_ID:" not in coordinate_job
+    # The release-controller invocation must not auto-bind a caller-supplied pair id.
+    # The post-switch readonly QA caller legitimately passes the controller-bound
+    # pair id (steps.frontend_release.outputs.pair_id) to run_dev_paired_readonly_qa.py.
+    controller_start = coordinate_job.index("cross_repo_release_controller.py")
+    controller_end = coordinate_job.find("\n      - name:", controller_start)
+    controller_step = coordinate_job[
+        controller_start : controller_end if controller_end != -1 else len(coordinate_job)
+    ]
+    assert "--pair-id" not in controller_step
+    assert "PAIR_ID:" not in controller_step
     assert "--candidate-out" in coordinate_job
     assert '--fe-base-url "${DEV_FE_URL}"' in coordinate_job
 
@@ -1973,3 +1984,289 @@ def test_non_transient_http_401_403_404_422_on_get_are_never_retried(
     assert f"GitHub API GET {run_path} failed with HTTP {status_code}" in str(exc_info.value)
     assert f"http {status_code} rejected" in str(exc_info.value)
 
+
+
+# --- rate limit / transient fetch (DEV-RELEASE-CONTROLLER-RATE-LIMIT-AND-FETCH-RETRY-20261115) ---
+import io as _io
+from email.message import Message as _Message
+
+from scripts import cross_repo_release_controller as _ctl
+
+
+def _herr(code: int, headers: dict[str, str] | None = None, body: str = "") -> urllib.error.HTTPError:
+    msg = _Message()
+    for k, v in (headers or {}).items():
+        msg[k] = v
+    return urllib.error.HTTPError("https://x", code, "e", msg, _io.BytesIO(body.encode()))
+
+
+class _R:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def read(self) -> bytes:
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _urlopen(monkeypatch, outcomes):
+    calls: list[Any] = []
+
+    def fake(req, timeout=0):
+        calls.append(req)
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return _R(out)
+
+    monkeypatch.setattr(_ctl.urllib.request, "urlopen", fake)
+    return calls
+
+
+def _gh(sleeps, **kw):
+    return _ctl.GitHubClient(
+        api_url="https://api.test", token="t", repository="o/r",
+        sleep=sleeps.append, clock=lambda: 1000.0, **kw,
+    )
+
+
+@pytest.mark.parametrize(
+    "hdrs,expected",
+    [
+        ({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1060"}, 61.0),
+        ({"retry-after": "30"}, 31.0),
+    ],
+)
+def test_rate_limited_403_waits_until_reset_then_retries(monkeypatch, hdrs, expected) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [_herr(403, hdrs), b'{"ok": 1}'])
+    assert _gh(sleeps).request("GET", "/x") == {"ok": 1}
+    assert sleeps == [expected] and len(calls) == 2
+
+
+def test_rate_limited_429_waits_and_retries_post(monkeypatch) -> None:
+    sleeps: list[float] = []
+    _urlopen(monkeypatch, [_herr(429, {"retry-after": "5"}), b""])
+    assert _gh(sleeps).request("POST", "/x", {"a": 1}) is None
+    assert sleeps == [6.0]
+
+
+def test_rate_limit_beyond_budget_fails_closed_with_reason(monkeypatch) -> None:
+    sleeps: list[float] = []
+    _urlopen(monkeypatch, [_herr(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "9000"})])
+    with pytest.raises(_ctl.RateLimitError, match="rate_limit") as info:
+        _gh(sleeps, max_rate_limit_wait_seconds=60).request("GET", "/x")
+    assert info.value.reason == "rate_limit" and sleeps == []
+
+
+def test_rate_limit_wait_ceiling_is_65_minutes() -> None:
+    with pytest.raises(ControllerError):
+        _ctl.GitHubClient(api_url="u", token="t", repository="o/r", max_rate_limit_wait_seconds=3901)
+
+
+@pytest.mark.parametrize("code", [403, 404])
+def test_non_rate_limit_403_404_fail_immediately(monkeypatch, code) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [_herr(code, {"x-ratelimit-remaining": "42"}, "Forbidden")])
+    with pytest.raises(ControllerError, match=f"HTTP {code}") as info:
+        _gh(sleeps).request("GET", "/x")
+    assert not isinstance(info.value, _ctl.RateLimitError) and sleeps == [] and len(calls) == 1
+
+
+def test_fetch_url_json_retries_transient_then_succeeds(monkeypatch) -> None:
+    sleeps: list[float] = []
+    calls = _urlopen(monkeypatch, [TimeoutError("t"), _herr(503), b'{"a": 1}'])
+    assert _ctl.fetch_url_json("https://h/x", sleep=sleeps.append) == {"a": 1}
+    assert len(calls) == 3 and sleeps == [1.0, 2.0]
+
+
+def test_fetch_url_json_exhaustion_is_transient_fetch(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [urllib.error.URLError("refused")] * 3)
+    with pytest.raises(_ctl.TransientFetchError, match="transient_fetch"):
+        _ctl.fetch_url_json("https://h/x", sleep=lambda s: None)
+    assert len(calls) == 3
+
+
+def test_fetch_url_json_404_not_retried(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [_herr(404)])
+    with pytest.raises(urllib.error.HTTPError):
+        _ctl.fetch_url_json("https://h/x", sleep=lambda s: None)
+    assert len(calls) == 1
+
+
+def test_fetched_mismatching_identity_still_fails_at_once(monkeypatch) -> None:
+    calls = _urlopen(monkeypatch, [b'{"commit": "' + b"9" * 40 + b'"}'])
+    cand = {"pantheon_sha": BACKEND_SHA, "execute_plans_sha": FRONTEND_SHA, "pair_id": None}
+    with pytest.raises(ControllerError, match="served identity mismatch") as info:
+        verify_served_identity(bff_base_url="https://b", expected_candidate=cand)
+    assert not isinstance(info.value, _ctl.TransientFetchError) and len(calls) == 1
+
+
+def test_identity_fetch_exhaustion_keeps_transient_fetch_reason() -> None:
+    def boom(url: str) -> dict[str, Any]:
+        raise _ctl.TransientFetchError("transient_fetch: x")
+
+    cand = {"pantheon_sha": BACKEND_SHA, "execute_plans_sha": FRONTEND_SHA, "pair_id": None}
+    with pytest.raises(_ctl.TransientFetchError):
+        verify_served_identity(bff_base_url="https://b", expected_candidate=cand, fetch_fn=boom)
+
+
+# --- Dev: a gate failure for an unchanged frontend does not roll the backend back
+
+
+def _manifest_file(
+    tmp_path: Path,
+    *,
+    frontend_sha: str = FRONTEND_SHA,
+    status: str = "accepted",
+    bundle_mismatch: bool = False,
+) -> tuple[Path, str]:
+    import hashlib
+
+    manifest = {
+        "compatibility_status": status,
+        "blocking_reasons": [],
+        "backend": {
+            "runtime_commit": BACKEND_SHA,
+            "contract_commit": "9" * 40,
+            "bundle_index_sha256": "b" * 64,
+            "openapi_sha256": "e" * 64,
+        },
+        "frontend": {
+            "runtime_commit": frontend_sha,
+            "generated_from_contract_commit": "9" * 40,
+            "bundle_index_sha256": "f" * 64 if bundle_mismatch else "b" * 64,
+            "openapi_sha256": "e" * 64,
+        },
+    }
+    raw = json.dumps(manifest).encode()
+    path = tmp_path / "manifest.json"
+    path.write_bytes(raw)
+    return path, hashlib.sha256(raw).hexdigest()
+
+
+def _unchanged_fetch(url: str) -> dict[str, Any]:
+    if "version" in url:
+        return {"source_commit_sha": BACKEND_SHA}
+    return {"frontendSha": FRONTEND_SHA, "bffCommit": PREV_BFF_SHA, "pairId": PREV_PAIR_ID}
+
+
+PREV_BFF_SHA = "b" * 40
+
+
+def _unchanged(client: FakeClient, **overrides: Any) -> dict[str, Any]:
+    return _coordinate(
+        client,
+        fetch_fn=_unchanged_fetch,
+        predecessor_fe_sha=FRONTEND_SHA,
+        predecessor_bff_sha=PREV_BFF_SHA,
+        **overrides,
+    )
+
+
+def test_unchanged_frontend_gate_failure_with_compatible_manifest_keeps_backend(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    evidence = _unchanged(
+        client, compatibility_manifest_path=path, compatibility_manifest_sha256=digest
+    )
+
+    assert evidence["outcome"] == "deployed_not_accepted"
+    assert evidence["acceptance"] == {
+        "deployed": True,
+        "accepted": False,
+        "owning_chain": "frontend",
+        "failed_gates": ["Gate 1 - npm run test"],
+        "gate_run_id": "101",
+        "compatibility": evidence["acceptance"]["compatibility"],
+    }
+    assert evidence["integration_gate"]["conclusion"] == "failure"
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+    assert evidence["served_verification"]["observed_fe_sha"] == FRONTEND_SHA
+
+
+@pytest.mark.parametrize("case", ["incompatible", "wrong_digest", "unreadable", "missing", "wrong_pair"])
+def test_unchanged_frontend_gate_failure_with_unusable_manifest_rejects(tmp_path: Path, case: str) -> None:
+    path, digest = _manifest_file(tmp_path, bundle_mismatch=case == "incompatible")
+    if case == "wrong_digest":
+        digest = "0" * 64
+    elif case == "unreadable":
+        path.write_bytes(b"{not json")
+        import hashlib
+
+        digest = hashlib.sha256(b"{not json").hexdigest()
+    elif case == "missing":
+        path = tmp_path / "absent.json"
+    elif case == "wrong_pair":
+        path, digest = _manifest_file(tmp_path, frontend_sha="3" * 40)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="not tolerated"):
+        _unchanged(client, compatibility_manifest_path=path, compatibility_manifest_sha256=digest)
+
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+
+
+def test_changed_frontend_gate_failure_rejects(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="concluded failure") as raised:
+        _coordinate(
+            client,
+            fetch_fn=_unchanged_fetch_for(PREV_FRONTEND_SHA),
+            predecessor_fe_sha=PREV_FRONTEND_SHA,
+            predecessor_bff_sha=PREV_BFF_SHA,
+            compatibility_manifest_path=path,
+            compatibility_manifest_sha256=digest,
+        )
+    assert "not tolerated" not in str(raised.value)
+
+
+def _unchanged_fetch_for(frontend_sha: str):
+    def fetch(url: str) -> dict[str, Any]:
+        if "version" in url:
+            return {"source_commit_sha": BACKEND_SHA}
+        return {"frontendSha": frontend_sha, "bffCommit": PREV_BFF_SHA, "pairId": PREV_PAIR_ID}
+
+    return fetch
+
+
+def test_staging_target_unchanged_frontend_gate_failure_rejects(tmp_path: Path) -> None:
+    path, digest = _manifest_file(tmp_path)
+    client = FakeClient(gate_conclusion="failure")
+
+    with pytest.raises(ControllerError, match="concluded failure"):
+        _unchanged(
+            client,
+            environment="staging",
+            compatibility_manifest_path=path,
+            compatibility_manifest_sha256=digest,
+        )
+
+    assert [workflow for workflow, _ in client.dispatches] == [GATE_WORKFLOW]
+
+
+def test_trading_pulse_readonly_qa_step_is_supplementary_and_secret_safe() -> None:
+    start = NONPROD_WORKFLOW.index("      - name: Trading Pulse page read-only browser QA")
+    end = NONPROD_WORKFLOW.index("      - name: Upload accepted or compensated release evidence")
+    step = NONPROD_WORKFLOW[start:end]
+    assert "continue-on-error: true" in step
+    assert "run_dev_trading_pulse_readonly_qa.py" in step
+    # viewer profile only; no other dev-login secret and no secret on argv
+    assert "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in step
+    for other in ("OPERATOR_A", "OPERATOR_B", "TEST_ADMIN", "DEV_DEPLOY_SSH_PRIVATE_KEY"):
+        assert other not in step
+    run_block = step[step.index("run: |"):]
+    assert "CLIENT_SECRET" not in run_block
+    # the release outcome gate must not read this step
+    gate = NONPROD_WORKFLOW[NONPROD_WORKFLOW.index("      - name: Enforce accepted or proven compensated outcome"):]
+    assert "trading_pulse_readonly_qa" not in gate[: gate.index("\n  dev-acceptance-stage:")]
+    # no new workflow_dispatch input
+    assert "trading_pulse" not in NONPROD_WORKFLOW[: NONPROD_WORKFLOW.index("\njobs:")]

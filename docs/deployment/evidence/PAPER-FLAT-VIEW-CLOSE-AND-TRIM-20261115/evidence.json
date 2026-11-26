@@ -1,0 +1,35 @@
+{
+  "task_id": "PAPER-FLAT-VIEW-CLOSE-AND-TRIM-20261115",
+  "reproduction_before_change": {
+    "claim": "audit claim 6: notional_target_v1 flat or weaker view neither closes nor trims",
+    "cmd": "PYTHONPATH=. python3 repro.py (outside repo; decide_validated on a held 10-unit eq:2330 long, FLAT view and LONG strength 0.2)",
+    "observed": {"flat": "flat_view, no units", "weaker": "already_at_target, no units"},
+    "exit": 0
+  },
+  "change": {
+    "file": "services/execution/lean_runtime/expression_policy.py",
+    "flat_view": "FLAT with an open position on the underlying emits close_leg of the whole held leg (one leg per call, same as opposite-view close); no position keeps flat_view; held leg missing from candidates fails closed as no_feasible_instrument / close_instrument_not_in_candidates",
+    "opposite_view": "unchanged: close_leg before reversing",
+    "weaker_view": "same-direction holding is trimmed when exposure - target > band, band = max(largest held unit notional, target * rebalance_band_fraction); units = floor(held * (exposure - target) / exposure), never above held; target = strength * notional_fraction_at_full_strength * gross_limit (absolute limit, so a held position does not shrink its own target); record carries additive rebalance_band",
+    "stronger_view": "unchanged: adds only when allow_pyramiding is true",
+    "band_value": "NOTIONAL_REBALANCE_BAND_FRACTION = 0.2, COORDINATOR PROPOSAL (2026-11-13 PERSONA-POOL-TARGET-POSITIONS-20261113) for reviewer confirmation; read from the rebalance_band_fraction policy parameter when present",
+    "not_merged_into_DEFAULT_PARAMETERS": "so policy_parameters_digest of existing decisions and the multi-member envelope parameters stay byte identical (digests 21506025fd1f63344919806d defaults, 1124d9c76fdca98ddda3d10f with band 0.2, both pinned in test_portfolio_envelope_parity.py)",
+    "limitation": "services/registry/strategy_artifact.py rejects rebalance_band_fraction for notional_target_v1 artifacts and is outside the artifact list, so an artifact cannot yet carry its own band; the module default applies. Follow-up task needed if per-artifact bands are wanted."
+  },
+  "backtest_convention_difference": {
+    "file": "services/research/vectorbt/adapter/vectorbt_adapter.py",
+    "lines": "_artifact_order_sizes, non-target branch (about 1662-1700)",
+    "difference": "single-strategy research backtest sizes every BUY/SELL as the fixed order_quantity and never calls expression_policy, so it has no notional sizing and no trim; the paper path and expression_replay share the policy. Parity test pins paper vs expression_replay. Multi-member target_position_v1 backtest (_portfolio_target_sequence) is unchanged and already at parity (existing test)."
+  },
+  "schema": "counterfactual and expression replay record keys unchanged; trim reuses existing close_leg and the already-allowed rebalance_band key (additive); replay code unchanged",
+  "hosted_personas": {
+    "artifacts_changed": false,
+    "note": "no artifact, checksum, schema or approval is touched; the three hosted persona artifacts load as before and need no re-approval",
+    "position_change_on_recorded_history": "NOT MEASURED: hosted view history with FLAT or weaker views is still an open field of the audit (hosted-readback only has 3 fills each). Deterministic fixture sequence instead (LONG .5, LONG .5, LONG .2, FLAT; budget 100000, price 100): before change units stay at the first-bar size through the weaker and flat bars; after change units are held, held, trimmed, 0 (test_flat_and_weaker_views_replay_to_the_same_positions_as_the_policy and the paper-ledger integration test)."
+  },
+  "validation": [
+    {"cmd": "pytest services/execution/lean_runtime/test_expression_policy.py test_expression_replay.py test_expression_inputs.py test_portfolio_target_positions.py test_notional_target_exit_integration.py test_paper_signal_producer.py test_futures_session_inputs.py test_current_artifact_signal.py services/research/tests/test_portfolio_target_parity.py test_portfolio_envelope_parity.py", "exit": 0, "result": "229 passed, 33 subtests passed"},
+    {"cmd": "test_notional_target_exit_integration.py against the pre-change expression_policy.py", "exit": 1, "result": "failed at the trim assertion (364 units not < 364), proving the test exercises the change"}
+  ],
+  "integration_test": "services/execution/lean_runtime/test_notional_target_exit_integration.py: PaperSignalProducer + CurrentArtifactStrategy + production expression inputs + real build_candidates + PaperRuntimeService risk gate + paper ledger; no hand-written neighbour fake"
+}

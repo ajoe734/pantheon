@@ -1,0 +1,118 @@
+{
+  "task_id": "HYPOTHESIS-CARD-SCREEN-ENTRY-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "scope": "Optional cited screen and entry ideas, compiler defaults, separate structural fingerprints, paired support counting, production controller replay",
+  "design": "docs/04/pantheon_strategy_discovery_sources_2026-11-10/SD_STRATEGY_SCREEN_ENTRY_EXIT_2026-11-12.md",
+  "implementation_notes": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/README.md",
+  "fixture": "services/source_ingestion/tests/fixtures/hypothesis_screen_entry_recorded.json",
+  "market_fixture": "services/research/tests/fixtures/candidate_pool_tw_recorded.json",
+  "recorded_data": {
+    "source": "Existing official TWSE STOCK_DAY raw recordings and SHA256 hashes",
+    "symbols": [
+      "2330.TW",
+      "2317.TW"
+    ],
+    "sessions": 39,
+    "survivorship_limited": true,
+    "model_output": "Hand-authored model-shaped transport replay, not a live provider capture"
+  },
+  "validation": [
+    {
+      "status": "passed",
+      "exit_status": 0,
+      "bounded_timeout_seconds": 120,
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_feature_catalogue.py services/registry/test_candidate_pool.py",
+      "result": "230 passed, 3 dependency deprecation warnings in 66.07 seconds",
+      "tested_base": "81c55e458caaa542547f17648745b4b202080787",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/acceptance.log"
+    },
+    {
+      "status": "passed",
+      "exit_status": 0,
+      "bounded_timeout_seconds": 120,
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/registry/test_candidate_pool.py",
+      "result": "121 passed, 3 dependency deprecation warnings in 18.46 seconds",
+      "tested_base": "421c13abc87a44e2b05d1bf638d9a5866e4d8400",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/refreshed.log"
+    },
+    {
+      "status": "timed_out",
+      "exit_status": 124,
+      "bounded_timeout_seconds": 180,
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests services/registry/test_candidate_pool.py",
+      "result": "Incomplete broad batch; failure markers were seen before timeout. Not counted as passed.",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-timeout.log"
+    },
+    {
+      "status": "timed_out",
+      "exit_status": 124,
+      "bounded_timeout_seconds": 120,
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests -x --tb=short",
+      "result": "Incomplete broad diagnostic. Not counted as passed.",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/diagnostic-timeout.log"
+    },
+    {
+      "status": "failed",
+      "exit_status": 1,
+      "bounded_timeout_seconds": 180,
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -vv services/source_ingestion/tests -x --tb=short",
+      "result": "404 passed, 1 failed, 3 warnings in 144.44 seconds. FinMind broker backfill returns dependency_unavailable: worker dependency environment lacks pyarrow.",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic-summary.log",
+      "original_log": {
+        "commit": "80058569e71c53686cf07a0757e5bb1f9b739982",
+        "path": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/broad-diagnostic.log",
+        "sha256": "5aa412b2d40684121bd86cabcb23f29658cb3d270073fa4a8fa5768aa0c1b634",
+        "bytes": 60937,
+        "lines": 440,
+        "digest_scope": "Committed whitespace-normalized bytes before summary replacement"
+      }
+    },
+    {
+      "status": "failed",
+      "exit_status": 1,
+      "bounded_timeout_seconds": 30,
+      "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_writes_governed_datasets_with_times_and_licence --tb=short",
+      "result": "Same dependency_unavailable failure in isolation. Backfill, connector and test files unchanged from origin/dev; pyarrow import spec is None.",
+      "log": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/unrelated-recheck.log",
+      "dependency_probe": "docs/deployment/evidence/HYPOTHESIS-CARD-SCREEN-ENTRY-20261112/dependency-check.log"
+    }
+  ],
+  "additional_check": "git diff --check",
+  "log_normalization": "Captured stdout/stderr with trailing whitespace removed; broad diagnostic summarized with failure excerpt and digest of the recoverable committed original.",
+  "acceptance_evidence": {
+    "1": [
+      "test_contract_file_matches_code",
+      "test_screen_entry_citations_survive_real_extraction_path",
+      "test_idea_citations_fail_closed",
+      "test_prediction_contract_and_old_cards"
+    ],
+    "2": [
+      "test_split_compiles_ordered_screen_and_entry_and_fingerprints",
+      "test_entry_only_and_legacy_get_declared_boundary_default",
+      "test_screen_only_default_holds_in_pool_and_exits_removed_member_on_recorded_tw_data",
+      "test_declared_idea_cannot_be_silently_omitted_or_replaced"
+    ],
+    "3": [
+      "test_sector_then_quality_idea_is_needs_data",
+      "test_unknown_screen_requirements_count_all_datasets_without_proposer",
+      "test_screen_entry_recording_through_environment_controller[True]"
+    ],
+    "4": [
+      "test_fingerprints_and_support_separate_screen_and_entry_changes",
+      "test_predictions_do_not_change_proposer_input_artifact_or_fingerprint",
+      "test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip"
+    ],
+    "5": [
+      "test_screen_entry_citations_survive_real_extraction_path",
+      "test_sector_then_quality_idea_is_needs_data",
+      "test_injected_idea_keys_fail_closed",
+      "test_screen_entry_recording_through_environment_controller[False]"
+    ]
+  },
+  "independent_review": {
+    "status": "pending",
+    "reviewer": "Claude"
+  },
+  "hosted_claim": false
+}

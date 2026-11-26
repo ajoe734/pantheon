@@ -13,12 +13,17 @@ import os
 import re
 import sys
 import uuid
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Optional
 
+import hashlib
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
@@ -42,6 +47,7 @@ try:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -71,6 +77,7 @@ try:
     )
     from .write_authority import is_authorized, matrix_as_list
     from .capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope
+    from .risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest
     from . import inbound_authority as _inbound_mod
     from .inbound_authority import (
         CapitalInboundAuthority,
@@ -90,6 +97,7 @@ except ImportError:
         ApplyRebalanceRequest,
         BindingAdmissibilityResponse,
         CapitalPoolBody,
+        ChangePaperRiskProfileRequest,
         ContainmentBody,
         CreateContainmentRequest,
         CreateBindingRequest,
@@ -119,6 +127,7 @@ except ImportError:
     )
     from write_authority import is_authorized, matrix_as_list  # type: ignore
     from capital_guard import CapitalGuard, _tenant_of, STAGE_DEPLOYMENT_SCOPE, line_deployment_scope, line_increases_risk, line_is_paper_scope  # type: ignore
+    from risk_policy import require_valid_any, resolve_pool_risk_policy_binding, risk_policy_digest  # type: ignore
     import inbound_authority as _inbound_mod  # type: ignore
     from inbound_authority import (  # type: ignore
         CapitalInboundAuthority,
@@ -135,7 +144,19 @@ log = logging.getLogger(__name__)
 
 
 def pool_digest(pool: Any) -> str:
-    return stable_payload_hash({f: getattr(pool, f, None) for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")})
+    payload: Dict[str, Any] = {
+        f: getattr(pool, f, None)
+        for f in ("pool_id", "owner_id", "owner_type", "currency", "budget", "risk_policy_ref", "single_runtime_enforced")
+    }
+    pool_meta = getattr(pool, "metadata", None)
+    if isinstance(pool_meta, dict) and isinstance(pool_meta.get("risk_policy"), dict):
+        try:
+            digest = risk_policy_digest(pool_meta["risk_policy"])
+            if digest:
+                payload["risk_policy_digest"] = digest
+        except Exception:
+            pass
+    return stable_payload_hash(payload)
 def binding_digest(binding: Any) -> str:
     return stable_payload_hash({f: getattr(binding, f, None) for f in ("binding_id", "persona_id", "capital_pool_id", "capital_sleeve_id", "role", "allowed_deployment_scope", "budget", "effective_from", "effective_to")})
 def plan_digest(proposal: Dict[str, Any]) -> str:
@@ -258,7 +279,7 @@ class CapitalBoundaryService:
         bindings = self.list_bindings(capital_pool_id=pool.pool_id)
         self.guard.authorize(
             pool=pool, tenant_id=t, decision_id=decision_id, target_type="capital_pool_activation", target_id=pool.pool_id,
-            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": "increase"},
+            expected={"target_version": pool_digest(pool), "subject.pool_id": pool.pool_id, "subject.risk_direction": frozenset({"increase", "reduce", "neutral"})},
             allocations=held, bindings=bindings,
         )
 
@@ -330,20 +351,297 @@ class CapitalBoundaryService:
     def update_pool_status(self, pool_id: str, body: UpdateCapitalPoolStatusRequest) -> CapitalPool:
         self._authorize("CapitalPool", "update_status", body.actor_role)
         self.get_pool(pool_id)
+        if body.status is None:
+            # The existing PATCH route also accepts this narrowly bounded,
+            # non-activating provenance write. Merge at the owner, never from a
+            # stale BFF snapshot; keep concurrent status and metadata changes.
+            meta = body.metadata or {}
+            if (
+                set(meta) != {"requested_risk_profile", "require_approved_profile_mapping"}
+                or meta.get("require_approved_profile_mapping") is not True
+                or body.risk_policy_ref is not None
+                or body.approval_decision_id is not None
+            ):
+                raise CapitalPoolError("Status omission requires a requested-profile provenance patch")
+            with self._CAPITAL_STATE_APPLY_LOCK:
+                updated, changed = self.pool_store.record_requested_profile(
+                    pool_id,
+                    persona_id=body.expected_persona_id or "",
+                    profile=meta.get("requested_risk_profile"),
+                )
+            if changed:
+                self._emit(
+                    event_type="capital_pool_status_updated",
+                    resource_type="CapitalPool",
+                    resource_id=pool_id,
+                    actor_id=body.actor_id,
+                    actor_role=body.actor_role,
+                    detail={"requested_risk_profile": meta["requested_risk_profile"]},
+                )
+            return updated
         with self._CAPITAL_STATE_APPLY_LOCK:
             pool = self.get_pool(pool_id)
-            if body.status == "active" and pool.status != "active":
-                self._authorize_pool_activation(pool, body.approval_decision_id)
-            updated = self.pool_store.update_status(pool_id, body.status)
+            has_policy_patch = body.risk_policy_ref is not None or body.metadata is not None
+            merged_meta = dict(pool.metadata or {})
+            if isinstance(body.metadata, dict):
+                merged_meta.update(body.metadata)
+            pool_tenant = _tenant_of(pool)
+            if pool_tenant:
+                merged_meta["tenant_id"] = pool_tenant
+            next_ref = (
+                (str(body.risk_policy_ref).strip() or None)
+                if body.risk_policy_ref is not None
+                else pool.risk_policy_ref
+            )
+            from services.capital.pg_store import ordered_pool_patch
+
+            ordered_pool_patch(pool, {"risk_policy_ref": next_ref, "metadata": merged_meta})
+            candidate_pool = replace(
+                pool,
+                status=body.status,
+                risk_policy_ref=next_ref,
+                metadata=merged_meta,
+            )
+            if pool_tenant:
+                object.__setattr__(candidate_pool, "tenant_id", pool_tenant)
+            # Unrelated annotations do not change the approved policy digest.
+            # Keep legacy activation behavior before the first ordered intent.
+            activation_patch = has_policy_patch and not (pool.metadata or {}).get("risk_profile_change")
+            if body.status == "active" and (pool.status != "active" or activation_patch):
+                self._authorize_pool_activation(candidate_pool, body.approval_decision_id)
+            if has_policy_patch:
+                patch_fields: Dict[str, Any] = {
+                    "status": body.status,
+                    "risk_policy_ref": next_ref,
+                    "metadata": merged_meta,
+                }
+                if hasattr(self.pool_store, "patch"):
+                    updated = self.pool_store.patch(pool_id, patch=patch_fields, updated_at=self._utc_now())
+                else:
+                    updated = self.pool_store.update_status(pool_id, body.status)
+            else:
+                updated = self.pool_store.update_status(pool_id, body.status)
+        detail: Dict[str, Any] = {"status": updated.status}
+        if has_policy_patch:
+            detail["risk_policy_ref"] = updated.risk_policy_ref
+            if isinstance(updated.metadata, dict) and isinstance(updated.metadata.get("risk_policy"), dict):
+                detail["risk_policy_id"] = updated.metadata["risk_policy"].get("risk_policy_id")
+                detail["risk_policy_version"] = updated.metadata["risk_policy"].get("version")
         self._emit(
             event_type="capital_pool_status_updated",
             resource_type="CapitalPool",
             resource_id=updated.pool_id,
             actor_id=body.actor_id,
             actor_role=body.actor_role,
-            detail={"status": updated.status},
+            detail=detail,
         )
         return updated
+
+    def change_paper_risk_profile(self, pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPool:
+        from .profile_change import change_profile, RiskChangeReceipts
+
+        self._authorize("CapitalPool", "update_status", body.actor_role)
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        receipts = RiskChangeReceipts(self.audit_store, tenant, pool_id, body.actor_id, body.actor_role)
+        with self._CAPITAL_STATE_APPLY_LOCK:
+            updated, changed = self.pool_store.mutate_paper_risk_profile(
+                pool_id, lambda current: change_profile(
+                    current, body, tenant_id=tenant,
+                    reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader,
+                    receipt_reader=receipts.read, receipt_archiver=receipts.archive,
+                ),
+            )
+        if changed:
+            self._emit(event_type="capital_pool_status_updated", resource_type="CapitalPool",
+                       resource_id=pool_id, actor_id=body.actor_id, actor_role=body.actor_role,
+                       detail={"requested_risk_profile": body.requested_profile,
+                               "risk_change_revision": updated.metadata["risk_profile_change"]["revision"]})
+        return updated
+
+    def read_paper_risk_profile(self, pool_id: str, persona_id: str, request_id: str | None = None) -> Dict[str, Any]:
+        from .profile_change import read_change, RiskChangeReceipts
+
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        result = read_change(pool, tenant_id=tenant, persona_id=persona_id,
+                             reader=self.guard._effective_approval_reader(), loader=self.guard._policy_loader)
+        if request_id:
+            result["requestReceipt"] = (pool.metadata.get("risk_profile_change_receipts") or {}).get(request_id)
+            if result["requestReceipt"] is None:
+                result["requestReceipt"] = RiskChangeReceipts(self.audit_store, tenant, pool_id, "", "").read(request_id)
+        return result
+
+    def resolve_pool_risk_policy(self, pool_id: str, *, stage: Optional[str] = None) -> Dict[str, Any]:
+        pool = self.get_pool(pool_id)
+        pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+        expected_stage = str(
+            stage
+            or pool_meta.get("execution_context")
+            or pool_meta.get("target_stage")
+            or "paper"
+        ).strip()
+        resolution = resolve_pool_risk_policy_binding(
+            capital_pool_id=pool.pool_id,
+            pool=pool,
+            risk_policy_loader=self.guard._policy_loader,
+            expected_tenant_id=_tenant_of(pool),
+            expected_stage=expected_stage or "paper",
+            approval_reader=self.guard._effective_approval_reader(),
+            require_active=True,
+            require_limits=("gross_limit",),
+            raise_on_error=False,
+        )
+        return resolution.to_dict()
+
+    def get_pool_approval_evidence(
+        self,
+        decision_id: str,
+        *,
+        pool_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from services.governance.approval_authority import ApprovalEvidence
+
+        clean_decision_id = str(decision_id or "").strip()
+        if not clean_decision_id:
+            raise CapitalPoolError("Approval decision not found")
+        tenant = _current_tenant()
+        pool: Optional[CapitalPool] = None
+        if pool_id is not None:
+            pool = self.get_pool(pool_id)
+        reader = self.guard._effective_approval_reader()
+        if reader is None:
+            raise CapitalServiceError("Governance approval reader is not configured")
+        try:
+            loaded = reader.get(clean_decision_id)
+        except Exception as exc:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}") from exc
+        if loaded is None:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        evidence: Optional[ApprovalEvidence] = None
+        if isinstance(loaded, ApprovalEvidence):
+            evidence = loaded
+        elif isinstance(loaded, dict):
+            evidence = ApprovalEvidence.model_validate(dict(loaded))
+        elif hasattr(loaded, "model_dump"):
+            evidence = ApprovalEvidence.model_validate(loaded.model_dump())
+        elif pool is not None and callable(getattr(loaded, "require_valid", None)):
+            pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+            raw_policy = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+            req_risk = (
+                str(
+                    pool_meta.get("requested_risk_profile")
+                    or pool_meta.get("risk_profile")
+                    or "low"
+                ).strip()
+                or "low"
+            )
+            expected_binding: Dict[str, Any] = {
+                "tenant_id": _tenant_of(pool) or tenant or "default",
+                "target_type": "capital_pool_activation",
+                "target_id": pool.pool_id,
+                "target_version": pool_digest(pool),
+                "subject.pool_id": pool.pool_id,
+                "subject.risk_direction": frozenset({"increase", "reduce", "neutral"}),
+                "subject.risk_policy_id": str(
+                    raw_policy.get("risk_policy_id") or pool.risk_policy_ref or f"rp-{pool.pool_id}"
+                ),
+                "subject.risk_policy_version": str(raw_policy.get("version") or "1.0"),
+                "subject.risk_policy_digest": risk_policy_digest(raw_policy) if raw_policy else "",
+                "subject.requested_risk": req_risk,
+            }
+            res_ev = require_valid_any(loaded, expected=expected_binding)
+            if isinstance(res_ev, ApprovalEvidence):
+                evidence = res_ev
+            elif isinstance(res_ev, dict):
+                evidence = ApprovalEvidence.model_validate(dict(res_ev))
+            elif hasattr(res_ev, "model_dump"):
+                evidence = ApprovalEvidence.model_validate(res_ev.model_dump())
+        if evidence is None or evidence.decision_id != clean_decision_id:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if tenant and evidence.tenant_id != tenant:
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if evidence.target_type != "capital_pool_activation":
+            raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is not None:
+            pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+            raw_pol = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+            bound_policy_ids = {
+                str(cid).strip()
+                for cid in (pool.risk_policy_ref, raw_pol.get("risk_policy_id"))
+                if cid is not None and str(cid).strip()
+            }
+            if evidence.target_id != pool.pool_id and evidence.target_id not in bound_policy_ids:
+                raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        if pool is None:
+            target_pool = self.get_pool(evidence.target_id)
+            if target_pool.pool_id != evidence.target_id:
+                raise CapitalPoolError(f"Approval decision not found: {clean_decision_id}")
+        return evidence.model_dump(mode="json")
+
+    def list_pool_approval_evidence(
+        self,
+        pool_id: str,
+    ) -> list[Dict[str, Any]]:
+        from services.governance.approval_authority import ApprovalEvidence
+
+        pool = self.get_pool(pool_id)
+        tenant = _current_tenant() or _tenant_of(pool)
+        reader = self.guard._effective_approval_reader()
+        if reader is None:
+            raise CapitalServiceError("Governance approval reader is not configured")
+        pool_meta = pool.metadata if isinstance(pool.metadata, dict) else {}
+        raw_pol = pool_meta.get("risk_policy") if isinstance(pool_meta.get("risk_policy"), dict) else {}
+        bound_policy_id = str(pool.risk_policy_ref or raw_pol.get("risk_policy_id") or "").strip()
+
+        found: dict[str, Dict[str, Any]] = {}
+        if hasattr(reader, "list_for_target"):
+            targets: list[tuple[str, str]] = [("capital_pool_activation", pool.pool_id)]
+            if bound_policy_id and not bound_policy_id.startswith("rp-pool-") and bound_policy_id != f"rp-{pool.pool_id}":
+                targets.append(("capital_pool_activation", bound_policy_id))
+            for t_type, t_id in targets:
+                try:
+                    items = reader.list_for_target(
+                        target_type=t_type,
+                        target_id=t_id,
+                        decision_state=None,
+                        max_items=17,
+                    )
+                except Exception:
+                    items = []
+                for item in items or []:
+                    try:
+                        ev = (
+                            item
+                            if isinstance(item, ApprovalEvidence)
+                            else ApprovalEvidence.model_validate(
+                                dict(item) if isinstance(item, dict) else item.model_dump()
+                            )
+                        )
+                    except Exception:
+                        continue
+                    if tenant and ev.tenant_id != tenant:
+                        continue
+                    if ev.decision_id not in found and len(found) < 17:
+                        found[ev.decision_id] = ev.model_dump(mode="json")
+
+        fallback_ids: list[str] = []
+        for candidate_key in ("profile_mapping_approval_id", "approval_decision_id"):
+            val = str(pool_meta.get(candidate_key) or "").strip()
+            if val and val not in fallback_ids:
+                fallback_ids.append(val)
+        default_cand = f"apv-capital-pool-{pool.pool_id}"
+        if default_cand not in fallback_ids:
+            fallback_ids.append(default_cand)
+        for cand_id in fallback_ids:
+            if cand_id in found or len(found) >= 17:
+                continue
+            try:
+                ev_dict = self.get_pool_approval_evidence(cand_id, pool_id=pool.pool_id)
+                found[cand_id] = ev_dict
+            except Exception:
+                continue
+        return list(found.values())
 
     def create_binding(
         self,
@@ -1018,6 +1316,162 @@ register_fastapi_health_routes(
 )
 
 
+
+# --- governed quarterly paper allocation cycle -------------------------------------------------------------------
+# One cycle per tenant and quarter: admitted quarterly ranking snapshot -> the real allocation policy arithmetic over
+# every paper persona -> a paper rebalance proposal -> automatic apply inside the paper ledger with an audit receipt and
+# a rollback target.  It can only create or apply a proposal whose lines are all ``paper_ledger`` scope in a pool whose
+# execution context is paper; real capital (canary/live) and its human approval path are never reached from here.
+PAPER_QUARTERLY_CYCLE_MODE = "governed_paper_quarterly_cycle"
+
+
+class PaperAllocationCycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor_id: str
+    actor_role: str
+    quarter: str = Field(pattern=r"^\d{4}-Q[1-4]$")
+    ranking_snapshot_id: str = Field(min_length=1)
+    capital_pool_id: str = Field(min_length=1)
+    # persona_id -> {risk_budget_factor, capacity_factor, provenance}; personas not listed stay at 1.0
+    pool_health: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+
+CYCLE_KIND = "paper_quarterly_cycle"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _quarter_end(quarter: str) -> datetime:
+    year, q = int(quarter[:4]), int(quarter[-1])
+    return datetime(year + (q == 4), 1 if q == 4 else q * 3 + 1, 1, tzinfo=timezone.utc)
+QUARTERLY_INCREASE_CAP = 0.25
+
+
+def cycle_rebalance_id(tenant: str, quarter: str, pool_id: str) -> str:
+    digest = hashlib.sha256(f"{tenant}|{quarter}|{pool_id}".encode()).hexdigest()[:16]
+    return f"paper-quarterly-{quarter.lower()}-{digest}"
+
+
+def _held_by_persona(service: Any, pool_id: str, tenant: str) -> Dict[str, Dict[str, Any]]:
+    held = service.allocation_store.list_allocations(capital_pool_id=pool_id, tenant_id=tenant)
+    return {str(a.get("persona_id")): a for a in held if a.get("capital_scope") == "paper_ledger"}
+
+
+def _cycle_result(service: Any, rebalance_id: str, tenant: str, *, replayed: bool) -> Dict[str, Any]:
+    proposal = service.allocation_store.get_rebalance(rebalance_id, tenant_id=tenant)
+    return {"cycle": CYCLE_KIND, "rebalance": proposal, "replayed": replayed,
+            "applied": bool(proposal.get("applied")), "receipt": proposal.get("apply_receipt")}
+
+
+def _apply(service: Any, rebalance_id: str, body: PaperAllocationCycleRequest) -> None:
+    command_id = f"cmd-{rebalance_id}"
+    service.apply_rebalance(rebalance_id, ApplyRebalanceRequest(
+        actor_id=body.actor_id, actor_role=body.actor_role, idempotency_key=command_id,
+        request_hash=hashlib.sha256(command_id.encode()).hexdigest(), command_id=command_id,
+        approval_ref=f"paper-auto:{rebalance_id}",
+    ))
+
+
+def run_paper_allocation_cycle(service: "CapitalBoundaryService", body: PaperAllocationCycleRequest, *, tenant: str, paper_environment: bool) -> Dict[str, Any]:
+    service._authorize("Rebalance", "create", body.actor_role)
+    if not paper_environment:
+        raise PermissionError("Paper allocation cycle is only available in the paper environment")
+    if not tenant:
+        raise PermissionError("Paper allocation cycle requires a tenant")
+    pool = service.get_pool(body.capital_pool_id)
+    if (getattr(pool, "metadata", None) or {}).get("execution_context") != "paper":
+        raise PermissionError("Paper allocation cycle requires a paper capital pool")
+    if pool.status != "active":
+        raise ValueError(f"CapitalPool {pool.pool_id!r} must be active for the paper allocation cycle")
+    rebalance_id = cycle_rebalance_id(tenant, body.quarter, pool.pool_id)
+
+    try:  # rerun / catch-up: the quarter already has its cycle; finish an unapplied one, never recompute
+        existing = service.allocation_store.get_rebalance(rebalance_id, tenant_id=tenant)
+    except AllocationAuthorityNotFound:
+        existing = None
+    if existing is not None:
+        if not existing.get("applied") and existing.get("status") != "failed":
+            _apply(service, rebalance_id, body)
+        return _cycle_result(service, rebalance_id, tenant, replayed=True)
+
+    if _utc_now() < _quarter_end(body.quarter):
+        raise ValueError(f"quarter {body.quarter} has not closed; the paper allocation cycle runs after quarter close")
+    snapshot = lineage._load_snapshot(body.ranking_snapshot_id)
+    if snapshot.get("period") != body.quarter:
+        raise lineage.AllocationLineageError("ranking snapshot period does not match the cycle quarter")
+    held = _held_by_persona(service, pool.pool_id, tenant)
+    rows: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    for item in snapshot["items"]:
+        persona_id = str(item.get("persona_id") or "")
+        if str(item.get("stage") or "").strip().lower() != "paper_running":
+            continue
+        ledger = str(item.get("paper_ledger_id") or "").strip()
+        bindings = [
+            b for b in service.list_bindings(persona_id=persona_id, capital_pool_id=pool.pool_id)
+            if b.role == "paper_owner" and not service._normalized_sleeve_id(b.capital_sleeve_id)
+            and service._binding_matches_rebalance_line(
+                b, capital_pool_id=pool.pool_id, persona_id=persona_id, capital_sleeve_id=None, required_scope="paper")
+        ]
+        if not ledger:
+            skipped.append({"persona_id": persona_id, "reason": "paper_ledger_missing"})
+        elif len(bindings) != 1:
+            skipped.append({"persona_id": persona_id, "reason": "no_unique_paper_owner_binding"})
+        else:
+            health = body.pool_health.get(persona_id) or {}
+            rows.append({
+                "persona_id": persona_id, "ranking_snapshot_id": snapshot["ranking_snapshot_id"],
+                "capital_scope": "paper_ledger", "paper_ledger_id": ledger, "capital_pool_id": pool.pool_id,
+                "capital_sleeve_id": None, "binding_id": bindings[0].binding_id,
+                "current_weight": float((held.get(persona_id) or {}).get("current_weight") or 0.0),
+                **{k: health[k] for k in ("risk_budget_factor", "capacity_factor") if k in health},
+                "pool_health_factors": health or {"status": "unavailable", "reason": "pool_health_not_supplied"},
+            })
+    if not rows:
+        raise lineage.AllocationLineageError("no eligible paper persona in the ranking snapshot; cycle not created")
+    row_personas = {r["persona_id"] for r in rows}
+    retained = round(sum(float(a.get("current_weight") or 0.0) for pid, a in held.items() if pid not in row_personas), 8)
+    evaluation = lineage.evaluate_allocation(
+        {"ranking_snapshot_id": snapshot["ranking_snapshot_id"], "rows": rows, "retained_weight": retained},
+        paper=True, quarterly=True)
+    lines = evaluation["lines"]
+    if round(sum(l["target_weight"] for l in lines) + retained, 8) > 1.0 + 1e-9:
+        raise ValueError("paper cycle would exceed the paper total; cycle not created")
+    if any(line.get("capital_scope") != "paper_ledger" for line in lines):
+        raise PermissionError("paper cycle cannot carry a non-paper line")
+    budget = getattr(pool, "budget", None)
+    request_hash = hashlib.sha256(rebalance_id.encode()).hexdigest()
+    created = service.create_rebalance(CreateRebalanceRequest(
+        actor_id=body.actor_id, actor_role=body.actor_role, idempotency_key=rebalance_id, request_hash=request_hash,
+        rebalance_id=rebalance_id, capital_pool_id=pool.pool_id,
+        ranking_snapshot_id=evaluation["ranking_snapshot_id"],
+        allocation_evaluation_id=evaluation["allocation_evaluation_id"],
+        allocation_policy_version=evaluation["allocation_policy_version"],
+        reason=f"governed paper quarterly allocation {body.quarter}", lines=lines,
+        simulation={"kind": CYCLE_KIND, "quarter": body.quarter, "paper_total": budget,
+                    "paper_total_basis": "capital_pool.budget" if budget is not None else "unknown",
+                    "target_weight_sum": round(sum(l["target_weight"] for l in lines), 8),
+                    "retained_weight": retained,
+                    "line_capital": ({l["persona_id"]: round(l["target_weight"] * budget, 8) for l in lines}
+                                     if budget is not None else None),
+                    "skipped": skipped},
+        constraints={"max_total_weight": 1.0, "quarterly_increase_cap": QUARTERLY_INCREASE_CAP,
+                     "tier_caps": {"s": 0.25, "a": 0.15, "b": 0.08, "watch": 0.0},
+                     "capital_scope": "paper_ledger", "human_approval": "not_required_in_paper"},
+        rollback_target={"kind": "previous_paper_allocation_weights",
+                         "allocations": [{"allocation_id": f"{pool.pool_id}|persona:{l['persona_id']}",
+                                          "persona_id": l["persona_id"], "weight": l["current_weight"],
+                                          "allocation_version": (held.get(l["persona_id"]) or {}).get("allocation_version", 0)}
+                                         for l in lines]},
+        audit_refs=[f"paper-quarterly-cycle:{body.quarter}:{evaluation['allocation_evaluation_id']}"],
+    ))
+    _apply(service, created["rebalance_id"], body)
+    return _cycle_result(service, rebalance_id, tenant, replayed=False)
+
+
 @app.middleware("http")
 async def enforce_capital_mutation_authority(request: Request, call_next):
     if not request.url.path.startswith("/api/"):
@@ -1115,6 +1569,69 @@ def update_capital_pool_status(
     try:
         body = bind_capital_mutation(body)
         return _pool_body(service.update_pool_status(pool_id, body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/risk-policy")
+def get_capital_pool_risk_policy(
+    pool_id: str,
+    stage: Optional[str] = None,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.resolve_pool_risk_policy(pool_id, stage=stage)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.post("/api/capital-pools/{pool_id}/risk-profile-change", response_model=CapitalPoolBody)
+def change_paper_pool_risk_profile(pool_id: str, body: ChangePaperRiskProfileRequest) -> CapitalPoolBody:
+    try:
+        body = bind_capital_mutation(body)
+        return _pool_body(get_capital_service().change_paper_risk_profile(pool_id, body))
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/risk-profile-change")
+def read_paper_pool_risk_profile(pool_id: str, persona_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+    try:
+        return get_capital_service().read_paper_risk_profile(pool_id, persona_id, request_id)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/approvals")
+def list_capital_pool_approval_evidence(
+    pool_id: str,
+) -> List[Dict[str, Any]]:
+    service = get_capital_service()
+    try:
+        return service.list_pool_approval_evidence(pool_id)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital-pools/{pool_id}/approvals/{decision_id}")
+def get_capital_pool_approval_evidence(
+    pool_id: str,
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id, pool_id=pool_id)
+    except CAPITAL_HTTP_ERRORS as exc:
+        _raise_http_error(exc)
+
+
+@app.get("/api/capital/approvals/{decision_id}")
+def get_capital_approval_evidence(
+    decision_id: str,
+) -> Dict[str, Any]:
+    service = get_capital_service()
+    try:
+        return service.get_pool_approval_evidence(decision_id)
     except CAPITAL_HTTP_ERRORS as exc:
         _raise_http_error(exc)
 
@@ -1231,6 +1748,17 @@ def create_rebalance(body: CreateRebalanceRequest) -> RebalanceBody:
 def evaluate_allocation_policy(payload: Dict[str, Any]) -> Dict[str, Any]:
     paper = str(payload.get("authority_mode") or "").strip().lower()
     try:
+        if paper == PAPER_QUARTERLY_CYCLE_MODE:
+            authority = current_authority()
+            if "operator" not in authority.roles:
+                raise PermissionError("Paper allocation cycle requires an operator")
+            request = PaperAllocationCycleRequest(
+                actor_id=authority.delegated_actor_id or authority.actor_id, actor_role="operator",
+                **{k: v for k, v in payload.items() if k in PaperAllocationCycleRequest.model_fields})
+            with CapitalBoundaryService._CAPITAL_STATE_APPLY_LOCK:
+                return run_paper_allocation_cycle(
+                    get_capital_service(), request, tenant=_current_tenant() or "",
+                    paper_environment=lineage.paper_environment_allowed())
         if paper:
             if paper != lineage.PAPER_AUTHORITY_MODE:
                 raise lineage.AllocationLineageError(f"Unsupported authority_mode={paper!r}")

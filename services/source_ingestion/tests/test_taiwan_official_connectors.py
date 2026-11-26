@@ -931,7 +931,7 @@ def test_taifex_contract_roll_and_calendar_policy(tmp_path) -> None:
     assert store.get_watermark(TAIFEX_DERIVATIVES_CONNECTOR_ID).value == "2026-06-17"
 
 
-def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
+def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path, monkeypatch) -> None:
     """Validate durable source->evidence->search canary readback for TDCC and TAIFEX."""
     from pathlib import Path
     from services.knowledge.evidence import (
@@ -940,6 +940,7 @@ def test_tdcc_and_taifex_evidence_and_search_canary_readback(tmp_path) -> None:
         InMemoryEvidenceRepository,
         JsonlEvidenceRepository,
     )
+    monkeypatch.setenv("PANTHEON_SEARCH_BACKEND", "jsonl")  # explicit non-production fallback
     from services.search.main import create_app as create_search_app
     from services.source_ingestion.connectors import (
         TaifexDerivativesChipAdapter,
@@ -2301,3 +2302,254 @@ def test_holiday_calendar_is_sourced_from_twse_openapi_endpoint() -> None:
     assert records[0].metadata["normalized_row"]["name"] == "中華民國開國紀念日"
 
 
+
+
+@pytest.mark.parametrize("venue,fixture,code_key,industry_key", [
+    ("TWSE", "twse", "公司代號", "產業別"),
+    ("TPEx", "tpex", "SecuritiesCompanyCode", "SecuritiesIndustryCode"),
+])
+def test_recorded_company_profiles_through_provider_refresh_and_storage(
+    tmp_path, monkeypatch, venue, fixture, code_key, industry_key,
+):
+    from datetime import datetime, timedelta
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.source_ingestion.connectors import taiwan_official as tw
+    from services.source_ingestion.feature_catalogue import observations_from_row, read_feature_series
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    recording = json.loads((Path(__file__).parent / "fixtures" / f"{fixture}_company_profile_recorded.json").read_text())
+    stamp = recording["recorded_at"]
+    monkeypatch.setattr(tw, "_utc_now", lambda: stamp)
+
+    class RecordedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(tz)
+
+    monkeypatch.setattr(tw, "datetime", RecordedClock)
+    seen = []
+
+    def official(request, **kwargs):
+        seen.append(request.full_url)
+        return recording["records"]
+
+    monkeypatch.setattr(tw, "_fetch_official", official)
+    connector = TaiwanOfficialMarketDatasetAdapter().connector()
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={"adapter": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+               "request": {"dataset": "tw_industry_classification", "venues": [venue]}, "max_records": 50},
+        trace_id="recorded-industry-refresh",
+    )
+    assert seen == [recording["source_url"]]
+    assert len(records) == len(recording["records"])
+    expected = {r[code_key]: int(r[industry_key]) for r in recording["records"]}
+    observations = []
+    for record in records:
+        row = record.metadata["normalized_row"]
+        assert row["industry_code"] == expected[row["symbol"]]
+        assert row["available_time"] == row["observed_at"] == row["ingest_time"] == stamp
+        assert row["event_time"] == "2026-11-12"
+        observations.extend(observations_from_row("tw_industry_classification", row))
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-11")
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-12T14:27:00Z")
+    instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    assert not read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant - timedelta(microseconds=1))
+    assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time=instant)) == len(records)
+    assert len(read_feature_series(observations, "tw_industry_classification", "industry_code", decision_time="2026-11-13")) == len(records)
+    writer = MarketDataStorageWriter(tmp_path)
+    manifest = writer.write_run(result=SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id="observed-1")), connector=connector)
+    ref = manifest.normalized_refs[0]
+    assert ref["date"] == "2026-11-12"
+    assert Path(ref["uri"]).is_file()
+    stored = [json.loads(line)["metadata"]["normalized_row"] for line in Path(ref["uri"]).read_text().splitlines()]
+    assert [r["industry_code"] for r in stored] == [r.metadata["normalized_row"]["industry_code"] for r in records]
+
+
+def test_company_profile_missing_industry_is_not_imputed():
+    import json
+    from pathlib import Path
+    from services.source_ingestion.connectors.taiwan_official import normalize_industry_classification_rows
+    recording = json.loads((Path(__file__).parent / "fixtures/tpex_company_profile_recorded.json").read_text())
+    row = dict(recording["records"][0])
+    row.pop("SecuritiesIndustryCode")  # explicit missing-field fault on real response
+    assert normalize_industry_classification_rows("TPEx", [row], source_dataset="mopsfin_t187ap03_O",
+        api_endpoint=recording["source_url"], ingest_time=recording["recorded_at"]) == ()
+
+
+def test_recorded_chip_profiles_dispatch_existing_adapters_and_store_raw_values(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.persona_source_reconciler import chip_profile_provider
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+    from services.source_ingestion.market_data_storage import MarketDataStorageWriter
+
+    evidence = json.loads((Path(__file__).parents[3] / 'docs/deployment/evidence/REGIME-DATA-TW-CHIP-SCHEDULE-20261114/evidence.json').read_text())
+    monkeypatch.delenv('SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS', raising=False)
+    monkeypatch.delenv('SOURCE_INGEST_TW_HISTORY_SYMBOLS', raising=False)
+    writer = MarketDataStorageWriter(tmp_path / 'market')
+    # FinMind fundamentals are symbol-keyed and covered by test_finmind_fundamentals.py.
+    chip_profiles = {k: v for k, v in TW_CHIP_REFRESH_PROFILES.items() if v['base'] != 'tw-finmind-fundamentals'}
+    for index, (cid, profile) in enumerate(chip_profiles.items()):
+        adapter = chip_profile_provider(cid)
+        fetch = dict(adapter.fetch_config())
+        fetch['request'] = {**fetch['request'], **{k: v for k, v in profile.items() if k in ('dataset', 'venues', 'contracts')}}
+        venue = profile.get('venues', ['TAIFEX'])[0]
+        if profile['dataset'] == 'taifex_tx_daily':  # Recorded by REGIME-DATA-TAIFEX-TX-DAILY-20261114.
+            recorded = {'payload': json.loads((Path(__file__).parent / 'fixtures' / 'taifex_daily_market_report_fut_tx_20261113.json').read_text())['payload']}
+        else:
+            recorded = next(r for r in evidence['recorded_responses'] if (r['dataset'], r['venue']) == (profile['dataset'], venue))
+        fetch['request']['payload'] = recorded['payload']
+        records = execute_provider_owned_adapter(connector=adapter.connector(), fetch=fetch, trace_id='recorded-chip')
+        assert records
+        assert all(r.connector_id == cid and r.metadata['dataset'] == profile['dataset'] for r in records)
+        assert all(r.metadata['raw_row'] in recorded['payload'] for r in records)
+        if venue == 'TWSE':
+            # TW-OFFICIAL-CHIP-FULL-MARKET-AND-SESSION-DATE-20261120: a date-less MI_MARGN row takes the session
+            # of the shared published-session rule at fetch time (never empty, never the fetch date).
+            from datetime import datetime as _dt, timezone as _tz
+            from services.source_ingestion.chip_publication_schedule import resolve_chip_row_session
+            session = resolve_chip_row_session(cid, '', _dt.now(_tz.utc)).isoformat()
+            assert all(r.metadata['date'] == session for r in records)
+        result = SimpleNamespace(records=records, run=SimpleNamespace(ingest_run_id=f'chip-{index}'))
+        # Use the existing persistence contract; no fixture-generated market observations.
+        manifest = writer.write_run(connector=adapter.connector(), result=result)
+        assert manifest.normalized_refs
+        assert manifest.raw_refs
+
+
+# --- taifex_tx_daily: TX/MTX daily price, volume and open interest -------------------------------
+
+_TX_FIXTURE = (
+    _Path(__file__).resolve().parent / "fixtures" / "taifex_daily_market_report_fut_tx_20261113.json"
+)
+
+
+def _tx_recorded() -> list[dict]:
+    return _json.loads(_TX_FIXTURE.read_text(encoding="utf-8"))["payload"]
+
+
+def _tx_row(rows, contract: str, month: str, session: str) -> dict:
+    return next(
+        r for r in rows
+        if (r["contract"], r["contract_month"], r["trading_session"]) == (contract, month, session)
+    )
+
+
+def test_taifex_tx_daily_keeps_regular_and_after_hours_rows_distinct() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter(dataset="taifex_tx_daily", contracts=["TX", "MTX"])
+    rows = adapter.normalized_rows_from_payload(_tx_recorded())
+    assert {r["contract"] for r in rows} == {"TX", "MTX"}
+    assert {r["trading_session"] for r in rows} == {"regular", "after_hours"}
+    assert all(r["dataset"] == "taifex_tx_daily" and r["date"] == "2026-11-13" for r in rows)
+    assert len({r["contract_id"] for r in rows}) == len(rows)
+    assert all("/" not in r["contract_month"] for r in rows)
+
+    regular = _tx_row(rows, "TX", "202611", "regular")
+    assert (regular["open_price"], regular["high_price"], regular["low_price"], regular["last_price"]) == (
+        43925.0, 44824.0, 43692.0, 43834.0,
+    )
+    assert (regular["settlement_price"], regular["volume"], regular["open_interest"]) == (43839.0, 94919, 105228)
+    assert regular["raw_row"]["SettlementPrice"] == "43839"
+    after = _tx_row(rows, "TX", "202611", "after_hours")
+    # Source values are kept: no settlement or open interest is invented for after-hours.
+    assert after["settlement_price"] is None and after["open_interest"] is None
+    assert after["volume"] == 79972 and after["raw_row"]["OpenInterest"] == "-"
+    assert after["available_time"] > regular["available_time"]
+    assert any(r["contract_month_kind"] == "weekly" for r in rows)
+
+
+def test_taifex_tx_daily_rows_are_selected_before_any_record_cap() -> None:
+    payload = _tx_recorded()
+    non_tx = [r for r in payload if r["Contract"] not in ("TX", "MTX")]
+    tx = [r for r in payload if r["Contract"] in ("TX", "MTX")]
+    padded = (non_tx * 200)[:1500] + tx  # TX rows sit after far more than max_records other rows
+    adapter = _tw_official.TaifexDerivativesChipAdapter(dataset="taifex_tx_daily", contracts=["TX", "MTX"])
+    assert len(adapter.normalized_rows_from_payload(padded, max_records=100)) > 0
+    with pytest.raises(SourceEvidenceError, match="refusing to truncate"):
+        adapter.normalized_rows_from_payload(tx, max_records=3)
+
+
+def test_taifex_tx_daily_fetch_filters_before_cap(monkeypatch) -> None:
+    payload = _tx_recorded()
+    tx = [r for r in payload if r["Contract"] in ("TX", "MTX")]
+    padded = [r for r in payload if r["Contract"] not in ("TX", "MTX")] * 50 + tx
+    seen: list[str] = []
+
+    def fake_fetch(request, *, caller, timeout_seconds, max_bytes, parse):
+        seen.append(request.full_url)
+        return parse(_json.dumps(padded).encode("utf-8"))
+
+    monkeypatch.setattr(_tw_official, "_fetch_official", fake_fetch)
+    adapter = _tw_official.TaifexDerivativesChipAdapter(dataset="taifex_tx_daily", contracts=["TX", "MTX"])
+    fetched = adapter.fetch_payload()
+    assert seen == ["https://openapi.taifex.com.tw/v1/DailyMarketReportFut"]
+    assert len(fetched) == len(tx) and {r["Contract"] for r in fetched} == {"TX", "MTX"}
+
+
+def test_taifex_tx_rows_never_enter_the_single_stock_futures_dataset() -> None:
+    payload = _ssf_payload()
+    baseline = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+        payload, dataset="taifex_ssf_contracts"
+    )
+    mixed = dict(payload, DailyMarketReportFut=list(payload["DailyMarketReportFut"]) + _tx_recorded())
+    rows = _tw_official.TaifexDerivativesChipAdapter().normalized_rows_from_payload(
+        mixed, dataset="taifex_ssf_contracts"
+    )
+    assert {r["contract"] for r in rows}.isdisjoint({"TX", "MTX"})
+    assert [r["contract_id"] for r in rows] == [r["contract_id"] for r in baseline]
+    assert _tw_official._SSF_CONTRACT_CODE.pattern == "^[A-Z]{2}F$"
+    assert not any(_tw_official._SSF_CONTRACT_CODE.match(c) for c in ("TX", "MTX"))
+
+
+def test_taifex_tx_daily_fails_closed_on_changed_or_missing_tables() -> None:
+    adapter = _tw_official.TaifexDerivativesChipAdapter(dataset="taifex_tx_daily", contracts=["TX", "MTX"])
+    tx = [r for r in _tx_recorded() if r["Contract"] in ("TX", "MTX")]
+    with pytest.raises(SourceEvidenceError, match="no rows"):
+        adapter.normalized_rows_from_payload([])
+    with pytest.raises(SourceEvidenceError, match="no TX or MTX"):
+        adapter.normalized_rows_from_payload([r for r in _tx_recorded() if r["Contract"] not in ("TX", "MTX")])
+    dropped = [{k: v for k, v in r.items() if k != "OpenInterest"} for r in tx]
+    with pytest.raises(SourceEvidenceError, match="format changed"):
+        adapter.normalized_rows_from_payload(dropped)
+    with pytest.raises(SourceEvidenceError, match="trading session"):
+        adapter.normalized_rows_from_payload([dict(tx[0], TradingSession="X")])
+    with pytest.raises(SourceEvidenceError, match="contract month"):
+        adapter.normalized_rows_from_payload([dict(tx[0], **{"ContractMonth(Week)": "ABC"})])
+
+
+def test_taifex_tx_daily_records_carry_schema_and_are_declared() -> None:
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES, get_connector_definition
+
+    adapter = _tw_official.TaifexDerivativesChipAdapter(dataset="taifex_tx_daily", contracts=["TX", "MTX"])
+    records = adapter.records_from_payload(_tx_recorded())
+    assert records and all(r.metadata["schema_hash"] == "tw_taifex_tx_daily.v1" for r in records)
+    assert all(r.source_id.startswith("tw-taifex:taifex_tx_daily:") for r in records)
+    assert len({r.source_id for r in records}) == len(records)
+    assert "taifex_tx_daily" in get_connector_definition("tw-taifex-futures-options-chip").datasets
+    assert TW_CHIP_REFRESH_PROFILES["tw-taifex-tx-daily"]["dataset"] == "taifex_tx_daily"
+    assert get_connector_definition("tw-taifex-tx-daily").datasets == ("taifex_tx_daily",)
+
+
+def test_adapter_listing_filter_skips_unlisted_and_counts_and_rollback_restores():
+    """SOURCE-WARRANT-LISTING-EXPIRY-20261117: a tw_price_daily row in no current listing is not stored."""
+    from services.source_ingestion.security_listing import ListingFilter
+
+    payload = [
+        {"Date": "1150210", "Code": "2330", "ClosingPrice": "950.00"},
+        {"Date": "1150210", "Code": "030002", "ClosingPrice": "0.50"},  # expired warrant, in no listing
+        {"Date": "1150210", "Code": "030001", "ClosingPrice": "0.80"},  # listed warrant
+    ]
+    flt = ListingFilter(listed=frozenset({"2330", "030001"}), listing_date="2026-11-16")
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10, listing_filter=flt)
+    recs = adapter.records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")
+    assert sorted(r.metadata["normalized_row"]["symbol_canonical"] for r in recs) == ["030001.TWSE", "2330.TWSE"]
+    assert flt.skipped_not_listed_count == 1
+    off = TaiwanOfficialMarketDatasetAdapter(max_records=10, listing_filter=ListingFilter(listed=frozenset(), enabled=False))
+    assert len(off.records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")) == 3
+    # other datasets are never filtered by the price listing rule
+    assert TaiwanOfficialMarketDatasetAdapter(max_records=10).records_from_payload("tw_price_daily", "TWSE", payload, trace_id="t")

@@ -11,6 +11,36 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parent.parent / "fetch-policy.json"
+QUERY_VOCABULARY_PATH = DEFAULT_POLICY_PATH.with_name("query_vocabulary.json")
+QUERY_SOURCE_IDS = frozenset({"collector-paper-arxiv", "collector-paper-openalex", "collector-gdelt"})
+GDELT_INDEX_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+GDELT_BASE_URL = "https://data.gdeltproject.org/gdeltv2/"
+
+
+def load_query_vocabulary() -> dict[str, list[str]]:
+    """The committed vocabulary is shared with research; no host override or fallback."""
+    try:
+        raw = json.loads(QUERY_VOCABULARY_PATH.read_text(encoding="utf-8"))
+        terms = raw["terms"]
+        if raw["schema_version"] != "collector_query_vocabulary.v1" or not isinstance(terms, dict) or not terms:
+            raise ValueError("invalid vocabulary")
+        for term, aliases in terms.items():
+            if not isinstance(term, str) or not term or any(c in term for c in '\"():*'):
+                raise ValueError("invalid query term")
+            if not isinstance(aliases, list) or not aliases or not all(isinstance(a, str) and a for a in aliases):
+                raise ValueError("invalid demand aliases")
+        return terms
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise CollectorConfigError("missing or invalid fixed query vocabulary") from exc
+
+
+def validate_query_terms(source_id: str, terms: Any) -> tuple[str, ...]:
+    vocabulary = load_query_vocabulary()
+    if (not isinstance(terms, list) or not terms or len(terms) > 12
+            or not all(isinstance(t, str) and t in vocabulary for t in terms)
+            or len(set(terms)) != len(terms)):
+        raise CollectorConfigError(f"source {source_id} query_terms must contain 1..12 unique fixed vocabulary terms")
+    return tuple(terms)
 
 ALLOWED_SCHEMA_VERSIONS = frozenset({"collector_fetch_policy.v1"})
 ALLOWED_FETCHERS = frozenset({"http", "browser", "api"})
@@ -25,6 +55,12 @@ EXCHANGE_WEBSITE_SOURCE_IDS = frozenset(
         "collector-tw-twse-t86",
         "collector-tw-twse-price-history",
         "collector-tw-tpex-price-history",
+    }
+)
+EXCHANGE_SURVIVORSHIP_SOURCE_IDS = frozenset(
+    {
+        "collector-tw-trading-holidays",
+        "collector-tw-trading-suspension",
     }
 )
 DISABLED_BY_BUILD_TOKENS = frozenset({"yahoo", "cnyes", "anue"})
@@ -111,6 +147,35 @@ class SourceFetchPolicy:
         canonical = json.dumps(dict(self.raw_config), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def offering(self, env: Mapping[str, str]) -> dict[str, Any]:
+        """Host capability, separate from the outcome of its last fetch.
+
+        Optional timer inventory is supplied by host provisioning; never infer that
+        a source is scheduled merely because it ran once. No secret value is returned.
+        """
+        reasons = []
+        if not self.enabled:
+            reasons.append(str(self.raw_config.get("disabled_reason") or "disabled_by_fetch_policy"))
+        credential = {
+            "collector-youtube-finance": "YOUTUBE_DATA_API_KEY",
+            "collector-youtube-gemini-notes": "GEMINI_API_KEY",
+        }.get(self.source_id)
+        if credential:
+            available = bool(env.get(credential, "").strip())
+            if not available and env.get(f"{credential}_FILE"):
+                try:
+                    available = bool(Path(env[f"{credential}_FILE"]).read_text().strip())
+                except OSError:
+                    pass
+            if not available:
+                reasons.append(f"missing_credential:{credential}")
+        scheduled = env.get("COLLECTOR_SCHEDULED_SOURCE_IDS")
+        timer_enabled = None if scheduled is None else self.source_id in scheduled.split(",")
+        if timer_enabled is False:
+            reasons.append("no_timer")
+        return {"offered": not reasons, "offered_reason": "; ".join(reasons) or None,
+                "policy_enabled": self.enabled, "timer_enabled": timer_enabled}
+
     def validate_target_url(self, url: str) -> None:
         parsed = urlparse(url)
         lowered = url.lower()
@@ -160,6 +225,7 @@ class CollectorConfig:
     sources: Mapping[str, SourceFetchPolicy]
 
     def get_source(self, source_id: str) -> SourceFetchPolicy:
+        _ensure_survivorship_spiders_registered()
         if source_id in DROPPED_SOURCE_IDS or source_id in self.dropped_sources:
             raise CollectorConfigError(
                 f"source {source_id!r} was dropped per DEV_PLAN §2 (uses TPEx OpenAPI directly)"
@@ -266,6 +332,22 @@ def validate_collector_config(
             )
 
         _check_forbidden_settings(entry, context=f"source {source_id}")
+        if source_id in QUERY_SOURCE_IDS:
+            validate_query_terms(source_id, entry.get("query_terms"))
+        elif "query_terms" in entry:
+            raise CollectorConfigError(f"source {source_id} cannot be steered by query_terms")
+
+        if source_id == "collector-gdelt":
+            if (entry.get("base_urls") != [GDELT_BASE_URL]
+                    or entry.get("index_url") != GDELT_INDEX_URL
+                    or entry.get("feed_type") != "export"
+                    or entry.get("cadence") != "hourly"
+                    or entry.get("cadence_seconds") != 3600
+                    or entry.get("fetcher") != "http"
+                    or entry.get("max_requests_per_run") != 2
+                    or float(entry.get("min_interval_seconds", 0)) < 5
+                    or any(k in entry for k in ("max_records_per_call", "default_window", "query", "api_url"))):
+                raise CollectorConfigError("collector-gdelt requires the official hourly export feed policy")
 
         if entry.get("logged_in") is not False:
             raise CollectorConfigError(f"source {source_id} must explicitly set logged_in=false")
@@ -334,6 +416,53 @@ def validate_collector_config(
         if max_requests <= 0:
             raise CollectorConfigError(f"source {source_id} max_requests_per_run must be > 0")
 
+        if source_id == "collector-news-rss":
+            raw_routes = entry.get("routes")
+            if (
+                not isinstance(raw_routes, list)
+                or not raw_routes
+                or not all(isinstance(r, str) and r.strip().strip("/") for r in raw_routes)
+            ):
+                raise CollectorConfigError(
+                    "source collector-news-rss requires a non-empty routes list in fetch-policy.json"
+                )
+            norm_routes: list[str] = []
+            for raw_route in raw_routes:
+                norm_route = "/" + raw_route.strip().lstrip("/")
+                lowered_route = norm_route.lower()
+                for tok in DISABLED_BY_BUILD_TOKENS:
+                    if tok in lowered_route:
+                        raise CollectorConfigError(
+                            f"source collector-news-rss route {raw_route!r} references DISABLED_BY_BUILD source {tok!r}"
+                        )
+                if "/ptt" in lowered_route:
+                    raise CollectorConfigError(
+                        "source collector-news-rss cannot use /ptt route; use PttStockSpider instead"
+                    )
+                norm_routes.append(norm_route)
+            if len(set(norm_routes)) != len(norm_routes):
+                raise CollectorConfigError(
+                    "source collector-news-rss routes must not contain duplicates"
+                )
+            if len(norm_routes) > max_requests:
+                raise CollectorConfigError(
+                    f"source collector-news-rss routes count ({len(norm_routes)}) exceeds max_requests_per_run={max_requests}"
+                )
+            disabled_routes = entry.get("disabled_routes")
+            if disabled_routes is not None:
+                if not isinstance(disabled_routes, Mapping) or not all(
+                    isinstance(k, str) and k.strip() and isinstance(v, str) and v.strip()
+                    for k, v in disabled_routes.items()
+                ):
+                    raise CollectorConfigError(
+                        "source collector-news-rss disabled_routes must map route strings to non-empty observed reasons"
+                    )
+                overlap = set(norm_routes) & {"/" + k.strip().lstrip("/") for k in disabled_routes}
+                if overlap:
+                    raise CollectorConfigError(
+                        f"source collector-news-rss active routes cannot include disabled_routes {sorted(overlap)}"
+                    )
+
         min_interval = float(entry.get("min_interval_seconds", -1.0))
         if min_interval < 0.0:
             raise CollectorConfigError(f"source {source_id} min_interval_seconds must be >= 0")
@@ -356,6 +485,15 @@ def validate_collector_config(
             if granularity != "per_date_all_stocks":
                 raise CollectorConfigError(
                     f"source {source_id} backfill_page_granularity must be 'per_date_all_stocks', got {granularity!r}"
+                )
+        if source_id in EXCHANGE_SURVIVORSHIP_SOURCE_IDS:
+            if entry.get("max_connections") != 1 or max_connections != 1:
+                raise CollectorConfigError(
+                    f"source {source_id} must set max_connections=1 (single connection for exchange websites)"
+                )
+            if min_interval < 5.0:
+                raise CollectorConfigError(
+                    f"source {source_id} min_interval_seconds must be >= 5.0 (at most 1 request every 5 seconds)"
                 )
 
         cadence = str(entry.get("cadence") or "").strip()
@@ -402,6 +540,34 @@ def validate_collector_config(
     )
 
 
+def _ensure_survivorship_spiders_registered() -> None:
+    import sys
+
+    runner_mod = sys.modules.get("collector_stack.runner")
+    if runner_mod is None:
+        return
+    runner_cls = getattr(runner_mod, "CollectorRunner", None)
+    if runner_cls is None or getattr(runner_cls, "_survivorship_spiders_registered", False):
+        return
+    orig_build = runner_cls.build_collector
+
+    def _build_collector(self: Any, policy: SourceFetchPolicy) -> Any:
+        sid = policy.source_id
+        if sid in EXCHANGE_SURVIVORSHIP_SOURCE_IDS:
+            from .spiders import TwTradingHolidayScheduleSpider, TwTradingSuspensionSpider
+
+            cls = (
+                TwTradingHolidayScheduleSpider
+                if sid == TwTradingHolidayScheduleSpider.source_id
+                else TwTradingSuspensionSpider
+            )
+            return cls(policy, transport=self.transport, contact_user_agent=self.config.contact_user_agent)
+        return orig_build(self, policy)
+
+    runner_cls.build_collector = _build_collector  # type: ignore[method-assign]
+    runner_cls._survivorship_spiders_registered = True  # type: ignore[attr-defined]
+
+
 def load_collector_config(
     path: Path | str = DEFAULT_POLICY_PATH,
     *,
@@ -409,6 +575,7 @@ def load_collector_config(
 ) -> CollectorConfig:
     """Load and validate fetch-policy.json from disk."""
 
+    _ensure_survivorship_spiders_registered()
     policy_path = Path(path)
     raw = json.loads(policy_path.read_text(encoding="utf-8"))
     return validate_collector_config(raw, env=env)

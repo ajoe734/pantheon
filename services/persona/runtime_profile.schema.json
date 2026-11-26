@@ -9,13 +9,23 @@
     "model_routing",
     "memory_policy",
     "sync_generation",
-    "source_refs"
+    "source_refs",
+    "harness"
   ],
   "additionalProperties": false,
   "properties": {
-    "persona_id": {"type": "string", "minLength": 1},
-    "workspace_ref": {"type": "string", "minLength": 1},
-    "sync_generation": {"type": "integer", "minimum": 1},
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspace_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sync_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
     "model_routing": {
       "type": "object",
       "required": [
@@ -32,23 +42,68 @@
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["pool_default", "preferred_pool_model", "hard_pin", "fallback"]
+          "enum": [
+            "pool_default",
+            "preferred_pool_model",
+            "hard_pin",
+            "fallback"
+          ]
         },
-        "status": {"type": "string", "enum": ["ready", "degraded"]},
-        "primary_model": {"type": ["string", "null"]},
-        "fallback_models": {"type": "array", "items": {"type": "string"}},
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "degraded"
+          ]
+        },
+        "primary_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "provider_pool_refs": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^openclaw_provider_pool:"}
+          "items": {
+            "type": "string",
+            "pattern": "^openclaw_provider_pool:"
+          }
         },
         "selected_provider_pool_ref": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^openclaw_provider_pool:"
         },
-        "requested_models": {"type": "array", "items": {"type": "string"}},
-        "invalid_refs": {"type": "array", "items": {"type": "string"}},
-        "reason": {"type": "string", "minLength": 1},
-        "blocked_reason": {"type": ["string", "null"]}
+        "requested_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "invalid_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blocked_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "memory_policy": {
@@ -65,27 +120,94 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "source": {"const": "canonical_persona_memory_plane"},
-        "read_endpoint": {"type": "string"},
-        "writeback_endpoint": {"type": "string"},
-        "canonical_store": {"type": "string"},
-        "materialization": {"const": "openclaw_workspace_cache"},
-        "workspace_files": {"type": "array", "items": {"type": "string"}},
-        "cache_mutation_policy": {"const": "memory_bridge_only"},
-        "direct_session_writes": {"const": false}
+        "source": {
+          "const": "canonical_persona_memory_plane"
+        },
+        "read_endpoint": {
+          "type": "string"
+        },
+        "writeback_endpoint": {
+          "type": "string"
+        },
+        "canonical_store": {
+          "type": "string"
+        },
+        "materialization": {
+          "const": "openclaw_workspace_cache"
+        },
+        "workspace_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cache_mutation_policy": {
+          "const": "memory_bridge_only"
+        },
+        "direct_session_writes": {
+          "const": false
+        }
       }
     },
     "source_refs": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["surface", "ref"],
+        "required": [
+          "surface",
+          "ref"
+        ],
         "properties": {
-          "surface": {"type": "string", "minLength": 1},
-          "ref": {"type": "string", "minLength": 1},
-          "status": {"type": "string"}
+          "surface": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string"
+          }
         },
         "additionalProperties": false
+      }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "active_version",
+        "content_digest",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "ready",
+            "unavailable"
+          ]
+        },
+        "active_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "content_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     }
   }

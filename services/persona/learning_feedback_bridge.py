@@ -11,6 +11,16 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from services.runtime_auth import resolve_runtime_manager_auth
+
+
+def _memory_headers() -> Dict[str, str]:
+    return {"Content-Type": "application/json", **resolve_runtime_manager_auth(
+        token_env_key="PANTHEON_MEMORY_AUTH_TOKEN",
+        token_file_env_key="PANTHEON_MEMORY_AUTH_TOKEN_FILE",
+        default_token="",
+    ).headers()}
+
 # Setup logs
 log = logging.getLogger("learning-feedback-bridge")
 if not log.handlers:
@@ -99,19 +109,34 @@ def run_learning_feedback_bridge(
 
     dec_path = decisions_store_path or default_decisions_path
     inc_path = incidents_store_path or default_incidents_path
+    report = {
+        "processed_decisions": 0,
+        "processed_postmortems": 0,
+        "written_decisions": [],
+        "written_postmortems": [],
+        "errors": [],
+    }
 
     # 2. Fetch/Load Executed Decisions
     decisions: List[Dict[str, Any]] = []
     try:
         url = f"{evo_url}/api/evolution/proposals"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        headers = {"Accept": "application/json"}
+        token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        tenant = os.getenv("EVOLUTION_DEFAULT_TENANT_ID", "").strip()
+        if tenant:
+            headers["X-Tenant-Id"] = tenant
+        req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             decisions = data.get("proposals") if isinstance(data, dict) else data
         log.info("Fetched %d decisions from evolution API %s", len(decisions), evo_url)
     except Exception as exc:
+        report["errors"].append(f"Evolution source unavailable: {exc}")
         log.warning("Could not fetch decisions from evolution API: %s. Falling back to local file %s", exc, dec_path)
-        decisions = load_local_decisions(dec_path)
+        decisions = load_local_decisions(dec_path) if decisions_store_path is not None else []
         log.info("Loaded %d decisions from local file %s", len(decisions), dec_path)
 
     # Filter executed decisions with non-empty outcome_summary
@@ -124,11 +149,16 @@ def run_learning_feedback_bridge(
         # Check execution result
         exec_res = d.get("execution_result")
         if not exec_res:
+            report["errors"].append(f"Decision {d.get('decision_id')} has no execution result")
             continue
         status = str(exec_res.get("status") or "").lower()
-        # Fail-closed: "沒有結果不得造記憶" -> only complete or submitted with result
+        # Submitted dispatch intent has no terminal outcome and cannot teach memory.
+        if status not in {"succeeded", "failed", "noop"}:
+            report["errors"].append(f"Decision {d.get('decision_id')} has no terminal execution result")
+            continue
         outcome = str(exec_res.get("outcome_summary") or "").strip()
         if not outcome:
+            report["errors"].append(f"Decision {d.get('decision_id')} has no outcome summary")
             continue
         executed_decisions.append(d)
 
@@ -141,24 +171,18 @@ def run_learning_feedback_bridge(
             postmortems = json.loads(resp.read().decode("utf-8"))
         log.info("Fetched %d published postmortems from postmortem API %s", len(postmortems), pm_url)
     except Exception as exc:
+        report["errors"].append(f"Postmortem source unavailable: {exc}")
         log.warning("Could not fetch postmortems from postmortem API: %s. Falling back to local file %s", exc, inc_path)
-        pm_all = load_local_postmortems(inc_path)
+        pm_all = load_local_postmortems(inc_path) if incidents_store_path is not None else []
         postmortems = [p for p in pm_all if str(p.get("status") or "").lower() == "published"]
         log.info("Loaded %d published postmortems from local file %s", len(postmortems), inc_path)
-
-    report = {
-        "processed_decisions": 0,
-        "processed_postmortems": 0,
-        "written_decisions": [],
-        "written_postmortems": [],
-        "errors": [],
-    }
 
     # 4. Process Decisions → write feedback to memory plane
     for d in executed_decisions:
         decision_id = d["decision_id"]
         persona_id = d.get("persona_id") or parse_persona_id_from_pcb(d.get("persona_capital_binding_id") or "")
         if not persona_id:
+            report["errors"].append(f"Decision {decision_id} has no persona attribution")
             log.warning("Decision %s has no persona_id or valid PCB; skipping", decision_id)
             continue
         
@@ -172,6 +196,7 @@ def run_learning_feedback_bridge(
             "sponsor_persona_id": persona_id,
             "contributing_persona_ids": [persona_id],
             "summary": f"Executed evolution decision: {outcome}",
+            "tenant_id": d.get("tenant_id") or os.getenv("EVOLUTION_DEFAULT_TENANT_ID"),
             "runtime_telemetry_evidence": [
                 {
                     "type": "evolution_decision",
@@ -201,7 +226,7 @@ def run_learning_feedback_bridge(
                 req = urllib.request.Request(
                     req_url,
                     data=req_body,
-                    headers={"Content-Type": "application/json"},
+                    headers=_memory_headers(),
                     method="POST"
                 )
                 with urllib.request.urlopen(req, timeout=5.0) as resp:
@@ -221,13 +246,19 @@ def run_learning_feedback_bridge(
 
     # 5. Process Postmortems → write feedback to memory plane
     for pm in postmortems:
+        if str(pm.get("status") or "").lower() != "published":
+            continue
         pm_id = pm["postmortem_id"]
-        persona_id = parse_persona_id_from_pcb(pm.get("persona_capital_binding_id") or "")
+        persona_id = pm.get("persona_id") or parse_persona_id_from_pcb(pm.get("persona_capital_binding_id") or "")
         if not persona_id:
+            report["errors"].append(f"Postmortem {pm_id} has no persona attribution")
             log.warning("Postmortem %s has no valid persona_capital_binding_id; skipping", pm_id)
             continue
         
-        root_cause = pm.get("root_cause") or pm.get("title") or "No details"
+        root_cause = str(pm.get("root_cause") or pm.get("title") or "").strip()
+        if not root_cause:
+            report["errors"].append(f"Postmortem {pm_id} has no published findings")
+            continue
         payload = {
             "source_event_type": "postmortem_published",
             "source_event_id": pm_id,
@@ -235,6 +266,7 @@ def run_learning_feedback_bridge(
             "sponsor_persona_id": persona_id,
             "contributing_persona_ids": [persona_id],
             "summary": f"Published postmortem: {root_cause}",
+            "tenant_id": pm.get("tenant_id") or os.getenv("EVOLUTION_DEFAULT_TENANT_ID"),
             "runtime_telemetry_evidence": [
                 {
                     "type": "postmortem",
@@ -262,7 +294,7 @@ def run_learning_feedback_bridge(
                 req = urllib.request.Request(
                     req_url,
                     data=req_body,
-                    headers={"Content-Type": "application/json"},
+                    headers=_memory_headers(),
                     method="POST"
                 )
                 with urllib.request.urlopen(req, timeout=5.0) as resp:
@@ -288,7 +320,11 @@ def run_learning_feedback_bridge(
             # We can retrieve all personas from bff
             bff_url = os.getenv("BFF_API_URL", "http://localhost:18001").rstrip("/")
             req_url = f"{bff_url}/bff/personas"
-            req = urllib.request.Request(req_url, headers={"Authorization": "Bearer op-b3-evolution:operator,reviewer"}, method="GET")
+            req = urllib.request.Request(req_url, headers=resolve_runtime_manager_auth(
+                token_env_key="PANTHEON_BFF_AUTH_TOKEN",
+                token_file_env_key="PANTHEON_BFF_AUTH_TOKEN_FILE",
+                default_token="",
+            ).headers(), method="GET")
             
             personas_list = []
             with urllib.request.urlopen(req, timeout=5.0) as resp:
@@ -316,6 +352,7 @@ def run_learning_feedback_bridge(
 def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Learning feedback bridge for OpenClaw.")
+    parser.add_argument("--skip-openclaw-sync", action="store_true")
     parser.add_argument("--once", action="store_true", help="Run once and exit.")
     parser.add_argument("--poll", type=int, default=0, help="Poll interval in seconds (0 to disable).")
     args = parser.parse_args()
@@ -325,12 +362,13 @@ def main() -> int:
         log.info("Running learning feedback bridge daemon, polling every %ds", args.poll)
         while True:
             try:
-                run_learning_feedback_bridge()
+                run_learning_feedback_bridge(skip_openclaw_sync=args.skip_openclaw_sync)
             except Exception as exc:
                 log.error("Unhandled error in bridge tick: %s", exc)
             time.sleep(args.poll)
     else:
-        run_learning_feedback_bridge()
+        report = run_learning_feedback_bridge(skip_openclaw_sync=args.skip_openclaw_sync)
+        return 1 if report["errors"] else 0
     return 0
 
 

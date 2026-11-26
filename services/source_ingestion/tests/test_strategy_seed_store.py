@@ -688,3 +688,100 @@ def test_convenience_wrapper_materialize_seed_from_bundle(tmp_path: Path) -> Non
     assert result.seed.evidence_bundle_id == "evbundle-test-001"
     assert result.seed.lineage["execution_route"] == "none"
     assert result.seed.metadata["research_only"] is True
+
+
+def test_identical_replay_save_writes_nothing(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    seed = _memory_seed(seed_id="seed-replay", status=StrategySpecSeedStatus.DRAFT)
+    assert store.save(seed) is True
+    st = store.path.stat()
+    assert store.save(seed) is False
+    st2 = store.path.stat()
+    assert (st.st_size, st.st_mtime_ns) == (st2.st_size, st2.st_mtime_ns)
+
+
+def test_per_source_cap_prunes_oldest_mutable_first(tmp_path: Path) -> None:
+    store = StrategySpecSeedStore(path=tmp_path / "seeds.jsonl", max_seeds_per_source=2)
+    store.save(_memory_seed(seed_id="seed-keep", status=StrategySpecSeedStatus.REJECTED))
+    for i in range(3):
+        store.save(
+            _memory_seed(
+                seed_id=f"seed-draft-{i}",
+                status=StrategySpecSeedStatus.DRAFT,
+                created_at=f"2026-06-1{i}T00:00:00Z",
+            )
+        )
+    ids = {s.seed_id for s in store.list_all()}
+    assert len(ids) == 2
+    assert "seed-draft-2" in ids
+
+
+def test_total_cap_bounds_store(tmp_path: Path) -> None:
+    store = StrategySpecSeedStore(
+        path=tmp_path / "seeds.jsonl", max_seeds_per_source=50, max_total_seeds=3
+    )
+    for i in range(6):
+        store.save(
+            _memory_seed(
+                seed_id=f"seed-t-{i}",
+                source_id=f"src-{i}",
+                status=StrategySpecSeedStatus.DRAFT,
+                created_at=f"2026-06-0{i + 1}T00:00:00Z",
+            )
+        )
+    assert store.count() == 3
+
+
+def test_readers_match_legacy_full_scan(tmp_path: Path) -> None:
+    import json
+
+    store = _make_store(tmp_path)
+    for i, st in enumerate(
+        (StrategySpecSeedStatus.DRAFT, StrategySpecSeedStatus.REJECTED, StrategySpecSeedStatus.DRAFT)
+    ):
+        store.save(_memory_seed(seed_id=f"seed-r-{i}", status=st, evidence_bundle_id=f"b-{i % 2}"))
+    raw = [json.loads(x) for x in store.path.read_text().splitlines() if x.strip()]
+    assert [s.seed_id for s in store.list_all()] == [r["seed_id"] for r in raw]
+    assert {s.seed_id for s in store.list_by_bundle("b-0")} == {
+        r["seed_id"] for r in raw if r["evidence_bundle_id"] == "b-0"
+    }
+    assert len(store.list_negative_memory_records()) == 1
+    assert {s.seed_id for s in store.list_by_status("draft")} == {"seed-r-0", "seed-r-2"}
+
+
+def _seed_with(seed_id: str) -> StrategySpecSeed:
+    return StrategySpecSeed(
+        seed_id=seed_id, source_id=f"src-{seed_id}", evidence_bundle_id=f"evb-{seed_id}", hypothesis="h",
+        asset_class=["equity"], market_scope=["TWSE"], holding_period="swing", required_data=["ohlcv"],
+        backend_hint="qlib", feature_hints=["f"], label_hints=["l"], risk_notes=["r"], confidence=0.5,
+        citation_refs=["c"], created_at="2026-10-18T00:00:00Z")
+
+
+def test_read_window_pages_in_order_without_building_seed_objects(tmp_path: Path, monkeypatch) -> None:
+    store = _make_store(tmp_path)
+    for i in range(10):
+        store.save(_seed_with(f"seed-{i}"))
+    built = []
+    real = StrategySpecSeed.from_dict.__func__
+    monkeypatch.setattr(StrategySpecSeed, "from_dict", classmethod(lambda cls, d: (built.append(1), real(cls, d))[1]))
+    seen, token, windows = [], None, 0
+    while True:
+        window, token = store.read_window(page_token=token, max_scan=4)
+        windows += 1
+        seen += [r["seed_id"] for r in window]
+        if token is None:
+            break
+    assert seen == [f"seed-{i}" for i in range(10)] and windows == 3
+    assert not built, "a window reads raw records only"
+    with pytest.raises(StrategySpecSeedStoreError):
+        store.read_window(page_token="garbage", max_scan=4)
+
+
+def test_read_window_cursor_survives_appends_and_pruned_cursor_seed(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    for i in range(6):
+        store.save(_seed_with(f"seed-{i}"))
+    first, token = store.read_window(page_token=None, max_scan=3)
+    store.save(_seed_with("seed-appended"))
+    rest, end = store.read_window(page_token=token, max_scan=10)
+    assert [r["seed_id"] for r in first + rest] == [f"seed-{i}" for i in range(6)] + ["seed-appended"] and end is None

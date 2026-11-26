@@ -1,0 +1,2609 @@
+{
+ "schema_version": 1,
+ "rule": "see docs/operations/ci-test-inventory.md",
+ "exemptions": [
+  {
+   "path": ".orchestrator/rewrite/test_status_projection.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "failed when run once on the development host: 1 failed, 3 passed in 0.82s",
+   "failing_tests": [
+    ".orchestrator/rewrite/test_status_projection.py::StatusProjectionModuleTests::test_module_imports_with_no_circular_dependency"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": ".orchestrator/rewrite/test_task_state_runtime_env.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "failed when run once on the development host: 3 failed, 3 passed in 1.06s",
+   "failing_tests": [
+    ".orchestrator/rewrite/test_task_state_runtime_env.py::test_authoritative_store_env_is_added_to_issued_runtime_metadata",
+    ".orchestrator/rewrite/test_task_state_runtime_env.py::test_relative_repo_template_is_rejected_for_status_commands",
+    ".orchestrator/rewrite/test_task_state_runtime_env.py::test_authoritative_store_env_is_added_to_status_commands"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": ".orchestrator/test_antigravity_error_observability.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "passed on the development host but fails in the CI checkout layout: KeyError 'Missing config path for status_file' (orchestrator config with status_file is not present on the runner); needs a hermetic config fixture",
+   "failing_tests": [
+    "AntigravityAuthProbeNativeLogBindingTests (5 tests)"
+   ],
+   "measured": "2026-11-19 (PR #7620 test sweep)",
+   "action": "owning domain makes the test hermetic (provide status_file config) then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": ".orchestrator/test_auto_commit_archive.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "failed when run once on the development host: 1 failed, 2 passed in 0.29s",
+   "failing_tests": [
+    ".orchestrator/test_auto_commit_archive.py::test_backfill_refuses_directory_scope_before_copy2"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": ".orchestrator/test_codex_worker_home_isolation.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "failed when run once on the development host: 1 failed, 2 passed in 0.35s",
+   "failing_tests": [
+    ".orchestrator/test_codex_worker_home_isolation.py::TestCodexWorkerHomeIsolation::test_interactive_invocation_keeps_configured_home"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": ".orchestrator/test_provider_permissions.py",
+   "owner": "domain:orchestrator-tooling",
+   "reason": "passed on the development host but fails in the CI checkout layout: KeyError 'Missing config path for status_file' (orchestrator config with status_file is not present on the runner); needs a hermetic config fixture",
+   "failing_tests": [
+    "ProviderPermissionsTest::test_antigravity_* (9 probe tests)"
+   ],
+   "measured": "2026-11-19 (PR #7620 test sweep)",
+   "action": "owning domain makes the test hermetic (provide status_file config) then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "integrations/openclaw/test_dev_gates.py",
+   "owner": "domain:integrations",
+   "reason": "error: collection or setup error; 40 warnings, 1 error in 3.43s",
+   "failing_tests": [
+    "integrations/openclaw/test_dev_gates.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_agora_v1_7_bundle.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 6 passed in 1.02s",
+   "failing_tests": [
+    "scripts/test_agora_v1_7_bundle.py::test_v1_7_bundle_extends_frozen_v1_6_exact_bytes",
+    "scripts/test_agora_v1_7_bundle.py::test_openapi_manifest_and_live_decorators_have_exact_route_parity"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_agora_v1_8_bundle.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed in 0.81s",
+   "failing_tests": [
+    "scripts/test_agora_v1_8_bundle.py::test_openapi_manifest_and_live_decorators_have_exact_route_parity"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_bff_cw_contract_prerequisite.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 32 passed, 3 warnings in 27.19s",
+   "failing_tests": [
+    "scripts/test_bff_cw_contract_prerequisite.py::test_cw03_record_sponsor_decision_command_reuses_same_read_projection",
+    "scripts/test_bff_cw_contract_prerequisite.py::test_cw04_default_redactor_fails_closed_without_wired_policy"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_bff_package_boundary_prerequisite.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 5 failed, 4 passed in 5.81s",
+   "failing_tests": [
+    "scripts/test_bff_package_boundary_prerequisite.py::test_management_consumers_share_canonical_model_identity",
+    "scripts/test_bff_package_boundary_prerequisite.py::test_missing_internal_dependency_fails_import_instead_of_substituting_models",
+    "scripts/test_bff_package_boundary_prerequisite.py::test_cross_user_forbidden_is_403_without_bare_models_alias",
+    "scripts/test_bff_package_boundary_prerequisite.py::test_representative_delayed_and_worker_imports_in_fresh_process",
+    "scripts/test_bff_package_boundary_prerequisite.py::test_representative_negative_branches_keep_exact_contracts"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_bff_route_diff.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed in 1.31s",
+   "failing_tests": [
+    "scripts/test_bff_route_diff.py::test_route_diff_baseline_matches_current_failure_surface"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_check_product_ownership.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 12 passed, 95 warnings in 18.33s",
+   "failing_tests": [
+    "scripts/test_check_product_ownership.py::test_verify_product_ownership_live_passes"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_cleanup_loop_control_test_rows.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 4 failed, 8 passed, 4 warnings in 1.01s",
+   "failing_tests": [
+    "scripts/test_cleanup_loop_control_test_rows.py::test_run_defaults_to_dry_run_and_never_calls_delete",
+    "scripts/test_cleanup_loop_control_test_rows.py::test_apply_rolls_back_when_deleted_count_differs_from_plan",
+    "scripts/test_cleanup_loop_control_test_rows.py::test_apply_refuses_before_delete_when_plan_binding_is_stale",
+    "scripts/test_cleanup_loop_control_test_rows.py::test_run_requires_dedicated_cleanup_dsn"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_dashboard_server.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 6 passed in 1.99s",
+   "failing_tests": [
+    "scripts/test_dashboard_server.py::test_repo_root_is_authoritatively_governed_true_for_authoritative_store",
+    "scripts/test_dashboard_server.py::test_refresh_skips_subprocess_for_a_governed_root"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_deploy_nonprod_artifact_restore.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 6 failed, 69 passed in 40.53s",
+   "failing_tests": [
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_actual_ssh_command_forwards_explicit_seal_metadata_but_not_runner_guard_fd",
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_full_cli_restore_final_executes_original_bff_chain",
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_full_cli_restore_final_preserves_explicit_workflow_dispatch",
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_original_chain_rejects_tampered_final_fe_seal_after_driver_readback",
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_original_chain_rejects_missing_or_unsafe_fe_node_runtime",
+    "scripts/test_deploy_nonprod_artifact_restore.py::test_original_chain_rejects_unadmitted_fe_controller_before_fe_or_driver"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_deploy_nonprod_bootstrap_contract.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 99 passed, 2 skipped in 26.18s",
+   "failing_tests": [
+    "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[1800-120]",
+    "scripts/test_deploy_nonprod_bootstrap_contract.py::test_bounded_source_rpc_budget_is_exported_and_capped[3600-120]"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_deploy_nonprod_env_parity.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 13 passed in 2.54s",
+   "failing_tests": [
+    "scripts/test_deploy_nonprod_env_parity.py::test_deploy_script_syntax_and_shared_function_contract"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_evolution_daily_sweep_deploy_contract.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed in 0.27s",
+   "failing_tests": [
+    "scripts/test_evolution_daily_sweep_deploy_contract.py::test_dev_root_deploy_proves_evolution_scheduler_tick"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_isolated_l12_provider_workflow.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 3 failed, 22 passed in 2.40s",
+   "failing_tests": [
+    "scripts/test_isolated_l12_provider_workflow.py::test_tempgit_multipayload_fetch_and_mismatch_guard",
+    "scripts/test_isolated_l12_provider_workflow.py::test_hosted_mode_is_explicit_and_mutually_exclusive",
+    "scripts/test_isolated_l12_provider_workflow.py::test_hosted_validation_guard_script"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_nightly_publish_cut.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed in 0.29s",
+   "failing_tests": [
+    "scripts/test_nightly_publish_cut.py::test_nightly_publish_cut_never_dispatches_deploy"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_ops_l12_python_packaging_provision_evidence.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 9 passed, 36 subtests passed in 0.80s",
+   "failing_tests": [
+    "scripts/test_ops_l12_python_packaging_provision_evidence.py::TestEvidenceChecksumAnchor::test_recorded_source_digests_match_the_committed_files"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_ppl_alloc_009_deploy_proof_gate.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 5 passed in 0.94s",
+   "failing_tests": [
+    "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_defaults_false_and_passes_exact_compose_env",
+    "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_allows_only_clean_strict_dev_root_when_enabled"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_probe_dev_runtime_paper_lifecycle.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 78 passed in 18.79s",
+   "failing_tests": [
+    "scripts/test_probe_dev_runtime_paper_lifecycle.py::test_execute_signals_accepts_a_real_negative_sell_fill"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_project_market_data_to_bff_agora_surfaces.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 27 passed in 4.75s",
+   "failing_tests": [
+    "scripts/test_project_market_data_to_bff_agora_surfaces.py::test_projector_wrong_role_fails_closed"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_release_gate_current_run.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 37 passed in 5.17s",
+   "failing_tests": [
+    "scripts/test_release_gate_current_run.py::test_stage0_registered_workflow_can_dispatch_strict_live_evidence_mode"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_run_command_idempotency_regression.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "error: collection or setup error; 40 warnings, 1 error in 3.15s",
+   "failing_tests": [
+    "scripts/test_run_command_idempotency_regression.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_run_evolution_followthrough_packet.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 3 failed in 0.82s",
+   "failing_tests": [
+    "scripts/test_run_evolution_followthrough_packet.py::EvolutionFollowthroughPacketTest::test_cli_writes_json_packet",
+    "scripts/test_run_evolution_followthrough_packet.py::EvolutionFollowthroughPacketTest::test_packet_traces_freeze_stage_and_runtime_rollback",
+    "scripts/test_run_evolution_followthrough_packet.py::EvolutionFollowthroughPacketTest::test_runtime_manager_replay_uses_in_memory_store"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_run_evolution_program_simulation.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 16 passed, 22 warnings in 11.12s",
+   "failing_tests": [
+    "   research-orchestrator:main.py:3084 Retrain executor crashed for rrun-20261119-001",
+    "   research-orchestrator:main.py:3084 Retrain executor crashed for rrun-20261119-001",
+    "scripts/test_run_evolution_program_simulation.py::test_run_evolution_program_simulation_candidate_created_end_to_end",
+    "scripts/test_run_evolution_program_simulation.py::test_run_evolution_program_simulation_no_candidate_variant"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_run_openclaw_broker_tool_denial_smoke.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 1 warning in 3.28s",
+   "failing_tests": [
+    "scripts/test_run_openclaw_broker_tool_denial_smoke.py::OpenClawBrokerToolDenialSmokeTest::test_cli_writes_json_report",
+    "scripts/test_run_openclaw_broker_tool_denial_smoke.py::OpenClawBrokerToolDenialSmokeTest::test_smoke_denies_broker_tools_before_upstream_dispatch"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_seed_tj_e2e_012_hosted_scenarios.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed, 7 passed in 1.05s",
+   "failing_tests": [
+    "scripts/test_seed_tj_e2e_012_hosted_scenarios.py::test_canonical_fixture_projector_rebuilds_all_scenarios"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_smoke_operator_fallback_drills.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 1 failed in 0.32s",
+   "failing_tests": [
+    "scripts/test_smoke_operator_fallback_drills.py::OperatorFallbackDrillSmokeTest::test_bff_down_fallback_drill_exercises_non_bff_surfaces"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 4 failed, 32 passed in 26.73s",
+   "failing_tests": [
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_search_worker_failure_retained_before_compensation_without_payloads[stdout]",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_search_worker_failure_retained_before_compensation_without_payloads[stderr]",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_taifex_preflight_does_not_skip_on_fresh_twse_snapshot_when_ssf_missing_or_stale",
+    "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_taifex_preflight_skips_weekend_holiday_and_recovers_latest_closed_session"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "scripts/test_verify_agora_operational_readiness.py",
+   "owner": "domain:delivery-scripts",
+   "reason": "failed when run once on the development host: 2 failed, 5 passed in 1.38s",
+   "failing_tests": [
+    "   verify_agora_operational_readiness:verify_agora_operational_readiness.py:694 ✗ Stage stage_04_bounded_recovery_sequence FAILED in 0.4 ms: [bounded_recovery_sequence] Market snapshot admission failed: market_input_missing (market snapshot is missing required fields: observed_at)",
+    "   verify_agora_operational_readiness:verify_agora_operational_readiness.py:694 ✗ Stage stage_04_bounded_recovery_sequence FAILED in 0.1 ms: [bounded_recovery_sequence] Market snapshot admission failed: market_input_missing (market snapshot is missing required fields: observed_at)",
+    "scripts/test_verify_agora_operational_readiness.py::test_verifier_full_positive_run",
+    "scripts/test_verify_agora_operational_readiness.py::test_verifier_fails_on_order_authority_claim"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/agora/performance/test_performance.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 42 passed, 1 warning in 11.00s",
+   "failing_tests": [
+    "services/control-plane/bff/agora/performance/test_performance.py::test_pm12_attribution_values_stock_future_with_multiplier_and_groups_by_instrument"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/assistant/tests/test_command_idempotency.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 8 passed in 4.15s",
+   "failing_tests": [
+    "services/control-plane/bff/assistant/tests/test_command_idempotency.py::test_header_resolution_rejects_conflicts_and_required_missing"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/migrations/test_twelve_loop_truth.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 40 failed, 3 passed in 12.32s",
+   "failing_tests": [
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_migration_and_store_operations[asyncio]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_async_non_lossy_rollback_to_002_and_pre003_source_compatibility[asyncio]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_async[asyncio-causation_id-conflicting-cause-async]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_async[asyncio-observed_at-value1]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_async[asyncio]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_store_persistence_and_fresh_projector_reload",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_interleaving_projectors_fence_stale_backfill",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_rejects_cross_key_duplicate_receipt_id",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_partial_write_retry",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_equal_timestamp_interleaving_cannot_restore_complete",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_late_stimulus_incremental_equals_rebuild",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_duplicate_race_cannot_project_unpersisted_cross_key_receipt",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_late_lower_provenance_stimulus_keeps_incremental_rebuild_equal[replay]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_late_lower_provenance_stimulus_keeps_incremental_rebuild_equal[backfill]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_receipt_set_containment_and_provenance_fencing",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_unmatched_live_next_consumer_keeps_incremental_rebuild_equal[live_first-replay]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_unmatched_live_next_consumer_keeps_incremental_rebuild_equal[live_first-backfill]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_unmatched_live_next_consumer_keeps_incremental_rebuild_equal[terminal_first-replay]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_unmatched_live_next_consumer_keeps_incremental_rebuild_equal[terminal_first-backfill]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_equal_time_stimuli_reduce_independently_of_arrival_order",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_older_stimulus_cannot_steal_live_next_consumer[replay]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_older_stimulus_cannot_steal_live_next_consumer[backfill]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_scoped_migration_and_honest_legacy_handling",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_scoped_persistence_multi_tenant_streaming_and_rebuild_equivalence",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_scoped_cross_tenant_collisions_and_duplicate_receipt_handling",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_scoped_out_of_order_and_provenance_fencing",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_unscoped_legacy_reduction_isolated_from_scoped_receipts",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_non_lossy_rollback_to_002_and_pre003_source_compatibility",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_forward_migration_fails_closed_on_conflicting_content_preserving_backup",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_sync[causation_id-conflicting-cause]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_sync[observed_at-value1]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_receipt_semantic_fields_sync[degradation_reason-conflicting-degradation]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync[causation_id-conflicting-obs-cause]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync[observed_at-value1]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync[terminal_status-failed]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync[stimulus_id-conflicting-stim-id]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fail_closed_on_conflicting_observation_semantic_fields_sync[degradation_reason-conflicting observation degradation]",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_cold_replay_after_rollback_pre003_replay_and_reupgrade",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fresh_process_restart_and_rebuild_equivalence",
+    "services/control-plane/bff/migrations/test_twelve_loop_truth.py::test_postgres_fresh_process_rollback_pre003_replay_and_reupgrade"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/strategies/test_router_isolation.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 11 passed, 3 warnings in 24.65s",
+   "failing_tests": [
+    "services/control-plane/bff/strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_architecture_boundaries.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 7 passed, 95 warnings in 21.62s",
+   "failing_tests": [
+    "services/control-plane/bff/test_architecture_boundaries.py::test_mutation_route_ownership_mapping_contract",
+    "services/control-plane/bff/test_architecture_boundaries.py::test_symbol_dispositions_inventory_contract"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 3 passed, 3 warnings in 9.91s",
+   "failing_tests": [
+    "   services.control_plane.bff.core.errors:errors.py:251 Unhandled BFF request error",
+    "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py::test_pack_a_live_lists_return_non_empty_data_counts"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed, 3 warnings in 12.26s",
+   "failing_tests": [
+    "   services.control_plane.bff.core.errors:errors.py:251 Unhandled BFF request error",
+    "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py::test_pack_b_runtime_bindings_live_list_returns_non_empty"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed, 3 warnings in 9.81s",
+   "failing_tests": [
+    "   services.control_plane.bff.core.errors:errors.py:251 Unhandled BFF request error",
+    "services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py::test_detail_smoke_a_pack_a_routes_resolve_acceptance_links"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_error_envelope_shape.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 7 passed, 1 warning in 4.10s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_error_envelope_shape.py::test_error_code_enum_matches_pack_d_d21_allowlist"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 29 passed, 1 warning in 16.81s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py::test_evolution_programs_candidates_list"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_management_delta_routes.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 18 passed, 1 warning in 17.29s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_management_delta_routes.py::test_persona_league_heatmap",
+    "services/control-plane/bff/test_bff_management_delta_routes.py::test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_promotion_review_governance.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 11 passed, 1 warning in 14.59s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_degrades_cleanly_when_persona_readiness_blocks",
+    "services/control-plane/bff/test_bff_promotion_review_governance.py::test_human_inbox_capacity_bound_rejects_late_submission_while_occupied"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 63 passed, 3 warnings in 35.82s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_session_auth_me_contract.py::test_bff_persona_fleet_works_for_same_tenant_viewer_and_view_only_via_real_registry_read_contract"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_strategy_persona_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 failed, 17 passed, 3 warnings in 20.52s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py::test_bff_personas_list_returns_200_and_dto_shape",
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py::test_bff_personas_create_then_subresources_round_trip",
+    "services/control-plane/bff/test_bff_strategy_persona_contract.py::test_bff_personas_actions_route_through_command_envelope"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 failed, 36 passed, 1 warning in 16.32s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py::test_v5_persona_health_returns_200",
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py::test_l12_bff_monitor_event_is_admitted_by_real_strict_telemetry_route",
+    "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py::test_l12_bff_replay_route_requires_mfa_approval_and_audits_actor"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_bff_write_gap_2026_05_28.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 4 failed, 24 passed, 3 warnings in 12.24s",
+   "failing_tests": [
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_get_persona_management_returns_200_with_six_top_level_data_keys",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_get_persona_management_health_field_has_required_structure",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_get_persona_management_health_parity_with_fleet",
+    "services/control-plane/bff/test_bff_write_gap_2026_05_28.py::test_get_persona_management_deploymentplans_and_approvals_are_lists"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_current_twelve_owner_truth.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 22 passed, 1 warning in 10.66s",
+   "failing_tests": [
+    "services/control-plane/bff/test_current_twelve_owner_truth.py::TestTwelveOwnerCatalogContract::test_composite_overlay_is_isolated_from_canonical_loops",
+    "services/control-plane/bff/test_current_twelve_owner_truth.py::TestTwelveOwnerCatalogContract::test_loop_inventory_endpoint_publishes_all_twelve_canonical_contracts"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_ew05_mutation_review_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 5 failed, 1 warning in 4.24s",
+   "failing_tests": [
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py::test_mutation_review_projection_contract",
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py::test_mutation_review_reviewer_visibility_contract",
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py::test_mutation_review_review_action_allowed_when_proposed",
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py::test_mutation_review_execute_action_allowed_when_approved",
+    "services/control-plane/bff/test_ew05_mutation_review_contract.py::test_mutation_review_returns_503_when_required_evidence_is_unavailable"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed, 1 skipped, 117 warnings in 13.95s",
+   "failing_tests": [
+    "services/control-plane/bff/test_execute_plans_final_live_wiring_contract.py::test_execute_plans_final_seeded_detail_paths_use_read_model_dtos"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_final_command_execution_bridge.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 7 passed, 1 warning in 4.42s",
+   "failing_tests": [
+    "services/control-plane/bff/test_final_command_execution_bridge.py::test_confirm_token_create_persists_command_record_shape_and_status"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_governance_command_submission.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 4 failed, 19 passed, 1 warning in 7.36s",
+   "failing_tests": [
+    "services/control-plane/bff/test_governance_command_submission.py::test_submit_command_accepts_approve_mutation_published_payload",
+    "services/control-plane/bff/test_governance_command_submission.py::test_submit_command_accepts_reject_mutation_published_payload",
+    "services/control-plane/bff/test_governance_command_submission.py::test_submit_command_accepts_review_mutation_published_payload",
+    "services/control-plane/bff/test_governance_command_submission.py::test_submit_command_accepts_execute_mutation_published_payload"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_kw03_evidence_refs_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 11 passed, 1 warning in 6.54s",
+   "failing_tests": [
+    "services/control-plane/bff/test_kw03_evidence_refs_contract.py::test_kw03_list_and_detail_return_contract_shape_with_degraded_fallback"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_loop_health_read_model_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 13 passed, 1 warning in 3.88s",
+   "failing_tests": [
+    "services/control-plane/bff/test_loop_health_read_model_contract.py::test_loop_health_registry_only_lists_all_loops_without_live_claim"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 9 passed, 1 warning in 4.41s",
+   "failing_tests": [
+    "services/control-plane/bff/test_loop_inventory_read_model_contract.py::test_loop_catalog_controller_contract_matches_runtime_implementation",
+    "services/control-plane/bff/test_loop_inventory_read_model_contract.py::test_loop_inventory_publishes_controller_contract_coverage"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_management_list_response_guardrail.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed in 3.27s",
+   "failing_tests": [
+    "services/control-plane/bff/test_management_list_response_guardrail.py::test_management_bff_list_responses_have_no_runtime_contract_issues"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.80s",
+   "failing_tests": [
+    "services/control-plane/bff/test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed in 3.48s",
+   "failing_tests": [
+    "services/control-plane/bff/test_p0_tw_paper_activate_honesty.py::test_build_persona_health_items_binds_telemetry_and_seed_flags"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 failed, 65 passed, 8 skipped, 10 warnings in 78.58s (0:01:18)",
+   "failing_tests": [
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py::test_real_paper_runtime_identity_drives_formal_persona_attribution_and_fleet",
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py::test_canonical_binding_precedence_and_mixed_topology",
+    "services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py::test_fleet_request_reads_slim_ledger_once_and_shares_failure"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_persona_live_integration.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 4 failed, 1 passed, 1 warning in 4.64s",
+   "failing_tests": [
+    "services/control-plane/bff/test_persona_live_integration.py::test_bff_personas_list_source_is_service_backed",
+    "services/control-plane/bff/test_persona_live_integration.py::test_bff_personas_list_returns_seeded_personas",
+    "services/control-plane/bff/test_persona_live_integration.py::test_bff_personas_list_pagination",
+    "services/control-plane/bff/test_persona_live_integration.py::test_bff_persona_detail_readback"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_ptj_004_trade_journal.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 7 passed, 1 warning in 4.34s",
+   "failing_tests": [
+    "services/control-plane/bff/test_ptj_004_trade_journal.py::test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/test_trade_journal_owner_reads.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 19 passed, 3 warnings in 32.07s",
+   "failing_tests": [
+    "services/control-plane/bff/test_trade_journal_owner_reads.py::test_actual_telemetry_scope_pagination_and_dto",
+    "services/control-plane/bff/test_trade_journal_owner_reads.py::test_pattern_review_producer_end_to_end_reads_through_mounted_bff"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_agora_research_candidate_governed.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 5 failed, 10 passed, 13 warnings in 30.87s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_durable_dispatcher_outbox_lease_and_provenance",
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_end_to_end_outbox_consumer_dispatch",
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_bff_plan_projects_all_owner_roots_and_terminal_state",
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_governed_dataset_reference_dispatch_to_research_owner",
+    "services/control-plane/bff/tests/test_agora_research_candidate_governed.py::test_mounted_cancel_running_plan_reaches_owner_and_fences"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 8 passed, 3 warnings in 21.51s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_http_owner_restart_preserves_fleet_to_detail_read_symmetry",
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_servant_production_http_owner_included_in_interaction_eligibility_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed, 2 warnings in 1.82s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_agora_workshop_dev_deploy_config.py::test_private_content_key_uses_existing_secret_transport_and_only_consumer"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_auth_facade.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 13 passed, 2 warnings in 12.21s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_auth_facade.py::test_lifespan_schedules_first_probe_without_blocking_startup",
+    "services/control-plane/bff/tests/test_bff_auth_facade.py::test_persona_fleet_owner_reads_allow_auth_and_portfolio_while_pending_and_batch_strategy_specs"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 50 passed, 3 warnings in 26.25s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_b2_list_detail_facade.py::test_persona_detail_field_for_field_identity_and_cpu_reduction"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_b3_persona_intent.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 5 passed, 3 warnings in 4.94s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_b3_persona_intent.py::test_persona_intent_real_domain_consultation_port_store_fallback"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 4 passed, 3 warnings in 7.66s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_b6_001_security_hardening.py::test_nl_ask_tenant_scopes_portfolio_summary"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_capital_paper_allocation.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed, 3 warnings in 8.35s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_capital_paper_allocation.py::test_quarter_close_runs_one_paper_cycle_across_three_personas_and_applies_it"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 8 passed, 13 warnings, 1 error in 3.62s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_discovery_read_surfaces.py::test_alpha_factory_returns_templates_with_evaluation_metrics"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_emergency_containment.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 23 passed, 3 warnings in 7.91s",
+   "failing_tests": [
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-75f84db25cdb46b397ecdaa7d936bcac HTTP error: Command backend returned 404 for cmd-75f84db25cdb46b397ecdaa7d936bcac",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-6a9c71e72af648308d4b77311f39bb14 HTTP error: Command backend returned 404 for cmd-6a9c71e72af648308d4b77311f39bb14",
+    "services/control-plane/bff/tests/test_bff_emergency_containment.py::test_containment_admissions_execute_authoritative_persona_freeze[/bff/v1/commands-Idempotency-Key]",
+    "services/control-plane/bff/tests/test_bff_emergency_containment.py::test_concurrent_new_keys_cannot_reuse_one_containment_confirm_token"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 5 passed, 2 warnings in 2.58s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py::test_list_cpu_drops_at_least_70_percent"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_bff_rebalance_proposals.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 10 failed, 14 passed, 3 warnings in 17.56s",
+   "failing_tests": [
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-bf0f0fe8b74a406a9fd2877d975f96fb HTTP error: Command backend returned 404 for cmd-bf0f0fe8b74a406a9fd2877d975f96fb",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-f03193f6541f482ea61196e2893c220d HTTP error: Command backend returned 404 for cmd-f03193f6541f482ea61196e2893c220d",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-138aa03223d24e5ba1358bcce08d062b HTTP error: Command backend returned 404 for cmd-138aa03223d24e5ba1358bcce08d062b",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-f17757b16ee046fb83c4ae6f22641307 HTTP error: Command backend returned 404 for cmd-f17757b16ee046fb83c4ae6f22641307",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-1618ec16979b47abad9c1c5758091cf4 HTTP error: Command backend returned 404 for cmd-1618ec16979b47abad9c1c5758091cf4",
+    "   services.control_plane.bff.command_executor:command_executor.py:1578 Command cmd-a9f32a9e8c3043778a1943cb9ba8dfff execution error",
+    "   services.control_plane.bff.command_executor:command_executor.py:1578 Command cmd-a7a8f938b8364edcbbdfc32e52b4599e execution error",
+    "   services.control_plane.bff.command_executor:command_executor.py:1578 Command cmd-e1291276fead4d1a876acaac0f3eb0a6 execution error",
+    "   services.control_plane.bff.command_executor:command_executor.py:1578 Command cmd-3cee9894153746088c9c5f84a719fc76 execution error",
+    "   services.control_plane.bff.command_executor:command_executor.py:1507 Command cmd-6006fae18f704beeb2b83136ffef3f20 HTTP error: Command backend returned 404 for cmd-6006fae18f704beeb2b83136ffef3f20",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_live_increase_without_approval_is_owner_rejected_and_state_unchanged[live]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_live_increase_without_approval_is_owner_rejected_and_state_unchanged[live_candidate]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_live_increase_without_approval_is_owner_rejected_and_state_unchanged[live_running]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_approved_apply_is_terminal_authoritative_and_forwards_the_caller_jwt",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_bff_apply_bootstraps_zero_weight_owner_allocation",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_ambiguous_owner_apply_response_reconciles_committed_receipt[url_disconnect]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_ambiguous_owner_apply_response_reconciles_committed_receipt[json_decode]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_ambiguous_owner_apply_response_reconciles_committed_receipt[truncated_response]",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_same_key_retries_only_retryable_terminal_capital_command",
+    "services/control-plane/bff/tests/test_bff_rebalance_proposals.py::test_restart_preserves_owner_apply_receipt_and_proposal_readback"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_capital_owner_forwarding.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 11 failed, 4 passed, 3 warnings in 15.41s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_paper_onboarding_creates_activates_suspends_reactivates_and_reloads_without_approval",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_canary_and_live_binding_activation_require_exact_owner_approval[canary]",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_canary_and_live_binding_activation_require_exact_owner_approval[live]",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_pool_actions_forward_status_and_unsupported_actions_fail_explicitly",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_retired_approve_pool_command_fails_without_an_owner_effect",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_real_operator_jwt_forwarding_with_strict_capital_auth",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_stored_binding_active_status_rejection_preserved_and_idempotent_reconciled",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_binding_rest_preserves_explicit_tenant",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_binding_replay_cannot_cross_tenant_authority",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_cached_write_requires_current_tenant_authority[/bff/capital-pools]",
+    "services/control-plane/bff/tests/test_capital_owner_forwarding.py::test_cached_write_requires_current_tenant_authority[/api/v1/bindings]"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 51 passed, 3 warnings in 12.35s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py::test_ooda_persona_producer_list_and_detail_fail_closed_when_capabilities_unresolvable",
+    "services/control-plane/bff/tests/test_control_loops_evidence_redaction_sweep.py::test_ooda_persona_producer_list_and_detail_fail_closed_when_capabilities_returns_none"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_control_loops_router.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 14 passed, 3 warnings in 3.24s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_control_loops_router.py::test_loop_runs_control_room_and_downstream_replay"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 warnings, 1 error in 0.89s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_default_bff_actual_persona_sessions.py::test_default_bff_port_projects_owned_actual_served_persona_session"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_evidence_owner_list_bounded.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 18 passed, 3 warnings in 16.55s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_evidence_owner_list_bounded.py::test_postgres_owner_summarize_evidence_items_aggregates_in_sql_and_excludes_tenantless_rows"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 4 failed, 7 passed, 13 warnings in 5.66s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py::test_human_approved_program_runs_a_real_retrain_through_the_existing_chain",
+    "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py::test_bff_runs_carry_the_structured_outcome_fields_the_research_run_recorded[candidate_created-1.5-controls0-candidate_created-candidate_passed_gate_and_beat_baseline-art-e2e-v1-retrain-child]",
+    "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py::test_bff_runs_carry_the_structured_outcome_fields_the_research_run_recorded[no_candidate-0.1-controls1-no_candidate-not_better_than_baseline-None]",
+    "services/control-plane/bff/tests/test_evolution_program_approval_dispatch.py::test_bff_runs_carry_the_structured_outcome_fields_the_research_run_recorded[evaluation_rejected-1.5-controls2-evaluation_rejected-control change rejected by Training: [{\"error\": \"out_of_range\", \"parameter_key\": \"lookback_bars\"}]-None]"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_http_auth_composition_owner.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 20 passed, 3 warnings in 8.67s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_http_auth_composition_owner.py::TestLifespanAndProviderReadiness::test_lifespan_lifecycle_and_clean_shutdown"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_latest_dev_six_area_closure.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed, 2 warnings in 0.51s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_latest_dev_six_area_closure.py::test_closure_doc_records_identities_and_non_real_boundary"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 28 passed, 3 warnings in 32.08s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_003.py::test_compose_bff_app_matches_main_route_set"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 18 passed, 3 warnings in 20.15s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_main_composition_seam_extraction_005.py::test_zero_duplicate_definitions_ast_readback"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 8 passed, 3 warnings in 11.69s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_management_read_timeout_and_capacity.py::test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_overlay_retirement.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 24 passed, 1 skipped, 3 warnings in 4.18s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_overlay_retirement.py::test_jobs_router_reads_strictly_canonical_read_store"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_persona_cycle_views.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 31 passed, 3 warnings in 18.59s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_persona_cycle_views.py::test_view_and_probe_share_the_daily_cycle_rule"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 failed, 3 warnings in 2.54s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py::test_mounted_ranking_drives_lifecycle_proposal[paper_owner-freeze_persona-frozen]",
+    "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py::test_mounted_ranking_drives_lifecycle_proposal[live_owner-retire_persona-retired]",
+    "services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py::test_mounted_state_change_invalidates_snapshot_and_preserves_reuse_and_idempotency"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_persona_paper_onboarding_capital_integration.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 3 warnings in 2.65s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_persona_paper_onboarding_capital_integration.py::test_paper_onboarding_creates_and_activates_pool_and_binding_without_approval_or_policy"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 3 warnings, 1 error in 2.43s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_persona_paper_owner_lifecycle_contract.py::test_new_persona_crosses_real_approval_and_registry_and_reloads"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_persona_router.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 12 failed, 30 passed, 3 warnings in 16.56s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_persona_router.py::test_route_inventory_count",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_quarterly_ranking",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_quarterly_ranking_drilldown",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_quarterly_ranking_recommendations",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_promotion_reviews",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_league",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_league_rankings",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_league_movers",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_league_tiers",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_league_heatmap",
+    "services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_fleet",
+    "services/control-plane/bff/tests/test_persona_router.py::test_custom_router_factory"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_postmortem_owner_read.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 6 passed, 5 warnings in 9.68s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_postmortem_owner_read.py::test_ac3_owner_paging_filtering_and_learning_feedback_bridge_compat"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 6 failed, 17 passed, 3 warnings in 14.96s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_ppl_alloc_009_governed_paper_chain_applies_without_two_man",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_durable_lineage_integrity_fails_closed_after_same_id_store_tamper",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_binding_weight_mutation_changes_snapshot_and_quarterly_surfaces_converge",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_runtime_binding_mode_is_actual_stage_not_binding_ceiling",
+    "services/control-plane/bff/tests/test_ppl_alloc_012_ranking_projection.py::test_paper_ledger_without_persona_binding_remains_ranking_eligible"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 28 passed, 3 warnings in 14.03s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_read_surface_caller_migration.py::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 1 failed, 12 passed, 3 warnings in 3.50s",
+   "failing_tests": [
+    "services/control-plane/bff/tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py",
+   "owner": "domain:bff",
+   "reason": "failed when run once on the development host: 2 failed, 6 passed, 4 warnings in 2.50s",
+   "failing_tests": [
+    "   services.telemetry.main:app.py:875 Exception on /api/telemetry/runtime-summaries [GET]",
+    "   services.telemetry.main:app.py:875 Exception on /api/telemetry/runtime-summaries [GET]",
+    "services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py::test_production_factory_reads_real_telemetry_route_with_caller_and_selected_tenant",
+    "services/control-plane/bff/tests/test_telemetry_owner_read_wiring.py::test_cookie_session_context_reaches_telemetry_owner_when_authorization_header_is_absent"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/cron/smoke_test.py",
+   "owner": "domain:control-plane",
+   "reason": "error: collection fails (ImportError: attempted relative import with no known parent package)",
+   "failing_tests": [
+    "services/control-plane/cron/smoke_test.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py",
+   "owner": "domain:control-plane",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed in 1.54s",
+   "failing_tests": [
+    "services/control-plane/governance/test_persona_proposal_runtime_binding_e2e.py::GovernedPersonaProposalRuntimeBindingE2ETest::test_proposal_reaches_runtime_only_after_governed_chain"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/ooda/test_paper_loop_packet.py",
+   "owner": "domain:control-plane",
+   "reason": "error: collection fails (ModuleNotFoundError: No module named 'runtime_binding')",
+   "failing_tests": [
+    "services/control-plane/ooda/test_paper_loop_packet.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/ooda/test_telemetry_evolution_link.py",
+   "owner": "domain:control-plane",
+   "reason": "error: collection fails (ModuleNotFoundError: No module named 'runtime_binding')",
+   "failing_tests": [
+    "services/control-plane/ooda/test_telemetry_evolution_link.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/control-plane/tests/agora/test_cross_user_isolation.py",
+   "owner": "domain:control-plane",
+   "reason": "error: collection or setup error; 40 warnings, 1 error in 3.41s",
+   "failing_tests": [
+    "services/control-plane/tests/agora/test_cross_user_isolation.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "services/test_external_egress.py",
+   "owner": "domain:services",
+   "reason": "failed when run once on the development host: 1 failed, 29 passed in 3.54s",
+   "failing_tests": [
+    "services/test_external_egress.py::test_every_production_connector_uses_guarded_transport"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/agora_product_journey/test_command_idempotency_cas.py",
+   "owner": "domain:agora",
+   "reason": "failed when run once on the development host: 1 failed, 2 passed, 2 warnings in 1.40s",
+   "failing_tests": [
+    "tests/agora_product_journey/test_command_idempotency_cas.py::test_performance_suggestion_action_idempotency_and_version_cas"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/agora_product_journey/test_full_product_journey.py",
+   "owner": "domain:agora",
+   "reason": "failed when run once on the development host: 1 failed, 2 warnings in 1.28s",
+   "failing_tests": [
+    "tests/agora_product_journey/test_full_product_journey.py::test_complete_agora_product_journey"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/agora_product_journey/test_restart_persistence_readback.py",
+   "owner": "domain:agora",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed in 0.83s",
+   "failing_tests": [
+    "tests/agora_product_journey/test_restart_persistence_readback.py::test_performance_suggestion_store_restart_persistence"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/agora_product_journey/test_two_tenant_isolation.py",
+   "owner": "domain:agora",
+   "reason": "failed when run once on the development host: 1 failed, 4 passed, 2 warnings in 1.38s",
+   "failing_tests": [
+    "tests/agora_product_journey/test_two_tenant_isolation.py::test_performance_suggestion_isolation"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/bff/test_failover_demo.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 3 failed, 1 passed, 79 warnings in 3.62s",
+   "failing_tests": [
+    "tests/bff/test_failover_demo.py::test_failover_demo_script_launches_two_replicas_and_records_required_rows",
+    "tests/bff/test_failover_demo.py::test_in_process_failover_preserves_committed_command_rpo_across_replicas",
+    "tests/bff/test_failover_demo.py::test_changed_retry_after_failover_fails_closed_without_duplicate_command"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/bff/test_idempotency_multi_replica.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 2 failed, 79 warnings in 3.63s",
+   "failing_tests": [
+    "tests/bff/test_idempotency_multi_replica.py::test_idempotency_key_replays_same_response_across_replicas",
+    "tests/bff/test_idempotency_multi_replica.py::test_changed_payload_with_same_key_conflicts_across_replicas"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/bff/test_multi_replica_smoke.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 2 failed, 1 passed, 1 skipped, 40 warnings in 3.59s",
+   "failing_tests": [
+    "tests/bff/test_multi_replica_smoke.py::test_smoke_script_launches_three_replicas_and_exercises_required_routes",
+    "tests/bff/test_multi_replica_smoke.py::test_in_process_replicas_share_idempotency_and_audit_store"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/bff/test_sse_replay.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 2 failed, 78 warnings in 3.57s",
+   "failing_tests": [
+    "tests/bff/test_sse_replay.py::test_last_event_id_replay_survives_replica_failover_without_gap_or_duplicate",
+    "tests/bff/test_sse_replay.py::test_shared_sse_replay_fails_closed_when_cursor_is_unavailable"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/deployment/test_production_release.py",
+   "owner": "domain:delivery-deploy",
+   "reason": "needs a database or network service the sweep job does not provide; 1 failed, 102 passed, 2 warnings, 24 subtests passed in 154.42s (0:02:34)",
+   "failing_tests": [
+    "tests/deployment/test_production_release.py::StaticContractTests::test_prod_bff_inprocess_stores_all_wired_to_isolated_postgres"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/deployment/test_staging_release.py",
+   "owner": "domain:delivery-deploy",
+   "reason": "error: exceeded the 200s per-file budget (timeout) on the development host",
+   "failing_tests": [],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_admission_to_deployment_plan.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 2 failed, 1 passed in 0.67s",
+   "failing_tests": [
+    "tests/e2e/test_admission_to_deployment_plan.py::test_approval_decision_lifecycle_advances_candidate_artifact_to_approved",
+    "tests/e2e/test_admission_to_deployment_plan.py::test_approved_artifact_creates_paper_deployment_plan_and_dep004_passes"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_agent_trading_reflection_evolution_3000.py",
+   "owner": "domain:persona-e2e",
+   "reason": "needs QuantLib, which only the research venv installs (not the sweep venv); 1 failed in 24.63s",
+   "failing_tests": [
+    "tests/e2e/test_agent_trading_reflection_evolution_3000.py::test_persona_agents_plan_trade_reflect_and_evolve_across_3000_unique_cases"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_allocation_policy_to_paper_run.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 21 failed, 1 passed, 4 skipped, 1 warning in 4.49s",
+   "failing_tests": [
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyRegistration::test_register_returns_candidate_allocation_policy",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyRegistration::test_lineage_maps_provenance_refs_to_source_run_ids",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyRegistration::test_lineage_maps_conflict_log_id_to_source_strategy_spec_id",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyRegistration::test_evaluation_summary_carries_synthesis_evidence",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyApproval::test_advance_candidate_to_approved",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestAllocationPolicyApproval::test_approved_entry_is_deployment_plan_ready",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestDeploymentPlanFromAllocationPolicy::test_deployment_plan_artifact_type_is_allocation_policy",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestDeploymentPlanFromAllocationPolicy::test_deployment_plan_transition_is_activate_from_none",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestDeploymentPlanFromAllocationPolicy::test_deployment_plan_paper_scale_zero_live_capital",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestDeploymentPlanFromAllocationPolicy::test_deployment_plan_preserves_persona_capital_binding_in_metadata",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestRuntimeBindingFromAllocationPolicy::test_runtime_binding_is_paper_mode",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestRuntimeBindingFromAllocationPolicy::test_runtime_binding_artifact_matches_allocation_policy_registry_id",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestRuntimeBindingFromAllocationPolicy::test_runtime_binding_carries_persona_capital_binding_attribution",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestRuntimeBindingFromAllocationPolicy::test_runtime_binding_stored_and_retrievable",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_fill_event_is_paper_only_no_live_broker",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_queryable_by_runtime_binding",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_queryable_by_deployment_plan",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_queryable_by_capital_pool",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_queryable_by_artifact",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_queryable_by_persona_capital_binding",
+    "tests/e2e/test_allocation_policy_to_paper_run.py::TestFillsTelemetryLineage::test_lineage_summary_covers_all_five_dimensions"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_evoloop_004_generative_loop.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 11 warnings in 2.78s",
+   "failing_tests": [
+    "tests/e2e/test_evoloop_004_generative_loop.py::test_evoloop_004_generative_loop_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_evoloop_011_learning_feedback.py",
+   "owner": "domain:persona-e2e",
+   "reason": "needs a database or network service the sweep job does not provide; 1 failed, 1 passed in 0.78s",
+   "failing_tests": [
+    "tests/e2e/test_evoloop_011_learning_feedback.py::test_evoloop_011_learning_feedback_loop_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_full_ooda_packet_closure.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed in 3.90s",
+   "failing_tests": [
+    "tests/e2e/test_full_ooda_packet_closure.py::test_full_ooda_packet_closure_runs_transition_tests_and_writes_evidence"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_human_management_frontend_browser_ooda_100.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 2 warnings in 2.94s",
+   "failing_tests": [
+    "tests/e2e/test_human_management_frontend_browser_ooda_100.py::test_human_management_frontend_browser_executes_real_dashboard_renderers_for_100_rounds"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_human_management_frontend_persona_ooda_100.py",
+   "owner": "domain:persona-e2e",
+   "reason": "error: collection or setup error; 42 warnings, 1 error in 4.13s",
+   "failing_tests": [
+    "tests/e2e/test_human_management_frontend_persona_ooda_100.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_ibkr_validate_order_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.92s",
+   "failing_tests": [
+    "tests/e2e/test_ibkr_validate_order_memory_e2e.py::test_ibkr_validate_only_order_feedback_performance_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_kraken_validate_order_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 3.02s",
+   "failing_tests": [
+    "tests/e2e/test_kraken_validate_order_memory_e2e.py::test_kraken_validate_only_order_feedback_performance_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_binding_filter_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.86s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_binding_filter_memory_e2e.py::test_lean_binding_mismatch_filter_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_binding_isolation_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.38s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_binding_isolation_memory_e2e.py::test_binding_isolation_filters_misrouted_signal_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_bracket_guard_logged_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.28s",
+   "failing_tests": [
+    "tests/e2e/test_lean_bracket_guard_logged_memory_e2e.py::test_bracket_guard_logged_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_bracket_submitted_recovery_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.48s",
+   "failing_tests": [
+    "tests/e2e/test_lean_bracket_submitted_recovery_memory_e2e.py::test_market_data_to_long_bracket_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_close_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_close_no_position_memory_e2e.py::test_cash_value_sell_long_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_limit_close_caps_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.46s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_limit_close_caps_position_memory_e2e.py::test_cash_value_limit_close_caps_to_open_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_limit_long_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.59s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_limit_long_close_memory_e2e.py::test_cash_value_sell_long_limit_close_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_limit_order_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.56s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_limit_order_memory_e2e.py::test_lean_cash_value_limit_order_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_limit_short_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.49s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_limit_short_memory_e2e.py::test_lean_cash_value_limit_short_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_market_rounding_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.65s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_market_rounding_memory_e2e.py::test_cash_value_market_rounding_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_short_rounding_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.49s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_short_rounding_memory_e2e.py::test_cash_value_market_short_rounding_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_cash_value_limit_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.61s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_cash_value_limit_roundtrip_memory_e2e.py::test_cash_value_limit_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_close_risk_logged_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.58s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_close_risk_logged_memory_e2e.py::test_close_signal_with_bracket_risk_logs_non_entry_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_conflict_loser_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.39s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_conflict_loser_memory_e2e.py::test_lean_signal_conflict_loser_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_crypto_cash_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.48s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_crypto_cash_memory_e2e.py::test_crypto_cash_value_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_duplicate_signal_id_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.69s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_duplicate_signal_id_memory_e2e.py::test_lean_duplicate_signal_id_no_duplicate_order_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_duplicate_signal_replay_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.57s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_duplicate_signal_replay_memory_e2e.py::test_duplicate_signal_replay_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_duplicate_target_nodelta_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_duplicate_target_nodelta_memory_e2e.py::test_lean_duplicate_target_no_delta_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_long_liquidate_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.40s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_long_liquidate_memory_e2e.py::test_exit_long_liquidate_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_long_loss_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_long_loss_memory_e2e.py::test_exit_long_loss_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_no_position_memory_e2e.py::test_lean_exit_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_short_cover_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.65s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_short_cover_memory_e2e.py::test_exit_short_cover_profit_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_short_fractional_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_short_fractional_memory_e2e.py::test_exit_short_fractional_cover_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_short_loss_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.58s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_short_loss_memory_e2e.py::test_exit_short_loss_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_exit_short_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.52s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_exit_short_no_position_memory_e2e.py::test_exit_short_without_position_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_forex_cash_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.55s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_forex_cash_memory_e2e.py::test_forex_cash_value_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_future_filter_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.55s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_future_filter_memory_e2e.py::test_lean_future_signal_filter_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_hold_noop_feedback_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.64s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_hold_noop_feedback_memory_e2e.py::test_lean_llm_hold_noop_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_limit_close_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_limit_close_no_position_memory_e2e.py::test_sell_long_limit_close_without_position_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_limit_feedback_recovery_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_limit_feedback_recovery_memory_e2e.py::test_limit_order_feedback_adapter_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_limit_missing_price_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.59s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_limit_missing_price_memory_e2e.py::test_lean_limit_order_missing_price_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_limit_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.34s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_limit_roundtrip_memory_e2e.py::test_limit_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_binding_isolation_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.39s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_binding_isolation_memory_e2e.py::test_llm_binding_isolation_filters_misrouted_signal_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_bracket_submitted_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.30s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_bracket_submitted_memory_e2e.py::test_llm_bracket_submitted_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_broad_smoke_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.26s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_broad_smoke_memory_e2e.py::test_llm_broad_smoke_fill_noops_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_close_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.25s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_close_no_position_memory_e2e.py::test_llm_sell_long_cash_close_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_limit_close_cap_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.41s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_limit_close_cap_memory_e2e.py::test_llm_cash_value_limit_close_caps_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_market_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.39s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_market_roundtrip_memory_e2e.py::test_llm_cash_value_market_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_market_short_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.54s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_market_short_memory_e2e.py::test_llm_cash_value_market_short_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_short_loss_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.34s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_short_loss_memory_e2e.py::test_llm_cash_short_roundtrip_loss_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_cash_short_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.49s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_cash_short_roundtrip_memory_e2e.py::test_llm_cash_short_roundtrip_profit_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_conflict_loser_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_conflict_loser_memory_e2e.py::test_llm_conflict_loser_quant_winner_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_duplicate_target_nodelta_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.48s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_duplicate_target_nodelta_memory_e2e.py::test_llm_duplicate_target_no_delta_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_event_alpha_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.41s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_event_alpha_memory_e2e.py::test_llm_event_alpha_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_exit_long_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.39s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_exit_long_no_position_memory_e2e.py::test_llm_exit_long_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_exit_short_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.42s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_exit_short_no_position_memory_e2e.py::test_llm_exit_short_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_fill_noop_mixed_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.28s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_fill_noop_mixed_memory_e2e.py::test_llm_fill_then_hold_noop_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_future_signal_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.34s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_future_signal_memory_e2e.py::test_llm_future_signal_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_hold_noop_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.10s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_hold_noop_memory_e2e.py::test_llm_hold_noop_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_limit_close_no_position_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.24s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_limit_close_no_position_memory_e2e.py::test_llm_sell_long_limit_close_without_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_limit_partial_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.49s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_limit_partial_close_memory_e2e.py::test_llm_sell_long_limit_partial_close_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_limit_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_limit_roundtrip_memory_e2e.py::test_llm_limit_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_market_loss_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_market_loss_memory_e2e.py::test_llm_market_long_loss_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_market_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.48s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_market_roundtrip_memory_e2e.py::test_llm_market_long_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_multiref_limit_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.53s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_multiref_limit_memory_e2e.py::test_llm_multiref_limit_roundtrip_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_news_research_market_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.43s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_news_research_market_memory_e2e.py::test_llm_news_research_market_roundtrip_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_percent_limit_unsupported_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.62s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_percent_limit_unsupported_memory_e2e.py::test_llm_percent_limit_unsupported_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_percent_long_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.56s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_percent_long_roundtrip_memory_e2e.py::test_llm_percent_long_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_percent_short_roundtrip_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.46s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_percent_short_roundtrip_memory_e2e.py::test_llm_percent_short_roundtrip_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_rebalance_batch_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.44s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_rebalance_batch_memory_e2e.py::test_llm_rebalance_batch_timeout_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_rebalance_partial_timeout_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.45s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_rebalance_partial_timeout_memory_e2e.py::test_llm_rebalance_partial_timeout_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_sell_long_cash_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.60s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_sell_long_cash_close_memory_e2e.py::test_llm_sell_long_cash_value_close_caps_position_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_short_bracket_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.33s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_short_bracket_memory_e2e.py::test_llm_short_bracket_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_symbol_parse_error_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.58s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_symbol_parse_error_memory_e2e.py::test_llm_symbol_parse_error_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_llm_zero_share_rejection_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.40s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_llm_zero_share_rejection_memory_e2e.py::test_llm_zero_share_cash_value_rejection_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_market_data_order_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.31s",
+   "failing_tests": [
+    "tests/e2e/test_lean_market_data_order_memory_e2e.py::test_market_data_to_lean_order_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_confidence_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.43s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_percent_confidence_memory_e2e.py::test_percent_portfolio_confidence_floor_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_limit_unsupported_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.59s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_percent_limit_unsupported_memory_e2e.py::test_lean_percent_portfolio_limit_unsupported_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_long_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.57s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_percent_long_close_memory_e2e.py::test_percent_long_close_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_market_short_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.58s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_percent_market_short_memory_e2e.py::test_percent_market_short_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_short_bracket_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.48s",
+   "failing_tests": [
+    "tests/e2e/test_lean_percent_short_bracket_memory_e2e.py::test_percent_short_bracket_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_percent_short_confidence_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.54s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_percent_short_confidence_memory_e2e.py::test_percent_short_confidence_scaled_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_rebalance_batch_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_rebalance_batch_memory_e2e.py::test_rebalance_batch_timeout_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_rebalance_partial_timeout_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.54s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_rebalance_partial_timeout_memory_e2e.py::test_rebalance_partial_timeout_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_roundtrip_performance_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.32s",
+   "failing_tests": [
+    "tests/e2e/test_lean_roundtrip_performance_memory_e2e.py::test_market_data_roundtrip_performance_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_sell_long_cash_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.36s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_sell_long_cash_close_memory_e2e.py::test_lean_sell_long_cash_value_close_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_sell_long_limit_close_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.43s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_sell_long_limit_close_memory_e2e.py::test_sell_long_limit_close_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_setholdings_nodelta_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.45s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_setholdings_nodelta_memory_e2e.py::test_lean_setholdings_no_delta_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_shares_limit_short_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.38s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_shares_limit_short_memory_e2e.py::test_shares_sell_short_limit_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_shares_market_short_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.41s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_shares_market_short_memory_e2e.py::test_shares_sell_short_market_feedback_recovery_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_shares_rounding_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.38s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_shares_rounding_memory_e2e.py::test_fractional_shares_market_rounding_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_shares_short_rounding_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.34s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_shares_short_rounding_memory_e2e.py::test_fractional_shares_short_rounding_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_short_bracket_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.24s",
+   "failing_tests": [
+    "tests/e2e/test_lean_short_bracket_memory_e2e.py::test_market_data_to_short_bracket_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_short_zero_share_rejection_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.55s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_short_zero_share_rejection_memory_e2e.py::test_lean_short_zero_share_rejection_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_signal_conflict_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.46s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_signal_conflict_memory_e2e.py::test_signal_conflict_winner_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_stale_filter_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.37s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_stale_filter_memory_e2e.py::test_lean_stale_signal_filter_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_stale_signal_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.47s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_stale_signal_memory_e2e.py::test_stale_signal_filtered_fresh_order_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_stale_signal_only_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.50s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_stale_signal_only_memory_e2e.py::test_stale_signal_feedback_performance_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_symbol_parse_error_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.43s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_symbol_parse_error_memory_e2e.py::test_lean_symbol_parse_error_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_unsupported_action_direction_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_unsupported_action_direction_memory_e2e.py::test_lean_unsupported_action_direction_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_zero_liquidate_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.62s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_zero_liquidate_memory_e2e.py::test_lean_zero_liquidate_feedback_memory_readback_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_lean_zero_share_rejection_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.71s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_lean_zero_share_rejection_memory_e2e.py::test_lean_zero_share_cash_value_rejection_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_openclaw_paper_cancel_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.69s",
+   "failing_tests": [
+    "tests/e2e/test_openclaw_paper_cancel_memory_e2e.py::test_openclaw_paper_cancel_feedback_performance_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_openclaw_paper_partial_fill_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.57s",
+   "failing_tests": [
+    "tests/e2e/test_openclaw_paper_partial_fill_memory_e2e.py::test_openclaw_paper_partial_fill_feedback_performance_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_openclaw_paper_recovered_readback_memory_e2e.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 warning in 2.63s",
+   "failing_tests": [
+    "tests/e2e/test_openclaw_paper_recovered_readback_memory_e2e.py::test_openclaw_paper_recovered_readback_feedback_memory_e2e"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_cognitive_closed_loop_3000.py",
+   "owner": "domain:persona-e2e",
+   "reason": "error: exceeded the 200s per-file budget (timeout) on the development host",
+   "failing_tests": [],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_iterative_validation_loop_100.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 1 passed in 1.51s",
+   "failing_tests": [
+    "   services.execution.lean_runtime.paper_runtime:paper_runtime.py:5515 paper runtime drain failed",
+    "tests/e2e/test_persona_iterative_validation_loop_100.py::test_iterative_validation_loop_runs_100_reference_aware_e2e_rounds"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_ooda_15_cycle_autonomy.py",
+   "owner": "domain:persona-e2e",
+   "reason": "error: collection or setup error; 40 warnings, 1 error in 3.69s",
+   "failing_tests": [
+    "tests/e2e/test_persona_ooda_15_cycle_autonomy.py"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 4 failed, 1 passed, 1 warning in 4.57s",
+   "failing_tests": [
+    "tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py::test_100_adapter_backed_persona_openclaw_cases_are_distinct_and_usable",
+    "tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py::test_100_adapter_backed_persona_openclaw_ooda_cycles_iterate_response_to_next_request",
+    "tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py::test_ooda_episode_fails_when_next_cycle_does_not_consume_previous_response",
+    "tests/e2e/test_persona_openclaw_adapter_backed_flow_100.py::test_downstream_trace_must_consume_the_actual_provider_response_ref"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py",
+   "owner": "domain:persona-e2e",
+   "reason": "needs QuantLib, which only the research venv installs (not the sweep venv); 7 failed, 94 passed in 16.38s",
+   "failing_tests": [
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-055-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-056-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-057-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-058-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-059-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-060-quantlib]",
+    "tests/e2e/test_persona_oss_100_alpha_seed_roundtrips.py::test_persona_to_oss_to_persona_roundtrip_spec[persona-oss-rt-061-quantlib]"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_oss_runtime_matrix.py",
+   "owner": "domain:persona-e2e",
+   "reason": "needs QuantLib, which only the research venv installs (not the sweep venv); 2 failed, 6 passed in 1.19s",
+   "failing_tests": [
+    "tests/e2e/test_persona_oss_runtime_matrix.py::test_persona_can_run_every_oss_component_and_get_runtime_results",
+    "tests/e2e/test_persona_oss_runtime_matrix.py::test_research_oss_requests_produce_analysis_or_policy_results"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_persona_remaining_gap_validation_3000.py",
+   "owner": "domain:persona-e2e",
+   "reason": "error: exceeded the 200s per-file budget (timeout) on the development host",
+   "failing_tests": [],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/e2e/test_source_to_strategy_spec.py",
+   "owner": "domain:persona-e2e",
+   "reason": "failed when run once on the development host: 1 failed, 3 warnings in 2.29s",
+   "failing_tests": [
+    "tests/e2e/test_source_to_strategy_spec.py::test_internal_research_note_ingests_converts_and_registers_strategy_spec"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/governance_write_owner/test_decision_journal_write_owner.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 6 failed, 7 passed in 1.38s",
+   "failing_tests": [
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_create_entry_is_idempotent_by_id_and_does_not_clobber",
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_patch_entry_versions_diffs_and_persists_across_fresh_store",
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_patch_entry_replays_identical_idempotency_key",
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_patch_entry_retries_on_a_lost_compare_and_set_race",
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_patch_entry_concurrent_conflicting_request_hash_is_race_safe",
+    "tests/governance_write_owner/test_decision_journal_write_owner.py::test_patch_entry_concurrent_identical_retries_replay_without_second_write"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/integrations/test_research_no_order_route.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 1 failed, 2 passed in 1.04s",
+   "failing_tests": [
+    "tests/integrations/test_research_no_order_route.py::test_static_scanner_passes_default_research_adapter_roots"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  },
+  {
+   "path": "tests/research_write_owner/test_artifact_read_owner.py",
+   "owner": "domain:cross-service-tests",
+   "reason": "failed when run once on the development host: 1 failed, 11 passed, 11 warnings in 4.13s",
+   "failing_tests": [
+    "tests/research_write_owner/test_artifact_read_owner.py::test_bff_routes_distinguish_data_empty_unavailable_and_missing"
+   ],
+   "measured": "2026-11-19",
+   "action": "owning domain fixes the test or the code under test, then removes this entry; not edited in CI-EVERY-TEST-FILE-RUNS-20261119"
+  }
+ ]
+}

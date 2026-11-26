@@ -178,6 +178,39 @@ def _write_headers(idempotency_key: str = "idem-001") -> dict:
     }
 
 
+class _MemoryJsonOwnerStore:
+    """In-memory stand-in for the Postgres JSON table under the real AgoraStore."""
+
+    def __init__(self, **_kw) -> None:
+        self.rows: dict = {}
+
+    def put(self, record_id, payload):
+        self.rows[record_id] = dict(payload)
+
+    def insert_if_absent(self, record_id, payload, **_kw):
+        if record_id in self.rows:
+            return False, dict(self.rows[record_id])
+        self.rows[record_id] = dict(payload)
+        return True, dict(payload)
+
+    def get(self, record_id):
+        row = self.rows.get(record_id)
+        return dict(row) if row is not None else None
+
+    def list_all(self, **_kw):
+        return [dict(r) for r in self.rows.values()]
+
+
+def _lock_owner():
+    from unittest import mock
+
+    from services.agora.service import AgoraWriteService
+    from services.agora.store import AgoraStore
+
+    with mock.patch("services.agora.store.PostgresJsonOwnerStore", _MemoryJsonOwnerStore):
+        return AgoraWriteService(store=AgoraStore(dsn="postgresql://test/none", bootstrap=False))
+
+
 def _client(
     store: TradingRoomStore,
     *,
@@ -218,6 +251,7 @@ def _client(
             utc_now=_utc_now,
             trading_room_store=store,
             workshop_store=workshop_store,
+            decision_lock_owner=_lock_owner(),
         )
     )
     return TestClient(app)
@@ -2247,6 +2281,7 @@ def _object_identity_client(store: TradingRoomStore, *, operator_id: str = "op-0
             bff_error=_bff_error,
             utc_now=_utc_now,
             trading_room_store=store,
+            decision_lock_owner=_lock_owner(),
         )
     )
     return TestClient(app)

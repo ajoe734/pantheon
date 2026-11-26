@@ -178,6 +178,107 @@ _OUTBOX_DEFAULT_MAX_ATTEMPTS = 3
 _OUTBOX_DEFAULT_RETRY_DELAY_SECONDS = 30
 
 
+# Closes the market snapshot serves per symbol. Mirrors the default of
+# SOURCE_INGEST_MARKET_SNAPSHOT_MAX_CLOSES (services/source_ingestion/runtime.py);
+# phase 1 of SD_MARKET_DATA_ONE_WRITE_PER_DAY section 5.4 E2.
+MARKET_SNAPSHOT_SERVED_CLOSES = 60
+
+
+def _refuse_history_beyond_snapshot(artifact: Mapping[str, Any], needed: int, derive: Any) -> None:
+    """Refuse at deployment a strategy that needs more closes than the snapshot serves."""
+    if needed <= MARKET_SNAPSHOT_SERVED_CLOSES:
+        return
+    logic = artifact.get("strategy_logic") or {}
+    kind = logic.get("kind")
+    served = MARKET_SNAPSHOT_SERVED_CLOSES
+    if kind == "persona_portfolio_v1":
+        for member in logic["members"]:
+            member_needed = derive(member["artifact"])
+            if member_needed > served:
+                member_kind = (member["artifact"].get("strategy_logic") or {}).get("kind")
+                raise DeploymentPlanError(
+                    f"history_unavailable: envelope member {member.get('member_id')!r} "
+                    f"(strategy kind {member_kind!r}) needs {member_needed} closes but the "
+                    f"market snapshot serves {served}"
+                )
+    raise DeploymentPlanError(
+        f"history_unavailable: strategy kind {kind!r} needs {needed} closes but the "
+        f"market snapshot serves {served}"
+    )
+
+
+# DEPLOY-PLAN-HISTORY-AVAILABILITY-20261120 (design 5.4 E2 phase 2). The one named setting: when true the
+# min_closes window of SOURCE-SNAPSHOT-MIN-CLOSES-WINDOW-20261120 is live, the phase 1 refusal above the
+# snapshot is lifted and the plan is checked against the governed daily history instead.
+HISTORY_FROM_DAILY_BARS_ENV = "DEPLOYMENT_HISTORY_FROM_DAILY_BARS"
+
+
+def _history_from_daily_bars_enabled() -> bool:
+    return os.getenv(HISTORY_FROM_DAILY_BARS_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _symbol_needs(artifact: Mapping[str, Any], derive: Any) -> Dict[str, tuple]:
+    """``{symbol: (closes needed, strategy kind)}``; an envelope member needs its own count."""
+    logic = artifact.get("strategy_logic") or {}
+    needs: Dict[str, tuple] = {}
+    if logic.get("kind") == "persona_portfolio_v1":
+        parts = [(m["artifact"], f"{logic.get('kind')}/{(m['artifact'].get('strategy_logic') or {}).get('kind')}")
+                 for m in logic["members"]]
+    else:
+        parts = [(artifact, str(logic.get("kind")))]
+    for part, kind in parts:
+        needed = derive(part)
+        for symbol in (part.get("parameters") or {}).get("symbols") or []:
+            if symbol not in needs or needs[symbol][0] < needed:
+                needs[symbol] = (needed, kind)
+    return needs
+
+
+def _fetch_history_availability(symbols: List[str]) -> Dict[str, Any]:
+    """Governed daily history per symbol from Source. Any failure is a refusal, never an assumption."""
+    import httpx
+    from urllib.parse import quote
+
+    base = (os.getenv("DEPLOYMENT_SOURCE_INGEST_BASE_URL") or os.getenv("PANTHEON_SOURCE_INGEST_URL") or "").rstrip("/")
+    if not base:
+        raise DeploymentPlanError("history_unavailable: Source URL is not configured, history cannot be checked")
+    out: Dict[str, Any] = {}
+    try:
+        for start in range(0, len(symbols), 100):
+            chunk = symbols[start:start + 100]
+            response = httpx.get(
+                base + "/api/source-ingest/history/availability?symbols=" + ",".join(quote(s, safe="") for s in chunk),
+                headers={"Accept": "application/json"},
+                timeout=float(os.getenv("DEPLOYMENT_SOURCE_INGEST_TIMEOUT_SECONDS", "5")),
+                follow_redirects=False)
+            response.raise_for_status()
+            out.update(response.json()["symbols"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        raise DeploymentPlanError(
+            f"history_unavailable: Source history availability could not be read ({type(exc).__name__}); "
+            "the plan is not built on an assumption") from exc
+    return out
+
+
+def _refuse_history_shortfall(
+    artifact: Mapping[str, Any], derive: Any, symbols: List[str], reader: Any = None,
+) -> None:
+    needs = _symbol_needs(artifact, derive)
+    names = sorted(set(symbols) | set(needs))
+    report = (reader or _fetch_history_availability)(names)
+    for symbol in names:
+        needed, kind = needs.get(symbol) or (max((n for n, _ in needs.values()), default=0), str(
+            (artifact.get("strategy_logic") or {}).get("kind")))
+        entry = report.get(symbol) if isinstance(report, Mapping) else None
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("count"), int):
+            raise DeploymentPlanError(
+                f"history_unavailable: Source reported no history for {symbol!r} (strategy kind {kind!r})")
+        if entry["count"] < needed:
+            raise DeploymentPlanError(
+                f"history_unavailable: {symbol} has {entry['count']} governed closes, strategy kind "
+                f"{kind!r} needs {needed} (short by {needed - entry['count']})")
+
+
 def _iso_sort_key(plan: DeploymentPlan) -> str:
     return str(plan.created_at or "")
 
@@ -371,8 +472,10 @@ class DeploymentPlannerService:
         plan_store: DeploymentPlanStore,
         registry_reader=None,
         approval_reader=None,
+        history_reader=None,
     ) -> None:
         self.plan_store = plan_store
+        self.history_reader = history_reader
         self.registry_reader = registry_reader
         self.approval_reader = approval_reader
         self.planner = StagePlanner()
@@ -433,6 +536,62 @@ class DeploymentPlannerService:
         if request.plan_id and self.plan_store.get(request.plan_id) is not None:
             raise DeploymentPlanError(f"DeploymentPlan '{request.plan_id}' already exists")
 
+        has_inline_meta_policy = "risk_policy" in metadata
+        has_meta_policy_ref = "risk_policy_ref" in metadata
+        meta_policy_ref = str(metadata.get("risk_policy_ref") or "").strip() or None
+        if request.risk_policy is not None or has_inline_meta_policy or has_meta_policy_ref:
+            from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+            candidate_policy = (
+                request.risk_policy if request.risk_policy is not None else metadata.get("risk_policy")
+            )
+            if candidate_policy is None and not meta_policy_ref:
+                raise DeploymentPlanError(
+                    "RiskPolicy rejected: metadata.risk_policy is null or missing (risk_policy_missing)"
+                )
+            pool_for_res: Dict[str, Any] = {
+                "pool_id": capital_pool_id,
+                "tenant_id": tenant_id,
+                "metadata": {
+                    **metadata,
+                    **(
+                        {"risk_policy": candidate_policy}
+                        if (request.risk_policy is not None or has_inline_meta_policy)
+                        else {}
+                    ),
+                },
+                **(
+                    {"risk_policy_ref": meta_policy_ref}
+                    if meta_policy_ref is not None
+                    else {}
+                ),
+                **(
+                    {"approval_digest": metadata.get("approval_digest") or metadata.get("pool_approval_digest")}
+                    if (metadata.get("approval_digest") or metadata.get("pool_approval_digest"))
+                    else {}
+                ),
+            }
+            policy_res = resolve_pool_risk_policy_binding(
+                capital_pool_id=capital_pool_id,
+                pool=pool_for_res,
+                expected_tenant_id=tenant_id,
+                expected_stage=request.target_stage.value,
+                approval_reader=self.approval_reader,
+                require_active=True,
+                require_limits=(
+                    ("gross_limit",)
+                    if request.target_stage.value == "paper"
+                    and (has_inline_meta_policy or has_meta_policy_ref)
+                    and request.risk_policy is None
+                    else ()
+                ),
+                raise_on_error=False,
+            )
+            if not policy_res.resolved:
+                raise DeploymentPlanError(
+                    f"RiskPolicy rejected: {policy_res.reason} ({policy_res.reason_code})"
+                )
+
         schedule_window = (
             ScheduleWindow(**request.schedule_window.model_dump())
             if request.schedule_window is not None
@@ -479,6 +638,7 @@ class DeploymentPlannerService:
             from services.registry.strategy_artifact import (
                 StrategyArtifactValidationError,
                 strategy_artifact_checksum,
+                strategy_artifact_minimum_closes,
                 validate_strategy_artifact,
             )
 
@@ -506,13 +666,42 @@ class DeploymentPlannerService:
             parameters = artifact["parameters"]
             if not plan.metadata.get("symbol"):
                 symbols = parameters.get("symbols")
-                if not isinstance(symbols, list) or len(symbols) != 1 or not isinstance(symbols[0], str) or not symbols[0].strip():
-                    raise DeploymentPlanError("Inline paper artifact requires an explicit symbol or one approved symbol")
-                plan.metadata["symbol"] = symbols[0]
+                cleaned = (
+                    [x.strip() for x in symbols if isinstance(x, str)] if isinstance(symbols, list) else []
+                )
+                if (
+                    not isinstance(symbols, list) or not symbols or len(cleaned) != len(symbols)
+                    or not all(cleaned) or len(set(cleaned)) != len(cleaned)
+                ):
+                    raise DeploymentPlanError(
+                        "paper_plan_symbols_invalid: inline paper artifact requires an explicit symbol "
+                        "or a non-empty list of distinct approved symbols"
+                    )
+                if len(symbols) == 1:
+                    plan.metadata["symbol"] = symbols[0]
+                else:
+                    # A pool envelope nets several underlyings in one binding. It declares the
+                    # complete list the producer must obtain at one common bar; there is no
+                    # single symbol, and none is invented.
+                    plan.metadata["symbols"] = list(symbols)
+            if "market_data_policy" in plan.metadata:
+                minimum_closes = None
+            else:
+                try:
+                    minimum_closes = strategy_artifact_minimum_closes(artifact)
+                except (StrategyArtifactValidationError, KeyError, TypeError, ValueError) as exc:
+                    raise DeploymentPlanError(f"minimum_closes cannot be derived: {exc}") from exc
+                if _history_from_daily_bars_enabled():
+                    bound = [plan.metadata["symbol"]] if plan.metadata.get("symbol") else list(
+                        plan.metadata.get("symbols") or [])
+                    _refuse_history_shortfall(
+                        artifact, strategy_artifact_minimum_closes, bound, self.history_reader)
+                else:
+                    _refuse_history_beyond_snapshot(artifact, minimum_closes, strategy_artifact_minimum_closes)
             plan.metadata.setdefault("market_data_policy", {
                 "owner": "source-ingest",
                 "contract": "latest_stored_normalized",
-                "minimum_closes": parameters[artifact["strategy_logic"]["lookback_parameter"]],
+                "minimum_closes": minimum_closes,
                 "max_age_seconds": 86400,
             })
         if persist:

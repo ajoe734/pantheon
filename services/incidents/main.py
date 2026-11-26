@@ -80,6 +80,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -98,6 +100,7 @@ from services.foundation.reliable_delivery import (
     reconcile_prepared,
 )
 from services.foundation.serialization import sha256_checksum
+from services.foundation.outbox import describe_exception
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer from sibling services/incident/ directory
@@ -116,6 +119,7 @@ try:
         NOT_REOBSERVED_RESOLUTION_REASON,
         ORPHAN_RECOVERED_RESOLUTION_REASON,
         canonical_monitor_agent_finding_key,
+        derive_incident_summary_fields,
         extract_infrastructure_incident_component,
         extract_infrastructure_incident_referenced_ids,
         extract_monitor_agent_finding_references,
@@ -135,6 +139,7 @@ except ImportError:
         NOT_REOBSERVED_RESOLUTION_REASON,
         ORPHAN_RECOVERED_RESOLUTION_REASON,
         canonical_monitor_agent_finding_key,
+        derive_incident_summary_fields,
         extract_infrastructure_incident_component,
         extract_infrastructure_incident_referenced_ids,
         extract_monitor_agent_finding_references,
@@ -147,9 +152,9 @@ except ImportError:
 
 try:
     from .models import (
-        CreateIncidentRequest,
-        IncidentResponse,
-        OperatorIncidentPayload,
+        CreateIncidentRequest as _BaseCreateIncidentRequest,
+        IncidentResponse as _BaseIncidentResponse,
+        OperatorIncidentPayload as _BaseOperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
     from .consumer import (
@@ -160,13 +165,14 @@ try:
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
+        build_incident_from_agent_finding_payload,
         build_incident_from_infrastructure_health_payload,
     )
 except ImportError:
     from models import (  # type: ignore
-        CreateIncidentRequest,
-        IncidentResponse,
-        OperatorIncidentPayload,
+        CreateIncidentRequest as _BaseCreateIncidentRequest,
+        IncidentResponse as _BaseIncidentResponse,
+        OperatorIncidentPayload as _BaseOperatorIncidentPayload,
         UpdateIncidentStatusRequest,
     )
     from consumer import (  # type: ignore
@@ -177,8 +183,52 @@ except ImportError:
         IncidentConsumerError,
         IncidentConsumerRetryableError,
         ThresholdTelemetryIncidentConsumer,
+        build_incident_from_agent_finding_payload,
         build_incident_from_infrastructure_health_payload,
     )
+
+
+class CreateIncidentRequest(_BaseCreateIncidentRequest):
+    kind: Optional[str] = None
+    metric: Optional[str] = None
+    observed: Optional[Any] = None
+    threshold: Optional[Any] = None
+    comparator: Optional[str] = None
+    occurrence_count: Optional[int] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
+class IncidentResponse(_BaseIncidentResponse):
+    kind: Optional[str] = None
+    metric: Optional[str] = None
+    observed: Optional[Any] = None
+    threshold: Optional[Any] = None
+    comparator: Optional[str] = None
+    occurrence_count: Optional[int] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    summary_key: Optional[str] = None
+    summary_params: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
+    evidence_refs: Optional[List[str]] = None
+    timeline: Optional[List[Dict[str, Any]]] = None
+
+
+class OperatorIncidentPayload(_BaseOperatorIncidentPayload):
+    kind: Optional[str] = None
+    metric: Optional[str] = None
+    observed: Optional[Any] = None
+    threshold: Optional[Any] = None
+    comparator: Optional[str] = None
+    occurrence_count: Optional[int] = None
+    first_seen_at: Optional[str] = None
+    last_seen_at: Optional[str] = None
+    summary_key: Optional[str] = None
+    summary_params: Optional[Dict[str, Any]] = None
+    summary: Optional[str] = None
+    evidence_refs: Optional[List[str]] = None
+    timeline: Optional[List[Dict[str, Any]]] = None
 
 try:
     from services.incident.reference_validation import (  # type: ignore
@@ -234,7 +284,7 @@ register_fastapi_health_routes(
     app,
     "incidents",
     dependencies=lambda: {"persistence": PERSISTENCE_POSTURE.to_dict()},
-    metrics=lambda: {"incident_count": len(store.list_incidents())},
+    metrics=lambda: {"incident_count": store.count_incidents()},
     details=lambda: {
         "data_dir": DATA_DIR,
         "store_path": str(STORE_PATH),
@@ -368,6 +418,10 @@ def _to_response(inc: IncidentCase) -> IncidentResponse:
     d = inc.to_dict()
     d.setdefault("telemetry_event_ids", [])
     d.setdefault("reconciliation_ids", [])
+    derived = derive_incident_summary_fields(d)
+    for key, value in derived.items():
+        if d.get(key) is None and value is not None:
+            d[key] = value
     return IncidentResponse(**d)
 
 
@@ -405,12 +459,13 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
         raise HTTPException(status_code=409, detail=f"IncidentCase '{incident_id}' already exists")
 
     try:
+        created_at = _utc_now()
         inc = IncidentCase(
             incident_id=incident_id,
             title=body.title,
             status=body.status,
             severity=body.severity,
-            created_at=_utc_now(),
+            created_at=created_at,
             binding_id=body.binding_id,
             deployment_stage=body.deployment_stage,
             deployment_plan_id=body.deployment_plan_id,
@@ -425,6 +480,14 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
             incident_cluster_id=body.incident_cluster_id,
             evidence_summary=body.evidence_summary,
             lineage_ref=body.lineage_ref,
+            kind=body.kind,
+            metric=body.metric,
+            observed=body.observed,
+            threshold=body.threshold,
+            comparator=body.comparator,
+            occurrence_count=body.occurrence_count,
+            first_seen_at=body.first_seen_at,
+            last_seen_at=body.last_seen_at,
         )
     except (IncidentError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -723,27 +786,19 @@ def consume_agent_finding_incident(
             )
         canonical_key = canonical_monitor_agent_finding_key(fingerprint, title, rationale)
         digest = uuid.uuid5(uuid.NAMESPACE_URL, canonical_key).hex[:12]
-        payload = {
-            "schema_version": "pantheon.infrastructure-incident/1",
-            "source_event_id": snapshot_ref,
+        finding_payload = {
+            **body,
+            "fingerprint": fingerprint,
+            "canonical_key": canonical_key,
+            "snapshot_ref": snapshot_ref,
+            "rationale": rationale,
+            "title": title,
+            "observed_at": observed_at,
             "tenant_id": str(body.get("tenant_id") or os.getenv("PANTHEON_TENANT_ID") or "default"),
-            "producer": "monitor-agent",
-            "created_at": observed_at,
-            "component": {
-                "service_name": f"agent-finding-{digest}",
-                "component_kind": "monitor-agent-finding",
-                "endpoint": f"monitor-agent://{digest}",
-            },
-            "title": title[:200],
-            "severity": body.get("severity"),
-            "evidence_summary": (
-                f"fingerprint={fingerprint}; canonical_key={canonical_key}; "
-                f"observed_at={observed_at}; snapshot_ref={snapshot_ref}; "
-                f"rationale={rationale[:1500]}"
-            ),
         }
-        incoming = build_incident_from_infrastructure_health_payload(
-            {**payload, "incident_id": f"agent-{digest}-0000"}
+        incoming = build_incident_from_agent_finding_payload(
+            finding_payload,
+            incident_id=f"agent-{digest}-0000",
         )
     except (IncidentConsumerError, IncidentError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -755,7 +810,7 @@ def consume_agent_finding_incident(
     for _ in range(5):
         # Sequence is read before the open check: a creator that lost the race
         # either sees the winner's open incident or collides on the same id.
-        seq = sum(1 for i in store.list_incidents() if i.incident_id.startswith(prefix))
+        seq = store.count_incidents_with_id_prefix(prefix)
         matched = _match_open_agent_finding_incident(
             store.find_open_incidents(),
             incoming=incoming,
@@ -768,8 +823,9 @@ def consume_agent_finding_incident(
             response.status_code = 200
             log.info("Merged agent finding into IncidentCase %s", merged.incident_id)
             return _to_response(merged)
-        candidate = build_incident_from_infrastructure_health_payload(
-            {**payload, "incident_id": f"{prefix}{seq:04d}"}
+        candidate = build_incident_from_agent_finding_payload(
+            finding_payload,
+            incident_id=f"{prefix}{seq:04d}",
         )
         try:
             created = store.create_incident(candidate)
@@ -784,6 +840,9 @@ def consume_agent_finding_incident(
 # Routes — list / lookup
 # ---------------------------------------------------------------------------
 
+LIST_INCIDENTS_DEFAULT_LIMIT = 1000
+
+
 @app.get(
     "/api/incidents",
     response_model=List[IncidentResponse],
@@ -795,23 +854,23 @@ def list_incidents(
     status: Optional[str] = Query(None, description="Filter by status"),
     severity: Optional[str] = Query(None, description="Filter by severity"),
     open_only: bool = Query(False, description="Return only open+investigating incidents"),
+    limit: Optional[int] = Query(None, ge=1, le=5000, description="Page size; defaults to 1000 unless open_only"),
 ) -> List[IncidentResponse]:
     """List IncidentCases with optional filters.  Most-recent first."""
     resolve_stale_agent_finding_incidents()
-    incidents = store.list_incidents()
-
-    if binding_id:
-        incidents = [i for i in incidents if i.binding_id == binding_id]
-    if capital_pool_id:
-        incidents = [i for i in incidents if i.capital_pool_id == capital_pool_id]
-    if status:
-        incidents = [i for i in incidents if i.status == status]
-    if severity:
-        incidents = [i for i in incidents if i.severity == severity]
-    if open_only:
-        incidents = [i for i in incidents if i.is_open()]
-
-    incidents.sort(key=lambda i: i.created_at, reverse=True)
+    # Filters run in the store so memory is bounded by the match set (open
+    # cases for open_only) or the page cap, never by total stored history.
+    effective_limit = limit if limit is not None else (
+        None if open_only else LIST_INCIDENTS_DEFAULT_LIMIT
+    )
+    incidents = store.query_incidents(
+        binding_id=binding_id,
+        capital_pool_id=capital_pool_id,
+        status=status,
+        severity=severity,
+        open_only=open_only,
+        limit=effective_limit,
+    )
     return [_to_response(i) for i in incidents]
 
 
@@ -1074,7 +1133,7 @@ async def process_incidents_outbox():
                             canonical.status,
                         )
             except Exception as exc:
-                err_msg = str(exc)
+                err_msg = describe_exception(exc)
                 log.warning("AUDIT: Outbox delivery attempt %d for resolved incident %s failed with exception: %s", record.delivery_attempts + 1, incident_id, err_msg)
                 applied, canonical = outbox_store.complete_failed(
                     record,
@@ -1350,6 +1409,55 @@ def update_status(
     return _to_response(updated)
 
 
+RUNTIME_BINDING_RETIRED_RESOLUTION_REASON = "runtime_binding_retired"
+
+
+class ResolveRetiredBindingRequest(BaseModel):
+    binding_id: str
+    retired_at: Optional[str] = None
+
+
+class _RetirementStatusRequest(UpdateIncidentStatusRequest):
+    resolution_reason: Optional[str] = None
+
+
+@app.post(
+    "/api/incidents/resolve-retired-binding",
+    summary="Resolve open drift incidents of a retired RuntimeBinding",
+)
+def resolve_retired_binding_drift_incidents(
+    body: ResolveRetiredBindingRequest,
+) -> Dict[str, Any]:
+    """Resolve every open drift incident of a binding that runtime-manager retired.
+
+    A retired binding can no longer drift, so its drift incidents must not stay
+    on the human inbox. Only drift-cluster incidents are touched; the
+    resolution reason names the retirement.
+    """
+    binding_id = body.binding_id.strip()
+    if not binding_id:
+        raise HTTPException(status_code=400, detail="binding_id is required")
+    resolved_ids: List[str] = []
+    for inc in store.query_incidents(binding_id=binding_id, open_only=True):
+        if not str(inc.incident_cluster_id or "").startswith("drift:"):
+            continue
+        update_status(
+            inc.incident_id,
+            _RetirementStatusRequest(
+                status="resolved",
+                resolved_at=body.retired_at,
+                resolution_reason=RUNTIME_BINDING_RETIRED_RESOLUTION_REASON,
+            ),
+        )
+        resolved_ids.append(inc.incident_id)
+    log.info("Resolved %d drift incidents of retired binding %s", len(resolved_ids), binding_id)
+    return {
+        "binding_id": binding_id,
+        "resolution_reason": RUNTIME_BINDING_RETIRED_RESOLUTION_REASON,
+        "resolved_incident_ids": resolved_ids,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Routes — operator payload
 # ---------------------------------------------------------------------------
@@ -1379,6 +1487,10 @@ def get_operator_payload(incident_id: str) -> OperatorIncidentPayload:
     inc_dict = inc.to_dict()
     inc_dict.setdefault("telemetry_event_ids", [])
     inc_dict.setdefault("reconciliation_ids", [])
+    derived = derive_incident_summary_fields(inc_dict)
+    for key, value in derived.items():
+        if inc_dict.get(key) is None and value is not None:
+            inc_dict[key] = value
 
     return OperatorIncidentPayload(
         **inc_dict,

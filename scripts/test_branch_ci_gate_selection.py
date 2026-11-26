@@ -31,8 +31,13 @@ TENANT_FALLBACK_AUDIT_STEP_NAME = "BFF tenant fallback audit gate"
 EXPECTED_TENANT_FALLBACK_AUDIT_COMMAND = (
     "python3 -m pytest -q services/control-plane/bff/tests/test_tenant_fallback_audit.py"
 )
-EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 30
+EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES = 40
 SOURCE_INGESTION_STEP_NAME = "Run source ingestion tests"
+MARKET_DATA_BUDGET_STEP_NAME = "Market data budget check"
+EXPECTED_MARKET_DATA_BUDGET_COMMANDS = (
+    "python3 -m pytest -q scripts/test_check_market_data_budget.py",
+    "python3 scripts/check_market_data_budget.py --output /tmp/market-data-budget-report.json",
+)
 COMPOSE_CONTRACT_STEP_NAME = "Run compose contract tests"
 COMPOSE_CONTRACT_TEST_FILES = (
     "scripts/test_paper_runtime_topology_contract.py",
@@ -80,7 +85,7 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         cls.smoke_steps = cls.smoke_job["steps"]
         cls.conditions = _load_smoke_step_conditions()
 
-    def test_smoke_job_timeout_minutes_is_30(self) -> None:
+    def test_smoke_job_timeout_minutes_is_40(self) -> None:
         self.assertEqual(
             self.smoke_job.get("timeout-minutes"),
             EXPECTED_SMOKE_JOB_TIMEOUT_MINUTES,
@@ -142,23 +147,101 @@ class BranchCiGateSelectionTests(unittest.TestCase):
         for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
             self.assertNotIn(flag, pytest_args)
 
+    def test_market_data_budget_step_pinned(self) -> None:
+        names = [s.get("name") for s in self.smoke_steps]
+        self.assertIn(MARKET_DATA_BUDGET_STEP_NAME, names)
+        index = names.index(MARKET_DATA_BUDGET_STEP_NAME)
+        step = self.smoke_steps[index]
+        self.assertNotIn("if", step, "market data budget check must run unconditionally")
+        self.assertFalse(step.get("continue-on-error", False))
+        self.assertLessEqual(step.get("timeout-minutes", 0), 5)
+        self.assertGreater(step.get("timeout-minutes", 0), 0)
+        # pyarrow comes from the source ingestion requirements, so the step must run after them
+        self.assertGreater(index, names.index("Install source ingestion dependencies"))
+        commands = tuple(line.strip() for line in step["run"].strip().splitlines())
+        self.assertEqual(commands, EXPECTED_MARKET_DATA_BUDGET_COMMANDS)
+        for flag in ("|| true", "--only", "--deselect", "-k "):
+            self.assertNotIn(flag, step["run"])
+
     def test_source_ingestion_step_pinned(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]
         self.assertIn(SOURCE_INGESTION_STEP_NAME, names)
         step = self.smoke_steps[names.index(SOURCE_INGESTION_STEP_NAME)]
         self.assertNotIn("if", step, "source ingestion tests must run unconditionally")
         self.assertFalse(step.get("continue-on-error", False))
+        self.assertEqual(step.get("timeout-minutes"), 25)
         self.assertGreater(names.index(SOURCE_INGESTION_STEP_NAME), names.index("Install test dependencies"))
+        self.assertGreater(
+            names.index(SOURCE_INGESTION_STEP_NAME),
+            names.index("Install source ingestion dependencies"),
+        )
         run = step.get("run", "")
-        self.assertIn('SOURCE_INGEST_DATA_DIR="$(mktemp -d)"', run)
-        self.assertIn("python3 -m pytest -q services/source_ingestion/tests", run)
-        self.assertIn("services/source_ingestion/test_*.py", run)
+        # Sharded runner: same targets (defined in the script), per-shard data dirs.
+        commands = [ln.strip() for ln in run.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        self.assertEqual(
+            commands,
+            ["python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300"],
+        )
+        # Every source ingestion test file must be covered by expand_targets() and land in
+        # exactly one non-empty shard; dropping a target, a file path, or a shard must fail.
+        from scripts import ci_source_ingestion_test_shards as sharder
+
+        root = sharder.REPO_ROOT
+        self.assertEqual(
+            tuple(sharder.TARGETS),
+            ("services/source_ingestion/tests", "services/source_ingestion/test_*.py"),
+        )
+        expected_files = sorted(
+            str(p.relative_to(root))
+            for p in (root / "services/source_ingestion").rglob("test_*.py")
+        )
+        self.assertTrue(expected_files)
+
+        def expand_covered_files(target_paths: list[str]) -> list[str]:
+            covered: set[str] = set()
+            for rel in target_paths:
+                p = root / rel
+                if p.is_dir():
+                    covered.update(str(f.relative_to(root)) for f in p.rglob("test_*.py"))
+                elif p.is_file() and p.name.startswith("test_") and p.suffix == ".py":
+                    covered.add(str(p.relative_to(root)))
+            return sorted(covered)
+
+        def assert_pin_coverage(target_paths: list[str], shard_plan: list[list[str]]) -> None:
+            covered = expand_covered_files(target_paths)
+            self.assertEqual(covered, expected_files, "a source ingestion test path was dropped")
+            self.assertEqual(len(shard_plan), 4, "a shard was dropped")
+            for shard in shard_plan:
+                self.assertTrue(shard, "a shard is empty")
+            flat = [f for shard in shard_plan for f in shard]
+            self.assertEqual(len(flat), len(set(flat)), "duplicate test path across shards")
+            self.assertEqual(sorted(flat), expected_files, "shard plan dropped a test path")
+
+        target_paths = sharder.expand_targets()
+        covered_files = expand_covered_files(target_paths)
+        plan = sharder.plan_shards(covered_files, 4)
+        assert_pin_coverage(target_paths, plan)
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths[:-1], plan)
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, plan[:-1])
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, [*plan[:-1], []])
+        with self.assertRaises(AssertionError):
+            assert_pin_coverage(target_paths, [plan[0][1:], *plan[1:]])
+        for weighted in sharder.FILE_WEIGHTS:
+            self.assertIn(weighted, expected_files)
+        runner = (Path(__file__).resolve().parent / "ci_source_ingestion_test_shards.py").read_text()
+        self.assertIn("services/source_ingestion/tests", runner)
+        self.assertIn("services/source_ingestion/test_*.py", runner)
+        self.assertIn("SOURCE_INGEST_DATA_DIR", runner)
         dsn = step.get("env", {}).get("SOURCE_INGEST_TEST_POSTGRES_DSN", "")
         self.assertTrue(dsn.startswith("postgresql://"))
         self.assertIn("localhost:5432", dsn)
-        pytest_args = run.split("python3 -m pytest", 1)[1]
         for flag in ("--deselect", "--ignore", " -k ", " -m ", "--lf"):
-            self.assertNotIn(flag, pytest_args)
+            self.assertNotIn(flag, run)
+        for flag in ("--deselect", "--ignore", "--lf", "-k", "--co "):
+            self.assertNotIn(f'"{flag}"', runner)
 
     def test_compose_contract_step_pinned(self) -> None:
         names = [s.get("name") for s in self.smoke_steps]

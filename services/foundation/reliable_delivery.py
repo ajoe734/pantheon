@@ -10,8 +10,9 @@ so exact retries are harmless and divergent replays fail closed.
 from __future__ import annotations
 
 import json
+import logging
 import os
-import tempfile
+import re
 import threading
 import uuid
 from contextlib import contextmanager
@@ -58,6 +59,132 @@ def _parse_time(value: str | datetime | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+_STALE_TEMP_HEX = re.compile(r"^[0-9a-f]{8,32}$")
+
+
+def atomic_temp_path(target: str | Path) -> Path:
+    """Deterministic single temp sibling for ``target`` (at most one per target)."""
+
+    target = Path(target)
+    return target.with_name(f"{target.name}.tmp")
+
+
+_KEPT_TEMP_REPORTED: set[tuple[str, int, int]] = set()
+_LOG = logging.getLogger(__name__)
+
+
+def sweep_stale_temp_siblings(
+    target: str | Path,
+    *,
+    keep_newer: bool = False,
+    kept: list[Path] | None = None,
+    legacy_names: tuple[str, ...] = (),
+) -> list[Path]:
+    """Remove leftover temp siblings of ``target``; never touch ``target`` itself.
+
+    Matches the deterministic names (``<name>.tmp``, ``.<name>.tmp``) plus the
+    legacy random names (``<name>.<32 hex>.tmp``, ``.<name>.<32 hex>.tmp`` and the
+    reconciler's ``.<name>.<pid>.<32 hex>.tmp``) written by earlier releases.  Only
+    regular files (symlinks are never followed or removed) that are siblings of
+    this exact target name match, so other targets and foreign files are safe.
+
+    Callers must hold the store's exclusive write lock so no in-flight write can
+    be removed.  With ``keep_newer`` a temp file whose mtime is newer than the
+    real file (or any temp when the real file is absent) is kept, appended to
+    ``kept`` and reported once with its path and size, because it may hold data
+    the real file does not.
+    """
+
+    target = Path(target)
+    removed: list[Path] = []
+    try:
+        entries = list(os.scandir(target.parent))
+    except OSError:
+        return removed
+    name = target.name
+    deterministic = (f"{name}.tmp", f".{name}.tmp", *legacy_names)
+    target_mtime_ns: int | None = None
+    if keep_newer:
+        try:
+            target_mtime_ns = os.stat(target, follow_symlinks=False).st_mtime_ns
+        except OSError:
+            target_mtime_ns = None
+    for entry in entries:
+        candidate = entry.name
+        if candidate == name or not (candidate.endswith(".tmp") or candidate in legacy_names):
+            continue
+        stem = candidate[: -len(".tmp")] if candidate.endswith(".tmp") else candidate
+        match = candidate in deterministic
+        if not match:
+            for base in (name, f".{name}"):
+                prefix = f"{base}."
+                if not stem.startswith(prefix):
+                    continue
+                middle = stem[len(prefix):]
+                parts = middle.split(".")
+                if _STALE_TEMP_HEX.match(parts[-1]) and (
+                    len(parts) == 1 or (len(parts) == 2 and parts[0].isdigit())
+                ):
+                    match = True
+                    break
+        if not match or not entry.is_file(follow_symlinks=False):
+            continue
+        if keep_newer:
+            try:
+                info = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if target_mtime_ns is None or info.st_mtime_ns > target_mtime_ns:
+                path = Path(entry.path)
+                if kept is not None:
+                    kept.append(path)
+                key = (entry.path, info.st_mtime_ns, info.st_size)
+                if key not in _KEPT_TEMP_REPORTED:
+                    _KEPT_TEMP_REPORTED.add(key)
+                    _LOG.warning(
+                        "kept temp file newer than %s: %s (%d bytes)",
+                        target,
+                        entry.path,
+                        info.st_size,
+                    )
+                continue
+        try:
+            os.unlink(entry.path)
+            removed.append(Path(entry.path))
+        except OSError:
+            continue
+    return removed
+
+
+def atomic_write_text(target: str | Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Durably replace ``target`` through one deterministic temp file.
+
+    The temp file is removed on every exit path, so a failed write leaves no
+    orphan; a hard kill leaves at most the single deterministic temp, which
+    ``sweep_stale_temp_siblings`` removes on the owner's next start.
+    """
+
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = atomic_temp_path(target)
+    directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        try:
+            with temporary.open("w", encoding=encoding) as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            os.fsync(directory_fd)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+    finally:
+        os.close(directory_fd)
+
+
 class AtomicJsonRecordStore:
     """Concurrent-safe JSON object store with locked atomic replacement."""
 
@@ -66,6 +193,10 @@ class AtomicJsonRecordStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_path = self.path.with_name(f".{self.path.name}.lock")
         self._thread_lock = threading.RLock()
+        try:
+            self.sweep_stale_temp()
+        except OSError:
+            pass
 
     @contextmanager
     def _locked(self, *, exclusive: bool) -> Iterator[None]:
@@ -97,30 +228,41 @@ class AtomicJsonRecordStore:
         }
 
     def _write_unlocked(self, payload: Mapping[str, Mapping[str, Any]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=self.path.parent,
-            prefix=f".{self.path.name}.",
-            suffix=".tmp",
-            delete=False,
-        )
-        temporary_path = Path(handle.name)
-        try:
-            with handle:
-                json.dump(payload, handle, indent=2, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, self.path)
-            directory_fd = os.open(self.path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if temporary_path.exists():
-                temporary_path.unlink()
+        # Compact, key-sorted JSON: still plain JSON, so older readers parse it
+        # unchanged, but without the indent=2 whitespace inflation.  The single
+        # deterministic temp (removed on every exit path) is swept on start-up.
+        text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        atomic_write_text(self.path, text)
+
+    def sweep_stale_temp(self) -> list[Path]:
+        """Remove temp siblings left by a hard-killed writer (lock-guarded)."""
+
+        with self._locked(exclusive=True):
+            return sweep_stale_temp_siblings(self.path)
+
+    def compare_and_set_many(
+        self,
+        updates: list[tuple[str, dict[str, Any] | None, dict[str, Any]]],
+    ) -> list[bool]:
+        """Apply several snapshot-guarded replacements with one read and one rewrite."""
+
+        for record_id, _expected, _payload in updates:
+            if not str(record_id).strip():
+                raise ValueError("record_id is required")
+        results: list[bool] = []
+        with self._locked(exclusive=True):
+            records = self._read_unlocked()
+            changed = False
+            for record_id, expected, payload in updates:
+                if records.get(str(record_id)) != expected:
+                    results.append(False)
+                    continue
+                records[str(record_id)] = dict(payload)
+                results.append(True)
+                changed = True
+            if changed:
+                self._write_unlocked(records)
+        return results
 
     def put(self, record_id: str, payload: dict[str, Any]) -> None:
         if not str(record_id).strip():
@@ -529,13 +671,27 @@ class ReliableOutboxStore:
     def list_all(self) -> list[ReliableOutboxRecord]:
         return [ReliableOutboxRecord.from_dict(payload) for payload in self.impl.list_all()]
 
+    def _list_matching(
+        self, statuses: set[str], *, delivery_ready: bool
+    ) -> list[ReliableOutboxRecord]:
+        # Filter on the raw payload first so published/dead records (the bulk of
+        # a long-lived store) never get an envelope and record built for them.
+        matched: list[ReliableOutboxRecord] = []
+        for payload in self.impl.list_all():
+            delivery = payload.get("delivery")
+            ready = bool(delivery.get("ready", True)) if isinstance(delivery, Mapping) else True
+            status = payload.get("status", OutboxRecordStatus.PENDING.value)
+            status = getattr(status, "value", status)
+            if ready != delivery_ready or str(status) not in statuses:
+                continue
+            matched.append(ReliableOutboxRecord.from_dict(payload))
+        return matched
+
     def list_pending_and_failed(self) -> list[ReliableOutboxRecord]:
-        return [
-            record
-            for record in self.list_all()
-            if record.delivery_ready
-            and record.status in {OutboxRecordStatus.PENDING, OutboxRecordStatus.FAILED}
-        ]
+        return self._list_matching(
+            {OutboxRecordStatus.PENDING.value, OutboxRecordStatus.FAILED.value},
+            delivery_ready=True,
+        )
 
     def list_due(self, *, now: datetime | None = None) -> list[ReliableOutboxRecord]:
         return [record for record in self.list_pending_and_failed() if record.is_due(now)]
@@ -552,20 +708,35 @@ class ReliableOutboxStore:
 
         effective_now = now or utc_now()
         claimed: list[ReliableOutboxRecord] = []
+        pending: list[tuple[ReliableOutboxRecord, ReliableOutboxRecord]] = []
+        max_claims = None if limit is None else max(0, int(limit))
         for candidate in self.list_due(now=effective_now):
-            if limit is not None and len(claimed) >= max(0, int(limit)):
+            if max_claims is not None and len(pending) >= max_claims:
                 break
             token = f"{str(worker_id).strip() or 'worker'}:{uuid.uuid4()}"
-            leased = candidate.claim_for_delivery(
-                token=token,
-                lease_seconds=lease_seconds,
-                now=effective_now,
+            pending.append(
+                (
+                    candidate,
+                    candidate.claim_for_delivery(
+                        token=token,
+                        lease_seconds=lease_seconds,
+                        now=effective_now,
+                    ),
+                )
             )
-            replaced, _ = self.impl.compare_and_set(
-                candidate.outbox_id,
-                candidate.to_dict(),
-                leased.to_dict(),
+        if not pending:
+            return claimed
+        batch = getattr(self.impl, "compare_and_set_many", None)
+        if batch is not None:
+            outcomes = batch(
+                [(c.outbox_id, c.to_dict(), leased.to_dict()) for c, leased in pending]
             )
+        else:
+            outcomes = [
+                self.impl.compare_and_set(c.outbox_id, c.to_dict(), leased.to_dict())[0]
+                for c, leased in pending
+            ]
+        for (_candidate, leased), replaced in zip(pending, outcomes):
             if replaced:
                 claimed.append(leased)
         return claimed
@@ -614,11 +785,9 @@ class ReliableOutboxStore:
         return False, ReliableOutboxRecord.from_dict(canonical_payload)
 
     def list_prepared(self) -> list[ReliableOutboxRecord]:
-        return [
-            record
-            for record in self.list_all()
-            if not record.delivery_ready and record.status == OutboxRecordStatus.PENDING
-        ]
+        return self._list_matching(
+            {OutboxRecordStatus.PENDING.value}, delivery_ready=False
+        )
 
     def redrive(self, outbox_id: str, *, actor: str, note: str) -> ReliableOutboxRecord:
         existing = self.get(outbox_id)

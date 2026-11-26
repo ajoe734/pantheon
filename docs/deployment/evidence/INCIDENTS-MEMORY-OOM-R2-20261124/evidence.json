@@ -1,0 +1,41 @@
+{
+  "task_id": "INCIDENTS-MEMORY-OOM-R2-20261124",
+  "class": "RC3 WP3.4",
+  "hosted_observation_from_task": {
+    "release": "524bcb241 (includes #7777), switched 2026-11-24T06:19Z",
+    "oom_kill_utc": "2026-11-24T06:42:12Z",
+    "anon_rss": "2.09 GB",
+    "limit": "2 GiB (unchanged)",
+    "outbox_failures": "13 x 'outbox failure error is required' after a postmortems httpx.ReadTimeout with an empty message"
+  },
+  "fixes": {
+    "outbox_empty_error": "failure recording uses the exception type when the message is empty (9914900ea); regression test with httpx.ReadTimeout",
+    "incident_json_store": "bounded reads/writes, stale temp sweep (ac5539d52): traced write peak 87 -> 46 MB, hwm 250 -> 189 MB at 34.8 MB / 5200 incidents / 4000 postmortems",
+    "outbox_json_store": "services/foundation/reliable_delivery.py AtomicJsonRecordStore (3e18ff985): compact sorted JSON write (still plain JSON, legacy indented files still read), one deterministic temp swept on start under the store lock, payload-level status/ready filter before records are built in list_due/list_prepared, claim_due batches CAS in one rewrite via compare_and_set_many (per-record fallback for the Postgres store); public API, schema and Postgres store unchanged"
+  },
+  "outbox_json_store_measurement": {
+    "method": "synthetic store, 7000 ReliableOutboxRecord (1000 pending, 6000 published), ~1.2 KB payload each, 18.6 MB indented file; same script against the module before (3e18ff985~1) and after",
+    "list_due_seconds": {"before": 0.47, "after": 0.23},
+    "claim_due_limit_1_seconds": {"before": 1.35, "after": 0.57},
+    "claim_due_limit_50": "one rewrite instead of 50; tracemalloc peak 62 MB after vs 54 MB before (single parse plus compact serialization; time, not peak, is what improved)",
+    "file_size_mb_after_first_rewrite": {"before": 18.6, "after": 16.0},
+    "stale_tmp_after_run": "none",
+    "residual": "every claim is still one full parse of the file; at 7000 records that is about 0.5 s per claim. The structural bound is retiring delivered records or using the Postgres backend; recorded as a residual finding, not changed here."
+  },
+  "tests": {
+    "run_with": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest",
+    "passed": [
+      "services/foundation (all) and services/incidents (all)",
+      "services/foundation/tests/test_reliable_delivery.py, services/postmortems/test_evochain_003_delivery.py, services/incidents/test_evochain_003_delivery.py, services/persona/test_training_target_owner.py, test_pool_dataset_authority.py, test_lesson_rule_proposals.py, services/incident/test_pg_store_integration.py (102 passed, 7 skipped)",
+      "services/postmortems/tests/test_evolution_linkage_e2e.py, services/evolution/tests/test_postmortem_evolution_decision_e2e.py, services/control-plane/persona/test_persona_strategy_pool.py, services/consultation/tests/test_meeting_outputs.py, persona test_persona_cycle_controller.py (except the one deselected below)"
+    ],
+    "environment_failures_not_caused_by_change": [
+      "services/persona/test_persona_cycle_controller.py::test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker: npm ci exits 254 in the sandbox",
+      "6 tests in services/research/tests/test_persona_cycle_demand_integration.py and test_pool_evolution_integration.py: numpy / vectorbt backend not installed in the sandbox venv; the same 6 fail identically with the previous reliable_delivery.py swapped in"
+    ]
+  },
+  "hosted_acceptance": {
+    "status": "NOT_MEASURED_BY_WORKER",
+    "required": "no incidents OOM (kernel memcg log) from the switch through 24 h including the next persona daily cycle, steady CPU below half a core, zero 'outbox failure error is required' lines"
+  }
+}

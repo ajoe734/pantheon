@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
@@ -40,7 +42,6 @@ from .pg_store import build_search_evidence_repository, build_search_index_store
 from .retriever import (
     FullTextRetriever,
     KeywordRetriever,
-    MockVectorEmbeddingBackend,
     SemanticRetriever,
 )
 from .structured_alpha import StructuredAlphaEngine, StructuredAlphaQuery
@@ -407,10 +408,25 @@ def _resolve_search_access_context(
     return context
 
 
-class SearchQueryBody(BaseModel):
+class KnowledgeSearchBody(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def reject_memory_projection(cls, value: Any) -> Any:
+        # Reject even null/empty legacy fields instead of silently ignoring extras.
+        if isinstance(value, dict):
+            removed = sorted({"memory_entries", "memory_record_kind"}.intersection(value))
+            if removed:
+                raise ValueError(
+                    "memory_search_projection_removed: " + ", ".join(removed)
+                    + "; use the canonical memory service and its Hindsight index"
+                )
+        return value
+
+
+class SearchQueryBody(KnowledgeSearchBody):
     query: str = ""
     schema_version: str = "governed_search_request.v2"
-    retrieval_mode: str = "keyword"
+    retrieval_mode: str | None = None
     actor_ref: str | None = None
     role_refs: list[str] = Field(default_factory=lambda: ["researcher"])
     purpose: str = "research"
@@ -429,9 +445,11 @@ class SearchQueryBody(BaseModel):
     require_citations: bool = True
     filters_applied: dict[str, Any] = Field(default_factory=dict)
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
+    caller_decision_type: str | None = None
+    source_event_id: str | None = None
 
 
-class StructuredAlphaQueryBody(BaseModel):
+class StructuredAlphaQueryBody(KnowledgeSearchBody):
     schema_version: str = "alpha_rule_query.v1"
     dataset_ref: str
     universe: list[str] = Field(default_factory=lambda: ["US_EQUITY"])
@@ -444,13 +462,13 @@ class StructuredAlphaQueryBody(BaseModel):
     access_context: AccessContextBody = Field(default_factory=AccessContextBody)
 
 
-class IndexRefreshBody(BaseModel):
+class IndexRefreshBody(KnowledgeSearchBody):
     triggered_by: str = "manual"
     trigger_ref: str | None = None
     force_full: bool = False
 
 
-class SourceCompletionBody(BaseModel):
+class SourceCompletionBody(KnowledgeSearchBody):
     ingest_run_id: str
     connector_id: str | None = None
     source_type: str | None = None
@@ -563,7 +581,20 @@ def _repository_from_documents(documents: list[SearchDocumentBody]) -> InMemoryE
     return repository
 
 
+def _indexed_object_count(repository: InMemoryEvidenceRepository) -> int | None:
+    counter = getattr(repository, "knowledge_object_count", None)
+    if counter is None:
+        return len(repository.list_knowledge_objects())
+    try:  # aggregate read; a database blip must not fail /health
+        return int(counter())
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str | None]:
+    pushed_down = getattr(repository, "source_watermarks", None)
+    if pushed_down is not None:
+        return dict(pushed_down())
     watermarks: dict[str, str | None] = {}
     for source in repository.list_source_records():
         source_type = source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type)
@@ -571,6 +602,39 @@ def _source_watermarks(repository: InMemoryEvidenceRepository) -> dict[str, str 
         if source_type not in watermarks or created_at > str(watermarks[source_type] or ""):
             watermarks[source_type] = created_at or None
     return watermarks
+
+
+class _CapturingBackend:
+    """Proxy that remembers backend candidates; they are logged only after gateway validation."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.candidates: list[Any] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def search(self, *args: Any, **kwargs: Any) -> Any:
+        hits = self._inner.search(*args, **kwargs)
+        self.candidates = list(hits)
+        return hits
+
+
+def _record_served_query(backend: Any, capture: _CapturingBackend, response: Any, context: Any,
+                         body: Any, latency_ms: float) -> None:
+    """Log what was actually served (gateway-validated, served order); a failed write fails the query."""
+    by_id = {hit.id: hit for hit in capture.candidates}
+    served = [by_id[r.result_id] for r in response.results if r.result_id in by_id]
+    try:
+        backend.record_query(
+            context=context, request_id=body.request_id, query=body.query,
+            retrieval_mode=response.retrieval_mode, hits=served, latency_ms=latency_ms,
+            caller_decision_type=body.caller_decision_type, source_event_id=body.source_event_id,
+        )
+    except SearchCapabilityUnavailableError:
+        raise
+    except Exception as exc:
+        raise SearchCapabilityUnavailableError("retrieval_query_log_unavailable") from exc
 
 
 def create_app(
@@ -588,20 +652,50 @@ def create_app(
     app = FastAPI(title="Pantheon Search Service", version="0.2.0")
     store = build_search_index_store(index_store_path or INDEX_STORE_PATH)
     durable_repository = build_search_evidence_repository(evidence_store_path or EVIDENCE_STORE_PATH)
+    def _refresh_evidence() -> None:
+        """Incremental, single-flight evidence load; never a whole-table re-read."""
+        refresh = getattr(durable_repository, "refresh", None)
+        (refresh or durable_repository.reload)()
+
     materialize_store = JsonlMaterializedIndexStore(materialize_store_path or MATERIALIZE_STORE_PATH)
     durable_only = durable_index_only if durable_index_only is not None else DURABLE_INDEX_ONLY
-    if retrieval_backend is None and not durable_only:
+    dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
+    backend_mode = os.getenv("PANTHEON_SEARCH_BACKEND") or "postgres_pgvector"
+    activation_error = None
+    if retrieval_backend is None and backend_mode == "postgres_pgvector":
         contract_path = Path(__file__).parent / "backend-contract.json"
         if contract_path.exists():
             try:
                 contract = json.loads(contract_path.read_text(encoding="utf-8"))
                 if contract.get("accepted") and contract.get("activation_allowed"):
-                    dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
                     if dsn:
                         from .pg_retrieval import PostgresRetrievalBackend
                         retrieval_backend = PostgresRetrievalBackend(dsn=dsn)
+                    else:
+                        activation_error = "retrieval_dsn_missing"
+                else:
+                    activation_error = "retrieval_contract_unaccepted"
             except Exception:
-                pass
+                activation_error = "retrieval_initialization_failed"
+        else:
+            activation_error = "retrieval_contract_missing"
+    elif retrieval_backend is None and backend_mode != "jsonl":
+        activation_error = "retrieval_backend_unknown"
+
+    def retrieval_status() -> dict[str, Any]:
+        if activation_error:
+            return {"status": "unavailable", "backend": backend_mode, "reason": activation_error}
+        if retrieval_backend is not None:
+            return retrieval_backend.check_health()
+        return {"status": "ok", "backend": "jsonl", "reason": "explicit_jsonl_fallback"}
+
+    @app.middleware("http")
+    async def report_retrieval_mode(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Retrieval-Backend"] = "postgres_pgvector" if retrieval_backend is not None else backend_mode
+        if retrieval_backend is None:
+            response.headers["X-Retrieval-Reason"] = activation_error or "explicit_jsonl_fallback"
+        return response
 
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
@@ -613,17 +707,36 @@ def create_app(
         retrieval_backend=retrieval_backend,
     )
 
+    # Local CPU embedding costs seconds per document, so one refresh can outlive a caller's 30s
+    # request boundary while the server thread keeps running. Without single-flight, every caller
+    # retry (scheduler restart, ingest completion) starts another run over the same unrecorded
+    # objects and re-embeds them concurrently. Serialize runs: a later caller waits, then sees the
+    # recorded checkpoint instead of redoing the work. Timeouts and the checkpoint rule are unchanged.
+    pipeline_run_lock = threading.Lock()
+
+    def _run_pipeline(**kwargs: Any) -> Any:
+        with pipeline_run_lock:
+            return pipeline.run(**kwargs)
+
     # Initialize retrievers
     kw_retriever = KeywordRetriever()
     ft_retriever = FullTextRetriever()
     embedding_backend = vector_embedding_backend
-    if embedding_backend is None and VECTOR_EMBEDDING_ENABLED:
-        embedding_backend = MockVectorEmbeddingBackend()
+    if embedding_backend is None and VECTOR_EMBEDDING_ENABLED and retrieval_backend is None:
+        from .local_embeddings import LocalEmbeddingEngine
+        embedding_backend = LocalEmbeddingEngine()
     sem_retriever = SemanticRetriever(embedding_backend=embedding_backend)
     hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
     alpha_eng = alpha_engine or StructuredAlphaEngine()
 
-    def _build_gateway(repository: InMemoryEvidenceRepository, adapter: KeywordIndexAdapter | None = None) -> SearchGateway:
+    def _build_gateway(
+        repository: InMemoryEvidenceRepository,
+        adapter: KeywordIndexAdapter | None = None,
+        query_body: "SearchQueryBody | None" = None,
+    ) -> SearchGateway:
+        served_backend = retrieval_backend
+        if retrieval_backend is not None and query_body is not None:
+            served_backend = _CapturingBackend(retrieval_backend)
         return SearchGateway(
             repository=repository,
             retriever=kw_retriever,
@@ -633,8 +746,20 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
-            retrieval_backend=retrieval_backend,
+            retrieval_backend=served_backend,
         )
+
+    def capabilities() -> dict[str, Any]:
+        result = _build_gateway(durable_repository).get_capabilities()
+        if backend_mode == "postgres_pgvector" or retrieval_backend is not None:
+            status = retrieval_status()
+            available = status.get("status") == "ok"
+            for mode in ("keyword", "full_text", "semantic", "hybrid"):
+                result[mode] = {
+                    "available": available,
+                    "ranker_version": f"postgres-{mode}-v1" if available else None,
+                }
+        return result
 
     def _materialize_index_state(
         *,
@@ -642,7 +767,7 @@ def create_app(
         trigger_ref: str | None = None,
         source_completion: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        durable_repository.reload()
+        _refresh_evidence()
         adapter = KeywordIndexAdapter(
             durable_repository,
             source_watermarks=_source_watermarks(durable_repository),
@@ -652,7 +777,7 @@ def create_app(
             "materialized_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "triggered_by": triggered_by,
             "trigger_ref": trigger_ref,
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "index": adapter.snapshot().to_dict(),
             "evidence_store_path": str(durable_repository.path),
         }
@@ -697,10 +822,11 @@ def create_app(
         "pantheon-search",
         dependencies=lambda: {
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+            "retrieval": retrieval_status(),
         },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "pipeline_run_count": pipeline_store.count_runs(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         },
@@ -716,20 +842,20 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        store.reload()
-        durable_repository.reload()
+        # Never loads: reports what is already in memory.
         return {
-            "status": "ok",
+            "status": retrieval_status()["status"],
             "service": "pantheon-search",
             "index_store_path": str(store.path),
             "evidence_store_path": str(durable_repository.path),
             "snapshot_count": len(store.list_snapshots()),
-            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "indexed_object_count": _indexed_object_count(durable_repository),
             "pipeline_run_count": pipeline_store.count_runs(),
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
-            "capabilities": _build_gateway(durable_repository).get_capabilities(),
+            "retrieval": retrieval_status(),
+            "capabilities": capabilities(),
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),
         }
@@ -737,7 +863,7 @@ def create_app(
     @app.get("/api/search/capabilities")
     def search_capabilities() -> dict[str, Any]:
         """Report retrieval mode capabilities honestly."""
-        return _build_gateway(durable_repository).get_capabilities()
+        return capabilities()
 
     @app.post("/api/search/index/refresh")
     def refresh_index(
@@ -750,14 +876,28 @@ def create_app(
             triggered_by = (body.triggered_by if body else "manual").strip() or "manual"
             trigger_ref = body.trigger_ref if body else None
             force_full = body.force_full if body else False
-            snapshot = pipeline.run(
-                triggered_by=triggered_by,
-                trigger_ref=trigger_ref,
-                force_full=force_full,
-            )
-            return {"pipeline_snapshot": snapshot.to_dict()}
+            if not pipeline_run_lock.acquire(blocking=False):
+                # Single-flight: never start (or queue) a second run; report promptly instead.
+                latest = pipeline_store.get_latest()
+                return {
+                    "status": "in_progress",
+                    "detail": "an index refresh is already running; this call did not start another",
+                    "pipeline_snapshot": latest.to_dict() if latest else None,
+                }
+            try:
+                snapshot = pipeline.run(
+                    triggered_by=triggered_by,
+                    trigger_ref=trigger_ref,
+                    force_full=force_full,
+                )
+            finally:
+                pipeline_run_lock.release()
+            return {"status": "completed", "pipeline_snapshot": snapshot.to_dict()}
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SearchCapabilityUnavailableError as exc:
+            # Observable failed tick: no checkpoint was recorded; the scheduler sees HTTP 503 + reason.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/search/index/freshness")
     def index_freshness() -> dict[str, Any]:
@@ -798,12 +938,11 @@ def create_app(
             "knowledge_object_ids": list(body.knowledge_object_ids),
         }
         try:
-            snapshot = pipeline.run(
+            snapshot = _run_pipeline(
                 triggered_by="ingest_completion",
                 trigger_ref=ingest_run_id,
                 force_full=body.force_full,
             )
-            pipeline_store.reload()
             freshness = pipeline.freshness_status()
             materialized = (
                 _materialize_index_state(
@@ -824,6 +963,9 @@ def create_app(
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SearchCapabilityUnavailableError as exc:
+            # Reason-preserving failure; pipeline records no checkpoint when indexing fails.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/search/index/source-completions/{ingest_run_id}")
     def get_source_completion_truth(ingest_run_id: str) -> dict[str, Any]:
@@ -848,7 +990,7 @@ def create_app(
             return {
                 "index": adapter.snapshot().to_dict(),
                 "evidence_store_path": str(durable_repository.path),
-                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+                "indexed_object_count": _indexed_object_count(durable_repository),
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -856,7 +998,7 @@ def create_app(
     @app.get("/api/search/index/status")
     def index_status() -> dict[str, Any]:
         try:
-            durable_repository.reload()
+            # status never triggers a table load; it reports the in-memory view
             adapter = KeywordIndexAdapter(
                 durable_repository,
                 source_watermarks=_source_watermarks(durable_repository),
@@ -865,7 +1007,7 @@ def create_app(
             return {
                 "index": adapter.snapshot().to_dict(),
                 "evidence_store_path": str(durable_repository.path),
-                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+                "indexed_object_count": _indexed_object_count(durable_repository),
             }
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -877,6 +1019,8 @@ def create_app(
         auth_ctx: AuthContext | None = None,
     ) -> dict[str, Any]:
         try:
+            if activation_error:
+                raise SearchCapabilityUnavailableError(activation_error)
             if body.documents:
                 if durable_only:
                     raise ValueError(
@@ -891,7 +1035,7 @@ def create_app(
                 repository = _repository_from_documents(body.documents)
                 adapter_state = "request_documents_compat"
             else:
-                durable_repository.reload()
+                _refresh_evidence()
                 repository = durable_repository
                 adapter_state = "durable"
 
@@ -906,7 +1050,7 @@ def create_app(
                 schema_version=body.schema_version,
                 request_id=body.request_id,
                 query=body.query,
-                retrieval_mode=body.retrieval_mode,
+                retrieval_mode=body.retrieval_mode or ("hybrid" if retrieval_backend is not None else "keyword"),
                 actor_ref=context.actor_ref,
                 persona_id=context.persona_id,
                 workspace_id=context.workspace_id,
@@ -923,11 +1067,17 @@ def create_app(
                 filters_applied=body.filters_applied,
             )
 
-            gateway = _build_gateway(repository, adapter=index_adapter)
+            gateway = _build_gateway(repository, adapter=index_adapter, query_body=body)
+            started = time.perf_counter()
             response = gateway.search(request, context)
+            if isinstance(gateway.retrieval_backend, _CapturingBackend):
+                _record_served_query(retrieval_backend, gateway.retrieval_backend, response, context, body,
+                                     (time.perf_counter() - started) * 1000.0)
             snapshot = store.get_snapshot(response.request_id)
             return {
                 **response.to_dict(),
+                "retrieval_backend": "postgres_pgvector" if retrieval_backend is not None else "jsonl",
+                "capabilities": capabilities(),
                 "index_adapter": index_adapter.snapshot().to_dict(),
                 "index_snapshot": snapshot.to_dict() if snapshot else None,
             }

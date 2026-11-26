@@ -25,6 +25,23 @@ LEGACY_SCHEMA_VERSION = "source_ingest_controller_state.v1"
 MAX_TRACKED_CONNECTORS = 512
 MAX_TEXT_LENGTH = 512
 MAX_FAILED_CONNECTORS = 16
+MAX_SKIPPED_IDS = 50
+MAX_SKIPPED_ID_LENGTH = 128
+
+
+# Failure stages (controller_worker.ControllerTickError.stage) where the loop ran and a
+# connector reported a failed outcome. Every other stage, and any stage not listed here,
+# is controller level: the loop could not do its own work (source-ingest unreachable or
+# timed out "controller"; reconcile refused "reconcile"/"reconcile_contract"; desired state
+# unreadable "desired_state_*"/"persona_owner_read"; state/readback invalid "actual_readback",
+# "schedule_contract", "provider_boundary", "frontier_recovery", "http_contract", ...).
+CONNECTOR_OUTCOME_STAGES = frozenset({"schedule"})
+
+
+def is_controller_level_stage(stage: str | None) -> bool:
+    """Single classification point; unknown or missing stage counts as controller level."""
+
+    return str(stage or "").strip() not in CONNECTOR_OUTCOME_STAGES
 
 
 class ControllerStateError(RuntimeError):
@@ -212,6 +229,15 @@ def summarize_actual_readback(actual: Mapping[str, Any] | None) -> dict[str, Any
         "pending_dlq_count": _bounded_int(payload.get("pending_dlq_count")),
         "unresolved_dlq_count": _bounded_int(payload.get("unresolved_dlq_count")),
         "dlq_status_counts": dlq_status_counts,
+        "dlq_status_counts_by_connector": {
+            str(connector_id): _scalar_summary(counts)
+            for connector_id, counts in (
+                payload.get("dlq_status_counts_by_connector", {}).items()
+                if isinstance(payload.get("dlq_status_counts_by_connector"), Mapping)
+                else ()
+            )
+            if isinstance(counts, Mapping)
+        },
         "frontier_backlog": _bounded_int(payload.get("frontier_backlog")),
         "max_lag_seconds": _bounded_int(payload.get("max_lag_seconds")),
         "terminal_connectors": {
@@ -258,10 +284,31 @@ def summarize_reconcile(reconcile: Mapping[str, Any] | None) -> dict[str, Any]:
         inventory["truncated"] = bool(stored_inventory.get("truncated")) or (
             len(inventory["connector_ids"]) != inventory["count"]
         )
+    skipped_count, skipped_ids = _skipped_summary(payload)
     return {
         "summary": _scalar_summary(payload.get("summary") if isinstance(payload.get("summary"), Mapping) else {}),
         "connector_inventory": inventory,
+        # Items this release left alone because a newer release wrote them (RC1 WP1.5).
+        # Count is exact; ids are the first MAX_SKIPPED_IDS as "kind:id", each bounded.
+        "skipped_count": skipped_count,
+        "skipped_ids": skipped_ids,
     }
+
+
+def _skipped_summary(payload: Mapping[str, Any]) -> tuple[int, list[str]]:
+    ids: list[str] = []
+    count = 0
+    items = payload.get("skipped")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, Mapping) and item.get("id"):
+                ids.append(f"{item.get('kind') or 'item'}:{item['id']}"[:MAX_SKIPPED_ID_LENGTH])
+        count = _bounded_int(payload.get("skipped_count"))
+        count = max(len(ids), count or 0)
+    elif isinstance(payload.get("skipped_ids"), list):
+        ids = [str(value)[:MAX_SKIPPED_ID_LENGTH] for value in payload["skipped_ids"] if str(value)]
+        count = max(len(ids), _bounded_int(payload.get("skipped_count")) or 0)
+    return count, ids[:MAX_SKIPPED_IDS]
 
 
 def summarize_schedule(schedule: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -283,6 +330,18 @@ def summarize_schedule(schedule: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _controller_failure_streak(payload: Mapping[str, Any]) -> int:
+    stored = payload.get("consecutive_controller_failures")
+    if stored is not None:
+        return max(0, int(stored))
+    # Written by a release without the field: fail closed, treat the existing streak as
+    # controller level unless the last failure stage is known to be a connector outcome.
+    streak = int(payload.get("consecutive_failures") or 0)
+    if streak and not is_controller_level_stage(payload.get("last_failure_stage")):
+        return 0
+    return streak
+
+
 @dataclass
 class ControllerState:
     controller_id: str
@@ -300,6 +359,8 @@ class ControllerState:
     last_failure_reason: str | None = None
     last_repair_at: str | None = None
     consecutive_failures: int = 0
+    # Consecutive failed ticks whose stage is controller level; read only by controller_healthcheck.
+    consecutive_controller_failures: int = 0
     total_ticks: int = 0
     total_successes: int = 0
     total_failures: int = 0
@@ -341,6 +402,7 @@ class ControllerState:
         self.last_success_at = now
         self.total_successes += 1
         self.consecutive_failures = 0
+        self.consecutive_controller_failures = 0
         self.last_failure_stage = None
         self.last_failure_reason = None
         if recovered:
@@ -366,6 +428,10 @@ class ControllerState:
         self.last_failure_stage = str(stage or "unknown")
         self.last_failure_reason = str(reason or "controller tick failed")[:2000]
         self.consecutive_failures += 1
+        if is_controller_level_stage(self.last_failure_stage):
+            self.consecutive_controller_failures += 1
+        else:
+            self.consecutive_controller_failures = 0
         self.total_failures += 1
         if desired_state is not None:
             self.desired_state = summarize_desired_state(desired_state)
@@ -409,6 +475,7 @@ class ControllerState:
             "last_failure_reason": self.last_failure_reason,
             "last_repair_at": self.last_repair_at,
             "consecutive_failures": self.consecutive_failures,
+            "consecutive_controller_failures": self.consecutive_controller_failures,
             "total_ticks": self.total_ticks,
             "total_successes": self.total_successes,
             "total_failures": self.total_failures,
@@ -449,6 +516,7 @@ class ControllerState:
             last_failure_reason=payload.get("last_failure_reason"),
             last_repair_at=payload.get("last_repair_at"),
             consecutive_failures=int(payload.get("consecutive_failures") or 0),
+            consecutive_controller_failures=_controller_failure_streak(payload),
             total_ticks=int(payload.get("total_ticks") or 0),
             total_successes=int(payload.get("total_successes") or 0),
             total_failures=int(payload.get("total_failures") or 0),

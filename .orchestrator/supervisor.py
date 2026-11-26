@@ -2203,6 +2203,17 @@ def _behind_reopen_message(target_branch: str) -> str:
     )
 
 
+def _source_owned_reopen_message(reason: str, target_branch: str, detail: str) -> str:
+    if reason == unblock_contract.EXACT_HEAD_BEHIND_BASE_REASON:
+        return _behind_reopen_message(target_branch)
+    return (
+        f"Auto-integrator source-owned return ({reason}): this repository's fix "
+        "belongs to the source task, not a Pantheon tooling repair. Repair the "
+        "source branch, push a new head and resubmit for exact-head review; "
+        f"prior approval does not carry to a changed head. Detail: {str(detail)[:500]}"
+    )
+
+
 def _validate_auto_integrator_unblock_request(
     config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
@@ -2225,8 +2236,8 @@ def _validate_auto_integrator_unblock_request(
     source_task_id = str(request.get("source_task_id") or "")
     reason = unblock_contract.validate_reason(request.get("reason"))
     if not (
-        unblock_contract.requires_repair_task(reason)
-        or unblock_contract.requires_source_reopen(reason)
+        unblock_contract.requires_repair_task(reason, request.get("repository_id"))
+        or unblock_contract.requires_source_reopen(reason, request.get("repository_id"))
     ):
         raise ValueError("authority/evidence blocker must be resolved on its source task")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
@@ -2239,7 +2250,7 @@ def _validate_auto_integrator_unblock_request(
     # Enforce again under the canonical lock, including already queued requests
     # from older producers. A caller cannot reset depth in the request body.
     unblock_contract.require_root_repair_source(source_task_id, source)
-    if unblock_contract.requires_source_reopen(reason):
+    if unblock_contract.requires_source_reopen(reason, request.get("repository_id")):
         if str(source.get("status") or "") != "review_approved":
             raise ValueError("unblock request source task is not review_approved")
         if source.get("review_decision_intent") not in (None, {}, []):
@@ -2362,7 +2373,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             request = load_json(path, default={})
             if not isinstance(request, Mapping):
                 raise ValueError("unblock request is not a JSON object")
-            if unblock_contract.requires_source_reopen(str(request.get("reason") or "")):
+            if unblock_contract.requires_source_reopen(
+                str(request.get("reason") or ""), request.get("repository_id")
+            ):
                 with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
                     status = load_status(config)
                     valid, source = _validate_auto_integrator_unblock_request(
@@ -2376,7 +2389,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                         str(binding.get("base") or repo_meta.get("default_branch") or "dev").strip()
                         or "dev"
                     )
-                    reopen_message = _behind_reopen_message(target_branch)
+                    reopen_message = _source_owned_reopen_message(
+                        str(valid["reason"]), target_branch, str(valid["detail"])
+                    )
                 script, env = status_command_subprocess_context(config)
                 env["AI_NAME"] = "Human/Ops"
                 env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
@@ -4014,14 +4029,21 @@ def process_queue(
             continue
         request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
         workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
-        guard_ok, guard_message = check_worker_tree_clean(
-            config,
-            run_id=str(event_id or ""),
-            task_id=str(event.get("task_id") or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-            queue_event_id=str(event_id or ""),
-            cwd=Path(str(workspace_path)) if workspace_path else None,
+        owner_wip_admitted = (
+            isinstance(request_metadata, dict)
+            and request_metadata.get("owner_wip_resume_admitted") is True
         )
+        if owner_wip_admitted:
+            guard_ok, guard_message = True, None
+        else:
+            guard_ok, guard_message = check_worker_tree_clean(
+                config,
+                run_id=str(event_id or ""),
+                task_id=str(event.get("task_id") or ""),
+                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+                queue_event_id=str(event_id or ""),
+                cwd=Path(str(workspace_path)) if workspace_path else None,
+            )
         if not guard_ok:
             _set_pending_wait_reason(record, guard_message)
             record["dirty_tree_guard_at"] = utc_now()
@@ -6072,6 +6094,28 @@ def reviewer_fallback_search_order(
     )
 
 
+def order_reviewers_cross_family_first(
+    config: dict[str, Any],
+    candidate_owner: str,
+    reviewer_order: list[str],
+) -> list[str]:
+    """Stable-partition reviewers: other model families before the owner's own.
+
+    Same-family reviewers stay available as a last resort so a task is never
+    stranded, but only after every other-family reviewer has been tried.
+    """
+
+    owner_family = agent_family(candidate_owner)
+    if owner_family is None:
+        return list(reviewer_order)
+    other: list[str] = []
+    same: list[str] = []
+    for name in reviewer_order:
+        canonical = canonical_agent_name(config, name)
+        (same if agent_family(canonical) == owner_family else other).append(name)
+    return other + same
+
+
 def plan_task_assignment_pair(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -6164,6 +6208,10 @@ def plan_task_assignment_pair(
                     owner=owner,
                     candidate_owner=candidate_owner,
                 )
+            )
+        if not explicit_human_reviewer:
+            reviewer_order = order_reviewers_cross_family_first(
+                config, candidate_owner, reviewer_order
             )
         seen_reviewers: set[str] = set()
         for candidate_reviewer in reviewer_order:
@@ -10211,6 +10259,145 @@ def resolve_obsolete_worker_recovery_receipt(
     return True
 
 
+# Model families per AGENTS.md "Review Independence". Reviewer must be of a
+# different family than the owner whenever another family has capacity.
+AGENT_FAMILIES: dict[str, str] = {
+    "claude": "claude",
+    "claude2": "claude",
+    "codex": "codex",
+    "codex2": "codex",
+    "antigravity": "antigravity",
+    "antigravity2": "antigravity",
+    "copilot": "copilot",
+    "piastra": "piastra",
+}
+_REVIEW_EXCEPTION_REASON_LIMIT = 120
+
+
+def agent_family(name: object) -> str | None:
+    """Return the model family of an agent name, or None when it has none."""
+
+    key = str(name or "").strip().casefold()
+    if key in AGENT_FAMILIES:
+        return AGENT_FAMILIES[key]
+    # codex1_1 / codex2_3 style lane aliases belong to the codex family.
+    if key.startswith("codex"):
+        return "codex"
+    return None
+
+
+def build_review_independence_exception(
+    *,
+    owner: object,
+    reviewer: object,
+    capacity_evidence: Mapping[str, Any] | None = None,
+) -> dict[str, object] | None:
+    """Record why a same-family reviewer was used, or None when independent.
+
+    Bounded: at most one entry per other family (four), each reason capped, so
+    the record adds well under 1 KiB to one activity event per reassignment.
+    """
+
+    owner_family = agent_family(owner)
+    reviewer_family = agent_family(reviewer)
+    if owner_family is None or reviewer_family is None:
+        return None
+    if owner_family != reviewer_family:
+        return None
+    evidence = {
+        str(key).strip().casefold(): str(value or "").strip()
+        for key, value in (capacity_evidence or {}).items()
+    }
+    considered = []
+    for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family}):
+        reason = evidence.get(family) or "evidence_unavailable"
+        considered.append(
+            {"family": family, "reason": reason[:_REVIEW_EXCEPTION_REASON_LIMIT]}
+        )
+    return {
+        "owner_family": owner_family,
+        "reviewer_family": reviewer_family,
+        "considered": considered,
+    }
+
+
+def attach_review_independence_exception(
+    event: dict[str, Any],
+    capacity_evidence: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    """Add the exception record to a canonical reassignment event, if due."""
+
+    exception = build_review_independence_exception(
+        owner=event.get("new_owner"),
+        reviewer=event.get("new_reviewer"),
+        capacity_evidence=capacity_evidence,
+    )
+    if exception is not None:
+        event["review_independence_exception"] = exception
+    return event
+
+
+def _review_exception_capacity_evidence(
+    config: dict[str, Any],
+    owner: str,
+    reviewer: str,
+    task: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Per-family concrete reason for a same-family reviewer pick.
+
+    Only computed when owner and reviewer share a family; best effort and
+    bounded (one health lookup per configured agent, once per reassignment).
+    Every other family gets a concrete reason: the first agent's terminal
+    unavailability, "cannot_take_task" when a task-level gate refused it, or
+    "available:<agent>" when an agent could take the task but the pair was
+    pinned (e.g. incumbent-only recovery).
+    """
+
+    owner_family = agent_family(owner)
+    if owner_family is None or owner_family != agent_family(reviewer):
+        return {}
+    try:
+        # Lock-free snapshot: the caller holds the task_state lock, and taking
+        # runtime_admission (lower rank) here would violate the lock order.
+        state = load_runtime_state_snapshot(config)
+    except Exception as exc:  # noqa: BLE001 - evidence is advisory, never blocks assignment
+        error_class = type(exc).__name__
+        print(
+            f"supervisor: review exception capacity evidence unavailable: "
+            f"{error_class}: {exc}",
+            file=sys.stderr,
+        )
+        return {
+            family: f"evidence_unavailable:{error_class}"
+            for family in sorted(set(AGENT_FAMILIES.values()) - {owner_family})
+        }
+    evidence: dict[str, str] = {}
+    for agent_id in sorted(config.get("agents", {}) or {}):
+        family = agent_family(agent_id)
+        if family is None or family == owner_family:
+            continue
+        if evidence.get(family, "").startswith("available:"):
+            continue
+        try:
+            reason = assignment_terminal_unavailability(config, state, agent_id)
+            if not reason and not agent_can_take_task(
+                config, agent_id, task, state=state
+            ):
+                reason = "cannot_take_task"
+        except Exception:  # noqa: BLE001
+            reason = "health_unreadable"
+        entry = f"{agent_id}:{reason}" if reason else f"available:{agent_id}"
+        if not reason:
+            evidence[family] = entry
+        elif family in evidence:
+            evidence[family] = f"{evidence[family]}; {entry}"[:300]
+        else:
+            evidence[family] = entry
+    for family in set(AGENT_FAMILIES.values()) - {owner_family}:
+        evidence.setdefault(family, "no_agent_configured")
+    return evidence
+
+
 def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
@@ -10381,6 +10568,12 @@ def _persist_task_reassignment_locked(
         assignment=assignment,
         old_generation=old_generation,
         new_generation=old_generation + 1,
+    )
+    attach_review_independence_exception(
+        event,
+        _review_exception_capacity_evidence(
+            config, assignment.new_owner, assignment.new_reviewer, task
+        ),
     )
     if recovery_receipt is not None:
         event["recovery_receipt_id"] = recovery_receipt["receipt_id"]
@@ -13261,6 +13454,57 @@ def _worker_recovery_candidate_has_capacity(
     return bool(decision.eligible)
 
 
+_BRANCH_TRAILER_RE = re.compile(
+    r"^(LLM-Agent|Reviewer|Task-ID):[ \t]*(.+?)[ \t]*$", re.MULTILINE
+)
+
+
+def task_branch_incumbent_pair(
+    config: dict[str, Any], task: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """Return the (owner, reviewer) named by the task branch's own commits.
+
+    Reads the commits the task branch has ahead of the repository base and
+    returns the pair from the newest commit whose Task-ID matches and which
+    carries both an LLM-Agent and a Reviewer trailer. None when the branch,
+    base or trailers are unavailable (best effort; never raises).
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return None
+    try:
+        repository_id = validate_task_repository_scope(config, dict(task))
+        source = worker_worktree_source_root(config, repository_id=repository_id)
+        base_ref = worker_repository_base_ref(config, repository_id)
+        branch = worker_task_branch(config, task_id)
+        for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+            proc = subprocess.run(
+                [
+                    "git", "log", "--no-merges", "--format=%B%x00",
+                    f"{base_ref}..{ref}",
+                ],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                continue
+            for body in proc.stdout.split("\x00"):
+                trailers = {k: v for k, v in _BRANCH_TRAILER_RE.findall(body)}
+                if trailers.get("Task-ID", "").strip() != task_id:
+                    continue
+                owner = canonical_agent_name(config, trailers.get("LLM-Agent", ""))
+                reviewer = canonical_agent_name(config, trailers.get("Reviewer", ""))
+                if owner and reviewer:
+                    return owner, reviewer
+    except Exception:  # noqa: BLE001 - advisory evidence
+        return None
+    return None
+
+
 def worker_recovery_assignment_pair(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -13312,12 +13556,42 @@ def worker_recovery_assignment_pair(
     )
     role = str(receipt.get("recovery_role") or "owner")
     lost_agent = str((receipt.get("worker") or {}).get("agent") or "")
+    if (
+        receipt.get("reason_kind") == "worker_process_missing"
+        and owner
+        and reviewer
+        and owner.casefold() != reviewer.casefold()
+        and task_branch_incumbent_pair(config, task)
+        == (owner, reviewer)
+    ):
+        # A pushed head already carries the incumbent LLM-Agent/Reviewer
+        # trailers; any other pair would be refused at handoff. Keep the pair
+        # whenever the incumbent of the lost role can still take the task.
+        pair = plan_task_assignment_pair(
+            config,
+            task,
+            state=state,
+            owner_candidates=[owner],
+            preferred_reviewers=[reviewer],
+            allowed_reviewers=[reviewer],
+            require_owner_ready=role != "reviewer",
+            require_reviewer_ready=role == "reviewer",
+        )
+        if pair == (owner, reviewer) and _worker_recovery_candidate_has_capacity(
+            config, state, status, task,
+            owner=owner, reviewer=reviewer,
+            target_agent=reviewer if role == "reviewer" else owner,
+        ):
+            return pair
     if role == "reviewer":
         reviewer_candidates = reassignment_candidate_order(
             config,
             settings.get("reviewer_fallbacks", {}) or {},
             roots=[reviewer, owner, previous_reviewer, previous_owner],
             exclude={reviewer, owner, lost_agent},
+        )
+        reviewer_candidates = order_reviewers_cross_family_first(
+            config, owner, reviewer_candidates
         )
         for candidate_reviewer in reviewer_candidates:
             pair = plan_task_assignment_pair(
@@ -15625,48 +15899,6 @@ def reconcile_review_requeue_materializations(
     return changed
 
 
-def task_review_reopen_revision(
-    task: Mapping[str, Any] | None,
-    activity_events: list[dict[str, Any]] | None = None,
-    *,
-    config: dict[str, Any] | None = None,
-) -> int:
-    """Return the bounded review-reopen revision for a task's dispatch identity.
-
-    A rejected review returns work to the unchanged owner. To prevent an
-    in-progress polling loop, the dispatch signature must distinguish a fresh
-    reopen from ordinary in-progress polling without mutating the assignment
-    generation.
-    """
-    raw_explicit: int | None = None
-    if isinstance(task, Mapping):
-        raw = task.get("review_reopen_revision")
-        if raw is None:
-            raw = task.get("reopen_revision")
-        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-            raw_explicit = raw
-        elif isinstance(raw, str) and raw.strip().isdigit():
-            raw_explicit = int(raw.strip())
-
-    counted = 0
-    if activity_events is None and config is not None:
-        activity_events = recent_governance_activity_events(config)
-    if isinstance(activity_events, (list, tuple)) and isinstance(task, Mapping):
-        task_id = str(task.get("id") or "").strip()
-        if task_id:
-            for event in activity_events:
-                if not isinstance(event, Mapping):
-                    continue
-                if str(event.get("task_id") or "").strip() != task_id:
-                    continue
-                if str(event.get("type") or "").strip().lower() == "reopen":
-                    counted += 1
-
-    if raw_explicit is not None:
-        return max(raw_explicit, counted)
-    return counted
-
-
 def task_integration_resume_revision(
     task: Mapping[str, Any] | None,
     activity_events: list[dict[str, Any]] | None = None,
@@ -15725,9 +15957,6 @@ def ready_dispatch_signature(
             "depends_on": list(task.get("depends_on", []) or []),
             "owner": task.get("owner"),
             "reason": reason,
-            "review_reopen_revision": task_review_reopen_revision(
-                task, activity_events=activity_events, config=config
-            ),
             "review_requeue_intent_id": (
                 requeue_intent.get("intent_id") if requeue_intent else None
             ),
@@ -15761,9 +15990,6 @@ def build_dispatch_event(
         for item in (task.get("depends_on") or [])
         if str(item or "").strip()
     ]
-    reopen_revision = task_review_reopen_revision(
-        task, activity_events=activity_events, config=config
-    )
     resume_revision = (
         task_integration_resume_revision(
             task, activity_events=activity_events, config=config
@@ -15843,8 +16069,6 @@ def build_dispatch_event(
     ):
         if key in task:
             task_payload[key] = task.get(key)
-    if reopen_revision > 0:
-        task_payload["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         task_payload["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:
@@ -15870,8 +16094,6 @@ def build_dispatch_event(
         "reason": reason,
         "task": task_payload,
     }
-    if reopen_revision > 0:
-        event["review_reopen_revision"] = reopen_revision
     if resume_revision > 0:
         event["integration_resume_revision"] = resume_revision
     if requeue_intent is not None:

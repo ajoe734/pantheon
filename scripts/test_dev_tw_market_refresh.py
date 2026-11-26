@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time as time_mod
-from datetime import datetime, time, timedelta, timezone
+import urllib.error
+import urllib.parse
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -126,7 +132,21 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         state_file = getattr(self.server, "state_file", None)
         state = json.loads(state_file.read_text(encoding="utf-8")) if (state_file and state_file.exists()) else {}
-        if self.path.startswith("/api/source-ingest/snapshots/latest"):
+        if self.path == "/readyz":
+            failures = state.get("readiness_failures_remaining", 0)
+            restore_always_fails = bool(
+                state.get("readiness_fails_on_restore")
+                and state.get("source_ingest_cid") == state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+            )
+            status = 503 if failures or state.get("readiness_always_fails") or restore_always_fails else 200
+            state["readiness_failures_remaining"] = max(0, failures - 1)
+            state_file.write_text(json.dumps(state), encoding="utf-8")
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "readyz", "status": status}) + "\n")
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b'{"ready": true}' if status == 200 else b'{"ready": false}')
+        elif self.path.startswith("/api/source-ingest/snapshots/latest"):
             import urllib.parse
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             sym = (qs.get("symbol") or [""])[0]
@@ -160,6 +180,8 @@ class _MockSourceIngestHandler(BaseHTTPRequestHandler):
                 }]
             self.wfile.write(json.dumps({"receipts": receipts}).encode("utf-8"))
         elif self.path.startswith("/api/source-ingest/controller/readback"):
+            with self.server.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"event": "connector_readback"}) + "\n")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -359,9 +381,19 @@ def _setup_refresh_stub_docker(tmp_path: Path, initial_state: dict[str, Any]) ->
     state_file = tmp_path / "docker_state.json"
     server.state_file = state_file
     events_file = tmp_path / "docker_events.jsonl"
+    server.events_file = events_file
     output_file = tmp_path / "refresh_output.json"
 
     state_file.write_text(json.dumps(initial_state))
+    # Optional real Compose config interpolation/merge, without a Docker daemon.
+    # This catches a new default that a no-op mock of compose would silently miss.
+    compose_fixture = tmp_path / "compose.json"
+    compose_fixture.write_text(json.dumps({"services": {"source-ingest": {
+        "image": "pantheon-source-ingest",
+        "environment": initial_state.get("compose_environment_defaults", {}),
+        "volumes": ["source-ingest-data:/data/source-ingest"],
+    }}, "volumes": {"source-ingest-data": {}}}))
+    real_docker = shutil.which("docker")
 
     docker_script = f"""#!/usr/bin/env python3
 import json, os, sys, subprocess, time
@@ -382,9 +414,11 @@ state = json.loads(state_file.read_text(encoding="utf-8"))
 
 if args[0] == "compose":
     sub = args[5:] if len(args) > 5 else []
+    overrides = []
     # The deploy script may add further compose files (-f <override>), e.g. the
     # source-ingest image pin override; skip them to reach the compose subcommand.
     while len(sub) > 1 and sub[0] == "-f":
+        overrides.extend(sub[:2])
         sub = sub[2:]
     if not sub:
         sys.exit(0)
@@ -452,6 +486,10 @@ if args[0] == "compose":
         print(state["compose_image_id"])
         sys.exit(0)
     elif sub[0] == "config":
+        if "compose_environment_defaults" in state:
+            model = subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True)
+            print(model)
+            sys.exit(0)
         print(json.dumps({{"services": {{"source-ingest": {{"image": "pantheon-source-ingest"}}}}}}))
         sys.exit(0)
     elif sub[0] == "up":
@@ -463,16 +501,29 @@ if args[0] == "compose":
             # Model Compose interpolation: the recreated container carries the
             # egress/controller-mode keys the deploy script exported for this up.
             controlled_keys = ("PANTHEON_EXTERNAL_EGRESS", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "SOURCE_INGEST_CONTROLLER_MODE")
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+            # A restore is egress deny, or the steady collector-host allowlist with a steady
+            # (non-bounded) controller mode; the bounded window is allowlist + reconcile_and_pull.
+            is_restore = os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny" or (
+                os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist"
+                and os.environ.get("SOURCE_INGEST_CONTROLLER_MODE") in ("reconcile_only", "collector_steady_pull"))
+            if is_restore:
                 kept = [e for e in state["container_env"] if e.split("=", 1)[0] not in controlled_keys]
                 # Real compose passes SOURCE_INGEST_CONTROLLER_MODE only to the scheduler,
                 # so the source-ingest container carries it only if it did before.
                 had_mode = any(e.startswith("SOURCE_INGEST_CONTROLLER_MODE=") for e in state["container_env"])
                 state["container_env"] = kept + [f"{{k}}={{os.environ[k]}}" for k in controlled_keys if k in os.environ and (k != "SOURCE_INGEST_CONTROLLER_MODE" or had_mode)]
-            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist":
+            if os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "allowlist" and not is_restore:
                 state["source_ingest_cid"] = state.get("recreated_source_ingest_cid", "cid-source-ingest-recreated")
-            elif os.environ.get("PANTHEON_EXTERNAL_EGRESS") == "deny":
+            elif is_restore:
                 state["source_ingest_cid"] = state.get("restored_source_ingest_cid", "cid-source-ingest-restored")
+                if "compose_environment_defaults" in state:
+                    model = json.loads(subprocess.check_output([{real_docker!r}, "compose", "-f", {str(compose_fixture)!r}, *overrides, "config", "--format", "json"], env=os.environ, text=True))
+                    service = model["services"]["source-ingest"]
+                    # `config` serializes dollar signs escaped for reloading;
+                    # container creation consumes the resolved literal values.
+                    state["container_env"] = [f"{{k}}={{v.replace('$$', '$')}}" for k, v in service["environment"].items()]
+                    state["restored_image_reference"] = service["image"]
+                    state["restored_volumes"] = service["volumes"]
                 if "mutate_env_on_restore" in state:
                     state["container_env"] = state["mutate_env_on_restore"]
             state_file.write_text(json.dumps(state))
@@ -817,121 +868,381 @@ def test_refresh_entrypoint_env_equality_fails_closed_on_mismatch(tmp_path: Path
     assert "restored container env mismatch" in proc.stderr
 
 
-def _run_preflight_script(force: bool, now_dt: datetime, snapshot_json: dict[str, Any] | None, http_status: int = 200) -> dict[str, Any]:
-    """Helper to exercise the preflight Python logic extracted from deploy_nonprod_vm.sh."""
-    from services.execution.market_snapshot_admission import (
-        evaluate_taiwan_market_freshness,
-        validate_taiwan_calendar_evidence,
+def _run_exact_restore_helper(tmp_path: Path, *, root_value=None, compose_defaults_match_capture=False, **state_changes):
+    """Execute maintained shell + Python + retry helper against real Compose config.
+
+    Only Docker runtime operations and sleep are stubbed. The next readback uses
+    the same HTTP fixture as connector preflight, after a successful restore.
+    """
+    if not shutil.which("docker"):
+        pytest.skip("Docker Compose config is required for environment merge regression")
+    captured = [
+        "PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=",
+        "PORT=8097", "CUSTOM_SECRET=old$token${UNSET_SECRET}\nquoted=\"value\"",
+        "FINMIND_API_TOKEN=prior$secret", "SOURCE_INGEST_DATA_DIR=/data/source-ingest",
+        "SOURCE_INGEST_CONTROLLER_TOKEN_FILE=/data/source-ingest/controller_token",
+    ]
+    if root_value is not None:
+        captured.append(f"INTRADAY_STORE_ROOT={root_value}")
+    defaults = dict(item.split("=", 1) for item in captured) if compose_defaults_match_capture else {
+        "INTRADAY_STORE_ROOT": "/data/source-ingest", "NEW_DEFAULT": "must-not-appear",
+        "FINMIND_API_TOKEN": "wrong-default", "PORT": "8097",
+    }
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "container_env": captured,
+        "compose_environment_defaults": {k: v.replace("$", "$$") for k, v in defaults.items()},
+        **state_changes,
+    }
+    bin_dir, state_file, events_file, _, port = _setup_refresh_stub_docker(tmp_path, initial)
+    # Keep the production retry count but shorten sleep for a bounded local test.
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    captured_file = tmp_path / "captured.json"
+    captured_file.write_text(json.dumps(captured))
+    text = DEPLOY_SCRIPT.read_text()
+    def function(name):
+        return text.split(name + "() {", 1)[1].split("\n}\n", 1)[0]
+    script = tmp_path / "restore.sh"
+    script.write_text(
+        "set -euo pipefail\n"
+        + "curl_with_retry() {" + function("curl_with_retry") + "\n}\n"
+        + "manage_source_ingest_refresh_runtime() {" + function("manage_source_ingest_refresh_runtime") + "\n}\n"
+        + 'manage_source_ingest_refresh_runtime "$1" restore "$2" || exit $?\n'
+        + 'curl -fsS "$SOURCE_INGEST_API_URL/api/source-ingest/controller/readback" >/dev/null\n'
     )
-
-    tz = timezone(timedelta(hours=8))
-    now_u = now_dt.astimezone(timezone.utc)
-    now_t = now_u.astimezone(tz)
-    d_str = str(now_t.date())
-
-    def emit(status, **kw):
-        return {"status": status, "taipei_date": d_str, **kw}
-
-    if not force and now_t.weekday() >= 5:
-        return emit("skipped", reason="weekend", checked_at=now_u.isoformat())
-    if not force and now_t.time() < time(13, 30):
-        return emit("skipped", reason="session_not_closed", checked_at=now_u.isoformat())
-
-    snap = snapshot_json
-    if http_status != 200 and http_status != 404:
-        return emit("error", reason="snapshot_lookup_failed", detail=f"HTTP {http_status}")
-
-    if snap is not None:
-        cal = snap.get("calendar_evidence") or (snap.get("lineage") or {}).get("calendar_evidence")
-        if not cal:
-            return emit("error", reason="market_input_calendar_unverifiable", detail="snapshot missing required calendar evidence and pins")
-        c_ok, c_err, c_norm = validate_taiwan_calendar_evidence(cal, now_dt=now_u)
-        if not c_ok:
-            return emit("error", reason="market_input_calendar_unverifiable", detail=c_err)
-        if d_str in (c_norm.get("holidays") or {}):
-            return emit("skipped", reason="holiday", checked_at=now_u.isoformat())
-        ev_dt = datetime.fromisoformat(snap["event_time"].replace("Z", "+00:00"))
-        obs = snap.get("observed_at")
-        obs_dt = datetime.fromisoformat(obs.replace("Z", "+00:00")) if obs else None
-        close_t = datetime(now_t.year, now_t.month, now_t.day, 13, 30, tzinfo=tz).astimezone(timezone.utc)
-        if not force and ev_dt.astimezone(tz).date() == now_t.date() and obs_dt and obs_dt >= close_t:
-            ok, reason, detail = evaluate_taiwan_market_freshness(
-                event_time_dt=ev_dt, now_dt=now_u, refresh_receipt_dt=obs_dt,
-                lineage=snap.get("lineage") or {}, max_refresh_age_seconds=86400, calendar_evidence=cal
-            )
-            if ok:
-                return emit("noop", reason="already_fresh", snapshot_id=snap.get("snapshot_id"), checked_at=now_u.isoformat())
-            return emit("error", reason="existing_snapshot_admission_failed", detail=f"{reason}: {detail}")
-
-    return emit("proceed")
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               FINMIND_API_TOKEN="bounded-secret-must-not-survive", PANTHEON_COLLECTOR_HOST="",
+               SOURCE_INGEST_RESTORE_CONTROLLER_MODE="reconcile_only")
+    proc = subprocess.run(["bash", str(script), str(captured_file), initial["image_id"]],
+                          env=env, cwd=ROOT, capture_output=True, text=True, timeout=15)
+    events = [json.loads(line) for line in events_file.read_text().splitlines()] if events_file.exists() else []
+    return proc, json.loads(state_file.read_text()), events, captured
 
 
-def test_preflight_weekend_skip():
-    # 2026-10-10 is a Saturday (weekday 5)
-    dt = datetime(2026, 10, 10, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=None)
-    assert res["status"] == "skipped"
-    assert res["reason"] == "weekend"
-
-    # With force=True, weekend skip is bypassed
-    res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=None)
-    assert res_force["status"] == "proceed"
-
-
-def test_preflight_session_not_closed_skip():
-    # 2026-10-06 (Tuesday) at 11:00 Taipei time (before 13:30 session close)
-    dt = datetime(2026, 10, 6, 11, 0, tzinfo=timezone(timedelta(hours=8)))
-    res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=None)
-    assert res["status"] == "skipped"
-    assert res["reason"] == "session_not_closed"
-
-    # With force=True, session close check is bypassed
-    res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=None)
-    assert res_force["status"] == "proceed"
+@pytest.mark.parametrize("root_value", [None, "", "/captured/custom-root"])
+def test_exact_restore_replaces_new_compose_defaults_and_preserves_secrets(tmp_path, root_value):
+    proc, state, events, captured = _run_exact_restore_helper(tmp_path, root_value=root_value)
+    assert proc.returncode == 0, proc.stderr
+    assert set(state["container_env"]) == set(captured)
+    assert state["restored_image_reference"] == state["image_id"]
+    assert state["restored_volumes"][0]["source"] == "source-ingest-data"
+    assert state["restored_volumes"][0]["target"] == "/data/source-ingest"
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200]
 
 
-def test_preflight_holiday_skip():
-    # 2026-10-06 after session close, but calendar says it's a holiday
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    cal = {
-        "calendar_schema": "twse_trading_calendar_v1",
-        "jurisdiction": "TW",
-        "holidays": {"2026-10-06": "Special Holiday"},
-        "pins": {"market": "TWSE", "pin_hash": "a" * 64},
+def test_exact_restore_waits_for_api_before_next_connector_readback(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_failures_remaining=2)
+    assert proc.returncode == 0, proc.stderr
+    http = [e for e in events if e["event"] in {"readyz", "connector_readback"}]
+    assert http == [{"event": "readyz", "status": 503}, {"event": "readyz", "status": 503},
+                    {"event": "readyz", "status": 200}, {"event": "connector_readback"}]
+
+
+def test_exact_restore_readiness_timeout_prevents_success_and_next_connector(tmp_path):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, compose_defaults_match_capture=True, readiness_always_fails=True)
+    assert proc.returncode != 0
+    assert len([e for e in events if e["event"] == "readyz"]) == 37  # 1 initial + 36 retries (180s readiness budget)
+    assert not any(e["event"] == "connector_readback" for e in events)
+
+
+@pytest.mark.parametrize("mutation,expected_keys", [
+    (["PORT=wrong-sensitive-value"], ["PORT", "CUSTOM_SECRET", "FINMIND_API_TOKEN"]),
+    (["LEAKED_VAR=secret-added-value"], ["LEAKED_VAR", "CUSTOM_SECRET"]),
+])
+def test_exact_restore_environment_drift_fails_without_disclosing_values(tmp_path, mutation, expected_keys):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, mutate_env_on_restore=mutation)
+    assert proc.returncode != 0
+    assert "restored container env mismatch" in proc.stderr
+    assert all(key in proc.stderr for key in expected_keys)
+    assert not any(secret in proc.stderr + proc.stdout for secret in
+                   ["wrong-sensitive-value", "secret-added-value", "old$token", "prior$secret"])
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+@pytest.mark.parametrize("changes", [
+    {"resolved_compose_image_id": "sha256:" + "b" * 64},
+    {"mutate_image_on_up": "sha256:" + "c" * 64},
+])
+def test_exact_restore_wrong_image_stays_failed_before_readiness(tmp_path, changes):
+    proc, _, events, _ = _run_exact_restore_helper(tmp_path, **changes)
+    assert proc.returncode != 0
+    assert "image" in proc.stderr
+    assert not any(e["event"] in {"readyz", "connector_readback"} for e in events)
+
+
+def test_exact_restore_readiness_failure_is_not_nonblocking_connector_success(tmp_path):
+    initial = {
+        "image_id": "sha256:" + "a" * 64, "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny", "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="],
+        "readiness_fails_on_restore": True,
     }
-    snap = {
-        "snapshot_id": "snap-123",
-        "event_time": "2026-10-05T06:00:00Z",
-        "observed_at": "2026-10-05T07:00:00Z",
+    bin_dir, _, events_file, output, port = _setup_refresh_stub_docker(tmp_path, initial)
+    (bin_dir / "sleep").write_text("#!/bin/sh\n/bin/sleep 0.01\n")
+    (bin_dir / "sleep").chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
+               SOURCE_INGEST_API_URL=f"http://127.0.0.1:{port}",
+               SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS="30", PANTHEON_REMOTE_DIR=str(ROOT))
+    # Default force=false, through the normal caller and its non-blocking cleanup.
+    proc = subprocess.run([
+        "bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--non-blocking",
+        "--connector-id", "tw-taifex-futures-options-chip", "--allowed-hosts",
+        "openapi.taifex.com.tw,www.taifex.com.tw", "--dataset", "taifex_ssf_contracts",
+        "--output", str(output),
+    ], env=env, cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert proc.returncode != 0
+    assert json.loads(output.read_text())["status"] == "failed"
+    events = [json.loads(line) for line in events_file.read_text().splitlines()]
+    assert [e["status"] for e in events if e["event"] == "readyz"] == [200, 200] + [503] * 37
+    assert any(e["event"] == "docker_start" for e in events)  # steady scheduler restored
+
+
+CHIP_PROFILES = [
+    ("tw-taifex-futures-options-chip", "taifex_ssf_contracts"),
+    ("tw-finmind-broker-daily-report", "tw_broker_top"),
+]
+
+
+def _shared_tw_refresh_helpers_py(script: str | None = None) -> str:
+    text = script if script is not None else DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    if "<<'SHARED_TW_REFRESH_HELPERS_PY'\n" not in text:
+        return ""
+    return text.split("<<'SHARED_TW_REFRESH_HELPERS_PY'\n", 1)[1].split("\nSHARED_TW_REFRESH_HELPERS_PY", 1)[0]
+
+
+def _run_preflight_script(
+    force: bool,
+    now_dt: datetime,
+    snapshot_json: dict[str, Any] | None,
+    http_status: int = 200,
+    *,
+    profile=("tw-twse-tpex-official-market", "tw_price_daily"),
+    readback=None,
+    readback_http_status=200,
+    source_records=None,
+    readback_error=None,
+    script_text=None,
+) -> dict[str, Any]:
+    """Execute the maintained shell heredoc; only I/O and the test clock are injected.
+
+    script_text permits a local old/new comparison against a git blob, without
+    copying or rewriting the preflight decision logic.
+    """
+    content = script_text if script_text is not None else DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    code = content.split("<<'PREFLIGHT_PY'\n", 1)[1].split("\nPREFLIGHT_PY", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(content)
+    connector, dataset = profile
+
+    def urlopen(request, *, timeout):
+        parsed = urllib.parse.urlparse(request.full_url)
+        assert parsed.hostname == "preflight.test", "tests must never reach a service/provider"
+        assert 3 <= timeout <= 10  # Bounded per call; the preflight retries a warming-up source-ingest.
+        assert request.get_method() == "GET"
+        if parsed.path.endswith("/snapshots/latest"):
+            status, payload = (404, {}) if snapshot_json is None and http_status == 200 else (http_status, snapshot_json)
+        else:
+            assert parsed.path == "/api/source-ingest/controller/readback"
+            assert urllib.parse.parse_qs(parsed.query) == {"connector_id": [connector], "dataset": [dataset]}
+            if readback_error:
+                raise readback_error
+            status, payload = readback_http_status, readback or {"connectors": []}
+        if status != 200:
+            raise urllib.error.HTTPError(request.full_url, status, "test response", {}, None)
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        return response
+
+    with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as records_file:
+        json.dump({"source_records": source_records or []}, records_file)
+        records_file.flush()
+        env = {
+            "SOURCE_INGEST_API_URL": "http://preflight.test",
+            "SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS": "2330.TW,2317.TW",
+            "SOURCE_INGEST_BOUNDED_CONNECTOR_ID": connector,
+            "SOURCE_INGEST_BOUNDED_DATASET": dataset,
+            "PANTHEON_REFRESH_PREFLIGHT_NOW": now_dt.isoformat(),
+            "FINMIND_SOURCE_RECORDS_PATH": records_file.name if source_records is not None else "",
+            "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+            "PANTHEON_PREFLIGHT_API_PAUSE_SECONDS": "0",
+        }
+        output = io.StringIO()
+        with patch.dict(os.environ, env), patch.object(sys, "argv", ["-", str(force)]), \
+             patch("urllib.request.urlopen", side_effect=urlopen), redirect_stdout(output), \
+             pytest.raises(SystemExit) as stopped:
+            exec(compile(code, str(DEPLOY_SCRIPT) + ":PREFLIGHT_PY", "exec"), {"__name__": "__main__"})
+        assert stopped.value.code is None
+        return json.loads(output.getvalue())
+
+
+def _preflight_snapshot(session="2026-11-12", *, calendar_day="2026-11-13"):
+    from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+    cal = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=calendar_day)
+    assert cal is not None
+    return {
+        "snapshot_id": "test-official-close",
+        "event_time": f"{session}T05:30:00Z",
+        "observed_at": f"{session}T11:00:00Z",
         "calendar_evidence": cal,
-        "lineage": {"calendar_evidence": cal},
+        "lineage": {"connector_ids": ["tw-twse-tpex-official-market"], "calendar_evidence": cal},
     }
-    with patch("services.execution.market_snapshot_admission.validate_taiwan_calendar_evidence", return_value=(True, "", cal)):
-        res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-        assert res["status"] == "skipped"
-        assert res["reason"] == "holiday"
 
 
-def test_preflight_already_fresh_same_day_noop():
-    dt = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=8)))
-    cal = {"calendar_schema": "twse_trading_calendar_v1", "holidays": {}}
-    snap = {
-        "snapshot_id": "snap-fresh-today",
-        "event_time": "2026-10-06T06:00:00Z",  # 14:00 Asia/Taipei
-        "observed_at": "2026-10-06T06:30:00Z", # 14:30 Asia/Taipei (>= 13:30 Asia/Taipei)
-        "calendar_evidence": cal,
-        "lineage": {"calendar_evidence": cal},
-    }
-    with patch("services.execution.market_snapshot_admission.validate_taiwan_calendar_evidence", return_value=(True, "", cal)), \
-         patch("services.execution.market_snapshot_admission.evaluate_taiwan_market_freshness", return_value=(True, "fresh", "ok")):
-        res = _run_preflight_script(force=False, now_dt=dt, snapshot_json=snap)
-        assert res["status"] == "noop"
-        assert res["reason"] == "already_fresh"
-        assert res["snapshot_id"] == "snap-fresh-today"
+def _preflight_readback(profile, session="2026-11-12", *, observed_at=None):
+    connector, dataset = profile
+    return {"connectors": [{
+        "connector_id": connector,
+        "latest_source_record": {
+            "source_id": f"tw-taifex:{dataset}:test" if profile == CHIP_PROFILES[0] else "finmind:test",
+            "status": "normalized",
+            "provenance": {"dataset": dataset, "trade_date": session},
+            "metadata": {"date": session},
+        },
+        "freshness": {"last_success_at": observed_at or f"{session}T11:00:00Z"},
+    }]}
 
-        # With force=True, even an already-fresh snapshot proceeds
-        res_force = _run_preflight_script(force=True, now_dt=dt, snapshot_json=snap)
-        assert res_force["status"] == "proceed"
+
+def _preflight_broker_coverage(session="2026-11-12", covered=("2330", "2317"), missing=()):
+    return [{
+        "connector_id": CHIP_PROFILES[1][0],
+        "metadata": {"refresh_coverage": {
+            "trade_date": session, "covered_symbols": list(covered), "missing_symbols": list(missing),
+        }},
+    }]
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("state,reason", [("missing", "dataset_missing"), ("stale", "closed_session_missing"), ("fresh", "already_fresh")])
+def test_preflight_morning_previous_session(profile, state, reason):
+    # Official run's ordinary next-morning time. Fixtures describe controlled
+    # missing/stale/fresh alternatives, never asserted historical database state.
+    readback = None if state == "missing" else _preflight_readback(profile, "2026-11-11" if state == "stale" else "2026-11-12")
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=profile, readback=readback, source_records=_preflight_broker_coverage(),
+    )
+    assert res["status"] == ("noop" if state == "fresh" else "proceed")
+    assert res["reason"] == reason
+    assert res["session_date"] == "2026-11-12"
+    assert res["taipei_date"] == "2026-11-13"
+    assert (res["connector_id"], res["dataset"]) == profile
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+def test_preflight_chip_without_equity_snapshot(profile):
+    res = _run_preflight_script(False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), None, profile=profile)
+    assert (res["status"], res["reason"], res["session_date"]) == ("proceed", "dataset_missing", "2026-11-12")
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("now,session", [
+    ("2026-11-16T00:30:00+00:00", "2026-11-13"),  # Monday walks over weekend.
+    ("2026-10-27T00:30:00+00:00", "2026-10-22"),  # Governed emergency Friday + Monday holiday.
+    ("2026-11-12T22:50:00+00:00", "2026-11-12"),  # Taipei date already Friday (06:50 Taipei).
+])
+def test_preflight_morning_calendar_boundaries(profile, now, session):
+    dt = datetime.fromisoformat(now)
+    cal_day = dt.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    res = _run_preflight_script(False, dt, _preflight_snapshot(session, calendar_day=cal_day), profile=profile)
+    assert (res["status"], res["session_date"]) == ("proceed", session)
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("now,reason", [
+    ("2026-11-14T00:30:00+00:00", "weekend"),
+    ("2026-10-26T00:30:00+00:00", "holiday"),
+])
+def test_preflight_chip_nontrading_day_safety(profile, now, reason):
+    dt = datetime.fromisoformat(now)
+    cal_day = dt.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    res = _run_preflight_script(False, dt, _preflight_snapshot(calendar_day=cal_day), profile=profile)
+    assert (res["status"], res["reason"]) == ("skipped", reason)
+
+
+@pytest.mark.parametrize("now,taifex_session,broker_session", [
+    ("2026-11-12T16:30:00+00:00", "2026-11-11", "2026-11-12"),
+    ("2026-11-13T05:30:00+00:00", "2026-11-12", "2026-11-12"),
+    ("2026-11-13T09:59:59+00:00", "2026-11-12", "2026-11-12"),
+    ("2026-11-13T10:00:00+00:00", "2026-11-12", "2026-11-13"),
+])
+def test_preflight_distinct_close_and_publication_cutoffs(now, taifex_session, broker_session):
+    for profile, expected in zip(CHIP_PROFILES, (taifex_session, broker_session)):
+        res = _run_preflight_script(False, datetime.fromisoformat(now), _preflight_snapshot(), profile=profile)
+        assert (res["status"], res["session_date"]) == ("proceed", expected)
+
+
+@pytest.mark.parametrize("records,reason", [
+    (None, "coverage_readback_unavailable"),
+    ([], "coverage_incomplete"),
+    (_preflight_broker_coverage(covered=("2330",), missing=("2317",)), "coverage_incomplete"),
+    (_preflight_broker_coverage(session="2026-11-11"), "coverage_incomplete"),
+    (_preflight_broker_coverage(covered=("2330.TW",)) + _preflight_broker_coverage(covered=("2317.TWSE",)), "already_fresh"),
+])
+def test_preflight_morning_broker_coverage(records, reason):
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=CHIP_PROFILES[1], readback=_preflight_readback(CHIP_PROFILES[1]), source_records=records,
+    )
+    assert res["reason"] == reason
+    assert res["status"] == ("noop" if reason == "already_fresh" else "proceed")
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+@pytest.mark.parametrize("mutation", ["wrong_dataset", "invalid_status", "prepublication_receipt", "unpublished_date"])
+def test_preflight_chip_invalid_record_cannot_noop(profile, mutation):
+    readback = _preflight_readback(profile)
+    conn = readback["connectors"][0]
+    if mutation == "wrong_dataset":
+        conn["latest_source_record"]["provenance"]["dataset"] = "tw_price_daily"
+    elif mutation == "invalid_status":
+        conn["latest_source_record"]["status"] = "invalid"
+    elif mutation == "unpublished_date":
+        conn["latest_source_record"]["metadata"]["date"] = "2026-11-13"
+    else:
+        conn["freshness"]["last_success_at"] = "2026-11-12T05:00:00Z"
+    res = _run_preflight_script(
+        False, datetime.fromisoformat("2026-11-13T00:39:00+00:00"), _preflight_snapshot(),
+        profile=profile, readback=readback, source_records=_preflight_broker_coverage(),
+    )
+    assert res["status"] == "proceed"
+    assert res["session_date"] == "2026-11-12"
+
+
+@pytest.mark.parametrize("profile", CHIP_PROFILES)
+def test_preflight_morning_real_http_errors_remain_errors(profile):
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    snapshot_error = _run_preflight_script(False, now, _preflight_snapshot(), 503, profile=profile)
+    assert (snapshot_error["status"], snapshot_error["reason"]) == ("error", "snapshot_lookup_failed")
+    readback_error = _run_preflight_script(False, now, _preflight_snapshot(), profile=profile, readback_http_status=503)
+    assert (readback_error["status"], readback_error["reason"]) == ("error", "readback_lookup_failed")
+    missing = _run_preflight_script(False, now, _preflight_snapshot(), profile=profile, readback_http_status=404)
+    assert (missing["status"], missing["reason"]) == ("proceed", "dataset_missing")
+
+
+def test_preflight_calendar_pin_and_equity_admission_stay_enforced():
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    snap = _preflight_snapshot()
+    snap["calendar_evidence"]["checksum"] = "0" * 64
+    res = _run_preflight_script(False, now, snap, profile=CHIP_PROFILES[0])
+    assert (res["status"], res["reason"]) == ("proceed", "calendar_evidence_refresh_needed")
+    snap = _preflight_snapshot()
+    snap["lineage"] = {"connector_ids": ["unofficial"]}
+    res = _run_preflight_script(False, now, snap)
+    assert (res["status"], res["reason"]) == ("error", "existing_snapshot_admission_failed")
+
+
+def test_preflight_equity_missing_and_fresh_are_distinct():
+    now = datetime.fromisoformat("2026-11-13T00:39:00+00:00")
+    stale = _run_preflight_script(False, now, _preflight_snapshot("2026-11-11"))
+    assert (stale["status"], stale["reason"], stale["session_date"]) == ("proceed", "closed_session_missing", "2026-11-12")
+    missing = _run_preflight_script(False, now, None)
+    assert (missing["status"], missing["reason"]) == ("proceed", "snapshot_missing")
+    fresh = _run_preflight_script(False, now, _preflight_snapshot())
+    # Preserve equity's existing skip semantics: this is NOT stale-data evidence.
+    assert (fresh["status"], fresh["reason"]) == ("skipped", "session_not_closed")
+    after_close = _run_preflight_script(False, datetime.fromisoformat("2026-11-13T11:00:00+00:00"), _preflight_snapshot("2026-11-13"))
+    assert (after_close["status"], after_close["reason"]) == ("noop", "already_fresh")
+    forced = _run_preflight_script(True, now, _preflight_snapshot())
+    assert forced["status"] == "proceed"
 
 
 def test_refresh_only_with_no_bindings_runs_bounded_pull_for_baseline_symbol(tmp_path: Path):
@@ -2433,7 +2744,9 @@ def test_refresh_entrypoint_taifex_non_force_proceeds_when_twse_fresh_and_enforc
                 "source_id": "tw-taifex:taifex_ssf_contracts:QFF:202611:abc123",
                 "status": "normalized",
                 "metadata": {
-                    "date": "2026-11-06",
+                    # Verifier binds to the latest closed session at deploy start (real clock).
+                    "date": _latest_closed_taipei_session(datetime.now(timezone.utc)),
+                    "underlying_code": "2330",
                     "dataset": "taifex_ssf_contracts",
                     "schema_hash": "tw_taifex_ssf_contracts.v1",
                 },
@@ -2816,6 +3129,758 @@ def test_finmind_prepare_and_missing_secret_paths_exist():
     script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
     assert "FinMindTaiwanBrokerDailyReportAdapter(connector_id=connector_id)" in script
     assert '=~ ^(tw-taifex-futures-options-chip|tw-finmind-broker-daily-report)$ ]]; then\n    extra_bounded_env_args' in script
-    guard = script.index('== "tw-finmind-broker-daily-report" && -z "${FINMIND_API_TOKEN:-}"')
+    guard = script.index(
+        '=~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"'
+    )
     assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
     assert '"skipped" "missing_credential"' in script[guard:guard + 600]
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: restore keeps the steady Collector pull ---
+
+_COLLECTOR_TEST_HOST = "collector.example.test"
+
+
+def _run_refresh_with_steady_mode(
+    tmp_path: Path, steady_mode_env: list[str], *, fail_readback: bool, collector_host: str | None = _COLLECTOR_TEST_HOST
+) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]]]:
+    initial_state: dict[str, Any] = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "steady_lease_env": steady_mode_env,
+    }
+    if fail_readback:
+        initial_state["built_projector_image_id"] = "sha256:0fedd6c77271dc29bf6425461cac284df85a6454d656e363d67646ec9ee24b2e"
+        initial_state["projector_image_sha"] = "abc123"
+        initial_state["agora_projection"] = {
+            "row1": {
+                "connectorId": "tw-twse-tpex-official-market",
+                "ingestRunId": "ingest-e53a86463995",
+                "sourceId": "tw-official:tw_price_daily:TWSE:2330:90e323e6754e2e9e",
+            }
+        }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    if collector_host:
+        test_env["PANTHEON_COLLECTOR_HOST"] = collector_host
+    else:
+        test_env.pop("PANTHEON_COLLECTOR_HOST", None)
+    script = _deploy_script_with_readback(tmp_path) if fail_readback else _deploy_script_without_readback(tmp_path)
+    proc = subprocess.run(
+        ["bash", str(script), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    return proc, events
+
+
+def _last_restore_up(events: list[dict[str, Any]], egress: str) -> dict[str, Any]:
+    ups = [
+        e for e in events
+        if e.get("event") == "compose_up"
+        and "source-ingest" in e.get("services", [])
+        and e["env"].get("PANTHEON_EXTERNAL_EGRESS") == egress
+    ]
+    assert ups, "no restore compose up observed"
+    return ups[-1]
+
+
+@pytest.mark.parametrize("fail_readback", [False, True])
+def test_bounded_refresh_restore_keeps_configured_steady_collector_pull(tmp_path: Path, fail_readback: bool):
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1", "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"], fail_readback=fail_readback
+    )
+    assert (proc.returncode != 0) is fail_readback, f"{proc.stdout}\n{proc.stderr}"
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"] == _COLLECTOR_TEST_HOST
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "collector_steady_pull"
+    assert "to collector_steady_pull" in proc.stdout + proc.stderr
+
+
+@pytest.mark.parametrize("fail_readback", [False, True])
+def test_bounded_refresh_restore_never_invents_steady_pull(tmp_path: Path, fail_readback: bool):
+    # Prior steady posture was reconcile_only: restore must not widen it.
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1"], fail_readback=fail_readback
+    )
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_only"
+
+
+def test_bounded_refresh_restore_drops_steady_pull_without_collector_host(tmp_path: Path):
+    proc, events = _run_refresh_with_steady_mode(
+        tmp_path, ["SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull", "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1", "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1"], fail_readback=False, collector_host=None
+    )
+    restore = _last_restore_up(events, "deny")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "reconcile_only"
+
+
+@pytest.mark.parametrize(("sig_name", "expected_rc"), [("INT", 130), ("TERM", 143)])
+def test_bounded_refresh_terminating_signal_restores_and_exits_nonzero(tmp_path: Path, sig_name: str, expected_rc: int):
+    # COLLECTOR-STEADY-PULL-RESTORE-20261112 (Codex2 P1): a terminating INT/TERM must
+    # restore the steady Collector pull, exit with 128+signal, and never go on to
+    # launch the projector or write a completed outcome.
+    initial_state = {
+        "image_id": "sha256:" + "a" * 64,
+        "compose_image_id": "sha256:" + "a" * 64,
+        "container_env": ["PANTHEON_EXTERNAL_EGRESS=deny"],
+        "steady_lease_env": [
+            "SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull",
+            "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS=1",
+            "SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS=1",
+        ],
+    }
+    bin_dir, _state_file, events_file, output_file, port = _setup_refresh_stub_docker(tmp_path, initial_state)
+    docker = bin_dir / "docker"
+    delegate = bin_dir / "original-owned-docker-stub"
+    docker.rename(delegate)
+    docker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os,sys,json,signal\n"
+        "from pathlib import Path\n"
+        "a=sys.argv[1:]\n"
+        'if "run" in a and "--name" in a and "pantheon-bounded-refresh-source-ingest-scheduler" in a:\n'
+        f"    Path({repr(str(events_file))}).open('a').write(json.dumps({{'event':'QA_signal_sent'}})+'\\n')\n"
+        f"    os.kill(os.getppid(), signal.SIG{sig_name})\n"
+        "    sys.exit(0)\n"
+        f"os.execv({repr(str(delegate))}, [{repr(str(delegate))}]+a)\n"
+    )
+    docker.chmod(0o755)
+    test_env = dict(os.environ)
+    test_env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+    test_env["SOURCE_INGEST_API_URL"] = f"http://127.0.0.1:{port}"
+    test_env["SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS"] = "30"
+    test_env["PANTHEON_REMOTE_DIR"] = str(ROOT)
+    test_env["PANTHEON_COLLECTOR_HOST"] = _COLLECTOR_TEST_HOST
+    proc = subprocess.run(
+        ["bash", str(_deploy_script_without_readback(tmp_path)), "--refresh-only", "--force", "--output", str(output_file)],
+        env=test_env, capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode == expected_rc, f"{proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+    events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line]
+    assert any(e.get("event") == "QA_signal_sent" for e in events)
+    restore = _last_restore_up(events, "allowlist")
+    assert restore["env"]["SOURCE_INGEST_CONTROLLER_MODE"] == "collector_steady_pull"
+    sent = next(i for i, e in enumerate(events) if e.get("event") == "QA_signal_sent")
+    assert not any("projector" in json.dumps(e) and e.get("event") in {"docker_run", "run"} for e in events[sent + 1:])
+    assert not output_file.exists() or json.loads(output_file.read_text()).get("status") != "completed"
+
+
+@pytest.mark.parametrize(
+    "now,expected",
+    [
+        ("2026-11-13T02:48:00Z", "2026-11-12"),  # actual 10:48 Taipei Nov13: Nov13 not yet closed
+        ("2026-11-13T05:29:00Z", "2026-11-12"),  # 13:29 Taipei, still open
+        ("2026-11-13T05:30:00Z", "2026-11-13"),  # 13:30 close
+        ("2026-11-16T02:00:00Z", "2026-11-13"),  # Monday morning -> Friday
+    ],
+)
+def test_taifex_bounded_prepare_targets_latest_closed_session(now: str, expected: str) -> None:
+    _run_taifex_prepare(now, None, expected)
+
+
+def test_taifex_bounded_prepare_keeps_session_selected_at_refresh_start_across_cutoff() -> None:
+    # Started 13:29:59 Taipei (open Nov13 -> Nov12); preparation runs after 13:30.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", "2026-11-13T05:29:59Z", "2026-11-12")
+    # Without the carried selection the later wall clock selects Nov13.
+    _run_taifex_prepare("2026-11-13T05:31:00Z", None, "2026-11-13")
+
+
+def _run_taifex_prepare(now: str, selected_at: str | None, expected: str) -> None:
+    import http.server
+    import threading
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    body = script.split("<<'PREPARE_DATASET_PY'\n", 1)[1].split("\nPREPARE_DATASET_PY", 1)[0]
+    posted: list[dict] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            posted.append({"path": self.path, **json.loads(self.rfile.read(int(self.headers["Content-Length"])))})
+            raw = b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        do_PUT = do_POST
+
+        def log_message(self, *args) -> None:
+            pass
+
+    # Isolated test clock inside the child process only; production has no override.
+    clock = (
+        "import datetime as _dt\n_REAL = _dt.datetime\n"
+        f"_FIX = _dt.datetime.fromisoformat({now!r}.replace('Z', '+00:00'))\n"
+        "class _D(_dt.datetime):\n    @classmethod\n    def now(cls, tz=None):\n"
+        "        return _FIX.astimezone(tz) if tz else _FIX.replace(tzinfo=None)\n"
+        "_dt.datetime = _D\n"
+    )
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import sys\n{clock}exec(compile({body!r}, 'prepare', 'exec'))\n",
+             "tw-taifex-futures-options-chip", "taifex_ssf_contracts", "2330.TW,0050.TW,2317.TW"],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT), "SOURCE_INGEST_API_URL": f"http://127.0.0.1:{server.server_port}",
+                 "SOURCE_INGEST_CONTROLLER_TOKEN": "t",
+                 **({"SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT": selected_at} if selected_at else {})},
+            capture_output=True, text=True, check=False,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    schedule = next(item for item in posted if item["path"].endswith("/active-universe/schedule"))
+    assert schedule["run_date"] == expected
+
+
+def _latest_closed_taipei_session(now: datetime) -> str:
+    from services.source_ingestion.controller_worker import _latest_eligible_session
+
+    return _latest_eligible_session("tw-taifex-futures-options-chip", now).isoformat()
+
+
+def _run_embedded_readback_verifier(tmp_path: Path, *, started: str, record_meta: dict, symbols: str = "2330.TW") -> subprocess.CompletedProcess:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index("<<'PY'\nimport json\nimport math\n", script.index("verify_bounded_source_refresh_readback() {"))
+    body = script[start + len("<<'PY'\n"):].split("\nPY\n", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script)
+    run = "run-ssf-1"
+    receipt_at = (datetime.fromisoformat(started.replace("Z", "+00:00")) + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    receipts = {"receipts": [{
+        "connector_id": "tw-taifex-futures-options-chip", "status": "completed", "typed_failure": None,
+        "source_timestamp": "2026-11-12T07:15:00Z", "source_timestamp_status": "valid",
+        "created_at": receipt_at, "finished_at": receipt_at, "ingest_run_id": run,
+    }]}
+    readback = {"connectors": [{
+        "connector_id": "tw-taifex-futures-options-chip",
+        "freshness": {"latest_receipt": {"ingest_run_id": run}, "source_timestamp_status": "valid"},
+        "latest_source_record": {
+            "source_id": "tw-taifex:taifex_ssf_contracts:CDF:202611:abc", "status": "normalized",
+            "metadata": {"dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1", **record_meta},
+            "provenance": {"source_ingest_run_id": run, "dataset": "taifex_ssf_contracts", "schema_hash": "tw_taifex_ssf_contracts.v1"},
+        },
+    }]}
+    for name, payload in (("receipts", receipts), ("readback", readback), ("projection", {})):
+        (tmp_path / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return subprocess.run(
+        ["python3", "-I", "-c", f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nexec(compile({body!r}, 'verify', 'exec'))",
+         "tw-taifex-futures-options-chip", started, str(tmp_path / "receipts.json"), str(tmp_path / "readback.json"),
+         str(tmp_path / "projection.json"), symbols, "taifex_ssf_contracts"],
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+        capture_output=True, text=True, check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "started,meta,message",
+    [
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-11", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+        ("2026-11-13T02:48:00Z", {"date": "2026-11-12", "underlying_code": "9999", "contract": "ZZF"}, "outside active scope"),
+        ("2026-11-13T05:30:00Z", {"date": "2026-11-13", "underlying_code": "2330"}, None),
+        # Started before the 13:30 close, receipt finished after it: still the Nov12 session.
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-12", "underlying_code": "2330"}, None),
+        ("2026-11-13T05:29:59Z", {"date": "2026-11-13", "underlying_code": "2330"}, "requested session"),
+    ],
+)
+def test_taifex_terminal_verifier_binds_requested_session_and_scope(tmp_path: Path, started: str, meta: dict, message: str | None) -> None:
+    proc = _run_embedded_readback_verifier(tmp_path, started=started, record_meta=meta)
+    if message is None:
+        assert proc.returncode == 0, proc.stderr
+    else:
+        assert proc.returncode != 0 and message in proc.stderr, proc.stderr
+
+
+def test_chip_terminal_verifier_binds_dataset_schema_venue_run_and_source_session(tmp_path):
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = script_text.split('verify_bounded_source_refresh_readback() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script_text)
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        dataset = profile['dataset']
+        is_fund = profile['base'] == 'tw-finmind-fundamentals'
+        prefix = 'finmind' if is_fund else ('tw-taifex' if profile['base'] == 'tw-taifex-futures-options-chip' else 'tw-official')
+        default_date = (
+            '2026-10-31' if dataset == 'tw_monthly_revenue'
+            else '2026-09-30' if dataset == 'tw_financial_statement'
+            else '2026-11-13'
+        )
+        stale_date = (
+            '2026-09-30' if dataset == 'tw_monthly_revenue'
+            else '2026-03-31' if dataset == 'tw_financial_statement'
+            else '2026-11-12' if dataset == 'tw_valuation_bwibbu'
+            else '2026-11-11'
+        )
+        record = {'source_id': f'{prefix}:{dataset}:recorded',
+                  'metadata': {'dataset': dataset, 'schema_hash': profile['schema_hash'],
+                               'date': default_date, 'venue': profile.get('venues', ['TAIFEX'])[0],
+                               'provider_listed_count': 1000},
+                  'provenance': {'dataset': dataset, 'source_ingest_run_id': 'chip-run'}}
+        receipts = {'receipts': [{'connector_id': cid, 'status': 'completed', 'typed_failure': None,
+                                 'source_timestamp': '2026-11-13T10:00:00Z', 'source_timestamp_status': 'valid',
+                                 'finished_at': '2026-11-13T11:01:00Z', 'ingest_run_id': 'chip-run',
+                                 'normalized_count': 1000}]}
+        (tmp_path / 'receipts.json').write_text(json.dumps(receipts))
+        (tmp_path / 'projection.json').write_text('{}')
+        cases = [({}, {}, True), ({'dataset': 'other'}, {}, False), ({'schema_hash': 'wrong'}, {}, False),
+                 ({'date': ''}, {}, False), ({'date': stale_date}, {}, False),
+                 ({}, {'source_ingest_run_id': 'old-run'}, False)]
+        if is_fund:
+            cases.append(({'as_of_date': '2026-11-13'}, {}, True))
+            cases.append(({'as_of_date': '2026-11-12'}, {}, False))
+            if dataset in ('tw_monthly_revenue', 'tw_financial_statement'):
+                # Session date in period_end field must fail same-kind comparison.
+                cases.append(({'date': '2026-11-13'}, {}, False))
+        else:
+            # Scheduled session (2026-11-12) is published; unclosed future day (2026-11-14) fails.
+            cases.append(({'date': '2026-11-12'}, {}, True))
+            cases.append(({'date': '2026-11-14'}, {}, False))
+        if 'venues' in profile:
+            cases.append(({'venue': 'TAIFEX'}, {}, False))
+        for meta_patch, provenance_patch, accepted in cases:
+            latest = {**record, 'metadata': {**record['metadata'], **meta_patch},
+                      'provenance': {**record['provenance'], **provenance_patch}}
+            # A record's dataset must agree across provenance and metadata.
+            if 'dataset' in meta_patch:
+                latest['provenance']['dataset'] = meta_patch['dataset']
+            readback = {'connectors': [{'connector_id': cid, 'freshness': {
+                'latest_receipt': {'ingest_run_id': 'chip-run'}, 'source_timestamp_status': 'valid', 'status': 'fresh'},
+                'latest_source_record': latest}]}
+            (tmp_path / 'readback.json').write_text(json.dumps(readback))
+            proc = subprocess.run([sys.executable, '-c', body, cid, '2026-11-13T11:00:00Z',
+                                   str(tmp_path / 'receipts.json'), str(tmp_path / 'readback.json'),
+                                   str(tmp_path / 'projection.json'), '', dataset],
+                                  cwd=ROOT, env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+                                  text=True, capture_output=True, timeout=20)
+            assert (proc.returncode == 0) is accepted, (cid, meta_patch, proc.stderr)
+
+
+def test_finmind_fundamentals_preflight_uses_1800_taipei_rule_and_same_kind_dates():
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+
+    for cid, expected_period, stale_period in (
+        ("tw-finmind-monthly-revenue", "2026-10-31", "2026-09-30"),
+        ("tw-finmind-quarterly-statements", "2026-09-30", "2026-06-30"),
+        ("tw-finmind-valuation", "2026-11-17", "2026-11-16"),
+    ):
+        prof = TW_CHIP_REFRESH_PROFILES[cid]
+        ds = prof["dataset"]
+        # 1. Before 18:00 Taipei on 2026-11-17 (09:59:59Z -> 17:59:59 Taipei), expected session is 2026-11-16.
+        before_1800 = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T09:59:59+00:00"),
+            None,
+            profile=(cid, ds),
+            readback={"connectors": []},
+        )
+        assert (before_1800["status"], before_1800["session_date"]) == ("proceed", "2026-11-16")
+
+        # 2. At/after 18:00 Taipei on 2026-11-17 (19:26:06Z -> 2026-11-18 03:26:06 Taipei),
+        # expected session is 2026-11-17; hosted record with finmind: prefix and period-end date noops.
+        fresh_readback = {
+            "connectors": [
+                {
+                    "connector_id": cid,
+                    "freshness": {
+                        "last_success_at": "2026-11-17T19:26:06Z",
+                        "latest_receipt": {"ingest_run_id": "ingest-6950e836ee63", "finished_at": "2026-11-17T19:26:06Z"},
+                    },
+                    "latest_source_record": {
+                        "source_id": f"finmind:{ds}:TWSE:2330:3cc25dbbec5d8679",
+                        "status": "normalized",
+                        "metadata": {
+                            "dataset": ds,
+                            "schema_hash": prof["schema_hash"],
+                            "venue": "TWSE",
+                            "date": expected_period,
+                            "as_of_date": "2026-11-17",
+                        },
+                        "provenance": {
+                            "dataset": ds,
+                            "schema_hash": prof["schema_hash"],
+                            "source_ingest_run_id": "ingest-6950e836ee63",
+                        },
+                    },
+                }
+            ]
+        }
+        fresh = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T19:30:00+00:00"),
+            None,
+            profile=(cid, ds),
+            readback=fresh_readback,
+        )
+        assert (fresh["status"], fresh["reason"], fresh["session_date"]) == (
+            "noop",
+            "already_fresh",
+            "2026-11-17",
+        ), (cid, fresh)
+
+        # 3. Stale period-end or stale as_of_date proceeds with closed_session_missing.
+        stale_readback = json.loads(json.dumps(fresh_readback))
+        stale_readback["connectors"][0]["latest_source_record"]["metadata"]["date"] = stale_period
+        stale = _run_preflight_script(
+            False,
+            datetime.fromisoformat("2026-11-17T19:30:00+00:00"),
+            None,
+            profile=(cid, ds),
+            readback=stale_readback,
+        )
+        assert (stale["status"], stale["reason"], stale["session_date"]) == (
+            "proceed",
+            "closed_session_missing",
+            "2026-11-17",
+        ), (cid, stale)
+
+
+def test_chip_preflight_does_not_require_equity_price_snapshots():
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        result = _run_preflight_script(False, datetime(2026, 11, 13, 11, tzinfo=timezone.utc), None,
+                                       profile=(cid, profile['dataset']), readback={'connectors': []})
+        assert result['status'] == 'proceed', (cid, result)
+        assert result['reason'] != 'snapshot_missing'
+
+
+def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(tmp_path: Path):
+    """Acceptance 1, 2, 3, 4: hosted TWSE margin empty-date record and FinMind broker SourceRecord.to_dict() without
+    top-level provenance both pass terminal readback and fail when date+event_time or symbol coverage are missing,
+    including from a working directory whose scripts/deploy_nonprod_vm.sh lacks the shared-helper markers or is absent.
+    """
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    body = script_text.split("verify_bounded_source_refresh_readback() {", 1)[1].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    shared_helpers = _shared_tw_refresh_helpers_py(script_text)
+
+    # 1. Hosted TWSE margin shape (2026-11-18T23:53:58Z, ingest-2f56b4efe47f)
+    twse_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:53:58Z",
+                "source_timestamp_status": "valid",
+                "started_at": "2026-11-18T23:53:58Z",
+                "finished_at": "2026-11-18T23:53:58Z",
+                "created_at": "2026-11-18T23:57:32Z",
+                "ingest_run_id": "ingest-2f56b4efe47f",
+                "normalized_count": 1310,
+            }
+        ]
+    }
+    twse_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-official-twse-margin-balances",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:53:58Z",
+                    "source_timestamp": "2026-11-18T23:53:58Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {
+                        "ingest_run_id": "ingest-2f56b4efe47f",
+                        "source_timestamp": "2026-11-18T23:53:58Z",
+                        "source_timestamp_status": "valid",
+                        "finished_at": "2026-11-18T23:53:58Z",
+                    },
+                },
+                "latest_source_record": {
+                    "source_id": "tw-official:tw_margin_short_balance:TWSE:2330:868572793d1b6354",
+                    "connector_id": "tw-official-twse-margin-balances",
+                    "status": "normalized",
+                    "metadata": {
+                        "date": "",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "dataset": "tw_margin_short_balance",
+                        "event_time": "",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "normalized_row": {
+                            "date": "",
+                            "venue": "TWSE",
+                            "symbol": "2330",
+                            "dataset": "tw_margin_short_balance",
+                            "available_time": "",
+                        },
+                        "provider_listed_count": 1310,
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                    "provenance": {
+                        "dataset": "tw_margin_short_balance",
+                        "venue": "TWSE",
+                        "symbol": "2330",
+                        "event_time": "",
+                        "available_time": "2026-11-18T23:53:58Z",
+                        "schema_hash": "tw_margin_short_balance.v1",
+                        "source_ingest_run_id": "ingest-2f56b4efe47f",
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "twse_receipts.json").write_text(json.dumps(twse_receipts), encoding="utf-8")
+    (tmp_path / "twse_readback.json").write_text(json.dumps(twse_readback), encoding="utf-8")
+    (tmp_path / "projection.json").write_text("{}", encoding="utf-8")
+
+    preflight_res = _run_preflight_script(
+        False,
+        datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+        None,
+        profile=("tw-official-twse-margin-balances", "tw_margin_short_balance"),
+        readback=twse_readback,
+    )
+    assert (preflight_res["status"], preflight_res["reason"], preflight_res["session_date"]) == (
+        "noop",
+        "already_fresh",
+        "2026-11-18",
+    )
+
+    proc_twse = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_twse.returncode == 0, proc_twse.stderr
+
+    # Missing both date and event_time fails naming the missing fields.
+    missing_twse = json.loads(json.dumps(twse_readback))
+    missing_twse["connectors"][0]["latest_source_record"]["metadata"]["available_time"] = ""
+    missing_twse["connectors"][0]["latest_source_record"]["provenance"]["available_time"] = ""
+    missing_twse["connectors"][0]["freshness"]["source_timestamp"] = ""
+    missing_twse["connectors"][0]["freshness"]["latest_receipt"]["source_timestamp"] = ""
+    (tmp_path / "twse_missing.json").write_text(json.dumps(missing_twse), encoding="utf-8")
+    proc_missing = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-official-twse-margin-balances",
+            "2026-11-18T23:53:00Z",
+            str(tmp_path / "twse_receipts.json"),
+            str(tmp_path / "twse_missing.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_margin_short_balance",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers},
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_missing.returncode != 0
+    assert "metadata.date" in proc_missing.stderr and "provenance.event_time" in proc_missing.stderr
+
+    # 2. Hosted FinMind broker SourceRecord.to_dict() shape (2026-11-18T23:41:43Z, ingest-78b81ff0f04d, no provenance key)
+    fm_receipts = {
+        "receipts": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "status": "completed",
+                "typed_failure": None,
+                "source_timestamp": "2026-11-18T23:41:43Z",
+                "source_timestamp_status": "valid",
+                "finished_at": "2026-11-18T23:41:43Z",
+                "ingest_run_id": "ingest-78b81ff0f04d",
+            }
+        ]
+    }
+    fm_readback = {
+        "connectors": [
+            {
+                "connector_id": "tw-finmind-broker-daily-report",
+                "freshness": {
+                    "last_success_at": "2026-11-18T23:41:43Z",
+                    "source_timestamp": "2026-11-18T23:41:43Z",
+                    "source_timestamp_status": "valid",
+                    "status": "fresh",
+                    "latest_receipt": {"ingest_run_id": "ingest-78b81ff0f04d"},
+                },
+                "latest_source_record": {
+                    "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                    "connector_id": "tw-finmind-broker-daily-report",
+                    "status": "normalized",
+                    "metadata": {
+                        "dataset": "tw_broker_top",
+                        "trade_date": "2026-11-18",
+                        "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    },
+                    "provenance": {
+                        "dataset": "tw_broker_top",
+                        "trade_date": "2026-11-18",
+                        "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    },
+                },
+            }
+        ]
+    }
+    fm_records = {
+        "source_records": [
+            {
+                "source_id": "finmind-broker-top:0050:2026-11-18:sell:f2fb94ce10285c6c",
+                "connector_id": "tw-finmind-broker-daily-report",
+                "source_type": "market",
+                "title": "FinMind broker top sell 0050 2026-11-18 #3 群益",
+                "content_ref": "finmind://broker-top/0050/2026-11-18/sell/3",
+                "status": "normalized",
+                "trace_id": "active-universe-tw-finmind-broker-daily-report-2026-11-18",
+                "created_at": "2026-11-18T23:41:43Z",
+                "metadata": {
+                    "dataset": "tw_broker_top",
+                    "symbol": "0050",
+                    "trade_date": "2026-11-18",
+                    "source_ingest_run_id": "ingest-78b81ff0f04d",
+                    "refresh_coverage": {
+                        "status": "complete",
+                        "trade_date": "2026-11-18",
+                        "covered_symbols": ["2330", "2317", "0050"],
+                        "missing_symbols": [],
+                        "requested_symbols": ["2330", "2317", "0050"],
+                    },
+                },
+            }
+        ]
+    }
+    (tmp_path / "fm_receipts.json").write_text(json.dumps(fm_receipts), encoding="utf-8")
+    (tmp_path / "fm_readback.json").write_text(json.dumps(fm_readback), encoding="utf-8")
+    (tmp_path / "fm_records.json").write_text(json.dumps(fm_records), encoding="utf-8")
+
+    proc_fm = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            body,
+            "tw-finmind-broker-daily-report",
+            "2026-11-18T23:38:00Z",
+            str(tmp_path / "fm_receipts.json"),
+            str(tmp_path / "fm_readback.json"),
+            str(tmp_path / "projection.json"),
+            "2330.TW,2317.TWSE,0050.TWSE",
+            "tw_broker_top",
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "fm_records.json"),
+            "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers,
+        },
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert proc_fm.returncode == 0, proc_fm.stderr
+
+    # 3. Hosted working directory whose scripts/deploy_nonprod_vm.sh lacks markers (08d748790 copy) or is absent.
+    workdir = tmp_path / "hosted_workdir"
+    (workdir / "services" / "execution").mkdir(parents=True)
+    for item in (ROOT / "services").iterdir():
+        if item.name != "execution":
+            (workdir / "services" / item.name).symlink_to(item)
+    for item in (ROOT / "services" / "execution").iterdir():
+        if item.name == "market_snapshot_admission.py":
+            shutil.copyfile(item, workdir / "services" / "execution" / item.name)
+        else:
+            (workdir / "services" / "execution" / item.name).symlink_to(item)
+    (workdir / "scripts").mkdir(parents=True)
+    old_copy_proc = subprocess.run(
+        ["git", "show", "08d748790551534411a2e168b2b3fa8bb579a391:scripts/deploy_nonprod_vm.sh"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    markerless_copy = old_copy_proc.stdout if old_copy_proc.returncode == 0 and old_copy_proc.stdout else "#!/usr/bin/env bash\n"
+    assert "BEGIN_SHARED_TW_REFRESH_HELPERS" not in markerless_copy
+
+    for mode in ("lacks_markers", "absent"):
+        hosted_script = workdir / "scripts" / "deploy_nonprod_vm.sh"
+        if mode == "lacks_markers":
+            hosted_script.write_text(markerless_copy, encoding="utf-8")
+        else:
+            hosted_script.unlink(missing_ok=True)
+        prev_cwd = Path.cwd()
+        try:
+            os.chdir(workdir)
+            twse_pf = _run_preflight_script(
+                False,
+                datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+                None,
+                profile=("tw-official-twse-margin-balances", "tw_margin_short_balance"),
+                readback=twse_readback,
+            )
+            assert (twse_pf["status"], twse_pf["reason"], twse_pf["session_date"]) == ("noop", "already_fresh", "2026-11-18")
+            fm_pf = _run_preflight_script(
+                False,
+                datetime.fromisoformat("2026-11-19T00:40:00+00:00"),
+                None,
+                profile=("tw-finmind-broker-daily-report", "tw_broker_top"),
+                readback=fm_readback,
+                source_records=fm_records["source_records"],
+            )
+            assert (fm_pf["status"], fm_pf["reason"], fm_pf["session_date"]) == ("noop", "already_fresh", "2026-11-18")
+        finally:
+            os.chdir(prev_cwd)
+        for cid, ds, started, rec_path, rb_path, extra_env in (
+            (
+                "tw-official-twse-margin-balances",
+                "tw_margin_short_balance",
+                "2026-11-18T23:53:00Z",
+                tmp_path / "twse_receipts.json",
+                tmp_path / "twse_readback.json",
+                {},
+            ),
+            (
+                "tw-finmind-broker-daily-report",
+                "tw_broker_top",
+                "2026-11-18T23:38:00Z",
+                tmp_path / "fm_receipts.json",
+                tmp_path / "fm_readback.json",
+                {"FINMIND_SOURCE_RECORDS_PATH": str(tmp_path / "fm_records.json")},
+            ),
+        ):
+            proc_hosted = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    f"import sys\nsys.path.insert(0, {str(workdir)!r})\nexec(compile({body!r}, 'verify', 'exec'))\n",
+                    cid,
+                    started,
+                    str(rec_path),
+                    str(rb_path),
+                    str(tmp_path / "projection.json"),
+                    "2330.TW,2317.TWSE,0050.TWSE",
+                    ds,
+                ],
+                cwd=workdir,
+                env={**os.environ, "TW_REFRESH_SHARED_HELPERS_PY": shared_helpers, **extra_env},
+                text=True,
+                capture_output=True,
+                timeout=20,
+            )
+            assert proc_hosted.returncode == 0, (mode, cid, proc_hosted.stderr)
+

@@ -1,0 +1,568 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Agora committee and memory owner views",
+    "version": "1.14",
+    "description": "AGORA-COMMITTEE-MEMORY-RESTORE-20261112. Thin owner forwarding; paper ceiling; no execution authority. Owner absence fails closed."
+  },
+  "paths": {
+    "/bff/agora/committee/sessions": {
+      "get": {
+        "tags": [
+          "agora-committee"
+        ],
+        "summary": "Sessions",
+        "operationId": "sessions_bff_agora_committee_sessions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "consultation",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+      }
+    },
+    "/bff/agora/committee/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "agora-committee"
+        ],
+        "summary": "Session",
+        "operationId": "session_bff_agora_committee_sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "consultation",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+      }
+    },
+    "/bff/agora/committee/sessions/{session_id}/memos": {
+      "get": {
+        "tags": [
+          "agora-committee"
+        ],
+        "summary": "Memos",
+        "operationId": "memos_bff_agora_committee_sessions__session_id__memos_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "consultation",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+      }
+    },
+    "/bff/agora/committee/sessions/{session_id}/memos/{memo_id}/publish": {
+      "post": {
+        "tags": [
+          "agora-committee"
+        ],
+        "summary": "Publish",
+        "operationId": "publish_bff_agora_committee_sessions__session_id__memos__memo_id__publish_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "memo_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memo Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "consultation",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+      }
+    },
+    "/bff/agora/memory": {
+      "get": {
+        "tags": [
+          "agora-memory-review"
+        ],
+        "summary": "Review",
+        "operationId": "review_bff_agora_memory_get",
+        "parameters": [
+          {
+            "name": "persona_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Persona Id"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "persona",
+                "institutional",
+                "both"
+              ],
+              "type": "string",
+              "default": "both",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "memory",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope."
+      }
+    },
+    "/bff/agora/memory/{memory_id}/actions/quarantine": {
+      "post": {
+        "tags": [
+          "agora-memory-review"
+        ],
+        "summary": "Quarantine",
+        "operationId": "quarantine_bff_agora_memory__memory_id__actions_quarantine_post",
+        "parameters": [
+          {
+            "name": "memory_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Memory Id"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuarantineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "403": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "404": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "409": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          },
+          "503": {
+            "description": "Admission denied or owner unavailable; no fallback records."
+          }
+        },
+        "x-business-owner": "memory",
+        "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Only paper lesson candidates support quarantine; persona/institutional entry quarantine returns unavailable without a write."
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "QuarantineRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Reason"
+          },
+          "audit_receipt_id": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Audit Receipt Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "lesson_candidate",
+              "persona",
+              "institutional"
+            ],
+            "title": "Kind",
+            "default": "lesson_candidate"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reason",
+          "audit_receipt_id"
+        ],
+        "title": "QuarantineRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "OwnerView": {
+        "type": "object",
+        "required": [
+          "status",
+          "reason",
+          "owner",
+          "data",
+          "fallback_used",
+          "environment_ceiling",
+          "execution_authority"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "enum": [
+              "consultation",
+              "memory"
+            ]
+          },
+          "data": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            ]
+          },
+          "fallback_used": {
+            "const": false
+          },
+          "environment_ceiling": {
+            "const": "paper"
+          },
+          "execution_authority": {
+            "const": "none"
+          }
+        },
+        "description": "data contains the owner record/list. Memory review data contains entries (typed hits), lesson_candidates and owner authz. No locally generated records."
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

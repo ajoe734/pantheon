@@ -1,5 +1,5 @@
 name: Pantheon Nonprod Deploy
-run-name: ${{ inputs.environment == 'dev' && (inputs.compensation_drill && format('Dev compensation drill {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha)) || github.workflow }}
+run-name: ${{ inputs.environment == 'dev' && (inputs.restore_accepted_baseline_run_id != '' && format('Dev restore accepted baseline run {0} attempt {1}', inputs.restore_accepted_baseline_run_id, inputs.restore_accepted_baseline_run_attempt || '1') || inputs.compensation_drill && format('Dev compensation drill {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha)) || github.workflow }}
 
 on:
   workflow_dispatch:
@@ -136,6 +136,16 @@ on:
         required: false
         default: ""
         type: string
+      restore_accepted_baseline_run_id:
+        description: "Dev root only: prior workflow run id whose captured baseline manifest should be restored with the current controller when compensation left hosted on a rejected candidate"
+        required: false
+        default: ""
+        type: string
+      restore_accepted_baseline_run_attempt:
+        description: "Dev root only: prior workflow run attempt that uploaded the captured baseline manifest"
+        required: false
+        default: "1"
+        type: string
 permissions:
   contents: read
   id-token: write
@@ -147,12 +157,12 @@ concurrency:
 jobs:
   deploy-dev:
     name: Deploy dev under shared environment lease
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.isolated_provider_qualification && !inputs.hosted_all12_chain }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.isolated_provider_qualification && !inputs.hosted_all12_chain && inputs.restore_accepted_baseline_run_id == '' }}
     runs-on: ubuntu-latest
     # A root deploy rebuilds the complete dev image set on one VM.  The direct
     # SSH deadline below is two hours; the job budget must also leave room for
     # lease acquisition, paper baseline, smoke, and a bounded rollback.
-    timeout-minutes: 240
+    timeout-minutes: 360
     environment: dev
     outputs:
       backend_sha: ${{ steps.target.outputs.sha }}
@@ -164,6 +174,7 @@ jobs:
       release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
       compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
       admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
+      compatibility_manifest_b64: ${{ steps.release_admission.outputs.compatibility_manifest_b64 }}
       artifact_baseline_manifest_sha256: ${{ steps.artifact_baseline.outputs.manifest_sha256 }}
       artifact_baseline_id: ${{ steps.artifact_baseline_upload.outputs.artifact-id }}
       artifact_baseline_digest: ${{ steps.artifact_baseline_upload.outputs.artifact-digest }}
@@ -187,6 +198,12 @@ jobs:
       DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
+      # Dev functional checks are advisory (record result, never roll back)
+      # unless an operator sets the repository variable
+      # DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS to "true". This is a variable and
+      # not a dispatch input because GitHub rejects a workflow with more than
+      # 25 workflow_dispatch inputs and this workflow already has 25.
+      FUNCTIONAL_CHECKS_STRICT: ${{ vars.DEV_DEPLOY_STRICT_FUNCTIONAL_CHECKS == 'true' && 'true' || 'false' }}
       COMPENSATION_DRILL: ${{ inputs.compensation_drill || false }}
       # One applicability decision for the run-scoped paper case: only an
       # explicit proof/probe/bootstrap request on auto/root creates it, so an
@@ -201,7 +218,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 3fd9536ca9f5e0cfb275429a05fefa36bc7ec870
+          ref: 081075781d28a6563c731909667b98b7b5c153f9
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -219,7 +236,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: dev
+          ref: ${{ env.TARGET_REF }}
           path: .agora-gate-controller
           fetch-depth: 0
           persist-credentials: false
@@ -238,6 +255,7 @@ jobs:
         working-directory: .target
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
+          GH_TOKEN: ${{ github.token }}
           RUN_EVOLUTION_DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe || false }}
           RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
           DRILL_ISOLATED: ${{ inputs.isolated_provider_qualification }}
@@ -266,8 +284,23 @@ jobs:
           fi
           trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
-          if [[ "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
-            echo "Dev release must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF} workflow_sha=${GITHUB_SHA}" >&2
+          # The workflow definition always comes from the dev tip (GITHUB_REF/GITHUB_SHA);
+          # the payload may be an older commit on dev that has a green dev push Branch CI
+          # run.  Deploy scripts under .target/ come from that payload, the lease controller
+          # is the pinned checkout above, and this workflow file is the dev tip's.
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "Dev release must be dispatched from refs/heads/dev; got workflow_ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${sha}" "${trusted_ref}"; then
+            echo "Dev release payload ${sha} is not on Pantheon dev (tip ${trusted_ref})" >&2
+            exit 1
+          fi
+          ci_conclusion="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/branch-ci.yml/runs" \
+            -f branch=dev -f event=push -f head_sha="${sha}" -f per_page=100 \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"${sha}"'" and .head_branch == "dev" and .event == "push")] | max_by(.id) | if . == null then "none" else "\(.status):\(.conclusion)" end')"
+          if [[ "${ci_conclusion}" != "completed:success" ]]; then
+            echo "Dev release payload ${sha} has no successful dev push Branch CI run (latest=${ci_conclusion})" >&2
             exit 1
           fi
           case "${TARGET_COMPONENT}" in
@@ -328,6 +361,8 @@ jobs:
         id: frontend
         working-directory: .agora-frontend
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        env:
+          GH_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
         run: |
           requested="${FRONTEND_SHA,,}"
           [[ "${requested}" =~ ^[0-9a-f]{40}$ ]] || {
@@ -348,14 +383,22 @@ jobs:
             exit 1
           }
           ref_tip="$(git rev-parse "refs/remotes/origin/${FRONTEND_REF}")"
-          [[ "${ref_tip}" == "${requested}" ]] || {
-            echo "execute-plans frontend ref ${FRONTEND_REF} moved: tip=${ref_tip} requested=${requested}" >&2
-            exit 1
-          }
+          if [[ "${FRONTEND_REF}" != "dev" ]]; then
+            [[ "${ref_tip}" == "${requested}" ]] || {
+              echo "execute-plans frontend ref ${FRONTEND_REF} moved: tip=${ref_tip} requested=${requested}" >&2
+              exit 1
+            }
+          fi
           if [[ "${FRONTEND_REF}" == "dev" ]]; then
-            current="$(git rev-parse refs/remotes/origin/dev)"
-            [[ "${requested}" == "${current}" ]] || {
-              echo "current execute-plans dev moved: current=${current} requested=${requested}" >&2
+            git merge-base --is-ancestor "${requested}" "${ref_tip}" || {
+              echo "execute-plans frontend commit ${requested} is not on dev (tip ${ref_tip})" >&2
+              exit 1
+            }
+            fe_ci="$(gh api -X GET "repos/ajoe734/execute-plans/actions/workflows/branch-ci.yml/runs" \
+              -f branch=dev -f event=push -f head_sha="${requested}" -f per_page=100 \
+              --jq '[.workflow_runs[] | select(.head_sha == "'"${requested}"'" and .head_branch == "dev" and .event == "push")] | max_by(.id) | if . == null then "none" else "\(.status):\(.conclusion)" end')"
+            [[ "${fe_ci}" == "completed:success" ]] || {
+              echo "execute-plans frontend commit ${requested} has no successful dev push Branch CI run (latest=${fe_ci})" >&2
               exit 1
             }
           fi
@@ -396,6 +439,7 @@ jobs:
             --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
             --evidence-out "${ledger}"
           python3 - "${ledger}" "${evidence_dir}" >> "${GITHUB_OUTPUT}" <<'PY'
+          import base64
           import json
           import pathlib
           import sys
@@ -410,6 +454,10 @@ jobs:
               f"{candidate['compatibility_manifest']['sha256']}"
           )
           print(f"evidence_dir={sys.argv[2]}")
+          # The exact manifest bytes (digest-bound) travel to the coordinator,
+          # which reads compatibility from them and never from a second rule.
+          manifest_bytes = (pathlib.Path(sys.argv[2]) / "release-compatibility-manifest.json").read_bytes()
+          print("compatibility_manifest_b64=" + base64.b64encode(manifest_bytes).decode("ascii"))
           PY
 
       - name: Capture exact hosted FE and BFF rollback baseline
@@ -829,6 +877,7 @@ jobs:
           GIT_ASKPASS: ""
           SSH_ASKPASS: ""
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_LEASE_MIN_REMAINING_QUOTA: ${{ vars.DEV_LEASE_MIN_REMAINING_QUOTA || '1500' }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -837,13 +886,17 @@ jobs:
           unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
+
+          # This is an observed engineering budget, not reserved capacity.
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" wait-for-quota
 
           lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
           chmod 0700 "${lease_dir}"
@@ -864,7 +917,7 @@ jobs:
             --mode deployment \
             --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
             --ttl-seconds 300 \
-            --wait-seconds 1800 \
+            --wait-seconds 3900 \
             --poll-seconds 5 \
             --state-file "${state_file}" \
             --expected-backend-sha "${TARGET_SHA}" \
@@ -924,7 +977,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec {token_fd}<<<"${lease_token}"
@@ -1056,6 +1109,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
@@ -1242,7 +1297,7 @@ jobs:
         run: |
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           exec "${controller}/scripts/run_with_dev_environment_lease.sh" \
@@ -1352,6 +1407,8 @@ jobs:
           # session, which is the prior (refresh-dependent) behavior.
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -1363,10 +1420,23 @@ jobs:
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
+          DEV_EVOLUTION_AUTO_CONSUMER_ENABLED: ${{ vars.DEV_EVOLUTION_AUTO_CONSUMER_ENABLED || 'false' }}
+          DEV_L2_EXTRACTION_ENABLED: ${{ vars.DEV_L2_EXTRACTION_ENABLED || 'false' }}
+          DEV_L2_EXTRACTION_DAILY_CALL_CAP: ${{ vars.DEV_L2_EXTRACTION_DAILY_CALL_CAP || '400' }}
+          DEV_MEMORY_LLM_BRIDGE_ENABLED: ${{ vars.DEV_MEMORY_LLM_BRIDGE_ENABLED || 'false' }}
+          DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET: ${{ vars.DEV_MEMORY_LLM_BRIDGE_DAILY_BUDGET || '500' }}
+          DEV_PERSONA_EVALUATOR_PAPER_POOL_ID: ${{ vars.DEV_PERSONA_EVALUATOR_PAPER_POOL_ID || 'pool-paper-default' }}
+          DEV_PERSONA_RANKING_TOKEN_FILE: ${{ vars.DEV_PERSONA_RANKING_TOKEN_FILE || '/run/pantheon-principals/PERSONA_RANKING_TOKEN' }}
+          DEV_PERSONA_ALLOCATION_TOKEN_FILE: ${{ vars.DEV_PERSONA_ALLOCATION_TOKEN_FILE || '/run/pantheon-principals/PERSONA_ALLOCATION_TOKEN' }}
+          DEV_SHADOW_REPLAY_AGENT_ID: ${{ vars.DEV_SHADOW_REPLAY_AGENT_ID || '' }}
+          DEV_SHADOW_REPLAY_POLICY_URL: ${{ vars.DEV_SHADOW_REPLAY_POLICY_URL || '' }}
           # The recovery switch is deliberately one boolean with a fixed
           # connector and exact reviewed hosts. Callers cannot inject profiles,
           # wildcard domains, credentials, query strings, or arbitrary egress.
           PANTHEON_DEV_COMPOSE_PROFILES: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'root,source-ingest-scheduler' || 'root' }}
+          # Existing opt-in flag; vars.* is not shell env, so map it explicitly.
+          # Only the literal 'true' selects collector_steady_pull; unset/other keeps reconcile_only.
+          SOURCE_INGEST_STEADY_COLLECTOR_PULL: ${{ vars.SOURCE_INGEST_STEADY_COLLECTOR_PULL == 'true' && 'true' || 'false' }}
           PANTHEON_EXTERNAL_EGRESS: ${{ (env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' || vars.PANTHEON_COLLECTOR_HOST != '') && 'allowlist' || 'deny' }}
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${{ env.BOUNDED_SOURCE_REFRESH_ENABLED == 'true' && 'openapi.twse.com.tw,www.tpex.org.tw' || vars.PANTHEON_COLLECTOR_HOST }}
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
@@ -1376,6 +1446,7 @@ jobs:
           SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: "1"
           SOURCE_INGEST_MAX_RECORDS: "100"
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
           PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE: ${{ vars.PANTHEON_DEV_DOCKER_BUILDER_KEEP_STORAGE || '20GB' }}
           PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB: ${{ vars.PANTHEON_DEV_DEPLOY_MIN_FREE_DISK_GB || '25' }}
           PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED: ${{ vars.PANTHEON_DEV_ARTIFACT_KEEP_ACCEPTED || '3' }}
@@ -1404,7 +1475,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -1423,6 +1494,10 @@ jobs:
           esac
           echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
           echo "PPL-ALLOC-009 dev proof enabled: ${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
+          # Keep the deploy output on the runner so the advisory in-script check
+          # results (ADVISORY_CHECK_RESULT lines) reach the advisory summary.
+          deploy_log="${RUNNER_TEMP}/deploy-script-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.log"
+          exec > >(tee -a "${deploy_log}") 2>&1
           args=(
             bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
             --environment dev
@@ -1433,6 +1508,7 @@ jobs:
             --rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
+          [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]] && args+=(--strict-functional-checks)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "${args[@]}"
 
@@ -1470,6 +1546,7 @@ jobs:
         if: ${{ env.PAPER_BOOTSTRAP_REQUESTED == 'true' && env.BOUNDED_SOURCE_REFRESH_ENABLED != 'true' && env.BOOTSTRAP_EMPTY_HOST != 'true' }}
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
           PATH: ${{ steps.runtime.outputs.safe_path }}
           BASH_ENV: ""
           ENV: ""
@@ -1511,7 +1588,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           outcome_dir="${RUNNER_TEMP}/pantheon-market-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -1521,19 +1598,40 @@ jobs:
           # preflight skips the pull when the closed session is already stored).
           # The step still fails closed; the outcome (with the refresh's own redacted
           # log) is recorded as evidence first, then the failure is re-raised.
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
           refresh_rc=0
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+          guarded_advisory "${outcome_dir}/refresh.rc" \
             bash "${deploy_script}" --refresh-only --output "${outcome_dir}/refresh.json" || refresh_rc=$?
           # A completed refresh only proves it ran; repeat the preflight to prove the session.
           preflight_rc=0
           if (( refresh_rc == 0 )); then
-            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-              "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            guarded_advisory "${outcome_dir}/preflight.rc" \
               bash "${deploy_script}" --refresh-only --preflight-only --output "${outcome_dir}/preflight.json" || preflight_rc=$?
           fi
           lease_token=""
-          python3 - "${outcome_dir}/refresh.json" "${outcome_dir}/preflight.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" "${preflight_rc}" <<'PY'
+          python3 - "${outcome_dir}/refresh.json" "${outcome_dir}/preflight.json" "${EVIDENCE_DIR:-}" "${refresh_rc}" "${preflight_rc}" "${FUNCTIONAL_CHECKS_STRICT}" "${ADVISORY_DIR}" <<'PY'
           import json
           import pathlib
           import sys
@@ -1556,6 +1654,7 @@ jobs:
 
           refresh_path, preflight_path, evidence_dir = sys.argv[1], sys.argv[2], sys.argv[3]
           refresh_rc, preflight_rc = int(sys.argv[4]), int(sys.argv[5])
+          strict, advisory_dir = sys.argv[6] == "true", sys.argv[7]
           refresh = load(refresh_path) or {}
           preflight = load(preflight_path)
           record = dict(refresh)
@@ -1588,6 +1687,19 @@ jobs:
               (ev_dir / "tw-market-refresh.json").write_text(serialized, encoding="utf-8")
           if record["log"]:
               print(record["log"])
+          if advisory_dir:
+              adv = pathlib.Path(advisory_dir)
+              adv.mkdir(parents=True, exist_ok=True)
+              (adv / "taiwan_market_refresh.json").write_text(json.dumps({
+                  "check": "taiwan_market_refresh",
+                  "status": "failed" if failure else "passed",
+                  "reason": failure or "",
+                  "mode": "strict" if strict else "advisory",
+                  "scope": "workflow_step",
+              }, sort_keys=True) + "\n", encoding="utf-8")
+          if failure and not strict:
+              print(f"::warning::advisory check failed (recorded, deploy continues): {failure}")
+              raise SystemExit(0)
           if failure:
               raise SystemExit(failure)
           print(f"Taiwan market session proven: status={record['status']} reason={record['reason']}")
@@ -1659,7 +1771,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           outcome_dir="${RUNNER_TEMP}/pantheon-taifex-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -1751,7 +1863,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           outcome_dir="${RUNNER_TEMP}/pantheon-bounded-taifex-refresh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -1855,6 +1967,7 @@ jobs:
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           EXPECTED_BFF_SHA: ${{ steps.target.outputs.sha }}
           EXPECTED_FE_SHA: ${{ steps.frontend.outputs.sha }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
           DEV_PAPER_RUN_ID: ${{ github.run_id }}
           DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
           DEV_PAPER_PHASE: paper_bootstrap
@@ -1868,7 +1981,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           # The guard binary above is the immutable pinned trust root; the
@@ -1895,22 +2008,49 @@ jobs:
           echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
           echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
           python3 -c "import datetime as dt, json, sys; doc = {'schemaVersion': 1, 'collectionStatus': 'not_started', 'bootstrapExit': None, 'collectedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'collectorExit': None, 'collectorErrorCategory': None, 'collectorStderrSummary': None}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(doc, sort_keys=True) + '\n')" "${diagnostic_dir}/collection-status.json"
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
           baseline_status=0
           # Collection happens inside this same guarded child, before the
           # guard observes the failure and quarantines the lease/heartbeat.
           # A later, separate guard invocation cannot do this: the guard's
           # own EXIT trap already stops the heartbeat for quarantine as soon
           # as this command returns non-zero.
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
+          DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
             DEV_PAPER_DIAGNOSTICS_COLLECTOR="${collector}" \
             EXPECTED_FE_SHA="${EXPECTED_FE_SHA}" \
             DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
             DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
             DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
             DEV_PAPER_PREBOOTSTRAP_WORKTREE="${DEV_PAPER_PREBOOTSTRAP_WORKTREE}" \
-            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            guarded_advisory "${diagnostic_dir}/baseline.rc" \
             "${diagnostics_script}" || baseline_status=$?
+          write_advisory_result governed_paper_baseline "${baseline_status}" ""
+          if [[ "${FUNCTIONAL_CHECKS_STRICT}" != "true" && "${baseline_status}" != "0" ]]; then
+            echo "::warning::advisory check governed_paper_baseline failed (exit ${baseline_status}); recorded, deploy continues"
+            exit 0
+          fi
           exit "${baseline_status}"
 
       - name: Upload dev paper failure diagnostics
@@ -1931,6 +2071,7 @@ jobs:
       - name: Dev evolution dispatch hosted probe
         id: evolution-dispatch-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        continue-on-error: ${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
@@ -1961,7 +2102,7 @@ jobs:
           echo "Hosted evolution dispatch evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload evolution dispatch hosted evidence
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' && steps.evolution-dispatch-probe.outputs.artifact_path != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: evoloop-001-hosted-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1972,6 +2113,7 @@ jobs:
       - name: Dev canonical paper lifecycle hosted probe
         id: loop-prod-tel-002-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe && env.TARGET_COMPONENT == 'root' }}
+        continue-on-error: ${{ env.FUNCTIONAL_CHECKS_STRICT != 'true' }}
         working-directory: .target
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
@@ -2090,7 +2232,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -2182,6 +2324,7 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -2189,11 +2332,34 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+          # Advisory mode: the guarded child always exits 0 so the lease guard
+          # keeps the heartbeat and never quarantines the lease; the real exit
+          # code is returned from the result file. A guard-level failure (lease
+          # lost) still propagates. Strict mode keeps the legacy behaviour.
+          guarded_advisory() {
+            local rcfile="$1" guard_rc=0 child_rc=0
+            shift
+            rm -f "${rcfile}"
+            if [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]]; then
+              PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+                "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "$@"
+              return $?
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+              bash -c 'rcfile="$1"; shift; rc=0; "$@" || rc=$?; printf "%s" "${rc}" > "${rcfile}"; exit 0' _ "${rcfile}" "$@" || guard_rc=$?
+            (( guard_rc == 0 )) || return "${guard_rc}"
+            child_rc="$(cat "${rcfile}" 2>/dev/null || echo 1)"
+            return "${child_rc}"
+          }
+          write_advisory_result() {
+            python3 -c 'import json,sys,pathlib; d=pathlib.Path(sys.argv[1]); d.mkdir(parents=True, exist_ok=True); rc=int(sys.argv[3]); (d/(sys.argv[2]+".json")).write_text(json.dumps({"check":sys.argv[2],"status":"passed" if rc==0 else "failed","reason":"" if rc==0 else sys.argv[4] or ("exit_"+str(rc)),"mode":"strict" if sys.argv[5]=="true" else "advisory","scope":"workflow_step"}, sort_keys=True)+"\n")' "${ADVISORY_DIR}" "$1" "$2" "${3:-}" "${FUNCTIONAL_CHECKS_STRICT}"
+          }
+          agora_status=0
+          guarded_advisory "${RUNNER_TEMP}/agora-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.rc" \
             bash -c '
               set -euo pipefail
               workshop_id="deploy-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2220,14 +2386,168 @@ jobs:
               "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
                 "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
               echo "Workshop ${workshop_id} and proposal proposal-${workshop_id} survived operator-bff restart with exactly-once replay and pending outbox recovery." >> "$GITHUB_STEP_SUMMARY"
-            '
+            ' || agora_status=$?
+          write_advisory_result agora_restart_persistence "${agora_status}" ""
+          if [[ "${FUNCTIONAL_CHECKS_STRICT}" != "true" && "${agora_status}" != "0" ]]; then
+            echo "::warning::advisory check agora_restart_persistence failed (exit ${agora_status}); recorded, deploy continues"
+            exit 0
+          fi
+          exit "${agora_status}"
+
+      - name: Record advisory functional check results
+        id: advisory_summary
+        if: ${{ always() && steps.release_admission.outputs.evidence_dir != '' }}
+        env:
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+          DEPLOY_LOG: ${{ runner.temp }}/deploy-script-${{ github.run_id }}-${{ github.run_attempt }}.log
+          EVOLUTION_PROBE_OUTCOME: ${{ steps.evolution-dispatch-probe.outcome }}
+          LIFECYCLE_PROBE_OUTCOME: ${{ steps.loop-prod-tel-002-probe.outcome }}
+        shell: /bin/bash --noprofile --norc -eu {0}
+        run: |
+          mkdir -p "${ADVISORY_DIR}"
+          python3 - "${ADVISORY_DIR}" "${DEPLOY_LOG}" "${GITHUB_STEP_SUMMARY}" <<'PY'
+          import json, os, pathlib, sys
+
+          advisory_dir, deploy_log, summary_path = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          strict = os.environ.get("FUNCTIONAL_CHECKS_STRICT") == "true"
+          mode = "strict" if strict else "advisory"
+          results = {}
+          for f in sorted(advisory_dir.glob("*.json")):
+              if f.name == "summary.json":
+                  continue
+              try:
+                  doc = json.loads(f.read_text(encoding="utf-8"))
+              except (OSError, ValueError):
+                  continue
+              if isinstance(doc, dict) and doc.get("check"):
+                  results[doc["check"]] = doc
+          try:
+              for line in open(deploy_log, encoding="utf-8", errors="replace"):
+                  marker = "ADVISORY_CHECK_RESULT "
+                  idx = line.find(marker)
+                  if idx < 0:
+                      continue
+                  try:
+                      doc = json.loads(line[idx + len(marker):])
+                  except ValueError:
+                      continue
+                  if isinstance(doc, dict) and doc.get("check"):
+                      results[doc["check"]] = doc
+          except OSError:
+              pass
+          for name, outcome in (
+              ("evolution_dispatch_probe", os.environ.get("EVOLUTION_PROBE_OUTCOME", "")),
+              ("canonical_paper_lifecycle_probe", os.environ.get("LIFECYCLE_PROBE_OUTCOME", "")),
+          ):
+              if outcome and outcome != "skipped":
+                  results[name] = {
+                      "check": name,
+                      "status": "passed" if outcome == "success" else "failed",
+                      "reason": "" if outcome == "success" else f"step_outcome_{outcome}",
+                      "mode": mode,
+                      "scope": "workflow_step",
+                  }
+          failed = sorted(k for k, v in results.items() if v.get("status") == "failed")
+          doc = {
+              "schemaVersion": 1,
+              "mode": mode,
+              "deployment": "deployed",
+              "advisoryStatus": "failed" if failed else ("passed" if results else "pending"),
+              "failedChecks": failed,
+              "checks": [results[k] for k in sorted(results)],
+          }
+          (advisory_dir / "summary.json").write_text(json.dumps(doc, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+          lines = ["## Dev functional checks (" + mode + ")", "- deployment: deployed; advisoryChecks: " + doc["advisoryStatus"]]
+          for k in sorted(results):
+              v = results[k]
+              reason = f" ({v.get('reason')})" if v.get("reason") else ""
+              lines.append(f"- {k}: {v.get('status')}{reason}")
+          with open(summary_path, "a", encoding="utf-8") as out:
+              out.write("\n".join(lines) + "\n")
+          if failed and not strict:
+              print("::warning::advisory functional checks failed: " + ", ".join(failed))
+          if strict and failed:
+              (advisory_dir / "strict-failed").write_text("\n".join(failed) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload advisory functional check evidence
+        id: advisory_upload
+        if: ${{ always() && steps.advisory_summary.conclusion != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-advisory-checks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce strict functional checks when requested
+        id: functional_gate
+        if: ${{ always() && env.FUNCTIONAL_CHECKS_STRICT == 'true' && steps.advisory_summary.conclusion != 'skipped' }}
+        env:
+          ADVISORY_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/advisory
+        shell: /bin/bash --noprofile --norc -eu {0}
+        run: |
+          if [[ -s "${ADVISORY_DIR}/strict-failed" ]]; then
+            echo "Strict functional checks failed: $(tr '\n' ' ' < "${ADVISORY_DIR}/strict-failed")" >&2
+            exit 1
+          fi
+
+      - name: Steady stack restart-loop check (two samples, read-only)
+        id: steady_restart_loop
+        # A restart-looping steady service is an unhealthy stack: restart count
+        # growth, OOMKilled or a restarting state fails this step and follows the
+        # same compensation path as a stopped steady service. Container healthcheck
+        # status and readiness contents are not criteria. Budget: <= 100 s.
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.deploy.outcome == 'success' }}
+        timeout-minutes: 6
+        env:
+          RESTART_EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}/steady-restart
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # This job has no checkout at the workspace root: every script comes
+          # from the controller checkout (.agora-gate-controller).
+          controller_scripts="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts"
+          transport="${controller_scripts}/dev_vm_ssh.sh"
+          for required in dev_steady_state_rows.py fetch_dev_artifact_evidence.py; do
+            [[ -f "${controller_scripts}/${required}" ]] || { echo "controller script missing: ${required}" >&2; exit 1; }
+          done
+          [[ -f "${transport}" && ! -L "${transport}" && -f "${credentials_dir}/deploy_key" ]] || { echo "ssh transport missing" >&2; exit 1; }
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          mkdir -p "${RESTART_EVIDENCE_DIR}"
+          sample() {
+            timeout --kill-after=5 30 "${transport}" exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+              | python3 "${controller_scripts}/dev_steady_state_rows.py" > "$1"
+          }
+          sample "${RESTART_EVIDENCE_DIR}/sample-1.json" || exit 1
+          t1="$(date +%s)"
+          sleep 90
+          sample "${RESTART_EVIDENCE_DIR}/sample-2.json" || exit 1
+          gap=$(( $(date +%s) - t1 ))
+          python3 "${controller_scripts}/fetch_dev_artifact_evidence.py" \
+            --mode verify-restart-loop \
+            --steady-state-file "${RESTART_EVIDENCE_DIR}/sample-1.json" \
+            --steady-state-second-file "${RESTART_EVIDENCE_DIR}/sample-2.json" \
+            --sample-gap-seconds "${gap}" | tee "${RESTART_EVIDENCE_DIR}/result.json"
+
+      - name: Upload steady restart-loop evidence
+        id: steady_restart_loop_upload
+        if: ${{ always() && steps.steady_restart_loop.conclusion != 'skipped' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-steady-restart-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}/steady-restart
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Retire this run's dev paper release case before deploy compensation
         id: retire_release_cases
         # Pre-restore preparation only: retire this run's ephemeral probe case
         # before baseline restore waits on health; never marks compensation
         # successful before exact image/FE/health readback.
-        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.market_refresh.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
+        if: ${{ always() && env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.steady_restart_loop.outcome != 'success' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
         continue-on-error: true
         timeout-minutes: 6
         env:
@@ -2266,9 +2586,8 @@ jobs:
 
       - name: Compensate dev deployment failure to exact hosted baseline
         id: deploy_compensation
-        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || (env.PAPER_BOOTSTRAP_REQUESTED == 'true' && steps.paper_bootstrap.outcome != 'success') || steps.market_refresh.outcome == 'failure' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success' || ((env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' || env.TARGET_COMPONENT == 'bff') && steps.agora.outcome != 'success')) }}
-        continue-on-error: true
-        timeout-minutes: 60
+        if: ${{ always() && steps.lease.outcome == 'success' && steps.artifact_baseline.outcome == 'success' && (cancelled() || steps.heartbeat.outcome != 'success' || steps.deploy.outcome != 'success' || steps.compensation_drill.outcome == 'failure' || steps.artifact_baseline_upload.outcome != 'success' || steps.artifact_candidate_seal.outcome != 'success' || steps.artifact_candidate_upload.outcome != 'success' || steps.functional_gate.outcome == 'failure' || steps.steady_restart_loop.outcome != 'success' || steps.public_smoke.outcome != 'success' || steps.deploy-posture-evidence.outcome != 'success') }}
+        timeout-minutes: 100
         env:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           PATH: ${{ steps.runtime.outputs.safe_path }}
@@ -2346,6 +2665,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -2379,8 +2700,9 @@ jobs:
           # Compensation is bounded independently of the full root-build
           # deadline. It restores the whole stack (3 sealed images with the
           # existing 120 s wait, then every other recorded service) and then
-          # polls readback for at most 900 s; 1500 s keeps lease wait +
-          # deadline inside this 60 minute step.
+          # polls readback for at most 900 s. A shared 3900 s lease budget
+          # covers a full hourly API reset; 1500 s restore plus cleanup fits
+          # inside this 100 minute step.
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1500' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -2390,7 +2712,7 @@ jobs:
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
           case "${DEV_AUTH_PROFILE}" in
@@ -2486,6 +2808,8 @@ jobs:
                       --resource pantheon-dev-environment \
                       --state-file "${rollback_state_file}" >/dev/null || status=75
                 fi
+              elif [[ "${status}" -eq 79 ]]; then
+                echo "[dev-deploy-compensation] rate_limited_rollback_pending; no restore authorized" >&2
               else
                 echo "[dev-deploy-compensation] rollback incomplete; lease remains quarantined until TTL" >&2
               fi
@@ -2574,6 +2898,7 @@ jobs:
               exit 75
             fi
 
+            rollback_lease_deadline=$((SECONDS + 3900))
             PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
               python3 "${controller}/scripts/dev_environment_lease.py" acquire \
                 --repository ajoe734/execute-plans \
@@ -2583,12 +2908,29 @@ jobs:
                 --mode deployment \
                 --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:rollback" \
                 --ttl-seconds 300 \
-                --wait-seconds 1800 \
+                --wait-seconds 3900 \
                 --poll-seconds 5 \
                 --state-file "${rollback_state_file}" \
                 --expected-backend-sha "${PANTHEON_ROLLBACK_BACKEND_SHA}" \
                 --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
                 --json-out "${rollback_acquisition_file}"
+
+            rollback_rate_wait=$((rollback_lease_deadline - SECONDS))
+            if (( rollback_rate_wait <= 0 )); then
+              echo "rate_limited_rollback_pending: rollback lease budget exhausted before verification" >&2
+              exit 79
+            fi
+            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+              python3 "${controller}/scripts/dev_environment_lease.py" verify \
+                --repository ajoe734/execute-plans \
+                --branch environment-coordination \
+                --path .pantheon/environment-leases/pantheon-dev-environment.json \
+                --resource pantheon-dev-environment \
+                --state-file "${rollback_state_file}" \
+                --max-heartbeat-age-seconds 120 \
+                --initial-visibility-wait-seconds 15 \
+                --initial-visibility-poll-seconds 1 \
+                --rate-limit-wait-seconds "${rollback_rate_wait}" >/dev/null
 
             exec {token_fd}<<<"${lease_token}"
             env -i \
@@ -2626,16 +2968,7 @@ jobs:
               --pid "${rollback_heartbeat_pid}" \
               --expected-cli "${controller}/scripts/dev_environment_lease.py" \
               --state-file "${rollback_state_file}" >/dev/null
-            PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-              python3 "${controller}/scripts/dev_environment_lease.py" verify \
-                --repository ajoe734/execute-plans \
-                --branch environment-coordination \
-                --path .pantheon/environment-leases/pantheon-dev-environment.json \
-                --resource pantheon-dev-environment \
-                --state-file "${rollback_state_file}" \
-                --max-heartbeat-age-seconds 120 \
-                --initial-visibility-wait-seconds 15 \
-                --initial-visibility-poll-seconds 1 >/dev/null
+
 
             export TARGET_ENV=dev
             export PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE="${rollback_state_file}"
@@ -2732,11 +3065,11 @@ jobs:
           LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
-          PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
+          FUNCTIONAL_GATE_OUTCOME: ${{ steps.functional_gate.outcome }}
+          STEADY_RESTART_LOOP_OUTCOME: ${{ steps.steady_restart_loop.outcome }}
           PAPER_BOOTSTRAP_REQUESTED: ${{ env.PAPER_BOOTSTRAP_REQUESTED }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
-          AGORA_OUTCOME: ${{ steps.agora.outcome }}
           ARTIFACTS_VERIFIED: ${{ job.status != 'cancelled' && steps.artifact_baseline.outcome == 'success' && steps.artifact_baseline_upload.outcome == 'success' && steps.artifact_candidate_seal.outcome == 'success' && steps.artifact_candidate_upload.outcome == 'success' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -2747,7 +3080,7 @@ jobs:
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -2789,13 +3122,14 @@ jobs:
           }
 
           complete_success=false
-          # An unrequested paper bootstrap is intentionally skipped; a
-          # requested one must have succeeded.
-          expected_paper=skipped
-          [[ "${PAPER_BOOTSTRAP_REQUESTED}" == "true" ]] && expected_paper=success
+          # Functional checks are advisory (recorded, never part of completion);
+          # only a strict dispatch makes the gate step participate, and then a
+          # failed gate is not "success".
+          expected_gate=skipped
+          [[ "${FUNCTIONAL_CHECKS_STRICT}" == "true" ]] && expected_gate=success
           case "${TARGET_COMPONENT}" in
             auto|root|bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:${expected_paper}:success:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${FUNCTIONAL_GATE_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${STEADY_RESTART_LOOP_OUTCOME}" == "success:success:${expected_gate}:success:success:success" ]] && complete_success=true
               ;;
           esac
 
@@ -2864,7 +3198,7 @@ jobs:
             echo "- Rollback BFF baseline: \`${{ steps.rollback_baseline.outputs.sha }}\`"
             echo "- Rollback FE baseline: \`${{ steps.rollback_baseline.outputs.frontend_sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
-            echo "- Controller: \`3fd9536ca9f5e0cfb275429a05fefa36bc7ec870\`"
+            echo "- Controller: \`081075781d28a6563c731909667b98b7b5c153f9\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
             echo "- Deploy deadline: \`${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}s\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
@@ -2894,6 +3228,9 @@ jobs:
       source_mode: ${{ steps.frontend_release.outputs.source_mode }}
       expires_at: ${{ steps.frontend_release.outputs.expires_at }}
       evidence_dir: ${{ steps.frontend_release.outputs.evidence_dir }}
+      release_outcome: ${{ steps.frontend_release.outputs.release_outcome }}
+      gate_run_id: ${{ steps.frontend_release.outputs.gate_run_id }}
+      failed_gates: ${{ steps.frontend_release.outputs.failed_gates }}
     env:
       TARGET_ENV: dev
       RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2907,7 +3244,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ajoe734/pantheon
-          ref: 3fd9536ca9f5e0cfb275429a05fefa36bc7ec870
+          ref: 081075781d28a6563c731909667b98b7b5c153f9
           path: .lease-controller
           fetch-depth: 1
           persist-credentials: false
@@ -2955,9 +3292,12 @@ jobs:
           PREVIOUS_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}
           RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
           COMPATIBILITY_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.compatibility_manifest_sha256 }}
+          COMPATIBILITY_MANIFEST_B64: ${{ needs.deploy-dev.outputs.compatibility_manifest_b64 }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           install -d -m 0700 "${RELEASE_EVIDENCE_DIR}"
+          manifest_file="${RELEASE_EVIDENCE_DIR}/release-compatibility-manifest.json"
+          printf '%s' "${COMPATIBILITY_MANIFEST_B64}" | base64 -d > "${manifest_file}" || rm -f "${manifest_file}"
           controller_log="${RELEASE_EVIDENCE_DIR}/release-controller.log"
           umask 077
           controller_evidence="${RELEASE_EVIDENCE_DIR}/release-controller-accepted.json"
@@ -2972,6 +3312,8 @@ jobs:
             --predecessor-bff-sha "${PREVIOUS_BACKEND_SHA}" \
             --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
             --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
+            --compatibility-manifest-file "${manifest_file}" \
+            --environment "${TARGET_ENV}" \
             --controller-run-id "${GITHUB_RUN_ID}" \
             --evidence-out "${controller_evidence}" \
             --candidate-profile "${FRONTEND_PROFILE}" \
@@ -3016,11 +3358,27 @@ jobs:
           fi
           echo "evidence_dir=${RELEASE_EVIDENCE_DIR}" >> "${GITHUB_OUTPUT}"
           echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
+          if [[ "${controller_status}" -eq 0 ]]; then
+            # deployed_not_accepted: the gate failed for the unchanged served
+            # frontend; the record names the run, the failing gates and owner.
+            python3 - "${controller_evidence}" >> "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import sys
+
+          evidence = json.load(open(sys.argv[1], encoding="utf-8"))
+          acceptance = evidence.get("acceptance") or {}
+          print(f"release_outcome={evidence.get('outcome', '')}")
+          print(f"gate_run_id={acceptance.get('gate_run_id', '')}")
+          print("failed_gates=" + ",".join(acceptance.get("failed_gates") or []))
+          PY
+          fi
           exit "${controller_status}"
 
       - name: Verify and seal admitted final candidate
         id: final_artifact_verify
-        if: ${{ steps.frontend_release.outcome == 'success' }}
+        # deployed_not_accepted switched no frontend and wrote no FE deploy run, so the
+        # final seal (and any compensation it would trigger) does not apply.
+        if: ${{ steps.frontend_release.outcome == 'success' && steps.frontend_release.outputs.release_outcome != 'deployed_not_accepted' }}
         env:
           PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.target
           PANTHEON_ROLLBACK_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
@@ -3074,6 +3432,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -3221,6 +3581,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -3233,6 +3595,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3335,6 +3698,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -3347,6 +3712,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3434,9 +3800,8 @@ jobs:
 
       - name: Compensate rejected release to exact hosted baseline
         id: compensation
-        timeout-minutes: 60
+        timeout-minutes: 100
         if: ${{ always() && (steps.frontend_release.outcome != 'success' || (steps.final_artifact_verify.conclusion != 'skipped' && steps.final_artifact_verify.outcome != 'success') || (steps.roundtrip_baseline_restore.conclusion != 'skipped' && steps.roundtrip_baseline_restore.outcome != 'success') || (steps.roundtrip_final_return.conclusion != 'skipped' && steps.roundtrip_final_return.outcome != 'success')) }}
-        continue-on-error: true
         env:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
           PANTHEON_LEASE_CONTROLLER_ROOT: ${{ github.workspace }}/.lease-controller
@@ -3510,6 +3875,8 @@ jobs:
           DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
           DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
@@ -3522,6 +3889,7 @@ jobs:
           DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
           PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
           PANTHEON_DEV_DOCKER_PRUNE: ${{ vars.PANTHEON_DEV_DOCKER_PRUNE || 'false' }}
+          OPENCLAW_MODEL_CHAIN: ${{ vars.OPENCLAW_MODEL_CHAIN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: bash .target/scripts/compensate_cross_repo_release.sh
 
@@ -3567,6 +3935,122 @@ jobs:
           fi
           echo "- dev paper release case retirement (${RELEASE_OUTCOME}): \`$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status"))' "${evidence}")\`" >> "${GITHUB_STEP_SUMMARY}"
 
+      - name: Checkout exact FE revision for original read-only QA CLI
+        id: original_qa_frontend
+        # Supplementary measurement after Root acceptance; never a release gate.
+        if: ${{ always() && steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip }}
+        continue-on-error: true
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: ${{ needs.deploy-dev.outputs.frontend_sha }}
+          path: .original-qa-frontend
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare original QA frontend dependencies (no credentials)
+        id: original_qa_prepare
+        # Pinned lockfile install + browser, in an isolated step that never sees
+        # any dev-login secret or SSH key.  Failure is surfaced by the caller as
+        # an explicit cli_not_ready unproven outcome, never as PASS.
+        if: ${{ always() && steps.original_qa_frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: .original-qa-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Original paired four-role read-only QA (supplementary, non-gating)
+        id: original_paired_readonly_qa
+        if: ${{ always() && steps.frontend_release.outcome == 'success' && steps.final_artifact_verify.outcome == 'success' && !inputs.run_exact_artifact_roundtrip }}
+        continue-on-error: true
+        timeout-minutes: 75
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID || 'pantheon-dev-admin-test' }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET }}
+          QA_TENANT_ID: ${{ vars.DEV_ORIGINAL_QA_TENANT_ID }}
+          QA_PERSONA_ID: ${{ vars.DEV_ORIGINAL_QA_PERSONA_ID }}
+          QA_EXPECTED_ROLES_JSON: ${{ vars.DEV_ORIGINAL_QA_EXPECTED_ROLES_JSON }}
+          QA_BASELINE_REMOTE_PATH: ${{ vars.DEV_ORIGINAL_QA_BASELINE_PATH }}
+          QA_BASELINE_SHA256: ${{ vars.DEV_ORIGINAL_QA_BASELINE_SHA256 }}
+          QA_PAIR_ID: ${{ steps.frontend_release.outputs.pair_id }}
+          QA_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          QA_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # Raw outcome (pass/failed/unproven) lives in the evidence file; this
+          # step is continue-on-error and is not read by the Root outcome gate.
+          evidence="${RELEASE_EVIDENCE_DIR}/original-paired-readonly-qa.json"
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          transport="${GITHUB_WORKSPACE}/.target/scripts/dev_vm_ssh.sh"
+          "${transport}" prepare "${credentials_dir}" >/dev/null 2>&1 || true
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key" DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          out_dir="${RUNNER_TEMP}/original-qa-private-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${out_dir}"
+          python3 "${GITHUB_WORKSPACE}/.target/scripts/run_dev_paired_readonly_qa.py" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --fe-sha "${QA_FRONTEND_SHA}" --bff-sha "${QA_BACKEND_SHA}" \
+            --root-run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" --pair-id "${QA_PAIR_ID}" \
+            --tenant-id "${QA_TENANT_ID}" --persona-id "${QA_PERSONA_ID}" \
+            --expected-roles-json "${QA_EXPECTED_ROLES_JSON}" \
+            --frontend-checkout "${GITHUB_WORKSPACE}/.original-qa-frontend" \
+            --baseline-remote-path "${QA_BASELINE_REMOTE_PATH}" --baseline-sha256 "${QA_BASELINE_SHA256}" \
+            --out-dir "${out_dir}" --evidence-out "${evidence}"
+          qa_status=$?
+          echo "- original paired read-only QA (supplementary, non-gating): exit ${qa_status}; raw outcome in original-paired-readonly-qa.json" >> "${GITHUB_STEP_SUMMARY}"
+          exit "${qa_status}"
+
+      - name: Trading Pulse page read-only browser QA (supplementary, non-gating)
+        id: trading_pulse_readonly_qa
+        # Same supplementary position as the paired QA above: viewer profile
+        # only, exact served FE/BFF pair, sources witness built in the caller
+        # from independent registry/ledger reads.  Its outcome never feeds the
+        # deploy, switch or rollback decision.  Evidence is one sanitized
+        # summary plus at most two masked screenshots (<= 5 MiB per release).
+        if: ${{ always() && steps.original_qa_prepare.outcome == 'success' && steps.original_paired_readonly_qa.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET'] }}
+          QA_TENANT_ID: ${{ vars.DEV_ORIGINAL_QA_TENANT_ID }}
+          PULSE_HISTORY_JOURNEY_ID: ${{ vars.DEV_TRADING_PULSE_HISTORY_JOURNEY_ID }}
+          PULSE_HISTORY_EVENT_ID: ${{ vars.DEV_TRADING_PULSE_HISTORY_EVENT_ID }}
+          PULSE_HISTORY_ENVIRONMENT: ${{ vars.DEV_TRADING_PULSE_HISTORY_ENVIRONMENT || 'paper' }}
+          QA_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          QA_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # The caller maps the CLI exit 0/1/2 to pass/failed/unproven and its
+          # own exit code without rewriting; this step is continue-on-error.
+          evidence="${RELEASE_EVIDENCE_DIR}/trading-pulse-readonly-qa.json"
+          out_dir="${RUNNER_TEMP}/trading-pulse-qa-private-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${out_dir}"
+          python3 "${GITHUB_WORKSPACE}/.target/scripts/run_dev_trading_pulse_readonly_qa.py" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --fe-sha "${QA_FRONTEND_SHA}" --bff-sha "${QA_BACKEND_SHA}" \
+            --root-run-id "${GITHUB_RUN_ID}" --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --tenant-id "${QA_TENANT_ID}" \
+            --history-journey-id "${PULSE_HISTORY_JOURNEY_ID}" --history-event-id "${PULSE_HISTORY_EVENT_ID}" \
+            --history-environment "${PULSE_HISTORY_ENVIRONMENT}" \
+            --frontend-checkout "${GITHUB_WORKSPACE}/.original-qa-frontend" \
+            --out-dir "${out_dir}" --evidence-dir "${RELEASE_EVIDENCE_DIR}/trading-pulse" --evidence-out "${evidence}"
+          qa_status=$?
+          echo "- Trading Pulse read-only browser QA (supplementary, non-gating): exit ${qa_status}; raw outcome in trading-pulse-readonly-qa.json" >> "${GITHUB_STEP_SUMMARY}"
+          exit "${qa_status}"
+
       - name: Upload accepted or compensated release evidence
         id: release_evidence_upload
         if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' }}
@@ -3587,6 +4071,20 @@ jobs:
             if [[ "${{ steps.roundtrip_baseline_restore.outcome }}" != "success" || "${{ steps.roundtrip_final_return.outcome }}" != "success" ]]; then
               roundtrip_ok=false
             fi
+          fi
+          if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
+                "${{ steps.frontend_release.outputs.release_outcome }}" == "deployed_not_accepted" ]]; then
+            {
+              echo "## Exact FE/BFF release deployed, NOT accepted"
+              echo "- the frontend gate failed for the unchanged served frontend; the backend stays deployed and nothing was rolled back"
+              echo "- gate run: \`${{ steps.frontend_release.outputs.gate_run_id }}\`"
+              echo "- failing gates: \`${{ steps.frontend_release.outputs.failed_gates }}\`"
+              echo "- owning chain: frontend (open a task there; the release is not accepted)"
+              echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
+              echo "- backend: \`${{ needs.deploy-dev.outputs.backend_sha }}\`"
+              echo "- frontend (accepted baseline, unchanged): \`${{ needs.deploy-dev.outputs.frontend_sha }}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
           fi
           if [[ "${{ steps.frontend_release.outcome }}" == "success" && \
                 "${{ steps.final_artifact_verify.outcome }}" == "success" && \
@@ -3622,9 +4120,473 @@ jobs:
           echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
           exit 75
 
+  # Acceptance is a verdict about a release that is already deployed. This job
+  # never rolls back and never fails the run: continue-on-error keeps the run
+  # conclusion a measure of deploys, and the stage itself always exits 0 and
+  # writes the real result to the verdict file. A lease-guarded step cannot be
+  # advisory, so no step here uses the lease guard wrapper; mutating checks run
+  # only while this job holds the qualification lease.
+  dev-acceptance-stage:
+    name: Post-deploy acceptance verdict
+    needs:
+      - deploy-dev
+      - coordinate-dev-release
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && !inputs.compensation_drill && needs.coordinate-dev-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 120
+    environment: dev
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BACKEND_SHA: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+      FRONTEND_SHA: ${{ needs.coordinate-dev-release.outputs.frontend_sha }}
+      RELEASE_OUTCOME: ${{ needs.coordinate-dev-release.outputs.release_outcome }}
+      GATE_RUN_ID: ${{ needs.coordinate-dev-release.outputs.gate_run_id }}
+      FAILED_GATES: ${{ needs.coordinate-dev-release.outputs.failed_gates }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
+      DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT) }}
+      VERDICT_FILE: ${{ github.workspace }}/acceptance-verdict.json
+      CRAWL_FILE: ${{ github.workspace }}/acceptance-crawl.json
+    steps:
+      - name: Checkout exact deployed backend release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout pinned lease controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: 081075781d28a6563c731909667b98b7b5c153f9
+          path: .lease-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Plan acceptance checks
+        id: plan
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/dev_acceptance_stage.py plan
+
+      - name: Prepare pinned direct SSH transport
+        id: ssh
+        continue-on-error: true
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
+
+      - name: Prepare fixed trusted command path
+        id: runtime
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          trusted_bin="${RUNNER_TEMP}/pantheon-trusted-bin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${trusted_bin}"
+          for command_name in ssh scp ssh-keygen; do
+            command_path="$(command -v "${command_name}")"
+            [[ -x "${command_path}" && ! -L "${command_path}" ]]
+            ln -s "${command_path}" "${trusted_bin}/${command_name}"
+          done
+          safe_path="${trusted_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          echo "safe_path=${safe_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Record acceptance pending
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          python3 scripts/dev_acceptance_stage.py pending \
+            --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" --verdict-out "${VERDICT_FILE}"
+
+      - name: Publish pending verdict beside the hosted deployment manifest
+        if: ${{ always() && steps.ssh.outcome == 'success' && hashFiles('acceptance-verdict.json') != '' }}
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          target_dir="$(dirname "${DEV_DEPLOY_WORKTREE}")/acceptance"
+          printf -v dir_q '%q' "${target_dir}"
+          scripts/dev_vm_ssh.sh exec "mkdir -p ${dir_q} && cat > ${dir_q}/latest.json.tmp && mv ${dir_q}/latest.json.tmp ${dir_q}/latest.json" \
+            < "${VERDICT_FILE}"
+          echo "- verdict published to \`${target_dir}/latest.json\` on the dev VM" >> "${GITHUB_STEP_SUMMARY}"
+
+      # Post-switch management page crawl (ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126): the existing
+      # execute-plans crawl at the deployed frontend commit. Checkout and install see no credential;
+      # the crawl itself runs inside the stage step after the probes, as the read-only viewer, under
+      # a stated deadline. Any failure here leaves the crawl check skipped (verdict pending), never
+      # a failed deploy job and never a rollback.
+      - name: Checkout deployed frontend for the management crawl
+        id: crawl_frontend
+        if: ${{ env.RELEASE_OUTCOME != 'deployed_not_accepted' }}
+        continue-on-error: true
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: ${{ needs.coordinate-dev-release.outputs.frontend_sha }}
+          path: .acceptance-crawl-frontend
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare management crawl dependencies (no credentials)
+        id: crawl_prepare
+        if: ${{ steps.crawl_frontend.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: .acceptance-crawl-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          [[ "$(git rev-parse HEAD)" == "${FRONTEND_SHA}" ]]
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+
+      - name: Acquire qualification lease and start identity-bound heartbeat
+        id: lease
+        if: ${{ steps.plan.outputs.mutating == 'true' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          ACCEPTED_BACKEND_SHA: ${{ needs.coordinate-dev-release.outputs.backend_sha }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          [[ -n "${lease_token}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the qualification lease." >&2; exit 1; }
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
+          [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+
+          lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          chmod 0700 "${lease_dir}"
+          state_file="${lease_dir}/state.json"
+          pid_file="${lease_dir}/heartbeat.pid"
+          identity_file="${lease_dir}/heartbeat-identity.json"
+          failure_file="${lease_dir}/heartbeat-failure.json"
+          shutdown_file="${lease_dir}/heartbeat-stop.json"
+          heartbeat_log="${lease_dir}/heartbeat.log"
+          {
+            echo "state_file=${state_file}"
+            echo "pid_file=${pid_file}"
+            echo "identity_file=${identity_file}"
+            echo "failure_file=${failure_file}"
+            echo "shutdown_file=${shutdown_file}"
+            echo "heartbeat_log=${heartbeat_log}"
+          } >> "${GITHUB_OUTPUT}"
+
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" acquire \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --mode qualification \
+            --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}" \
+            --ttl-seconds 300 \
+            --wait-seconds 1800 \
+            --poll-seconds 5 \
+            --state-file "${state_file}" \
+            --expected-backend-sha "${ACCEPTED_BACKEND_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --json-out "${lease_dir}/acquisition.json"
+
+          exec {token_fd}<<<"${lease_token}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${state_file}" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${failure_file}" \
+              --shutdown-json-out "${shutdown_file}" \
+              --identity-json-out "${identity_file}" \
+              --token-stdin \
+              <&"${token_fd}" >"${heartbeat_log}" 2>&1 &
+          heartbeat_pid=$!
+          disown "${heartbeat_pid}" 2>/dev/null || true
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${pid_file}"
+          for _ in $(seq 1 100); do
+            [[ -s "${identity_file}" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || {
+              sed -n '1,200p' "${heartbeat_log}" >&2 || true
+              exit 75
+            }
+            sleep 0.1
+          done
+          [[ -s "${identity_file}" ]]
+          python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+            --identity-file "${identity_file}" \
+            --pid "${heartbeat_pid}" \
+            --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+            --state-file "${state_file}" >/dev/null
+          lease_token=""
+
+      - name: Run acceptance checks and probes
+        id: stage
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          DEPLOYED_RESULT: ${{ needs.coordinate-dev-release.result }}
+          LEASE_HELD: ${{ steps.lease.outcome == 'success' && 'true' || 'false' }}
+          CRAWL_PREPARED: ${{ steps.crawl_prepare.outcome }}
+          # Read-only viewer identity for release probes; only when the checked-out stage redacts output.
+          ACCEPTANCE_VIEWER_CLIENT_ID: ${{ steps.plan.outputs.redacts_output == 'true' && (vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1') || '' }}
+          ACCEPTANCE_VIEWER_CLIENT_SECRET: ${{ steps.plan.outputs.redacts_output == 'true' && secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET || '' }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          lease_args=()
+          [[ "${LEASE_HELD}" == "true" ]] && lease_args=(--lease-held)
+          # Advisory: the stage exits 0 on every outcome; || true guards a crash before it can write.
+          python3 scripts/dev_acceptance_stage.py run \
+            --backend-sha "${BACKEND_SHA}" --frontend-sha "${FRONTEND_SHA}" \
+            --fe-url "${DEV_FE_URL}" --bff-url "${DEV_BFF_URL}" \
+            --deployed "${DEPLOYED_RESULT}" --verdict-out "${VERDICT_FILE}" "${lease_args[@]}" \
+            --crawl-frontend-dir "${GITHUB_WORKSPACE}/.acceptance-crawl-frontend" \
+            --crawl-prepared "${CRAWL_PREPARED}" --crawl-out "${CRAWL_FILE}" || true
+          exit 0
+
+      - name: Record frontend gate failure for the unchanged served frontend
+        if: ${{ always() && env.RELEASE_OUTCOME == 'deployed_not_accepted' }}
+        continue-on-error: true
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          # Deployed, not accepted: the unchanged served frontend failed its
+          # integration gate. The verdict is failed and owned by the frontend
+          # chain; the deploy itself is never rolled back.
+          python3 - "${VERDICT_FILE}" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          try:
+              verdict = json.loads(path.read_text(encoding="utf-8"))
+          except (OSError, ValueError):
+              verdict = {"schemaVersion": "pantheon.dev-acceptance-verdict.v1", "failed": [], "checks": []}
+          gates = ", ".join(g for g in os.environ.get("FAILED_GATES", "").split(",") if g) or "unknown"
+          entry = {
+              "id": "gate:frontend-integration",
+              "kind": "check",
+              "owner": "frontend",
+              "detail": f"integration gate run {os.environ.get('GATE_RUN_ID', '')} failed: {gates}",
+          }
+          verdict["acceptance"] = "failed"
+          verdict["outcome"] = "deployed_not_accepted"
+          verdict["deployed"] = True
+          verdict["accepted"] = False
+          verdict["owning_chain"] = "frontend"
+          verdict["gate_run_id"] = os.environ.get("GATE_RUN_ID", "")
+          verdict["failed_gates"] = [g for g in os.environ.get("FAILED_GATES", "").split(",") if g]
+          verdict["failed"] = [entry, *verdict.get("failed", [])]
+          verdict["checks"] = [{**entry, "status": "failed"}, *verdict.get("checks", [])]
+          path.write_text(json.dumps(verdict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Stop heartbeat and release the acceptance lease
+        id: lease_cleanup
+        if: ${{ always() && steps.lease.conclusion != 'skipped' && steps.lease.outputs.state_file != '' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          LEASE_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          LEASE_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          LEASE_SHUTDOWN_FILE: ${{ steps.lease.outputs.shutdown_file }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+
+          heartbeat_stopped() {
+            local state
+            state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+            case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+            return 1
+          }
+          verify_identity() {
+            python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+              --identity-file "${LEASE_IDENTITY_FILE}" \
+              --pid "${heartbeat_pid}" \
+              --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+              --state-file "${LEASE_STATE_FILE}" >/dev/null
+          }
+          stop_heartbeat() {
+            local attempt
+            heartbeat_stopped && return 0
+            verify_identity || return 1
+            kill -TERM "${heartbeat_pid}" 2>/dev/null || {
+              heartbeat_stopped && return 0
+              return 1
+            }
+            heartbeat_stopped && return 0
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 40); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -KILL "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 20); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            return 1
+          }
+
+          if [[ ! -s "${LEASE_PID_FILE}" ]]; then
+            echo "Lease heartbeat never became identity-bound; quarantining until TTL." >&2
+            exit 0
+          fi
+          heartbeat_pid="$(tr -d '[:space:]' < "${LEASE_PID_FILE}")"
+          [[ "${heartbeat_pid}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Invalid heartbeat PID; quarantining until TTL." >&2
+            exit 0
+          }
+          stop_heartbeat || {
+            echo "Could not identity-safely stop heartbeat; refusing release." >&2
+            exit 75
+          }
+          if [[ -e "${LEASE_FAILURE_FILE}" ]]; then
+            echo "Lease heartbeat failed; lease quarantined until TTL." >&2
+            sed -n '1,200p' "${LEASE_FAILURE_FILE}" >&2 2>/dev/null || true
+            exit 75
+          fi
+          [[ -s "${LEASE_SHUTDOWN_FILE}" ]] || {
+            echo "Heartbeat did not record a graceful identity-bound stop; refusing release." >&2
+            exit 75
+          }
+          python3 - "${LEASE_SHUTDOWN_FILE}" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          if payload.get("status") != "stopped" or payload.get("resource") != "pantheon-dev-environment":
+              raise SystemExit("heartbeat shutdown evidence is invalid")
+          PY
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" release \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --state-file "${LEASE_STATE_FILE}"
+          lease_token=""
+
+      # One verdict per release: the file replaces the previous one beside the
+      # release store; the FE deployment.json stays byte-identical because the
+      # exact-artifact capture pins its digest.
+      - name: Publish verdict beside the hosted deployment manifest
+        if: ${{ always() && steps.ssh.outcome == 'success' && hashFiles('acceptance-verdict.json') != '' }}
+        continue-on-error: true
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+        shell: /bin/bash --noprofile --norc -uo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          target_dir="$(dirname "${DEV_DEPLOY_WORKTREE}")/acceptance"
+          printf -v dir_q '%q' "${target_dir}"
+          scripts/dev_vm_ssh.sh exec "mkdir -p ${dir_q} && cat > ${dir_q}/latest.json.tmp && mv ${dir_q}/latest.json.tmp ${dir_q}/latest.json" \
+            < "${VERDICT_FILE}"
+          echo "- verdict published to \`${target_dir}/latest.json\` on the dev VM" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload acceptance verdict
+        if: ${{ always() && hashFiles('acceptance-verdict.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dev-acceptance-verdict-${{ github.run_id }}-${{ github.run_attempt }}
+          # acceptance-crawl.json: routes and statuses of the management crawl only (no token, no body).
+          path: |
+            acceptance-verdict.json
+            acceptance-crawl.json
+          if-no-files-found: warn
+          retention-days: 30
+
   isolated-l12-provider-qualification:
     name: Isolated L1-L12 gate with approved provider
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.isolated_provider_qualification && !inputs.hosted_all12_chain }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.isolated_provider_qualification && !inputs.hosted_all12_chain && inputs.restore_accepted_baseline_run_id == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     environment: dev
@@ -3700,6 +4662,8 @@ jobs:
       - name: Run original isolated L1-L12 stimulus gate
         env:
           PANTHEON_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          PANTHEON_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          PANTHEON_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
           PANTHEON_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
           PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
           PANTHEON_OPENCLAW_OPENAI_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_OPENAI_OAUTH_TOKEN }}
@@ -3731,7 +4695,7 @@ jobs:
   # honest incomplete receipt and releases the lease; a later dispatch resumes.
   hosted-all12-chain-phase:
     name: Hosted all-12 chain segment
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.hosted_all12_chain }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.hosted_all12_chain && inputs.restore_accepted_baseline_run_id == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     environment: dev
@@ -3775,7 +4739,7 @@ jobs:
           git checkout -q --detach "${target_sha}"
           git submodule update --init --recursive --depth 1
           # Immutable trust root for every lease operation, separate from the payload.
-          controller_sha=3fd9536ca9f5e0cfb275429a05fefa36bc7ec870
+          controller_sha=081075781d28a6563c731909667b98b7b5c153f9
           mkdir .lease-controller
           git -C .lease-controller init -q
           git -C .lease-controller remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
@@ -4018,10 +4982,10 @@ jobs:
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           [[ -n "${lease_token}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the qualification lease." >&2; exit 1; }
           controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ "$(git -C "${controller}" rev-parse HEAD)" == "3fd9536ca9f5e0cfb275429a05fefa36bc7ec870" ]]
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
           [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -4644,7 +5608,7 @@ jobs:
           unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
           controller="${GITHUB_WORKSPACE}/.lease-controller"
           printf '%s  %s\n' \
-            89c6c20d88a70bbe96290852fc93f10d38c5448ebfdb79e9f9a547b8ef15c2c4 "${controller}/scripts/dev_environment_lease.py" \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
 
@@ -4754,3 +5718,557 @@ jobs:
             fi
             echo "- a paused or failed segment is incomplete progress, never an all-12 pass"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  restore-accepted-baseline:
+    name: Restore accepted baseline after failed compensation
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.restore_accepted_baseline_run_id != '' && !inputs.isolated_provider_qualification && !inputs.hosted_all12_chain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: dev
+    permissions:
+      contents: read
+      actions: read
+    env:
+      TARGET_ENV: dev
+      TARGET_REF: ${{ inputs.ref || github.sha }}
+      TARGET_COMPONENT: ${{ inputs.component }}
+      ALLOW_DIRTY: ${{ inputs.allow_dirty }}
+      DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
+      PRIOR_RUN_ID: ${{ inputs.restore_accepted_baseline_run_id }}
+      PRIOR_RUN_ATTEMPT: ${{ inputs.restore_accepted_baseline_run_attempt || '1' }}
+      COMPENSATION_DRILL: ${{ inputs.compensation_drill }}
+      ISOLATED_REQUESTED: ${{ inputs.isolated_provider_qualification }}
+      HOSTED_CHAIN_REQUESTED: ${{ inputs.hosted_all12_chain }}
+      ROUNDTRIP_REQUESTED: ${{ inputs.run_exact_artifact_roundtrip }}
+      BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+      BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
+      RUN_EVOLUTION_DISPATCH_PROBE: ${{ inputs.run_evolution_dispatch_probe }}
+      RUN_LOOP_PROD_TEL_002_PROBE: ${{ inputs.run_loop_prod_tel_002_probe }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST }}
+      DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER }}
+      REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+      DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
+      DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+      GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
+    steps:
+      - name: Fetch current controller and pinned lease controller
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: http.extraheader
+          GH_TOKEN: ${{ github.token }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          basic="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w0)"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          git init -q .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q origin "+refs/heads/dev:refs/remotes/origin/dev" "${TARGET_REF}"
+          target_sha="$(git rev-parse --verify "${TARGET_REF}^{commit}")"
+          git checkout -q --detach "${target_sha}"
+          git submodule update --init --recursive --depth 1
+          controller_sha=081075781d28a6563c731909667b98b7b5c153f9
+          mkdir .lease-controller
+          git -C .lease-controller init -q
+          git -C .lease-controller remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C .lease-controller fetch -q --depth 1 origin "${controller_sha}"
+          git -C .lease-controller checkout -q --detach "${controller_sha}"
+
+      - name: Prepare pinned direct SSH transport
+        env:
+          DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
+          DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          scripts/dev_vm_ssh.sh prepare "${credentials_dir}" >/dev/null
+
+      - name: Fetch prior run attempt baseline and verify drift preconditions
+        id: preflight
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ || "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
+            echo "Restore accepted baseline must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF}" >&2
+            exit 1
+          fi
+          case "${TARGET_COMPONENT}" in
+            auto|root) ;;
+            *) echo "Restore accepted baseline is a dev/root only mode and is rejected for component ${TARGET_COMPONENT}." >&2; exit 1 ;;
+          esac
+          if [[ "${ALLOW_DIRTY}" != "false" || "${DEV_AUTH_PROFILE}" != "strict" || "${COMPENSATION_DRILL}" != "false" || "${ISOLATED_REQUESTED}" != "false" || "${HOSTED_CHAIN_REQUESTED}" != "false" || "${ROUNDTRIP_REQUESTED}" != "false" || "${BOOTSTRAP_EMPTY_HOST}" != "false" || "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" || "${BOUNDED_SOURCE_REFRESH_ENABLED}" != "false" || "${RUN_EVOLUTION_DISPATCH_PROBE}" != "false" || "${RUN_LOOP_PROD_TEL_002_PROBE}" != "false" ]]; then
+            echo "Restore accepted baseline runs only a baseline restore under strict auth; candidate, probe, roundtrip, bootstrap and drill flags are rejected." >&2
+            exit 1
+          fi
+          [[ "${PRIOR_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]] || { echo "restore_accepted_baseline_run_id must be a positive numeric workflow run id." >&2; exit 1; }
+          [[ "${PRIOR_RUN_ATTEMPT}" =~ ^[1-9][0-9]{0,19}$ ]] || { echo "restore_accepted_baseline_run_attempt must be a positive numeric attempt." >&2; exit 1; }
+          evidence_dir="${RUNNER_TEMP}/pantheon-restore-accepted-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${evidence_dir}"
+          baseline_meta="$(python3 scripts/fetch_dev_artifact_evidence.py \
+            --kind baseline \
+            --run-id "${PRIOR_RUN_ID}" \
+            --attempt "${PRIOR_RUN_ATTEMPT}" \
+            --output-dir "${evidence_dir}/baseline")"
+          candidate_meta="$(python3 scripts/fetch_dev_artifact_evidence.py \
+            --kind candidate \
+            --run-id "${PRIOR_RUN_ID}" \
+            --attempt "${PRIOR_RUN_ATTEMPT}" \
+            --output-dir "${evidence_dir}/candidate")"
+          manifest_sha256="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["manifest_sha256"])' "${baseline_meta}")"
+          candidate_sha256="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["candidate_image_manifest_sha256"])' "${candidate_meta}")"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_FE_URL%/}/deployment.json" > "${evidence_dir}/frontend-deployment-before.json"
+          chmod 0600 "${evidence_dir}/frontend-deployment-before.json"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_BFF_URL%/}/bff/version" > "${evidence_dir}/bff-version-before.json"
+          chmod 0600 "${evidence_dir}/bff-version-before.json"
+          # Live steady-service state of the dev stack (read-only), so a stack whose BFF
+          # matches the accepted backend but whose steady service is stopped is restored.
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          collect_steady_state() {
+            scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+              | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "$1"
+            chmod 0600 "$1"
+          }
+          collect_steady_state "${evidence_dir}/steady-state-before.json"
+          preconditions="$(python3 scripts/fetch_dev_artifact_evidence.py \
+            --mode verify-preconditions \
+            --steady-state-file "${evidence_dir}/steady-state-before.json" \
+            --baseline-file "${evidence_dir}/baseline/artifact-baseline.json" \
+            --deployment-json-file "${evidence_dir}/frontend-deployment-before.json" \
+            --bff-version-file "${evidence_dir}/bff-version-before.json" \
+            --repo-root "${GITHUB_WORKSPACE}")"
+          accepted_backend="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["accepted_backend_sha"])' "${preconditions}")"
+          accepted_frontend="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["accepted_frontend_sha"])' "${preconditions}")"
+          drifted_backend="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["drifted_backend_sha"])' "${preconditions}")"
+          {
+            echo "evidence_dir=${evidence_dir}"
+            echo "manifest_sha256=${manifest_sha256}"
+            echo "candidate_sha256=${candidate_sha256}"
+            echo "accepted_backend_sha=${accepted_backend}"
+            echo "accepted_frontend_sha=${accepted_frontend}"
+            echo "drifted_backend_sha=${drifted_backend}"
+            echo "current_controller_sha=${sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare fixed trusted command path
+        id: runtime
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          trusted_bin="${RUNNER_TEMP}/pantheon-trusted-bin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${trusted_bin}"
+          for command_name in ssh scp ssh-keygen; do
+            command_path="$(command -v "${command_name}")"
+            [[ -x "${command_path}" && ! -L "${command_path}" ]]
+            ln -s "${command_path}" "${trusted_bin}/${command_name}"
+          done
+          safe_path="${trusted_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          echo "safe_path=${safe_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Acquire shared dev environment lease and start identity-bound heartbeat
+        id: lease
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          ACCEPTED_BACKEND_SHA: ${{ steps.preflight.outputs.accepted_backend_sha }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          [[ -n "${lease_token}" ]] || { echo "COORDINATION_REPO_TOKEN is required for the deployment lease." >&2; exit 1; }
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ "$(git -C "${controller}" rev-parse HEAD)" == "081075781d28a6563c731909667b98b7b5c153f9" ]]
+          [[ -f "${controller}/scripts/dev_environment_lease.py" && ! -L "${controller}/scripts/dev_environment_lease.py" ]]
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          lease_dir="$(mktemp -d "${RUNNER_TEMP}/pantheon-dev-lease-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          chmod 0700 "${lease_dir}"
+          state_file="${lease_dir}/state.json"
+          pid_file="${lease_dir}/heartbeat.pid"
+          identity_file="${lease_dir}/heartbeat-identity.json"
+          failure_file="${lease_dir}/heartbeat-failure.json"
+          shutdown_file="${lease_dir}/heartbeat-stop.json"
+          heartbeat_log="${lease_dir}/heartbeat.log"
+          {
+            echo "state_file=${state_file}"
+            echo "pid_file=${pid_file}"
+            echo "identity_file=${identity_file}"
+            echo "failure_file=${failure_file}"
+            echo "shutdown_file=${shutdown_file}"
+            echo "heartbeat_log=${heartbeat_log}"
+          } >> "${GITHUB_OUTPUT}"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" acquire \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --mode deployment \
+            --owner "pantheon:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:restore-accepted-baseline" \
+            --ttl-seconds 300 \
+            --wait-seconds 3900 \
+            --poll-seconds 5 \
+            --state-file "${state_file}" \
+            --expected-backend-sha "${ACCEPTED_BACKEND_SHA}" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --json-out "${lease_dir}/acquisition.json"
+          exec {token_fd}<<<"${lease_token}"
+          env -i \
+            PATH="${PATH}" HOME="${HOME}" LANG=C.UTF-8 \
+            PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 PYTHONSTARTUP= PYTHONINSPECT= \
+            python3 "${controller}/scripts/dev_environment_lease.py" heartbeat-loop \
+              --repository ajoe734/execute-plans \
+              --branch environment-coordination \
+              --path .pantheon/environment-leases/pantheon-dev-environment.json \
+              --resource pantheon-dev-environment \
+              --state-file "${state_file}" \
+              --ttl-seconds 300 \
+              --interval-seconds 60 \
+              --failure-json-out "${failure_file}" \
+              --shutdown-json-out "${shutdown_file}" \
+              --identity-json-out "${identity_file}" \
+              --token-stdin \
+              <&"${token_fd}" >"${heartbeat_log}" 2>&1 &
+          heartbeat_pid=$!
+          disown "${heartbeat_pid}" 2>/dev/null || true
+          exec {token_fd}<&-
+          printf '%s\n' "${heartbeat_pid}" > "${pid_file}"
+          for _ in $(seq 1 100); do
+            [[ -s "${identity_file}" ]] && break
+            kill -0 "${heartbeat_pid}" 2>/dev/null || {
+              sed -n '1,200p' "${heartbeat_log}" >&2 || true
+              exit 75
+            }
+            sleep 0.1
+          done
+          [[ -s "${identity_file}" ]]
+          python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+            --identity-file "${identity_file}" \
+            --pid "${heartbeat_pid}" \
+            --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+            --state-file "${state_file}" >/dev/null
+          lease_token=""
+
+      - name: Restore accepted baseline under shared dev lease
+        id: restore
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
+          PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
+          EVIDENCE_DIR: ${{ steps.preflight.outputs.evidence_dir }}
+          BASELINE_MANIFEST_SHA256: ${{ steps.preflight.outputs.manifest_sha256 }}
+          ACCEPTED_BACKEND_SHA: ${{ steps.preflight.outputs.accepted_backend_sha }}
+          ACCEPTED_FRONTEND_SHA: ${{ steps.preflight.outputs.accepted_frontend_sha }}
+          DRIFTED_BACKEND_SHA: ${{ steps.preflight.outputs.drifted_backend_sha }}
+          PANTHEON_CURRENT_CONTROLLER_SHA: ${{ steps.preflight.outputs.current_controller_sha }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
+          DEV_BFF_PUBLIC_HOST: ${{ vars.DEV_BFF_PUBLIC_HOST || 'api.dev.mvl-cap.tw' }}
+          DEV_FE_PUBLIC_HOST: ${{ vars.DEV_FE_PUBLIC_HOST || 'app.dev.mvl-cap.tw' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_AUTH_STUB: "false"
+          DEV_BFF_AUTH_MODE: strict
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          DEV_PAPER_PRINCIPALS_AUTHORIZED: ${{ vars.DEV_PAPER_PRINCIPALS_AUTHORIZED || 'false' }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET'] }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET'] }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET'] }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET'] }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET'] }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_ID || 'pantheon-dev-admin-test' }}
+          DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET: ${{ secrets['DEV_BFF_DEV_LOGIN_TEST_ADMIN_CLIENT_SECRET'] }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'false' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
+          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
+          DEV_BFF_TENANT_ID: ${{ vars.DEV_BFF_TENANT_ID || 'tenant-dev' }}
+          DEV_BFF_ALLOWED_TENANTS: ${{ vars.DEV_BFF_ALLOWED_TENANTS || 'tenant-dev,pantheon-dev' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN }}
+          DEV_OPENCLAW_ANTHROPIC_API_KEY: ${{ secrets.DEV_OPENCLAW_ANTHROPIC_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY }}
+          DEV_OPENCLAW_OPENAI_API_KEY_2: ${{ secrets.DEV_OPENCLAW_OPENAI_API_KEY_2 }}
+          DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID: ${{ vars.DEV_OPENCLAW_ANTHROPIC_WORKSPACE_ID }}
+          DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
+          DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
+          DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_AGORA_PRIVATE_CONTENT_DEV_KEK: ${{ secrets.DEV_AGORA_PRIVATE_CONTENT_DEV_KEK }}
+          DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
+          DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          PANTHEON_DEV_PAPER_EXPRESSION_LAYER: ${{ vars.DEV_PAPER_EXPRESSION_LAYER || 'off' }}
+          DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1500' }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DEV_DEPLOY_SSH_KEY_FILE="${credentials_dir}/deploy_key"
+          export DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE="${credentials_dir}/known_hosts"
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
+              --mode restore-accepted-baseline \
+              --baseline-file "${EVIDENCE_DIR}/baseline/artifact-baseline.json" \
+              --expected-baseline-sha256 "${BASELINE_MANIFEST_SHA256}" \
+              --candidate-receipt-file "${EVIDENCE_DIR}/candidate/candidate-receipt.json" \
+              --deployment-json-file "${EVIDENCE_DIR}/frontend-deployment-before.json" \
+              --bff-version-file "${EVIDENCE_DIR}/bff-version-before.json" \
+              --steady-state-file "${EVIDENCE_DIR}/steady-state-before.json" \
+              --repo-root "${GITHUB_WORKSPACE}" \
+              --output-readback "${EVIDENCE_DIR}/restore-accepted-baseline-readback.json"
+          lease_token=""
+          # Same completeness check after the restore: every steady baseline service
+          # running on its baseline image, or the restore is not reported as proven.
+          scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+            | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "${EVIDENCE_DIR}/steady-state-after.json"
+          python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
+            --mode verify-steady-state \
+            --baseline-file "${EVIDENCE_DIR}/baseline/artifact-baseline.json" \
+            --steady-state-file "${EVIDENCE_DIR}/steady-state-after.json"
+          # Restart-loop check after the restore: second sample >= 90 s later.
+          t1="$(date +%s)"
+          sleep 90
+          scripts/dev_vm_ssh.sh exec "docker ps -a -q --filter label=com.docker.compose.project=pantheon | xargs -r docker inspect --format '{{index .Config.Labels \"com.docker.compose.service\"}}|{{index .Config.Labels \"com.docker.compose.oneoff\"}}|{{.State.Status}}|{{.Image}}|{{.RestartCount}}|{{.State.OOMKilled}}'" \
+            | python3 "${GITHUB_WORKSPACE}/scripts/dev_steady_state_rows.py" > "${EVIDENCE_DIR}/steady-state-after-2.json"
+          python3 "${GITHUB_WORKSPACE}/scripts/fetch_dev_artifact_evidence.py" \
+            --mode verify-restart-loop \
+            --steady-state-file "${EVIDENCE_DIR}/steady-state-after.json" \
+            --steady-state-second-file "${EVIDENCE_DIR}/steady-state-after-2.json" \
+            --sample-gap-seconds "$(( $(date +%s) - t1 ))"
+          actual_bff="$(curl --connect-timeout 10 --max-time 30 -fsS "${DEV_BFF_URL%/}/bff/version" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")')"
+          [[ "${actual_bff}" == "${ACCEPTED_BACKEND_SHA}" ]]
+          curl --connect-timeout 10 --max-time 30 -fsS "${DEV_FE_URL%/}/deployment.json" > "${EVIDENCE_DIR}/frontend-deployment-after.json"
+          cmp -s "${EVIDENCE_DIR}/frontend-deployment-before.json" "${EVIDENCE_DIR}/frontend-deployment-after.json"
+          {
+            echo "## Restored accepted baseline after failed compensation"
+            echo "- prior run: \`${PRIOR_RUN_ID}\` attempt: \`${PRIOR_RUN_ATTEMPT}\`"
+            echo "- drifted BFF before restore: \`${DRIFTED_BACKEND_SHA}\`"
+            echo "- restored accepted BFF: \`${actual_bff}\`"
+            echo "- accepted FE (unchanged): \`${ACCEPTED_FRONTEND_SHA}\`"
+            echo "- controller: \`${PANTHEON_CURRENT_CONTROLLER_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload restore accepted baseline readback evidence
+        if: ${{ always() && steps.restore.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-restore-accepted-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.preflight.outputs.evidence_dir }}/restore-accepted-baseline-readback.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop heartbeat and release lease only after complete restore success
+        id: lease_cleanup
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          LEASE_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          LEASE_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          LEASE_SHUTDOWN_FILE: ${{ steps.lease.outputs.shutdown_file }}
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          unset BASH_ENV ENV PYTHONPATH PYTHONHOME CDPATH
+          unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          printf '%s  %s\n' \
+            c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+
+          heartbeat_stopped() {
+            local state
+            state="$(ps -o stat= -p "${heartbeat_pid}" 2>/dev/null | tr -d '[:space:]')"
+            case "${state}" in ""|Z*|X*|x*) return 0 ;; esac
+            return 1
+          }
+          verify_identity() {
+            python3 "${controller}/scripts/dev_environment_lease.py" verify-heartbeat-identity \
+              --identity-file "${LEASE_IDENTITY_FILE}" \
+              --pid "${heartbeat_pid}" \
+              --expected-cli "${controller}/scripts/dev_environment_lease.py" \
+              --state-file "${LEASE_STATE_FILE}" >/dev/null
+          }
+          stop_heartbeat() {
+            local attempt
+            heartbeat_stopped && return 0
+            verify_identity || return 1
+            kill -TERM "${heartbeat_pid}" 2>/dev/null || {
+              heartbeat_stopped && return 0
+              return 1
+            }
+            heartbeat_stopped && return 0
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -CONT "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 40); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            verify_identity || { heartbeat_stopped && return 0; return 1; }
+            kill -KILL "${heartbeat_pid}" 2>/dev/null || true
+            for attempt in $(seq 1 20); do
+              heartbeat_stopped && return 0
+              sleep 0.25
+            done
+            return 1
+          }
+
+          if [[ ! -s "${LEASE_PID_FILE}" ]]; then
+            echo "Lease heartbeat never became identity-bound; quarantining until TTL." >&2
+            exit 0
+          fi
+          heartbeat_pid="$(tr -d '[:space:]' < "${LEASE_PID_FILE}")"
+          [[ "${heartbeat_pid}" =~ ^[1-9][0-9]*$ ]] || {
+            echo "Invalid heartbeat PID; quarantining until TTL." >&2
+            exit 0
+          }
+          stop_heartbeat || {
+            echo "Could not identity-safely stop heartbeat; refusing release." >&2
+            exit 75
+          }
+          if [[ "${RESTORE_OUTCOME}" != "success" || -e "${LEASE_FAILURE_FILE}" ]]; then
+            echo "Restore accepted baseline was incomplete; lease quarantined until TTL." >&2
+            sed -n '1,200p' "${LEASE_FAILURE_FILE}" >&2 2>/dev/null || true
+            exit 0
+          fi
+          [[ -s "${LEASE_SHUTDOWN_FILE}" ]] || {
+            echo "Heartbeat did not record a graceful identity-bound stop; refusing release." >&2
+            exit 75
+          }
+          python3 - "${LEASE_SHUTDOWN_FILE}" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          if payload.get("status") != "stopped" or payload.get("resource") != "pantheon-dev-environment":
+              raise SystemExit("heartbeat shutdown evidence is invalid")
+          PY
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" verify \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --state-file "${LEASE_STATE_FILE}" \
+            --max-heartbeat-age-seconds 120 >/dev/null
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            python3 "${controller}/scripts/dev_environment_lease.py" release \
+            --repository ajoe734/execute-plans \
+            --branch environment-coordination \
+            --path .pantheon/environment-leases/pantheon-dev-environment.json \
+            --resource pantheon-dev-environment \
+            --state-file "${LEASE_STATE_FILE}"
+          lease_token=""

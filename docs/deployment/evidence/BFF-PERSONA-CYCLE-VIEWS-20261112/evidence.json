@@ -1,0 +1,83 @@
+{
+  "task_id": "BFF-PERSONA-CYCLE-VIEWS-20261112",
+  "owner": "Codex2",
+  "reviewer": "Claude2",
+  "status": "ready_for_independent_review",
+  "independent_review": "pending",
+  "base_commit": "7c968cbedc35b1c88689def3fcca3f2a139b4f34",
+  "implementation_commit": "3eb6b39af53ce4e292ec8bdad1f5f33b11151f74",
+  "design": "docs/04/pantheon_persona_cycle_reconnect_2026-11-12/SD_PERSONA_CYCLE_RECONNECT_2026-11-12.md (D13)",
+  "hosted_behavior_claimed": false,
+  "scope": "Tenant-authorized PersonaService composition for cycle packets, Memory summary and harness experiences, Consultation memos and Persona harness version metadata; per-persona controller health on Management fleet.",
+  "production_entrypoints": [
+    "GET /bff/personas/{persona_id}",
+    "GET /api/v1/operator/persona-management/{persona_id}",
+    "GET /bff/management/persona-fleet"
+  ],
+  "acceptance": {
+    "1": "test_detail_reads_real_owners_and_controller_record exercises both production detail handlers, real clients and actual Persona/Memory/Consultation/Governance APIs/stores. The controller owner append/decoder persists and reads packet stage, failure, risk status and harness version. test_latest_controller_run_controls_detail_and_management verifies chronological packet summaries plus running/completed health.",
+    "2": "test_management_fleet_has_controller_health and test_latest_controller_run_controls_detail_and_management verify controller-record health on the authorized Management page, with unavailable status for a missing controller. No canonical loop is added.",
+    "3": "test_owner_outage_preserves_other_sections, test_missing_corrupt_or_empty_controller_is_unavailable, test_empty_owner_results_are_unavailable, test_malformed_owner_data_fails_closed and test_owner_configuration_missing_is_explicit cover null+unavailable with recorded reasons. Foreign owner data is refused and raw owner errors, prompt/case data and version surfaces are omitted.",
+    "4": "Only urllib network transport is bridged into real owner ASGI apps. Signed caller JWTs, Consultation existing service credential, Governance authorization, owner data stores, owner version validation, packet persistence and the actual PersonaService/create_personas_router run. The existing pool suite is preserved with unrelated D13 HTTP enrichment explicitly isolated in its fixture."
+  },
+  "verification": [
+    {
+      "command": "timeout 60 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_cycle_views.py services/control-plane/bff/tests/test_persona_pool_views.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "55 passed, 3 warnings in 30.09s (before rebase)",
+      "output": "owner-integration.txt"
+    },
+    {
+      "command": "timeout 60 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_pool_views.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_health_single_owner.py services/control-plane/bff/tests/test_persona_cycle_views.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "57 passed, 29 warnings in 25.68s (earlier implementation; subsequent additions covered by final suite)",
+      "output": "owner-regression.txt"
+    },
+    {
+      "command": "timeout 120 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q --disable-warnings",
+      "exit_code": 0,
+      "result": "39 passed, 3 warnings in 85.03s, after rebase",
+      "output": "architecture.txt"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "Passed"
+    },
+    {
+      "command": "timeout 120 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_cycle_views.py services/control-plane/bff/tests/test_persona_pool_views.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_health_single_owner.py -q --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "69 passed, 29 warnings in 34.23s, after rebase; final implementation",
+      "output": "rebased-final.txt"
+    }
+  ],
+  "nonpassing_checks": [
+    {
+      "command": "python3 -m pytest services/control-plane/bff/tests/test_persona_cycle_views.py",
+      "exit_code": 1,
+      "result": "System Python has no pytest. Subsequent commands use existing /tmp/bffvenv interpreter."
+    },
+    {
+      "command": "timeout 60 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_bff_test_architecture.py -q --disable-warnings",
+      "exit_code": 124,
+      "result": "First standalone full architecture batch timed out; not counted as passed. Bounded 120-second batch above completed all 39 tests."
+    },
+    {
+      "command": "timeout 30 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_router.py::test_route_inventory_count services/control-plane/bff/tests/test_persona_router.py::test_bff_management_persona_fleet -q --disable-warnings (clean archive of b5530c692)",
+      "exit_code": 1,
+      "result": "2 baseline failures reproduced: 53 actual routes vs 49 expected; legacy fleet fixture returns 422 because Evolution owner is unconfigured. Same failures encountered on task branch. New real-owner fleet integration passes.",
+      "output": "baseline-router-failures.txt"
+    },
+    {
+      "command": "timeout 60 /tmp/bffvenv/bin/python -m pytest services/control-plane/bff/tests/test_persona_cycle_views.py services/control-plane/bff/tests/test_persona_pool_views.py services/control-plane/bff/tests/test_mgmt_read_001_persona_fleet_owner_observations.py services/control-plane/bff/tests/test_persona_health_single_owner.py -q --disable-warnings --maxfail=2",
+      "exit_code": 124,
+      "result": "First combined rebased batch timed out with partial output while full architecture batch was also active; not counted as passed. Subsequent bounded 120-second batch completed all 69 tests."
+    }
+  ],
+  "limits": [
+    "No deployment, hosted acceptance, live model call, trading or capital write was performed or claimed.",
+    "Cycle summaries are the newest 20 paper records. Memory summary and tagged experiences are each limited to 100 owner-ranked records. Consultation shows memos from the newest 20 panels initiated by the persona; it is not a full participant/transcript archive.",
+    "Missing sources remain independently unavailable. Existing outer persona metadata is preserved; consumers inspect the matching meta.surfaces entry.",
+    "Independent Claude2 review, exact-head approval, supervisor integration and owner closeout remain required."
+  ]
+}

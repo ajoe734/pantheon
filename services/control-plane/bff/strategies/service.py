@@ -6,10 +6,12 @@ away from route handlers.
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Sequence, Set, Union
 import uuid
 
 from fastapi import HTTPException
@@ -65,6 +67,9 @@ STRATEGY_OPERATIONAL_COUNT_MAX_CANDIDATES = STRATEGY_OWNER_PAGE_SIZE
 
 ROLE_TRADING = "trading"
 ROLE_ROLLBACK_BASELINE = "rollback_baseline"
+ROLE_POOL_ENVELOPE = "pool_envelope"
+ROLE_POOL_MEMBER = "pool_member"
+POOL_ENVELOPE_KIND = "persona_portfolio_v1"
 
 
 def _clean_dict(value: Any) -> Dict[str, Any]:
@@ -83,7 +88,10 @@ def project_strategy_rules(
     of RegistryEntryView (``{"entry": {...}}``) or bare entries. Role is
     ``rollback_baseline`` only when the registry id is named in
     ``lineage.parent_registry_ids`` of another approved bundle of the same
-    strategy. No registry id is ever derived by rewriting another id.
+    strategy. A bundle whose ``strategy_logic.kind`` is ``persona_portfolio_v1``
+    is a ``pool_envelope`` and lists its members; a bundle named only by pool
+    envelopes (as member or lineage parent) is a ``pool_member``. No registry
+    id is ever derived by rewriting another id.
     """
     approved: List[Dict[str, Any]] = []
     for item in entries if isinstance(entries, list) else []:
@@ -115,30 +123,75 @@ def project_strategy_rules(
             else []
         )
 
+    def _artifact_of(entry: Dict[str, Any]) -> Dict[str, Any]:
+        return _clean_dict(_clean_dict(entry.get("metadata")).get("strategy_artifact"))
+
+    envelope_ids = {
+        str(e["registry_id"])
+        for e in approved
+        if _clean_dict(_artifact_of(e).get("strategy_logic")).get("kind") == POOL_ENVELOPE_KIND
+    }
+    named_by_envelopes: set = set()
+    for env_id in envelope_ids:
+        named_by_envelopes.update(parent_ids_by_bundle.get(env_id, []))
+    for entry in approved:
+        if str(entry["registry_id"]) not in envelope_ids:
+            continue
+        for member in _clean_dict(_artifact_of(entry).get("strategy_logic")).get("members") or []:
+            if isinstance(member, dict):
+                for key in ("artifact_id", "member_id"):
+                    if str(member.get(key) or "").strip():
+                        named_by_envelopes.add(str(member[key]).strip())
+
     rules: List[Dict[str, Any]] = []
     for entry in approved:
         registry_id = str(entry["registry_id"])
-        is_parent_of_other = any(
+        is_envelope = registry_id in envelope_ids
+        is_baseline = any(
             registry_id in parents
             for other_id, parents in parent_ids_by_bundle.items()
-            if other_id != registry_id
+            if other_id != registry_id and other_id not in envelope_ids
         )
-        metadata = _clean_dict(entry.get("metadata"))
-        artifact = _clean_dict(metadata.get("strategy_artifact"))
+        artifact = _artifact_of(entry)
         mutation = _clean_dict(artifact.get("mutation_surface"))
         controls = mutation.get("controls")
         immutable = mutation.get("immutable_parameters")
-        rules.append(
-            {
-                "registryId": registry_id,
-                "version": entry.get("version"),
-                "role": ROLE_ROLLBACK_BASELINE if is_parent_of_other else ROLE_TRADING,
-                "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
-                "parameters": _clean_dict(artifact.get("parameters")),
-                "adjustableControls": list(controls) if isinstance(controls, list) else [],
-                "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
-            }
-        )
+        if is_envelope:
+            role = ROLE_POOL_ENVELOPE
+        elif is_baseline:
+            role = ROLE_ROLLBACK_BASELINE
+        elif registry_id in named_by_envelopes:
+            role = ROLE_POOL_MEMBER
+        else:
+            role = ROLE_TRADING
+        rule = {
+            "registryId": registry_id,
+            "version": entry.get("version"),
+            "role": role,
+            "strategyLogic": _clean_dict(artifact.get("strategy_logic")),
+            "parameters": _clean_dict(artifact.get("parameters")),
+            "adjustableControls": list(controls) if isinstance(controls, list) else [],
+            "immutableParameters": list(immutable) if isinstance(immutable, list) else [],
+        }
+        if is_envelope:
+            logic = rule["strategyLogic"]
+            rule["combinationRule"] = logic.get("combination_rule")
+            rule["riskLimits"] = deepcopy(logic.get("risk_limits"))
+            members = []
+            for member in logic.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                member_artifact = _clean_dict(member.get("artifact"))
+                member_controls = _clean_dict(member_artifact.get("mutation_surface")).get("controls")
+                members.append({
+                    "registryId": member.get("artifact_id") or member.get("member_id"),
+                    "riskWeight": member.get("risk_weight"),
+                    "strategyLogic": deepcopy(_clean_dict(member_artifact.get("strategy_logic"))),
+                    "parameters": deepcopy(_clean_dict(member_artifact.get("parameters"))),
+                    "adjustableControls": deepcopy(member_controls) if isinstance(member_controls, list) else [],
+                })
+            rule["members"] = members
+        rules.append(rule)
     return rules
 
 log = logging.getLogger(__name__)
@@ -328,6 +381,8 @@ class StrategiesService:
         persona_id: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[Sequence[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         norm_state = str(state).strip() if state and str(state).strip() else None
         norm_exclude_state = (
@@ -365,13 +420,28 @@ class StrategiesService:
         }
         if norm_exclude_state is not None:
             call_kwargs["exclude_state"] = norm_exclude_state
+        hide_kwargs: Dict[str, Any] = (
+            {"hide_stubs": True, "hide_persona_ids": sorted(set(hide_persona_ids or ()))}
+            if hide_stubs
+            else {}
+        )
         try:
             try:
-                page = getter(**call_kwargs)
+                page = getter(**call_kwargs, **hide_kwargs)
             except TypeError:
-                if norm_exclude_state is not None:
+                if hide_kwargs:
+                    # A read port that cannot take the owner-side hide input
+                    # answers without the hide marker; the caller classifies.
+                    try:
+                        page = getter(**call_kwargs)
+                    except TypeError:
+                        if norm_exclude_state is not None:
+                            return None
+                        raise
+                elif norm_exclude_state is not None:
                     return None
-                raise
+                else:
+                    raise
         except HTTPException as exc:
             if exc.status_code == 400 and self._bff_error:
                 detail_obj = exc.detail if isinstance(exc.detail, dict) else {}
@@ -411,15 +481,28 @@ class StrategiesService:
         state: Optional[str] = None,
         exclude_state: Optional[str] = None,
         persona_id: Optional[str] = None,
+        hide_stubs: bool = False,
+        hide_persona_ids: Optional[Sequence[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Walk every owner summary page of one candidate set (page_size 200).
 
-        Returns ``{"items", "total", "state_counts"}`` or ``None`` when the
-        owner has no paged view. The registry paging is by offset token, so a
-        repeated or non-advancing token is a broken owner and fails closed.
+        Returns ``{"items", "total", "state_counts", "owner_hid", "hidden",
+        "visible_state_counts"}`` or ``None`` when the owner has no paged
+        view. The registry paging is by offset token, so a repeated or
+        non-advancing token is a broken owner and fails closed.
+
+        With ``hide_stubs`` the owner answers the hide input on every page of
+        the same candidate set; ``owner_hid`` / ``hidden`` /
+        ``visible_state_counts`` are taken from the first page, so the counts
+        cost no extra owner call. An owner that does not take the hide input
+        answers without the marker (``owner_hid`` False, counts ``None``) and
+        the caller classifies the rows itself.
         """
         items: List[Dict[str, Any]] = []
         state_counts: Optional[Dict[str, int]] = None
+        visible_state_counts: Optional[Dict[str, int]] = None
+        hidden: Optional[Dict[str, Any]] = None
+        owner_hid = False
         total = 0
         page_token: Optional[str] = None
         seen_tokens: Set[str] = set()
@@ -430,6 +513,8 @@ class StrategiesService:
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=STRATEGY_OWNER_PAGE_SIZE,
+                hide_stubs=hide_stubs,
+                hide_persona_ids=hide_persona_ids,
             )
             if page is None:
                 return None
@@ -437,12 +522,34 @@ class StrategiesService:
             if not isinstance(page_items, list):
                 raise self._candidate_walk_error("Invalid strategy list payload")
             items.extend(page_items)
+            page_hid = isinstance(page.get("hidden"), dict) and isinstance(
+                page.get("visible_state_counts"), dict
+            )
             if page_number == 0:
                 total = int(page.get("total") or 0)
                 state_counts = self.resolve_strategy_state_counts(owner_page=page)
+                if hide_stubs and page_hid:
+                    owner_hid = True
+                    hidden = dict(page["hidden"])
+                    visible_state_counts = self.resolve_visible_state_counts(
+                        owner_page=page
+                    )
+            elif hide_stubs and page_hid != owner_hid:
+                # Pages of one walk that disagree on hiding cannot be joined
+                # into one exact candidate set.
+                raise self._candidate_walk_error(
+                    "Strategy list pages disagree on the hide input"
+                )
             next_token = page.get("next_page_token")
             if not next_token:
-                return {"items": items, "total": total, "state_counts": state_counts}
+                return {
+                    "items": items,
+                    "total": total,
+                    "state_counts": state_counts,
+                    "owner_hid": owner_hid,
+                    "hidden": hidden,
+                    "visible_state_counts": visible_state_counts,
+                }
             next_token = str(next_token)
             if next_token in seen_tokens or next_token == page_token:
                 raise self._candidate_walk_error("Strategy list paging did not advance")
@@ -453,8 +560,25 @@ class StrategiesService:
         )
 
     def list_strategy_summaries_hide_retired_unfiltered_page(
+        self, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Bounded unfiltered paging (see ``_hide_retired_unfiltered_page_impl``).
+
+        Cancels an overlapped ``exclude_state=draft`` read that was started but
+        never joined (early return, error, or reconciliation not needed).
+        """
+        overlap: Dict[str, Any] = {"join": None}
+        try:
+            return self._hide_retired_unfiltered_page_impl(_overlap=overlap, **kwargs)
+        finally:
+            canceller = getattr(overlap.get("join"), "cancel", None)
+            if callable(canceller):
+                canceller()
+
+    def _hide_retired_unfiltered_page_impl(
         self,
         *,
+        _overlap: Dict[str, Any],
         persona_lookup: Any,
         summary_persona_ids_fn: Callable[[Dict[str, Any]], List[str]],
         operational_counts_fn: Callable[[Any], Dict[str, int]],
@@ -465,8 +589,21 @@ class StrategiesService:
         ],
         page_token: Optional[str] = None,
         page_size: int = 20,
+        hide_retired: bool = True,
+        stub_reason_fn: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
+        test_probe_reason: Optional[str] = None,
+        first_page_fn: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+        submit_overlap_fn: Optional[Callable[[Callable[[], Any]], Callable[[], Any]]] = None,
+        owner_hide_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Bounded resolution for ``hide_retired_personas=true`` with no state filter.
+
+        Also serves the default view when test-scoped Personas exist
+        (``hide_retired=False`` with ``stub_reason_fn``): test probes and
+        synthetic stubs are hidden and counted over the rows seen. A
+        ``first_page_fn`` supplies an already prefetched offset-0 page, and
+        ``submit_overlap_fn`` starts the ``exclude_state=draft`` read
+        concurrently with the unfiltered page reads.
 
         Instead of walking every 200-row owner page across thousands of unbound
         draft strategies, reads the first unfiltered owner page, walks additional
@@ -474,7 +611,14 @@ class StrategiesService:
         ``(page_token, page_size)``, and resolves exact ``operational_counts`` and
         ``hidden_retired_persona_count`` from the bounded ``exclude_state=draft``
         non-draft population plus the remaining unbound draft count.
+
+        ``owner_hide_kwargs`` is the owner-side hide input: every owner read
+        carries it, so stubs are excluded and counted by the owner over the
+        whole candidate set and ``total`` and the hidden counts are exact. Only
+        an owner that does not answer it (no hidden counts in its page) falls
+        back to classifying the rows seen here.
         """
+        hide_kwargs = dict(owner_hide_kwargs or {})
         start = 0
         if page_token is not None and str(page_token).strip() != "":
             try:
@@ -504,15 +648,82 @@ class StrategiesService:
                     detail="page_token must be a non-negative integer offset",
                 )
         page_slice_fn([], page_token, page_size)
-        first_page = self.list_strategy_summaries_page(
-            state=None,
-            exclude_state=None,
-            persona_id=None,
-            page_token=None,
-            page_size=STRATEGY_OWNER_PAGE_SIZE,
-        )
+
+        def _read_non_draft() -> Optional[Dict[str, Any]]:
+            return self.list_all_strategy_summary_pages(
+                state=None, exclude_state="draft", persona_id=None, **hide_kwargs
+            )
+
+        non_draft_join: Optional[Callable[[], Any]] = None
+        first_page: Optional[Dict[str, Any]]
+        if first_page_fn is not None and start == 0:
+            # Start the draft-excluded reconciliation read first so it overlaps
+            # with joining the prefetched first page.
+            if submit_overlap_fn is not None:
+                non_draft_join = submit_overlap_fn(_read_non_draft)
+                _overlap["join"] = non_draft_join
+            first_page = first_page_fn()
+        else:
+            first_page = self.list_strategy_summaries_page(
+                state=None,
+                exclude_state=None,
+                persona_id=None,
+                page_token=None,
+                page_size=STRATEGY_OWNER_PAGE_SIZE,
+                **hide_kwargs,
+            )
         if first_page is None:
             return None
+        owner_hid = (
+            bool(hide_kwargs)
+            and isinstance(first_page.get("hidden"), dict)
+            and isinstance(first_page.get("visible_state_counts"), dict)
+        )
+        owner_stub_counts: Optional[Tuple[int, int]] = None
+        visible_state_counts: Optional[Dict[str, int]] = None
+        if owner_hid:
+            by_reason = first_page["hidden"].get("by_reason") or {}
+            owner_test_n = int(by_reason.get(test_probe_reason) or 0)
+            owner_stub_counts = (
+                owner_test_n,
+                sum(int(v) for k, v in by_reason.items() if k != test_probe_reason),
+            )
+            visible_state_counts = self.resolve_visible_state_counts(owner_page=first_page)
+            # The owner already excluded the stubs; nothing left to classify.
+            stub_reason_fn = None
+
+        def _is_kept(row: Dict[str, Any]) -> bool:
+            if stub_reason_fn is not None and stub_reason_fn(row) is not None:
+                return False
+            if hide_retired:
+                return (
+                    persona_lookup.operational_status(summary_persona_ids_fn(row))
+                    != status_retired
+                )
+            return True
+
+        def _stub_counts(rows: Any) -> Tuple[int, int]:
+            if owner_stub_counts is not None:
+                return owner_stub_counts
+            test_n = other_n = 0
+            if stub_reason_fn is None:
+                return 0, 0
+            for row in rows:
+                reason = stub_reason_fn(row)
+                if reason is None:
+                    continue
+                if reason == test_probe_reason:
+                    test_n += 1
+                else:
+                    other_n += 1
+            return test_n, other_n
+
+        def _visible_op_counts(rows: Any) -> Dict[str, int]:
+            return operational_counts_fn(
+                persona_lookup.operational_status(summary_persona_ids_fn(r))
+                for r in rows
+                if stub_reason_fn is None or stub_reason_fn(r) is None
+            )
         first_items = first_page.get("items")
         if not isinstance(first_items, list):
             raise self._candidate_walk_error("Invalid strategy list payload")
@@ -530,23 +741,25 @@ class StrategiesService:
         first_next_token = first_page.get("next_page_token")
 
         if not first_next_token:
-            kept = [
-                s
-                for s in first_items
-                if persona_lookup.operational_status(summary_persona_ids_fn(s))
-                != status_retired
-            ]
+            kept = [s for s in first_items if _is_kept(s)]
             page_summaries, next_page_token = page_slice_fn(kept, page_token, page_size)
-            op_counts = operational_counts_fn(
-                persona_lookup.operational_status(summary_persona_ids_fn(s))
-                for s in first_items
+            op_counts = _visible_op_counts(first_items)
+            test_n, other_n = _stub_counts(first_items)
+            # An owner that hid the stubs already left them out of first_items.
+            stubs_in_items = 0 if owner_hid else test_n + other_n
+            retired_n = (
+                len(first_items) - stubs_in_items - len(kept) if hide_retired else 0
             )
             return {
                 "page_summaries": page_summaries,
                 "next_page_token": next_page_token,
                 "total": len(kept),
-                "hidden_retired_persona_count": len(first_items) - len(kept),
+                "hidden_retired_persona_count": retired_n,
+                "hidden_test_persona_strategy_count": test_n,
+                "stubs_applied": stub_reason_fn is not None or owner_hid,
+                "hidden_unbound_stub_strategy_count": other_n,
                 "state_counts": state_counts,
+                "visible_state_counts": visible_state_counts,
                 "operational_counts": op_counts,
             }
 
@@ -560,6 +773,7 @@ class StrategiesService:
                     persona_id=None,
                     page_token=page_token,
                     page_size=page_size,
+                    **hide_kwargs,
                 )
                 if not isinstance(target_page, dict) or not isinstance(
                     target_page.get("items"), list
@@ -585,7 +799,11 @@ class StrategiesService:
                 "next_page_token": next_page_token,
                 "total": unfiltered_total,
                 "hidden_retired_persona_count": 0,
+                "hidden_test_persona_strategy_count": (owner_stub_counts or (0, 0))[0],
+                "stubs_applied": owner_hid,
+                "hidden_unbound_stub_strategy_count": (owner_stub_counts or (0, 0))[1],
                 "state_counts": state_counts,
+                "visible_state_counts": visible_state_counts,
                 "operational_counts": {
                     "running": 0,
                     "idle": 0,
@@ -596,13 +814,11 @@ class StrategiesService:
             }
 
         walked_items: List[Dict[str, Any]] = list(first_items)
-        kept = [
-            s
-            for s in first_items
-            if persona_lookup.operational_status(summary_persona_ids_fn(s))
-            != status_retired
-        ]
+        kept = [s for s in first_items if _is_kept(s)]
         next_token: Optional[str] = str(first_next_token)
+        if non_draft_join is None and submit_overlap_fn is not None:
+            non_draft_join = submit_overlap_fn(_read_non_draft)
+            _overlap["join"] = non_draft_join
         seen_tokens: Set[str] = {next_token}
         page_number = 1
         while len(kept) < start + page_size and next_token:
@@ -616,6 +832,7 @@ class StrategiesService:
                 persona_id=None,
                 page_token=next_token,
                 page_size=STRATEGY_OWNER_PAGE_SIZE,
+                **hide_kwargs,
             )
             if page is None or not isinstance(page.get("items"), list):
                 raise self._candidate_walk_error("Invalid strategy list payload")
@@ -630,10 +847,7 @@ class StrategiesService:
                     raise self._candidate_walk_error("Invalid strategy summary entry")
             walked_items.extend(page_items)
             for s in page_items:
-                if (
-                    persona_lookup.operational_status(summary_persona_ids_fn(s))
-                    != status_retired
-                ):
+                if _is_kept(s):
                     kept.append(s)
             raw_next = page.get("next_page_token")
             if not raw_next:
@@ -651,10 +865,11 @@ class StrategiesService:
             for s in walked_items
         }
         non_draft_expected: Optional[int] = None
-        if isinstance(state_counts, dict):
+        expected_counts = visible_state_counts if owner_hid else state_counts
+        if isinstance(expected_counts, dict):
             non_draft_expected = sum(
                 int(v)
-                for k, v in state_counts.items()
+                for k, v in expected_counts.items()
                 if k not in ("draft", "retired")
             )
         seen_non_draft = sum(
@@ -667,10 +882,9 @@ class StrategiesService:
         if next_token is not None and (
             non_draft_expected is None or seen_non_draft < non_draft_expected
         ):
-            non_draft_walk = self.list_all_strategy_summary_pages(
-                state=None,
-                exclude_state="draft",
-                persona_id=None,
+            _overlap["join"] = None
+            non_draft_walk = (
+                non_draft_join() if non_draft_join is not None else _read_non_draft()
             )
             if non_draft_walk is not None:
                 for s in non_draft_walk.get("items") or ():
@@ -683,14 +897,17 @@ class StrategiesService:
                         raise self._candidate_walk_error("Invalid strategy summary entry")
                     seen_by_id.setdefault(sid, s)
 
-        op_counts = operational_counts_fn(
-            persona_lookup.operational_status(summary_persona_ids_fn(s))
-            for s in seen_by_id.values()
-        )
+        seen_rows = list(seen_by_id.values())
+        op_counts = _visible_op_counts(seen_rows)
+        test_n, other_n = _stub_counts(seen_rows)
         remaining_unbound_drafts = max(0, unfiltered_total - len(seen_by_id))
         op_counts["unbound"] = int(op_counts.get("unbound") or 0) + remaining_unbound_drafts
-        hidden_count = int(op_counts.get("retired") or 0)
-        total = max(0, unfiltered_total - hidden_count)
+        hidden_count = int(op_counts.get("retired") or 0) if hide_retired else 0
+        # unfiltered_total already excludes what the owner hid.
+        total = max(
+            0,
+            unfiltered_total - hidden_count - (0 if owner_hid else test_n + other_n),
+        )
         page_summaries = kept[start : start + page_size]
         next_offset = start + len(page_summaries)
         next_page_token = (
@@ -701,7 +918,11 @@ class StrategiesService:
             "next_page_token": next_page_token,
             "total": total,
             "hidden_retired_persona_count": hidden_count,
+            "hidden_test_persona_strategy_count": test_n,
+            "stubs_applied": stub_reason_fn is not None or owner_hid,
+            "hidden_unbound_stub_strategy_count": other_n,
             "state_counts": state_counts,
+            "visible_state_counts": visible_state_counts,
             "operational_counts": op_counts,
         }
 
@@ -813,6 +1034,32 @@ class StrategiesService:
             return counts
         except Exception:
             return None
+
+    def resolve_visible_state_counts(
+        self, *, owner_page: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, int]]:
+        """Per-DTO-state counts of the rows the owner did not hide, or ``None``
+        when the owner gave none; never fabricates zeros."""
+        if not isinstance(owner_page, dict):
+            return None
+        raw_counts = owner_page.get("visible_state_counts")
+        if (
+            not isinstance(raw_counts, dict)
+            or not raw_counts
+            or not all(
+                isinstance(k, str)
+                and k.strip()
+                and isinstance(v, int)
+                and not isinstance(v, bool)
+                and v >= 0
+                for k, v in raw_counts.items()
+            )
+        ):
+            return None
+        counts = {k: 0 for k in STRATEGY_DEFAULT_STATE_COUNT_KEYS}
+        for k, v in raw_counts.items():
+            counts[str(k).strip()] = int(v)
+        return counts
 
     def _invoke_read_owner(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         try:

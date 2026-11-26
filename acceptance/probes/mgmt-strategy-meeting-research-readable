@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+# acceptance-owner: BFF-STRATEGY-SYNTHETIC-STUBS-20261120
+"""Read-only release probe: strategy, meeting and research lists are readable.
+
+Logs in as the viewer (ACCEPTANCE_VIEWER_CLIENT_ID/SECRET via /bff/auth/dev-login; the
+token stays in memory and is never printed) and checks, with GET only:
+  * GET /bff/strategies?exclude_state=draft lists no "SIMULATION paper-only" row, no
+    strat-tw-official / "TW official" raw-seed row, and no retired or unbound
+    "Pantheon Dev Paper Release" probe row, and reports meta.hidden_unbound_stub_strategy_count
+    and meta.hidden_test_persona_strategy_count;
+  * GET /bff/meetings?status=upcoming lists no dead_letter meeting;
+  * GET /bff/research-tasks?view=research lists no is_non_real row, exposes meta.hidden_non_real_count,
+    reports meta.surfaces.research_demands.status == ok (open persona demands readable from the Research
+    owner), and lists no row whose persona_ids resolve to a test-scope persona
+    (GET /bff/management/persona-fleet?data_scope=test).
+Exit 0 passed, 1 failed, 77 skipped (a variable is missing).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+STRATEGIES = "/bff/strategies?exclude_state=draft&page_size=200"
+MEETINGS = "/bff/meetings?status=upcoming&page_size=50"
+RESEARCH = "/bff/research-tasks?view=research&page_size=200"
+TEST_PERSONAS = "/bff/management/persona-fleet?data_scope=test&page_size=200"
+MAX_PAGES = 30
+DEAD_LETTER = {"dead_letter", "execution_failed"}
+
+
+def _rows(body):
+    if not isinstance(body, dict):
+        return []
+    for candidate in (body.get("items"), body.get("data"), (body.get("data") or {}).get("items") if isinstance(body.get("data"), dict) else None):
+        if isinstance(candidate, list):
+            return [r for r in candidate if isinstance(r, dict)]
+    return []
+
+
+def _meta(body):
+    return body.get("meta") if isinstance(body, dict) and isinstance(body.get("meta"), dict) else {}
+
+
+def _strategy_failures(fetch):
+    failures, rows, path, first_meta = [], [], STRATEGIES, None
+    for _ in range(MAX_PAGES):
+        body = fetch(path)
+        if first_meta is None:
+            first_meta = _meta(body)
+        rows += _rows(body)
+        token = (body.get("page_info") or {}).get("next_page_token") if isinstance(body, dict) else None
+        if not token:
+            break
+        path = STRATEGIES + "&page_token=" + str(token)
+    bad = []
+    for r in rows:
+        name, sid = str(r.get("name") or ""), str(r.get("id") or "")
+        if name.startswith("SIMULATION paper-only") or name.startswith("TW official ") or sid.startswith("strat-tw-official"):
+            bad.append(sid)
+        elif name.startswith("Pantheon Dev Paper Release"):
+            bad.append(sid)
+    if bad:
+        failures.append("stub_or_probe_strategies_listed:" + ",".join(bad[:5]))
+    for key in ("hidden_unbound_stub_strategy_count", "hidden_test_persona_strategy_count"):
+        if not isinstance(first_meta.get(key), int) or isinstance(first_meta.get(key), bool):
+            failures.append("meta_" + key + "_missing")
+    return len(rows), failures
+
+
+def _test_persona_ids(fetch):
+    ids, path = set(), TEST_PERSONAS
+    for _ in range(MAX_PAGES):
+        body = fetch(path)
+        rows = _rows(body) or _rows(body.get("data") if isinstance(body, dict) else None)
+        ids |= {str(r.get("persona_id") or r.get("id")) for r in rows}
+        page = (body.get("page_info") or (body.get("data") or {}).get("page_info") or {}) if isinstance(body, dict) else {}
+        token = page.get("next_page_token") if isinstance(page, dict) else None
+        if not token:
+            break
+        path = TEST_PERSONAS + "&page_token=" + str(token)
+    return ids
+
+
+def check(fetch) -> dict:
+    failures = []
+    strategy_rows, found = _strategy_failures(fetch)
+    failures += found
+    meetings = _rows(fetch(MEETINGS))
+    dead = [
+        str(m.get("meeting_id") or m.get("id"))
+        for m in meetings
+        if str(m.get("effective_status") or "").lower() in DEAD_LETTER
+        or str((m.get("execution_state") or {}).get("state") or "").lower() == "dead_letter"
+    ]
+    if dead:
+        failures.append("dead_letter_meetings_listed:" + ",".join(dead[:5]))
+    research_body = fetch(RESEARCH)
+    research = _rows(research_body)
+    non_real = [str(t.get("task_id") or t.get("id")) for t in research if t.get("is_non_real") is True]
+    if non_real:
+        failures.append("non_real_research_tasks_listed:" + ",".join(non_real[:5]))
+    hidden = _meta(research_body).get("hidden_non_real_count")
+    if not isinstance(hidden, int) or isinstance(hidden, bool):
+        failures.append("meta_hidden_non_real_count_missing")
+    surface = (_meta(research_body).get("surfaces") or {}).get("research_demands")
+    if not isinstance(surface, dict) or surface.get("status") != "ok":
+        failures.append("research_demands_unavailable:" + str((surface or {}).get("reason") if isinstance(surface, dict) else "missing"))
+    if any(isinstance(t.get("persona_ids"), list) and t["persona_ids"] for t in research):
+        test_ids = _test_persona_ids(fetch)
+        scoped = [str(t.get("task_id") or t.get("id")) for t in research
+                  if isinstance(t.get("persona_ids"), list) and t["persona_ids"]
+                  and all(str(p) in test_ids for p in t["persona_ids"])]
+        if scoped:
+            failures.append("test_scope_persona_research_tasks_listed:" + ",".join(scoped[:5]))
+    return {"strategy_rows": strategy_rows, "meeting_rows": len(meetings), "research_rows": len(research),
+            "failed": failures, "passed": not failures}
+
+
+def _request(request):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - operator-supplied BFF URL
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"http_{exc.code}") from None
+    except Exception as exc:  # never echo URLs or bodies
+        raise RuntimeError(f"request_failed:{type(exc).__name__}") from None
+
+
+def main() -> int:
+    missing = [name for name in REQUIRED if not os.environ.get(name, "").strip()]
+    if missing:
+        print("skipped: missing " + ", ".join(missing))
+        return 77
+    base = os.environ["ACCEPTANCE_BFF_URL"].rstrip("/")
+    try:
+        body = json.dumps({"grant_type": "client_credentials",
+                           "client_id": os.environ["ACCEPTANCE_VIEWER_CLIENT_ID"],
+                           "client_secret": os.environ["ACCEPTANCE_VIEWER_CLIENT_SECRET"]}).encode()
+        token = str(_request(urllib.request.Request(
+            base + "/bff/auth/dev-login", data=body, method="POST",
+            headers={"Content-Type": "application/json"})).get("access_token") or "")
+        if not token:
+            raise RuntimeError("no_access_token")
+        report = check(lambda path: _request(urllib.request.Request(
+            base + path, method="GET", headers={"Authorization": "Bearer " + token})))
+    except RuntimeError as exc:
+        print(f"failed: {exc}")
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

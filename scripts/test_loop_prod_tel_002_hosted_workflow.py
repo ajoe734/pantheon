@@ -71,3 +71,12 @@ def test_prebootstrap_baseline_is_captured_before_bootstrap_and_wired_to_probe()
     assert "DEV_PAPER_PREBOOTSTRAP_WORKTREE" in source
     assert "steps.paper_bootstrap.outputs.prebootstrap_high_watermark" in source
     assert "--baseline-high-watermark ${baseline_q}" in source
+
+
+def test_automatic_deployer_does_not_send_probe_but_manual_input_still_gates_steps() -> None:
+    auto = (ROOT / "scripts" / "auto_deploy_dev_pair.py").read_text(encoding="utf-8")
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "run_loop_prod_tel_002_probe" not in auto
+    assert "PAPER_BOOTSTRAP_REQUESTED" not in auto
+    assert "inputs.run_loop_prod_tel_002_probe" in source
+    assert "inputs.run_loop_prod_tel_002_probe &&" in source

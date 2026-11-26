@@ -465,6 +465,7 @@ class DispatchIntent:
     target_stage: str | None = None
     approval_decision_id: str | None = None
     command_id: str | None = None
+    pool_member: Mapping[str, Any] | None = None
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -479,6 +480,7 @@ class DispatchIntent:
             "target_stage": self.target_stage,
             "approval_decision_id": self.approval_decision_id,
             "command_id": self.command_id,
+            **({"pool_member": dict(self.pool_member)} if self.pool_member else {}),
         }
 
     def transition(self) -> dict[str, Any]:

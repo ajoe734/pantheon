@@ -1,0 +1,43 @@
+{
+  "recorded_at": "2026-11-13T11:47:01.890951+00:00",
+  "host": "dev host (task worker)",
+  "index_url": "https://data.gdeltproject.org/gdeltv2/lastupdate.txt",
+  "historical_index_url": "https://data.gdeltproject.org/gdeltv2/masterfilelist.txt",
+  "historical_index_note": "Only unchanged 20261113110000 lines retained from the 124 MB index; no production dependency on masterfilelist.",
+  "files": [
+    {
+      "path": "20261113110000.export.CSV.zip",
+      "size": 71933,
+      "sha256": "ae9b0c7d9186caf0bfffbcdcb18c54fd97c10a1d846f525c40dbe1de5e32a6b0",
+      "url": "http://data.gdeltproject.org/gdeltv2/20261113110000.export.CSV.zip",
+      "md5": "1b74632b99680fc3946f48dda490f7a0"
+    },
+    {
+      "path": "20261113114500.export.CSV.zip",
+      "size": 55892,
+      "sha256": "69d1aac4aca5bb8b01077a11a8e2ebae1e9d04f42845b0ab5c563807d1df98b8",
+      "url": "http://data.gdeltproject.org/gdeltv2/20261113114500.export.CSV.zip",
+      "md5": "d324b9f15fe7a0e16c0efc8e0591b6da"
+    },
+    {
+      "path": "export.headers",
+      "size": 1022,
+      "sha256": "6eedaf36f9a3e22d70952f8d7fbedc86db2768f7645af7834b7baf19edbf4250"
+    },
+    {
+      "path": "lastupdate.headers",
+      "size": 819,
+      "sha256": "1d2a557211f2c44c9da5a82a14f968b511e668770121e89085f617cc43bad4f7"
+    },
+    {
+      "path": "lastupdate.txt",
+      "size": 319,
+      "sha256": "eef21c6da73a92f795c44e2470b50b10d28f71dd3f71977f759b91840fcbb21f"
+    },
+    {
+      "path": "masterfilelist-excerpt.txt",
+      "size": 320,
+      "sha256": "fbfd57e4b9113baea4ba6ae06fee86d2b942723a52412465e919029eef53f464"
+    }
+  ]
+}

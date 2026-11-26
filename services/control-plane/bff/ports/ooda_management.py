@@ -10,8 +10,10 @@ This module provides typed domain ports and explicit Management compositions for
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union
 
 from services.control_plane.bff.core.owner_reads import (
@@ -142,6 +144,42 @@ def _ooda_packet_matches_ref(packet: Mapping[str, Any], ref_id: str, ref_type: s
 # OODA Packets Port
 # ---------------------------------------------------------------------------
 
+_OODA_OWNER_STORE_ENV_VARS = (
+    "PANTHEON_BFF_OODA_PACKET_STORE",
+    "PANTHEON_OODA_DATA_DIR",
+    "PANTHEON_CONTROL_PLANE_DATA_DIR",
+)
+
+
+def _configured_ooda_owner_store_path() -> Optional[Path]:
+    if not any(os.getenv(key, "").strip() for key in _OODA_OWNER_STORE_ENV_VARS):
+        return None
+    from services.persona.cron_ooda_closure import resolve_ooda_packet_store_path
+
+    return Path(resolve_ooda_packet_store_path())
+
+
+def read_persona_ooda_owner_packets(
+    store_path: Optional[Union[str, os.PathLike[str]]] = None,
+) -> List[Dict[str, Any]]:
+    """Decode packets from the Persona OODA owner store using the existing read-only owner decoder."""
+    path = Path(store_path) if store_path is not None else _configured_ooda_owner_store_path()
+    if path is None or not path.is_file():
+        raise FileNotFoundError("Persona OODA packet owner store is unconfigured or absent")
+    from services.persona.persona_cycle_controller import read_packets
+
+    return [dict(packet) for packet in read_packets(path).values()]
+
+
+def create_ooda_packets_port(
+    *,
+    store: Optional[Any] = None,
+    records_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+) -> OodaPacketsPort:
+    """Create the shared OODA packets port bound to the existing read-only Persona owner decoder."""
+    return OodaPacketsPort(store=store, records_provider=records_provider)
+
+
 class OodaPacketsPort:
     """Port for listing and retrieving OODA loop packets."""
 
@@ -157,6 +195,11 @@ class OodaPacketsPort:
     def _get_raw_records(self) -> Tuple[str, List[Dict[str, Any]]]:
         if self._store is not None:
             try:
+                if isinstance(self._store, (str, os.PathLike)):
+                    path = Path(self._store)
+                    if not path.is_file():
+                        return "missing", []
+                    return "store", read_persona_ooda_owner_packets(path)
                 # 1. OodaLoopStore interface
                 if hasattr(self._store, "list") and callable(self._store.list):
                     raw_packets = self._store.list()
@@ -180,6 +223,15 @@ class OodaPacketsPort:
             try:
                 records = self._records_provider()
                 return "service", [dict(r) for r in (records or [])]
+            except Exception:
+                return "unavailable", []
+
+        path = _configured_ooda_owner_store_path()
+        if path is not None:
+            if not path.is_file():
+                return "missing", []
+            try:
+                return "store", read_persona_ooda_owner_packets(path)
             except Exception:
                 return "unavailable", []
 
@@ -213,6 +265,17 @@ class OodaPacketsPort:
             json.loads(json.dumps(packet))
             for packet in raw_records
             if _ooda_packet_id(packet)
+            # Daily-cycle packets can contain private reasoning and staged
+            # memory. They require an exact authenticated tenant context
+            # and remain paper-scoped.
+            and (
+                "persona_cycle" not in packet
+                or (
+                    bool(selected_tenant.get())
+                    and packet.get("tenant_id") == selected_tenant.get()
+                    and packet.get("environment") == "paper"
+                )
+            )
         ]
 
         if status:

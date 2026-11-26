@@ -1,0 +1,54 @@
+{
+ "task": "SOURCE-RECONCILE-TOLERATES-NEWER-STATE-20261117",
+ "problem_register": "RC1 WP1.5 (state written by a newer release)",
+ "harness": {
+  "location": "scripts/previous_release_reader.py (tests: scripts/test_previous_release_reader.py, 6 passed)",
+  "how_it_works": "git archive of the revision from local objects into a temp dir; driver runs in 'python -I' subprocess whose import path is only that tree; named modules must import from the tree or the run fails (exit 97); missing revision/path exits 2 with 'revision-unavailable' / 'path-unavailable'; temp tree removed on every exit; working tree, index and HEAD never touched; no network",
+  "branch_ci_revision": "Branch CI jobs use actions/checkout with fetch-depth: 0 (full history, .github/workflows/branch-ci.yml), so e7ec353d6 and d88a1a86f are in the local object database; a shallow clone makes the harness fail with 'revision-unavailable ... shallow clone', never skip",
+  "example_other_module": "python3 scripts/previous_release_reader.py --revision e7ec353d6 --path services --module services.source_ingestion.requirement_state --driver reader.py -- /path/to/requirement_snapshots.jsonl   (exercised by test_harness_is_reusable_for_another_stateful_service_requirement_state_reader: prints {'sequence': 1, 'binding_count': 2})",
+  "fixture_copies": "existing checked-in fixture copies were not touched"
+ },
+ "reproduce_first": {
+  "method": "state written by d88a1a86f (dev before this change) through the harness: default desired state, 32 requirements, collector host and FinMind credential set, all 32 bindings provisioned including collector-tw-trading-holidays, collector-tw-trading-suspension, tw-finmind-monthly-revenue, tw-finmind-quarterly-statements, tw-finmind-valuation; then e7ec353d6 (the 2026-11-17 baseline) reconciled with its own 27-requirement desired state",
+  "http_status": 400,
+  "detail_text_prefix": "provider-owned adapter is not allowlisted: FinMindTaiwanFundamentalsAdapter.records_from_rows; allowed=AdmittedSocialMediaAdapter, ...",
+  "exception": "SourceEvidenceError",
+  "raise_site_at_e7ec353d6": "services/source_ingestion/provider_adapters.py:91 validate_provider_adapter_token <- configured.py:401 _validate_fetch_config <- configured.py:260 normalize_fetch_config <- configured.py:243 upsert_config <- runtime.py:1144 _retire_removed_requirement_bindings <- runtime.py:1517 _persona_source_provisioning_payload (translated to HTTP 400 by routers/catalog_controller.py)",
+  "finding": "NOT the connector lookup (collector_definition) and NOT persona required_data_sources validation: the baseline's authoritative reconcile treats the five connectors it does not define as 'removed bindings' and tries to DISABLE them by rewriting their stored record, which re-validates a provider adapter token it does not allowlist",
+  "also_observed": "with a requirement that names an unknown connector the baseline returns 200 with conflicts=5 (policy_gate_failed); that fails the tick in the worker, not HTTP 400"
+ },
+ "fix": {
+  "reconcile": "stored connector records, their schedule records and previous snapshot bindings whose provider adapter, connector definition, cadence or dataset this release does not define are skipped; response has skipped[] (kind,id,reason) and skipped_count; nothing is retired, disabled, rewritten or re-validated; requirement naming such a connector is status skipped (not conflict, not unsupported)",
+  "bindings": "the appended requirement snapshot carries uninterpreted previous bindings forward (32 stays 32 instead of dropping to 27) and each is listed in skipped[] as kind=binding; the snapshot schema is unchanged so older readers still read it",
+  "pull_stage": "records not defined by this release are reported offered=false so the scheduler skips them instead of failing the pull stage; known connector still runs (test: total_ran 1, total_failed 0)",
+  "known_but_invalid": "a connector with an allowlisted adapter and an invalid fetch contract still returns HTTP 400 with the existing message (test_known_connector_that_is_malformed_still_fails_closed); requirement/persona validation and unsupported-dataset on a defined connector are unchanged and still fail closed",
+  "diagnosability": "controller HTTP errors now read 'HTTPError: HTTP Error 400: Bad Request: <detail>' in the tick log line and controller_state last_failure_reason; detail = JSON 'detail' or body text, bounded to 500 characters, bearer token redacted, headers never included; tests: JSON detail, non-JSON body, 5000-char body, structured detail, empty body",
+  "readback_health": "skipped_count and skipped_ids (first 50) in /api/source-ingest/controller/readback and in /health (via runtime metrics); 0 and [] when nothing is skipped"
+ },
+ "controller_state_size": "one file replaced each tick (asserted: only controller_state.json in the directory, size identical across saves); skipped_ids capped at 50 entries x 128 chars = at most about 6.7 KB added; whole file with 50 ids asserted < 64 KiB",
+ "runtime_budget": {
+  "new_store": "none",
+  "manifest": "docs/operations/storage-manifest.json entry /data/source-ingest/controller_state.json gained changed_fields (cadence, size, cap, cleanup); no other entry edited; scripts/check_storage_manifest.py passed"
+ },
+ "rollback_proof": {
+  "method": "current code (HEAD) wrote the full state plus a controller_state.json with reconcile.skipped_count=3; e7ec353d6 and d88a1a86f each ran through the harness and read /controller/readback over a copy of the volume",
+  "result": "both: HTTP 200, 32 connectors, controller state present, requirement snapshot 32 bindings, no error",
+  "named_difference": "neither release knows reconcile.skipped_count / skipped_ids; ControllerState.from_dict ignores unknown keys and the checksum is computed over the payload as written, so reading is safe; their next save rewrites the file without the two fields (safe: the fields are recomputed by the next tick of a release that has them)"
+ },
+ "hosted_statement": "This change cannot repair a release that is already the baseline (e7ec353d6 on 2026-11-17): that code still disables unknown connectors and returns HTTP 400. It protects rollbacks to releases that contain it. After it is served the health payload and controller readback show skipped_count / skipped_ids. The rollback drill from a later release belongs to RC1 WP1.5 of docs/operations/problem-register.md.",
+ "validation": {
+  "environment": "python 3.12 venv with services/source_ingestion/requirements.txt + pytest, pytest-xdist, pyyaml",
+  "focused_suites": "scripts/test_previous_release_reader.py + services/source_ingestion/tests/test_reconcile_tolerates_newer_state.py (13) + test_persona_source_reconciler.py + test_controller_worker.py + test_multi_process_source_reconciliation.py + services/source_ingestion/test_service.py: 334 passed, 2 skipped, 0 failed (pytest -n 4)",
+  "full_service_suite": "python -m pytest services/source_ingestion -n 10: 2364 passed, 23 skipped, 0 failed",
+  "manifest_check": "python3 scripts/check_storage_manifest.py: passed true, failures []",
+  "baseline_before_change": "275 passed on the three pre-existing focused source_ingestion suites"
+ },
+ "review": "owner Claude; reviewer Antigravity2 (different model family; no exception needed)",
+ "residual_findings": [
+  "services/source_ingestion/tests/test_controller_worker.py was not edited: its existing suites pass unchanged; HTTP-detail and skipped-state tests live in test_reconcile_tolerates_newer_state.py",
+  "the baseline's own behaviour for a requirement that names an unknown connector (conflict, tick fails closed) is fixed by this change for releases that contain it, not retroactively",
+  "a defined connector whose requirement dataset the connector does not support still returns 'unsupported' and fails the tick closed; that is configuration error, not newer state, and was left unchanged",
+  "docs/operations/problem-register.md was not edited (not in the artifact list); the WP1.5 rollback drill stays open there",
+  "services/source_ingestion/pipeline.py and requirement_state.py were not edited; the pull-stage skip uses the existing collector_offering offered=false mechanism"
+ ]
+}

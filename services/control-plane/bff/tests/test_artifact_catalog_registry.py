@@ -65,6 +65,7 @@ CATALOG_ROW_KEYS = {
     "owner",
     "updatedAt",
     "source_kind",
+    "list_scope",
 }
 
 
@@ -360,6 +361,7 @@ def seeded_catalog_env(monkeypatch: pytest.MonkeyPatch):
         registry_service_url="http://registry.test",
         research_write_owner=research_owner,
     )
+    port.list_personas = lambda: []  # type: ignore[attr-defined]
 
     bff_app = FastAPI()
     bff_app.include_router(
@@ -446,7 +448,10 @@ def test_artifact_catalog_merges_251_registry_bundles_and_2_research_outputs_new
 
     # Verify every row has exact required keys and no full metadata
     for row in all_rows:
-        assert set(row.keys()) == CATALOG_ROW_KEYS
+        # Additive BFF-resolved name fields only; no other extra keys.
+        extra_keys = set(row.keys()) - CATALOG_ROW_KEYS
+        assert CATALOG_ROW_KEYS <= set(row.keys())
+        assert extra_keys <= {"strategy_display_name", "strategy_name_missing"}
         assert "metadata" not in row
 
     # Verify strategy_spec and other-tenant rows are excluded

@@ -37,5 +37,25 @@ RUN npm install -g \
 RUN rm -rf /home/node/.claude \
     && ln -s /home/node/.openclaw/claude-cli /home/node/.claude \
     && chown -h node:node /home/node/.claude
+# Pantheon persona tools plugin (design H9): registers persona_memory_recall,
+# persona_mental_model_read and persona_proposal_submit and forwards each call to
+# the adapter's internal broker. It is installed as a STOCK (bundled-origin) plugin
+# with enabledByDefault, so it needs no entry or load path in openclaw.json and no
+# $include overlay: the gateway config stays one plain writable file (a root
+# $include made every config.patch fail with "would flatten $include-owned config").
+# Broker URL/token come from PERSONA_TOOL_BROKER_URL / PERSONA_TOOL_BROKER_TOKEN in
+# the gateway env; without the token the plugin registers nothing. A previous image
+# without this directory simply has no plugin, so rollback on the same volume is safe.
+# Built here (npm ci from the lockfile, tests run at build time).
+COPY integrations/openclaw/plugins/pantheon-persona-tools /app/dist/extensions/pantheon-persona-tools
+# A host-built node_modules or dist in the build context must never be reused.
+RUN cd /app/dist/extensions/pantheon-persona-tools \
+    && rm -rf node_modules dist \
+    && npm ci --include=dev --no-audit --no-fund \
+    && npm test \
+    && npm prune --omit=dev --no-audit --no-fund \
+    && rm -rf dist/test test \
+    && chown -R root:root /app/dist/extensions/pantheon-persona-tools \
+    && chmod -R go-w /app/dist/extensions/pantheon-persona-tools
 # Restore the upstream runtime user; entrypoint/cmd/workdir are inherited.
 USER node

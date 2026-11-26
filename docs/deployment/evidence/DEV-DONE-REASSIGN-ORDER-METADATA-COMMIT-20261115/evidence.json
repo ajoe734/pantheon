@@ -1,0 +1,7 @@
+{
+  "task_id": "DEV-DONE-REASSIGN-ORDER-METADATA-COMMIT-20261115",
+  "finding": "On current dev, collect_done_delivery_metadata already timestamps metadata_ref (approved_closeout_metadata_ref result) via _delivered_commit_timestamp(commit_ref=metadata_ref). A mocked PERSONA-shape closeout (authored commit 16:22 with old-reviewer trailer, reassignment 17:15, 3 base-refresh merges, tip 18:48) is accepted before and after this change; the real refusal could not be reproduced and may stem from an older promoted command runtime or a merge shape not unwrapped by the traversal.",
+  "change": "delivery record now names the timestamp source: commit_timestamp and commit_timestamp_ref",
+  "tests": ["scripts/test_ai_status.py: 4 new tests (reviewer ordering, reassignment before authored commit refused, stale trailer without event refused, owner ordering)"],
+  "validation": "python3 -m unittest scripts.test_ai_status -> Ran 519 tests, OK"
+}

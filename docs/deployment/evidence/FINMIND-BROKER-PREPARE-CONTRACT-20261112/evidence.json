@@ -1,0 +1,9 @@
+{
+  "task_id": "FINMIND-BROKER-PREPARE-CONTRACT-20261112",
+  "scope": "source-only fix; hosted provider acceptance NOT_RUN",
+  "root_cause": "adapter.fetch_config() flat provider keys (base_url, endpoint, secret_ref_id, dataset, history_start, max_rank) were POSTed in fetch body; strict ConfiguredFetchBody forbids them (HTTP 422 extra_forbidden)",
+  "fix": "scripts/deploy_nonprod_vm.sh PREPARE_DATASET_PY keeps only typed fetch keys (mode, adapter, adapter_config, next_watermark) plus request/max_records; secret ref and max_rank preserved in adapter_config; DTO unchanged",
+  "regression": "scripts/test_deploy_nonprod_vm.py::test_finmind_prepare_payload_passes_real_typed_configure_request_and_dispatch (real ConfigureConnectorRequest + execute_provider_owned_adapter with fake handler); old source fails on exactly the six fields",
+  "validation": "pytest scripts/test_deploy_nonprod_vm.py -k finmind: 19 passed",
+  "not_run": ["real provider probe", "range/volume/publication probes", "hosted acceptance"]
+}

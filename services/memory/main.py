@@ -1,15 +1,18 @@
 """HTTP facade for the canonical memory stores."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import os
+import uuid
 import json
 from pathlib import Path
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import FastAPI, HTTPException, Query, Response, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
@@ -20,6 +23,10 @@ from .institutional_memory_store import (
     InstitutionalMemoryStore,
     build_institutional_memory_store,
 )
+from . import hindsight_index as hs
+from . import mental_models
+from .usefulness import apply_usefulness
+
 from .learn_feedback_writeback import (
     LearnFeedbackUnauthorizedError,
     LearnFeedbackWritebackError,
@@ -37,6 +44,7 @@ from services.persona.lesson_governance import (
     LessonGovernanceService,
     TradeLessonCandidateError,
     is_sensitive_change,
+    RiskReviewStore,
 )
 
 
@@ -59,7 +67,13 @@ def _split_csv_values(values: Optional[List[str]]) -> List[str]:
     return normalized
 
 
-_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session")
+_POLICY_READ_ONLY_ROLES = ("reviewer", "auditor")
+_MEMORY_READ_ROLES = ("researcher", "operator", "admin", "system", "analyst", "consultation_session", "persona_memory_reader", "persona_session")
+# Persona owner reads a single tenant-bound lesson to convert it into a rule proposal.
+_PERSONA_LIST_BROAD_ROLES = frozenset({"operator", "admin", "system", "researcher", "analyst", "persona_memory_reader"})
+_MEMORY_LESSON_GET_ROLES = _MEMORY_READ_ROLES + ("persona.admin", "persona-svc")
+# The persona service lists its own tenant's candidates for the paper endorsement step (persona.admin stays get-only).
+_MEMORY_LESSON_LIST_ROLES = _MEMORY_READ_ROLES + ("persona-svc",)
 _MEMORY_WRITE_ROLES = (
     "operator",
     "admin",
@@ -73,6 +87,7 @@ _MEMORY_WRITE_ROLES = (
     "trainer-svc",
     "consultation-svc",
     "research-svc",
+    "persona-svc",
 )
 _REQUIRED_JWT_CLAIMS = ("sub", "exp")
 _TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
@@ -234,7 +249,51 @@ def _authenticate_memory_request(
         raise HTTPException(status_code=401, detail="Unauthorized: a verified operator JWT is required")
     return ctx
 
-app = FastAPI(title="Pantheon Memory Service", version="0.1.0")
+def startup_hindsight_catch_up(*, background: bool = False) -> Dict[str, Any]:
+    """Non-destructive startup catch-up when Hindsight is configured (never deletes banks)."""
+    client = hs.get_hindsight_client()
+    if client is None:
+        return {
+            "status": "skipped",
+            "reason": "hindsight_unconfigured",
+            "scheduled": 0,
+            "deferred": 0,
+            "already_mirrored": 0,
+            "inactive_skipped": 0,
+            "pending_resync_count": hs.pending_resync_count(),
+        }
+    if background:
+        store_fn = _store
+        persona_store_fn = _persona_store
+        inst_path = _store_path()
+        persona_path = _persona_store_path()
+
+        def _lazy_store() -> Any:
+            if store_fn is _default_store:
+                inst_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_institutional_memory_store(inst_path)
+            return store_fn()
+
+        def _lazy_persona_store() -> Any:
+            if persona_store_fn is _default_persona_store:
+                persona_path.parent.mkdir(parents=True, exist_ok=True)
+                return build_persona_memory_store(persona_path)
+            return persona_store_fn()
+
+        return hs.schedule_catch_up_mirrors(_lazy_store, _lazy_persona_store, client=client)
+    return hs.catch_up_mirrors(_store(), _persona_store(), client=client)
+
+
+@asynccontextmanager
+async def memory_lifespan(_: FastAPI):
+    startup_hindsight_catch_up(background=True)
+    try:
+        yield
+    finally:
+        hs.stop_resync_timer()
+
+
+app = FastAPI(title="Pantheon Memory Service", version="0.1.0", lifespan=memory_lifespan)
 STORE_BACKEND = os.getenv("PANTHEON_MEMORY_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("memory")
 register_fastapi_health_routes(
@@ -246,6 +305,8 @@ register_fastapi_health_routes(
         "persona_store_path": str(_persona_store_path()),
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+        "pending_resync_count": hs.pending_resync_count(),
+        "mirror": hs.DIAGNOSTICS.snapshot(),
     },
 )
 
@@ -272,10 +333,16 @@ def _store() -> InstitutionalMemoryStore:
     return build_institutional_memory_store(path)
 
 
+_default_store = _store
+
+
 def _persona_store() -> PersonaMemoryStore:
     path = _persona_store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     return build_persona_memory_store(path)
+
+
+_default_persona_store = _persona_store
 
 
 def _candidate_store_path() -> Path:
@@ -446,6 +513,22 @@ async def health():
     return {"status": "ok", "service": "memory"}
 
 
+@app.get("/api/memory/health")
+async def memory_health():
+    mirror_snap = hs.DIAGNOSTICS.snapshot()
+    return {
+        "status": "ok",
+        "service": "memory",
+        "hindsight_configured": hs.get_hindsight_client() is not None,
+        "llm_layers": hs.llm_layers(),
+        "pending_resync_count": mirror_snap["pending_resync_count"],
+        "pending_resync_bytes": mirror_snap["pending_resync_bytes"],
+        "counts": mirror_snap["counts"],
+        "failures": mirror_snap["failures"],
+        "mirror": mirror_snap,
+    }
+
+
 @app.post("/api/memory/entries", status_code=201)
 async def store_entry(
     payload: Dict[str, Any],
@@ -463,6 +546,8 @@ async def store_entry(
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise InstitutionalMemoryError("usefulness is written only by the outcome owner")
         entry = InstitutionalMemoryEntry.from_dict(payload)
         saved = _store().create(entry)
     except (InstitutionalMemoryError, TypeError) as exc:
@@ -482,6 +567,8 @@ def _store_persona_payload(payload: Dict[str, Any], auth_ctx: Optional[AuthConte
         if not payload_tenant and token_tenant != "*":
             payload["tenant_id"] = token_tenant
     try:
+        if payload.get("usefulness_marks") or payload.get("memory_review"):
+            raise PersonaMemoryError("usefulness is written only by the outcome owner")
         entry = PersonaMemoryEntry.from_dict(payload)
         saved = _persona_store().create(entry)
     except (PersonaMemoryError, TypeError) as exc:
@@ -513,7 +600,26 @@ async def writeback_learn_feedback(
     response: Response,
     authorization: Optional[str] = Header(default=None),
 ):
-    _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES)
+    if payload.get("source_event_type") == "case_file_usefulness":
+        # Same route and existing writer role; no operator/session can submit marks.
+        ctx = _authenticate_memory_request(authorization, required_roles=("persona-svc",), require_jwt=True)
+        tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant")
+        if not tenant or tenant == "*" or tenant != payload.get("tenant_id"):
+            raise HTTPException(status_code=403, detail="Usefulness requires one verified tenant")
+        try:
+            return apply_usefulness(payload, persona_store=_persona_store(), institutional_store=_store())
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if ctx is not None:
+        authority = str(payload.get("write_authority") or "")
+        if not ({authority, "operator", "admin", "system", "memory-writer"} & set(ctx.roles)):
+            raise HTTPException(status_code=403, detail="Verified caller cannot represent this memory writer")
+        tenant = ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default"
+        if tenant != "*":
+            if payload.get("tenant_id") and payload["tenant_id"] != tenant:
+                raise HTTPException(status_code=403, detail="Memory writeback tenant differs from verified tenant")
+            payload["tenant_id"] = tenant
     try:
         result = write_learn_feedback(
             payload,
@@ -542,9 +648,21 @@ async def list_entries(
     scope_filter: Optional[str] = Query(default=None),
     contributing_persona_id: Optional[str] = Query(default=None),
     active_only: bool = Query(default=True),
+    session_persona_id: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(default=None),
 ):
-    _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    if ctx is not None and "persona_session" in ctx.roles and not (ctx.roles & _PERSONA_LIST_BROAD_ROLES):
+        # A persona session may list only its own persona's contributions; governance owns the policy.
+        if not contributing_persona_id:
+            raise HTTPException(status_code=403, detail={"error": "unauthorized", "message": "persona_session requires contributing_persona_id"})
+        decision = _authorize_memory_retrieve(
+            actor_id=ctx.actor_id, actor_roles=sorted(ctx.roles),
+            resource={"scope": "persona", "persona_id": contributing_persona_id},
+            context={"session_id": "list-entries:" + ctx.actor_id, "session_persona_id": session_persona_id or ""},
+        )
+        if not decision["allowed"]:
+            raise HTTPException(status_code=403, detail={"error": "unauthorized", "message": decision["reason"]})
     entries = _store().list(
         knowledge_type=knowledge_type,
         scope=scope,
@@ -567,23 +685,14 @@ async def get_entry(
     return entry.to_dict()
 
 
-@app.get("/api/memory/retrieve")
-async def retrieve_memory(
-    actor_id: str = Query(..., min_length=1),
-    actor_roles: List[str] = Query(...),
-    session_id: str = Query(..., min_length=1),
-    persona_id: Optional[str] = Query(default=None),
-    session_persona_id: Optional[str] = Query(default=None),
-    scope: str = Query(default="both", pattern="^(institutional|persona|both)$"),
-    query: str = Query(default=""),
-    knowledge_type: Optional[str] = Query(default=None),
-    memory_type: Optional[str] = Query(default=None),
-    scope_filter: Optional[str] = Query(default=None),
-    tags: Optional[List[str]] = Query(default=None),
-    limit: int = Query(default=10, ge=1, le=100),
-    authorization: Optional[str] = Header(default=None),
+def _authorize_memory_read(
+    authorization: Optional[str], *, actor_id: str, actor_roles: List[str], session_id: str,
+    scope: str, persona_id: Optional[str], session_persona_id: Optional[str],
 ):
-    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES)
+    """Shared identity, tenant and governance check for retrieve and standing-question reads."""
+    # Governance (persona/institutional read roles) stays the final decision; reviewer and auditor
+    # are admitted here because that policy already allows them to read.
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_READ_ROLES + _POLICY_READ_ONLY_ROLES)
     roles = _split_csv_values(actor_roles)
     effective_actor_id = actor_id
     effective_roles = roles
@@ -606,7 +715,6 @@ async def retrieve_memory(
         else:
             effective_roles = list(ctx.roles)
 
-    tag_values = _split_csv_values(tags)
     resource = {"scope": scope}
     if persona_id:
         resource["persona_id"] = persona_id
@@ -632,95 +740,92 @@ async def retrieve_memory(
                 "reason": str(decision.get("reason") or "unknown"),
             },
         )
-
-    ranked_hits = []
-    if scope in {"institutional", "both"}:
-        institutional_store = _store()
-        backend = None
-        try:
-            from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_institutional_with_backend
-            backend = get_search_retrieval_backend()
-        except Exception:
-            backend = None
-
-        if backend is not None:
-            for hit in retrieve_institutional_with_backend(
-                institutional_store,
-                backend=backend,
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-        else:
-            for hit in institutional_store.retrieve(
-                query=query,
-                knowledge_type=knowledge_type,
-                scope_filter=scope_filter,
-                tags=tag_values,
-                limit=limit,
-            ):
-                ranked_hits.append(
-                    ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
-                )
-
-    persona_tenant = None
+    tenant_id = None
     if ctx is not None:
-        token_tenant = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
-        if token_tenant != "*":
-            persona_tenant = token_tenant
-    persona_fetch_limit = 1_000_000 if persona_tenant is not None else limit
+        tenant_id = str(ctx.claims.get("tenant_id") or ctx.claims.get("tenant") or "default")
+        if tenant_id == "*":
+            tenant_id = "default"
+    return ctx, effective_roles, tenant_id, persona_relevance_scope, decision
 
-    if scope in {"persona", "both"}:
+
+@app.get("/api/memory/retrieve")
+async def retrieve_memory(
+    review_required: bool = Query(default=False),
+    actor_id: str = Query(..., min_length=1),
+    actor_roles: List[str] = Query(...),
+    session_id: str = Query(..., min_length=1),
+    persona_id: Optional[str] = Query(default=None),
+    session_persona_id: Optional[str] = Query(default=None),
+    scope: str = Query(default="both", pattern="^(institutional|persona|both)$"),
+    query: str = Query(default=""),
+    knowledge_type: Optional[str] = Query(default=None),
+    memory_type: Optional[str] = Query(default=None),
+    scope_filter: Optional[str] = Query(default=None),
+    tags: Optional[List[str]] = Query(default=None),
+    subject_anchors: Optional[List[str]] = Query(default=None),
+    limit: int = Query(default=10, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    _ctx, _roles, tenant_id, persona_relevance_scope, decision = _authorize_memory_read(
+        authorization, actor_id=actor_id, actor_roles=actor_roles, session_id=session_id,
+        scope=scope, persona_id=persona_id, session_persona_id=session_persona_id)
+    tag_values = _split_csv_values(tags)
+    anchor_values = _split_csv_values(subject_anchors)
+    bad_anchors = [a for a in anchor_values if hs.parse_subject_anchor(a) is None]
+    if bad_anchors:
+        raise HTTPException(status_code=422, detail={"error": "invalid_subject_anchor", "anchors": bad_anchors,
+                                                     "allowed_kinds": list(hs.ANCHOR_KINDS)})
+    from .search_retrieval import retrieve_institutional, retrieve_persona
+    client = hs.get_hindsight_client()
+    ranked_hits = []
+    retrieval_details = {}
+
+    def _institutional():
+        diagnostics = {}
+        hits = [
+            ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
+            for hit in retrieve_institutional(
+                _store(), client=client, query=query, tenant_id=tenant_id, knowledge_type=knowledge_type,
+                scope_filter=scope_filter, tags=tag_values, subject_anchors=anchor_values, limit=limit,
+                diagnostics=diagnostics, review_required=review_required,
+            )
+        ]
+        return hits, diagnostics
+
+    def _persona():
+        diagnostics = {}
         try:
-            persona_store = _persona_store()
-            backend = None
-            try:
-                from services.memory.search_retrieval import get_search_retrieval_backend, retrieve_persona_with_backend
-                backend = get_search_retrieval_backend()
-            except Exception:
-                backend = None
-
-            def _persona_hits():
-                # Tenant must be filtered before ranking/limit: fetch the full
-                # candidate set from the local store, then cut after filtering.
-                if backend is not None and query.strip():
-                    return retrieve_persona_with_backend(
-                        persona_store,
-                        persona_id=persona_id or "",
-                        backend=backend,
-                        query=query,
-                        tenant_id=persona_tenant,
-                        memory_type=memory_type,
-                        relevance_scope=persona_relevance_scope,
-                        tags=tag_values,
-                        limit=min(persona_fetch_limit, 100),
-                    )
-                return persona_store.retrieve(
-                    persona_id=persona_id or "",
-                    query=query,
-                    memory_type=memory_type,
-                    relevance_scope=persona_relevance_scope,
-                    tags=tag_values,
-                    limit=persona_fetch_limit,
+            if not persona_id:
+                raise PersonaMemoryError("persona_id is required for persona memory retrieval")
+            hits = [
+                ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
+                for hit in retrieve_persona(
+                    _persona_store(), persona_id, client=client, query=query, tenant_id=tenant_id,
+                    memory_type=memory_type, relevance_scope=persona_relevance_scope,
+                    tags=tag_values, subject_anchors=anchor_values, limit=limit, diagnostics=diagnostics,
+                    review_required=review_required,
                 )
-
-            persona_hits = _persona_hits()
-            if persona_tenant is not None:
-                persona_hits = [h for h in persona_hits if h.entry.tenant_id == persona_tenant]
-            for hit in persona_hits:
-                ranked_hits.append(
-                    ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
-                )
+            ]
         except PersonaMemoryError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={"error": "invalid_persona_retrieve", "message": str(exc)},
-            ) from exc
+            raise HTTPException(status_code=422, detail={"error": "invalid_persona_retrieve", "message": str(exc)}) from exc
+        return hits, diagnostics
+
+    if scope == "both":
+        # Both recalls run concurrently: one retrieve costs one recall deadline.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="memory-retrieve") as pool:
+            inst_future, persona_future = pool.submit(_institutional), pool.submit(_persona)
+            inst_result, persona_result = inst_future.result(), persona_future.result()
+        ranked_hits.extend(inst_result[0])
+        retrieval_details["institutional"] = inst_result[1]
+        ranked_hits.extend(persona_result[0])
+        retrieval_details["persona"] = persona_result[1]
+    elif scope == "institutional":
+        hits, retrieval_details["institutional"] = _institutional()
+        ranked_hits.extend(hits)
+    else:
+        hits, retrieval_details["persona"] = _persona()
+        ranked_hits.extend(hits)
 
     ranked_hits.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
     selected_hits = ranked_hits[:limit]
@@ -748,6 +853,11 @@ async def retrieve_memory(
         "hits": response_hits,
         "count": len(response_hits),
         "scope": scope,
+        "retrieval_mode": "keyword_fallback" if any(
+            d["retrieval_mode"] == "keyword_fallback" for d in retrieval_details.values()) else "hindsight",
+        "fallback_reason": ";".join(sorted({d["fallback_reason"] for d in retrieval_details.values() if d.get("fallback_reason")})) or None,
+        "llm_layers": hs.llm_layers(),
+        "retrieval_details": retrieval_details,
         "authz": {
             "allowed": True,
             "reason": str(decision.get("reason") or "authorized"),
@@ -756,8 +866,77 @@ async def retrieve_memory(
     }
 
 
-def _lesson_identity(authorization: Optional[str], *, write: bool = False) -> tuple[AuthContext, str]:
-    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else _MEMORY_READ_ROLES, require_jwt=True)
+class StandingQuestionsPayload(BaseModel):
+    persona_id: str
+    questions: List[Dict[str, Any]]
+
+
+@app.put("/api/memory/persona-standing-questions")
+async def declare_standing_questions(payload: StandingQuestionsPayload, authorization: Optional[str] = Header(default=None)):
+    """Persona-service owner route: declare one persona's standing questions as an idempotent set by key (H13).
+
+    Keys missing from the set are retired. Only a verified ``persona-svc`` identity bound to one tenant may call it;
+    agents hold no path to it and the memory service is the only caller of Hindsight's mental-model API.
+    """
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=("persona-svc",))
+    persona_id = payload.persona_id.strip()
+    if not persona_id:
+        raise HTTPException(status_code=422, detail={"error": "invalid_standing_questions", "reason": "persona_id_required"})
+    if not hs.llm_layers_enabled():
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "llm_layers_disabled", "llm_layers": hs.llm_layers()})
+    client = hs.get_hindsight_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "hindsight_unconfigured", "llm_layers": hs.llm_layers()})
+    try:
+        report = mental_models.declare(client, tenant_id, persona_id, payload.questions)
+    except mental_models.StandingQuestionError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_standing_questions", "reason": exc.reason}) from exc
+    except hs.HindsightError as exc:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable", "reason": exc.reason,
+                                                     "llm_layers": hs.llm_layers()}) from exc
+    return {**report, "llm_layers": hs.llm_layers()}
+
+
+@app.get("/api/memory/persona-standing-questions")
+async def read_standing_questions(
+    persona_id: str = Query(..., min_length=1),
+    actor_id: str = Query(..., min_length=1),
+    actor_roles: List[str] = Query(...),
+    session_id: str = Query(..., min_length=1),
+    session_persona_id: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
+    """One persona's current standing-question answers; derived, never canonical, never another persona's (H13)."""
+    _ctx, roles, tenant_id, relevance_scope, decision = _authorize_memory_read(
+        authorization, actor_id=actor_id, actor_roles=actor_roles, session_id=session_id,
+        scope="persona", persona_id=persona_id, session_persona_id=session_persona_id)
+    if relevance_scope is not None:  # committee sessions see only committee-scoped canonical memory, never derived answers
+        raise HTTPException(status_code=403, detail={"error": "standing_questions_private",
+                                                     "reason": "committee_scope_has_no_derived_answers"})
+    if not hs.llm_layers_enabled():
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "llm_layers_disabled", "llm_layers": hs.llm_layers()})
+    client = hs.get_hindsight_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable",
+                                                     "reason": "hindsight_unconfigured", "llm_layers": hs.llm_layers()})
+    try:
+        answers = mental_models.read_answers(client, tenant_id, persona_id.strip(), _persona_store())
+    except hs.HindsightError as exc:
+        raise HTTPException(status_code=503, detail={"error": "standing_questions_unavailable", "reason": exc.reason,
+                                                     "llm_layers": hs.llm_layers()}) from exc
+    return {"persona_id": persona_id, "answers": answers, "count": len(answers), "derived": True,
+            "llm_layers": hs.llm_layers(),
+            "authz": {"allowed": True, "reason": str(decision.get("reason") or "authorized"),
+                      "policy_version": "governance-authz.v1"}}
+
+
+def _lesson_identity(
+    authorization: Optional[str], *, write: bool = False, read_roles: tuple = _MEMORY_READ_ROLES
+) -> tuple[AuthContext, str]:
+    ctx = _authenticate_memory_request(authorization, required_roles=_MEMORY_WRITE_ROLES if write else read_roles, require_jwt=True)
     assert ctx is not None
     tenants = {str(ctx.claims.get(key) or "").strip() for key in _TENANT_CLAIM_NAMES if str(ctx.claims.get(key) or "").strip()}
     if len(tenants) != 1:
@@ -793,7 +972,7 @@ async def list_trade_lessons(
     scope: Optional[str] = Query(default=None),
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    _ctx, tenant_id = _lesson_identity(authorization)
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=_MEMORY_LESSON_LIST_ROLES)
     candidates = _candidate_store().list(
         persona_id=persona_id,
         review_state=review_state,
@@ -805,7 +984,7 @@ async def list_trade_lessons(
 
 @app.get("/api/memory/trade-lessons/{candidate_id}")
 async def get_trade_lesson(candidate_id: str, authorization: Optional[str] = Header(None, alias="Authorization")):
-    _ctx, tenant_id = _lesson_identity(authorization)
+    _ctx, tenant_id = _lesson_identity(authorization, read_roles=_MEMORY_LESSON_GET_ROLES)
     return _owned_lesson(candidate_id, tenant_id)
 
 
@@ -947,6 +1126,114 @@ async def decide_trade_lesson(candidate_id: str, payload: DecidePayload, x_actor
         if "IDEMPOTENCY_CONFLICT" in msg:
             raise HTTPException(status_code=409, detail={"error": "IDEMPOTENCY_CONFLICT", "message": "different request", "retryable": False})
         raise HTTPException(status_code=422, detail={"error": "decision_failed", "message": msg}) from exc
+
+
+def _risk_review_store() -> RiskReviewStore:
+    path = _candidate_store_path().with_name("trade_lesson_risk_reviews.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return RiskReviewStore(path)
+
+
+class RiskReviewPayload(BaseModel):
+    verdict: str
+
+
+@app.post("/api/memory/trade-lessons/{candidate_id}/risk-review", status_code=201)
+async def record_trade_lesson_risk_review(candidate_id: str, payload: RiskReviewPayload, authorization: Optional[str] = Header(None, alias="Authorization")):
+    """Record a risk persona review. The reviewer is the verified caller identity and must hold the risk role."""
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    if "risk" not in {str(r).lower() for r in ctx.roles}:
+        raise HTTPException(status_code=403, detail="Risk persona review requires a verified risk role")
+    candidate = _owned_lesson(candidate_id, tenant_id)
+    if ctx.actor_id == candidate["persona_id"]:
+        raise HTTPException(status_code=403, detail="A persona cannot review its own lesson")
+    verdict = payload.verdict.strip().lower()
+    if verdict not in {"approve", "reject"}:
+        raise HTTPException(status_code=422, detail="verdict must be approve or reject")
+    review = _risk_review_store().record(review_id=str(uuid.uuid4()), candidate=candidate, reviewer_persona_id=ctx.actor_id, verdict=verdict)
+    if verdict == "reject" and candidate.get("review_state") in {"proposed", "pending_review"} and candidate.get("target_env", "paper") == "paper":
+        # D5: the risk persona's rejection is the paper-stage terminal decision (never a merge, never a promotion).
+        try:
+            _governance_service().decide(
+                candidate_id, action="reject", operator_id=ctx.actor_id,
+                reason=f"paper-scope rejection; risk persona review {review['review_id']} by {ctx.actor_id}: reject",
+                audit_receipt_id=review["review_id"],
+            )
+        except TradeLessonCandidateError as exc:
+            raise HTTPException(status_code=422, detail={"error": "paper_reject_failed", "message": str(exc)}) from exc
+    return review
+
+
+class PaperEndorsePayload(BaseModel):
+    """Only the review id is accepted. Supporting episodes are never caller-supplied (D5): memory reads them
+    from the trade journal owner, so an ``episodes`` field is rejected."""
+    model_config = ConfigDict(extra="forbid")
+    risk_review: Dict[str, Any]
+
+
+def _journal_config() -> tuple[str, str]:
+    base = (os.getenv("PANTHEON_TELEMETRY_API_URL") or os.getenv("PANTHEON_TELEMETRY_SERVICE_URL") or "").strip().rstrip("/")
+    token = os.getenv("PANTHEON_TELEMETRY_SERVICE_TOKEN", "").strip()
+    return base, token
+
+
+def _read_journal_episode(episode_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """One episode projection from the trade journal owner (telemetry) with the service credential."""
+    base, token = _journal_config()
+    if not base or not token:
+        raise RuntimeError("trade journal owner is not configured (PANTHEON_TELEMETRY_API_URL / PANTHEON_TELEMETRY_SERVICE_TOKEN)")
+    request = urllib.request.Request(
+        f"{base}/api/telemetry/trade-episodes/{urllib.parse.quote(episode_id, safe='')}",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant_id}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=float(os.getenv("PANTHEON_MEMORY_JOURNAL_TIMEOUT", "5"))) as response:
+            return json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise RuntimeError(f"trade journal owner returned HTTP {exc.code}") from exc
+
+
+def _supporting_episodes(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The candidate's supporting episodes as recorded by the journal owner; fails closed when any is unreadable."""
+    ids = list(dict.fromkeys(str(i) for i in candidate.get("trade_episode_ids") or []))
+    if not ids:
+        raise HTTPException(status_code=422, detail={"error": "supporting_episodes_missing", "message": "Candidate cites no supporting episodes."})
+    episodes: List[Dict[str, Any]] = []
+    for episode_id in ids:
+        try:
+            episode = _read_journal_episode(episode_id, candidate["tenant_id"])
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail={"error": "supporting_episodes_unavailable", "message": str(exc)[:200]}) from exc
+        if not episode or str(episode.get("trade_episode_id") or "") != episode_id:
+            raise HTTPException(status_code=422, detail={"error": "supporting_episode_not_found", "message": f"Journal has no episode {episode_id}."})
+        if episode.get("tenant_id") != candidate["tenant_id"] or episode.get("persona_id") != candidate["persona_id"]:
+            raise HTTPException(status_code=422, detail={"error": "supporting_episode_foreign", "message": f"Episode {episode_id} is not this persona's."})
+        episodes.append(episode)
+    return episodes
+
+
+@app.post("/api/memory/trade-lessons/{candidate_id}/paper-endorse")
+async def paper_endorse_trade_lesson(candidate_id: str, payload: PaperEndorsePayload, authorization: Optional[str] = Header(None, alias="Authorization")):
+    """Paper-scope endorsement: gates over journal-read episodes + recorded risk persona review, then merge.
+
+    The persona service principal (role ``persona-svc``) acts on the recorded risk review; every other caller
+    needs the governance lesson roles. Sensitive lessons are refused either way."""
+    ctx, tenant_id = _lesson_identity(authorization, write=True)
+    if "persona-svc" not in {str(r).lower() for r in ctx.roles}:
+        _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.decide")
+        _authorize_lesson_action(ctx.actor_id, sorted(ctx.roles), action="lesson.merge")
+    candidate = _owned_lesson(candidate_id, tenant_id)
+    # Only the review_id is trusted from the caller; the review itself is resolved from the durable store.
+    recorded = _risk_review_store().get(str(payload.risk_review.get("review_id") or "")) or {}
+    episodes = _supporting_episodes(candidate)
+    try:
+        return _governance_service().paper_endorse_and_merge(
+            candidate_id, operator_id=ctx.actor_id, risk_review=recorded,
+            episodes=episodes, memory_store=_persona_store(),
+        )
+    except TradeLessonCandidateError as exc:
+        raise HTTPException(status_code=422, detail={"error": "paper_endorse_failed", "message": str(exc)}) from exc
 
 
 @app.post("/api/memory/trade-lessons/{candidate_id}/merge")

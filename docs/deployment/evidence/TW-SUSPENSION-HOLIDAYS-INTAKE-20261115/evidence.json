@@ -1,0 +1,20 @@
+{
+  "task_id": "TW-SUSPENSION-HOLIDAYS-INTAKE-20261115",
+  "summary": "tw_trading_holidays and tw_trading_suspension collector bundles are normalized as governed datasets (additive connectors + desired state); the market feed derives includes_delisted / includes_suspended from them; the gate rule is unchanged and no flag is set by default or configuration.",
+  "acceptance": {
+    "1": "connector_definitions + default_desired_state + collector_bundle normalization (published_at <= fetched_at, raw values kept, malformed rows fail closed)",
+    "2": "candidate_pool_market_feed / survivorship_attestation: any missing session or unknown suspension keeps the flag false and names the sessions",
+    "3": "no default/config true; gate untouched",
+    "4": "test_screen_survivorship_gate_integration.py: complete window not survivorship_limited; missing_session, unknown_suspension, unexplained_weekday, no_evidence are",
+    "5": "additive records; existing collector/connector suites pass; test_scheduled_connector fixture gained rows for the two new datasets"
+  },
+  "validation": [
+    {"cmd": "post-merge e7ec353d6 (hc-venv): pytest test_tw_suspension_holidays_intake test_survivorship_attestation test_candidate_pool_market_feed test_screen_survivorship_gate_integration", "result": "34 passed, 0 skipped"},
+    {"cmd": "post-merge e7ec353d6 (hc-venv): pytest test_scheduled_connector.py", "result": "73 passed"},
+    {"cmd": "pytest test_tw_suspension_holidays_intake.py test_survivorship_attestation.py test_candidate_pool_market_feed.py (+ gate integration, regime-venv, no vectorbt)", "result": "29 passed, 5 skipped (gate tests need vectorbt)"},
+    {"cmd": "pytest services/research/tests/test_screen_survivorship_gate_integration.py (hc-venv, with vectorbt)", "result": "10 passed, 0 skipped"},
+    {"cmd": "pytest services/source_ingestion/tests/test_scheduled_connector.py (hc-venv)", "result": "73 passed"},
+    {"cmd": "pytest test_taiwan_official_connectors test_taiwan_market_connectors test_external_source_connectors test_connector_framework test_collector_source_alignment_contract test_collector_bundle_connector", "result": "186 passed, 2 skipped"},
+    {"cmd": "pytest collector/desired-state/connector suites with -x (before fixture fix)", "result": "359 passed, 1 failed (test_scheduled_connector steady tick, fixed), 4 skipped, stopped at first failure"}
+  ]
+}

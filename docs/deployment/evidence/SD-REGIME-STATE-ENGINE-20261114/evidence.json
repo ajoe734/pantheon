@@ -1,0 +1,74 @@
+{
+  "task_id": "SD-REGIME-STATE-ENGINE-20261114",
+  "base_sha": "a9284b68c",
+  "verified_on": "2026-11-14",
+  "hosted_behavior_claimed": false,
+  "design_only": true,
+  "operator_statements_verbatim_match": true,
+  "references_verified": "§2/§3 references resolved on base after in-place corrections: Gap Review attribution is line 418 (was 421-424); ooda_cycle_runtime.py:480 uses {_research_stage(persona)}; daggers removed",
+  "open_source_rechecked": {
+    "checked_on": "2026-11-14",
+    "method": "GitHub repository API (license, pushed_at, commits) and PyPI JSON API; statsmodels source and jumpmodels README read from GitHub",
+    "statsmodels": {
+      "license": "BSD-3-Clause",
+      "pypi": "0.15.0 2026-08-27",
+      "last_push": "2026-11-11"
+    },
+    "jumpmodels": {
+      "license": "Apache-2.0",
+      "pypi": "0.1.1 2024-10-04",
+      "last_push": "2025-01-12",
+      "stars": 173
+    },
+    "bayesian_changepoint_detection": {
+      "license": "MIT",
+      "last_push": "2026-11-06",
+      "pypi": "0.2.dev1 2019-08-12 (stale)"
+    },
+    "ruptures": {
+      "license": "BSD-2-Clause",
+      "pypi": "1.1.10 2025-09-10",
+      "last_push": "2026-10-06"
+    },
+    "hmmlearn": {
+      "license": "BSD-3-Clause",
+      "pypi": "0.3.3 2024-10-31",
+      "last_push": "2024-10-31"
+    }
+  },
+  "not_reconfirmed": [
+    "arXiv:2402.05272 switch-count figures",
+    "arXiv:2402.05272 half-lives and walk-forward protocol (only abstract persistence claim confirmed)",
+    "Nystrup/Kolm/Lindstrom 2020",
+    "Kritzman et al. 2012",
+    "jumpmodels discrete-model one-hot online probabilities",
+    "hmmlearn smoothed predict_proba",
+    "TAIFEX VIX download depth",
+    "no regime module in Qlib/Lean/zipline-reloaded/pyfolio-reloaded"
+  ],
+  "corrections": [
+    "C1 registry has no dataset reader or stats dependencies",
+    "C2 trigger is POST evaluate, GET read-only",
+    "C3 regime_scores normalisation validated by evaluator",
+    "C4 macro is measurement-only; never regime_class; explicit snapshot mapping",
+    "section 9 enumerates all additions incl. R6 custom naming and R13 consult/case tags"
+  ],
+  "numeric_values": "coordinator proposals",
+  "schema_validation": {
+    "validator": "jsonschema Draft7Validator against git show a9284b68c base schema",
+    "ok": [
+      "high_volatility",
+      "low_volatility",
+      "trending_up",
+      "trending_down",
+      "mean_reverting",
+      "risk_on",
+      "risk_off",
+      "regime_transition@0.2",
+      "mixed@0.45",
+      "macro_environment expansion/slowdown/recession"
+    ],
+    "negative_control": "regime_class=contraction fails enum",
+    "schema_changed": false
+  }
+}

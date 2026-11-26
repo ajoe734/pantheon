@@ -9,6 +9,7 @@ from fastapi import APIRouter, Body, Header, Query
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.ports.read_surface_ports import PaperReconcilerUnavailableError
+from ..fleet_classification import classify_persona_list_scope
 from ..service import (
     PersonaProvisioningCoordinationError,
     ProvisioningConflict,
@@ -23,10 +24,12 @@ from ..service import (
     _normalize_risk_level,
     _persona_create_canonical_payload,
     _persona_create_declared_data_scope,
+    _persona_create_effective_profile_payload,
     _persona_create_identity,
     _persona_create_required_data_sources,
     _persona_create_response,
     _persona_create_validate_paper_only,
+    _persona_fleet_shared_payload,
     _persona_fleet_slim_list_payload,
     _persona_intent_all_items,
     _persona_intent_filter_items,
@@ -108,6 +111,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
 
     @router.get("/bff/management/persona-intent")
     def bff_management_persona_intent(
+        kind: Optional[str] = None,
         source_type: Optional[str] = None,
         persona_id: Optional[str] = None,
         status: Optional[str] = None,
@@ -116,7 +120,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ):
-        """BFF: compose redacted Persona Intent trace, trainer, and Agora summaries."""
+        """BFF: compose Persona Intent trace, consultation, meeting, and trainer audit items."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
@@ -125,6 +129,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         items, _persona_sessions, _trainer_sessions, _agora_sessions = _persona_intent_all_items(caller_tenant_id)
         filtered = _persona_intent_filter_items(
             items,
+            kind=kind,
             source_type=source_type,
             persona_id=persona_id,
             status=status,
@@ -132,7 +137,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         )
         total = len(filtered)
         page_items, next_page_token = _page_slice(filtered, page_token, page_size)
-        summary = _management_prune_camel_aliases(_persona_intent_summary(filtered, len(page_items)))
+        summary = _management_prune_camel_aliases(
+            _persona_intent_summary(filtered, len(page_items), all_items=items)
+        )
         canonical_page_items = _management_prune_camel_aliases(page_items)
         meta = _snapshot_meta(snapshot_at)
         meta["surfaces"] = _persona_intent_surfaces(snapshot_at=snapshot_at)
@@ -185,6 +192,12 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         catalog_default_total = len(directory.catalog_defaults_by_id)
         page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
         page_items = _project_persona_list_records(page_raw)
+        for raw_rec, item in zip(page_raw, page_items):
+            if isinstance(item, dict) and "listScope" not in item:
+                item["listScope"] = classify_persona_list_scope(
+                    raw_rec if isinstance(raw_rec, dict) else item,
+                    projected_state=str(item.get("state") or ""),
+                )
         return {
             "data": page_items,
             "items": page_items,
@@ -255,6 +268,17 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "payload": canonical_payload,
             }
         )
+        # Preserve the historical wire hash (including omitted risk) for replay.
+        # Only this new-request boundary supplies the existing Persona default.
+        try:
+            canonical_payload = _persona_create_effective_profile_payload(canonical_payload)
+        except PersonaProvisioningCoordinationError as exc:
+            raise _bff_error(
+                422, ErrorCode.VALIDATION_FAILED,
+                "Persona requested risk profile is inconsistent",
+                str(exc), precondition_failed="risk_level",
+                details_extra={"reasonCode": exc.reason_code},
+            ) from exc
         snapshot_at = utc_now()
         record = ProvisioningRecord(
             tenant_id=tenant_id,
@@ -385,7 +409,25 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
             ooda_packet=ooda_packet,
         )
         if active.state in {"failed", "compensated"}:
-            failed_step = str((active.error or {}).get("failed_step") or "provisioning")
+            err_info = active.error if isinstance(active.error, dict) else {}
+            failed_step = str(err_info.get("failed_step") or "provisioning")
+            owner_decision_req = err_info.get("owner_decision_request") or active.references.get(
+                "risk_policy_owner_decision_request"
+            )
+            details_extra: Dict[str, Any] = {
+                "personaId": active.persona_id,
+                "provisioningState": active.state,
+                "provisioningStep": active.current_step,
+                "compensation": active.compensation,
+            }
+            if err_info.get("reason_code"):
+                details_extra["reasonCode"] = err_info["reason_code"]
+            if err_info.get("absence_source"):
+                details_extra["absenceSource"] = err_info["absence_source"]
+            if err_info.get("resolution_status"):
+                details_extra["resolutionStatus"] = err_info["resolution_status"]
+            if isinstance(owner_decision_req, dict):
+                details_extra["riskPolicyOwnerDecisionRequest"] = owner_decision_req
             raise _bff_error(
                 502,
                 ErrorCode.UPSTREAM_ERROR,
@@ -393,12 +435,7 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Downstream owner rejected persona provisioning step",
                 precondition_failed=failed_step,
                 suggestion="Inspect the persisted Persona provisioning receipt before a governed retry",
-                details_extra={
-                    "personaId": active.persona_id,
-                    "provisioningState": active.state,
-                    "provisioningStep": active.current_step,
-                    "compensation": active.compensation,
-                },
+                details_extra=details_extra,
             )
         return response
 
@@ -436,9 +473,8 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         tenant_payload = _bff_me_tenant_payload(identity, requested_tenant=None)
         tenant_id = str(tenant_payload.get("id") or "tenant-default")
         try:
-            return _persona_fleet_slim_list_payload(
+            return _persona_fleet_shared_payload(
                 tenant_id=tenant_id,
-                snapshot_at=utc_now(),
                 state=state,
                 health=health,
                 deployment_stage=deployment_stage,
@@ -450,6 +486,9 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
                 data_scope=data_scope,
                 archived=archived,
                 viewer_user_id=_fleet_viewer_user_id(identity, tenant_id, utc_now),
+                read_cycle_health=_service.read_persona_cycle_health,
+                now=utc_now,
+                slim_payload=_persona_fleet_slim_list_payload,
             )
         except ValueError as exc:
             raise _bff_error(

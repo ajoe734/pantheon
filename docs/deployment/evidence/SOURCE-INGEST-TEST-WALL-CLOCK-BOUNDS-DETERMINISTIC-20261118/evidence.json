@@ -1,0 +1,197 @@
+{
+ "task": "SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118",
+ "summary": "Wall-clock thresholds (values unchanged) are judged only with PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1. Only bounds whose observed maximum over 30 runs under load exceeded half of the bound are gated; each gated bound has a counter in the default required check. No production code changed.",
+ "load_definitions": {
+  "idle": "serial, one run at a time, on the shared 12-core dev host (other workers present, load average 2.4-5 during these runs); this is the quietest this host gets",
+  "loaded_snapshot_store": "3 concurrent copies of the test on the same host (shared disk), no extra spinners",
+  "loaded_fast_files": "one round = 10 pytest processes (the files below) at once on the same host, 30 rounds",
+  "loaded_heavy_files": "6 concurrent pytest processes, 30 runs each",
+  "loaded_default_path": "8 concurrent pytest processes + 4 CPU spinner loops + 1 fsync dd loop (64 MB oflag=dsync), 200 runs"
+ },
+ "ac1_measure_before": {
+  "test": "test_full_day_replacement_keeps_one_row_per_key_and_never_blocks_readers (judged mode of the unchanged bounds, run through the wall_clock_bounds report)",
+  "ci_failure": "run 44310853467 / job 134826340879 (PR 7579, Smoke acceptance 2026-11-18T13:33Z): write txn p99 318.8 ms > 250; 503 other tests passed; the test took 54.5 s",
+  "dev_host_failure_in_commit_6b4d3dbab": "1 of 3 isolated runs failed on write txn p99 387 ms",
+  "idle_30_runs": {
+   "snapshot.reader_process_call_max": {
+    "runs": 30,
+    "min": 2.562,
+    "median": 4.112,
+    "p90": 7.768,
+    "max": 24.434,
+    "bound": 100.0,
+    "unit": "ms",
+    "runs_over_bound": 0,
+    "max_over_bound": 0.244
+   },
+   "snapshot.reader_thread_call_max": {
+    "runs": 30,
+    "min": 35.022,
+    "median": 51.216,
+    "p90": 101.171,
+    "max": 104.923,
+    "bound": 100.0,
+    "unit": "ms",
+    "runs_over_bound": 4,
+    "max_over_bound": 1.049
+   },
+   "snapshot.write_txn_500_keys_p99": {
+    "runs": 30,
+    "min": 52.118,
+    "median": 135.95,
+    "p90": 515.921,
+    "max": 723.899,
+    "bound": 250.0,
+    "unit": "ms",
+    "runs_over_bound": 11,
+    "max_over_bound": 2.896
+   },
+   "snapshot.maintenance_step_max": {
+    "runs": 30,
+    "min": 5.376,
+    "median": 6.771,
+    "p90": 182.522,
+    "max": 297.599,
+    "bound": 200.0,
+    "unit": "ms",
+    "runs_over_bound": 1,
+    "max_over_bound": 1.488
+   }
+  },
+  "idle_runs_failing_at_least_one_bound": 14,
+  "loaded_30_runs": {
+   "snapshot.reader_process_call_max": {
+    "runs": 30,
+    "min": 5.421,
+    "median": 7.527,
+    "p90": 49.931,
+    "max": 93.752,
+    "bound": 100.0,
+    "unit": "ms",
+    "runs_over_bound": 0,
+    "max_over_bound": 0.938
+   },
+   "snapshot.reader_thread_call_max": {
+    "runs": 30,
+    "min": 49.476,
+    "median": 78.936,
+    "p90": 103.993,
+    "max": 114.739,
+    "bound": 100.0,
+    "unit": "ms",
+    "runs_over_bound": 5,
+    "max_over_bound": 1.147
+   },
+   "snapshot.write_txn_500_keys_p99": {
+    "runs": 30,
+    "min": 100.144,
+    "median": 467.723,
+    "p90": 568.897,
+    "max": 737.715,
+    "bound": 250.0,
+    "unit": "ms",
+    "runs_over_bound": 26,
+    "max_over_bound": 2.951
+   },
+   "snapshot.maintenance_step_max": {
+    "runs": 30,
+    "min": 6.874,
+    "median": 191.382,
+    "p90": 285.547,
+    "max": 348.526,
+    "bound": 200.0,
+    "unit": "ms",
+    "runs_over_bound": 12,
+    "max_over_bound": 1.743
+   }
+  },
+  "loaded_runs_failing_at_least_one_bound": 28,
+  "reading": "The write transaction p99 (fsync bound) fails 11/30 idle and 26/30 loaded; reader thread 4/30 and 5/30; maintenance step 1/30 and 12/30; reader process never. All four exceed half their bound under load, so all four are gated."
+ },
+ "ac2_inventory": [
+  {"file": "services/source_ingestion/tests/test_snapshot_current_record_store.py", "line": "518", "assertion": "reader process call max", "bound": "100 ms", "protects": "readers never wait for the writer", "observed_max_under_load": 93.752, "runs": 30, "max_over_bound": 0.938, "gated_by_opt_in": true, "default_path_counter": "readers_during_open_write: reads finish while a write txn is open, no busy/locked error, journal_mode wal"},
+  {"file": "services/source_ingestion/tests/test_snapshot_current_record_store.py", "line": "519", "assertion": "reader thread call max", "bound": "100 ms", "protects": "request-paced reads never wait for the writer", "observed_max_under_load": 114.739, "runs": 30, "max_over_bound": 1.147, "gated_by_opt_in": true, "default_path_counter": "same counter"},
+  {"file": "services/source_ingestion/tests/test_snapshot_current_record_store.py", "line": "520", "assertion": "500-key write transaction p99", "bound": "250 ms", "protects": "a collector batch holds the writer lock briefly", "observed_max_under_load": 737.715, "runs": 30, "max_over_bound": 2.951, "gated_by_opt_in": true, "default_path_counter": "22 transactions for 10,700 keys; rows_changed == keys per batch (no table rewrite), WAL bytes reported"},
+  {"file": "services/source_ingestion/tests/test_snapshot_current_record_store.py", "line": "521", "assertion": "maintenance step max", "bound": "200 ms", "protects": "incremental maintenance does not stall the writer", "observed_max_under_load": 348.526, "runs": 30, "max_over_bound": 1.743, "gated_by_opt_in": true, "default_path_counter": "one step frees <= VACUUM_STEP_PAGES pages"},
+  {"file": "services/source_ingestion/tests/test_snapshot_current_record_store.py", "line": "650-653 (gated check at 653)", "assertion": "second writer waits (upper)", "bound": "4.0 s", "protects": "a second writer gets the retryable busy error after the 2 s busy timeout, not a hang", "observed_max_under_load": 2.009, "runs": 30, "max_over_bound": 0.502, "gated_by_opt_in": true, "default_path_counter": "busy_timeout_ms == DEFAULT_BUSY_TIMEOUT_MS == 2000 and the error is MarketSnapshotWriteBusy(retryable); lower bound 1.8 s stays judged always (slow host only lengthens it)", "note": "max/bound is 0.502: the wait is the 2 s timeout by design, so it sits at half the bound on any host"},
+  {"file": "services/source_ingestion/tests/test_controller_worker.py", "line": "3603,3621 (now checked at 3608,3630)", "assertion": "steady RPC that never answers fails within the dedicated bound", "bound": "2.9 s", "protects": "a hung API call ends the tick with the dedicated timeout", "observed_max_under_load": 2.14, "runs": 60, "max_over_bound": 0.738, "gated_by_opt_in": true, "default_path_counter": "the tick ends with ControllerTickError 'timed out' (the dedicated 1.5 s RPC timeout), not a hang or another error"},
+  {"file": "services/source_ingestion/tests/test_history_availability.py", "line": "129 (now 134)", "assertion": "warm p95 of 50 symbols x 500 days", "bound": "100 ms", "protects": "history availability is answered from caches", "observed_max_under_load": 76.779, "runs": 30, "max_over_bound": 0.768, "gated_by_opt_in": true, "default_path_counter": "warm requests open 0 parquet files and decode 0 row groups"},
+  {"file": "services/source_ingestion/tests/test_daily_bars_reader.py", "line": "135 (now 141)", "assertion": "p95 of a 60-close window of 50 symbols", "bound": "150 ms", "protects": "close-window read decodes only the needed row groups", "observed_max_under_load": 112.347, "runs": 30, "max_over_bound": 0.749, "gated_by_opt_in": true, "default_path_counter": "<= 1 row group and 1 file per trade date per request (2,400 in 40 requests)"},
+  {"file": "services/source_ingestion/tests/test_semantic_extraction.py", "line": "506", "assertion": "timeout 0.04 s abstains within", "bound": "0.2 s", "protects": "client honours its timeout", "observed_max_under_load": 0.052, "runs": 30, "max_over_bound": 0.26, "gated_by_opt_in": false, "note": "margin: max is 0.26 of bound; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_semantic_extraction.py", "line": "578", "assertion": "keep-alive does not stall", "bound": "0.4 s", "protects": "client does not wait for the 0.8 s keep-alive sleep", "observed_max_under_load": 0.004, "runs": 30, "max_over_bound": 0.01, "gated_by_opt_in": false, "note": "margin: max is 0.01 of bound; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_semantic_extraction.py", "line": "660", "assertion": "trickle response times out near 0.05 s", "bound": "0.15 s", "protects": "a trickling server cannot extend the budget", "observed_max_under_load": 0.058, "runs": 30, "max_over_bound": 0.387, "gated_by_opt_in": false, "note": "margin: max 0.387 of bound (not above half); left unchanged"},
+  {"file": "services/source_ingestion/tests/test_semantic_extraction.py", "line": "700", "assertion": "remaining budget passed to the provider", "bound": "0.08 s", "protects": "provider gets the remaining budget, not the original 0.1 s", "observed_max_under_load": 0.04, "runs": 30, "max_over_bound": 0.5, "gated_by_opt_in": false, "note": "computed from the 0.06 s policy sleep; max 0.500 of bound, not above half; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_semantic_extraction.py", "line": "703", "assertion": "remaining-budget timeout elapsed", "bound": "0.25 s", "protects": "policy + invoke time is charged to one budget", "observed_max_under_load": 0.123, "runs": 30, "max_over_bound": 0.492, "gated_by_opt_in": false, "note": "max 0.492 of bound, not above half; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_source_readiness_bounded.py", "line": "113", "assertion": "readyz + health", "bound": "1.0 s", "protects": "readiness does not scan the store", "observed_max_under_load": 0.07, "runs": 30, "max_over_bound": 0.07, "gated_by_opt_in": false, "note": "margin 0.07; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_snapshot_universe.py", "line": "125", "assertion": "request snapshot on a miss", "bound": "2.0 s", "protects": "a miss is resolved without a scan", "observed_max_under_load": 0.05, "runs": 30, "max_over_bound": 0.025, "gated_by_opt_in": false, "note": "margin 0.025; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_ingest_schedule_incremental_replay.py", "line": "361", "assertion": "registry p50", "bound": "300 ms", "protects": "registry read is incremental", "observed_max_under_load": 39.541, "runs": 30, "max_over_bound": 0.132, "gated_by_opt_in": false, "note": "margin 0.13; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_pg_connection_reuse.py", "line": "202", "assertion": "fresh repository start-up", "bound": "5.0 s (not below 5 s; listed for completeness)", "protects": "start well inside the healthcheck budget", "observed_max_under_load": 0.112, "runs": 30, "max_over_bound": 0.022, "gated_by_opt_in": false, "note": "margin 0.022; left unchanged (needs PostgreSQL, ran against SOURCE_INGEST_TEST_POSTGRES_DSN)"},
+  {"file": "services/source_ingestion/tests/test_evidence_read_cost.py", "line": "122", "assertion": "summary max", "bound": "0.5 s", "protects": "summary stays an index lookup", "observed_max_under_load": 0.013, "runs": 30, "max_over_bound": 0.026, "gated_by_opt_in": false, "note": "margin 0.026 (needs PostgreSQL); gating from the previous head reverted"},
+  {"file": "services/source_ingestion/tests/test_snapshot_min_closes_window.py", "line": "139", "assertion": "per call min_closes=504 max", "bound": "2.0 s", "protects": "deep window read stays bounded", "observed_max_under_load": 0.537, "runs": 30, "max_over_bound": 0.269, "gated_by_opt_in": false, "note": "margin 0.27; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_snapshot_min_closes_window.py", "line": "143", "assertion": "p95 default window", "bound": "0.1 s", "protects": "default window read stays cheap", "observed_max_under_load": 0.012, "runs": 30, "max_over_bound": 0.12, "gated_by_opt_in": false, "note": "margin 0.12; left unchanged"},
+  {"file": "services/source_ingestion/tests/test_snapshot_read_lock_free.py", "line": 105, "assertion": "longest read during append / compaction (6 series)", "bound": "0.05 s", "protects": "readers never wait for an append or a 300 MB in-place compaction", "observed_max_under_load": 0.022, "runs": 30, "max_over_bound": 0.44, "gated_by_opt_in": false, "note": "largest series is live_symbols during append at 0.44 of bound (below half); left unchanged"},
+  {"file": "services/source_ingestion/tests/test_retention.py", "line": "664-668", "assertion": "snapshot delete txn <250 ms; reader <100 ms; writer probe <250 ms during the sweep", "bound": "250/100/250 ms", "protects": "a retention sweep never blocks snapshot readers or writers", "observed_max_under_load": null, "gated_by_opt_in": false, "note": "NOT measured 30 times and left unchanged: the test already needs RETENTION_SHAPED=1 (skipped in the required check, 'hosted shape run') and one run takes more than 9 minutes with pyarrow 26.0.1; the gating of the previous head was reverted so no default-path guarantee is owed"}
+ ],
+ "ac2_not_wall_clock_or_out_of_range": {
+  "simulated_or_computed_time_not_affected": [
+   "services/source_ingestion/tests/test_collector_outcome_truth.py:722 (clock[0] model)",
+   "services/source_ingestion/tests/test_collector_bundle_connector.py:1102,1176,1660 (model clock, also > 5 s)",
+   "services/source_ingestion/tests/test_scheduled_connector.py:2795,3047 (> 5 s)",
+   "services/source_ingestion/tests/test_collector_newest_session_progress.py:228,243 and test_collector_newest_session_hosted_throughput.py:347 (bounds 30 s and 1800 s)",
+   "services/source_ingestion/tests/test_collector_market_provenance_bound.py:360 (120 s)",
+   "services/source_ingestion/tests/test_finmind_kbar.py:198 (computed window)"
+  ],
+  "other": "asserts that only record a measured time without comparing it (test_collector_held_symbols_live.py:75, test_registry_receipt_summary.py:228, test_latest_market_snapshot_compaction.py:275, test_evidence_read_cost.py owner_pages_with_parity_seconds) are not assertions on a bound"
+ },
+ "ac2_measurement_note": "Maxima come from 30 runs each (min_closes 30, read_lock_free 30 x 2 tests, the others 30 rounds), measured by temporarily recording each assertion's value through wall_clock_bounds.check without changing the assertion; the temporary instrumentation was reverted and is not in the diff.",
+ "ac3_switch": "PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 (defined once in wall_clock_bounds.py); without it the tests still run every other assertion and report the measured values (PANTHEON_SOURCE_INGEST_WALL_CLOCK_REPORT=<file> collects them as JSON lines). No threshold value changed. Not gated (left unchanged with margin): see ac2_inventory.",
+ "ac4_default_guarantees": {
+  "snapshot_store": "test_default_path_counts_one_txn_per_500_keys_no_rewrite_readers_free_bounded_maintenance: 22 transactions for 10,700 keys; rows_changed == keys per batch (no table rewrite), with WAL bytes reported; reads complete while a write transaction is open, none gets a busy/locked error, journal_mode is wal; one maintenance step frees exactly VACUUM_STEP_PAGES of a freelist more than 3x larger; the full-day test also asserts the counters",
+  "second_writer": "busy_timeout_ms == 2000 and the retryable MarketSnapshotWriteBusy",
+  "controller_worker": "ControllerTickError 'timed out' for a server that never answers",
+  "history_availability": "0 parquet opens and 0 row groups on 40 warm requests (wall_clock_bounds.count_parquet_reads)",
+  "daily_bars_reader": "<= 1 row group and 1 file per date per request (2,400 in 40 requests)"
+ },
+ "ac5_faults_10_of_10": "test_default_path_catches_each_fault_the_wall_clock_bounds_were_for[exclusive_lock|rewrite_table|whole_file_maintenance] passed in each of the 200 default-path runs below (so 200 of 200, not only 10 of 10): each fault makes _default_path_guarantees raise the expected AssertionError ('database is locked', 'table was rewritten', 'maintenance step freed')",
+ "ac6_stability": {
+  "default_path_runs": "200 of 200 passed (4 tests each: guarantee + 3 faults), 0 failures, under the loaded_default_path load; 8 in parallel, not one uninterrupted process; each run 18-20 s",
+  "opt_in_idle_dev_host": "4 runs of the documented command: 2 passed (rc 0) and 2 failed (rc 1). Passing values: reader process 5.0/5.4 ms, reader thread 53.5/73.2 ms, write txn p99 101.1/95.9 ms, maintenance 77.5/9.9 ms. Failing runs: write txn p99 253.2 ms and 371.6 ms (> 250 ms), every other bound inside. This is the flakiness the task exists for; the bound is not raised, and the opt-in path is not expected to pass under load (30 loaded runs: 26 failed on the write txn p99)."
+ },
+ "ac7_command": "PANTHEON_SOURCE_INGEST_WALL_CLOCK_BOUNDS=1 python -m services.source_ingestion.tests.wall_clock_bounds   (extra pytest args after --, e.g. -- services/source_ingestion/tests/test_snapshot_current_record_store.py -k full_day); prints {judged, exit_code, measurements[name,test,measured,bound,unit,operator,within_bound]}",
+ "ac8": "no correctness assertion removed or loosened; the only changed assertions are the wall-clock ones, routed through wall_clock_bounds.check with the same numbers and operators (the second-writer lower bound 1.8 s stays judged always); every changed test stays in the required check, not skipped, not slow-marked",
+ "ac9_durations_dev_host_before_after_seconds": {
+  "test_full_day_replacement...(call)": {
+   "before": 43.64,
+   "after": 43.73,
+   "ci_before": 54.5
+  },
+  "test_history_availability p95 test": {
+   "before": 18.96,
+   "after": 18.12
+  },
+  "test_daily_bars_reader p95 test": {
+   "before": 17.5,
+   "after": 17.18
+  },
+  "test_second_writer...": {
+   "before": 2.2,
+   "after": 2.37
+  },
+  "controller never-responds tests": {
+   "before": "2.03 / 2.01",
+   "after": "about 2.0 each"
+  },
+  "new tests": "4 default-path tests add about 14 s (8.65 + 2.0 + 1.8 + 1.5); no existing test grew"
+ },
+ "ac10": "no production code changed; the tests write only under tmp_path",
+ "ac11_validation": {
+  "PANTHEON_DEPENDENCY_PYTHON=/tmp/si-venv-claude2/bin/python3 pytest services/source_ingestion/tests/test_snapshot_current_record_store.py -q": "39 passed",
+  "... test_history_availability.py test_daily_bars_reader.py test_controller_worker.py -q": "231 passed",
+  "reverted to base (no longer changed): test_retention.py, test_evidence_read_cost.py, test_semantic_extraction.py": "evidence_read_cost 9 passed with SOURCE_INGEST_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:26432/postgres (30 of 30 rounds); semantic_extraction 33 passed (30 of 30 rounds); retention's hosted-shape test needs RETENTION_SHAPED=1 and is skipped in the required check as before"
+ },
+ "remaining_honest_gaps": [
+  "'idle' is serial on a shared host, not an empty machine.",
+  "test_retention.py hosted-shape bounds were not measured 30 times (opt-in already, > 9 min per run).",
+  "The opt-in path passes about half of the idle runs; that is the flakiness being isolated, not fixed."
+ ]
+}

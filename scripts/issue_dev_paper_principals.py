@@ -24,12 +24,39 @@ from typing import Mapping
 
 PAPER_SUBJECT = "pantheon-dev-paper-provisioner"
 PAPER_SCOPE = "pantheon:dev-paper-approval"
+# Persona paper enrolment proposes lifecycle approvals under its own propose-only
+# subject; Governance forbids decider == proposer, so it must differ from PAPER_SUBJECT.
+ENROLLMENT_PROPOSER_SUBJECT = "pantheon-dev-persona-enrollment-proposer"
+# Research card admission (design section 6A): the research owner proposes the admission of a
+# hypothesis-card StrategySpec under its own propose-only subject; the paper automated gate
+# (PAPER_SUBJECT) decides it.  Distinct from PAPER_SUBJECT and from the enrolment proposer.
+CARD_PROPOSER_SUBJECT = "pantheon-dev-research-card-proposer"
+# Grant content Governance reads: explicit paper-ladder persona lifecycle widening naming the
+# enrolment proposer, and explicit research card admission widening naming the card proposer
+# (services/governance/paper_approval_scope.py).
+GOVERNANCE_GRANT_CONTENT = (
+    "enabled;card_admission=paper_research;card_proposer=" + CARD_PROPOSER_SUBJECT
+    + ";persona_lifecycle=paper_ladder;proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+    # Pool risk-policy proposals come from the same enrolment proposer (PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID).
+    + ";risk_policy=paper_pool;risk_proposer=" + ENROLLMENT_PROPOSER_SUBJECT
+)
+GOVERNANCE_CAPITAL_READER_SUBJECT = "pantheon-dev-governance-capital-binding-reader"
+GOVERNANCE_RUNTIME_READER_SUBJECT = "pantheon-dev-governance-runtime-binding-reader"
 TTL_SECONDS = 24 * 60 * 60
+CASE_FILE_MEMORY_SUBJECT = "pantheon-dev-research-case-file-memory-reader"
+CASE_FILE_ACTOR_ROLES = "consultation_session"
 READERS = {
+    # Paper runtimes (via the fleet reconciler) -> registry owner entry GET ONLY, for the report-only
+    # member baseline comparison. registry-reader is the existing read-only role; dev tenant only.
+    "PAPER_RUNTIME_REGISTRY_READ_TOKEN": ("pantheon-dev-paper-runtime-registry-reader", "registry-reader"),
     "DEPLOYMENT_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-deployment-registry-reader", "registry-reader"),
     "DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-deployment-approval-reader", "approval_reader"),
     "REGISTRY_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-registry-approval-reader", "approval_reader"),
     "GOVERNANCE_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-governance-registry-reader", "registry-reader"),
+    # Governance paper-ladder lifecycle review -> Capital /api/bindings (capital-reader, GET only) and
+    # Runtime Manager /api/runtime-bindings (viewer, GET only).  Distinct subjects, no write role.
+    "GOVERNANCE_CAPITAL_SERVICE_TOKEN": (GOVERNANCE_CAPITAL_READER_SUBJECT, "capital-reader"),
+    "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN": (GOVERNANCE_RUNTIME_READER_SUBJECT, "viewer"),
     "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN": ("pantheon-dev-runtime-approval-reader", "approval_reader"),
     "RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-runtime-registry-reader", "registry-reader"),
     "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN": ("runtime-manager", "capital-reader"),
@@ -41,10 +68,76 @@ READERS = {
     "EVOLUTION_PERSONA_SERVICE_TOKEN": ("pantheon-dev-evolution-persona-reader", "viewer"),
     # Discovery allocator read-only owner reads (persona list, capital bindings).
     "RESEARCH_PERSONA_SERVICE_TOKEN": ("research-orchestrator", "viewer"),
+    # Persona daily pool cycle -> research owner (persona demands, candidate supply).
+    "PERSONA_RESEARCH_SERVICE_TOKEN": ("persona-pool-cycle", "viewer"),
+    # Persona daily cycle & strategy pool -> registry owner (candidate specs, champions).
+    "PERSONA_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-persona-registry-reader", ("registry-reader", "regime-evaluator")),
+    # Persona daily cycle case-file assembly -> search owner (hybrid retrieval query).
+    "PERSONA_SEARCH_SERVICE_TOKEN": ("persona_cycle_controller", ("researcher", "persona_session")),
+    # Evolution automatic consumer -> owner read ports.
+    "AUTO_CONSUMER_PERSONA_TOKEN": ("pantheon-dev-auto-consumer-persona-reader", "viewer"),
+    "AUTO_CONSUMER_REGISTRY_TOKEN": ("pantheon-dev-auto-consumer-registry-reader", "registry-reader"),
+    "AUTO_CONSUMER_CAPITAL_TOKEN": ("runtime-manager", "capital-reader"),
+    "AUTO_CONSUMER_RESEARCH_TOKEN": ("pantheon-dev-auto-consumer-research-reader", "viewer"),
+    "AUTO_CONSUMER_BFF_TOKEN": ("pantheon-dev-auto-consumer-bff-reader", ("viewer", "registry-reader")),
+    "DISTILLATION_RESEARCH_SERVICE_TOKEN": ("strategy-distillation-worker", "viewer"),
     "RESEARCH_CAPITAL_SERVICE_TOKEN": ("research-orchestrator", "capital-reader"),
     "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-registry-reader", "registry-reader"),
-    "PERSONA_EVALUATOR_BFF_TOKEN": ("pantheon-dev-persona-evaluator-bff-reader", ("viewer", "registry-reader")),
+    # Card admission path of the alpha replication worker: open persona demands (research owner)
+    # and the demand's persona (persona owner), both read-only.
+    "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-research-reader", "viewer"),
+    "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN": ("pantheon-dev-alpha-replication-persona-reader", "viewer"),
+    "PERSONA_EVALUATOR_BFF_TOKEN": (
+        "pantheon-dev-persona-evaluator-bff-reader",
+        ("viewer", "registry-reader"),
+    ),
+    "PERSONA_RANKING_TOKEN": (
+        "pantheon-dev-persona-evaluator-bff-reader",
+        ("viewer", "registry-reader"),
+    ),
+    # Consultation executor case-file composition -> persona owner strategy-pool GET routes ONLY
+    # (current / versions / one version). persona_pool_reader is accepted by no other persona route
+    # and is not a write role; the dev tenant is the only admitted tenant. Delivered as a file only:
+    # PANTHEON_PERSONA_SERVICE_TOKEN is the persona owner's own service-token name, so it is never
+    # exported into the shared deploy environment.
+    "CONSULTATION_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-consultation-persona-pool-reader", "persona_pool_reader"),
+    # Research demand / evolution executor case-file composition (RC2) -> one narrow read-only principal per
+    # owner. Roles are existing read-only roles (no write/operator/admin/service). The memory subject is the
+    # actor id research-orchestrator-svc sends (RESEARCH_CASE_FILE_ACTOR_ID); files only, mounted to
+    # research-orchestrator-svc alone, and none of the existing write-capable RESEARCH_* tokens is used.
+    "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN": (CASE_FILE_MEMORY_SUBJECT, "consultation_session"),
+    "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN": ("pantheon-dev-research-case-file-telemetry-reader", "viewer"),
+    "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN": ("pantheon-dev-research-case-file-registry-reader", "registry-reader"),
+    "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN": ("pantheon-dev-research-case-file-persona-pool-reader", "persona_pool_reader"),
+    # No search reader is issued: every existing search read role can write (researcher is a memory write role;
+    # analyst writes Agora notes/signals), so the search owner stays unset and the case file records its own
+    # unavailable reason for search.
+    # Meeting roster resolution -> persona owner directory (GET /api/personas) ONLY. viewer is the existing
+    # read-only persona role (no write/admin/decide role); a file, never an env value.
+    "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN": ("pantheon-dev-consultation-persona-directory-reader", "viewer"),
+    # Consultation executor case-file composition & meeting lesson-candidate episode verification ->
+    # telemetry owner read-only GET routes (runtime-summaries and trade-episodes; viewer + reviewer roles,
+    # no service/operator/admin write authority). File-delivered only so PANTHEON_TELEMETRY_SERVICE_TOKEN
+    # is never exported into the shared deploy env.
+    "CONSULTATION_TELEMETRY_READ_TOKEN": (
+        "pantheon-dev-consultation-telemetry-reader",
+        ("viewer", "reviewer"),
+    ),
+    # Consultation executor -> memory learn-feedback writeback ONLY as write_authority consultation-svc.
+    # Role consultation-svc is in the memory write set and satisfies the authority check; no
+    # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.
+    "CONSULTATION_MEMORY_WRITE_TOKEN": ("pantheon-dev-consultation-memory-writer", "consultation-svc"),
+    # Consultation executor + meeting pre-read -> memory retrieve ONLY. consultation_session is a memory read
+    # role (institutional and committee-scoped persona reads) and not a write role. The actor id the service
+    # sends must equal this subject (memory-svc matches actor_id to the verified token identity).
+    "CONSULTATION_MEMORY_READ_TOKEN": ("pantheon-dev-consultation-memory-reader", "consultation_session"),
+    # OpenClaw adapter persona-memory materialize -> memory owner: read-only (persona_memory_reader is not a
+    # memory write role). The adapter's actor id must equal this subject in strict auth.
+    "OPENCLAW_ADAPTER_MEMORY_TOKEN": ("openclaw-persona-sync", "persona_memory_reader"),
+    # Persona daily pool cycle -> BFF strategy-pool publish route ONLY. The role is accepted by no other BFF route.
+    "PERSONA_POOL_PUBLISH_BFF_TOKEN": ("persona-pool-cycle", "persona_pool_publisher"),
     "TRAINING_SESSION_SOURCE_READ_TOKEN": ("pantheon-dev-training-session-source-reader", "source_ingest_reader"),
+    "PERSONA_POOL_SOURCE_READ_TOKEN": ("pantheon-dev-persona-pool-source-reader", "source_ingest_reader"),
     "AGORA_PROJECTOR_SERVICE_JWT": ("pantheon-dev-agora-projector-reader", "source_ingest_reader"),
     # Preview worker -> Training API only: training-service role, no owner/decide roles.
     "TRAINING_SESSION_WORKER_TOKEN": ("training-session-preview-worker", "training-service"),
@@ -91,6 +184,58 @@ WRITERS = {
         "approval_proposer",
         "pantheon:dev-owner-write",
     ),
+    # Persona daily cycle & harness adoption -> memory owner (bundle recall + outcome writeback).
+    "PERSONA_MEMORY_SERVICE_TOKEN": (
+        "persona_cycle_controller",
+        "persona_session",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona service memory writes (harness adoption, learning feedback, pool outcomes) -> memory owner.
+    # Least privilege: persona-svc write role only; persona_session (reader above) stays read-only.
+    "PERSONA_MEMORY_WRITE_TOKEN": (
+        "persona-svc",
+        "persona-svc",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona lesson-rule proposal publisher -> governance owner (propose-only, no decide).
+    "LESSON_RULE_PROPOSER_TOKEN": (
+        "persona-svc",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
+    # Evolution automatic consumer -> governance owner (propose-only, no decide).
+    "AUTO_CONSUMER_PROPOSER_TOKEN": (
+        "evolution-auto-consumer-proposer",
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
+    # Consultation meeting owner -> research owner meeting-action tickets (create + chair review). The
+    # research owner admits actor consultation-svc with role "service" for both; no operator/admin role,
+    # no signing secret is distributed and no other service subject is substituted.
+    "CONSULTATION_RESEARCH_SERVICE_TOKEN": (
+        "consultation-svc",
+        "service",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona paper enrolment (operator-bff) -> governance owner: propose-only, no decide.
+    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN": (
+        ENROLLMENT_PROPOSER_SUBJECT,
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
+    # Alpha replication worker card admission -> governance owner: propose-only, no decide/revoke,
+    # so the paper gate's "decider must not be the proposer" rule stays intact.
+    "RESEARCH_GOVERNANCE_PROPOSER_TOKEN": (
+        CARD_PROPOSER_SUBJECT,
+        "approval_proposer",
+        "pantheon:dev-owner-write",
+    ),
+    # Persona evaluator paper-only quarterly allocation -> operator BFF (paper pool only).
+    "PERSONA_ALLOCATION_TOKEN": (
+        "pantheon-dev-persona-evaluator-allocation",
+        "operator",
+        "pantheon:dev-owner-write",
+    ),
 }
 # Downstream health monitor -> Telemetry infrastructure-health only. The telemetry
 # verifier needs the service role plus a producer scope inside its own allowlist.
@@ -99,6 +244,8 @@ TELEMETRY_PRODUCERS = {
     "PANTHEON_BFF_HEALTH_TELEMETRY_JWT": (
         "control-plane-bff-health-monitor", "service", ["control-plane-bff"]),
 }
+SEARCH_ACCESS_SCOPES = ["operator", "research", "public"]
+SEARCH_SCOPED_VARIABLES = frozenset({"PERSONA_SEARCH_SERVICE_TOKEN"})
 CONSUMER_FILES = {
     "deployment": (
         "DEPLOYMENT_REGISTRY_SERVICE_TOKEN",
@@ -106,9 +253,23 @@ CONSUMER_FILES = {
         "DEPLOYMENT_CAPITAL_SERVICE_TOKEN",
     ),
     "registry": ("REGISTRY_GOVERNANCE_SERVICE_TOKEN",),
-    "governance": ("GOVERNANCE_REGISTRY_SERVICE_TOKEN",),
+    "governance": (
+        "GOVERNANCE_REGISTRY_SERVICE_TOKEN",
+        "GOVERNANCE_CAPITAL_SERVICE_TOKEN",
+        "GOVERNANCE_RUNTIME_MANAGER_SERVICE_TOKEN",
+    ),
     "runtime-manager": ("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", "RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", "RUNTIME_MANAGER_CAPITAL_SERVICE_TOKEN"),
-    "persona": ("PERSONA_GOVERNANCE_SERVICE_TOKEN",),
+    "persona": (
+        "PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PERSONA_RESEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_SOURCE_READ_TOKEN",
+        "PERSONA_REGISTRY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_SERVICE_TOKEN",
+        "PERSONA_MEMORY_WRITE_TOKEN",
+        "LESSON_RULE_PROPOSER_TOKEN",
+        "PERSONA_SEARCH_SERVICE_TOKEN",
+        "PERSONA_POOL_PUBLISH_BFF_TOKEN",
+    ),
     "capital": ("CAPITAL_GOVERNANCE_SERVICE_TOKEN",),
     "evolution": (
         "EVOLUTION_GOVERNANCE_SERVICE_TOKEN",
@@ -116,11 +277,29 @@ CONSUMER_FILES = {
         "EVOLUTION_PERSONA_SERVICE_TOKEN",
         "EVOLUTION_EXECUTE_PROPOSER_TOKEN",
     ),
-    "operator-bff": ("PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN", "PANTHEON_BFF_HEALTH_TELEMETRY_JWT"),
-    "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN",),
+    "evolution-daily-sweep-scheduler": (
+        "AUTO_CONSUMER_PERSONA_TOKEN",
+        "AUTO_CONSUMER_REGISTRY_TOKEN",
+        "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "AUTO_CONSUMER_RESEARCH_TOKEN",
+        "AUTO_CONSUMER_BFF_TOKEN",
+        "AUTO_CONSUMER_PROPOSER_TOKEN",
+        "AUTO_CONSUMER_GATE_TOKEN",
+    ),
+    "operator-bff": (
+        "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+        "PANTHEON_BFF_HEALTH_TELEMETRY_JWT",
+    ),
+    "strategy-distillation-worker": ("DISTILLATION_REGISTRY_SERVICE_TOKEN", "DISTILLATION_RESEARCH_SERVICE_TOKEN"),
     "alpha-replication-worker": (
         "ALPHA_REPLICATION_REGISTRY_SERVICE_TOKEN",
         "TRAINING_SESSION_WORKER_TOKEN",
+        "ALPHA_REPLICATION_RESEARCH_SERVICE_TOKEN",
+        "ALPHA_REPLICATION_PERSONA_SERVICE_TOKEN",
+        "RESEARCH_REGISTRY_SERVICE_TOKEN",
+        "RESEARCH_GOVERNANCE_PROPOSER_TOKEN",
+        "RESEARCH_GOVERNANCE_GATE_TOKEN",
     ),
     "research-orchestrator-svc": (
         "RESEARCH_REGISTRY_SERVICE_TOKEN",
@@ -128,16 +307,43 @@ CONSUMER_FILES = {
         "RESEARCH_BFF_SERVICE_TOKEN",
         "RESEARCH_PERSONA_SERVICE_TOKEN",
         "RESEARCH_CAPITAL_SERVICE_TOKEN",
+        "RESEARCH_CASE_FILE_MEMORY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_TELEMETRY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_REGISTRY_READ_TOKEN",
+        "RESEARCH_CASE_FILE_PERSONA_POOL_READ_TOKEN",
     ),
-    "persona-evaluator-agent": ("PERSONA_EVALUATOR_BFF_TOKEN", "PERSONA_EVALUATOR_GOVERNANCE_TOKEN"),
+    "persona-evaluator-agent": (
+        "PERSONA_EVALUATOR_BFF_TOKEN",
+        "PERSONA_RANKING_TOKEN",
+        "PERSONA_ALLOCATION_TOKEN",
+        "PERSONA_EVALUATOR_GOVERNANCE_TOKEN",
+        "AUTO_CONSUMER_CAPITAL_TOKEN",
+        "AUTO_CONSUMER_REGISTRY_TOKEN",
+    ),
     "training-session-preview-worker": ("TRAINING_SESSION_WORKER_TOKEN",),
+    "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
+                         "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
+                         "CONSULTATION_TELEMETRY_READ_TOKEN",
+                         "CONSULTATION_RESEARCH_SERVICE_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
+    "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
     # Shared by paper-signal-producer and paper-fleet-reconciler: only the capital
     # reader principal, never the deployment volume's governance/registry files.
     "paper-capital-reader": ("DEPLOYMENT_CAPITAL_SERVICE_TOKEN",),
+    # Fleet reconciler only (inherited by persona-scoped paper workers): registry entry read, nothing else.
+    "paper-registry-reader": ("PAPER_RUNTIME_REGISTRY_READ_TOKEN",),
 }
 REFRESH_SECONDS = 60 * 60
+
+
+# A consumer directory is normally mounted at /run/pantheon-principals; the paper registry reader is
+# mounted beside it so the services sharing the capital reader volume never see it.
+MOUNT_ROOT_OVERRIDES = {"paper-registry-reader": "/run/pantheon-registry-read"}
+
+
+def _mount_root(consumer: str) -> str:
+    return MOUNT_ROOT_OVERRIDES.get(consumer, "/run/pantheon-principals")
 
 
 def _roles(role: str | tuple[str, ...]) -> list[str]:
@@ -156,7 +362,14 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         raise ValueError("Configured dev verifier secret, issuer and audience required")
     issued = int(time.time()) if now is None else now
 
-    def token(subject: str, role: str, scope: str, producers: list[str] | None = None) -> str:
+    def token(
+        subject: str,
+        role: str | tuple[str, ...],
+        scope: str,
+        producers: list[str] | None = None,
+        access_scopes: list[str] | None = None,
+        azp: str | None = None,
+    ) -> str:
         claims = {
             "sub": subject, "service": subject, "tenant_id": "tenant-dev",
             "allowed_tenants": ["tenant-dev"], "roles": _roles(role), "scope": scope,
@@ -165,6 +378,10 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         }
         if producers:
             claims["allowed_producers"] = list(producers)
+        if access_scopes:
+            claims["access_scopes"] = list(access_scopes)
+        if azp:
+            claims["azp"] = azp
         encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
         encoded = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(
             json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
@@ -172,12 +389,34 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
         signature = hmac.new(secret.encode(), encoded, hashlib.sha256).digest()
         return (encoded + b"." + encode(signature)).decode("ascii")
 
+    evolution_service_token = (
+        env.get("EVOLUTION_AUTH_TOKEN", "pantheon-local-evolution-service").strip()
+        or "pantheon-local-evolution-service"
+    )
+    consultation_service_token = (
+        env.get("CONSULTATION_SERVICE_TOKEN", "pantheon-local-consultation-service").strip()
+        or "pantheon-local-consultation-service"
+    )
+    consultation_api_token = (
+        (env.get("CONSULTATION_API_TOKEN") or consultation_service_token).strip()
+        or consultation_service_token
+    )
     values = {
-        variable: token(subject, role, "pantheon:dev-owner-read")
+        variable: token(
+            subject,
+            role,
+            "pantheon:dev-owner-read",
+            access_scopes=SEARCH_ACCESS_SCOPES if variable in SEARCH_SCOPED_VARIABLES else None,
+        )
         for variable, (subject, role) in READERS.items()
     }
     values.update({
-        variable: token(subject, role, scope)
+        variable: token(
+            subject,
+            role,
+            scope,
+            azp="control-plane-bff" if variable == "PERSONA_ALLOCATION_TOKEN" else None,
+        )
         for variable, (subject, role, scope) in WRITERS.items()
     })
     values.update({
@@ -186,16 +425,34 @@ def issue_environment(env: Mapping[str, str], *, now: int | None = None) -> dict
     })
     values.update({
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
+        "AUTO_CONSUMER_GATE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
+        "RESEARCH_GOVERNANCE_GATE_TOKEN": token(PAPER_SUBJECT, "automated_gate", PAPER_SCOPE),
+        "RESEARCH_GOVERNANCE_PROPOSER_ID": CARD_PROPOSER_SUBJECT,
+        "RESEARCH_GOVERNANCE_GATE_ID": PAPER_SUBJECT,
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": PAPER_SUBJECT,
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": ENROLLMENT_PROPOSER_SUBJECT,
         "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "true",
         "GOVERNANCE_REGISTRY_BASE_URL": "http://registry:8087",
+        "GOVERNANCE_CAPITAL_BASE_URL": "http://capital:8092",
+        "GOVERNANCE_RUNTIME_MANAGER_BASE_URL": "http://runtime-manager:8081",
         "PANTHEON_REGISTRY_JWT_ISSUER": issuer,
         "PANTHEON_REGISTRY_JWT_AUDIENCE": audience,
         "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
+        "PANTHEON_MEMORY_AUTH_TOKEN": values["PERSONA_MEMORY_WRITE_TOKEN"],
+        "PANTHEON_MEMORY_SERVICE_TOKEN": values["PERSONA_MEMORY_SERVICE_TOKEN"],
+        "PANTHEON_RESEARCH_SERVICE_TOKEN": values["PERSONA_RESEARCH_SERVICE_TOKEN"],
+        "PANTHEON_REGISTRY_SERVICE_TOKEN": values["PERSONA_REGISTRY_SERVICE_TOKEN"],
+        "PANTHEON_SEARCH_SERVICE_TOKEN": values["PERSONA_SEARCH_SERVICE_TOKEN"],
+        "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": values["PERSONA_POOL_SOURCE_READ_TOKEN"],
+        "RESEARCH_CASE_FILE_ACTOR_ID": CASE_FILE_MEMORY_SUBJECT,
+        "RESEARCH_CASE_FILE_ACTOR_ROLES": CASE_FILE_ACTOR_ROLES,
+        "EVOLUTION_AUTH_TOKEN": evolution_service_token,
+        "CONSULTATION_SERVICE_TOKEN": consultation_service_token,
+        "CONSULTATION_API_TOKEN": consultation_api_token,
     })
-    for variables in CONSUMER_FILES.values():
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 
@@ -203,12 +460,28 @@ def revoked_environment(env: Mapping[str, str]) -> dict[str, str]:
     if (env.get("PANTHEON_ENV") != "dev" or env.get("PANTHEON_DEV_BFF_TENANT_ID") != "tenant-dev"
             or env.get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") != "false"):
         raise ValueError("Explicit tenant-dev withdrawal required")
-    values = {"GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "false",
-              "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant"}
-    for variables in CONSUMER_FILES.values():
+    values = {
+        "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "false",
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": "",
+        "RESEARCH_GOVERNANCE_PROPOSER_ID": "",
+        "RESEARCH_GOVERNANCE_GATE_ID": "",
+        "GOVERNANCE_DEV_PAPER_GRANT_FILE": "/run/pantheon-principals/grant",
+        "PANTHEON_MEMORY_AUTH_TOKEN": "",
+        "PANTHEON_MEMORY_SERVICE_TOKEN": "",
+        "PANTHEON_RESEARCH_SERVICE_TOKEN": "",
+        "PANTHEON_REGISTRY_SERVICE_TOKEN": "",
+        "PANTHEON_SEARCH_SERVICE_TOKEN": "",
+        "PERSONA_SOURCE_INGEST_SERVICE_TOKEN": "",
+        "RESEARCH_CASE_FILE_ACTOR_ID": "",
+        "RESEARCH_CASE_FILE_ACTOR_ROLES": "",
+        "EVOLUTION_AUTH_TOKEN": "",
+        "CONSULTATION_SERVICE_TOKEN": "",
+        "CONSULTATION_API_TOKEN": "",
+    }
+    for consumer, variables in CONSUMER_FILES.items():
         for variable in variables:
             values[variable] = ""
-            values[variable + "_FILE"] = "/run/pantheon-principals/" + variable
+            values[variable + "_FILE"] = _mount_root(consumer) + "/" + variable
     return values
 
 
@@ -252,7 +525,7 @@ def refresh_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
         directory = root / consumer
         for variable in variables:
             _atomic_private(directory, variable, values[variable])
-    _atomic_private(root / "governance", "grant", "enabled")
+    _atomic_private(root / "governance", "grant", GOVERNANCE_GRANT_CONTENT)
 
 
 def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None) -> bool:
@@ -260,7 +533,7 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
     issued = int(time.time()) if now is None else now
     # Validate current environment authorization, not only old files.
     issue_environment(env, now=issued)
-    if (root / "governance" / "grant").read_text() != "enabled":
+    if (root / "governance" / "grant").read_text() != GOVERNANCE_GRANT_CONTENT:
         return False
     secret = env["PANTHEON_DEV_BFF_JWT_SECRET"].strip().encode()
     decode = lambda value: base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
@@ -292,12 +565,52 @@ def healthy_files(root: Path, env: Mapping[str, str], *, now: int | None = None)
                         "aud": env["PANTHEON_DEV_BFF_JWT_AUDIENCE"].strip()}
             if variable in TELEMETRY_PRODUCERS:
                 expected["allowed_producers"] = producers
+            if variable in SEARCH_SCOPED_VARIABLES:
+                expected["access_scopes"] = SEARCH_ACCESS_SCOPES
+            if variable == "PERSONA_ALLOCATION_TOKEN":
+                expected["azp"] = "control-plane-bff"
             if any(claims.get(key) != value for key, value in expected.items()):
                 return False
             if not (claims["nbf"] <= issued < claims["exp"] - REFRESH_SECONDS * 2
                     and 0 < claims["exp"] - claims["iat"] <= TTL_SECONDS):
                 return False
     return True
+
+
+BROKER_TOKEN_FILE_ENV = "PANTHEON_PERSONA_TOOL_BROKER_TOKEN_FILE"
+BROKER_TOKEN_FILE_DEFAULT = "~/.pantheon-secrets/persona-tool-broker.token"
+
+
+def broker_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """Dev persona tool broker enablement with one host-persistent secret file.
+
+    The token is generated once (0600, never overwritten) and re-read on every
+    deploy, so it survives container recreation. Value is never logged.
+    """
+    if env.get("PANTHEON_ENV") != "dev":
+        raise ValueError("Broker secret is dev-only")
+    path = Path(env.get(BROKER_TOKEN_FILE_ENV) or BROKER_TOKEN_FILE_DEFAULT).expanduser()
+    if path.is_symlink():
+        raise ValueError("Unsafe broker token file")
+    token = ""
+    if path.exists():
+        if path.stat().st_mode & 0o077:
+            raise ValueError("Broker token file must be private")
+        token = path.read_text(encoding="utf-8").strip()
+    if len(token) < 32:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        token = secrets.token_urlsafe(48)
+        descriptor, temporary = tempfile.mkstemp(prefix=".broker-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(token)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    return {"PERSONA_TOOL_BROKER_ENABLED": "true", "PERSONA_TOOL_BROKER_TOKEN": token}
 
 
 def write_environment(path: Path, values: Mapping[str, str]) -> None:
@@ -333,7 +646,7 @@ def main() -> int:
         values = (revoked_environment(os.environ)
                   if os.environ.get("PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED") == "false"
                   else issue_environment(os.environ))
-        write_environment(args.output_env, values)
+        write_environment(args.output_env, {**values, **broker_environment(os.environ)})
     except (ValueError, OSError, KeyError, TypeError):
         # Do not echo paths, environment, key material or a token on failures.
         parser.exit(1, "Dev product principal issuance failed closed\n")

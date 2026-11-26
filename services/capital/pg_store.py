@@ -7,7 +7,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 _CP_GOV = Path(__file__).resolve().parent.parent / "control-plane" / "governance"
 if str(_CP_GOV) not in sys.path:
@@ -19,6 +19,7 @@ from capital_pool import (  # type: ignore
     CapitalPoolStore,
     _validate_status_transition,
     validate_pool,
+    utc_now,
 )
 from persona_capital_binding import (  # type: ignore
     PersonaCapitalBinding,
@@ -36,10 +37,83 @@ except ImportError:
 _UTC = datetime.timezone.utc
 
 
+def ordered_pool_patch(pool: CapitalPool, patch: dict[str, Any]) -> dict[str, Any]:
+    """Merge ordinary metadata under the owner lock without altering risk intent.
+
+    Replacing a whole stale snapshot would erase the ordering authority. Partial
+    unrelated metadata remains an ordinary supported operation after a risk edit.
+    """
+    meta = pool.metadata or {}
+    if not meta.get("risk_profile_change"):
+        return patch
+    incoming = patch.get("metadata")
+    protected = {"tenant_id", "persona_id", "execution_context", "risk", "requested_risk",
+                 "requested_risk_profile", "require_approved_profile_mapping", "profile_mapping_approval_id",
+                 "provisional_unresolved_risk_policy", "requested_profile", "effective_from", "effective_to",
+                 "expires_at", "environment", "target_stage", "deployment_stage", "profile_auto_resolved",
+                 "default_paper_baseline", "capital_scale_pct"}
+    if ("risk_policy_ref" in patch and patch["risk_policy_ref"] != pool.risk_policy_ref
+            or "metadata" in patch and not isinstance(incoming, dict)):
+        raise CapitalPoolError("Use the ordered paper risk profile change path")
+    if isinstance(incoming, dict):
+        for key, value in incoming.items():
+            if (key in protected or key.startswith(("risk_", "expected_risk_policy_"))) and value != meta.get(key):
+                raise CapitalPoolError("Use the ordered paper risk profile change path")
+        return {**patch, "metadata": {**meta, **incoming}}
+    return patch
+
+
 class PersistentCapitalPoolStore(CapitalPoolStore):
     """Capital-owned store with an atomic canonical pool patch operation."""
 
     _PATCH_FIELDS = frozenset({"name", "status", "risk_policy_ref", "metadata"})
+
+    def mutate_paper_risk_profile(self, pool_id: str, mutate: Callable[[CapitalPool], CapitalPool]) -> tuple[CapitalPool, bool]:
+        """Apply the latest intent and its approved binding as one owner mutation."""
+        with self._lock:
+            pool = self.require(pool_id)
+            updated = mutate(copy.deepcopy(pool))
+            if updated.to_dict() == pool.to_dict():
+                return pool, False
+            saved = CapitalPool.from_dict({**updated.to_dict(), "updated_at": utc_now()})
+            if hasattr(pool, "tenant_id"):
+                object.__setattr__(saved, "tenant_id", pool.tenant_id)
+            errors = validate_pool(saved)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool patch: {errors}")
+            snapshot = dict(self._pools)
+            self._pools[pool_id] = saved
+            try:
+                self._save()
+            except Exception:
+                self._pools = snapshot
+                raise
+            return saved, True
+
+    @staticmethod
+    def _requested_profile_update(pool: CapitalPool, persona_id: str, profile: str) -> dict[str, Any]:
+        meta = dict(pool.metadata or {})
+        if (
+            not isinstance(profile, str)
+            or profile not in {"low", "medium", "high"}
+            or not persona_id
+            or meta.get("persona_id") != persona_id
+            or meta.get("execution_context") != "paper"
+            or pool.single_runtime_enforced is not True
+        ):
+            raise CapitalPoolError("requested_profile_identity_invalid")
+        if any(meta.get(key) not in (None, "", profile) for key in
+               ("requested_risk_profile", "risk_profile", "requested_risk", "risk")):
+            raise CapitalPoolError("requested_profile_source_conflict")
+        return {**meta, "requested_risk_profile": profile, "require_approved_profile_mapping": True}
+
+    def record_requested_profile(self, pool_id: str, *, persona_id: str, profile: str) -> tuple[CapitalPool, bool]:
+        with self._lock:
+            pool = self.require(pool_id)
+            meta = self._requested_profile_update(pool, persona_id, profile)
+            if meta == pool.metadata:
+                return pool, False
+            return self.patch(pool_id, patch={"metadata": meta}, updated_at=utc_now()), True
 
     def patch(
         self,
@@ -57,6 +131,7 @@ class PersistentCapitalPoolStore(CapitalPoolStore):
             raise CapitalPoolError("At least one CapitalPool patch field is required")
         with self._lock:
             pool = self.require(pool_id)
+            patch = ordered_pool_patch(pool, patch)
             target_status = str(patch.get("status") or pool.status)
             if target_status != pool.status:
                 _validate_status_transition(pool.status, target_status)
@@ -134,9 +209,65 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
         self._refresh_from_postgres()
 
     def create(self, pool: CapitalPool) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().create(pool)
+        errors = validate_pool(pool)
+        if errors:
+            raise CapitalPoolError(f"Invalid pool: {errors}")
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"INSERT INTO {self._records.table} (record_id,payload,updated_at,tenant_id) "
+                "VALUES (%s,%s::jsonb,now(),%s) ON CONFLICT (record_id) DO NOTHING RETURNING record_id",
+                (pool.pool_id, json.dumps(pool.to_dict()), getattr(pool, "tenant_id", None)),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Pool already exists: {pool.pool_id}")
+            self._pools[pool.pool_id] = pool
+            return pool
+
+    def record_requested_profile(self, pool_id: str, *, persona_id: str, profile: str) -> tuple[CapitalPool, bool]:
+        # Serialize with other Postgres writers and update just this row; _save
+        # writes full snapshots of all pools and is unsuitable for provenance.
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Unknown pool: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            meta = self._requested_profile_update(pool, persona_id, profile)
+            if meta == pool.metadata:
+                return pool, False
+            payload = {**pool.to_dict(), "metadata": meta, "updated_at": utc_now()}
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            updated = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            self._pools[pool_id] = updated
+            return updated, True
+
+    def mutate_paper_risk_profile(self, pool_id: str, mutate: Callable[[CapitalPool], CapitalPool]) -> tuple[CapitalPool, bool]:
+        # Row lock spans read/compare/discovery/commit. Independent BFF/Capital
+        # workers cannot finalize an older intent over a newer one.
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Unknown pool: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            updated = mutate(copy.deepcopy(pool))
+            if updated.to_dict() == pool.to_dict():
+                return pool, False
+            payload = {**updated.to_dict(), "updated_at": utc_now()}
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            saved = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            self._pools[pool_id] = saved
+            return saved, True
 
     def get(self, pool_id: str) -> Optional[CapitalPool]:
         with self._lock:
@@ -149,9 +280,7 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
             return super().list(owner_id=owner_id, status=status)
 
     def update_status(self, pool_id: str, new_status: str) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().update_status(pool_id, new_status)
+        return self.patch(pool_id, patch={"status": new_status}, updated_at=utc_now())
 
     def patch(
         self,
@@ -160,9 +289,34 @@ class PostgresCapitalPoolStore(PersistentCapitalPoolStore):
         patch: dict[str, Any],
         updated_at: str,
     ) -> CapitalPool:
-        with self._lock:
-            self._refresh_from_postgres()
-            return super().patch(pool_id, patch=patch, updated_at=updated_at)
+        unknown = set(patch) - self._PATCH_FIELDS
+        if unknown or not patch:
+            raise CapitalPoolError(f"Unsupported or empty CapitalPool patch: {sorted(unknown)}")
+        with self._lock, self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT record_id, payload, tenant_id FROM {self._records.table} WHERE record_id=%s FOR UPDATE",
+                (pool_id,),
+            ).fetchone()
+            if row is None:
+                raise CapitalPoolError(f"Pool not found: {pool_id}")
+            pool = _load_entity(CapitalPool, row)
+            # Ordered edits exclusively own policy and profile metadata after
+            # the first intent, including against an already in-flight repair.
+            patch = ordered_pool_patch(pool, patch)
+            target_status = str(patch.get("status") or pool.status)
+            if target_status != pool.status:
+                _validate_status_transition(pool.status, target_status)
+            payload = {**pool.to_dict(), **patch, "updated_at": updated_at}
+            updated = _load_entity(CapitalPool, (pool_id, payload, row[2]))
+            errors = validate_pool(updated)
+            if errors:
+                raise CapitalPoolError(f"Invalid pool patch: {errors}")
+            conn.execute(
+                f"UPDATE {self._records.table} SET payload=%s::jsonb, updated_at=now() WHERE record_id=%s",
+                (json.dumps(payload), pool_id),
+            )
+            self._pools[pool_id] = updated
+            return updated
 
     def _save(self) -> None:
         for pool in self._pools.values():
@@ -257,6 +411,7 @@ class JsonlCapitalAuditStore:
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         try:
             from .audit_log import append_audit_event
@@ -272,7 +427,19 @@ class JsonlCapitalAuditStore:
             detail=detail,
             audit_log_path=str(self.audit_log_path),
             tenant_id=tenant_id,
+            event_id=event_id,
         )
+
+    def get_event(self, event_id: str, tenant_id: str) -> dict[str, Any] | None:
+        if not self.audit_log_path.exists():
+            return None
+        # Stream the existing fallback journal; do not load history into RAM.
+        with self.audit_log_path.open(encoding="utf-8") as source:
+            for line in source:
+                event = json.loads(line) if line.strip() else {}
+                if event.get("event_id") == event_id and event.get("tenant_id") == tenant_id:
+                    return event
+        return None
 
     def list_events(
         self,
@@ -325,8 +492,9 @@ class PostgresCapitalAuditStore:
         actor_role: str | None,
         detail: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
-        event_id = str(uuid.uuid4())
+        event_id = event_id or str(uuid.uuid4())
         event = {
             "event_id": event_id,
             "tenant_id": tenant_id,
@@ -340,6 +508,14 @@ class PostgresCapitalAuditStore:
         }
         _put_record(self._records, event_id, event, tenant_id)
         return event_id
+
+    def get_event(self, event_id: str, tenant_id: str) -> dict[str, Any] | None:
+        with self._records._connect() as conn:
+            row = conn.execute(
+                f"SELECT payload FROM {self._records.table} WHERE record_id=%s AND tenant_id=%s",
+                (event_id, tenant_id),
+            ).fetchone()
+        return (row[0] if isinstance(row[0], dict) else json.loads(row[0])) if row else None
 
     def list_events(
         self,

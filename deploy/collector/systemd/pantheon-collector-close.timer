@@ -1,0 +1,12 @@
+[Unit]
+Description=Pantheon Collector same-day close capture (Taipei 14:40-17:00, every 10 min)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 14:40,50:00 Asia/Taipei
+OnCalendar=Mon..Fri *-*-* 15,16:00/10:00 Asia/Taipei
+OnCalendar=Mon..Fri *-*-* 17:00:00 Asia/Taipei
+Persistent=false
+Unit=pantheon-collector-close.service
+
+[Install]
+WantedBy=timers.target

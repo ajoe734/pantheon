@@ -6,12 +6,15 @@ Validates research candidates against admission criteria before
 allowing promotion to the registry.
 """
 
+import copy
 import hashlib
+import math
+import os
 import uuid
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import date as date_cls, datetime
 
 from jsonschema import Draft7Validator, RefResolver
 
@@ -24,9 +27,27 @@ from .gate_schema import (
     RegistryPromotionRequest,
 )
 from .gate_config import GateConfig, AdmissionRules
+from .mechanism_tests import (
+    CONTRADICTED as MECHANISM_PREDICTION_CONTRADICTED,
+    MECHANISM_CONTRADICTED,
+    run_mechanism_stage,
+)
 from services.research.vectorbt.adapter.vectorbt_adapter import (
     INSUFFICIENT_HISTORY_STATUS,
+    INTRADAY_FREQUENCY_MINUTES,
+    REPLAY_LABEL,
+    BacktestConfig,
+    GovernedVectorbtInputAdapter,
+    VectorbtBackend,
+    VectorbtWorkflowError,
+    _artifact_identity,
+    _compute_buy_and_hold_benchmark,
+    _session_of,
+    _slice_prepared_dataset,
+    _summarize_window_result,
+    bars_per_session,
     TAIWAN_BROKER_COMMISSION_RATE,
+    VECTORBT_VERSION_PIN,
     TAIWAN_COST_RATE_CITATIONS,
     TAIWAN_EQUITY_TRANSACTION_TAX_RATE,
     TAIWAN_ETF_TRANSACTION_TAX_RATE,
@@ -35,7 +56,303 @@ from services.research.vectorbt.adapter.vectorbt_adapter import (
 )
 
 
+INTRADAY_UNQUALIFIED_STATUS = "intraday_evidence_unqualified"
+INTRADAY_SOURCE_DATASET = "tw_price_1m"
+_ISOLATION_FLAGS = (
+    "waived", "waiver", "quarantined", "quarantine", "isolated", "partial", "unreconciled",
+    "waived_days", "quarantined_days", "isolated_days",
+)
+
+
+def _is_intraday_evaluation(evaluation: Dict[str, Any]) -> bool:
+    block = evaluation.get("intraday")
+    return (
+        isinstance(block, dict)
+        or evaluation.get("evidence_mode") == REPLAY_LABEL
+        or str(evaluation.get("bar_frequency") or "") in INTRADAY_FREQUENCY_MINUTES
+    )
+
+
+def run_intraday_replication_protocol(
+    dataset: Dict[str, Any],
+    strategy_artifact: Dict[str, Any],
+    *,
+    config: GateConfig,
+    mandate_max_drawdown: float = 0.25,
+    run_id: Optional[str] = None,
+    backend: Any = None,
+    run_windows: Any = None,
+) -> Dict[str, Any]:
+    """Session-based replication protocol on a governed minute replay dataset (K6).
+
+    Same 70/30 IS/OOS + walk-forward shape, statutory costs and benchmarks as the daily C2
+    protocol, but windows are cut on SESSION boundaries and sizes are counted in clean sessions
+    and round-trip trades.  Fills, annualisation, flatten-by-13:25 and the replay label come from
+    the K5 engine (``VectorbtBackend``, real vectorbt); nothing is reconstructed.
+    Only reconciled ``tw_price_1m`` replay data is accepted (the K5 governed boundary enforces
+    it); there is no daily or synthetic fallback.
+    """
+    from services.execution.shioaji_adapter import normalize_taiwan_symbol
+    from services.registry.strategy_artifact import (
+        StrategyArtifactValidationError,
+        validate_strategy_artifact,
+    )
+
+    try:
+        validate_strategy_artifact(strategy_artifact)
+    except StrategyArtifactValidationError as exc:
+        raise VectorbtWorkflowError(f"strategy artifact validation failed: {exc}") from exc
+    parameters = strategy_artifact.get("parameters") or {}
+    if "screen" in (strategy_artifact.get("strategy_logic") or {}):
+        raise VectorbtWorkflowError("screen strategies are daily-only; no intraday screen replay is defined")
+    if str(parameters.get("market") or "TW").strip().upper() != "TW":
+        raise VectorbtWorkflowError("intraday replication protocol requires governed Taiwan market ('TW')")
+
+    prepared = GovernedVectorbtInputAdapter().prepare(dataset)
+    frequency = prepared.data_frequency
+    if frequency not in INTRADAY_FREQUENCY_MINUTES:
+        raise VectorbtWorkflowError(f"{frequency!r} is not an intraday frequency")
+    declared = parameters.get("bar_frequency")
+    if declared is not None and declared != frequency:
+        raise VectorbtWorkflowError(
+            f"strategy bar_frequency {declared!r} != replay dataset frequency {frequency!r}"
+        )
+    snapshot = dict((prepared.replay or {}).get("source_snapshot") or {})
+
+    wanted = {normalize_taiwan_symbol(s) for s in parameters.get("symbols", [])}
+    targets = [i for i in prepared.instruments if normalize_taiwan_symbol(i) in wanted]
+    bench_0050 = [i for i in prepared.instruments if i.split(".")[0].strip() == "0050"]
+    if not targets:
+        raise VectorbtWorkflowError("no target instrument present in the replay dataset")
+
+    # Clean session = every target instrument has the full regular bar count for that session.
+    expected = bars_per_session(frequency)
+    per_symbol_sessions: Dict[str, Dict[str, int]] = {}
+    for inst in targets:
+        counts: Dict[str, int] = {}
+        for key in prepared.dates_by_instrument[inst]:
+            counts[_session_of(key)] = counts.get(_session_of(key), 0) + 1
+        per_symbol_sessions[inst] = counts
+    all_sessions = sorted(set().union(*[set(c) for c in per_symbol_sessions.values()]))
+    clean = [
+        s for s in all_sessions
+        if all(per_symbol_sessions[i].get(s) == expected for i in targets)
+    ]
+    unclean = [s for s in all_sessions if s not in clean]
+    aligned = all(
+        prepared.dates_by_instrument[i] == prepared.dates_by_instrument[targets[0]] for i in targets
+    )
+    n_sessions = len(clean)
+    is_sessions = int(n_sessions * config.in_sample_ratio)
+    oos_sessions = n_sessions - is_sessions
+    fold_edges = [(k * is_sessions) // config.walk_forward_folds for k in range(config.walk_forward_folds + 1)]
+
+    history_sufficient = (
+        aligned and not unclean
+        and n_sessions >= config.min_clean_sessions
+        and oos_sessions >= config.min_oos_sessions
+    )
+    first_day = date_cls.fromisoformat(clean[0]) if clean else None
+    last_day = date_cls.fromisoformat(clean[-1]) if clean else None
+    history_check = {
+        "sufficient": bool(history_sufficient),
+        "calendar_days": (last_day - first_day).days if first_day and last_day else 0,
+        "trading_days": n_sessions,
+        "required_calendar_days": 0,
+        "required_trading_days": config.min_clean_sessions,
+        "unit": "clean_sessions",
+        "details": {
+            "clean_sessions": n_sessions,
+            "unclean_sessions": unclean,
+            "bar_aligned_across_targets": aligned,
+            "start_session": clean[0] if clean else None,
+            "end_session": clean[-1] if clean else None,
+        },
+    }
+    ident = _artifact_identity(strategy_artifact)
+    base: Dict[str, Any] = {
+        "backtest_run_id": run_id or f"bt-intraday-{_sha(prepared.dataset_id + str(ident))[:12]}",
+        "backend": "vectorbt_portfolio",
+        "framework": "vectorbt",
+        "market": "TW",
+        "governed_data": True,
+        "dataset_id": prepared.dataset_id,
+        "source_dataset_refs": list(prepared.source_dataset_refs),
+        "strategy_artifact": ident,
+        "bar_frequency": frequency,
+        "evidence_mode": REPLAY_LABEL,
+        "live_or_paper_evidence": False,
+        "history_check": history_check,
+        "pit_history_days": history_check["calendar_days"],
+        "pit_history_bars": n_sessions,
+    }
+    base["artifact_ref"] = f"vectorbt://backtest-runs/{base['backtest_run_id']}"
+    if not history_sufficient:
+        return {
+            **base,
+            "intraday": {
+                "bar_frequency": frequency,
+                "evidence_mode": REPLAY_LABEL,
+                "live_or_paper_evidence": False,
+                "replay_clock": "bar_end",
+                "availability_ceiling": (prepared.replay or {}).get("availability_ceiling"),
+                "source_snapshot": snapshot,
+                "clean_sessions": n_sessions,
+                "unclean_sessions": len(unclean),
+                "in_sample_sessions": is_sessions,
+                "out_of_sample_sessions": oos_sessions,
+                "in_sample_trades": 0,
+                "out_of_sample_trades": 0,
+                "trade_unit": "round_trips",
+                "not_run": True,
+            },
+            "status": INSUFFICIENT_HISTORY_STATUS,
+            "reason": (
+                f"intraday replay has {n_sessions} clean sessions ({len(unclean)} unclean, "
+                f"{oos_sessions} OOS); need >= {config.min_clean_sessions} clean sessions and "
+                f">= {config.min_oos_sessions} OOS sessions"
+            ),
+        }
+
+    split_idx = prepared.dates_by_instrument[targets[0]].index(
+        next(k for k in prepared.dates_by_instrument[targets[0]] if _session_of(k) == clean[is_sessions])
+    )
+    fold_idx = []
+    for e in fold_edges:
+        fold_idx.append(
+            split_idx if e >= is_sessions else next(
+                i for i, k in enumerate(prepared.dates_by_instrument[targets[0]]) if _session_of(k) == clean[e]
+            )
+        )
+    total_len = len(prepared.dates_by_instrument[targets[0]])
+    is_ds = _slice_prepared_dataset(prepared, 0, split_idx, "in_sample")
+    oos_ds = _slice_prepared_dataset(prepared, split_idx, total_len, "out_of_sample")
+    fold_ds = [
+        _slice_prepared_dataset(prepared, fold_idx[k], fold_idx[k + 1], f"wf_fold_{k + 1}")
+        for k in range(config.walk_forward_folds)
+    ]
+    base_cfg = BacktestConfig(strategy_artifact=dict(strategy_artifact))
+    bt_config = BacktestConfig(
+        version=base_cfg.version,
+        requested_by=base_cfg.requested_by,
+        strategy_params=dict(parameters),
+        strategy_artifact=dict(strategy_artifact),
+        init_cash=base_cfg.init_cash,
+        fees=base_cfg.commission_rate,
+        commission_rate=base_cfg.commission_rate,
+        transaction_tax_rate=base_cfg.transaction_tax_rate,
+        etf_transaction_tax_rate=base_cfg.etf_transaction_tax_rate,
+        apply_taiwan_fill_costs=True,
+        storage_backend=base_cfg.storage_backend,
+        storage_path_template=base_cfg.storage_path_template,
+    )
+    windows = [("full", prepared), ("in_sample", is_ds), ("out_of_sample", oos_ds)] + [
+        (f"wf_fold_{k + 1}", d) for k, d in enumerate(fold_ds)
+    ]
+    previous = os.environ.get("PANTHEON_VECTORBT_BACKEND")
+    os.environ["PANTHEON_VECTORBT_BACKEND"] = "real"
+    try:
+        if run_windows is not None:
+            results = list(run_windows([d for _, d in windows], bt_config))
+        else:
+            runner = backend or VectorbtBackend()
+            results = [runner.run(d, bt_config) for _, d in windows]
+    finally:
+        if previous is None:
+            os.environ.pop("PANTHEON_VECTORBT_BACKEND", None)
+        else:
+            os.environ["PANTHEON_VECTORBT_BACKEND"] = previous
+    if len(results) != len(windows):
+        raise VectorbtWorkflowError("window runner returned a different number of results")
+    full_res, is_res, oos_res, *fold_res = results
+    is_sum = _summarize_window_result(is_ds, is_res, window_fraction=config.in_sample_ratio)
+    oos_sum = _summarize_window_result(oos_ds, oos_res, window_fraction=round(1.0 - config.in_sample_ratio, 4))
+    folds = []
+    for idx, (d, r) in enumerate(zip(fold_ds, fold_res), start=1):
+        f = _summarize_window_result(d, r, window_fraction=round(config.in_sample_ratio / config.walk_forward_folds, 4))
+        f["fold_index"] = idx
+        folds.append(f)
+    sharpes = [float(f["sharpe_ratio"]) for f in folds]
+    bh_same = _compute_buy_and_hold_benchmark(oos_ds, targets, bt_config)
+    bh_0050 = _compute_buy_and_hold_benchmark(oos_ds, bench_0050, bt_config)
+    agg = full_res.aggregate_metrics
+    costs = {
+        "applied_on_every_fill": True,
+        "commission_rate": round(float(bt_config.commission_rate), 6),
+        "transaction_tax_rate": round(float(bt_config.transaction_tax_rate), 6),
+        "equity_transaction_tax_rate": round(float(bt_config.transaction_tax_rate), 6),
+        "etf_transaction_tax_rate": round(float(bt_config.etf_transaction_tax_rate), 6),
+        "total_commission_paid": round(float(agg.get("total_commission_paid", 0.0)), 6),
+        "total_transaction_tax_paid": round(float(agg.get("total_transaction_tax_paid", 0.0)), 6),
+        "total_fees_paid": round(float(agg.get("total_fees_paid", 0.0)), 6),
+        "citations": copy.deepcopy(TAIWAN_COST_RATE_CITATIONS),
+        "rate_citations": copy.deepcopy(TAIWAN_COST_RATE_CITATIONS),
+    }
+    return {
+        **base,
+        "status": "completed",
+        "framework_version": VECTORBT_VERSION_PIN,
+        "protocol": {
+            "in_sample_ratio": round(config.in_sample_ratio, 4),
+            "out_of_sample_ratio": round(1.0 - config.in_sample_ratio, 4),
+            "walk_forward_folds": config.walk_forward_folds,
+            "mandate_max_drawdown": mandate_max_drawdown,
+            "window_unit": "sessions",
+        },
+        "intraday": {
+            "bar_frequency": frequency,
+            "evidence_mode": REPLAY_LABEL,
+            "live_or_paper_evidence": False,
+            "replay_clock": "bar_end",
+            "availability_ceiling": (prepared.replay or {}).get("availability_ceiling"),
+            "source_snapshot": snapshot,
+            "clean_sessions": n_sessions,
+            "unclean_sessions": len(unclean),
+            "in_sample_sessions": is_sessions,
+            "out_of_sample_sessions": oos_sessions,
+            "in_sample_trades": int(is_sum["round_trips"]),
+            "out_of_sample_trades": int(oos_sum["round_trips"]),
+            "trade_unit": "round_trips",
+            "fill_rule": "next_bar_open",
+        },
+        "in_sample": is_sum,
+        "out_of_sample": oos_sum,
+        "walk_forward_folds": folds,
+        "walk_forward": {
+            "folds": folds,
+            "consistent_sign": len(sharpes) == config.walk_forward_folds
+            and all(math.isfinite(x) and x != 0.0 for x in sharpes)
+            and (all(x > 0 for x in sharpes) or all(x < 0 for x in sharpes)),
+            "all_positive": all(math.isfinite(x) and x > 0 for x in sharpes),
+        },
+        "costs": costs,
+        "transaction_costs": copy.deepcopy(costs),
+        "benchmarks": {
+            "buy_and_hold_same_symbols": bh_same,
+            "benchmark_0050": bh_0050,
+            "tw_0050": bh_0050,
+        },
+    }
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 CONFLICT = object()
+SURVIVORSHIP_LIMITED_STATUS = "survivorship_limited"
+
+
+DAILY_BAR_FREQUENCY = "1d"
+
+
+def family_trial_key(family_id: str, bar_frequency: Optional[str] = None) -> str:
+    """Trial-counter key.  Daily/undeclared keeps the legacy bare ``family_id``;
+    any other frequency is isolated under ``family_id@frequency`` (SD §9 K8)."""
+    freq = str(bar_frequency or "").strip().lower()
+    if not freq or freq == DAILY_BAR_FREQUENCY:
+        return family_id
+    return f"{family_id}@{freq}"
 
 
 class FamilyTrialCounterStore:
@@ -54,6 +371,13 @@ class FamilyTrialCounterStore:
 
     def get(self, family_id: str) -> int:
         return int(self._counts.get(family_id, 0))
+
+    def family_total(self, family_id: str) -> int:
+        """Aggregate lifetime trials for a family across every frequency bucket
+        (bare legacy/daily key plus ``family_id@<frequency>``); O-17 cap basis."""
+        self.get(family_id)  # shared stores reload (strict) inside get()
+        prefix = f"{family_id}@"
+        return sum(int(v) for k, v in self._counts.items() if k == family_id or k.startswith(prefix))
 
     def increment(self, family_id: str, preset_count: Optional[int] = None) -> int:
         next_val = self.get(family_id) + 1
@@ -153,9 +477,14 @@ class ReplicationGate:
         self._canonical_spec_validator = self._build_strategy_spec_validator()
         self._trial_counter_store = FamilyTrialCounterStore(trial_counter_path)
 
-    def get_family_trial_count(self, family_id: str) -> int:
-        """Return the current number of evaluated trials for a strategy family."""
-        return self._trial_counter_store.get(family_id)
+    def get_family_trial_count(self, family_id: str, bar_frequency: Optional[str] = None) -> int:
+        """Return the current number of evaluated trials for a strategy family
+        (per bar_frequency; daily/undeclared is the legacy key)."""
+        return self._trial_counter_store.get(family_trial_key(family_id, bar_frequency))
+
+    def get_family_total_trial_count(self, family_id: str) -> int:
+        """Aggregate family lifetime trials across all frequencies (O-17 cap of 500)."""
+        return self._trial_counter_store.family_total(family_id)
 
     def evaluate_candidate(self, request: ReplicationRequest) -> ReplicationResponse:
         """
@@ -169,6 +498,20 @@ class ReplicationGate:
         """
         gate_run_id = str(uuid.uuid4())[:8]
         results: List[ReplicationResult] = []
+
+        # Mechanism stage (SD_DISCOVERY_DEMAND §3.2). It runs before any criterion, so
+        # before the backtest that produces the out-of-sample window, and it reads the
+        # in-sample slice of the dataset only.
+        mechanism = self._run_mechanism_stage(request)
+        mechanism_contradicted = mechanism["mechanism_status"] == MECHANISM_CONTRADICTED
+        results.append(
+            ReplicationResult(
+                criterion_id="mechanism_stage",
+                passed=not mechanism_contradicted,
+                evidence=self._mechanism_evidence(mechanism),
+                details=mechanism,
+            )
+        )
 
         # Required criteria checks
         for criterion in self.config.get_required_criteria():
@@ -205,6 +548,7 @@ class ReplicationGate:
             backtest_details.get("status") == INSUFFICIENT_HISTORY_STATUS
         )
 
+        screen_status = backtest_details.get("status")
         if is_insufficient_history:
             admitted = False
             reasoning = (
@@ -217,6 +561,12 @@ class ReplicationGate:
             admitted, reasoning = AdmissionRules.evaluate_admission(
                 required_results, optional_results
             )
+            if not admitted and screen_status in (
+                SURVIVORSHIP_LIMITED_STATUS,
+                "screen_dropped",
+                "control_unavailable",
+            ):
+                reasoning = f"{reasoning}. {backtest_result.evidence}"
             replication_status = (
                 ReplicationStatus.PASSED
                 if admitted
@@ -227,6 +577,12 @@ class ReplicationGate:
                 if admitted
                 else CandidateAdmissionStatus.REJECTED
             )
+
+        if admitted and mechanism_contradicted:
+            admitted = False
+            reasoning = f"{reasoning}. Refused: {self._mechanism_evidence(mechanism)}"
+            replication_status = ReplicationStatus.FAILED
+            admission_status = CandidateAdmissionStatus.REJECTED
 
         # Build summary
         required_passed = sum(1 for r in required_results.values() if r)
@@ -253,6 +609,9 @@ class ReplicationGate:
                     optional_passed / optional_total if optional_total > 0 else 1.0
                 ),
                 "backtest_summary": backtest_details,
+                "mechanism_status": mechanism["mechanism_status"],
+                "mechanism_support": mechanism["mechanism_support"],
+                "mechanism": mechanism,
             },
         )
 
@@ -260,6 +619,66 @@ class ReplicationGate:
         self._log_evaluation(gate_run_id, request, response)
 
         return response
+
+    @staticmethod
+    def _mechanism_evidence(mechanism: Dict[str, Any]) -> str:
+        status = mechanism["mechanism_status"]
+        if status == MECHANISM_CONTRADICTED:
+            bad = [
+                f"#{r['index']} {r['test_kind']} (expected {r['expected_sign']}, "
+                f"Holm p={r['holm_p_value']:.4g})"
+                for r in mechanism["predictions"]
+                if r["status"] == MECHANISM_PREDICTION_CONTRADICTED
+            ]
+            return "In-sample mechanism test contradicted card prediction(s): " + "; ".join(bad)
+        if status == "mechanism_untested":
+            return (
+                f"mechanism_untested: {mechanism['testable_predictions']} testable of "
+                f"{mechanism['prediction_count']} predictions"
+            )
+        return (
+            f"mechanism_support={mechanism['mechanism_support']:.3f} "
+            f"({mechanism['supported_predictions']} supported of "
+            f"{mechanism['testable_predictions']} testable), none contradicted"
+        )
+
+    def _run_mechanism_stage(self, request: ReplicationRequest) -> Dict[str, Any]:
+        """Run the card's predictions on the in-sample window. Never reads out-of-sample bars."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+
+        def first(key: str, kind: type) -> Any:
+            for source in (handoff, spec):
+                if isinstance(source.get(key), kind):
+                    return source[key]
+            return None
+
+        predictions = first("hypothesis_predictions", list)
+        if predictions is None:
+            for source in (handoff, spec):
+                card = source.get("hypothesis_card")
+                if isinstance(card, dict) and isinstance(card.get("predictions"), list):
+                    predictions = card["predictions"]
+                    break
+        artifact = first("strategy_artifact", dict) or {}
+        params = artifact.get("parameters") if isinstance(artifact.get("parameters"), dict) else {}
+        symbols = params.get("symbols") if isinstance(params.get("symbols"), list) else []
+        logic = artifact.get("strategy_logic")
+        if isinstance(logic, dict) and "screen" in logic:
+            # Screened artifacts: the protocol's window is the min over the whole candidate pool
+            # (vectorbt_adapter uses pool_market["symbols"] as the target universe).
+            dataset = first("backtest_dataset", dict) or {}
+            pool = dataset.get("candidate_pool_market")
+            pool_symbols = pool.get("symbols") if isinstance(pool, dict) else None
+            if isinstance(pool_symbols, dict) and pool_symbols:
+                symbols = list(pool_symbols)
+        return run_mechanism_stage(
+            predictions,
+            first("backtest_dataset", dict),
+            first("mechanism_inputs", dict),
+            config=self.config,
+            target_symbols=symbols,
+        )
 
     def _check_criterion(
         self, criterion, request: ReplicationRequest
@@ -571,11 +990,23 @@ class ReplicationGate:
             mandate_dd = float(
                 spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
             )
+            if str(dataset.get("data_frequency") or "") in INTRADAY_FREQUENCY_MINUTES:
+                computed = run_intraday_replication_protocol(
+                    dataset, strategy_artifact, config=self.config, mandate_max_drawdown=mandate_dd
+                )
+                if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
+                    self.backtest_run_store.record(computed)
+                request.backtest_evaluation = computed
+                return computed
             computed = run_replication_backtest_protocol(
                 strategy_artifact=strategy_artifact,
                 dataset=dataset,
                 mandate_max_drawdown=mandate_dd,
                 min_oos_round_trips=self.config.min_oos_round_trips,
+                min_pit_history_days=self.config.min_pit_history_days,
+                min_pit_history_bars=self.config.min_pit_history_bars,
+                in_sample_fraction=self.config.in_sample_ratio,
+                walk_forward_folds=self.config.walk_forward_folds,
             )
             if computed.get("status") in ("completed", INSUFFICIENT_HISTORY_STATUS):
                 self.backtest_run_store.record(computed)
@@ -623,6 +1054,270 @@ class ReplicationGate:
             return next(iter(values))
 
         return resolve(checksums), resolve(dataset_ids)
+
+    @staticmethod
+    def _screen_inputs(
+        request: ReplicationRequest, backtest_eval: Dict[str, Any]
+    ) -> Optional[tuple]:
+        """Return None for an unscreened candidate, else (artifact|None, dataset|None)."""
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        artifact = next(
+            (
+                c
+                for c in (spec.get("strategy_artifact"), handoff.get("strategy_artifact"))
+                if isinstance(c, dict)
+            ),
+            None,
+        )
+        dataset = next(
+            (
+                c
+                for c in (spec.get("backtest_dataset"), handoff.get("backtest_dataset"))
+                if isinstance(c, dict)
+            ),
+            None,
+        )
+        logic = artifact.get("strategy_logic") if isinstance(artifact, dict) else None
+        artifact_screened = isinstance(logic, dict) and "screen" in logic
+        if artifact_screened and ReplicationGate._is_registered_entry_only(artifact):
+            # Durable entry-only registration: governed eligibility + min_size remain
+            # in the artifact (and so in the backtest), but there is no selection left
+            # to contribute, so the screen-contribution comparison does not apply.
+            return None
+        bundle = backtest_eval.get("artifact_bundle")
+        evidence_screened = isinstance(bundle, dict) and bool(bundle.get("candidate_pool_snapshots"))
+        if not (artifact_screened or evidence_screened):
+            return None
+        return (
+            artifact if artifact_screened else None,
+            dataset if isinstance(dataset, dict) and dataset.get("candidate_pool_market") else None,
+        )
+
+    @staticmethod
+    def _is_registered_entry_only(artifact: Dict[str, Any]) -> bool:
+        """Validate structurally that an artifact is a gate-produced entry-only form.
+
+        No caller flag is trusted: the artifact must be exactly the fixed point of the
+        whole-boundary control construction, i.e. its screen holds only the governed
+        eligibility block, ``min_size`` and the single pass-everything floor filter,
+        with no selection step left.
+        """
+        try:
+            symbols = artifact["parameters"]["symbols"]
+            if not isinstance(symbols, list) or not symbols:
+                return False
+            return ReplicationGate._whole_boundary_control_artifact(
+                artifact, list(symbols)
+            ) == artifact
+        except Exception:
+            return False
+
+    @staticmethod
+    def _whole_boundary_control_artifact(
+        artifact: Dict[str, Any], boundary: List[str]
+    ) -> Dict[str, Any]:
+        """The candidate's own entry/exit rules with every *selection* step removed.
+
+        The governed daily boundary exclusions (suspension, liquidity, history, stale
+        data) are market-eligibility safety, not selection, so they stay in force: the
+        screen keeps its eligibility block and ``min_size`` and its steps become one
+        pass-everything filter (governed close > 0 floor), so the control trades exactly
+        the eligible whole boundary and nothing the screened run could not.
+        """
+        control = copy.deepcopy(artifact)
+        logic = control["strategy_logic"]
+        parameters = control["parameters"]
+        parameters["symbols"] = boundary
+        canonical_input = {
+            "dataset": "tw_price_daily",
+            "field": "close",
+            "availability_lag_days": 0,
+        }
+        canonical_control = {
+            "value_type": "integer",
+            "current_value": 0,
+            "allowed_range": {"min": 0, "max": 1},
+            "step": 1,
+        }
+        declared = {i["name"]: i for i in logic["inputs"]}
+        controls = control.setdefault("mutation_surface", {}).setdefault("controls", [])
+        used = set(declared) | set(parameters) | {c.get("parameter_key") for c in controls}
+
+        # Reuse an existing pair only when the screen is already the canonical
+        # pass-everything filter AND the bound input/parameter have exact canonical
+        # semantics. Any other same-named binding is left untouched (it may serve the
+        # entry/exit rules or be an actual selection) and fresh names are allocated.
+        input_name = floor_key = None
+        steps = logic["screen"].get("steps")
+        if isinstance(steps, list) and len(steps) == 1 and isinstance(steps[0], dict):
+            expr = steps[0].get("expression") or {}
+            args = expr.get("args") if isinstance(expr, dict) else None
+            if (
+                steps[0].get("kind") == "filter"
+                and steps[0].get("refresh") == "daily"
+                and isinstance(expr, dict)
+                and expr.get("op") == "gt"
+                and isinstance(args, list)
+                and len(args) == 2
+                and isinstance(args[0], dict)
+                and isinstance(args[1], dict)
+            ):
+                n, k = args[0].get("ref"), args[1].get("const_param")
+                existing_ctl = [c for c in controls if c.get("parameter_key") == k]
+                if (
+                    set(args[0]) == {"ref"}
+                    and set(args[1]) == {"const_param"}
+                    and n in declared
+                    and {kk: vv for kk, vv in declared[n].items() if kk != "name"} == canonical_input
+                    and parameters.get(k) == 0
+                    and not isinstance(parameters.get(k), bool)
+                    and len(existing_ctl) == 1
+                    and {kk: vv for kk, vv in existing_ctl[0].items() if kk != "parameter_key"}
+                    == canonical_control
+                    and str(n).startswith("screen_control_close")
+                    and str(k).startswith("screen_control_close_floor")
+                ):
+                    input_name, floor_key = n, k
+        if input_name is None:
+            def fresh(base: str) -> str:
+                name, i = base, 1
+                while name in used:
+                    i += 1
+                    name = f"{base}_{i}"
+                used.add(name)
+                return name
+
+            input_name = fresh("screen_control_close")
+            floor_key = fresh("screen_control_close_floor")
+            logic["inputs"].append({"name": input_name, **canonical_input})
+            parameters[floor_key] = 0
+            controls.append({"parameter_key": floor_key, **canonical_control})
+        logic["screen"]["steps"] = [
+            {
+                "kind": "filter",
+                "expression": {
+                    "op": "gt",
+                    "args": [{"ref": input_name}, {"const_param": floor_key}],
+                },
+                "refresh": "daily",
+            }
+        ]
+        return control
+
+    def _measure_screen_contribution(
+        self,
+        request: ReplicationRequest,
+        screened_eval: Dict[str, Any],
+        artifact: Dict[str, Any],
+        dataset: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Run the same entry/exit rules over the whole boundary and compare out of sample.
+
+        The control is the candidate's own artifact with only the ``screen`` removed and
+        its symbols set to every governed symbol of the supplied market; nothing is
+        generated. Fails closed when the control cannot complete.
+        """
+        from services.registry.strategy_artifact import strategy_artifact_checksum
+
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        market = dataset.get("candidate_pool_market")
+        boundary = sorted((market.get("symbols") or {}).keys()) if isinstance(market, dict) else []
+        screened_oos = screened_eval.get("out_of_sample") or {}
+        screened_sharpe = float(screened_oos.get("sharpe_ratio", 0.0))
+        screened_return = float(screened_oos.get("total_return", 0.0))
+        measured: Dict[str, Any] = {
+            "rule": (
+                "screened out-of-sample after-cost result must exceed the same entry/exit "
+                "rules over the whole boundary"
+            ),
+            "required_sharpe_improvement": self.config.min_screen_oos_sharpe_improvement,
+            "boundary_symbols": boundary,
+            "screened_backtest_run_id": screened_eval.get("backtest_run_id"),
+            "screened_oos_sharpe": screened_sharpe if math.isfinite(screened_sharpe) else None,
+            "screened_oos_total_return": screened_return,
+        }
+        if not boundary:
+            return {**measured, "status": "control_unavailable", "reason": "market_boundary_empty"}
+
+        try:
+            control = self._whole_boundary_control_artifact(artifact, boundary)
+            control_checksum = strategy_artifact_checksum(control)
+            control_eval = run_replication_backtest_protocol(
+                strategy_artifact=control,
+                dataset=dataset,
+                mandate_max_drawdown=float(
+                    spec.get("mandate_max_drawdown", self.config.max_oos_drawdown)
+                ),
+                min_oos_round_trips=self.config.min_oos_round_trips,
+                min_pit_history_days=self.config.min_pit_history_days,
+                min_pit_history_bars=self.config.min_pit_history_bars,
+                in_sample_fraction=self.config.in_sample_ratio,
+                walk_forward_folds=self.config.walk_forward_folds,
+                run_id=f"{screened_eval.get('backtest_run_id')}-entry-only",
+            )
+        except Exception as exc:  # fail closed; never admit on an unmeasured screen
+            return {
+                **measured,
+                "status": "control_unavailable",
+                "reason": f"whole_boundary_control_failed:{type(exc).__name__}:{exc}",
+            }
+        if control_eval.get("status") != "completed":
+            return {
+                **measured,
+                "status": "control_unavailable",
+                "reason": f"whole_boundary_control_{control_eval.get('status')}",
+            }
+        self.backtest_run_store.record(control_eval)
+        control_oos = control_eval.get("out_of_sample") or {}
+        control_sharpe = float(control_oos.get("sharpe_ratio", 0.0))
+        control_return = float(control_oos.get("total_return", 0.0))
+        # Sharpe is the comparison metric. A zero-variance window yields a non-finite
+        # Sharpe that cannot rank anything, so fall back to after-cost total return.
+        if math.isfinite(screened_sharpe) and math.isfinite(control_sharpe):
+            metric = "oos_sharpe"
+            improvement = screened_sharpe - control_sharpe
+            required = self.config.min_screen_oos_sharpe_improvement
+        else:
+            metric = "oos_total_return"
+            improvement = screened_return - control_return
+            required = 0.0
+        measured.update(
+            {
+                "control_backtest_run_id": control_eval.get("backtest_run_id"),
+                "control_artifact_checksum": control_checksum,
+                "control_oos_sharpe": control_sharpe if math.isfinite(control_sharpe) else None,
+                "control_oos_total_return": control_return,
+                "comparison_metric": metric,
+                "oos_improvement": improvement,
+                "oos_sharpe_improvement": (
+                    screened_sharpe - control_sharpe
+                    if metric == "oos_sharpe"
+                    else None
+                ),
+            }
+        )
+        if improvement > required:
+            return {**measured, "status": "contributes"}
+        reason = (
+            f"screened {metric} improvement {improvement:.4f} does not exceed required "
+            f"{required:.4f} over the whole-boundary entry-only run "
+            f"(screened {screened_sharpe if metric == 'oos_sharpe' else screened_return:.4f} vs "
+            f"control {control_sharpe if metric == 'oos_sharpe' else control_return:.4f})"
+        )
+        return {
+            **measured,
+            "status": "screen_dropped",
+            "reason": reason,
+            "re_registration": {
+                "candidate_kind": "entry_only",
+                "screen_dropped": True,
+                "reason": reason,
+                "strategy_artifact": control,
+                "artifact_checksum": control_checksum,
+                "backtest_run_id": control_eval.get("backtest_run_id"),
+            },
+        }
 
     def _verify_authoritative_run(
         self, request: ReplicationRequest, backtest_eval: Dict[str, Any]
@@ -689,9 +1384,37 @@ class ReplicationGate:
                 details={"reason": "missing_backtest_run"},
             )
 
+        if (
+            backtest_eval.get("status") == SURVIVORSHIP_LIMITED_STATUS
+            or backtest_eval.get("survivorship_limited") is True
+        ):
+            reason = str(
+                backtest_eval.get("reason")
+                or "backtest history does not attest delisted and suspended symbol coverage"
+            )
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=(
+                    f"Backtest is {SURVIVORSHIP_LIMITED_STATUS}; not admitted: {reason}"
+                ),
+                details={
+                    "status": SURVIVORSHIP_LIMITED_STATUS,
+                    "survivorship_limited": True,
+                    "reason": reason,
+                    "source_dataset_refs": list(backtest_eval.get("source_dataset_refs") or []),
+                },
+            )
+
         unbound = self._verify_authoritative_run(request, backtest_eval)
         if unbound is not None:
             return unbound
+
+        intraday = _is_intraday_evaluation(backtest_eval)
+        if intraday:
+            unqualified = self._intraday_refusal(request, backtest_eval)
+            if unqualified is not None:
+                return unqualified
 
         history_check = backtest_eval["history_check"]
         eval_status = str(backtest_eval.get("status", ""))
@@ -699,7 +1422,7 @@ class ReplicationGate:
         trading_days = int(history_check.get("trading_days", 0))
         history_sufficient = bool(history_check["sufficient"])
 
-        if (
+        if not intraday and (
             eval_status == INSUFFICIENT_HISTORY_STATUS
             or not history_sufficient
             or (
@@ -823,12 +1546,73 @@ class ReplicationGate:
 
         # Increment family trial counter and compute deflated Sharpe threshold
         family_id = self._resolve_family_id(request)
+        trial_frequency = (
+            self._declared_bar_frequency(request)
+            or (backtest_eval.get("bar_frequency") if isinstance(backtest_eval.get("bar_frequency"), str) else None)
+        )
+        trial_key = family_trial_key(family_id, trial_frequency)
         preset_trials = backtest_eval.get("trial_count")
         trial_count = self._trial_counter_store.increment(
-            family_id,
+            trial_key,
             int(preset_trials) if isinstance(preset_trials, int) else None,
         )
-        deflation = self.config.compute_deflated_sharpe_threshold(trial_count)
+        screen_contribution: Optional[Dict[str, Any]] = None
+        screen_inputs = self._screen_inputs(request, backtest_eval)
+        if screen_inputs is not None:
+            screen_artifact, screen_dataset = screen_inputs
+            if screen_artifact is None or screen_dataset is None:
+                return ReplicationResult(
+                    criterion_id="real_backtest_validation",
+                    passed=False,
+                    evidence=(
+                        "Candidate has a screen but its strategy artifact or governed market "
+                        "dataset is absent; the screen contribution test cannot run, admission refused"
+                    ),
+                    details={
+                        "status": "screen_contribution_unavailable",
+                        "reason": "screen_contribution_inputs_missing",
+                        "family_id": family_id,
+                    },
+                )
+            # The screened evaluation above is a screen variant of the family; the
+            # whole-boundary control below is an entry variant. Both are trials.
+            trial_count = self._trial_counter_store.increment(trial_key)
+            screen_contribution = self._measure_screen_contribution(
+                request, backtest_eval, screen_artifact, screen_dataset
+            )
+            screen_contribution["trial_accounting"] = {
+                "screen_variant_trials": 1,
+                "entry_variant_trials": 1,
+                "family_trial_count_after": trial_count,
+            }
+            if screen_contribution["status"] != "contributes":
+                failure_reason = screen_contribution.get("reason")
+                dropped = screen_contribution["status"] == "screen_dropped"
+                return ReplicationResult(
+                    criterion_id="real_backtest_validation",
+                    passed=False,
+                    evidence=(
+                        "Screen adds nothing out of sample after costs: dropped and candidate "
+                        f"re-registered as entry-only ({failure_reason})"
+                        if dropped
+                        else f"Screen contribution test could not be completed: {failure_reason}"
+                    ),
+                    details={
+                        "status": screen_contribution["status"],
+                        "backtest_run_id": backtest_run_id,
+                        "family_id": family_id,
+                        "trial_count": trial_count,
+                        "screen_contribution": screen_contribution,
+                    },
+                )
+        # Frequency-scoped count stays as isolated accounting; the multiple-testing
+        # penalty counts every frequency/wrapper variant of the family (SD K8).
+        frequency_trial_count = trial_count
+        family_total_trials = max(
+            self._trial_counter_store.family_total(family_id), frequency_trial_count
+        )
+        trial_count = family_total_trials
+        deflation = self.config.compute_deflated_sharpe_threshold(family_total_trials)
         deflated_sharpe_threshold = float(deflation["deflated_sharpe_threshold"])
         sharpe_haircut = float(deflation["sharpe_haircut"])
 
@@ -875,7 +1659,8 @@ class ReplicationGate:
             "oos_sharpe_exceeds_deflated_threshold": oos_sharpe > deflated_sharpe_threshold,
             "oos_sharpe_beats_buy_and_hold": oos_sharpe > bh_sharpe,
             "oos_max_drawdown_within_mandate": oos_max_drawdown <= mandate_max_drawdown,
-            "oos_minimum_round_trips_met": oos_round_trips >= self.config.min_oos_round_trips,
+            "oos_minimum_round_trips_met": oos_round_trips
+            >= (self.config.min_oos_trades if intraday else self.config.min_oos_round_trips),
             "walk_forward_consistent_across_folds": walk_forward_consistent,
         }
         failed_checks = [name for name, ok in checks.items() if not ok]
@@ -892,6 +1677,9 @@ class ReplicationGate:
             },
             "family_id": family_id,
             "trial_count": trial_count,
+            "family_total_trial_count": family_total_trials,
+            "frequency_trial_count": frequency_trial_count,
+            "trial_frequency": trial_frequency,
             "base_sharpe_threshold": float(deflation["base_sharpe_threshold"]),
             "sharpe_haircut": sharpe_haircut,
             "deflated_sharpe_threshold": deflated_sharpe_threshold,
@@ -901,6 +1689,7 @@ class ReplicationGate:
             "out_of_sample_max_drawdown": oos_max_drawdown,
             "out_of_sample_total_return": oos_total_return,
             "out_of_sample_round_trips": oos_round_trips,
+            "fill_convention": backtest_eval.get("fill_convention"),
             "mandate_max_drawdown": mandate_max_drawdown,
             "buy_and_hold_sharpe_ratio": bh_sharpe,
             "tw_0050_sharpe_ratio": tw0050_sharpe,
@@ -912,6 +1701,10 @@ class ReplicationGate:
             "checks": checks,
             "failed_checks": failed_checks,
         }
+        if intraday:
+            details["intraday"] = self._intraday_details(backtest_eval)
+        if screen_contribution is not None:
+            details["screen_contribution"] = screen_contribution
 
         if not passed:
             return ReplicationResult(
@@ -935,6 +1728,131 @@ class ReplicationGate:
             ),
             details=details,
         )
+
+    def _intraday_details(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
+        block = evaluation.get("intraday") if isinstance(evaluation.get("intraday"), dict) else {}
+        snapshot = block.get("source_snapshot") if isinstance(block.get("source_snapshot"), dict) else {}
+        return {
+            "bar_frequency": block.get("bar_frequency") or evaluation.get("bar_frequency"),
+            "evidence_mode": block.get("evidence_mode"),
+            "live_or_paper_evidence": block.get("live_or_paper_evidence"),
+            "replay_clock": block.get("replay_clock"),
+            "availability_ceiling": block.get("availability_ceiling"),
+            "source_dataset": snapshot.get("source_dataset"),
+            "source_snapshot_sha256": snapshot.get("content_sha256"),
+            "clean_sessions": block.get("clean_sessions"),
+            "in_sample_sessions": block.get("in_sample_sessions"),
+            "out_of_sample_sessions": block.get("out_of_sample_sessions"),
+            "in_sample_trades": block.get("in_sample_trades"),
+            "out_of_sample_trades": block.get("out_of_sample_trades"),
+            "trade_unit": block.get("trade_unit"),
+            "thresholds": {
+                "min_clean_sessions": self.config.min_clean_sessions,
+                "min_in_sample_trades": self.config.min_in_sample_trades,
+                "min_oos_sessions": self.config.min_oos_sessions,
+                "min_oos_trades": self.config.min_oos_trades,
+            },
+        }
+
+    def _intraday_refusal(
+        self, request: ReplicationRequest, evaluation: Dict[str, Any]
+    ) -> Optional[ReplicationResult]:
+        """K6: minute evidence must be replay-labelled, reconciled, clean, and large enough."""
+        run_id = evaluation.get("backtest_run_id")
+
+        def refuse(status: str, reason: str, **extra: Any) -> ReplicationResult:
+            return ReplicationResult(
+                criterion_id="real_backtest_validation",
+                passed=False,
+                evidence=f"Intraday replication evidence refused ({reason})",
+                details={
+                    "status": status,
+                    "reason": reason,
+                    "backtest_run_id": run_id,
+                    "intraday": self._intraday_details(evaluation),
+                    **extra,
+                },
+            )
+
+        block = evaluation.get("intraday")
+        if not isinstance(block, dict):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "missing_intraday_evidence_block")
+        frequency = str(block.get("bar_frequency") or "")
+        if (
+            frequency not in INTRADAY_FREQUENCY_MINUTES
+            or evaluation.get("bar_frequency") != frequency
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "bar_frequency_missing_or_inconsistent")
+        declared = self._declared_bar_frequency(request)
+        if declared is not None and declared != frequency:
+            return refuse(
+                INTRADAY_UNQUALIFIED_STATUS, "strategy_frequency_differs_from_evidence", declared=declared
+            )
+        if (
+            block.get("evidence_mode") != REPLAY_LABEL
+            or evaluation.get("evidence_mode") != REPLAY_LABEL
+            or block.get("live_or_paper_evidence") is not False
+            or block.get("replay_clock") != "bar_end"
+            or not block.get("availability_ceiling")
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "not_labelled_replay_with_bar_end_clock")
+        snapshot = block.get("source_snapshot")
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("source_dataset") != INTRADAY_SOURCE_DATASET
+            or snapshot.get("reconciled_only") is not True
+            or not snapshot.get("content_sha256")
+        ):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "source_snapshot_not_reconciled_tw_price_1m")
+        flagged = [
+            name for name in _ISOLATION_FLAGS
+            if snapshot.get(name) or block.get(name) or evaluation.get(name)
+        ]
+        if flagged:
+            return refuse(
+                INTRADAY_UNQUALIFIED_STATUS, "quarantined_or_waived_data_is_not_replication_evidence",
+                flags=flagged,
+            )
+        counts = {
+            key: block.get(key)
+            for key in (
+                "clean_sessions", "unclean_sessions", "in_sample_sessions",
+                "out_of_sample_sessions", "in_sample_trades", "out_of_sample_trades",
+            )
+        }
+        if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in counts.values()):
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "session_or_trade_counts_missing")
+        if counts["unclean_sessions"] > 0:
+            return refuse(INTRADAY_UNQUALIFIED_STATUS, "unclean_sessions_in_window", counts=counts)
+        cfg = self.config
+        shortfalls = {
+            name: {"have": counts[key], "need": need}
+            for name, key, need in (
+                ("clean_sessions", "clean_sessions", cfg.min_clean_sessions),
+                ("out_of_sample_sessions", "out_of_sample_sessions", cfg.min_oos_sessions),
+                ("in_sample_trades", "in_sample_trades", cfg.min_in_sample_trades),
+                ("out_of_sample_trades", "out_of_sample_trades", cfg.min_oos_trades),
+            )
+            if counts[key] < need
+        }
+        if shortfalls or str(evaluation.get("status")) == INSUFFICIENT_HISTORY_STATUS:
+            return refuse(
+                INSUFFICIENT_HISTORY_STATUS,
+                "insufficient_clean_sessions_or_trades; thresholds are not lowered for thin data",
+                shortfalls=shortfalls,
+            )
+        return None
+
+    @staticmethod
+    def _declared_bar_frequency(request: ReplicationRequest) -> Optional[str]:
+        handoff = request.research_handoff if isinstance(request.research_handoff, dict) else {}
+        spec = request.proposed_strategy_spec if isinstance(request.proposed_strategy_spec, dict) else {}
+        for holder in (spec.get("strategy_artifact"), handoff.get("strategy_artifact")):
+            if isinstance(holder, dict):
+                value = (holder.get("parameters") or {}).get("bar_frequency")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _check_no_live_bypass(self, request: ReplicationRequest) -> ReplicationResult:
         """Check that candidate doesn't attempt to bypass promotion gates."""
@@ -1139,6 +2057,7 @@ def create_promotion_request(
         "max_drawdown": backtest_summary.get("out_of_sample_max_drawdown"),
         "total_return": backtest_summary.get("out_of_sample_total_return"),
         "round_trips": backtest_summary.get("out_of_sample_round_trips"),
+        "fill_convention": backtest_summary.get("fill_convention"),
         "buy_and_hold_sharpe_ratio": backtest_summary.get("buy_and_hold_sharpe_ratio"),
         "tw_0050_sharpe_ratio": backtest_summary.get("tw_0050_sharpe_ratio"),
         "walk_forward_fold_sharpes": backtest_summary.get("walk_forward_fold_sharpes"),
@@ -1176,6 +2095,12 @@ def create_promotion_request(
         "evaluation_summary": evaluation_summary,
         "transaction_costs": backtest_summary.get("transaction_costs"),
     }
+    if isinstance(resp_meta, dict) and isinstance(resp_meta.get("mechanism"), dict):
+        replication_proof["mechanism_status"] = resp_meta.get("mechanism_status")
+        replication_proof["mechanism_support"] = resp_meta.get("mechanism_support")
+        replication_proof["mechanism"] = resp_meta["mechanism"]
+        registry_entry["mechanism_support"] = resp_meta.get("mechanism_support")
+        registry_entry["mechanism_status"] = resp_meta.get("mechanism_status")
 
     # Build lineage
     source_run_ids = [backtest_run_id] if backtest_run_id else []

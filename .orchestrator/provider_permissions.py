@@ -700,6 +700,53 @@ def _codex_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str
     return metadata
 
 
+def _prune_codex_probe_sessions(
+    codex_home: Path,
+    *,
+    retention_seconds: float = 172800.0,
+    max_delete_per_pass: int = 250,
+    now_epoch: float | None = None,
+) -> int:
+    """Bound stale session files under codex_home/sessions without following symlinks."""
+    sessions_dir = codex_home / "sessions"
+    if not sessions_dir.exists() or sessions_dir.is_symlink() or not sessions_dir.is_dir():
+        return 0
+    cutoff = (
+        datetime.now(timezone.utc).timestamp() if now_epoch is None else float(now_epoch)
+    ) - max(0.0, retention_seconds)
+    deleted = 0
+    stack = [sessions_dir]
+    visited_dirs: list[Path] = []
+    while stack and deleted < max_delete_per_pass:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        if current != sessions_dir:
+            visited_dirs.append(current)
+        for entry in entries:
+            if deleted >= max_delete_per_pass:
+                break
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                        os.unlink(entry.path)
+                        deleted += 1
+            except OSError:
+                continue
+    for d in sorted(visited_dirs, key=lambda p: len(p.parts), reverse=True):
+        try:
+            d.rmdir()
+        except OSError:
+            continue
+    return deleted
+
+
 def _codex_auth_probe(
     config: dict[str, Any],
     provider_id: str,
@@ -756,7 +803,9 @@ def _codex_auth_probe(
         "-s",
         "read-only",
         "--skip-git-repo-check",
+        "--ephemeral",
     ]
+    _prune_codex_probe_sessions(_codex_home(config, provider_id))
     provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
     model = str(provider_settings.get("model") or "").strip()
     if model:

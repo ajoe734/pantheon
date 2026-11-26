@@ -1,0 +1,89 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-SD-PERSONA-CYCLE-RECONNECT-20261112-CI-RED-898E853D82C3",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "delivery_base_sha": "bd1757ea55cccf00a341e4622f18914dc91b7427",
+  "tested_source_commit": "2efb4fcbaaa24014acf93171185084704f34e11f",
+  "hosted_behavior_claimed": false,
+  "scope": "Three existing source-ingestion hypothesis test files and this evidence manifest only.",
+  "root_cause": {
+    "original_pr": "https://github.com/ajoe734/pantheon/pull/7249",
+    "original_head": "06dcfc50bdb2dbf268356bce4333f206cb11b4b9",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/43255934133/job/131322256416",
+    "historical_result": "4 failed, 1629 passed, 1 skipped, 5 warnings in 197.10s; remains failed.",
+    "registration_pr": "https://github.com/ajoe734/pantheon/pull/7245",
+    "registration_merge": "97308364387bd613382cbad4550eb6682a539932",
+    "explanation": "Industry classification industry_code and sector flows net_shares are registered. The recorded sector card still requests unsupported net_inflow. Four assertions assumed industry classification was also unavailable. This is a test/catalogue expectation regression, not an auto-integrator defect."
+  },
+  "changes": [
+    "Use test-scoped monkeypatch.delitem on the industry_code catalogue entry in the two existing missing-input unit tests; pytest restores it after each test. Preserve multi-dataset accounting, replay deduplication, no-proposer/no-draft behavior, unknown field checks, prediction demand and non-testable skip assertions.",
+    "Add an unpatched current-catalogue compiler case asserting industry_code and net_shares exist, net_inflow does not, and replay counts only sector flows once without proposer or draft.",
+    "Controller replay expects only remaining sector-flow demand while retaining authenticated deny-all extraction, no compiler invocation and no registry draft assertions.",
+    "Extraction replay retains the complete recorded screen idea and stamps needs_data:tw_sector_flows; extraction still creates a hypothesis seed, distinct from the controller compilation boundary."
+  ],
+  "validation": [
+    {
+      "command": "timeout 60s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_unknown_screen_requirements_count_all_datasets_without_proposer' 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip' 'services/source_ingestion/tests/test_hypothesis_compiler_wiring.py::test_screen_entry_recording_through_environment_controller[True]' 'services/source_ingestion/tests/test_hypothesis_extraction.py::test_sector_then_quality_idea_is_needs_data'",
+      "base_sha": "b14d049bef77c4d97553161c51ceff3ab3bfaed0",
+      "phase": "before changes",
+      "exit_code": 1,
+      "result": "4 failed in 2.07s"
+    },
+    {
+      "command": "timeout 60s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_unknown_screen_requirements_count_all_datasets_without_proposer' 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip' 'services/source_ingestion/tests/test_hypothesis_compiler_wiring.py::test_screen_entry_recording_through_environment_controller[True]' 'services/source_ingestion/tests/test_hypothesis_extraction.py::test_sector_then_quality_idea_is_needs_data'",
+      "base_sha": "b14d049bef77c4d97553161c51ceff3ab3bfaed0",
+      "phase": "after changes",
+      "exit_code": 0,
+      "result": "4 passed in 2.16s"
+    },
+    {
+      "command": "timeout 120s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_hypothesis_extraction.py services/registry/test_candidate_pool.py",
+      "phase": "first focused run",
+      "exit_code": 1,
+      "result": "1 failed, 121 passed in 12.76s; local venv missing httpx at adapter import"
+    },
+    {
+      "command": "timeout 120s /tmp/hypothesis-predictions-venv/bin/python -m pip install -r services/openclaw-gateway-adapter/requirements.txt",
+      "exit_code": 0,
+      "result": "Existing requirements installed only in temporary test venv; no repository dependency changes."
+    },
+    {
+      "command": "timeout 120s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_hypothesis_extraction.py services/registry/test_candidate_pool.py",
+      "base_sha": "b14d049bef77c4d97553161c51ceff3ab3bfaed0",
+      "exit_code": 0,
+      "result": "122 passed, 1 warning in 15.70s"
+    },
+    {
+      "command": "timeout 60s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_unknown_screen_requirements_count_all_datasets_without_proposer' 'services/source_ingestion/tests/test_hypothesis_compiler.py::test_missing_screen_keeps_prediction_demand_accounting_and_non_testable_skip' 'services/source_ingestion/tests/test_hypothesis_compiler_wiring.py::test_screen_entry_recording_through_environment_controller[True]' 'services/source_ingestion/tests/test_hypothesis_extraction.py::test_sector_then_quality_idea_is_needs_data'",
+      "base_sha": "bd1757ea55cccf00a341e4622f18914dc91b7427",
+      "phase": "after rebase",
+      "exit_code": 0,
+      "result": "4 passed in 1.98s"
+    },
+    {
+      "command": "timeout 120s /tmp/hypothesis-predictions-venv/bin/python -m pytest -q services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_hypothesis_extraction.py services/registry/test_candidate_pool.py",
+      "base_sha": "bd1757ea55cccf00a341e4622f18914dc91b7427",
+      "phase": "after rebase",
+      "exit_code": 0,
+      "result": "122 passed, 1 warning in 14.87s; Starlette httpx deprecation warning"
+    },
+    {
+      "command": "git diff origin/dev..HEAD --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    }
+  ],
+  "delivery_and_handoff": {
+    "review": "Pending fresh independent Codex2 review of the committed manifest and repair PR exact head.",
+    "ci": "Required GitHub checks must pass on the repair PR; no local result substitutes for required CI.",
+    "integration": "Only the native supervisor integrator may merge after exact-head canonical approval.",
+    "source_pr_followup": "Preserve original PR #7249 and its design. After this repair merges into dev, original author Codex must refresh that same source branch against fixed dev, update line references and manifest evidence as needed, and obtain fresh Codex2 review and CI through the existing workflow. Do not supersede or discard it. Its old head and approval do not prove a repaired delivery.",
+    "completion": "Source repair, original source PR refresh and native integration are not yet claimed complete."
+  },
+  "unchanged_boundaries": [
+    "Production catalogue and runtime",
+    "Compiler, extraction and controller implementation",
+    "CI workflows and integration/review gates",
+    "VM/provider/secret/deployment/production/capital state"
+  ]
+}

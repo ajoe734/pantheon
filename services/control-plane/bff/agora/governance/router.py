@@ -588,6 +588,12 @@ def create_governance_router(
                 approval_refs=body.approval_refs,
                 get_approval_decision=get_approval_decision,
             )
+            from ..candidate_decisions.consumers import SUPPORTED_MEASURES
+            if current["proposal_type"] not in SUPPORTED_MEASURES:
+                raise HTTPException(422, detail=f"Measure type {current['proposal_type']!r} has no downstream consumer; approval refused")
+            # These legacy cards have no persisted opinion/measure identity.
+            # Consumer delivery must use the exact-source candidate route.
+            raise HTTPException(422, detail="Create a candidate from the persisted recommended measure and link its canonical formal approval to deliver to the owner")
         if body.action == "validate" and not body.validation_result:
             raise bff_error(
                 422,

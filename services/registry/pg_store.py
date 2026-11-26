@@ -22,7 +22,7 @@ import json
 import os
 from typing import Any, Callable, Optional, Sequence
 
-from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore, quote_pg_identifier
 
 from .models import (
     DeploymentStage,
@@ -32,6 +32,8 @@ from .models import (
     utc_now_iso,
 )
 from .storage import (
+    DISCOVERY_ENTRY_KEYS,
+    DISCOVERY_EXCLUDED_STATES,
     LINEAGE_LIST_FIELDS,
     LINEAGE_META_FIELDS,
     LINEAGE_ROW_KEYS,
@@ -49,6 +51,8 @@ from .storage import (
     STRATEGY_SUMMARY_INDEX_PROV_KEYS,
     STRATEGY_SUMMARY_INDEX_ROW_KEYS,
     STRATEGY_SUMMARY_INDEX_SPEC_KEYS,
+    STRATEGY_SUMMARY_INDEX_SCOPE_KEYS,
+    STRATEGY_SUMMARY_INDEX_TITLE_KEYS,
     STRATEGY_SUMMARY_INNER_META_KEYS,
     STRATEGY_SUMMARY_MARKET_KEYS,
     STRATEGY_SUMMARY_META_KEYS,
@@ -56,6 +60,10 @@ from .storage import (
     STRATEGY_SUMMARY_ROW_KEYS,
     STRATEGY_SUMMARY_SPEC_KEYS,
     RegistryConcurrentUpdateError,
+    discovery_candidate_from_payload,
+    encode_strategy_artifact_page_token,
+    page_strategy_artifact_rows,
+    strategy_artifact_sort_key,
 )
 
 
@@ -99,11 +107,29 @@ def _new_entry(
         evaluation_summary=payload.evaluation_summary,
         rollback_target=payload.rollback_target,
         metadata=payload.metadata,
+        replication_success=payload.replication_success,
+        replication_proof=payload.replication_proof,
         created_at=now,
         updated_at=now,
         last_actor=actor,
         owner_tenant=str((actor or {}).get("tenant") or "").strip() or None,
     )
+
+
+# Ordered execution-bundle catalog page (ARTIFACT-CATALOG-INDEXED-PAGING-20261115). The predicate is
+# literal so the partial index below is provably applicable; ``"C"`` collation matches Python code-point order.
+_ARTIFACT_CATALOG_PRED_SQL = (
+    "jsonb_typeof(payload) = 'object' AND payload ->> 'artifact_type' = 'execution_bundle'"
+)
+_ARTIFACT_CATALOG_CREATED_SQL = "(COALESCE(payload ->> 'created_at', '') COLLATE \"C\")"
+_ARTIFACT_CATALOG_ID_SQL = "(COALESCE(payload ->> 'registry_id', '') COLLATE \"C\")"
+
+
+_DISCOVERY_SELECT_SQL = (
+    "jsonb_build_object("
+    + ", ".join(f"'{k}', payload -> '{k}'" for k in DISCOVERY_ENTRY_KEYS)
+    + ")::text"
+)
 
 
 class PostgresRegistryStore:
@@ -129,6 +155,8 @@ class PostgresRegistryStore:
         self._receipts = PostgresJsonOwnerStore(
             dsn=dsn, table=receipts_table, owner_service="registry-svc", bootstrap=bootstrap,
         )
+        if bootstrap:
+            self._ensure_artifact_catalog_indexes()
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: list[str] = []
 
@@ -837,6 +865,16 @@ class PostgresRegistryStore:
             for raw in self._entries.list_all()
         ]
 
+    def list_by_artifact_type(self, artifact_type: str) -> list[RegistryEntry]:
+        """Type-filtered read in SQL: other artifact types are never fetched or decoded."""
+        wanted = getattr(artifact_type, "value", artifact_type)
+        rows = self._entries.list_all_selected(
+            "(payload)::text",
+            visible_sql="payload ->> 'artifact_type' = %s",
+            keep_params=(str(wanted),),
+        )
+        return [RegistryEntry.from_dict(json.loads(r[0])) for r in rows if r and r[0] is not None]
+
     def list_persona_binding_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = None,
     ) -> list[dict]:
@@ -883,6 +921,202 @@ class PostgresRegistryStore:
             )
         )
 
+    def _ensure_artifact_catalog_indexes(self) -> None:
+        """Forward-only, additive indexes for the ordered catalog page.
+
+        ``CREATE INDEX IF NOT EXISTS`` changes no row, column or constraint, so
+        the previous release keeps reading and writing the same table unchanged.
+        """
+        table = self._entries.table
+        base = self._entries.table_name.split(".")[-1][:40]
+        stmts = (
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_artifact_catalog_idx')} "
+            f"ON {table} ({_ARTIFACT_CATALOG_CREATED_SQL} DESC, {_ARTIFACT_CATALOG_ID_SQL} DESC) "
+            f"WHERE {_ARTIFACT_CATALOG_PRED_SQL}",
+            f"CREATE INDEX IF NOT EXISTS {quote_pg_identifier(base + '_legacy_str_payload_idx')} "
+            f"ON {table} ((jsonb_typeof(payload))) WHERE jsonb_typeof(payload) = 'string'",
+        )
+        with self._entries._connect() as conn:
+            for stmt in stmts:
+                try:
+                    conn.execute(stmt)
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
+                        raise
+                    if hasattr(conn, "rollback"):
+                        conn.rollback()
+
+    def list_strategy_artifact_page(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_state: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        limit: int,
+        cursor: Optional[tuple[str, tuple]] = None,
+    ) -> tuple[list[dict], int, Optional[str]]:
+        """One bounded ordered catalog page read in Postgres: ``(items, exact_total, next_page_token)``.
+
+        Rows come back as ``(created_at, registry_id)`` descending and are cut at
+        ``limit + 1`` in SQL; the total is a separate ``count(*)`` over the same
+        predicate, so rows fetched per page do not depend on the population.
+        Legacy JSON-string payload rows (not indexable) route to the unbounded
+        path so the item set is unchanged.
+        """
+        entries = self._entries
+        if not hasattr(entries, "_use_conn") or self._has_legacy_string_payloads():
+            return page_strategy_artifact_rows(
+                self.list_strategy_artifact_rows(visible_tenants=visible_tenants),
+                artifact_state=artifact_state, strategy_id=strategy_id, limit=limit, cursor=cursor,
+            )
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, None)
+        where = [_ARTIFACT_CATALOG_PRED_SQL, f"({visible_sql})"]
+        args: list[Any] = list(params)
+        if artifact_state is not None:
+            where.append("payload ->> 'artifact_state' = %s")
+            args.append(artifact_state)
+        if strategy_id is not None:
+            where.append("payload ->> 'strategy_id' = %s")
+            args.append(strategy_id)
+        base_where = " AND ".join(where)
+        page_where, page_args = base_where, list(args)
+        offset_sql = ""
+        if cursor is not None:
+            kind, value = cursor
+            if kind == "after":
+                page_where += f" AND ({_ARTIFACT_CATALOG_CREATED_SQL}, {_ARTIFACT_CATALOG_ID_SQL}) < (%s::text, %s::text)"
+                page_args += [value[0], value[1]]
+            else:
+                offset_sql = " OFFSET %s"
+                page_args.append(int(value[0]))
+        page_sql = (
+            f"SELECT {strategy_artifact_select_sql()} FROM {entries.table} WHERE {page_where} "
+            f"ORDER BY {_ARTIFACT_CATALOG_CREATED_SQL} DESC, {_ARTIFACT_CATALOG_ID_SQL} DESC "
+            f"LIMIT {int(limit) + 1}{offset_sql}"
+        )
+        count_sql = f"SELECT count(*) FROM {entries.table} WHERE {base_where}"
+        with entries._use_conn(None) as conn:
+            cur = conn.execute(page_sql, tuple(page_args))
+            raw = [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+            cur = conn.execute(count_sql, tuple(args))
+            first = cur.fetchone()
+        total = int((first[0] if not isinstance(first, dict) else next(iter(first.values()))) if first else 0)
+        rows = strategy_artifact_rows_from_columns(raw)
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        token = (
+            encode_strategy_artifact_page_token(strategy_artifact_sort_key(items[-1]))
+            if has_more and items else None
+        )
+        return items, total, token
+
+    def _strategy_spec_keyset_rows(
+        self,
+        *,
+        select_sql: str,
+        visible_tenants: Optional[frozenset],
+        predicates: Sequence[str],
+        args: Sequence[Any],
+        limit: int,
+        after_registry_id: Optional[str],
+        key_sql: str = "payload ->> 'registry_id'",
+        source_sql: Optional[str] = None,
+    ) -> list[str]:
+        """Shared ``registry_id`` keyset page over StrategySpec rows, cut in SQL.
+
+        ``select_sql``/``predicates``/``key_sql``/``source_sql`` are code-defined
+        (never request input); the visible tenant population, request values and
+        the cursor travel as bound parameters. Only ``limit`` rows leave Postgres.
+        """
+        visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, "strategy_spec")
+        where = ["jsonb_typeof(payload) = 'object'", f"({visible_sql})", *predicates]
+        bound: list[Any] = list(params) + list(args)
+        if after_registry_id:
+            where.append(f"{key_sql} > %s")
+            bound.append(after_registry_id)
+        # The page is cut on the key first; ``select_sql`` is built only for the kept rows.
+        sql = (
+            f"SELECT {select_sql} FROM (SELECT payload FROM {source_sql or self._entries.table} "
+            f"WHERE {' AND '.join(where)} ORDER BY {key_sql} ASC LIMIT {int(limit)}) AS page "
+            f"ORDER BY {key_sql} ASC"
+        )
+        with self._entries._use_conn(None) as conn:
+            rows = conn.execute(sql, tuple(bound)).fetchall()
+        return [r[0] if not isinstance(r, dict) else next(iter(r.values())) for r in rows]
+
+    def list_card_admission_drafts(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        tenant_id: str,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[RegistryEntry]:
+        """At most ``limit`` admissible card drafts, filtered inside Postgres (never the draft table).
+
+        Predicate: strategy_spec, draft, ``metadata.strategy_spec.metadata.card_wiring.status
+        == 'gate_ready'`` and ``metadata.tenant_id``; ordered by ``registry_id`` with a keyset
+        cursor. Non-matching drafts are neither fetched nor decoded. Legacy JSON-string payloads
+        are not card drafts and are excluded by the object-type guard.
+        """
+        rows = self._strategy_spec_keyset_rows(
+            select_sql="(payload)::text",
+            visible_tenants=visible_tenants,
+            predicates=(
+                "payload ->> 'artifact_state' = 'draft'",
+                "payload #>> '{metadata,strategy_spec,metadata,card_wiring,status}' = 'gate_ready'",
+                "payload #>> '{metadata,tenant_id}' = %s",
+            ),
+            args=(tenant_id,),
+            limit=limit,
+            after_registry_id=after_registry_id,
+        )
+        return [RegistryEntry.from_dict(json.loads(r)) for r in rows]
+
+    def list_discovery_candidates(
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        limit: int,
+        after_registry_id: Optional[str] = None,
+    ) -> list[dict]:
+        """At most ``limit`` discovery rows (REGISTRY-DISCOVERY-SPEC-PAGE-20261125).
+
+        Same keyset as :meth:`list_card_admission_drafts`; predicate: strategy_spec,
+        ``artifact_state`` not retired/rejected, visible owner tenant. Only the five
+        discovery fields are built in SQL, so storage refs, evidence and audit fields
+        never leave Postgres. Legacy JSON-string payloads are unwrapped first so the
+        row set equals the unpaged list; the key is byte ordered (``COLLATE "C"``) to
+        match the in-memory owner.
+        """
+        excluded = ", ".join(f"'{s}'" for s in DISCOVERY_EXCLUDED_STATES)
+        rows = self._strategy_spec_keyset_rows(
+            select_sql=_DISCOVERY_SELECT_SQL,
+            visible_tenants=visible_tenants,
+            predicates=(f"payload ->> 'artifact_state' NOT IN ({excluded})",),
+            args=(),
+            limit=limit,
+            after_registry_id=after_registry_id,
+            key_sql="(payload ->> 'registry_id') COLLATE \"C\"",
+            # Same unwrap as ``PostgresJsonOwnerStore.list_all_selected``: ``payload || '{}'``
+            # detoasts each wide row once (about 3x faster per page than one detoast per leaf).
+            source_sql=(
+                "(SELECT CASE WHEN jsonb_typeof(u) = 'array' THEN "
+                "(CASE WHEN jsonb_typeof(payload) = 'string' THEN (payload #>> '{}')::jsonb ELSE u END) "
+                "ELSE u END AS payload "
+                f"FROM (SELECT payload, payload || '{{}}'::jsonb AS u FROM {self._entries.table} OFFSET 0) AS raw "
+                "OFFSET 0) AS discovery_rows"
+            ),
+        )
+        return [discovery_candidate_from_payload(json.loads(r)) for r in rows]
+
+    def _has_legacy_string_payloads(self) -> bool:
+        with self._entries._use_conn(None) as conn:
+            cur = conn.execute(
+                f"SELECT 1 FROM {self._entries.table} WHERE jsonb_typeof(payload) = 'string' LIMIT 1"
+            )
+            return cur.fetchone() is not None
+
     def list_strategy_spec_summary_rows(
         self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
     ) -> list[dict]:
@@ -908,7 +1142,12 @@ class PostgresRegistryStore:
         return rows
 
     def list_strategy_spec_summary_index_rows(
-        self, *, visible_tenants: Optional[frozenset] = None, artifact_type: Optional[str] = "strategy_spec",
+        self,
+        *,
+        visible_tenants: Optional[frozenset] = None,
+        artifact_type: Optional[str] = "strategy_spec",
+        include_title: bool = False,
+        include_scope: bool = False,
     ) -> list[dict]:
         """Lightweight candidate-index rows projected inside Postgres for Phase 1 of strategy_summary_page."""
         self.full_summary_rows_extracted = 0
@@ -917,18 +1156,32 @@ class PostgresRegistryStore:
             visible_tenants, artifact_type,
         )
         if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
-            sql = _strategy_spec_summary_index_single_pass_sql(self._entries.table, visible_sql)
+            sql = _strategy_spec_summary_index_single_pass_sql(
+                self._entries.table, visible_sql, include_title=include_title,
+                include_scope=include_scope,
+            )
+            # The visible predicate is bound twice: once in the table scan
+            # (before any payload expression) and once over the normalised row.
+            sql_params = params + params
             with self._entries._use_conn(None) as conn:
-                cursor = conn.execute(sql, params) if params else conn.execute(sql)
+                cursor = conn.execute(sql, sql_params) if sql_params else conn.execute(sql)
                 raw_rows = [
                     tuple(r.values()) if isinstance(r, dict) else tuple(r)
                     for r in cursor.fetchall()
                 ]
-            return strategy_spec_summary_index_rows_from_columns(raw_rows)
+            return strategy_spec_summary_index_rows_from_columns(
+                raw_rows, include_title=include_title, include_scope=include_scope,
+            )
         return strategy_spec_summary_index_rows_from_columns(
             self._entries.list_all_selected(
-                strategy_spec_summary_index_select_sql(), visible_sql=visible_sql, keep_params=params,
-            )
+                strategy_spec_summary_index_select_sql(
+                    include_title=include_title, include_scope=include_scope,
+                ),
+                visible_sql=visible_sql,
+                keep_params=params,
+            ),
+            include_title=include_title,
+            include_scope=include_scope,
         )
 
     def get_strategy_spec_summary_rows_by_ids(
@@ -1296,12 +1549,12 @@ _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS: tuple[tuple[str, ...], ...] = (
 )
 
 
-def _strategy_summary_index_leaf_paths() -> list[tuple[str, ...]]:
+def _strategy_summary_index_leaf_paths(*, include_title: bool = False) -> list[tuple[str, ...]]:
     """Leaf paths read for a strategy-spec candidate-index row (Phase 1)."""
     meta = ("metadata",)
     spec = ("metadata", "strategy_spec")
     spec_meta = spec + ("metadata",)
-    return (
+    paths = (
         [(k,) for k in STRATEGY_SUMMARY_INDEX_ROW_KEYS]
         + [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_META_KEYS]
         + [meta + ("provenance", k) for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS]
@@ -1309,22 +1562,61 @@ def _strategy_summary_index_leaf_paths() -> list[tuple[str, ...]]:
         + [spec + ("provenance", k) for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS]
         + [spec_meta + (k,) for k in STRATEGY_SUMMARY_INDEX_INNER_META_KEYS]
     )
+    if include_title:
+        paths = (
+            paths
+            + [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_TITLE_KEYS]
+            + [spec + (k,) for k in STRATEGY_SUMMARY_INDEX_TITLE_KEYS]
+        )
+    return paths
 
 
-def strategy_spec_summary_index_select_sql() -> str:
+def _strategy_summary_index_scope_paths() -> list[tuple[str, ...]]:
+    """``data_scope`` leaves read for the owner-side hide rule (metadata, then spec metadata)."""
+    meta = ("metadata",)
+    spec_meta = ("metadata", "strategy_spec", "metadata")
+    return [meta + (k,) for k in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS] + [
+        spec_meta + (k,) for k in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
+    ]
+
+
+def strategy_spec_summary_index_select_sql(
+    *, include_title: bool = False, include_scope: bool = False,
+) -> str:
     """Plain column list over ``payload`` for candidate-index rows (Phase 1)."""
-    cols = ", ".join(f"({_sql_node(p)})::text" for p in _strategy_summary_index_leaf_paths())
+    cols = ", ".join(
+        f"({_sql_node(p)})::text" for p in _strategy_summary_index_leaf_paths(include_title=include_title)
+    )
     shapes = ", ".join(
         f"jsonb_typeof({_sql_node(p)})"
         for p in _STRATEGY_SUMMARY_INDEX_CONTAINER_PATHS
     )
-    return f"{cols}, {shapes}"
+    sql = f"{cols}, {shapes}"
+    if include_scope:
+        sql += ", " + ", ".join(
+            f"({_sql_node(p)})::text" for p in _strategy_summary_index_scope_paths()
+        )
+    return sql
 
 
-def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -> str:
+def _strategy_spec_summary_index_single_pass_sql(
+    table: str, visible_sql: str, *, include_title: bool = False, include_scope: bool = False,
+) -> str:
     """Single-pass Postgres query that detoasts ``payload`` once, extracts
     ``metadata`` and ``strategy_spec`` sub-objects once per visible row, and
     projects only the candidate-index fields before sorting."""
+    title_cols_expr = (
+        [f"(m -> '{k}')::text AS mt{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_TITLE_KEYS)]
+        + [f"(s -> '{k}')::text AS st{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_TITLE_KEYS)]
+        if include_title
+        else []
+    )
+    title_outer_cols = (
+        [f"mt{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_TITLE_KEYS))]
+        + [f"st{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_TITLE_KEYS))]
+        if include_title
+        else []
+    )
     cols_expr = (
         [f"(payload -> '{k}')::text AS c{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_ROW_KEYS)]
         + [f"(m -> '{k}')::text AS m{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_META_KEYS)]
@@ -1332,6 +1624,7 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
         + [f"(s -> '{k}')::text AS s{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SPEC_KEYS)]
         + [f"(sp -> '{k}')::text AS sp{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_PROV_KEYS)]
         + [f"(sm -> '{k}')::text AS sm{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_INNER_META_KEYS)]
+        + title_cols_expr
         + [
             "jsonb_typeof(mp) AS t0",
             "jsonb_typeof(s) AS t1",
@@ -1346,8 +1639,21 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
         + [f"s{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SPEC_KEYS))]
         + [f"sp{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_PROV_KEYS))]
         + [f"sm{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_INNER_META_KEYS))]
+        + title_outer_cols
         + ["t0", "t1", "t2", "t3"]
     )
+    if include_scope:
+        scope_cols = (
+            [f"(m -> '{k}')::text AS ds{i}" for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS)]
+            + [
+                f"(sm -> '{k}')::text AS dsm{i}"
+                for i, k in enumerate(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS)
+            ]
+        )
+        cols_expr = cols_expr + scope_cols
+        outer_cols = outer_cols + [
+            f"ds{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS))
+        ] + [f"dsm{i}" for i in range(len(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS))]
     return (
         f"SELECT {', '.join(outer_cols)} FROM ("
         f"SELECT updated_at, {', '.join(cols_expr)} FROM ("
@@ -1359,7 +1665,12 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
         "(CASE WHEN jsonb_typeof(payload) = 'string' "
         "THEN (payload #>> '{}')::jsonb ELSE u END) ELSE u END AS payload "
         f"FROM (SELECT updated_at, payload, payload || '{{}}'::jsonb AS u "
-        f"FROM {table} OFFSET 0) AS raw OFFSET 0"
+        # Artifact type and tenant are decided on the stored payload before
+        # ``payload || '{}'`` is built, so rows of other artifact types or
+        # tenants are never copied. A non-object payload (legacy string or
+        # array encoding) cannot be judged yet and is normalised first.
+        f"FROM {table} WHERE jsonb_typeof(payload) <> 'object' OR ({visible_sql}) "
+        "OFFSET 0) AS raw OFFSET 0"
         f") AS r1 WHERE jsonb_typeof(payload) = 'object' AND ({visible_sql}) OFFSET 0"
         ") AS r2 OFFSET 0"
         ") AS r3 OFFSET 0"
@@ -1367,7 +1678,9 @@ def _strategy_spec_summary_index_single_pass_sql(table: str, visible_sql: str) -
     )
 
 
-def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
+def strategy_spec_summary_index_rows_from_columns(
+    rows, *, include_title: bool = False, include_scope: bool = False,
+) -> list[dict]:
     """Assemble ``strategy_spec_summary_index_row``-shaped dicts from the index select columns."""
     loads = json.loads
 
@@ -1382,15 +1695,35 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
 
     out: list[dict] = []
     append = out.append
-    for (
-        c0, c1, c2, c3, c4, c5, c6,
-        m0, m1, m2, m3, m4, m5, m6, m7, m8,
-        mp0,
-        s0, s1, s2, s3, s4, s5, s6, s7, s8,
-        sp0,
-        sm0, sm1, sm2, sm3,
-        t0, t1, t2, t3,
-    ) in rows:
+    for raw_tuple in rows:
+        if include_scope:
+            # Scope leaves trail the fixed columns: data_scope / dataScope from
+            # metadata, then from metadata.strategy_spec.metadata.
+            raw_tuple, scope_cols = tuple(raw_tuple[:-4]), tuple(raw_tuple[-4:])
+        else:
+            scope_cols = ()
+        if include_title:
+            (
+                c0, c1, c2, c3, c4, c5, c6,
+                m0, m1, m2, m3, m4, m5, m6, m7, m8,
+                mp0,
+                s0, s1, s2, s3, s4, s5, s6, s7, s8,
+                sp0,
+                sm0, sm1, sm2, sm3,
+                mt0, mt1, st0, st1,
+                t0, t1, t2, t3,
+            ) = raw_tuple
+        else:
+            (
+                c0, c1, c2, c3, c4, c5, c6,
+                m0, m1, m2, m3, m4, m5, m6, m7, m8,
+                mp0,
+                s0, s1, s2, s3, s4, s5, s6, s7, s8,
+                sp0,
+                sm0, sm1, sm2, sm3,
+                t0, t1, t2, t3,
+            ) = raw_tuple
+            mt0 = mt1 = st0 = st1 = None
         meta: dict[str, Any] = {}
         if m0 is not None:
             meta["spec_version_id"] = _dec(m0)
@@ -1410,6 +1743,15 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
             meta["state"] = _dec(m7)
         if m8 is not None:
             meta["status"] = _dec(m8)
+        if include_title:
+            if mt0 is not None:
+                meta["title"] = _dec(mt0)
+            if mt1 is not None:
+                meta["name"] = _dec(mt1)
+        if scope_cols:
+            for key, raw in zip(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS, scope_cols[:2]):
+                if raw is not None:
+                    meta[key] = _dec(raw)
         if t0 == "object":
             meta["provenance"] = {"created_at": _dec(mp0)} if mp0 is not None else {}
         if t1 == "object":
@@ -1432,6 +1774,11 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
                 spec["updated_at"] = _dec(s7)
             if s8 is not None:
                 spec["last_modified_at"] = _dec(s8)
+            if include_title:
+                if st0 is not None:
+                    spec["title"] = _dec(st0)
+                if st1 is not None:
+                    spec["name"] = _dec(st1)
             if t2 == "object":
                 spec["provenance"] = {"created_at": _dec(sp0)} if sp0 is not None else {}
             if t3 == "object":
@@ -1444,6 +1791,10 @@ def strategy_spec_summary_index_rows_from_columns(rows) -> list[dict]:
                     inner_meta["state"] = _dec(sm2)
                 if sm3 is not None:
                     inner_meta["status"] = _dec(sm3)
+                if scope_cols:
+                    for key, raw in zip(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS, scope_cols[2:]):
+                        if raw is not None:
+                            inner_meta[key] = _dec(raw)
                 spec["metadata"] = inner_meta
             meta["strategy_spec"] = spec
         row: dict[str, Any] = {"metadata": meta}

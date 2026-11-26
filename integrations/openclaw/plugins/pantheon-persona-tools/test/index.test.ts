@@ -1,0 +1,330 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+import plugin, {
+  PANTHEON_TOOLS,
+  TOOL_MENTAL_MODEL,
+  TOOL_PROPOSAL,
+  TOOL_RECALL,
+  TOOL_SPECS,
+  createPlugin,
+  parseConfig,
+} from "../src/index.js";
+
+type Handler = (event: any, ctx: any) => Promise<any>;
+
+const CONFIG = { brokerUrl: "http://adapter:8104/internal/persona-tools/v1/", brokerToken: "secret-1" };
+
+interface Call {
+  url: string;
+  headers: Record<string, string>;
+  body: any;
+}
+
+// Stateful stand-in for the broker: /authorize records (agent, session, tool call id, run), /call consumes it once.
+function fakeBroker() {
+  const recorded = new Map<string, string>();
+  return (call: Call): { status: number; body: unknown } => {
+    const b = call.body;
+    const key = `${b.agent_id}|${b.session_key}|${b.tool_call_id}`;
+    if (call.url.endsWith("/authorize")) {
+      recorded.set(key, b.run_id);
+      return { status: 200, body: { allowed: true, allowed_tools: [...PANTHEON_TOOLS] } };
+    }
+    if (!recorded.delete(key)) return { status: 403, body: { error: "refused", reason: "call_not_authorized_by_hook" } };
+    return { status: 200, body: { result: { ok: true } } };
+  };
+}
+
+function harness(opts: { respond?: (call: Call) => { status: number; body: unknown } | Promise<never>; config?: unknown; broker?: ReturnType<typeof fakeBroker> } = {}) {
+  const calls: Call[] = [];
+  const respond = opts.respond ?? (opts.broker ?? fakeBroker());
+  const fetchImpl = async (url: string, init: any) => {
+    const call = { url, headers: init.headers, body: JSON.parse(init.body) };
+    calls.push(call);
+    const out = await respond(call);
+    return { status: out.status, json: async () => out.body };
+  };
+  const instance = createPlugin({ fetchImpl: fetchImpl as any, env: {} });
+  let hook: Handler | undefined;
+  let factory: ((ctx: any) => any) | undefined;
+  let toolOptions: any;
+  const registerOn = (target: { hook?: Handler; factory?: (ctx: any) => any; options?: any }) =>
+    instance.register({
+      pluginConfig: "config" in opts ? opts.config : CONFIG,
+      registerTool(f: any, o: any) {
+        target.factory = f;
+        target.options = o;
+      },
+      on(_name: string, handler: Handler) {
+        target.hook = handler;
+      },
+    } as any);
+  const first: { hook?: Handler; factory?: (ctx: any) => any; options?: any } = {};
+  registerOn(first);
+  hook = first.hook;
+  factory = first.factory;
+  toolOptions = first.options;
+  return { calls, hook: hook!, factory: factory!, toolOptions, registerAgain: () => { const t: any = {}; registerOn(t); return t as { hook: Handler; factory: (ctx: any) => any }; } };
+}
+
+const HOOK_CTX = { agentId: "persona-alpha", sessionKey: "agent:persona-alpha:openresponses-user:s1", runId: "run-1" };
+
+test("manifest contracts.tools lists exactly the registered tools and they are optional", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const manifest = JSON.parse(readFileSync(join(here, "..", "..", "openclaw.plugin.json"), "utf8"));
+  assert.deepEqual([...manifest.contracts.tools].sort(), [...PANTHEON_TOOLS].sort());
+  assert.deepEqual(Object.keys(manifest.toolMetadata).sort(), [...PANTHEON_TOOLS].sort());
+  assert.equal(manifest.id, plugin.id);
+  assert.equal(manifest.configSchema.required, undefined); // config may come from the env
+  assert.equal(manifest.enabledByDefault, true);
+  assert.ok(!JSON.stringify(manifest).includes("reflect"));
+  const pkg = JSON.parse(readFileSync(join(here, "..", "..", "package.json"), "utf8"));
+  assert.deepEqual(pkg.openclaw.extensions, ["./dist/src/index.js"]);
+});
+
+test("registers three tools with JSON-schema parameters and no reflect tool", () => {
+  const { factory, toolOptions } = harness();
+  const tools = factory({ agentId: "persona-alpha", sessionKey: "k" });
+  assert.deepEqual(tools.map((t: any) => t.name), [TOOL_RECALL, TOOL_MENTAL_MODEL, TOOL_PROPOSAL]);
+  assert.deepEqual(toolOptions, { names: [...PANTHEON_TOOLS], optional: true });
+  for (const tool of tools) {
+    assert.equal(tool.parameters.type, "object");
+    assert.equal(tool.parameters.additionalProperties, false);
+    assert.equal(typeof tool.execute, "function");
+  }
+  assert.deepEqual(TOOL_SPECS.map((s) => s.name), [...PANTHEON_TOOLS]);
+  assert.ok(!tools.some((t: any) => /reflect/i.test(t.name)));
+  const recall = tools[0].parameters;
+  assert.deepEqual(recall.required, ["query"]);
+  assert.deepEqual(recall.properties.bank.enum, ["own", "facts"]);
+  assert.equal(recall.properties.persona_id, undefined); // the agent cannot name a persona
+  assert.ok(tools[2].parameters.properties.kind.enum.includes("meeting_action"));
+});
+
+test("no identity from the host means no tool is exposed", () => {
+  const { factory } = harness();
+  assert.equal(factory({}), null);
+  assert.equal(factory({ agentId: "a" }), null);
+});
+
+test("authorized call forwards tool, params and host identity with the plugin-config secret only", async () => {
+  const { calls, hook, factory } = harness();
+  const params = { query: "momentum" };
+  assert.equal(await hook({ toolName: TOOL_RECALL, params, toolCallId: "tc-1" }, HOOK_CTX), undefined);
+  assert.equal(calls[0]!.url, "http://adapter:8104/internal/persona-tools/v1/authorize");
+  const tool = factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey }).find((t: any) => t.name === TOOL_RECALL);
+  const result = await tool.execute("tc-1", params);
+  const call = calls[1]!;
+  assert.equal(call.url, "http://adapter:8104/internal/persona-tools/v1/call");
+  assert.deepEqual(call.body, {
+    tool: TOOL_RECALL, params, agent_id: "persona-alpha", session_key: HOOK_CTX.sessionKey, tool_call_id: "tc-1",
+  });
+  assert.equal(call.headers["Authorization"], "Bearer secret-1");
+  assert.deepEqual(Object.keys(call.headers).sort(), ["Authorization", "Content-Type"]);
+  assert.deepEqual(result.details, { ok: true });
+  assert.equal(JSON.parse(result.content[0].text).ok, true);
+});
+
+test("model-supplied identity in params is forwarded as params only, never as identity", async () => {
+  const { calls, hook, factory } = harness();
+  const params = { query: "q", agent_id: "persona-beta", run_id: "forged", session_key: "forged" };
+  await hook({ toolName: TOOL_RECALL, params, toolCallId: "tc-2" }, HOOK_CTX);
+  const tool = factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
+  await tool.execute("tc-2", params);
+  for (const call of calls) {
+    assert.equal(call.body.agent_id, "persona-alpha");
+    if (call.url.endsWith("/authorize")) assert.equal(call.body.run_id, "run-1");
+    assert.equal(call.body.session_key, HOOK_CTX.sessionKey);
+  }
+});
+
+test("hook blocks a non-persona agent when the broker refuses", async () => {
+  const { hook } = harness({ respond: () => ({ status: 403, body: { error: "refused", reason: "not_a_persona_agent" } }) });
+  const out = await hook({ toolName: TOOL_PROPOSAL, params: {}, toolCallId: "t" }, { ...HOOK_CTX, agentId: "main" });
+  assert.equal(out.block, true);
+  assert.match(out.blockReason, /not_a_persona_agent/);
+});
+
+test("hook blocks on handler error, timeout, broker 5xx and a non-allowed answer", async () => {
+  const cases: Array<() => any> = [
+    () => Promise.reject(new Error("ECONNREFUSED")),
+    () => Promise.reject(Object.assign(new Error("timed out"), { name: "TimeoutError" })),
+    () => ({ status: 503, body: { reason: "agent_registry_unavailable" } }),
+    () => ({ status: 200, body: { allowed: false } }),
+    () => ({ status: 200, body: {} }),
+  ];
+  for (const respond of cases) {
+    const { hook } = harness({ respond });
+    const out = await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "t" }, HOOK_CTX);
+    assert.equal(out?.block, true);
+  }
+});
+
+test("a CLI-backend hook context without identity fields is blocked naming each missing field", async () => {
+  const { hook, calls } = harness();
+  const cli = { agentId: "persona-alpha" } as any; // no sessionKey, no runId
+  const blocked = await hook({ toolName: TOOL_RECALL, params: { agent_id: "forged" } }, cli);
+  assert.equal(blocked.block, true);
+  assert.match(blocked.blockReason, /^persona_tools_blocked:missing_host_identity:session_key,run_id,tool_call_id/);
+  assert.equal(calls.length, 0); // model-supplied identity is never accepted
+  const noAgent = await hook({ toolName: TOOL_RECALL, runId: "r", toolCallId: "t" }, { sessionKey: "s" } as any);
+  assert.match(noAgent.blockReason, /missing_host_identity:agent_id\b/);
+});
+
+test("hook blocks when host identity is incomplete and invalid config blocks everything", async () => {
+  const { hook, calls } = harness();
+  for (const ctx of [{ ...HOOK_CTX, agentId: undefined }, { ...HOOK_CTX, sessionKey: undefined }, { ...HOOK_CTX, runId: undefined }]) {
+    assert.equal((await hook({ toolName: TOOL_RECALL, toolCallId: "t" }, ctx)).block, true);
+  }
+  assert.equal((await hook({ toolName: TOOL_RECALL, params: {} }, HOOK_CTX)).block, true); // no toolCallId
+  assert.equal(calls.length, 0);
+  const bad = harness({ config: { brokerUrl: "ftp://x", brokerToken: "" } });
+  assert.equal((await bad.hook({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
+  const missing = harness({ config: undefined });
+  assert.equal(missing.hook, undefined); // no config and no broker token: inert
+  assert.equal(missing.factory, undefined);
+});
+
+test("execute without a hook authorization fails closed (the broker has no record of it)", async () => {
+  const { calls, factory } = harness();
+  const tool = factory({ agentId: "persona-alpha", sessionKey: "k" })[0];
+  await assert.rejects(tool.execute("never-authorized", { query: "q" }), /call_not_authorized_by_hook/);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0]!.url.endsWith("/call"));
+});
+
+test("a call the hook authorized succeeds when the tool comes from a different plugin instance than the hook", async () => {
+  const { calls, hook, registerAgain } = harness();
+  // OpenClaw loads another registry at execute time: the tool is taken from a second register() call.
+  const second = registerAgain();
+  assert.notEqual(second.hook, hook);
+  await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "tc-x" }, HOOK_CTX);
+  const tool = second.factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
+  const result = await tool.execute("tc-x", { query: "q" });
+  assert.deepEqual(result.details, { ok: true });
+  assert.equal(calls.filter((c) => c.url.endsWith("/call")).length, 1);
+  await assert.rejects(tool.execute("tc-x", { query: "q" }), /call_not_authorized_by_hook/);
+});
+
+test("an authorization is single-use and bound to the agent and session of the tool context", async () => {
+  const { calls, hook, factory } = harness();
+  await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "tc-3" }, HOOK_CTX);
+  const other = factory({ agentId: "persona-beta", sessionKey: HOOK_CTX.sessionKey })[0];
+  await assert.rejects(other.execute("tc-3", { query: "q" }), /call_not_authorized_by_hook/);
+  const own = factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
+  await own.execute("tc-3", { query: "q" });
+  await assert.rejects(own.execute("tc-3", { query: "q" }), /call_not_authorized_by_hook/);
+  assert.equal(calls.filter((c) => c.url.endsWith("/call") && c.body.agent_id === "persona-alpha").length, 2); // the successful call and the refused replay
+});
+
+test("broker refusal at call time surfaces as a tool error with the reason", async () => {
+  const { hook, factory } = harness({
+    respond: (call) => call.url.endsWith("/authorize")
+      ? { status: 200, body: { allowed: true, allowed_tools: [TOOL_RECALL] } }
+      : { status: 429, body: { error: "refused", reason: "run_call_limit_exceeded" } },
+  });
+  await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "tc-4" }, HOOK_CTX);
+  const tool = factory({ agentId: HOOK_CTX.agentId, sessionKey: HOOK_CTX.sessionKey })[0];
+  await assert.rejects(tool.execute("tc-4", { query: "q" }), /run_call_limit_exceeded/);
+});
+
+test("a known persona agent is blocked from tools outside its profile; other agents are untouched", async () => {
+  const { hook } = harness({
+    respond: () => ({ status: 200, body: { allowed: true, allowed_tools: [TOOL_RECALL] } }),
+  });
+  assert.equal(await hook({ toolName: "exec", params: {} }, HOOK_CTX), undefined); // not yet known as a persona agent
+  await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "t" }, HOOK_CTX);
+  assert.equal((await hook({ toolName: "exec", params: {} }, HOOK_CTX)).block, true);
+  assert.equal((await hook({ toolName: "web_search", params: {} }, HOOK_CTX)).block, true);
+  assert.equal(await hook({ toolName: "read", params: {} }, HOOK_CTX), undefined);
+  assert.equal(await hook({ toolName: "exec", params: {} }, { ...HOOK_CTX, agentId: "main" }), undefined);
+});
+
+test("panel interpretation run: the broker's narrower tool set is what the hook enforces", async () => {
+  const { hook } = harness({
+    respond: (call) => call.body.tool === TOOL_RECALL
+      ? { status: 200, body: { allowed: true, allowed_tools: [TOOL_RECALL] } }
+      : { status: 403, body: { error: "refused", reason: "tool_not_allowed_for_purpose" } },
+  });
+  assert.equal(await hook({ toolName: TOOL_RECALL, params: { query: "q" }, toolCallId: "a" }, HOOK_CTX), undefined);
+  for (const toolName of [TOOL_MENTAL_MODEL, TOOL_PROPOSAL]) {
+    const out = await hook({ toolName, params: {}, toolCallId: "b" }, HOOK_CTX);
+    assert.match(out.blockReason, /tool_not_allowed_for_purpose/);
+  }
+});
+
+test("config parsing", () => {
+  assert.equal(parseConfig(CONFIG).success, true);
+  const ok = parseConfig({ ...CONFIG, callTimeoutMs: 1000 });
+  assert.ok(ok.success && ok.data.callTimeoutMs === 1000 && ok.data.brokerUrl.endsWith("/v1"));
+  for (const bad of [undefined, null, [], {}, { ...CONFIG, extra: 1 }, { ...CONFIG, callTimeoutMs: 5 }, { ...CONFIG, brokerToken: " " }]) {
+    assert.equal(parseConfig(bad).success, false);
+  }
+});
+
+test("the plugin source holds no memory or persona credential and no SDK import", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(here, "..", "..", "src", "index.ts"), "utf8");
+  const code = source.replace(/\/\*[\s\S]*?\*\//, "");
+  // The only env surface is the broker URL/token pair, read through one default (`deps.env ?? process.env`).
+  assert.equal((code.match(/process\.env/g) ?? []).length, 1);
+  assert.ok(code.includes("deps.env ?? process.env"));
+  assert.ok(!/MEMORY_AUTH|PERSONA_SERVICE|hindsight/i.test(code));
+  assert.ok(!/from "openclaw/.test(source));
+});
+
+test("env-provided broker config is used when plugin config is absent", async () => {
+  const calls: any[] = [];
+  const instance = createPlugin({
+    env: { PERSONA_TOOL_BROKER_URL: "http://adapter:8104/internal/persona-tools/v1/", PERSONA_TOOL_BROKER_TOKEN: " env-secret " },
+    fetchImpl: (async (url: string, init: any) => {
+      calls.push({ url, headers: init.headers });
+      return { status: 200, json: async () => ({ allowed: true, allowed_tools: [...PANTHEON_TOOLS] }) };
+    }) as any,
+  });
+  let hook: Handler | undefined;
+  instance.register({ registerTool() {}, on(_n: string, h: Handler) { hook = h; } } as any);
+  const out = await hook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX);
+  assert.equal(out, undefined);
+  assert.equal(calls[0].url, "http://adapter:8104/internal/persona-tools/v1/authorize");
+  assert.equal(calls[0].headers.Authorization, "Bearer env-secret");
+  // a token with an invalid URL fails closed rather than going inert
+  const bad = createPlugin({ env: { PERSONA_TOOL_BROKER_TOKEN: "x" } });
+  let badHook: Handler | undefined;
+  bad.register({ registerTool() {}, on(_n: string, h: Handler) { badHook = h; } } as any);
+  assert.equal((await badHook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
+});
+
+test("an empty validated plugin config object (what the gateway hands register) falls back to the env like a missing one", async () => {
+  const env = { PERSONA_TOOL_BROKER_URL: "http://adapter:8104/internal/persona-tools/v1/", PERSONA_TOOL_BROKER_TOKEN: "env-secret" };
+  const calls: any[] = [];
+  const fetchImpl = (async (url: string, init: any) => {
+    calls.push({ url, headers: init.headers });
+    return { status: 200, json: async () => ({ allowed: true, allowed_tools: [...PANTHEON_TOOLS] }) };
+  }) as any;
+  const registered: string[] = [];
+  let hook: Handler | undefined;
+  createPlugin({ env, fetchImpl }).register({
+    pluginConfig: {},
+    registerTool(_f: any, o: any) { registered.push(...(o?.names ?? [o?.name])); },
+    on(_n: string, h: Handler) { hook = h; },
+  } as any);
+  assert.ok(hook);
+  assert.equal(await hook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX), undefined);
+  assert.equal(calls[0].url, "http://adapter:8104/internal/persona-tools/v1/authorize");
+  assert.equal(calls[0].headers.Authorization, "Bearer env-secret");
+  // empty config and no token: inert
+  let inertHook: Handler | undefined;
+  let inertTools = 0;
+  createPlugin({ env: {} }).register({ pluginConfig: {}, registerTool() { inertTools++; }, on(_n: string, h: Handler) { inertHook = h; } } as any);
+  assert.equal(inertHook, undefined);
+  assert.equal(inertTools, 0);
+  // a non-empty config still wins and is validated (invalid -> fail closed, env not used)
+  let badHook: Handler | undefined;
+  createPlugin({ env, fetchImpl }).register({ pluginConfig: { brokerUrl: "nope" }, registerTool() {}, on(_n: string, h: Handler) { badHook = h; } } as any);
+  assert.equal((await badHook!({ toolName: TOOL_RECALL, params: {}, toolCallId: "t" }, HOOK_CTX)).block, true);
+});

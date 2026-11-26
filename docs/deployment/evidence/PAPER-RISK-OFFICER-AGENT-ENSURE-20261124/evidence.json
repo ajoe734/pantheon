@@ -1,0 +1,21 @@
+{
+  "task": "PAPER-RISK-OFFICER-AGENT-ENSURE-20261124",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "register_row": "RC2: Paper pools that requested low carry a hardcoded policy",
+  "observed_hosted": {"build": "adaa418de", "dry_run_error": "risk_officer_turn_failed:/v1/responses HTTP 400 (risk_officer_draft_unavailable)", "probes_failing": ["paper-risk-policy-binding", "paper-risk-journey"], "probe_reason": "draft_provenance_missing"},
+  "fix": {
+    "ensure_helper": "services/persona/risk_policy_draft.py ensure_risk_officer_agent via existing integrations/openclaw/persona_agent_client.py TradingPersonaAgentClient (existing adapter persona/ensure route, existing persona tool profile: read + brokered memory/proposal tools, no order/broker/capital/lifecycle tool)",
+    "wrapper": "services/persona/risk_policy_draft.py ensuring_turn_runner, used by make_drafter and by the lesson cycle built in persona_cycle_controller",
+    "wiring": "docker-compose.yml operator-bff: PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL / _SERVICE_TOKEN / _SERVICE_AUTH_REQUIRED (persona service already had them)",
+    "fail_closed": "ensure failure -> error turn risk_officer_agent_ensure_failed:<type> -> pending with readable reason, no fallback policy, no turn attempted; outer bounds and Governance proposal path unchanged; no vote cast"
+  },
+  "lesson_cycle": "shares the turn_runner(RISK_PERSONA_ID, ...) path; wrapped in the controller's lazy LessonCycle construction",
+  "tests": {
+    "services/persona/test_risk_policy_draft.py": "17 passed (includes: unensured real turn path fails HTTP 400; one ensure across two drafts; ensure 503 fails closed with no turn; other personas never ensured)",
+    "services/persona/test_lesson_cycle.py + test_persona_cycle_controller.py + bff test_persona_provisioning_coordinator.py": "all pass except 2 lifespan tests needing asyncpg (not installed in the worker venv; unrelated)",
+    "scripts/check_storage_manifest.py": "exit 0"
+  },
+  "runtime_budget": "storage-manifest.json runtime_budgets entry PAPER-RISK-OFFICER-AGENT-ENSURE-20261124",
+  "review_independence_exception": "other model families are at terminal quota until 2026-11-27 10:03Z; reviewer may be from the owner's family",
+  "hosted_acceptance": "pending: coordinator dry run for each of the three low trading personas, real call, /bff/approvals, probe paper-risk-policy-binding; record runs and digests here"
+}

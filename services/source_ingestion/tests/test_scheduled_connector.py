@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +51,7 @@ def client():
     try:
         yield TestClient(module.app, headers=_read_headers()), Path(tempdir), module
     finally:
+        shutil.rmtree(tempdir, ignore_errors=True)
         for key, value in env_backup.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -1042,6 +1044,16 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
     assert freshness["next_run_at"] == freshness["next_due_at"]
     assert freshness["last_typed_failure"] is None
     assert freshness["latest_receipt"]["status"] == "completed"
+    receipt_summary = freshness["latest_receipt"]
+    assert receipt_summary["schema_version"] == "source_ingest_receipt_summary.v1"
+    assert receipt_summary["normalized_count"] == 1
+    assert receipt_summary["evidence_refs"]["source_id_count"] == 1
+    assert "source_ids" not in receipt_summary["evidence_refs"]
+    full_receipt = test_client.get(
+        f"/api/source-ingest/receipts/{receipt_summary['ingest_run_id']}"
+    )
+    assert full_receipt.status_code == 200, full_receipt.text
+    assert full_receipt.json()["receipt"]["evidence_refs"]["source_id_count"] == 1  # counts only (T2)
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]
@@ -1682,3 +1694,1427 @@ def test_freshness_summary_taiwan_official_rejects_unparsable_receipt() -> None:
     )
 
     assert summary["stale"] is True
+
+
+# --- COLLECTOR-STEADY-PULL-RESTORE-20261112: real controller -> scheduler -> Collector adapter ---
+
+_STEADY_HOST = "collector.example.test"
+_STEADY_COLLECTOR_ID = "collector-tw-ptt-stock"
+
+
+def _steady_collector_config(connector_id: str, *, definition_id: str = _STEADY_COLLECTOR_ID) -> dict:
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    adapter = CollectorBundleAdapter(
+        connector_id=connector_id, source_id=_STEADY_COLLECTOR_ID, source_type="social", platform="ptt",
+        host=_STEADY_HOST, max_records=10,
+    )
+    full = adapter.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {key: full[key] for key in allowed if key in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": definition_id}
+    fetch = dict(adapter.fetch_config())
+    fetch["adapter_config"] = {
+        **fetch["adapter_config"], "source_type": "social", "platform": "ptt", "host": _STEADY_HOST,
+    }
+    return {"connector": connector, "fetch": fetch}
+
+
+@pytest.fixture()
+def steady_stack(client, monkeypatch: pytest.MonkeyPatch):
+    from services.source_ingestion import controller_worker
+    from services.source_ingestion.connectors import collector_bundle
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport, make_bundle
+
+    test_client, tempdir, module = client
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", _STEADY_HOST)
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tempdir / "market"))
+    files, entry, _ = make_bundle(source_id=_STEADY_COLLECTOR_ID)
+    files["bundles/index.json"] = __import__("json").dumps({"bundles": [entry]}).encode()
+    files["status.json"] = __import__("json").dumps({"sources": {_STEADY_COLLECTOR_ID: {
+        "status": "ok", "last_run_at": entry["finished_at"],
+    }}}).encode()
+    observed = collector_bundle.observed_from_collector_status
+    monkeypatch.setattr(collector_bundle, "observed_from_collector_status", lambda *a, **kw: observed(
+        *a, **{**kw, "now": datetime(2026, 11, 10, 3, tzinfo=timezone.utc)}))
+    reads: list[str] = []
+
+    class RecordingTransport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            reads.append(relative_path)
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: RecordingTransport(files))
+
+    def local_request(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0, allow_list=False):
+        path = "/" + url.split("//", 1)[1].split("/", 1)[1]
+        headers = {"Authorization": f"Bearer {module.runtime.controller_token}"} if bearer_token else None
+        response = test_client.request(method, path, json=payload, headers=headers)
+        assert response.status_code < 400, (path, response.text)
+        return response.json()
+
+    monkeypatch.setattr(controller_worker, "_request_json", local_request)
+    return test_client, module, reads
+
+
+def _steady_reconcile(connector_ids):
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    return tcw._collector_reconcile(*connector_ids)
+
+
+def _bundle_reads(reads):
+    """Capability status may be polled while no bundle is due."""
+    return [path for path in reads if path != "status.json"]
+
+
+def _steady_step(reconcile):
+    """The steady branch of run_controller_tick, using its real selection, scheduler and readback calls."""
+    from services.source_ingestion import controller_worker as cw
+
+    api = "http://source-ingest.test:8097"
+    actual = cw.read_actual_state_with_fetch_bindings(api_url=api)
+    selected = cw.select_collector_pull_connectors(actual, reconcile)
+    schedule = (
+        cw.run_schedule_tick(
+            api_url=api, max_concurrency=1, force_connector_ids=[], exclusive_connector_ids=selected,
+            controller_token="controller-test-token-that-is-at-least-32-characters",
+        )
+        if selected
+        else None
+    )
+    return selected, schedule
+
+
+def test_steady_controller_calls_drive_real_scheduler_and_collector_adapter(steady_stack) -> None:
+    import time
+
+    test_client, module, reads = steady_stack
+    cid = "conn-collector-ptt"
+    created = test_client.post("/api/source-ingest/connectors", json=_steady_collector_config(cid))
+    assert created.status_code == 201, created.text
+    assert test_client.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 6, "enabled": True}).status_code == 200
+    # A due, scheduled, enabled direct-provider connector must never be pulled by the steady loop.
+    assert _configure_with_records(test_client, connector_id="conn-direct-provider").status_code == 201
+    assert test_client.put("/api/source-ingest/connectors/conn-direct-provider/schedule", json={"interval_seconds": 1, "enabled": True}).status_code == 200
+    reconcile = _steady_reconcile([cid, "conn-direct-provider"])
+
+    # Tick 1: due -> the real scheduler runs the real registered Collector adapter via the fake transport.
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [cid]
+    assert [item["connector_id"] for item in schedule["ran"]] == [cid]
+    assert schedule["excluded"] == ["conn-direct-provider"]
+    assert schedule["summary"]["total_failed"] == 0
+    pulled_after_first = len(_bundle_reads(reads))
+    assert pulled_after_first > 0
+    assert schedule["ran"][0]["run"]["status"] == "completed"
+    assert schedule["ran"][0]["receipt"]["normalized_count"] == 2
+
+    # Readback after the pull: record, PIT time, provenance and persisted cursor, with no direct-provider record.
+    readback = test_client.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == cid)
+    record = item["latest_source_record"]
+    assert record["connector_id"] == cid and record["source_id"].startswith(f"collector:{_STEADY_COLLECTOR_ID}:")
+    assert record["provenance"]["available_time"] or record["metadata"].get("available_time")
+    assert item["freshness"]["last_success_at"]
+    direct = next(c for c in readback["connectors"] if c["connector_id"] == "conn-direct-provider")
+    assert not direct.get("latest_source_record")
+    assert test_client.get("/api/source-ingest/source-records/src-conn-direct-provider-note-1", headers=_read_headers()).status_code == 404
+
+    # Tick 2 within the cadence: nothing is selected, no scheduler call and no adapter read.
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [] and schedule is None
+    assert len(_bundle_reads(reads)) == pulled_after_first
+
+    # Tick 3 after the interval: due again, the real adapter is invoked again.
+    time.sleep(6.2)
+    selected, schedule = _steady_step(reconcile)
+    assert selected == [cid]
+    assert schedule["summary"]["total_failed"] == 0
+    assert len(_bundle_reads(reads)) > pulled_after_first
+    assert schedule["ran"][0]["run"]["raw_count"] == 0
+    assert schedule["ran"][0]["receipt"]["normalized_count"] == 0
+    final = test_client.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in final["connectors"] if c["connector_id"] == cid)
+    assert item["latest_source_record"] == record
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert final["source_record_count"] == 2
+
+
+def test_collector_empty_then_paused_preserves_source_records_freshness_and_health(client, monkeypatch):
+    import json
+    from services.source_ingestion.tests.test_collector_outcome_truth import CURSOR, SOURCE, setup_path
+
+    http, data_dir, module = client
+    files, _, _, store, _ = setup_path(data_dir, monkeypatch)
+    config = store.get_config("conn-truth")
+    connector = config.connector.to_dict()
+    connector.pop("schema_version")
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a"}
+    response = http.post("/api/source-ingest/connectors", json={"connector": connector, "fetch": config.fetch})
+    assert response.status_code == 201, response.text
+    assert http.put("/api/source-ingest/connectors/conn-truth/schedule",
+                    json={"interval_seconds": 86400, "enabled": True}).status_code == 200
+
+    def tick():
+        response = http.post("/api/source-ingest/run-scheduled", json={"force_connector_ids": ["conn-truth"]})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    first = tick()
+    assert first["ran"][0]["receipt"]["normalized_count"] == 2
+    before = [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()]
+    second = tick()
+    receipt = second["ran"][0]["receipt"]
+    assert receipt["raw_count"] == receipt["normalized_count"] == 0
+    assert receipt["source_timestamp"] is None
+    assert [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()] == before
+    readback = http.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == "conn-truth")
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert item["freshness"]["stale"] is True
+    assert item["source_health"]["row_count_last_run"] == 0
+    assert item["source_health"]["latest_watermark"] == CURSOR
+    latest = item["latest_source_record"]
+
+    files["status.json"] = json.dumps({"sources": {SOURCE: {
+        "status": "paused", "last_run_at": "2026-11-10T02:05:00Z", "paused_reason": "login_required",
+    }}}).encode()
+    failed = tick()
+    assert failed["summary"]["total_failed"] == 1 and failed["summary"]["total_ran"] == 0
+    assert failed["failed"][0]["receipt"]["normalized_count"] == 0
+    assert [r.to_dict() for r in module.runtime.evidence_repository.list_source_records()] == before
+    item = next(c for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]
+                if c["connector_id"] == "conn-truth")
+    assert item["latest_source_record"] == latest
+    assert item["source_health"]["status"] == "failed"
+    assert "login_required" in item["source_health"]["metadata"]["source_error"]
+    assert item["source_health"]["latest_watermark"] == CURSOR
+    assert item["fetch_state"]["collector_outcome"]["observed"]["health_state"] == "degraded"
+
+
+def test_steady_controller_calls_exclude_disabled_collector(steady_stack) -> None:
+    test_client, module, reads = steady_stack
+    cid = "conn-collector-disabled"
+    assert test_client.post("/api/source-ingest/connectors", json=_steady_collector_config(cid)).status_code == 201
+    assert test_client.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 1, "enabled": True}).status_code == 200
+    lifecycle = test_client.put(
+        f"/api/source-ingest/connectors/{cid}/lifecycle",
+        json={"status": "disabled", "reason": "hold", "actor_id": "op", "trace_id": "t-disable"},
+    )
+    assert lifecycle.status_code == 200, lifecycle.text
+    selected, schedule = _steady_step(_steady_reconcile([cid]))
+    assert selected == [] and schedule is None
+    assert _bundle_reads(reads) == []
+
+
+def _full_tick_setup(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests import test_controller_worker as tcw
+
+    http, module, reads = steady_stack
+    cid = "conn-collector-ptt"
+    assert http.post("/api/source-ingest/connectors", json=_steady_collector_config(cid)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 6, "enabled": True}).status_code == 200
+    personas = ({"persona_id": "steady-persona", "required_data_sources": [{
+        "dataset": "collector_social_posts", "market": "TW", "cadence": "daily",
+        "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+    }]},)
+    digest = module.runtime._desired_state_digest(list(personas))
+    config = replace(
+        tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+        state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, max_concurrency=1,
+    )
+    metadata = {**tcw._desired_meta(), "sha256": digest}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+
+    def tick():
+        return cw.run_controller_tick(
+            config=config, state=tcw._state(), store=cw.ControllerStateStore(config.state_path),
+            writer=tcw.RecordingWriter([]),
+        )
+
+    return http, reads, tick
+
+
+def test_full_controller_tick_completes_real_collector_pull_and_suppresses_next_in_cadence(
+    steady_stack, tmp_path, monkeypatch
+) -> None:
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    assert tick()["status"] == "ok"
+    pulled = len(_bundle_reads(reads))
+    assert pulled > 0
+    # Second tick is inside the (reconciled, daily) cadence: still accepted, no adapter read.
+    assert tick()["status"] == "ok"
+    assert len(_bundle_reads(reads)) == pulled
+
+
+@pytest.mark.parametrize("corruption", ["tenant", "future_pit", "bundle_incomplete"])
+def test_full_controller_tick_fails_closed_on_collector_readback_violation(
+    steady_stack, tmp_path, monkeypatch, corruption
+) -> None:
+    from services.source_ingestion import controller_worker as cw
+
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    original = cw.read_actual_state
+
+    def corrupted(**kwargs):
+        actual = original(**kwargs)
+        for connector in actual.get("connectors") or []:
+            record = connector.get("latest_source_record")
+            if not isinstance(record, dict):
+                continue
+            if corruption == "tenant":
+                record["provenance"]["tenant_id"] = "tenant-other"
+            elif corruption == "future_pit":
+                record["provenance"]["available_time"] = "2999-01-01T00:00:00Z"
+            else:
+                record["metadata"]["collector"]["bundle_status"] = "partial"
+        return actual
+
+    monkeypatch.setattr(cw, "read_actual_state", corrupted)
+    with pytest.raises(cw.ControllerTickError, match="terminal source readback failed closed"):
+        tick()
+
+
+def test_full_tick_excludes_definition_fetch_adapter_mismatch(steady_stack, tmp_path, monkeypatch):
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker
+    from services.source_ingestion import provider_adapters as pa
+    http, reads, tick = _full_tick_setup(steady_stack, tmp_path, monkeypatch)
+    token = 'TaiwanOfficialMarketDatasetAdapter.records_from_payload'
+    calls = []
+    def fake_direct_transport(adapter, request, trace_id):
+        calls.append(token)
+        return ()
+    monkeypatch.setitem(pa.ALLOWED_PROVIDER_ADAPTERS, token, replace(pa.ALLOWED_PROVIDER_ADAPTERS[token], handler=fake_direct_transport))
+    cfg = _steady_collector_config('conn-collector-ptt')
+    cfg['fetch'] = {'mode': 'provider_owned_adapter', 'adapter': token,
+                    'adapter_config': {}, 'request': {}, 'max_records': 10,
+                    'allow_empty': True, 'empty_reason': 'review local fake direct transport'}
+    response = http.post('/api/source-ingest/connectors', json=cfg)
+    assert response.status_code == 201, response.text
+    try:
+        result = tick()
+        print('full_tick_status', result['status'])
+    except controller_worker.ControllerTickError as exc:
+        print('full_tick_terminal_error_after_adapter_execution', str(exc))
+    print('full_tick_direct_provider_adapter_calls', calls, 'collector_reads', reads)
+    assert calls == []
+    assert _bundle_reads(reads) == []
+
+
+# --- COLLECTOR-HOSTED-ADMISSION-20261112: desired state -> reconcile -> provision -> select -> schedule -> adapter ---
+
+_ADMISSION_HOST = "collector.admission.test"
+_ADMISSION_HELD = {"collector-library-books"}
+
+
+def _admission_bundle_files(source_ids, *, item_counts=None):
+    """One complete bundle per admitted source with source-specific content; market rows carry trade dates."""
+    import hashlib
+    import json
+
+    from services.source_ingestion.connector_definitions import get_connector_definition
+    from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
+
+    files: dict[str, bytes] = {}
+    entries = []
+    for source_id in source_ids:
+        collector = get_connector_definition(source_id).metadata["collector"]
+        cid, stype = collector["source_id"], collector["source_type"]
+        run_id, date, finished = "run1", "2026-11-10", "2026-11-10T02:05:00Z"
+        base = f"bundles/{cid}/{date}/{run_id}"
+        manifest_items, rows = [], []
+        for n, item_id in enumerate(f"i{n:03d}" for n in range((item_counts or {}).get(source_id, 2))):
+            body = f"<html>{cid} {item_id}</html>".encode()
+            sha = hashlib.sha256(body).hexdigest()
+            manifest_items.append({"item_id": item_id, "url": f"https://example.test/{cid}/{item_id}", "http_status": 200,
+                                   "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
+            row = {"id": item_id, "url": f"https://example.test/{cid}/{item_id}", "fetched_at": "2026-11-10T02:00:00Z",
+                   "text": f"text {cid} {item_id}", "lang": "zh-TW", "title": f"t {item_id}", "metrics": {"likes": 1}}
+            if stype == "market" and collector["dataset"] == "tw_index_daily":
+                # Index rows are keyed by index name (no symbol); the TAIEX history source emits its own row dataset.
+                row.update(index_name=f"index {n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n,
+                           dataset="tw_index_ohlc_daily" if cid.endswith("taiex-history") else "tw_index_daily")
+            elif stype == "market" and collector["dataset"] in {"tw_trading_holidays", "tw_trading_suspension"}:
+                # TW-SUSPENSION-HOLIDAYS-INTAKE-20261115: official schedule / suspension rows carry venue + endpoint.
+                row.update(trade_date=f"2024-11-{12 + n}", dataset=collector["dataset"], venue="TWSE",
+                           api_endpoint="https://example.test/official", published_at="2026-11-10T01:00:00Z")
+                if collector["dataset"] == "tw_trading_holidays":
+                    row.update(is_closed=True, holiday_name=f"holiday {n}")
+                else:
+                    row.update(symbol=f"23{30 + n}", suspended_date=f"2024-11-{12 + n}")
+            elif stype == "market":
+                row.update(symbol=f"23{30 + n}", trade_date=f"2024-11-{12 + n}", close=100.0 + n, dataset=collector["dataset"])
+            else:
+                row["published_at"] = "2026-11-10T01:00:00Z"
+            if stype == "social":
+                row["hashed_author"] = "hmac-abc"
+            rows.append(row)
+            files[f"{base}/raw/{sha}.html"] = body
+        manifest = {
+            "schema_version": "collector_bundle.v1", "source_id": cid, "run_id": run_id, "collector_version": "1.0.0",
+            "started_at": "2026-11-10T02:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
+            "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "items": manifest_items,
+            "status": "complete", "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in manifest_items]),
+        }
+        if collector["attribution_required"]:
+            manifest["attribution"] = "attribution text"
+        files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+        files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+        entries.append({"source_id": cid, "date": date, "run_id": run_id, "finished_at": finished})
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    return files, entries
+
+
+@pytest.fixture()
+def admission_stack(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, tempdir, module = client
+    monkeypatch.setenv("PANTHEON_COLLECTOR_HOST", _ADMISSION_HOST)
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(tempdir / "market"))
+    monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_PATH", raising=False)
+    monkeypatch.delenv("SOURCE_INGEST_DESIRED_STATE_URL", raising=False)
+
+    personas, meta = cw.load_desired_state()  # the real default desired state
+    wanted = [
+        req["connector_candidates"][0]
+        for persona in personas
+        for req in persona["required_data_sources"]
+        if req["connector_candidates"][0].startswith(("collector-", "strategy-seed-"))
+    ]
+    # PTT publishes 60 posts in one bundle, above the 50-record community test volume.
+    files, _entries = _admission_bundle_files(wanted, item_counts={"collector-tw-ptt-stock": 60})
+    reads: list[str] = []
+
+    class RecordingTransport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            reads.append(relative_path)
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    transport = RecordingTransport(files)
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+
+    def local_request(url, *, method="GET", payload=None, bearer_token=None, timeout_seconds=30.0, allow_list=False):
+        path = "/" + url.split("//", 1)[1].split("/", 1)[1]
+        headers = {"Authorization": f"Bearer {module.runtime.controller_token}"} if bearer_token else None
+        response = http.request(method, path, json=payload, headers=headers)
+        assert response.status_code < 400, (path, response.text)
+        return response.json()
+
+    monkeypatch.setattr(cw, "_request_json", local_request)
+    monkeypatch.setattr(
+        cw, "load_controller_token", lambda **kwargs: "controller-test-token-that-is-at-least-32-characters"
+    )
+
+    def tick(mode):
+        config = replace(
+            tcw._config(tmp_path, truth_level="scheduled_tick", mode=mode),
+            state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, max_concurrency=1,
+        )
+        return cw.run_controller_tick(
+            config=config, state=tcw._state(), store=cw.ControllerStateStore(config.state_path),
+            writer=tcw.RecordingWriter([]),
+        )
+
+    return http, module, reads, wanted, files, transport, tick
+
+
+def test_desired_state_declares_one_live_pull_per_admitted_collector_source_and_holds_the_rest() -> None:
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connector_definitions import TW_CHIP_REFRESH_PROFILES
+    from services.source_ingestion.persona_source_reconciler import deployed_collector_definitions
+
+    personas, _ = cw.load_desired_state()
+    holder = next(p for p in personas if p["persona_id"] == cw.DEPLOYMENT_REQUIREMENT_HOLDER_ID)
+    requirements = holder["required_data_sources"]
+    assert all(r["source_class"] == "live_pull" and len(r["connector_candidates"]) == 1 for r in requirements)
+    candidates = [r["connector_candidates"][0] for r in requirements]
+    assert len(candidates) == len(set(candidates))
+    builtin_ids = {"tw-twse-tpex-official-market", *TW_CHIP_REFRESH_PROFILES}
+    collector_reqs = [r for r in requirements if r["connector_candidates"][0] not in builtin_ids]
+    admitted = {r["connector_candidates"][0] for r in collector_reqs}
+    deployed = {d.definition_id for d in deployed_collector_definitions()}
+    assert admitted == deployed - _ADMISSION_HELD
+    assert _ADMISSION_HELD.isdisjoint(candidates)
+    # Builtin official chip profiles are independent of the external Collector bundle.
+    chip_reqs = {r["connector_candidates"][0]: r for r in requirements
+                 if r["connector_candidates"][0] in TW_CHIP_REFRESH_PROFILES}
+    assert set(chip_reqs) == set(TW_CHIP_REFRESH_PROFILES)
+    for cid, profile in TW_CHIP_REFRESH_PROFILES.items():
+        assert chip_reqs[cid] == {
+            "cadence": "daily", "connector_candidates": [cid], "dataset": profile["dataset"],
+            "market": "TW", "source_class": "live_pull",
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok", "no_live_capital"],
+        }
+    # The existing official requirement is unchanged.
+    assert [r for r in requirements if r["connector_candidates"] == ["tw-twse-tpex-official-market"]] == [
+        {
+            "cadence": "daily", "connector_candidates": ["tw-twse-tpex-official-market"], "dataset": "tw_price_daily",
+            "market": "TW", "source_class": "live_pull",
+            "policy_gates": ["require_connector_approved", "require_schedule_active", "require_source_health_ok", "no_live_capital"],
+        }
+    ]
+
+
+def test_full_collector_steady_tick_from_default_desired_state_pulls_every_admitted_source(admission_stack) -> None:
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connector_definitions import get_connector_definition
+
+    http, module, reads, wanted, files, transport, tick = admission_stack
+
+    # reconcile_only: provisions and verifies, but nothing is pulled.
+    only = tick(cw.RECONCILE_ONLY_MODE)
+    assert only["provider_egress_attempted"] is False
+    assert _bundle_reads(reads) == []
+    provisioned = {c["connector_id"] for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]}
+    assert set(wanted) <= provisioned
+    assert _ADMISSION_HELD.isdisjoint(provisioned)
+
+    # collector_steady_pull: every admitted source is selected and pulled through the real scheduler.
+    # The scheduler claims max_concurrency (1 here) connectors per tick; the controller spreads the
+    # admitted sources over ticks instead of over-selecting, least recently successful first.
+    ticks = 0
+    while True:
+        result = tick(cw.COLLECTOR_STEADY_PULL_MODE)
+        assert result["status"] == "ok"
+        ticks += 1
+        if not result["provider_egress_attempted"]:
+            break
+        assert result["schedule_summary"]["total_ran"] == 1
+        assert ticks <= len(wanted), "every admitted source is pulled once, then nothing is due"
+    assert ticks == len(wanted) + 1
+    assert reads, "the Collector adapter must read bundles"
+    readback = http.get("/api/source-ingest/controller/readback").json()
+    by_id = {c["connector_id"]: c for c in readback["connectors"]}
+    for source_id in wanted:
+        item = by_id[source_id]
+        record = item["latest_source_record"]
+        collector = get_connector_definition(source_id).metadata["collector"]
+        assert record["source_id"].startswith(f"collector:{collector['source_id']}:"), source_id
+        assert item["connector"]["metadata"]["definition_id"] == source_id
+        assert item["schedule"]["interval_seconds"] == collector["cadence_seconds"]
+        fetch = module.runtime.connector_store.get_config(source_id).fetch
+        assert fetch["mode"] == "provider_owned_adapter" and fetch["adapter"] == "CollectorBundleAdapter.records_from_bundle"
+        assert fetch["adapter_config"]["host"] == _ADMISSION_HOST
+        assert fetch["adapter_config"]["source_id"] == collector["source_id"]
+    # Five social platforms share one dataset but are five connectors.
+    social = [s for s in wanted if get_connector_definition(s).metadata["collector"]["dataset"] == "collector_social_posts"]
+    assert len(social) == 5 and len({by_id[s]["connector_id"] for s in social}) == 5
+    # Community sources run at test volume.
+    for source_id in social:
+        assert module.runtime.connector_store.get_config(source_id).fetch["max_records"] == 50
+
+    # Resume: the first pull stopped at the 50-record test volume and persisted its cursor; a fresh
+    # adapter built from the stored fetch config continues with the remaining 10, not the head again.
+    from services.source_ingestion.provider_adapters import execute_provider_owned_adapter
+
+    ptt = by_id["collector-tw-ptt-stock"]
+    assert ptt["latest_source_record"]["source_id"].startswith("collector:collector-tw-ptt-stock:")
+    stored = module.runtime.connector_store.get_config("collector-tw-ptt-stock")
+    resumed = execute_provider_owned_adapter(connector=stored.connector, fetch=stored.fetch, trace_id="resume")
+    assert len(resumed) == 10
+    assert {r.metadata["collector"]["run_id"] for r in resumed} == {"run1"}
+
+
+def test_without_collector_host_nothing_is_provisioned_and_reason_is_in_readback(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services.source_ingestion import controller_worker as cw
+
+    http, tempdir, module = client
+    monkeypatch.delenv("PANTHEON_COLLECTOR_HOST", raising=False)
+    personas, meta = cw.load_desired_state()
+    response = http.post(
+        "/api/source-ingest/persona-source-provisioning/reconcile",
+        json={
+            "personas": list(personas), "authoritative_snapshot": True, "dry_run": False,
+            "desired_state_sha256": meta["sha256"], "source_authority": meta["authority"],
+        },
+        headers={"Authorization": f"Bearer {module.runtime.controller_token}"},
+    )
+    assert response.status_code < 400, response.text
+    actions = [a for r in response.json()["results"] for a in r["actions"]]
+    collector_actions = [a for a in actions if str(a["connector_id"] or "").startswith(("collector-", "strategy-seed-"))]
+    assert collector_actions and all(
+        a["status"] == "skipped" and a["connector_action"] == "collector_host_not_configured" for a in collector_actions
+    )
+    assert response.json()["summary"]["unsupported"] == 0  # does not fail the controller tick closed
+    assert all("PANTHEON_COLLECTOR_HOST" in a["details"]["reason"] for a in collector_actions)
+    ids = {c["connector_id"] for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]}
+    assert not any(i.startswith("collector-") or i.startswith("strategy-seed-") for i in ids)
+
+
+
+
+def test_one_failing_collector_does_not_starve_other_admitted_sources(admission_stack, monkeypatch):
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import SourceEvidenceError
+
+    http, module, reads, wanted, files, transport, tick = admission_stack
+    tick(cw.RECONCILE_ONLY_MODE)
+    original_read = transport.read
+
+    def fail_first_source(relative_path, *, max_bytes):
+        if '/collector-gdelt/' in relative_path:
+            raise SourceEvidenceError('review injected unavailable GDELT bundle')
+        return original_read(relative_path, max_bytes=max_bytes)
+
+    monkeypatch.setattr(transport, 'read', fail_first_source)
+    batches = []
+    errors = []
+    original_limit = cw.limit_collector_pull_batch
+
+    def record_batch(actual, selected, *, limit):
+        batch = original_limit(actual, selected, limit=limit)
+        batches.append(batch)
+        return batch
+
+    monkeypatch.setattr(cw, 'limit_collector_pull_batch', record_batch)
+    for _ in range(4):
+        try:
+            tick(cw.COLLECTOR_STEADY_PULL_MODE)
+        except cw.ControllerTickError as exc:
+            errors.append(str(exc))
+    readback = http.get('/api/source-ingest/controller/readback').json()
+    succeeded = [c['connector_id'] for c in readback['connectors']
+                 if c['connector_id'] in wanted and c.get('latest_source_record')]
+    assert succeeded, f'No other admitted source ran after four ticks; batches={batches}; errors={errors}'
+
+
+# --- COLLECTOR-CLOSE-CONTINUATION-20261113: configured handler -> controller selection -> scheduler -> snapshot store ---
+
+_CLOSE_SOURCE = "collector-tw-twse-price-history"
+_CLOSE_DATE = "2026-11-13"
+_CLOSE_ROWS = 600
+_CLOSE_HELD = {531: "2317", 538: "2330"}  # captured positions beyond the first ~55-row verified prefix
+_CLOSE_READ_SECONDS = 0.27  # finite per-read latency: the 15s whole-request budget verifies ~55 rows
+
+
+def _close_files(*, tamper_code: str | None = None, wrong_date_code: str | None = None,
+                 n_rows: int = _CLOSE_ROWS, source: str = _CLOSE_SOURCE, exchange: str = "TWSE",
+                 session_date: str = _CLOSE_DATE, held_positions: dict[int, str] | None = None):
+    import hashlib
+    import json
+
+    from services.source_ingestion.connectors.collector_bundle import compute_bundle_sha256
+
+    run_id, finished = f"close-{session_date}", f"{session_date}T07:30:00Z"
+    base = f"bundles/{source}/{session_date}/{run_id}"
+    endpoint = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if exchange == "TWSE"
+                else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
+    items, rows, files = [], [], {}
+    for n in range(n_rows):
+        held = _CLOSE_HELD if held_positions is None else held_positions
+        code = held.get(n, f"{(1000 if n_rows == _CLOSE_ROWS else 10000) + n}")
+        item_id = f"{exchange.lower()}-price-history-{session_date}-{code}"
+        body = f"<r>{session_date}-{code}</r>".encode()
+        sha = hashlib.sha256(body).hexdigest()
+        items.append({"item_id": item_id, "url": endpoint, "http_status": 200,
+                      "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
+        rows.append({
+            "id": item_id, "url": endpoint, "fetched_at": f"{session_date}T07:00:00Z",
+            "symbol": code, "security_name": f"name {code}", "exchange": exchange, "dataset": "tw_price_daily",
+            "trade_date": "2026-11-12" if code == wrong_date_code else session_date,
+            "open": 940.0, "high": 955.0, "low": 938.0, "close": 950.0 + n, "volume_shares": 1000, "transactions": 10,
+        })
+        files[f"{base}/raw/{sha}.html"] = b"tampered" if code == tamper_code else body
+    manifest = {
+        "schema_version": "collector_bundle.v1", "source_id": source, "run_id": run_id, "collector_version": "1.0.0",
+        "started_at": f"{session_date}T07:00:00Z", "finished_at": finished, "fetch_policy_hash": "fph",
+        "robots_decision": "allowed", "terms_ref": "https://example.test/terms", "attribution": "TWSE", "items": items,
+        "status": "complete", "bundle_sha256": compute_bundle_sha256([m["content_sha256"] for m in items]),
+    }
+    files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+    files[f"{base}/items.jsonl"] = "\n".join(json.dumps(r) for r in rows).encode()
+    files["bundles/index.json"] = json.dumps({"bundles": [
+        {"source_id": source, "date": session_date, "run_id": run_id, "finished_at": finished}]}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": finished}}}).encode()
+    return files
+
+
+def _close_config(connector_id: str, source: str = _CLOSE_SOURCE) -> dict:
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    adapter = CollectorBundleAdapter(
+        connector_id=connector_id, source_id=source, source_type="market", host=_STEADY_HOST,
+        attribution_required=True, dataset="tw_price_daily", max_records=1000, cadence_seconds=600,
+    )
+    full = adapter.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {key: full[key] for key in allowed if key in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a", "definition_id": source}
+    fetch = dict(adapter.fetch_config())
+    fetch["adapter_config"] = {
+        **fetch["adapter_config"], "source_type": "market", "host": _STEADY_HOST, "dataset": "tw_price_daily",
+        "attribution_required": True, "cadence_seconds": 600,
+    }
+    return {"connector": connector, "fetch": fetch}
+
+
+def _close_stack(steady_stack, monkeypatch, **file_kwargs):
+    import types
+
+    from services.source_ingestion.connectors import collector_bundle
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _reads = steady_stack
+    monkeypatch.setenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", "2330.TWSE,2317.TWSE")
+    clock = [0.0]
+    reads: list[str] = []
+
+    class LatencyTransport(FakeTransport):
+        def read(self, relative_path: str, *, max_bytes: int) -> bytes:
+            clock[0] += _CLOSE_READ_SECONDS  # every Collector read costs finite time against the request budget
+            reads.append(relative_path)
+            return super().read(relative_path, max_bytes=max_bytes)
+
+    transport = LatencyTransport(_close_files(**file_kwargs))
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(collector_bundle, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    cid = "conn-close-twse"
+    assert http.post("/api/source-ingest/connectors", json=_close_config(cid)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{cid}/schedule", json={"interval_seconds": 600, "enabled": True}).status_code == 200
+    return http, module, cid, reads, _steady_reconcile([cid])
+
+
+def _snapshot_date(module, symbol: str):
+    module.runtime.latest_market_snapshot_store.reload()
+    snap = module.runtime.latest_market_snapshot_store.get(symbol)
+    return snap.points[-1].event_time[:10] if snap and snap.points else None
+
+
+def test_held_symbols_reach_snapshot_store_on_first_tick_and_session_completes_across_ticks(steady_stack, monkeypatch) -> None:
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch)
+    ticks, snapshot_after_first, ack_ids = 0, None, []
+    while True:
+        selected, schedule = _steady_step(reconcile)
+        if not selected:
+            break
+        ticks += 1
+        assert selected == [cid] and schedule["summary"]["total_failed"] == 0
+        run = schedule["ran"][0]
+        assert run["run"]["status"] == "completed"
+        # Bounded by the finite-latency whole-request budget: never the whole 600-row session in one pull.
+        if ticks == 1:
+            assert 0 < run["receipt"]["normalized_count"] < 100
+            snapshot_after_first = {s: _snapshot_date(module, s) for s in ("2330.TW", "2317.TW", "1000.TW")}
+        ack_ids.append(run["run"]["ingest_run_id"])
+        assert ticks <= 30, "newest session must finish inside the 30-minute window at one tick per minute"
+    # Held symbols beyond the first prefix were published on the very first tick (old code: ~10 pulls later).
+    assert snapshot_after_first["2330.TW"] == _CLOSE_DATE and snapshot_after_first["2317.TW"] == _CLOSE_DATE
+    assert ticks > 1, "continuation happened across ticks, not within one request"
+    assert len(set(ack_ids)) == len(ack_ids), "no duplicate acknowledgement for one run"
+    # Whole session delivered; cadence is restored afterwards (nothing selected, no new reads).
+    assert _snapshot_date(module, "1599.TW") == _CLOSE_DATE
+    seen = len(_bundle_reads(reads))
+    assert _steady_step(reconcile) == ([], None) and len(_bundle_reads(reads)) == seen
+    readback = http.get("/api/source-ingest/controller/readback").json()
+    item = next(c for c in readback["connectors"] if c["connector_id"] == cid)
+    assert "continuation_pending" not in item["fetch_state"]["collector_outcome"]["observed"]
+
+
+def test_interrupted_close_pull_acknowledges_nothing_and_retry_resumes(steady_stack, monkeypatch) -> None:
+    from services.source_ingestion.connectors import SourceEvidenceError
+
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch)
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+
+    inner = CollectorBundleAdapter._transport
+    state = {"fail": True}
+
+    def flaky(self):
+        transport = inner(self)
+
+        class Flaky(type(transport)):
+            def read(self_inner, relative_path, *, max_bytes):
+                if state["fail"] and "/raw/" in relative_path:
+                    raise SourceEvidenceError("injected collector outage")
+                return transport.read(relative_path, max_bytes=max_bytes)
+
+        return Flaky(transport.files)
+
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", flaky)
+    monkeypatch.setattr(module.runtime, "FRONTIER_BACKOFF_SECONDS", 0)  # retry immediately instead of sleeping
+    selected, schedule = _steady_step(reconcile)
+    assert _snapshot_date(module, "2330.TW") is None  # nothing published, nothing acknowledged
+    assert not (schedule and schedule["summary"]["total_failed"] == 0)
+    state["fail"] = False
+    # The retry replays from the unacknowledged start with held symbols first and publishes them.
+    from services.source_ingestion import controller_worker as cw
+
+    retry = cw.run_schedule_tick(
+        api_url="http://source-ingest.test:8097", max_concurrency=1, force_connector_ids=[cid], exclusive_connector_ids=[cid],
+        controller_token="controller-test-token-that-is-at-least-32-characters",
+    )
+    assert retry["summary"]["total_failed"] == 0 and [r["connector_id"] for r in retry["ran"]] == [cid], retry
+    assert _snapshot_date(module, "2330.TW") == _CLOSE_DATE
+    assert _snapshot_date(module, "2317.TW") == _CLOSE_DATE
+
+
+@pytest.mark.parametrize("fault", ["hash", "date"])
+def test_held_close_with_invalid_raw_or_wrong_date_never_publishes_a_snapshot(steady_stack, monkeypatch, fault) -> None:
+    kwargs = {"tamper_code": "2330"} if fault == "hash" else {"wrong_date_code": "2330"}
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch, **kwargs)
+    try:
+        _steady_step(reconcile)
+    except Exception:  # truthful failure is acceptable; a published snapshot is not
+        pass
+    assert _snapshot_date(module, "2330.TW") != _CLOSE_DATE
+
+
+def test_completed_close_keeps_native_boundary_ack_and_replays_as_empty(steady_stack, monkeypatch):
+    from services.source_ingestion import controller_worker as cw
+
+    http, module, cid, reads, reconcile = _close_stack(steady_stack, monkeypatch, n_rows=8)
+    selected, first = _steady_step(reconcile)
+    assert selected == [cid] and first["summary"]["total_failed"] == 0
+    before = [r.source_id for r in module.runtime.evidence_repository.list_source_records()]
+    assert len(before) == 1
+    records = module.runtime.evidence_repository.list_source_records()
+    assert [r.metadata["collector_market_bundle"]["row_count"] for r in records] == [8]
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 8
+    # Simulate the next due tick without sleeping ten minutes. A completed native
+    # persistence boundary is required; cached raw bytes alone are never an ack.
+    replay = cw.run_schedule_tick(
+        api_url="http://source-ingest.test:8097", max_concurrency=1, force_connector_ids=[cid],
+        exclusive_connector_ids=[cid], controller_token=module.runtime.controller_token,
+    )
+    assert replay["summary"]["total_failed"] == 0
+    assert replay["ran"][0]["receipt"]["normalized_count"] == 0
+    item = next(c for c in http.get("/api/source-ingest/controller/readback").json()["connectors"]
+                if c["connector_id"] == cid)
+    assert item["fetch_state"]["collector_outcome"]["no_new_data"] is True
+    assert [r.source_id for r in module.runtime.evidence_repository.list_source_records()] == before
+
+
+def test_native_close_rollover_keeps_new_item_evidence_and_held_snapshots(steady_stack, monkeypatch, tmp_path):
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _ = steady_stack
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    transport = FakeTransport(_close_files(n_rows=8, session_date="2026-11-12", held_positions={0: "2317", 1: "2330"}))
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    personas = ({"persona_id": "rollover-persona", "required_data_sources": [{
+        "dataset": "tw_price_daily", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+        "connector_candidates": [_CLOSE_SOURCE], "policy_gates": [],
+    }]},)
+    metadata = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    config = replace(tcw._config(tmp_path, mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_concurrency=1)
+    cw.ControllerStateStore(config.state_path).save(tcw._state())
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+    cw.reconcile_desired_state(api_url=config.api_url, personas=personas, desired_state_sha256=metadata["sha256"],
+                               controller_token=config.controller_token)
+    previous = cw.run_schedule_tick(api_url=config.api_url, max_concurrency=1,
+                                    force_connector_ids=[_CLOSE_SOURCE], exclusive_connector_ids=[_CLOSE_SOURCE],
+                                    controller_token=config.controller_token)
+    assert previous["summary"]["total_failed"] == 0, __import__("json").dumps(previous["failed"], indent=2)
+    assert _snapshot_date(module, "2330.TWSE") == "2026-11-12"
+    # Simulate one source interval passing in this local fixture. Keep its real
+    # persistence receipt and run identity, changing only the fixture clock age.
+    receipt = module.runtime.store.get_receipt(previous["ran"][0]["run"]["ingest_run_id"])
+    module.runtime.store.upsert_receipt(replace(
+        receipt, finished_at=(datetime.now(timezone.utc) - timedelta(seconds=601)).isoformat(),
+    ))
+    __import__("time").sleep(1.05)  # distinct real run timestamps for terminal readback
+    transport.files = _close_files(n_rows=8, held_positions={0: "2317", 1: "2330"})
+    result = cw.run_controller_tick(config=config, state=tcw._state(),
+                                    store=cw.ControllerStateStore(config.state_path), writer=tcw.RecordingWriter([]))
+    assert result["status"] == "ok" and result["provider_egress_attempted"] is True
+    assert _snapshot_date(module, "2330.TWSE") == _CLOSE_DATE
+    assert _snapshot_date(module, "2317.TWSE") == _CLOSE_DATE
+    # Same original exchange URL across sessions must not freeze source evidence on Nov 12.
+    records = list(module.runtime.evidence_repository.list_source_records())
+    assert len(records) == 2
+    assert [r.metadata["collector_market_bundle"]["row_count"] for r in records] == [8, 8]
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 16
+    assert {day: sum(r["metadata"]["event_time"][:10] == day for r in rows)
+            for day in ("2026-11-12", _CLOSE_DATE)} == {"2026-11-12": 8, _CLOSE_DATE: 8}
+    assert {r.metadata["collector_close"]["trade_date"] for r in records} == {"2026-11-12", _CLOSE_DATE}
+
+
+@pytest.mark.parametrize("schedule", [
+    "overlapped",
+    "budget_spent_by_last_read",
+    # Forced non-overlapping reader model: ~70s of wall time, so it only runs on request.
+    pytest.param("sequential", marks=pytest.mark.skipif(
+        os.environ.get("PANTHEON_CLOSE_TEST_SEQUENTIAL") != "1", reason="set PANTHEON_CLOSE_TEST_SEQUENTIAL=1")),
+])
+def test_full_size_close_through_controller_main_with_persistence(
+    steady_stack, monkeypatch, tmp_path, capsys, schedule,
+) -> None:
+    """Captured cardinalities; finite 270ms reads, actual loop sleeps and real disk stores.
+
+    Network time is virtual and computed from the call structure, never from how real
+    reader threads happen to overlap: every raw read charges a fixed amount (a quarter of
+    270ms when the readers run LATEST_CLOSE_RAW_READ_CONCURRENCY wide, the full 270ms when
+    they run one after another). A barrier on the first group forces genuine thread overlap
+    for the peak-concurrency assertion; no real waiting is involved afterwards.
+    The ``budget_spent_by_last_read`` schedule forces the boundary case: the read that
+    delivers the last row of a source also spends the whole request budget, so the ordered
+    (history) sweep behind it cannot run on that same pull.
+    All real API/controller/normalization/disk time is added conservatively, as is
+    50ms per local API round trip and a worst-phase 600s source-cadence delay.
+    The real registered definitions are provisioned by reconciliation. No hosted claim.
+    """
+    import json
+    import threading
+    import time
+    import types
+    from dataclasses import replace
+
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import FakeTransport
+
+    http, module, _ = steady_stack
+    sessions = [(1377, "TWSE"), (6090, "TPEX")]
+    files, entries, statuses, requirements, paths = {}, [], {}, [], {}
+    for n_rows, exchange in sessions:
+        source = f"collector-tw-{exchange.lower()}-price-history"
+        cid = source
+        bundle_files = _close_files(n_rows=n_rows, source=source, exchange=exchange)
+        entries.extend(json.loads(bundle_files["bundles/index.json"])["bundles"])
+        statuses.update(json.loads(bundle_files["status.json"])["sources"])
+        files.update(bundle_files)
+        requirements.append({
+            "dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
+            "source_class": "live_pull", "connector_candidates": [cid], "policy_gates": [],
+        })
+        paths[cid] = Path(os.environ["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"]) / "state" / cid / "latest_priority.json"
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": statuses}).encode()
+    clock, reads, peak, active = [600.0], [], [0], [0]
+    lock = threading.Lock()
+    width = cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
+    read_cost = _CLOSE_READ_SECONDS if schedule == "sequential" else _CLOSE_READ_SECONDS / width
+    raw_total = {f"collector-tw-{x.lower()}-price-history": n for n, x in sessions}
+    raw_seen = {cid: set() for cid in raw_total}
+    overlap, raw_ordinal = threading.Barrier(width), [0]
+    # Persisted run/schedule timestamps (second resolution) come from an injected stamp clock that
+    # advances exactly one second per controller sleep, never from wall time. Consecutive ticks
+    # therefore always get distinct, ordered timestamps without any real wait, and staleness is
+    # measured in ticks (as on a healthy runner) rather than in the charged virtual read time.
+    from datetime import datetime as real_datetime
+    from services.source_ingestion import pipeline as pipeline_module
+    from services.source_ingestion import runtime as runtime_module
+    from services.source_ingestion import scheduler as scheduler_module
+    stamp = [0]
+    epoch = real_datetime.now(timezone.utc).replace(microsecond=0)  # fixed anchor, read once
+
+    class ModelDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            moment = epoch + timedelta(seconds=stamp[0])
+            return moment.astimezone(tz) if tz is not None else moment.replace(tzinfo=None)
+
+    for owner in (pipeline_module, scheduler_module, runtime_module, cw):
+        monkeypatch.setattr(owner, "datetime", ModelDatetime)
+
+    class LatencyTransport(FakeTransport):
+        def read(self, relative_path, *, max_bytes):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+                reads.append(relative_path)
+                if "/raw/" in relative_path:
+                    raw_ordinal[0] += 1
+                    forced = raw_ordinal[0] <= width
+                else:
+                    forced = False
+            try:
+                if forced:
+                    overlap.wait(timeout=60)  # forces the first reader group to be in flight together
+                data = super().read(relative_path, max_bytes=max_bytes)
+                with lock:
+                    clock[0] += read_cost if "/raw/" in relative_path else 0.0
+                    if schedule == "budget_spent_by_last_read" and "/raw/" in relative_path:
+                        for cid, seen in raw_seen.items():
+                            if f"/{cid}/" in relative_path and relative_path not in seen:
+                                seen.add(relative_path)
+                                if len(seen) == raw_total[cid]:  # the read that completes this source's delivery
+                                    clock[0] += cb.COLLECTOR_REQUEST_READ_BUDGET_SECONDS
+                return data
+            finally:
+                with lock:
+                    active[0] -= 1
+
+    transport = LatencyTransport(files)
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    # Whole-session delivery must work without optional priority/holdings provisioning.
+    monkeypatch.delenv("SOURCE_INGEST_ACTIVE_PAPER_SYMBOLS", raising=False)
+    personas = ({"persona_id": "close-persona", "required_data_sources": requirements},)
+    metadata = {**tcw._desired_meta(), "requirement_count": 2,
+                "sha256": module.runtime._desired_state_digest(list(personas))}
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, interval_seconds=60,
+                     max_concurrency=1, timeout_seconds=30)
+    monkeypatch.setattr(cw, "config_from_env", lambda: config)
+    monkeypatch.setattr(cw, "_new_state", tcw._state)
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kwargs: (personas, metadata))
+    monkeypatch.setattr(cw, "build_loop_writer", lambda **kwargs: tcw.RecordingWriter([]))
+    request = cw._request_json
+
+    def timed_request(*args, **kwargs):
+        clock[0] += 0.05
+        return request(*args, **kwargs)
+
+    monkeypatch.setattr(cw, "_request_json", timed_request)
+    sleeps, progress, completed_at, receipts = [], {cid: [] for cid in paths}, {}, []
+    tick_request = cw._request_json
+    schedule_elapsed, finish_ticks = [], []
+
+    def record_receipts(*args, **kwargs):
+        model_started = clock[0]
+        response = tick_request(*args, **kwargs)
+        if args[0].endswith("/run-scheduled"):
+            receipts.extend(item["receipt"] for item in response["ran"])
+            schedule_elapsed.append(clock[0] - model_started)
+        return response
+
+    monkeypatch.setattr(cw, "_request_json", record_receipts)
+
+    class SessionFinished(Exception):
+        pass
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+        stamp[0] += 1  # persisted run timestamps advance between loop ticks, deterministically
+        assert len(sleeps) < 150, "bounded controller regression"
+        for cid, path in paths.items():
+            if not path.is_file():
+                continue  # the other source may have been selected on this tick
+            state = json.loads(path.read_text())
+            if not progress[cid] or state["delivered"] != progress[cid][-1]:
+                progress[cid].append(state["delivered"])
+            if state["done"]:
+                completed_at.setdefault(cid, clock[0])
+        if len(completed_at) == len(paths):
+            # Every row in these newest-only bundles is acknowledged. A pull whose request budget is
+            # already spent when its last row lands cannot run the ordered (history) sweep behind it
+            # (collector_bundle._pull_bounded), so that source reports continuation_pending once more
+            # and is re-pulled on a short tick. That is at most one extra short tick per source, it
+            # delivers no row, and the tick after the last of them restores the cadence.
+            finish_ticks.append((seconds, len(receipts)))
+            assert seconds in (cw.CONTINUATION_PAUSE_SECONDS, config.interval_seconds), seconds
+            if seconds == config.interval_seconds:
+                raise SessionFinished
+            assert len(finish_ticks) <= len(paths), finish_ticks
+            return
+        assert seconds == cw.CONTINUATION_PAUSE_SECONDS, capsys.readouterr().out[-3000:]
+
+    monkeypatch.setattr(cw, "time", types.SimpleNamespace(sleep=sleep))
+    with pytest.raises(SessionFinished):
+        cw.main()  # genuine main -> run_controller_tick -> handler -> scheduler -> pipeline
+    logs = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    assert all(log.get("status") == "ok" for log in logs if "tick" in log), logs[-2:]
+    for n_rows, exchange in sessions:
+        counts = progress[f"collector-tw-{exchange.lower()}-price-history"]
+        assert counts[-1] == n_rows and all(a < b for a, b in zip(counts, counts[1:]))
+        assert len(counts) > 1
+    assert not cb._DEFER_ACK.get()
+    assert finish_ticks[-1][0] == config.interval_seconds
+    extra = finish_ticks[:-1]  # short ticks taken after every row was already acknowledged
+    assert all(seconds == cw.CONTINUATION_PAUSE_SECONDS for seconds, _ in extra)
+    # Those follow-up pulls only evaluate the ordered sweep: no row, no duplicate evidence.
+    assert all(receipt["normalized_count"] == 0 for receipt in receipts[finish_ticks[0][1]:])
+    if schedule == "budget_spent_by_last_read":
+        assert len(extra) == len(paths), finish_ticks  # forced boundary: every source needs its follow-up tick
+    ack_ids = [receipt["ingest_run_id"] for receipt in receipts]
+    assert len(ack_ids) == len(sleeps) == len(set(ack_ids))
+    assert all(receipt["status"] == "completed" for receipt in receipts)
+    assert peak[0] == cb.LATEST_CLOSE_RAW_READ_CONCURRENCY
+    records = list(module.runtime.evidence_repository.list_source_records())
+    assert len(records) == len({r.source_id for r in records}) == 2
+    assert {r.connector_id: r.metadata["collector_market_bundle"]["row_count"] for r in records} == {
+        "collector-tw-twse-price-history": 1377, "collector-tw-tpex-price-history": 6090}
+    rows = [json.loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 7467
+    assert {cid: sum(r["connector_id"] == cid for r in rows) for cid in paths} == {
+        "collector-tw-twse-price-history": 1377, "collector-tw-tpex-price-history": 6090}
+    for record in records:
+        assert record.tenant_id == "tenant-test"  # native controller tenant is retained
+        expected_url = ("https://www.twse.com.tw/exchangeReport/MI_INDEX" if "twse" in record.connector_id
+                        else "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes")
+        assert record.content_ref == expected_url
+        assert record.metadata["collector_close"]["official"] is False
+        assert record.metadata["collector_close"]["trade_date"] == _CLOSE_DATE
+        assert record.metadata["source_dedupe_key"] == f"collector-close:{record.source_id}"
+    for n_rows, exchange in sessions:
+        for code in ("2317", "2330", "10000", str(10000 + n_rows - 1)):
+            assert _snapshot_date(module, f"{code}.{exchange}") == _CLOSE_DATE
+    # Freshly reloaded store verifies disk persistence rather than only an in-memory view.
+    from services.source_ingestion.requirement_state import LatestMarketSnapshotStore
+    snapshots = LatestMarketSnapshotStore(module.runtime.latest_market_snapshot_store.path)
+    for _, exchange in sessions:
+        assert snapshots.get(f"2330.{exchange}").points[-1].event_time[:10] == _CLOSE_DATE
+    actual = cw.read_actual_state_with_fetch_bindings(api_url=config.api_url)
+    for item in actual["connectors"]:
+        if item["connector_id"] in paths:
+            assert item["schedule"]["interval_seconds"] == 600
+            fetch = module.runtime.connector_store.get_config(item["connector_id"]).fetch
+            assert fetch["max_records"] == 1000
+    pending = cw.select_collector_pull_connectors(actual, _steady_reconcile(list(paths)))
+    assert pending == []  # acknowledged newest-only bundles have no remaining history
+    assert active[0] == 0
+    assert max(schedule_elapsed) < config.timeout_seconds
+    elapsed = clock[0]
+    print({"sessions": sessions, "ticks": len(sleeps), "reads": len(reads),
+           "peak_inflight": peak[0], "completed_at": completed_at, "elapsed_seconds": round(elapsed, 2),
+           "max_schedule_request_seconds": max(schedule_elapsed)})
+    if schedule != "sequential":  # a reader that never overlaps is exactly what the 30-minute deadline rules out
+        assert elapsed < 1800, "full newest session must persist within the original 30-minute deadline"
+    else:
+        assert elapsed > 1800, "the sequential model must be visibly slower than the overlapped one"
+
+
+# COLLECTOR-HOSTED-INTAKE-THROUGHPUT-20261113 ------------------------------------
+def _intake_config(source):
+    from services.source_ingestion.persona_source_reconciler import CollectorDefinitionProvider
+    provider = CollectorDefinitionProvider(source)
+    full = provider.connector().to_dict()
+    allowed = ("connector_id", "source_type", "provider", "license_scope", "auth_type", "supported_modes", "auth_policy",
+               "rate_limit_policy", "license_policy", "source_metadata", "metadata")
+    connector = {k: full[k] for k in allowed if k in full}
+    connector["metadata"] = {**connector["metadata"], "tenant_id": "tenant-a"}
+    return {"connector": connector, "fetch": provider.fetch_config()}
+
+
+def _intake_files(monkeypatch, spec, days, *, count=None):
+    import json
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import _intake_bundle, FakeTransport
+    source, size, dataset, exchange, cap, cadence = spec
+    files, entries = {}, []
+    for day in days:
+        f, entry = _intake_bundle(source, size if count is None else count, dataset, exchange, day)
+        files.update(f); entries.append(entry)
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": {source: {"status": "ok", "last_run_at": entries[-1]["finished_at"],
+                                        "cadence_seconds": 86400, "offered": True, "offered_reason": None}}}).encode()
+    transport = FakeTransport(files)
+    monkeypatch.setattr(CollectorBundleAdapter, "_transport", lambda self: transport)
+    return files
+
+
+def test_real_controller_drains_1349_t86_rows_before_daily_cadence(steady_stack, monkeypatch, tmp_path):
+    import time
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[2]; source = spec[0]
+    _intake_files(monkeypatch, spec, ["2024-11-12"])
+    payload = _intake_config(source)
+    assert payload["fetch"]["max_records"] == 500
+    # Real reconciliation provisions the source and its deployed daily schedule.
+    personas = ({"persona_id": "intake-persona", "required_data_sources": [{
+        "dataset": "tw_institutional_flow", "market": "TW", "cadence": "daily", "source_class": "live_pull",
+        "connector_candidates": [source], "policy_gates": []}]},)
+    meta = {**tcw._desired_meta(), "sha256": module.runtime._desired_state_digest(list(personas))}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kw: (personas, meta))
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, timeout_seconds=30)
+    state = tcw._state(); store = cw.ControllerStateStore(config.state_path)
+    counts, durations = [], []
+    for n in range(3):
+        start = time.monotonic()
+        result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
+        durations.append(time.monotonic() - start)
+        assert result["status"] == "ok"
+        runs = module.runtime.store.list_runs()
+        counts.append(runs[-1].normalized_count)
+        assert result["continuation_pending"] is (n < 2)
+        # Real completed timestamps must advance for freshness ordering.
+        time.sleep(1)
+    assert counts == [500, 500, 349]
+    fetch_state = module.runtime.connector_store.get_fetch_state(source)
+    assert fetch_state["collector_outcome"]["complete"] is True
+    assert "|items=" not in fetch_state["collector_outcome"]["next_cursor"]
+    records = module.runtime.evidence_repository.list_source_records()
+    assert len(records) == 1
+    assert records[0].metadata["collector_market_bundle"]["row_count"] == 1349
+    rows = [__import__("json").loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_institutional_flow").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 1349
+    assert max(durations) < config.timeout_seconds
+    assert cw.select_collector_pull_connectors(cw.read_actual_state_with_fetch_bindings(api_url=config.api_url),
+                                               _steady_reconcile([source])) == []
+    print({"T86_controller_rows": counts, "tick_wall_seconds": durations, "cadence_seconds": 86400})
+
+
+@pytest.mark.parametrize("spec_index", [0, 1, 2])
+def test_backfill_normalized_date_partition_is_unchanged_on_replay(steady_stack, monkeypatch, spec_index):
+    import json
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors.collector_bundle import CollectorBundleAdapter
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[spec_index]; source, _, dataset, _, _, cadence = spec
+    _intake_files(monkeypatch, spec, ["2024-11-12", "2024-11-13"], count=10)
+    assert http.post("/api/source-ingest/connectors", json=_intake_config(source)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{source}/schedule",
+                    json={"enabled": True, "interval_seconds": cadence}).status_code == 200
+    def pull():
+        return cw.run_schedule_tick(api_url="http://source-ingest.test:8097", max_concurrency=1,
+                                    exclusive_connector_ids=[source], force_connector_ids=[],
+                                    controller_token=module.runtime.controller_token)
+    result = pull()
+    assert result["summary"]["total_failed"] == 0
+    root = module.runtime.market_data_storage_writer.root / "normalized" / dataset
+    before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
+    assert {p.parent.name for p in root.rglob("*.jsonl")} == {"date=2024-11-12", "date=2024-11-13"}
+    rows = [json.loads(line) for data in before.values() for line in data.decode().splitlines()]
+    assert len(rows) == 20 and len({r["source_id"] for r in rows}) == 20
+    assert {r["metadata"]["event_time"][:10] for r in rows} == {"2024-11-12", "2024-11-13"}
+    # Explicitly rewind the fetch request so real raw bundle rows replay, not
+    # merely a no-new-data cursor check. The product config store is used normally.
+    stored = module.runtime.connector_store.get_config(source)
+    fetch = {**stored.fetch, "request": {**stored.fetch.get("request", {}), "cursor": "2020-01-01T00:00:00Z#start"}}
+    module.runtime.connector_store.upsert_config(stored.connector, fetch)
+    replayed = []
+    original_pull = CollectorBundleAdapter.pull
+    def capture_pull(self, *args, **kwargs):
+        outcome = original_pull(self, *args, **kwargs)
+        replayed.extend(outcome.records)
+        return outcome
+    monkeypatch.setattr(CollectorBundleAdapter, "pull", capture_pull)
+    replay = pull()
+    assert replay["summary"]["total_failed"] == 0
+    receipt = replay["ran"][0]["receipt"]
+    replay_count = 10 if dataset == "tw_price_daily" else 20
+    # Rewind replays older history, retaining the newest item/hash acknowledgements.
+    assert receipt["raw_count"] == replay_count
+    assert receipt["storage_refs"]["summary"]["reused_record_count"] == replay_count
+    assert len(replayed) == replay_count
+    identity_fields = ("content_hash", "event_time", "available_time")
+    assert {(r.source_id, *(r.metadata.get(k) for k in identity_fields)) for r in replayed} == {
+        (r["source_id"], *(r["metadata"].get(k) for k in identity_fields)) for r in rows
+        if dataset != "tw_price_daily" or r["metadata"]["event_time"][:10] == "2024-11-12"}
+    assert receipt["storage_refs"]["summary"]["new_normalized_row_count"] == 0
+    after = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.jsonl")}
+    assert after == before
+
+
+def test_host_offering_readback_skips_without_failure_or_dlq_and_recovers(steady_stack, monkeypatch):
+    import json
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _INTAKE_SIZES
+    http, module, _ = steady_stack
+    spec = _INTAKE_SIZES[2]; source = spec[0]
+    files = _intake_files(monkeypatch, spec, ["2024-11-12"], count=2)
+    doc = json.loads(files["status.json"])
+    doc["sources"][source].update(offered=False, offered_reason="disabled_by_fetch_policy:403")
+    files["status.json"] = json.dumps(doc).encode()
+    assert http.post("/api/source-ingest/connectors", json=_intake_config(source)).status_code == 201
+    assert http.put(f"/api/source-ingest/connectors/{source}/schedule",
+                    json={"enabled": True, "interval_seconds": 86400}).status_code == 200
+    actual = cw.read_actual_state_with_fetch_bindings(api_url="http://source-ingest.test:8097")
+    item = next(i for i in actual["connectors"] if i["connector_id"] == source)
+    assert item["collector_offering"] == {"offered": False, "reason": "disabled_by_fetch_policy:403"}
+    assert cw.select_collector_pull_connectors(actual, _steady_reconcile([source])) == []
+    # Even an explicitly selected scheduled pull cannot enqueue/claim this source.
+    result = cw.run_schedule_tick(api_url="http://source-ingest.test:8097", max_concurrency=1,
+                                 exclusive_connector_ids=[source], force_connector_ids=[],
+                                 controller_token=module.runtime.controller_token)
+    assert result["summary"]["total_ran"] == result["summary"]["total_failed"] == 0
+    assert module.runtime.store.list_runs() == []
+    assert module.runtime.dead_letter_queue.entries() == []
+    assert module.runtime.source_health_store.get(source) is None
+    doc["sources"][source].update(offered=True, offered_reason=None)
+    files["status.json"] = json.dumps(doc).encode()
+    selected, resumed = _steady_step(_steady_reconcile([source]))
+    assert selected == [source] and resumed["summary"]["total_failed"] == 0
+    assert resumed["ran"][0]["receipt"]["normalized_count"] == 2
+
+
+def test_real_controller_real_size_backfill_fits_timeout_and_shared_48h_budget(steady_stack, monkeypatch, tmp_path):
+    """Cold latest rows plus a full 6000-row TPEx historical day through native persistence."""
+    import json
+    import threading
+    import time
+    import types
+    from dataclasses import replace
+    from services.source_ingestion import controller_worker as cw
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.tests import test_controller_worker as tcw
+    from services.source_ingestion.tests.test_collector_bundle_connector import _intake_bundle, FakeTransport
+
+    http, module, _ = steady_stack
+    files, entries, statuses, requirements = {}, [], {}, []
+    for source, count, exchange, day, newest in (
+        ("collector-tw-twse-price-history", 1, "TWSE", "2026-11-13", True),
+        ("collector-tw-tpex-price-history", 1, "TPEX", "2026-11-13", True),
+        ("collector-tw-tpex-price-history", 6000, "TPEX", "2024-11-12", False),
+    ):
+        f, entry = _intake_bundle(source, count, "tw_price_daily", exchange, day, newest=newest)
+        files.update(f); entries.append(entry)
+        if newest:
+            statuses[source] = {"status": "ok", "last_run_at": entry["finished_at"], "cadence_seconds": 86400,
+                                "offered": True, "offered_reason": None}
+            requirements.append({"dataset": "tw_price_daily", "market": "TW", "cadence": "daily",
+                                 "source_class": "live_pull", "connector_candidates": [source], "policy_gates": []})
+    files["bundles/index.json"] = json.dumps({"bundles": entries}).encode()
+    files["status.json"] = json.dumps({"sources": statuses}).encode()
+    clock, active, peak = [0.0], [0], [0]
+    lock = threading.Lock()
+    class Transport(FakeTransport):
+        def read(self, path, *, max_bytes):
+            with lock:
+                started = clock[0]; active[0] += 1; peak[0] = max(peak[0], active[0])
+            try:
+                time.sleep(0.005)
+                return super().read(path, max_bytes=max_bytes)
+            finally:
+                with lock:
+                    clock[0] = max(clock[0], started + 0.27); active[0] -= 1
+    transport = Transport(files)
+    monkeypatch.setattr(cb.CollectorBundleAdapter, "_transport", lambda self: transport)
+    monkeypatch.setattr(cb, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    personas = ({"persona_id": "history-persona", "required_data_sources": requirements},)
+    meta = {**tcw._desired_meta(), "requirement_count": 2,
+            "sha256": module.runtime._desired_state_digest(list(personas))}
+    monkeypatch.setattr(cw, "load_desired_state", lambda **kw: (personas, meta))
+    config = replace(tcw._config(tmp_path, truth_level="scheduled_tick", mode=cw.COLLECTOR_STEADY_PULL_MODE),
+                     state_path=module.runtime.CONTROLLER_STATE_PATH, max_ticks=0, timeout_seconds=30)
+    state = tcw._state(); store = cw.ControllerStateStore(config.state_path)
+    elapsed, delivered, durations = 0.0, 0, []
+    for _ in range(30):
+        wall_start, model_start = time.perf_counter(), clock[0]
+        result = cw.run_controller_tick(config=config, state=state, store=store, writer=tcw.RecordingWriter([]))
+        duration = time.perf_counter() - wall_start + clock[0] - model_start
+        durations.append(duration); elapsed += duration + 1
+        assert result["status"] == "ok" and duration < config.timeout_seconds
+        delivered = sum(r.metadata["collector_market_bundle"]["row_count"]
+                        for r in module.runtime.evidence_repository.list_source_records())
+        if delivered == 6002 and not result["continuation_pending"]:
+            break
+        time.sleep(1)
+    assert delivered == 6002 and not result["continuation_pending"]
+    records = module.runtime.evidence_repository.list_source_records()
+    assert len(records) == 3
+    assert {(r.connector_id, r.metadata["trade_date"]): r.metadata["collector_market_bundle"]["row_count"]
+            for r in records} == {("collector-tw-twse-price-history", "2026-11-13"): 1,
+                                  ("collector-tw-tpex-price-history", "2026-11-13"): 1,
+                                  ("collector-tw-tpex-price-history", "2024-11-12"): 6000}
+    rows = [json.loads(line)
+            for path in (module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily").rglob("*.jsonl")
+            for line in path.read_text().splitlines()]
+    assert len(rows) == len({r["source_id"] for r in rows}) == 6002
+    partition = module.runtime.market_data_storage_writer.root / "normalized/tw_price_daily/date=2024-11-12"
+    history_rows = [json.loads(line) for path in partition.glob("*.jsonl") for line in path.read_text().splitlines()]
+    assert len(history_rows) == len({r["source_id"] for r in history_rows}) == 6000
+    assert active[0] == 0 and 4 < peak[0] <= cb.HISTORY_RAW_READ_CONCURRENCY
+    # Apply the full 6000-row day's observed controller+transport cost per row to
+    # all 488*(1375+6000+1349) rows. The sample also includes cold newest sessions,
+    # duplicate newest replay, all API/readback/persistence work and 1s pauses.
+    shared_seconds = elapsed * (488*(1375+6000+1349))/6000 + 600
+    print("INTAKE_CONTROLLER_HISTORY " + json.dumps({"sample_history_rows": 6000, "delivered_rows": delivered,
+          "ticks": len(durations), "tick_seconds": durations, "sample_seconds": elapsed,
+          "peak_inflight": peak[0], "shared_488_days_seconds": shared_seconds}))
+    assert shared_seconds < 48*3600
+
+
+def test_ingest_queue_connection_reuse_preserves_each_commit_and_thread_isolation(tmp_path):
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue
+    def source(sid):
+        return SourceRecord(source_id=sid, connector_id="queue-test", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}", metadata={"body": sid})
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    reader = DistillationJobQueue(queue.path)
+    with queue.admission_connection():
+        first = queue.enqueue_source_record(source("first"))
+        assert reader.get("first").job_id == first.job_id  # committed before batch closes
+        assert queue.enqueue_source_record(source("first")).job_id == first.job_id
+        def other_thread():
+            assert queue._ingest_connection.get() is None
+            return queue.enqueue_source_record(source("thread"))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert pool.submit(other_thread).result(timeout=10).source_id == "thread"
+        queue.enqueue_source_record(source("last"))
+        assert reader.get("last") is not None
+    assert queue._ingest_connection.get() is None and reader.count() == 3
+
+
+def test_ingest_queue_reuse_rolls_back_collision_then_accepts_next_record(tmp_path):
+    import json
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.distillation_worker import DistillationError
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue
+    def source(sid):
+        return SourceRecord(source_id=sid, connector_id="queue-test", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}", metadata={"body": sid})
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    first = source("first"); queue.enqueue_source_record(first)
+    with queue._connect() as connection:
+        payload = first.to_dict(); payload["title"] = "tampered"
+        connection.execute("UPDATE distillation_source_versions SET payload_json = ? WHERE source_id = ?",
+                           (json.dumps(payload), "first"))
+    with queue.admission_connection():
+        with pytest.raises(DistillationError, match="collision"):
+            queue.enqueue_source_record(first)
+        queue.enqueue_source_record(source("second"))
+    assert queue.get("second") is not None and queue.count() == 2
+
+
+def test_ingest_queue_connection_failure_keeps_catch_up_admission_nonblocking(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.pipeline import IngestDistillationJobQueue, admit_normalized_records_to_distillation
+    queue = IngestDistillationJobQueue(tmp_path / "queue.sqlite")
+    @contextmanager
+    def broken():
+        raise RuntimeError("test connection unavailable")
+        yield
+    monkeypatch.setattr(queue, "admission_connection", broken)
+    records = [SourceRecord(source_id=sid, connector_id="q", source_type="internal_note",
+                            title=sid, content_ref=f"memory://{sid}") for sid in ("one", "two")]
+    admissions = admit_normalized_records_to_distillation(queue, records)
+    assert set(admissions) == {"one", "two"}
+    assert all(a["status"] == "admission_failed" for a in admissions.values())
+
+
+def test_scalar_readback_ranking_preserves_mixed_datetime_and_persisted_iso_order(client, monkeypatch):
+    from services.source_ingestion.connectors.base import SourceRecord
+    _, _, module = client
+    older = SourceRecord(source_id="zzz", connector_id="rank-notes", source_type="internal_note",
+                         title="older", content_ref="memory://older", created_at="2026-11-13T01:00:00Z")
+    newer = SourceRecord(source_id="aaa", connector_id="rank-notes", source_type="internal_note",
+                         title="newer", content_ref="memory://newer",
+                         created_at=datetime(2026, 11, 13, 2, tzinfo=timezone.utc))
+    monkeypatch.setattr(module.runtime.evidence_repository, "list_source_records", lambda: [older, newer])
+    assert module.runtime._latest_source_record_by_connector(receipts_by_connector={})["rank-notes"] is newer

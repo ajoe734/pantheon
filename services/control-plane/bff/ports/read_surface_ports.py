@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.request
 
+from services.control_plane.bff.command_adapters.base import ActionUnavailableError
 from services.control_plane.bff.core.owner_reads import cached_owner_call, request_read_cache, selected_tenant, shared_persona_directory_list
 from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
@@ -84,6 +85,7 @@ from services.control_plane.bff.ports.ooda_management import (
     OodaManagementDomainPort,
     OodaPacketsPort,
     SynthesisConflictLogsPort,
+    create_ooda_packets_port,
 )
 from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
@@ -146,7 +148,11 @@ class ReadSurfacePorts:
         paper_fleet_transport: Optional[Any] = None,
         reconciliation_drift_reads: Optional[ReconciliationDriftReadsPort] = None,
         latest_ranking_snapshot_reader: Optional[Callable[..., Optional[Dict[str, Any]]]] = None,
+        persona_pool_versions_reader: Optional[Callable[[str, str], Any]] = None,
+        registry_entry_reader: Optional[Callable[[str, str], Any]] = None,
     ) -> None:
+        self._persona_pool_versions_reader = persona_pool_versions_reader
+        self._registry_entry_reader = registry_entry_reader
         self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
         self.persona_capital_runtime = persona_capital_runtime or create_persona_capital_runtime_port()
@@ -443,6 +449,22 @@ class ReadSurfacePorts:
     def get_evolution_qualification(self, **kwargs: Any) -> Dict[str, Any]:
         return self.persona_capital_runtime.get_evolution_qualification(**kwargs)
 
+    def read_persona_pool_versions(self, persona_id: str, tenant_id: str) -> List[Dict[str, Any]]:
+        """Owner strategy pool versions of one persona (read-only, one owner read)."""
+        if self._persona_pool_versions_reader is None:
+            raise ActionUnavailableError("Persona pool versions reader is unconfigured", downstream_status=503)
+        payload = self._persona_pool_versions_reader(persona_id, tenant_id)
+        versions = payload.get("versions") if isinstance(payload, dict) else payload
+        if not isinstance(versions, list) or any(not isinstance(v, dict) for v in versions):
+            raise ActionUnavailableError("Persona pool versions payload is malformed", downstream_status=503)
+        return copy.deepcopy(versions)
+
+    def read_registry_entry(self, registry_id: str, tenant_id: str) -> Any:
+        """Registry owner entry of one artifact; ``{}`` when the owner has none."""
+        if self._registry_entry_reader is None:
+            raise ActionUnavailableError("Registry entry reader is unconfigured", downstream_status=503)
+        return self._registry_entry_reader(registry_id, tenant_id)
+
     def list_evolution_program_runs(self, program_id: Optional[str]) -> List[Dict[str, Any]]:
         return self.persona_capital_runtime.list_evolution_program_runs(program_id)
 
@@ -586,6 +608,12 @@ class ReadSurfacePorts:
             if self.reconciliation_drift_reads is not None:
                 return self.reconciliation_drift_reads.get_surface_status()
             return "typed_store"
+        if dataset == "ooda_packets":
+            ooda = getattr(self.ooda_management, "ooda", None)
+            if ooda is not None and hasattr(ooda, "get_surface_status"):
+                source = ooda.get_surface_status().get("source")
+                return "missing" if source in {None, "missing"} else str(source)
+            return "missing"
         if dataset in (
             "deployment_plans",
             "personas",
@@ -654,6 +682,23 @@ class ReadSurfacePorts:
     def list_strategy_specs_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
         if getattr(self, "allow_local_snapshot_fallback", False):
             return None
+        cls = type(self)
+        if (
+            cls is not ReadSurfacePorts
+            and "list_strategy_specs_page" not in getattr(self, "__dict__", {})
+            and "list_strategy_summaries_page" not in getattr(self, "__dict__", {})
+            and (
+                getattr(cls, "list_strategies", None) is not ReadSurfacePorts.list_strategies
+                or getattr(cls, "list_strategy_summaries", None) is not ReadSurfacePorts.list_strategy_summaries
+                or getattr(cls, "list_strategy_specs", None) is not ReadSurfacePorts.list_strategy_specs
+                or "list_strategies" in getattr(self, "__dict__", {})
+                or "list_strategy_summaries" in getattr(self, "__dict__", {})
+                or "list_strategy_specs" in getattr(self, "__dict__", {})
+            )
+            and not (os.getenv("PANTHEON_REGISTRY_API_URL") or os.getenv("PANTHEON_REGISTRY_URL"))
+            and not getattr(self.research_knowledge_source, "_strategy_specs", None)
+        ):
+            return None
         return self.research_knowledge_source.list_strategy_specs_page(**kwargs)
 
     def list_strategy_summaries_page(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -692,6 +737,30 @@ class ReadSurfacePorts:
 
     def get_institutional_memory(self, entry_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_institutional_memory(entry_id)
+
+    def list_research_ticket_page(
+        self,
+        *,
+        statuses: Optional[List[str]] = None,
+        owner: Optional[str] = None,
+        meeting_type: Optional[str] = None,
+        subject_ref: Optional[str] = None,
+        action_state: Optional[str] = None,
+        due_before: Optional[str] = None,
+        submitted_after: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        human_actionable: Optional[Union[bool, str]] = None,
+        page_token: Optional[str] = None,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        return self.research_knowledge_source.list_research_ticket_page(
+            statuses=statuses, owner=owner,
+            meeting_type=meeting_type, subject_ref=subject_ref,
+            action_state=action_state, due_before=due_before,
+            submitted_after=submitted_after, updated_after=updated_after,
+            human_actionable=human_actionable, page_token=page_token,
+            page_size=page_size
+        )
 
     def list_research_tickets(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_research_tickets(**kwargs)
@@ -1142,6 +1211,45 @@ class ReadSurfacePorts:
                 return item
         return None
 
+    def get_approval_decisions(self, decision_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+        """Resolve a page's decisions with the same precedence as the item read.
+
+        Read each owner/store at most once, including the legacy queue fallback.
+        The returned mapping is a caller-owned projection, not retained state.
+        """
+        pending = {str(value).strip() for value in decision_ids if str(value).strip()}
+        found: Dict[str, Dict[str, Any]] = {}
+        if not pending:
+            return found
+
+        def take(records: Any, *, queue: bool = False) -> None:
+            for item in records or []:
+                if not isinstance(item, dict):
+                    continue
+                key = str(
+                    item.get("decision_id") or item.get("id")
+                    or (item.get("item_id") if queue else "") or ""
+                ).strip()
+                candidates = (key, key.removeprefix("review-")) if queue else (key,)
+                for candidate in candidates:
+                    if candidate in pending:
+                        found[candidate] = item
+                        pending.remove(candidate)
+
+        rq = getattr(self.ooda_management, "review_queue", None)
+        by_id_reader = getattr(rq, "_approval_decisions_by_id_reader", None)
+        if callable(by_id_reader):
+            try:
+                take(by_id_reader(sorted(pending)))
+            except Exception:
+                pass
+        reader = getattr(rq, "_approval_decisions_reader", None)
+        if pending and callable(reader):
+            take(reader())
+        if pending:
+            take(self.ooda_management.list_approval_queue_items(), queue=True)
+        return found
+
     def list_approval_decisions(self, **kwargs: Any) -> List[Dict[str, Any]]:
         if not kwargs and hasattr(self.ooda_management, "review_queue"):
             reader = getattr(self.ooda_management.review_queue, "_approval_decisions_reader", None)
@@ -1563,6 +1671,7 @@ def create_read_surface_ports(
     persona_registry_store: Optional[Any] = None,
     ranking_store: Optional[Any] = None,
     ooda_management: Optional[OodaManagementDomainPort] = None,
+    ooda_port: Optional[OodaPacketsPort] = None,
     research_knowledge_source: Optional[ResearchKnowledgeSourcePort] = None,
     lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
     persona_training: Optional[PersonaTrainingDomainPort] = None,
@@ -1580,6 +1689,8 @@ def create_read_surface_ports(
         create_owner_domain_ports,
         decidable_evolution_records,
         latest_ranking_snapshot,
+        read_persona_pool_versions,
+        read_registry_entry,
         pending_approval_records,
         telemetry_summaries,
     )
@@ -1593,18 +1704,21 @@ def create_read_surface_ports(
             persona_registry_store, ranking_store,
         )
     if ooda_management is None:
-        ooda_management = OodaManagementDomainPort(review_queue_port=ManagementReviewQueuePort(
-            deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
-            evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
-            approval_decisions_reader=approval_records,
-            pending_approval_decisions_reader=pending_approval_records,
-            approval_decisions_by_id_reader=approval_records_by_ids,
-            decidable_evolution_decisions_reader=(
-                (lambda: decidable_evolution_records(persona_registry_store))
-                if default_pcr
-                else None
+        ooda_management = OodaManagementDomainPort(
+            ooda_port=ooda_port or create_ooda_packets_port(),
+            review_queue_port=ManagementReviewQueuePort(
+                deployment_plans_reader=persona_capital_runtime.list_deployment_plans,
+                evolution_decisions_reader=persona_capital_runtime.list_evolution_decisions,
+                approval_decisions_reader=approval_records,
+                pending_approval_decisions_reader=pending_approval_records,
+                approval_decisions_by_id_reader=approval_records_by_ids,
+                decidable_evolution_decisions_reader=(
+                    (lambda: decidable_evolution_records(persona_registry_store))
+                    if default_pcr
+                    else None
+                ),
             ),
-        ))
+        )
     if persona_training is None:
         persona_port = (
             PersonaRegistryReadsPort(store=persona_registry_store)
@@ -1630,6 +1744,8 @@ def create_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        persona_pool_versions_reader=read_persona_pool_versions,
+        registry_entry_reader=read_registry_entry,
         latest_ranking_snapshot_reader=lambda surface="quarterly": latest_ranking_snapshot(
             ranking_store, surface=surface
         ),
@@ -1655,7 +1771,11 @@ def create_in_memory_read_surface_ports(
     ops_port = create_in_memory_operations_consultation_port(**(operations_consultation_kwargs or {}))
     pcr_port = create_in_memory_persona_capital_runtime_port(**(persona_capital_runtime_kwargs or {}))
     ooda_kw = dict(ooda_management_kwargs or {})
-    ooda_p = ooda_kw.get("ooda_port") or OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
+    ooda_p = ooda_kw.get("ooda_port") or (
+        OodaPacketsPort(records_provider=lambda: list(ooda_kw.get("ooda_packets") or []))
+        if ooda_kw.get("ooda_packets") is not None
+        else create_ooda_packets_port()
+    )
     scl_p = ooda_kw.get("synthesis_conflict_logs_port") or SynthesisConflictLogsPort(records_provider=lambda: list(ooda_kw.get("synthesis_conflict_logs") or []))
     rq_p = ooda_kw.get("review_queue_port") or ManagementReviewQueuePort(
         deployment_plans_reader=lambda: list(ooda_kw.get("deployment_plans") or []),
@@ -1695,4 +1815,6 @@ def create_in_memory_read_surface_ports(
         paper_fleet_reconciler_url=paper_fleet_reconciler_url,
         paper_fleet_transport=paper_fleet_transport,
         reconciliation_drift_reads=reconciliation_drift_reads,
+        persona_pool_versions_reader=generic_kwargs.get("persona_pool_versions_reader"),
+        registry_entry_reader=generic_kwargs.get("registry_entry_reader"),
     )

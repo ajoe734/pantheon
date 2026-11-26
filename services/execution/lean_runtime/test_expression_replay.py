@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 
 from services.execution.lean_runtime import expression_replay as er
+from services.execution.lean_runtime.member_virtual_book import FILL_CONVENTION
 
 
 def _cash(code, price, max_units):
@@ -164,3 +165,70 @@ def test_records_from_events_dedupes_and_attaches_marks():
     records, params = er.records_from_events(events, {"d-0050": rec["marks"]})
     assert len(records) == 1 and params == {"lever_min_strength": 0.5}
     assert er.replay(records, params)["decisions"][0]["pnl"] == 24900.0
+
+
+def test_flat_and_weaker_views_replay_to_the_same_positions_as_the_policy():
+    """Recorded view sequence with weaker and flat views: replay == per-bar policy with a carried book."""
+    from services.execution.lean_runtime import expression_policy as ep
+
+    cand = {"instrument_id": "eq:2330", "kind": "cash_share", "side_capability": ["long"], "unit": 1,
+            "multiplier": 1, "price": 100.0, "max_units_by_risk": 1000,
+            "fee_per_unit_per_side": 0.0, "tax_rate_per_side": 0.0}
+    budget = {"available_cash": 100000.0, "gross_limit": 100000.0, "gross_used": 0.0}
+    views = [("LONG", 0.5), ("LONG", 0.5), ("LONG", 0.2), ("FLAT", None)]
+    records = [{"decision_id": f"d{i}",
+                "view": {"decision_id": f"d{i}", "underlying": "2330", "direction": d, "strength": s},
+                "candidates": [cand], "book_before": {}, "budget": budget, "marks": {"eq:2330": [100.0]}}
+               for i, (d, s) in enumerate(views)]
+    out = er.replay(records, None, carry_book=True)["decisions"]
+    book: list[dict] = []
+    for record, entry in zip(records, out):
+        expected = ep.decide_for_policy(ep.POLICY_KIND, record["view"], [cand], {"positions": book},
+                                        dict(budget), ep.resolved_parameters(None))
+        assert entry["record"] == expected
+        book = entry["positions_after"]
+    assert [d["record"].get("reason_code") for d in out] == ["long_cash", "already_at_target", "close_leg", "close_leg"]
+    assert out[2]["record"]["units"] < out[0]["record"]["units"]
+    assert out[3]["positions_after"] == []
+    # Additive only: the same record keys the replay always had, plus the existing optional band.
+    assert {"decision_id", "outcome", "record", "pnl_path", "pnl", "positions_after"} <= set(out[2])
+
+
+def _daily(record, fills):
+    return {**record, "fill_convention": FILL_CONVENTION, "fills": fills}
+
+
+def test_daily_decision_enters_at_the_next_open_not_the_decision_close():
+    rec = _record("d-e1", "2330", "LONG", 0.2, [_cash("2330", 2370.0, 42),
+                  _fut("ssf:QFF:202611", "2330", 100, 2370.0, 31995.0, 1)], 300000.0,
+                  {"eq:2330": [2135.0], "ssf:QFF:202611": [2135.0]})
+    [legacy] = er.replay([rec], None)["decisions"]
+    assert legacy["pnl"] == -235.0  # no convention declared: the candidate price is the entry
+    [d] = er.replay([_daily(rec, {"eq:2330": 2350.0, "ssf:QFF:202611": 2360.0})], None)["decisions"]
+    assert d["entry_price"] == 2350.0 and d["pnl"] == 2135.0 - 2350.0
+    # the counterfactual future also enters at its own next open
+    assert d["counterfactual_pnl"] == {"ssf:QFF:202611": (2135.0 - 2360.0) * 100}
+
+
+def test_daily_decision_without_a_next_open_has_no_fill_and_never_uses_the_close():
+    rec = _record("d-e1", "2330", "LONG", 0.2, [_cash("2330", 2370.0, 42),
+                  _fut("ssf:QFF:202611", "2330", 100, 2370.0, 31995.0, 1)], 300000.0,
+                  {"eq:2330": [2135.0], "ssf:QFF:202611": [2135.0]})
+    for fills in ({}, {"eq:2330": None, "ssf:QFF:202611": float("nan")}, {"eq:2330": 0}):
+        result = er.replay([_daily(rec, fills)], None)
+        [d] = result["decisions"]
+        assert d["pnl"] is None and d["fill_unavailable_reason"] == "no_open_price"
+        assert d.get("entry_price") is None
+        assert result["summary"]["graded_count"] == 0 and result["summary"]["total_pnl"] == 0.0
+        assert d["counterfactual_pnl"]["ssf:QFF:202611"] is None
+
+
+def test_records_from_events_joins_settled_opens_by_decision_id():
+    rec = _e_records(600000.0, "SHORT")[2]
+    payload = {k: rec[k] for k in ("view", "candidates", "book_before", "budget")}
+    payload.update(decision_id="d-0050", parameters={})
+    events = [{"metadata": {"expression_replay_input": payload}}]
+    [plain], _ = er.records_from_events(events)
+    assert "fill_convention" not in plain
+    [settled], _ = er.records_from_events(events, fills_by_decision={"d-0050": {"eq:0050": 104.0}})
+    assert settled["fill_convention"] == FILL_CONVENTION and settled["fills"] == {"eq:0050": 104.0}

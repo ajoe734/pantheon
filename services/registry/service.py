@@ -19,6 +19,9 @@ import json
 import logging
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Literal, Optional
@@ -58,7 +61,11 @@ from .split_api import (
     RegistryOwnerUnavailableError,
     RegistryService,
 )
-from .storage import get_store
+from .storage import (
+    decode_strategy_artifact_page_token,
+    get_store,
+    page_strategy_artifact_rows,
+)
 from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
     ensure_builtin_strategy_artifacts,
@@ -66,6 +73,7 @@ from .strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
 )
+from .promotion.gate import PromotionError, PromotionGate
 from .paper_strategy_spec import validate_strategy_spec
 from .alpha_template import (
     AlphaTemplateValidationError,
@@ -208,6 +216,9 @@ class StrategyArtifactRegisterRequest(BaseModel):
     evaluation_summary: Optional[dict[str, Any]] = None
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    replication_proof: Optional[dict[str, Any]] = None
+    backtest_evaluation: Optional[dict[str, Any]] = None
+    """Producer's full gate evaluation; recomputed (digest/checks/metrics) at registration, not stored."""
 
 
 class StrategyArtifactMutationRequest(BaseModel):
@@ -987,7 +998,49 @@ def _strategy_artifact_registration(
         "evaluation_summary": payload.evaluation_summary,
         "rollback_target": payload.rollback_target,
         "metadata": payload.metadata,
+        "replication_proof": payload.replication_proof,
+        "backtest_evaluation": payload.backtest_evaluation,
     }
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # never forward the bearer to another origin
+        return None
+
+
+def _verify_research_run_owner(
+    authorization: Optional[str], tenant: Optional[str], run_id: str, *, digest: str, checksum: str,
+    gate_verdict: Optional[dict[str, Any]] = None,
+) -> None:
+    """Confirm with the Research run owner that this tenant's run has this exact digest/checksum.
+
+    Forwards the already-verified caller bearer (RAM only, never logged/stored) to the single
+    configured Research origin; any missing config, transport error or mismatch fails closed.
+    """
+    base = os.environ.get("RESEARCH_ORCHESTRATOR_API_URL", "").strip().rstrip("/")
+    if not base or not authorization or not tenant:
+        raise RegistryError("producer run owner verification is not configured; gate proof refused.")
+    url = f"{base}/api/research-orchestrator/backtest-runs/{urllib.parse.quote(run_id, safe='')}/owner-binding"
+    request = urllib.request.Request(
+        url, headers={"Authorization": authorization, "X-Tenant-Id": tenant, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=5) as response:
+            owned = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - every failure refuses the proof; no token in message
+        raise RegistryError(f"producer run owner verification failed: {type(exc).__name__}") from None
+    if (not isinstance(owned, dict) or owned.get("backtest_run_id") != run_id
+            or owned.get("tenant_id") != tenant or owned.get("status") != "completed"
+            or owned.get("evaluation_digest") != digest or owned.get("artifact_checksum") != checksum):
+        raise RegistryError("producer run owner record does not match the gate proof.")
+    # The owner persisted the gate's real decision (trial count, mandate, verdict digest): the
+    # proof's policy context must equal it, so a caller cannot reconstruct a rejected/other-trial gate.
+    recorded = owned.get("gate_verdict")
+    if (not isinstance(recorded, dict) or not isinstance(gate_verdict, dict)
+            or recorded.get("admission_status") != "admitted"
+            or any(recorded.get(k) is None or recorded.get(k) != gate_verdict.get(k)
+                   for k in ("admission_status", "trial_count", "mandate_max_drawdown", "family_id", "verdict_digest"))):
+        raise RegistryError("producer run owner gate verdict does not match the gate proof.")
 
 
 def _register_strategy_artifact(
@@ -996,8 +1049,32 @@ def _register_strategy_artifact(
     *,
     ctx: AuthContext,
     actor: Optional[dict[str, Any]] = None,
+    authorization: Optional[str] = None,
 ) -> RegistryEntryView:
+    registration = dict(registration)
+    replication_proof = registration.pop("replication_proof", None)
+    backtest_evaluation = registration.pop("backtest_evaluation", None)
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
+    if replication_proof is not None:
+        # The success flag is derived here from the verified producer proof, never
+        # accepted from the caller.
+        try:
+            create_payload.replication_proof = PromotionGate.verify_admitted_replication_proof(
+                replication_proof, registration.get("evaluation_summary"), create_payload.lineage.to_dict(),
+                backtest_evaluation=backtest_evaluation,
+                artifact_checksum=strategy_artifact_checksum(registration["strategy_artifact"]),
+                producer_run_id=create_payload.producer_run_id or "",
+            )
+            binding = create_payload.replication_proof["owner_verified_binding"]
+            _verify_research_run_owner(
+                authorization, _caller_tenant(ctx), binding["backtest_run_id"],
+                digest=binding["evaluation_digest"], checksum=binding["artifact_checksum"],
+                gate_verdict=binding.get("gate_verdict"),
+            )
+            binding["producer_verified"] = True
+        except PromotionError as exc:
+            raise RegistryError(str(exc)) from exc
+        create_payload.replication_success = True
     view, created = registry_service.register_if_absent(create_payload, registry_id, actor=actor)
     if created:
         return view
@@ -1040,6 +1117,8 @@ def _register_strategy_artifact(
         or comparison_entry.evaluation_summary != create_payload.evaluation_summary
         or comparison_entry.rollback_target != create_payload.rollback_target
         or comparison_entry.metadata != create_payload.metadata
+        or comparison_entry.replication_success != create_payload.replication_success
+        or comparison_entry.replication_proof != create_payload.replication_proof
     ):
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
@@ -1593,6 +1672,12 @@ def _strategy_spec_read_scope(
     return ctx, header_tenant
 
 
+def list_views_by_artifact_type(artifact_type: ArtifactType) -> list[RegistryEntryView]:
+    """Views of one artifact type via the owner store's type-filtered read (never the whole registry)."""
+    registry = get_registry_service()
+    return [registry._to_view(e) for e in registry.store.list_by_artifact_type(artifact_type)]
+
+
 def _filter_strategy_spec_views(
     strategy_id: Optional[str],
     authorization: Optional[str],
@@ -1661,12 +1746,20 @@ def read_lineage_graph(
 @app.get("/api/registry/strategy-specs", response_model=list[RegistryEntryView])
 def list_all_strategy_spec_entries(
     artifact_state: Optional[ArtifactState] = None,
-    view: Optional[Literal["persona_binding", "persona_binding_counts", "strategy_summary_page"]] = None,
+    view: Optional[Literal[
+        "persona_binding", "persona_binding_counts", "strategy_summary_page", "card_admission_drafts",
+        "discovery_candidates",
+    ]] = None,
+    tenant_id: Optional[str] = None,
     state: Optional[str] = None,
     exclude_state: Optional[str] = None,
     persona_id: Optional[str] = None,
+    query: Optional[str] = None,
+    q: Optional[str] = None,
     page_token: Optional[str] = None,
     page_size: int = Query(default=20, ge=1, le=200),
+    hide_stubs: bool = False,
+    hide_persona_ids: Optional[str] = None,
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
@@ -1684,9 +1777,40 @@ def list_all_strategy_spec_entries(
         except ValueError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return JSONResponse(counts)
+    if view == "card_admission_drafts":
+        # Bounded owner read for the card admission path: Postgres-side filter, keyset page.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        if not tenant_id or not tenant_id.strip():
+            raise HTTPException(status_code=400, detail="tenant_id is required for view=card_admission_drafts")
+        try:
+            return JSONResponse(get_registry_service().card_admission_draft_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
+                tenant_id=tenant_id.strip(), page_size=min(page_size, 50), after_registry_id=page_token,
+            ))
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if view == "discovery_candidates":
+        # REGISTRY-DISCOVERY-SPEC-PAGE-20261125: bounded keyset page of non-retired/rejected
+        # StrategySpecs; ``tenant_id`` is the read scope with the X-Tenant-Id rules.
+        ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
+        scope_tenant = tenant_id.strip() if tenant_id is not None else ""
+        if not scope_tenant:
+            raise HTTPException(status_code=400, detail="tenant_id is required for view=discovery_candidates")
+        if header_tenant is not None and header_tenant != scope_tenant:
+            raise HTTPException(status_code=403, detail="X-Tenant-Id header does not match verified caller tenant.")
+        ctx, scope_tenant = _strategy_spec_read_scope(authorization, scope_tenant)
+        try:
+            return JSONResponse(get_registry_service().discovery_candidate_page(
+                visible_tenants=_persona_binding_visible_tenants(ctx, scope_tenant),
+                tenant_id=scope_tenant, page_size=page_size, page_token=page_token,
+            ))
+        except ValueError as exc:
+            msg = str(exc)
+            raise HTTPException(status_code=400 if msg.startswith("Invalid page_token") else 503, detail=msg) from exc
     if view == "strategy_summary_page":
         ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
         wanted_artifact_state = artifact_state.value if artifact_state is not None else None
+        effective_query = query if query is not None else q
         try:
             page_payload = get_registry_service().strategy_spec_summary_page(
                 visible_tenants=_persona_binding_visible_tenants(ctx, header_tenant),
@@ -1697,6 +1821,17 @@ def list_all_strategy_spec_entries(
                 persona_id=persona_id,
                 page_token=page_token,
                 page_size=page_size,
+                **({"query": effective_query} if effective_query is not None else {}),
+                **(
+                    {
+                        "hide_stubs": True,
+                        "hide_persona_ids": [
+                            p.strip() for p in (hide_persona_ids or "").split(",") if p.strip()
+                        ],
+                    }
+                    if hide_stubs
+                    else {}
+                ),
             )
         except ValueError as exc:
             msg = str(exc)
@@ -1770,6 +1905,7 @@ def register_strategy_artifact(
             _strategy_artifact_registration(payload),
             ctx=ctx,
             actor=_actor_context(ctx),
+            authorization=authorization,
         )
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1777,33 +1913,34 @@ def register_strategy_artifact(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _strategy_artifact_catalog_rows(
+def _strategy_artifact_catalog_page(
     authorization: Optional[str],
     x_tenant_id: Optional[str],
-    artifact_state: Optional[ArtifactState] = None,
-    strategy_id: Optional[str] = None,
-) -> list[dict]:
-    """Flat execution-bundle catalog rows with the same visible-tenant rule as persona_binding."""
+    *,
+    artifact_state: Optional[ArtifactState],
+    strategy_id: Optional[str],
+    limit: int,
+    cursor: Optional[tuple],
+) -> tuple[list[dict], int, Optional[str]]:
+    """One bounded ordered catalog page with the same visible-tenant rule as persona_binding."""
     ctx, header_tenant = _strategy_spec_read_scope(authorization, x_tenant_id)
     visible_tenants = _persona_binding_visible_tenants(ctx, header_tenant)
     svc = get_registry_service()
+    wanted_state = artifact_state.value if artifact_state is not None else None
+    wanted_strategy = strategy_id.strip() if isinstance(strategy_id, str) and strategy_id.strip() else None
+    store = svc if hasattr(svc, "list_strategy_artifact_page") else getattr(svc, "store", None)
+    if store is not None and hasattr(store, "list_strategy_artifact_page"):
+        return store.list_strategy_artifact_page(
+            visible_tenants=visible_tenants, artifact_state=wanted_state,
+            strategy_id=wanted_strategy, limit=limit, cursor=cursor,
+        )
     if hasattr(svc, "list_strategy_artifact_rows"):
         rows = svc.list_strategy_artifact_rows(visible_tenants=visible_tenants)
     else:
         rows = svc.store.list_strategy_artifact_rows(visible_tenants=visible_tenants)
-    wanted_state = artifact_state.value if artifact_state is not None else None
-    wanted_strategy = strategy_id.strip() if isinstance(strategy_id, str) and strategy_id.strip() else None
-    filtered = [
-        dict(row)
-        for row in rows
-        if (wanted_state is None or row.get("artifact_state") == wanted_state)
-        and (wanted_strategy is None or row.get("strategy_id") == wanted_strategy)
-    ]
-    filtered.sort(
-        key=lambda r: (str(r.get("created_at") or ""), str(r.get("registry_id") or "")),
-        reverse=True,
+    return page_strategy_artifact_rows(
+        rows, artifact_state=wanted_state, strategy_id=wanted_strategy, limit=limit, cursor=cursor,
     )
-    return filtered
 
 
 @app.get("/api/registry/strategy-artifacts")
@@ -1817,28 +1954,22 @@ def list_all_strategy_artifact_entries(
     authorization: Optional[str] = Header(default=None),
     x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
 ):
-    """List execution_bundle catalog rows (tenant-scoped flat projection with paging and total)."""
+    """List execution_bundle catalog rows: one bounded ordered page (exact total, stable keyset token)."""
     effective_page_size = limit if limit is not None else page_size
-    start = 0
-    if page_token is not None and str(page_token).strip() != "":
-        try:
-            start = int(str(page_token).strip())
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid page_token") from exc
-        if start < 0:
-            raise HTTPException(status_code=400, detail="Invalid page_token")
-    elif offset is not None:
-        start = offset
-    rows = _strategy_artifact_catalog_rows(
+    try:
+        cursor = decode_strategy_artifact_page_token(page_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid page_token") from exc
+    if cursor is None and offset is not None:
+        cursor = ("offset", (offset,))
+    items, total, next_page_token = _strategy_artifact_catalog_page(
         authorization,
         x_tenant_id,
         artifact_state=artifact_state,
         strategy_id=strategy_id,
+        limit=effective_page_size,
+        cursor=cursor,
     )
-    total = len(rows)
-    items = rows[start : start + effective_page_size]
-    next_offset = start + len(items)
-    next_page_token = str(next_offset) if (next_offset < total and items) else None
     return JSONResponse(
         {
             "items": items,
