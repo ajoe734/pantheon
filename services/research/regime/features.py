@@ -96,6 +96,10 @@ class AxisInputs:
     returns: pd.Series | None = None  # the index return series used for state sorting
     input_refs: tuple[str, ...] = ()
     sessions: int = 0
+    # Market sessions represented by one ``frame`` row (1 for daily rows, the return window for
+    # non-overlapping multi-session returns). Validation converts session-denominated windows
+    # and rates through this so a five-session row is never counted as one session.
+    cadence_sessions: int = 1
 
 
 def _unavailable(axis: str, horizon: str | None, reason: str, refs: Iterable[str] = ()) -> AxisInputs:
@@ -174,7 +178,7 @@ def build_volatility_inputs(observations: Sequence[Mapping[str, Any]], *, decisi
         series = returns
     frame = pd.DataFrame({"return_pct": series * 100.0})
     return AxisInputs("volatility", horizon, True, frame=frame, returns=returns, input_refs=tuple(refs),
-                      sessions=len(frame))
+                      sessions=len(frame), cadence_sessions=max(window, 1))
 
 
 def _market_series(observations, dataset, field_name, decision_time, refs, entity=None):
