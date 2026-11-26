@@ -676,5 +676,32 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_bare_debian_docker_compose_plugin_and_ssh_wait_repair_20261126": {
+    "task_generation": 80,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45886746072 (job 140141379785) passed preflight, Environment approval, WIF auth, READY data/boot snapshots, offline_boot_disk migration of TERMINATED incumbent pantheon-prod-control onto replacement e2-standard-8 Debian 12 VM, then failed at restore_active_release (and rolled back) because bare Debian 12 Bookworm default apt repositories lack docker-compose-plugin without the official Docker Debian apt repository",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "deploy/production/bootstrap.sh updates check_runtime_binaries() to require Docker Compose v2 ('\"$DOCKER\" compose version >/dev/null 2>&1 || run_priv \"$DOCKER\" compose version >/dev/null 2>&1') in addition to docker, curl, mountpoint, and python3",
+      "In deploy/production/bootstrap.sh PROD_ALLOW_APT_INSTALL=true block, installs base Debian 12 packages first ('ca-certificates curl gnupg util-linux python3', omitting host 'caddy' apt package so host caddy.service never grabs port 80 before container pantheon-caddy), then when docker or 'docker compose version' is still missing configures the official Docker Debian apt repository (PROD_DOCKER_GPG_URL default https://download.docker.com/linux/debian/gpg -> gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg + chmod a+r, PROD_DOCKER_APT_REPO_URL default https://download.docker.com/linux/debian with dpkg --print-architecture and Debian VERSION_CODENAME default bookworm -> /etc/apt/sources.list.d/docker.list), runs apt-get update -y and apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin, and enables docker via systemctl enable --now docker || true",
+      "scripts/deploy/prod_replace_vm.sh increases PROD_SSH_WAIT_TRIES default from 36 to 48 and PROD_INCUMBENT_SSH_TRIES default from 2 to 4 (PROD_INCUMBENT_SSH_INTERVAL default 3) so fresh-boot/rollback google-guest-agent IAP port 22 startup never races",
+      "docs/deployment/production-control-runbook.md documents the bare-Debian Docker Compose v2 and official Docker Debian apt repository bootstrap check within the <= 180-line runbook contract",
+      "tests/deployment/test_production_release.py adds test_bootstrap_requires_docker_compose_v2_and_installs_official_docker_debian_apt_repo in BootstrapTests and test_replace_vm_bare_debian_installs_docker_compose_plugin_and_enforces_ssh_wait_defaults in ReplaceVmHarness covering bare-Debian Docker apt repo + docker-compose-plugin installation, docker compose version check (direct and run_priv fallback), negative apt/gpg failure gates, and SSH wait retry defaults"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g79: no new recurring job, emitter, or background daemon; one-time on-demand apt repository keyring (/etc/apt/keyrings/docker.gpg, ~4 KB) and source list (/etc/apt/sources.list.d/docker.list, < 256 B) written only when PROD_ALLOW_APT_INSTALL=true and Docker Compose v2 is missing on a bare Debian host"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "40 tests passed, terminal exit 0",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "143 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }
