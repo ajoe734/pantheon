@@ -1,0 +1,44 @@
+{
+  "task_id": "ALPHA-REPLICATION-SEED-LINEAGE-READ-BOUNDED-20261126",
+  "class": "RC2",
+  "cause": "run_controller_tick read the whole distillation seed store (data/source-ingest/distill_seeds.jsonl, 34 MB and growing) with Path.read_text().splitlines(), json-parsed every line and de-duplicated source ids with list membership, every 60 s tick, only to publish desired_state.seed_lineage_count",
+  "seed_lineage_count_readers": {
+    "today": "run_controller_tick puts it in desired_state, which is saved to the controller health/state file (controller_state.json) via state.record_success; it is not passed to the LoopControllerWriter payload. git grep finds no other reader in code, BFF or frontend; the only other reference is the controller test",
+    "decision": "kept on the health file, computed incrementally"
+  },
+  "change": {
+    "counter": "SeedLineageCounter (in-memory, held by ReplicationControllerConfig): keyed by (st_dev, st_ino) and byte offset just past the last newline-terminated line counted; unchanged size = one stat() and no read; grown = seek to offset and stream only the appended bytes; new inode or size below offset = streamed recount from 0; missing file = 0",
+    "dedupe": "set of source ids",
+    "partial_line": "an unterminated last line is counted and re-read once when it is completed (the set keeps it single)",
+    "fail_closed": "a malformed line still raises and the tick fails with 'Failed to read StrategySpec discovery trigger store for lineage' as before",
+    "unchanged_fields": "all other desired_state, reconcile and actual_readback fields untouched"
+  },
+  "runtime_budget": {
+    "new_files": "none; no cache or offset file, storage-manifest.json unchanged (the controller remains a declared reader of distill_seeds.jsonl)",
+    "memory": "the set of distinct source ids (one str per distinct source, grows with distinct sources, not with store size) plus three integers; released with the process"
+  },
+  "tests": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/research/alpha_replication/",
+    "result": "162 passed, 2 skipped",
+    "new": [
+      "test_tick_does_not_reparse_unchanged_30mb_seed_store_and_keeps_other_fields: >=30 MB same-shape store; three ticks parse exactly the store size once (bytes_parsed == size), desired_state identical across ticks; an append costs exactly the appended bytes and raises the count by one new source",
+      "test_seed_lineage_counter_handles_partial_line_replacement_missing_and_bad_json",
+      "test_tick_fails_closed_on_malformed_seed_store"
+    ]
+  },
+  "local_measurement": {
+    "method": "real run_controller_tick code path (old module from git HEAD vs new module), same 35,652,419-byte store of 5000 distinct sources (ASCII filler), no admissions; per tick: clear_refs=5 resets VmHWM, peak growth = VmHWM after tick - VmRSS before tick; Linux 7.0.0-1017-gcp, dependency venv python",
+    "before": {"tick_peak_growth_mib": [68.0, 67.9, 67.8, 67.8], "tick_seconds": [1.315, 1.127, 1.117, 1.132]},
+    "after": {"tick_peak_growth_mib": [5.1, 0.0, 0.0, 0.0], "tick_seconds": [0.369, 0.015, 0.014, 0.017]},
+    "note": "the hosted spike (~260 MiB) is larger than the local 68 MiB because the real seed text is largely non-ASCII (CPython stores such str at 2-4 bytes per char, for both the whole-file str and every split line); the new path never materialises the whole file and streams line by line in both cases"
+  },
+  "expected_hosted": "after the first tick following deploy (one streamed pass, peak a few MiB above idle), controller ticks should show no anon spike above idle noise; the ~230 -> ~490 MiB per-minute swing should disappear",
+  "hosted_proof": {
+    "status": "pending_after_deploy",
+    "acceptance": "read-only 1 s sampling of alpha-replication-worker cgroup memory.stat anon for 10 minutes: no per-tick spike above near-idle, 0 restarts",
+    "residual_owner": "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125 if not recorded here"
+  },
+  "residual_findings": [
+    "distill_seeds.jsonl remains RC3 unreviewed/unbounded (no cap or cleanup) in storage-manifest.json; services/source_ingestion/runtime.py is another reader not examined here"
+  ]
+}
