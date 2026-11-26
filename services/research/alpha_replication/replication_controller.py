@@ -29,6 +29,60 @@ from services.service_token_file import configured_service_token
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+class SeedLineageCounter:
+    """Distinct seed ``source_id`` count, read incrementally from the append-only seed store.
+
+    In-memory only (no cache file): keyed by the store's (st_dev, st_ino). An unchanged store costs
+    one stat(); a grown store parses only the bytes after the last complete line already counted; a
+    replaced or truncated store is re-read from the start. Lines are streamed, never loaded whole.
+    """
+
+    def __init__(self) -> None:
+        self._identity: tuple[int, int] | None = None
+        self._offset = 0  # byte offset just past the last newline-terminated line counted
+        self._size = -1
+        self._source_ids: set[str] = set()
+        self.bytes_parsed = 0  # cumulative, for tests and evidence
+
+    def count(self, path: Path) -> int:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            self._reset(None)
+            return 0
+        identity = (st.st_dev, st.st_ino)
+        if identity != self._identity or st.st_size < self._offset:
+            self._reset(identity)
+        if st.st_size == self._size:
+            return len(self._source_ids)
+        with path.open("rb") as handle:
+            handle.seek(self._offset)
+            offset = self._offset
+            for raw in handle:
+                self.bytes_parsed += len(raw)
+                self._ingest(raw)
+                if raw.endswith(b"\n"):
+                    offset += len(raw)
+                # an unterminated last line is counted now and re-read once it is completed
+        self._offset = offset
+        self._size = st.st_size
+        return len(self._source_ids)
+
+    def _reset(self, identity: tuple[int, int] | None) -> None:
+        self._identity, self._offset, self._size = identity, 0, -1
+        self._source_ids = set()
+
+    def _ingest(self, raw: bytes) -> None:
+        line = raw.decode("utf-8").strip()
+        if not line:
+            return
+        payload = json.loads(line)
+        if isinstance(payload, dict) and "source_id" in payload:
+            source_id = str(payload["source_id"] or "").strip()
+            if source_id:
+                self._source_ids.add(source_id)
+
+
 class ReplicationControllerConfig:
     def __init__(
         self,
@@ -77,6 +131,7 @@ class ReplicationControllerConfig:
         self.seed_store_path = seed_store_path or Path(os.getenv("STRATEGY_SPEC_SEED_STORE_PATH") or "data/source-ingest/distill_seeds.jsonl")
         self.authority = authority
         self.admission_store = admission_store or ReplicationAdmissionStore(self.data_dir)
+        self.seed_lineage = SeedLineageCounter()
 
 
 def refresh_card_wiring(config: "ReplicationControllerConfig") -> dict[str, Any]:
@@ -304,25 +359,16 @@ def run_controller_tick(
         # 1. Read admissions from ReplicationAdmissionStore for current tenant
         admissions = config.admission_store.list_admissions(tenant_id=state.tenant_id)
 
-        # Legacy seed file read: seed store is retained for lineage tracking,
-        # but seed source_ids do NOT directly grant admission without an approved ReplicationAdmission.
-        seed_lineage_sources: list[str] = []
-        if config.seed_store_path.exists():
-            try:
-                for line in config.seed_store_path.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    payload = json.loads(line)
-                    if isinstance(payload, dict) and "source_id" in payload:
-                        source_id = str(payload["source_id"] or "").strip()
-                        if source_id and source_id not in seed_lineage_sources:
-                            seed_lineage_sources.append(source_id)
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to read StrategySpec discovery trigger store for lineage: {exc}"
-                ) from exc
-        
+        # Legacy seed file read: seed store is retained for lineage tracking (seed_lineage_count on the
+        # controller health file), but seed source_ids do NOT directly grant admission without an
+        # approved ReplicationAdmission. Counted incrementally: an unchanged store costs one stat().
+        try:
+            seed_lineage_count = config.seed_lineage.count(config.seed_store_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read StrategySpec discovery trigger store for lineage: {exc}"
+            ) from exc
+
         # Look up registry entries ONLY for admitted strategy specs
         approved_specs = []
         for adm in admissions:
@@ -340,7 +386,7 @@ def run_controller_tick(
             "approved_spec_count": len(approved_specs),
             "strategy_spec_ids": [entry.get("registry_id") for entry in approved_specs],
             "tenant_id": state.tenant_id,
-            "seed_lineage_count": len(seed_lineage_sources),
+            "seed_lineage_count": seed_lineage_count,
         }
         
         # 2. Enqueue into AlphaReplicationQueue
