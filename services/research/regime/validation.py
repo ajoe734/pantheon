@@ -10,6 +10,11 @@ Protocol, per axis and horizon:
   offline change points (``ruptures``) as an audit that does not gate approval;
 - with less than ``min_training_sessions`` of history no fold is run and the model stays a
   candidate. Nothing is substituted for missing history.
+
+Every window, delay and duration in ``RegimeConfig`` is declared in market sessions. A frame
+row may span several sessions (``AxisInputs.cadence_sessions``, e.g. five for the medium
+volatility horizon), so windows are converted to rows with ``sessions_to_rows`` (rounded up)
+and rates/durations are reported in market sessions actually spanned (rows * cadence).
 """
 from __future__ import annotations
 
@@ -21,7 +26,8 @@ import pandas as pd
 
 from services.research.regime.features import AxisInputs, RegimeConfig
 from services.research.regime.models import (
-    AxisSession, JumpAxisModel, RegimeModelError, VolatilityModel, fit_jump_axis, fit_volatility,
+    AxisSession, JumpAxisModel, RegimeModelError, VolatilityModel, fit_jump_axis, fit_volatility, rows_to_sessions,
+    sessions_to_rows,
 )
 
 FitFn = Callable[[pd.DataFrame, pd.Series], Any]
@@ -101,14 +107,15 @@ def changepoint_agreement(signal: np.ndarray, switches: list[int], *, penalty: f
             "penalty": penalty, "algorithm": "ruptures.Pelt(l2)"}
 
 
-def make_fit_fn(axis: str, horizon: str, config: RegimeConfig) -> FitFn:
+def make_fit_fn(axis: str, horizon: str, config: RegimeConfig, *, cadence_sessions: int = 1) -> FitFn:
     """The fitting recipe for one axis; the jump penalty is chosen on a trailing validation window."""
     if axis == "volatility":
         return lambda frame, returns: fit_volatility(frame, horizon=horizon)
     n_states = config.trend_states if axis == "trend" else config.risk_appetite_states
 
     def fit(frame: pd.DataFrame, returns: pd.Series) -> JumpAxisModel:
-        penalty = select_jump_penalty(frame, returns, axis=axis, horizon=horizon, n_states=n_states, config=config)
+        penalty = select_jump_penalty(frame, returns, axis=axis, horizon=horizon, n_states=n_states, config=config,
+                                      cadence_sessions=cadence_sessions)
         return fit_jump_axis(frame, returns, axis=axis, horizon=horizon, n_states=n_states,
                              jump_penalty=penalty, config=config)
 
@@ -116,14 +123,15 @@ def make_fit_fn(axis: str, horizon: str, config: RegimeConfig) -> FitFn:
 
 
 def select_jump_penalty(frame: pd.DataFrame, returns: pd.Series, *, axis: str, horizon: str, n_states: int,
-                        config: RegimeConfig) -> float:
+                        config: RegimeConfig, cadence_sessions: int = 1) -> float:
     """Smallest grid penalty whose validation-window switch rate is within the gate.
 
     Fits on the training window without its last ``refit_sessions`` rows and measures the
-    online switches per year on those held-out rows. Falls back to the largest penalty.
+    online switches per year on those held-out rows. Falls back to the largest penalty. Rows span
+    ``cadence_sessions`` market sessions each.
     """
     grid = sorted(float(p) for p in config.jump_penalty_grid)
-    holdout = min(config.refit_sessions, len(frame) // 4)
+    holdout = min(sessions_to_rows(config.refit_sessions, cadence_sessions), len(frame) // 4)
     if holdout < 40 or len(frame) - holdout < 250:
         return grid[-1]
     train, valid = frame.iloc[:-holdout], frame.iloc[-holdout:]
@@ -135,7 +143,7 @@ def select_jump_penalty(frame: pd.DataFrame, returns: pd.Series, *, axis: str, h
         except RegimeModelError:
             continue
         switches = len(switch_indices([s.state for s in sessions]))
-        if switches / (holdout / config.sessions_per_year) <= config.max_switches_per_year:
+        if switches / (rows_to_sessions(holdout, cadence_sessions) / config.sessions_per_year) <= config.max_switches_per_year:
             return penalty
     return grid[-1]
 
@@ -150,19 +158,33 @@ def walk_forward_validate(inputs: AxisInputs, fit_fn: FitFn, config: RegimeConfi
     """Run the walk-forward protocol over ``inputs`` and return the report (never raises on bad data)."""
     config = config or RegimeConfig()
     axis, horizon = inputs.axis, inputs.horizon or ""
+    try:
+        cadence = int(inputs.cadence_sessions)
+        # Session-denominated windows expressed in frame rows (rounded up, never shortened).
+        start = sessions_to_rows(config.min_training_sessions, cadence)
+        refit_rows = sessions_to_rows(config.refit_sessions, cadence)
+        delay_rows = sessions_to_rows(config.signal_delay_sessions, cadence)
+        stability_rows = sessions_to_rows(config.stability_window_sessions, cadence)
+        tolerance_rows = sessions_to_rows(config.changepoint_tolerance_sessions, cadence)
+    except (TypeError, ValueError) as exc:
+        return ValidationReport(axis, horizon, "error", False, f"cadence_invalid:{exc}",
+                                protocol={"inference": "filtered_online_only", "config": config.to_dict()})
     protocol = {"inference": "filtered_online_only", "signal_delay_sessions": config.signal_delay_sessions,
                 "refit_sessions": config.refit_sessions, "min_training_sessions": config.min_training_sessions,
+                "cadence_sessions": cadence, "signal_delay_rows": delay_rows, "refit_rows": refit_rows,
+                "min_training_rows": start, "stability_window_rows": stability_rows,
+                "changepoint_tolerance_rows": tolerance_rows,
                 "window": "expanding", "config": config.to_dict()}
     if not inputs.available or inputs.frame is None:
         return ValidationReport(axis, horizon, "error", False, f"axis_unavailable:{inputs.reason}", protocol=protocol)
     frame, returns = inputs.frame, inputs.returns
     n = len(frame)
     # The walk-forward start is the minimum training history; the last fold may be shorter.
-    start = config.min_training_sessions
-    if n < start + config.refit_sessions:
+    # Counts in ``history_short`` are frame rows (``protocol.cadence_sessions`` sessions each).
+    if n < start + refit_rows:
         return ValidationReport(
             axis, horizon, "insufficient_history", False,
-            f"history_short:{n}<{start + config.refit_sessions}", sessions=n, protocol=protocol)
+            f"history_short:{n}<{start + refit_rows}", sessions=n, protocol=protocol)
     returns = returns if returns is not None else pd.Series(0.0, index=frame.index)
     fold_models: list[Any] = []
     fold_rows: list[dict[str, Any]] = []
@@ -170,7 +192,7 @@ def walk_forward_validate(inputs: AxisInputs, fit_fn: FitFn, config: RegimeConfi
     try:
         cursor = start
         while cursor < n:
-            end = min(cursor + config.refit_sessions, n)
+            end = min(cursor + refit_rows, n)
             train = frame.iloc[:cursor]
             model = fit_fn(train, returns.reindex(train.index))
             sessions = model.infer(frame.iloc[:end])
@@ -178,22 +200,26 @@ def walk_forward_validate(inputs: AxisInputs, fit_fn: FitFn, config: RegimeConfi
             oos.extend(test)
             fold_models.append((model, cursor, end))
             fold_rows.append({"train_start": train.index[0].date().isoformat(), "train_end": train.index[-1].date().isoformat(),
-                              "train_sessions": cursor, "test_sessions": len(test), "model_fingerprint": model.fingerprint(),
+                              "train_sessions": int(rows_to_sessions(cursor, cadence)),
+                              "test_sessions": int(rows_to_sessions(len(test), cadence)),
+                              "train_rows": cursor, "test_rows": len(test), "model_fingerprint": model.fingerprint(),
                               "jump_penalty": getattr(model, "jump_penalty", None),
-                              "model_expected_durations": model.expected_durations()})
+                              "model_expected_durations": model.expected_durations(),
+                              "model_expected_durations_sessions": {
+                                  k: rows_to_sessions(v, cadence) for k, v in model.expected_durations().items()}})
             cursor = end
     except RegimeModelError as exc:
         return ValidationReport(axis, horizon, "error", False, f"fit_failed:{exc}", sessions=n, protocol=protocol)
     method = fold_models[-1][0].method
-    labels = delayed_signal(oos, config.signal_delay_sessions)
-    years = max(len(labels), 1) / config.sessions_per_year
+    labels = delayed_signal(oos, delay_rows)
+    years = rows_to_sessions(max(len(labels), 1), cadence) / config.sessions_per_year
     switches = switch_indices(labels)
     runs = run_lengths(labels)
-    durations = {state: float(np.mean(lengths)) for state, lengths in runs.items()}
+    durations = {state: rows_to_sessions(float(np.mean(lengths)), cadence) for state, lengths in runs.items()}
     # Label stability across consecutive refits: both models label the same recent training rows.
     agreements: list[float] = []
     for (prev, _, _), (nxt, cur_start, _) in zip(fold_models, fold_models[1:]):
-        window = min(config.stability_window_sessions, cur_start)
+        window = min(stability_rows, cur_start)
         sub = frame.iloc[:cur_start]
         a = [s.state for s in prev.infer(sub)[-window:]]
         b = [s.state for s in nxt.infer(sub)[-window:]]
@@ -205,16 +231,20 @@ def walk_forward_validate(inputs: AxisInputs, fit_fn: FitFn, config: RegimeConfi
     # Switch rows are positions in the model's own (undelayed) label timeline, i.e. frame rows.
     signal_audit = changepoint_agreement(
         audit_signal(inputs), [start + i for i in switches],
-        penalty=config.changepoint_penalty, tolerance=config.changepoint_tolerance_sessions)
+        penalty=config.changepoint_penalty, tolerance=tolerance_rows)
+    if signal_audit.get("status") == "computed":
+        signal_audit.update(tolerance_sessions=config.changepoint_tolerance_sessions, tolerance_rows=tolerance_rows)
     gates = {
-        "history": _gate(float(n), float(start), at_most=False),
+        "history": _gate(rows_to_sessions(n, cadence), float(config.min_training_sessions), at_most=False),
         "refits": _gate(float(len(fold_models)), float(config.min_refits), at_most=False),
         "switches_per_year": _gate(switches_per_year, config.max_switches_per_year, at_most=True),
         "expected_duration_sessions": _gate(min_duration, config.min_expected_duration_sessions, at_most=False),
         "label_stability": _gate(stability, config.min_label_stability, at_most=False),
     }
     failed = [name for name, gate in gates.items() if not gate["passed"]]
-    metrics = {"switches_per_year": switches_per_year, "switches": len(switches), "oos_sessions": len(labels),
+    metrics = {"switches_per_year": switches_per_year, "switches": len(switches),
+               "oos_sessions": int(rows_to_sessions(len(labels), cadence)), "oos_rows": len(labels),
+               "cadence_sessions": cadence,
                "expected_durations_sessions": durations, "mean_run_length_sessions": mean_duration,
                "model_expected_durations": fold_rows[-1]["model_expected_durations"],
                "label_stability": stability, "label_stability_pairs": len(agreements),
@@ -233,7 +263,7 @@ def fit_and_validate(inputs: AxisInputs, config: RegimeConfig | None = None) -> 
     only be registered as a candidate, never approved); an error returns no model.
     """
     config = config or RegimeConfig()
-    fit_fn = make_fit_fn(inputs.axis, inputs.horizon or "", config)
+    fit_fn = make_fit_fn(inputs.axis, inputs.horizon or "", config, cadence_sessions=inputs.cadence_sessions)
     report = walk_forward_validate(inputs, fit_fn, config)
     if report.status == "error":
         return None, report
