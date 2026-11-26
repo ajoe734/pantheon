@@ -3,7 +3,7 @@
   "task_id": "MGMT-GATE-FULL-PASS-HOSTED-ACCEPTANCE-20261114",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "recorded_at": "2026-11-26T03:53:21Z",
+  "recorded_at": "2026-11-26T04:32:10Z",
   "problem_register_binding": {
     "root_cause_classes": [
       "RC1 WP1.2",
@@ -26,8 +26,8 @@
     "fe_deploy_conclusion": "success",
     "fe_url": "https://app.dev.mvl-cap.tw",
     "bff_url": "https://api.dev.mvl-cap.tw",
-    "pair_id": "4ee2000dceee2403c4e9b4297374c19e276ce6ebcc4a8060026faced28954d61",
-    "release_candidate_id": "220692bc6162c59c5eb82fdaef7e400eefb4b863e093d20b90a3e5cc4e098104",
+    "pair_id": "5b664426555909acda7a5db40b6b742ead1989c634698cc11851ee9932b6d218",
+    "release_candidate_id": "923c2a3131e475fcf404e6f5ab4c11db4476eace48885a0648a6fd706c403b19",
     "deployment_state": "accepted",
     "backend_sha": "8e67d240e034f4f133ffa926383b584536bc2e35",
     "frontend_sha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
@@ -645,6 +645,15 @@
       ],
       "pair": "Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83) during concurrent self-hosted FE gate run 45747260884",
       "root_cause_and_disposition": "Passed on Root 45684275970 (BFF b3f93d448f44 + FE 38e5337d1f83: status=ok, dataPass=true). Timed out past the 20s settle window at 03:14Z-03:15Z only while self-hosted runner job 45747260884 (Release candidate 923c2a31...) saturated the Dev VM (load average 12.99)."
+    }
+  ],
+  "residual_findings_outside_scope": [
+    {
+      "id": "RESIDUAL-ACCEPTANCE-STAGE-VIEWER-APPROVALS-403-20261126",
+      "register_class": "RC1 WP1.2 / RC6 WP6.5",
+      "owning_task": "ACCEPTANCE-STAGE-POST-SWITCH-CRAWL-20261126",
+      "observed_on": "Root 45740904149 Post-deploy acceptance verdict job 139687776343 (artifact dev-acceptance-verdict-45740904149-1, id 15086869630)",
+      "summary": "In Root 45740904149, the newly wired post-switch check:management-crawl (scripts/dev_acceptance_stage.py) mints a viewer token (DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET, identity=viewer) instead of the read-only operator probe identity used by pantheon-integration-gate.yml (DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID). While /management/evolution-journal passed (status=ok, dataPass=true) in both crawls, viewer tokens receive HTTP 403 (Approval read role required) on GET /bff/approvals (/bff/approvals/ap_301, /bff/runtimes), causing accept-management-hosted-production.mjs to mark routes that query approvals/runtimes as api_data_failure under viewer auth even though all 111/111 routes pass (0 failures) under operator read-only auth."
     }
   ],
   "routes": [
