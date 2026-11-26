@@ -1,0 +1,37 @@
+{
+  "task": "BFF-HUMAN-INBOX-DETAIL-TARGETED-CONTRIBUTOR-20261126",
+  "task_id": "BFF-HUMAN-INBOX-DETAIL-TARGETED-CONTRIBUTOR-20261126",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "root_cause_class": "RC1 WP1.2 / RC6 WP6.1",
+  "register_instance": "RC6 (docs/operations/problem-register.md, WP6.1 and RC1 WP1.2 Human Inbox detail targeted contributor reads)",
+  "defect": "During hosted crawl on Root 45740904149 (BFF 8e67d240e034 + FE 38e5337d1f83), GET /bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity returned HTTP 503 (precondition_failed: 'human_inbox_partial_read', 2097 ms) instead of HTTP 404 because ManagementService.get_human_inbox_detail_result unconditionally fanned out across all five Human Inbox contributors (approval_queue, governance_review_queue, incidents, persona_readiness, meetings) and failed closed on unrelated contributor timeouts/degradation.",
+  "fix": {
+    "prefix_typed_detail_scoping": "Map unambiguous prefix-typed item_id values (readiness_blocker:* -> persona_readiness; incident:* -> incidents; meeting:* / meeting_review:* / meeting_refusal:* / meeting_proposal:* / meeting_action:* -> meetings; approval:* -> approval_queue + governance_review_queue; governance_review:* -> governance_review_queue + approval_queue) in _human_inbox_contributors_for_item_id and _human_inbox_source_type_for_item_id so get_human_inbox_detail_result executes only the contributor reader(s) and prewarm reads capable of producing the requested item.",
+    "source_type_scoping": "Map explicit source_type filters in _human_inbox_contributors_for_source_type so get_human_inbox, get_hiq_backlog, and _get_human_inbox_degraded_payload execute and track only the matching contributor reader subset when source_type restricts to known contributor surfaces.",
+    "honest_404_and_fail_closed_503": "When all contributors in a typed item_id's required subset succeed with no match, get_human_inbox_detail_result returns (None, []) -> HTTP 404 RESOURCE_NOT_FOUND even if unqueried contributors would time out or fail. When any contributor in the required subset (or any contributor for an untyped/ambiguous item_id) fails or times out without a match, preserve fail-closed HTTP 503 DEPENDENCY_UNAVAILABLE (precondition_failed='human_inbox_partial_read')."
+  },
+  "runtime_budget": {
+    "path_type": "read_path_only",
+    "downstream_calls_per_typed_detail_read": "reduced from 5 contributors to 1-2 contributors (1 for readiness_blocker:*, incident:*, meeting:*; 2 for approval:*, governance_review:*)",
+    "recurring_jobs": 0,
+    "emitters": 0,
+    "persistent_writers": 0
+  },
+  "review_independence": {
+    "owner": "Antigravity2",
+    "owner_family": "Antigravity",
+    "reviewer": "Claude2",
+    "reviewer_family": "Claude",
+    "independent": true
+  },
+  "tests": {
+    "services/control-plane/bff/tests/test_human_inbox_truth.py": "3 new tests covering readiness_blocker:persona:persona-tw-equity returning 404 while meetings/incidents/approvals/governance_review_queue raise TimeoutError (0 calls to unrelated contributors), readiness_blocker:* returning 503 human_inbox_partial_read when persona_readiness itself degrades, all five prefix families (readiness_blocker:*, incident:*, meeting:*, approval:*, governance_review:*) scoping to 1-2 contributors, untyped item_id preserving full-contributor fail-closed 503, and found-item detail shape parity between typed and untyped IDs.",
+    "services/control-plane/bff/tests/test_management_read_models_router.py": "test_human_inbox_detail_targeted_contributor_scoping_and_source_type_reads verifying router-mounted 404/503 semantics and source_type=readiness_blocker contributor isolation alongside existing 45 router tests."
+  },
+  "verification": [
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_promotion_review_production_defects.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_human_inbox_governance_latency.py",
+    "git diff --check"
+  ],
+  "residual_findings": []
+}

@@ -570,6 +570,73 @@ def test_human_inbox_fail_closed_on_contributor_failure_and_partial_503() -> Non
     assert err_404.get("code") == "RESOURCE_NOT_FOUND"
 
 
+def test_human_inbox_detail_targeted_contributor_scoping_and_source_type_reads() -> None:
+    """Prove prefix-typed detail reads and explicit source_type reads query only matching contributors."""
+    store = MockManagementReadStore()
+    calls = {"approvals": 0, "incidents": 0, "personas": 0, "meetings": 0}
+
+    def timeout_incidents(**_kwargs: Any) -> List[Dict[str, Any]]:
+        calls["incidents"] += 1
+        raise TimeoutError("incidents contributor timed out")
+
+    def timeout_meetings() -> List[Dict[str, Any]]:
+        calls["meetings"] += 1
+        raise TimeoutError("meetings contributor timed out")
+
+    def timeout_approvals() -> List[Dict[str, Any]]:
+        calls["approvals"] += 1
+        raise TimeoutError("approvals contributor timed out")
+
+    def healthy_personas(**_kwargs: Any) -> List[Dict[str, Any]]:
+        calls["personas"] += 1
+        return store.personas
+
+    store.list_incidents = timeout_incidents  # type: ignore[assignment]
+    store.list_meetings = timeout_meetings  # type: ignore[attr-defined]
+    store.list_approval_records = timeout_approvals  # type: ignore[assignment]
+    store.list_personas = healthy_personas  # type: ignore[assignment]
+
+    app = FastAPI()
+    app.include_router(create_management_router(get_read_store=lambda: store))
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer op-1:operator"}
+
+    # 1. readiness_blocker:persona:persona-tw-equity returns 404 when persona_readiness succeeds
+    #    even while meetings, incidents, and approvals raise TimeoutError.
+    resp_404 = client.get(
+        "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",
+        headers=headers,
+    )
+    assert resp_404.status_code == 404, resp_404.text
+    assert calls == {"approvals": 0, "incidents": 0, "personas": 1, "meetings": 0}
+
+    # 2. Explicit source_type=readiness_blocker list read also queries only persona_readiness
+    resp_list = client.get(
+        "/bff/management/human-inbox?source_type=readiness_blocker",
+        headers=headers,
+    )
+    assert resp_list.status_code == 200, resp_list.text
+    assert resp_list.json()["meta"]["surfaces"]["human_inbox"]["status"] == "ok"
+    assert not resp_list.json()["meta"].get("partial")
+    assert calls == {"approvals": 0, "incidents": 0, "personas": 2, "meetings": 0}
+
+    # 3. When persona_readiness itself degrades, readiness_blocker:* fails closed with 503
+    def failing_personas(**_kwargs: Any) -> List[Dict[str, Any]]:
+        calls["personas"] += 1
+        raise TimeoutError("persona_readiness contributor timed out")
+
+    store.list_personas = failing_personas  # type: ignore[assignment]
+    resp_503 = client.get(
+        "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",
+        headers=headers,
+    )
+    assert resp_503.status_code == 503, resp_503.text
+    err_503 = resp_503.json().get("detail", resp_503.json()).get("error", {})
+    assert err_503.get("code") == "DEPENDENCY_UNAVAILABLE"
+    assert err_503.get("details", {}).get("precondition_failed") == "human_inbox_partial_read"
+    assert calls["incidents"] == 0 and calls["meetings"] == 0 and calls["approvals"] == 0
+
+
 def test_evidence_summary() -> None:
     """Test GET /bff/management/evidence."""
     mock_store = MockManagementReadStore()

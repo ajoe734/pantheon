@@ -797,3 +797,246 @@ def test_human_inbox_derives_summary_at_read_time_for_legacy_appended_incident_w
     assert item["summary_key"] == "incident.summary.drift_threshold_breach"
     assert item["summary"] == "Observed rolling drawdown multiple 9.61 (> 1.25) across 6 occurrences."
     assert "[older entries dropped]" not in item["summary"]
+
+
+# ---------------------------------------------------------------------------
+# BFF-HUMAN-INBOX-DETAIL-TARGETED-CONTRIBUTOR-20261126 (RC1 WP1.2 / RC6 WP6.1)
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_blocker_detail_returns_404_when_meetings_or_incidents_timeout(tmp_path) -> None:
+    """Acceptance 1, 3, 4: readiness_blocker:persona:persona-tw-equity queries only
+    persona_readiness (1 contributor instead of 5) and returns HTTP 404 when
+    persona_readiness succeeds with no matching readiness blocker, even while
+    meetings, incidents, approvals, and governance_review_queue raise TimeoutError.
+    """
+    calls = {"incidents": 0, "meetings": 0, "approvals": 0, "plans": 0, "evolution": 0, "personas": 0}
+
+    def timeout_approvals() -> List[Dict[str, Any]]:
+        calls["approvals"] += 1
+        raise TimeoutError("approvals timed out")
+
+    def timeout_plans() -> List[Dict[str, Any]]:
+        calls["plans"] += 1
+        raise TimeoutError("plans timed out")
+
+    def timeout_evolution() -> List[Dict[str, Any]]:
+        calls["evolution"] += 1
+        raise TimeoutError("evolution timed out")
+
+    def timeout_meetings() -> List[Dict[str, Any]]:
+        calls["meetings"] += 1
+        raise TimeoutError("meetings timed out")
+
+    def healthy_personas(**_kwargs: Any) -> List[Dict[str, Any]]:
+        calls["personas"] += 1
+        return [
+            {
+                "persona_id": "persona-tw-equity",
+                "name": "TW Equity",
+                "lifecycle_state": "active",
+                "metadata": {"governance_required": False, "recommended_governance_action": "none"},
+            }
+        ]
+
+    with _inbox_app(
+        tmp_path,
+        incidents_url=_closed_port_url(),
+        approvals=timeout_approvals,
+        plans=timeout_plans,
+        evolution=timeout_evolution,
+        personas=healthy_personas,
+    ) as (client, store):
+        store.list_meetings = timeout_meetings  # type: ignore[attr-defined]
+        resp = client.get(
+            "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",
+            headers=HEADERS,
+        )
+
+    assert resp.status_code == 404, resp.text
+    err = resp.json().get("detail", resp.json()).get("error", {})
+    assert err.get("code") == "RESOURCE_NOT_FOUND"
+    assert calls["personas"] == 1
+    assert calls["meetings"] == 0
+    assert calls["approvals"] == 0
+    assert calls["plans"] == 0
+    assert calls["evolution"] == 0
+
+
+def test_readiness_blocker_detail_returns_503_when_persona_readiness_itself_degrades(tmp_path) -> None:
+    """Acceptance 2, 3: When persona_readiness itself degrades (raises or times out)
+    without finding the item, GET /bff/management/human-inbox/readiness_blocker:*
+    still fails closed with HTTP 503 precondition_failed=human_inbox_partial_read.
+    """
+    calls = {"meetings": 0, "approvals": 0}
+
+    def healthy_meetings() -> List[Dict[str, Any]]:
+        calls["meetings"] += 1
+        return []
+
+    def healthy_approvals() -> List[Dict[str, Any]]:
+        calls["approvals"] += 1
+        return []
+
+    def degraded_personas(**_kwargs: Any) -> List[Dict[str, Any]]:
+        raise TimeoutError("persona_readiness owner read timed out")
+
+    with IncidentOwner([]) as owner, _inbox_app(
+        tmp_path,
+        incidents_url=owner.url,
+        approvals=healthy_approvals,
+        personas=degraded_personas,
+    ) as (client, store):
+        store.list_meetings = healthy_meetings  # type: ignore[attr-defined]
+        resp = client.get(
+            "/bff/management/human-inbox/readiness_blocker:persona:persona-tw-equity",
+            headers=HEADERS,
+        )
+
+    assert resp.status_code == 503, resp.text
+    err = resp.json().get("detail", resp.json()).get("error", {})
+    assert err.get("code") == "DEPENDENCY_UNAVAILABLE"
+    assert err.get("details", {}).get("precondition_failed") == "human_inbox_partial_read"
+    assert owner.paths == []
+    assert calls == {"meetings": 0, "approvals": 0}
+
+
+def test_all_prefix_typed_detail_reads_scope_to_matching_contributors_and_untyped_preserves_503(
+    tmp_path,
+) -> None:
+    """Acceptance 1, 2, 3, 4:
+    - Prefix-typed IDs (readiness_blocker:*, incident:*, meeting:*, approval:*,
+      governance_review:*) execute only the 1-2 capable contributors and return 404
+      when those contributors succeed, even if unrelated contributors fail/timeout.
+    - When a required contributor for a prefix-typed ID fails, detail fails closed
+      with 503 human_inbox_partial_read.
+    - Untyped item_ids query all contributors and fail closed with 503 when any
+      contributor fails without a match.
+    - Existing found-item detail shape is unchanged across typed and untyped reads.
+    """
+    blocked_persona = {
+        "persona_id": "persona-tw-equity",
+        "name": "TW Equity",
+        "lifecycle_state": "active",
+        "updated_at": "2026-11-26T00:00:00Z",
+        "metadata": {
+            "persona_status": "needs_human_approval",
+            "governance_required": True,
+            "recommended_governance_action": "hold_for_risk_owner_review",
+            "current_work": "Verify TW session boundary",
+            "can_deploy": False,
+        },
+    }
+    meeting_row = {
+        "meeting_id": "mtg-review-01",
+        "meeting_type": "MT-1",
+        "status": "closed",
+        "outcome": "REVIEW",
+        "chair_persona_id": "persona-chair-alpha",
+        "created_at": "2026-11-26T01:00:00Z",
+        "closed_at": "2026-11-26T01:10:00Z",
+    }
+    plan_row = {
+        "plan_id": "plan-gov-01",
+        "status": "pending_review",
+        "target_stage": "paper",
+        "submitted_at": "2026-11-26T02:00:00Z",
+    }
+
+    # 1. Found-item detail shape parity between typed and untyped IDs on healthy store
+    with IncidentOwner([_incident(1, "open")]) as owner, _inbox_app(
+        tmp_path,
+        incidents_url=owner.url,
+        approvals=lambda: [_approval(1)],
+        plans=lambda: [plan_row],
+        personas=lambda **_k: [blocked_persona],
+    ) as (client, store):
+        store.list_meetings = lambda: [meeting_row]  # type: ignore[attr-defined]
+        store.list_persona_league = lambda **_k: [  # type: ignore[attr-defined]
+            {
+                "persona_id": "persona-tw-equity",
+                "governance_required": True,
+                "recommendation": "hold_for_risk_owner_review",
+                "status": "needs_human_approval",
+            }
+        ]
+
+        for typed_id, untyped_id in (
+            ("readiness_blocker:persona:persona-tw-equity", "persona-tw-equity"),
+            ("incident:inc-deployment-comp-deployment-saga-plan-persona-paper-0001", "inc-deployment-comp-deployment-saga-plan-persona-paper-0001"),
+            ("approval:apv-1", "apv-1"),
+            ("governance_review:review-plan-gov-01", "review-plan-gov-01"),
+            ("meeting_review:mtg-review-01", "mtg-review-01"),
+            ("meeting:mtg-review-01", "mtg-review-01"),
+        ):
+            r_typed = client.get(f"/bff/management/human-inbox/{typed_id}", headers=HEADERS)
+            r_untyped = client.get(f"/bff/management/human-inbox/{untyped_id}", headers=HEADERS)
+            assert r_typed.status_code == 200, (typed_id, r_typed.text)
+            assert r_untyped.status_code == 200, (untyped_id, r_untyped.text)
+            assert r_typed.json()["data"] == r_untyped.json()["data"]
+
+    # 2. Incident, meeting, approval, governance_review 404 when required contributor(s) succeed
+    #    and unrelated contributors raise TimeoutError, plus 503 for untyped item_id
+    def raise_timeout(*_a: Any, **_k: Any) -> Any:
+        raise TimeoutError("unrelated contributor timed out")
+
+    # 2a. incident:inc-nonexistent -> 404 while approvals, governance_review, personas, meetings time out
+    with IncidentOwner([]) as owner, _inbox_app(
+        tmp_path,
+        incidents_url=owner.url,
+        approvals=raise_timeout,
+        plans=raise_timeout,
+        evolution=raise_timeout,
+        personas=raise_timeout,
+    ) as (client, store):
+        store.list_meetings = raise_timeout  # type: ignore[attr-defined]
+        r_inc_404 = client.get("/bff/management/human-inbox/incident:inc-nonexistent", headers=HEADERS)
+        assert r_inc_404.status_code == 404, r_inc_404.text
+        assert len(owner.paths) == 1
+
+        # Untyped item_id queries all contributors and fails closed with 503
+        r_untyped_503 = client.get("/bff/management/human-inbox/untyped-item-001", headers=HEADERS)
+        assert r_untyped_503.status_code == 503, r_untyped_503.text
+        assert (
+            r_untyped_503.json()["detail"]["error"]["details"]["precondition_failed"]
+            == "human_inbox_partial_read"
+        )
+
+    # 2b. meeting:mtg-nonexistent -> 404 while incidents, approvals, plans, personas fail
+    with _inbox_app(
+        tmp_path,
+        incidents_url=_closed_port_url(),
+        approvals=raise_timeout,
+        plans=raise_timeout,
+        evolution=raise_timeout,
+        personas=raise_timeout,
+    ) as (client, store):
+        store.list_meetings = lambda: []  # type: ignore[attr-defined]
+        r_mtg_404 = client.get("/bff/management/human-inbox/meeting:mtg-nonexistent", headers=HEADERS)
+        assert r_mtg_404.status_code == 404, r_mtg_404.text
+
+        store.list_meetings = raise_timeout  # type: ignore[attr-defined]
+        r_mtg_503 = client.get("/bff/management/human-inbox/meeting:mtg-nonexistent", headers=HEADERS)
+        assert r_mtg_503.status_code == 503, r_mtg_503.text
+        assert (
+            r_mtg_503.json()["detail"]["error"]["details"]["precondition_failed"]
+            == "human_inbox_partial_read"
+        )
+
+    # 2c. approval:apv-nonexistent and governance_review:review-nonexistent -> 404 while incidents, personas, meetings fail
+    with _inbox_app(
+        tmp_path,
+        incidents_url=_closed_port_url(),
+        approvals=lambda: [],
+        plans=lambda: [],
+        evolution=lambda: [],
+        personas=raise_timeout,
+    ) as (client, store):
+        store.list_meetings = raise_timeout  # type: ignore[attr-defined]
+        r_apv_404 = client.get("/bff/management/human-inbox/approval:apv-nonexistent", headers=HEADERS)
+        r_gov_404 = client.get(
+            "/bff/management/human-inbox/governance_review:review-nonexistent",
+            headers=HEADERS,
+        )
+        assert r_apv_404.status_code == 404, r_apv_404.text
+        assert r_gov_404.status_code == 404, r_gov_404.text

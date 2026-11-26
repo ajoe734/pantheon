@@ -49,7 +49,7 @@ import concurrent.futures
 import contextlib
 import contextvars
 from services.control_plane.bff.core.owner_reads import management_read_deadline, remaining_management_read_budget
-from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE
+from .service import ManagementService, _MANAGEMENT_STORE_OVERRIDE, _human_inbox_contributors_for_source_type
 
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
@@ -255,9 +255,13 @@ def _get_human_inbox_degraded_payload(
     if completed_contributors:
         # Keep every contributor that finished; the rest report the real reason.
         completed = dict(completed_contributors)
+        target_keys = (
+            _human_inbox_contributors_for_source_type(source_type)
+            or ("approval_queue", "governance_review_queue", "incidents", "persona_readiness")
+        )
         missing = {
             key: ManagementService._human_inbox_timeout_surface(key, snap, reason)
-            for key in ("approval_queue", "governance_review_queue", "incidents", "persona_readiness")
+            for key in target_keys
             if key not in completed
         }
         payload = self.compose_human_inbox(
