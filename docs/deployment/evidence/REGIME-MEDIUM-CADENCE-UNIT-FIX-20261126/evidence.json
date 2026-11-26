@@ -1,0 +1,41 @@
+{
+  "task": "REGIME-MEDIUM-CADENCE-UNIT-FIX-20261126",
+  "root_cause_class": "RC2",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "status": "source + focused tests; no hosted run claimed",
+  "defect": "walk_forward_validate compared frame rows with session-denominated config: a 727-row medium volatility frame (five sessions per row, 3,639 daily returns) needed 2,450 + 122 rows (12,860 sessions, 52.49 years) and reported history_short:727<2572; switches per year and run lengths used rows as sessions (5x rate inflation, 5x duration deflation).",
+  "change": {
+    "services/research/regime/features.py": "AxisInputs.cadence_sessions (default 1); build_volatility_inputs sets it to volatility_return_window[horizon] (1 short, 5 medium). Trend and risk-appetite frames are daily (cadence 1).",
+    "services/research/regime/models.py": "sessions_to_rows(sessions, cadence) rounds up so declared windows are never shortened; rows_to_sessions(rows, cadence); cadence < 1 raises RegimeModelError.",
+    "services/research/regime/validation.py": "training start, refit step, signal delay, stability window and change-point tolerance converted to rows; years = rows * cadence / sessions_per_year; run lengths, oos_sessions, fold train/test sessions and model expected durations reported in sessions (row counts kept as *_rows); history gate compares sessions spanned with min_training_sessions; protocol records cadence and every row conversion; select_jump_penalty and make_fit_fn take cadence_sessions (default 1); invalid cadence is an error report."
+  },
+  "conversions": {
+    "medium (5 sessions/row)": {"min_training": "2450 sessions -> 490 rows", "refit": "122 sessions -> 25 rows", "signal_delay": "1 session -> 1 row", "stability_window": "60 -> 12 rows", "changepoint_tolerance": "10 -> 2 rows"},
+    "short (1 session/row)": "unchanged: 2450 + 122 rows; history_short reason identical to before"
+  },
+  "preserved": ["R9 filtered/online inference only (no inference code changed)", "signal delay never shorter than one market session (rounded up to one row)", "declared thresholds unchanged (max_switches_per_year 6.0, min_expected_duration_sessions 5.0, min_label_stability 0.8, min_refits 3)"],
+  "runtime_budget": {"recurring_jobs": 0, "emitters": 0, "persistent_writers": 0, "note": "pure in-memory walk-forward math"},
+  "tests": {
+    "environment": "python 3.12 venv with services/research/requirements.txt plus pinned numpy 2.4.6, pandas 3.0.6, statsmodels 0.15.0, ruptures 1.1.10",
+    "commands": [
+      {"command": "pytest services/research/regime/tests", "result": "61 passed"},
+      {"command": "pytest services/research/tests/test_regime_research_route.py", "result": "4 passed"}
+    ],
+    "new_regressions": [
+      "test_validation.py::test_hosted_shaped_medium_taiex_series_is_not_reported_history_short (3,640 closes -> 727 five-session rows, default RegimeConfig: runs 10 folds, 490-row start, 25-row refits, history gate 3635 >= 2450)",
+      "test_validation.py::test_short_cadence_daily_series_still_requires_daily_session_history",
+      "test_validation.py::test_switch_rate_and_run_lengths_are_in_market_sessions[5 and 1] (3 switches over 49 rows: 3.0/yr at cadence 5, 15.0/yr at cadence 1; run lengths a=50/b=72.5 vs a=10/b=14.5 sessions)",
+      "test_validation.py::test_invalid_cadence_is_an_error_report",
+      "test_models.py::test_sessions_to_rows_rounds_up_so_windows_are_never_shortened",
+      "test_models.py::test_rows_to_sessions_converts_multi_session_rows",
+      "test_models.py::test_volatility_inputs_declare_their_row_cadence"
+    ]
+  },
+  "residual_findings": [
+    "AxisSession.sessions_in_state and AxisSession.expected_durations (models.py _sessions / _expected_durations) remain in rows for the medium volatility model and are consumed by services/registry/regime/evaluator.py (TRANSITION_WINDOW comparison, explanation text); converting them changes the persisted model contract and fingerprints, so it is out of scope here.",
+    "Row-count floors that are not declared in RegimeConfig stay in rows: fit_volatility 100 rows, fit_jump_axis 250 rows, select_jump_penalty holdout >= 40 rows and >= 250 training rows, changepoint_agreement 60-row skip and Pelt min_size 20 rows.",
+    "At five-session cadence the one-session signal delay becomes one row (five sessions): conservative (no look-ahead), but the effective delay is longer than declared; recorded in protocol.signal_delay_rows.",
+    "Hosted proof pending: the next hosted regime research run should show medium volatility validated or failed on gates rather than insufficient_history."
+  ]
+}

@@ -19,6 +19,7 @@ from services.research.alpha_replication.controller_state import (
 from services.research.alpha_replication.queue import AlphaReplicationQueue
 from services.research.alpha_replication.replication_controller import (
     ReplicationControllerConfig,
+    SeedLineageCounter,
     _queue_payload_from_registry_entry,
     initialize_controller_state,
     run_controller_tick,
@@ -667,3 +668,82 @@ def test_card_read_is_paged_capped_and_never_a_whole_table_list(tmp_path):
     assert not any(u.endswith("artifact_state=draft") for u in urls)
     assert sum(sizes) < 100_000
     assert config.card_draft_cursor == "r3-19"  # next tick resumes where this one stopped
+
+
+def _write_seed_store(path: Path, *, target_bytes: int) -> int:
+    """Same-shape seed store of at least ``target_bytes``; returns the distinct source_id count."""
+    filler = "x" * 900
+    lines, size, n = [], 0, 0
+    while size < target_bytes:
+        line = json.dumps({"source_id": f"src-{n % 5000}", "seed_id": f"seed-{n}", "text": filler}) + "\n"
+        lines.append(line)
+        size += len(line)
+        n += 1
+    path.write_text("".join(lines), encoding="utf-8")
+    return min(n, 5000)
+
+
+def test_tick_does_not_reparse_unchanged_30mb_seed_store_and_keeps_other_fields(tmp_path) -> None:
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    distinct = _write_seed_store(seed_path, target_bytes=30 * 1024 * 1024)
+    size = seed_path.stat().st_size
+    assert size >= 30 * 1024 * 1024
+    config = _config(tmp_path, seed_store_path=seed_path, authority=FakeAuthority())
+    state_store = ControllerStateStore(tmp_path / "state.json")
+    state = ControllerState(controller_id="c", controller_name="alpha-replication-controller", tenant_id="tenant-a",
+                            environment="dev", deployment={"git_sha": "t"})
+
+    results = []
+    for _ in range(3):
+        results.append(run_controller_tick(config=config, state=state, store=state_store, writer=None))
+
+    assert config.seed_lineage.bytes_parsed == size  # first tick only; ticks 2 and 3 parse nothing
+    assert [r["desired_state"] for r in results] == [{
+        "approved_spec_count": 0, "strategy_spec_ids": [], "tenant_id": "tenant-a",
+        "seed_lineage_count": distinct,
+    }] * 3
+
+    # A grown store costs only the appended bytes.
+    appended = json.dumps({"source_id": "brand-new", "seed_id": "s"}) + "\n" + json.dumps({"source_id": "src-1"}) + "\n"
+    with seed_path.open("a", encoding="utf-8") as handle:
+        handle.write(appended)
+    result = run_controller_tick(config=config, state=state, store=state_store, writer=None)
+    assert config.seed_lineage.bytes_parsed == size + len(appended.encode())
+    assert result["desired_state"]["seed_lineage_count"] == distinct + 1
+
+
+def test_seed_lineage_counter_handles_partial_line_replacement_missing_and_bad_json(tmp_path) -> None:
+    path = tmp_path / "seeds.jsonl"
+    counter = SeedLineageCounter()
+    assert counter.count(path) == 0
+    path.write_text('{"source_id": "a"}\n\n{"source_id": " "}\n{"other": 1}\n{"source_id": "b"}', encoding="utf-8")
+    assert counter.count(path) == 2  # unterminated last line is counted
+    parsed = counter.bytes_parsed
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('\n{"source_id": "c"}\n')
+    assert counter.count(path) == 3
+    # only the previously unterminated line plus the new bytes were read again
+    assert counter.bytes_parsed - parsed == len('{"source_id": "b"}\n{"source_id": "c"}\n')
+    # replaced (new inode) and truncated stores are recounted from the start
+    replacement = tmp_path / "new.jsonl"
+    replacement.write_text('{"source_id": "z"}\n', encoding="utf-8")
+    replacement.replace(path)
+    assert counter.count(path) == 1
+    path.write_text("", encoding="utf-8")
+    assert counter.count(path) == 0
+    path.unlink()
+    assert counter.count(path) == 0
+    path.write_text('{"source_id": "a"}\nnot json\n', encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        counter.count(path)
+
+
+def test_tick_fails_closed_on_malformed_seed_store(tmp_path) -> None:
+    seed_path = tmp_path / "seeds.jsonl"
+    seed_path.write_text("not json\n", encoding="utf-8")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=FakeAuthority())
+    state_store = ControllerStateStore(tmp_path / "state.json")
+    state = ControllerState(controller_id="c", controller_name="alpha-replication-controller", tenant_id="tenant-a",
+                            environment="dev", deployment={"git_sha": "t"})
+    with pytest.raises(RuntimeError, match="discovery trigger store for lineage"):
+        run_controller_tick(config=config, state=state, store=state_store, writer=None)

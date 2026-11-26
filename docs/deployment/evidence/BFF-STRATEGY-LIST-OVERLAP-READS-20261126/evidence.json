@@ -1,0 +1,82 @@
+{
+  "task_id": "BFF-STRATEGY-LIST-OVERLAP-READS-20261126",
+  "class": "RC6",
+  "scope": "GET /bff/strategies starts the Persona directory, ranking snapshot and runtime-truth reads together with the prefetched Registry page; functional evidence only, hosted verification is left to the operator acceptance task",
+  "base_commit": "f0a0eb79f0b141f5a56238bf2d6f72f28f84834b",
+  "hosted_timings_before_change": {
+    "source": "task brief, hosted read-only measurement 2026-11-26 05:45Z after the close on BFF 8e67d240e with admintest; facts only, not a test threshold",
+    "load_average": "8.5 on 12 CPUs",
+    "requests_ms": {
+      "GET /bff/strategies?exclude_state=draft&hide_retired_personas=true&page_size=18": [6573, 1486],
+      "GET /bff/strategies?page_size=198 (no hide)": [9838, 1920],
+      "GET /bff/personas?page_size=197": [3507, 3121],
+      "GET /bff/management/trading-pulse": [4188, 5429],
+      "GET /bff/runtimes": [805, 650],
+      "GET /bff/strategies/{id}": [4792, 1523]
+    }
+  },
+  "change": {
+    "file": "services/control-plane/bff/strategies/routes/collection.py",
+    "before": "Registry first page prefetched (include_test_personas=true only); ranking snapshot warmed only when a request read cache existed; then read_persona_state_lookup, get_latest_ranking_snapshot and read_strategy_runtime_truth ran one after another on the request thread",
+    "after": "_start_independent_reads submits the Persona directory read, the ranking snapshot read and the runtime-truth input read (read_strategy_runtime_truth_inputs: RuntimeBinding then Telemetry summaries) on the existing _PERSONA_FLEET_READ_EXECUTOR via submit_owner_read (copy of request context), next to the existing Registry page prefetch; each is joined once with remaining_management_read_budget(); read_strategy_runtime_truth receives prefetched_inputs and the request's Persona records; unconsumed futures are cancelled in finally",
+    "default_view_dependency": "the default view's Registry page carries hide_persona_ids from the directory, so it still follows the directory read; it overlaps the ranking and runtime reads",
+    "outcomes_on_failure_or_timeout": {
+      "persona_directory": "unavailable_lookup -> meta.surfaces.persona_states unavailable, operationalStatus unknown (same as a failed directory read today)",
+      "ranking_snapshot": "(None, ranking_read_failed=True) -> metricsResolution unavailable (same as the existing TimeoutError branch)",
+      "runtime_inputs": "(None, []) -> runtime truth unavailable (runtime_bindings_unavailable) -> runtimeStatus unknown"
+    },
+    "no_new_state": "no cache, memo or stored state added; the ranking warm_key prefetch is replaced by a single joined future",
+    "detail_route": "unchanged: GET /bff/strategies/{id} already overlaps its reads since BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125 with the same executor / budget pattern; the list route uses the same pattern rather than a shared helper so the detail route is not touched in this scope"
+  },
+  "owner_calls_per_request": {
+    "method": "test_answers_and_owner_calls_match_the_pre_change_route counts each fake owner per request for the route at base_commit and after; after <= before per owner on every query",
+    "default_view_page_size_20": {
+      "before": {"persona_directory": 1, "ranking_snapshot": 1, "registry_page": 2, "runtime_bindings": 1, "telemetry": 1},
+      "after": {"persona_directory": 1, "ranking_snapshot": 1, "registry_page": 2, "runtime_bindings": 1, "telemetry": 1}
+    },
+    "hosted_query_exclude_draft_hide_retired_page_size_18": {
+      "before": {"persona_directory": 1, "ranking_snapshot": 1, "registry_page": 1, "runtime_bindings": 1, "telemetry": 1},
+      "after": {"persona_directory": 1, "ranking_snapshot": 1, "registry_page": 1, "runtime_bindings": 1, "telemetry": 1}
+    }
+  },
+  "local_measurement": {
+    "method": "test harness world (141 strategies, real RegistryService summary page), every owner call delayed 500 ms, 3 requests each, cold app per request",
+    "seconds": {
+      "page_size=20": {"before": [2.56, 2.57, 2.57], "after": [1.56, 1.56, 1.57]},
+      "exclude_state=draft&hide_retired_personas=true&page_size=18": {"before": [2.05, 2.06, 2.06], "after": [1.05, 1.06, 1.23]},
+      "include_test_personas=true&page_size=20": {"before": [2.06, 2.06, 2.06], "after": [1.06, 1.06, 1.07]}
+    },
+    "note": "local, informational; no wall-clock assertion in any test"
+  },
+  "row_shapes": "hosted 2026-11-07 Registry StrategySpec rows and Persona records of test_strategy_operational_status._World; hosted 2026-11-25 RuntimeBinding / Telemetry rows of test_strategy_metrics_truth._REAL (values unchanged, timestamps moved to the world's 2026-11-07 clock); ranking snapshot in the RankingSnapshotRecord canonical shape",
+  "tests": {
+    "new": "services/control-plane/bff/tests/test_strategy_list_overlap_reads.py (18 passed, 3 repeated runs)",
+    "new_covers": [
+      "barrier with 5 s fail-safe, no wall clock: Persona, Registry page, ranking and RuntimeBinding reads all in flight together (include_test_personas=true)",
+      "default view and hosted default query: ranking and RuntimeBinding reads start with the directory and stay in flight until the Registry read starts",
+      "the same barrier records reads that ran alone on the route at base_commit (the test discriminates)",
+      "items, page_info and meta (state_counts, visible_state_counts, operational_counts, hidden counts, surfaces) equal to the route at base_commit for page_size=20, exclude_state=draft&hide_retired_personas=true&page_size=18, exclude_state=draft&page_size=198, state=approved, exclude_state=draft&page_token=20, persona_id, include_test_personas=true",
+      "failed Persona / ranking / runtime reads: body equal to base_commit, read once, truthful unavailable / unknown",
+      "late reads past a 0.4 s request budget: 200, persona_states unavailable / ranking unavailable / runtimeStatus unknown, never zeros"
+    ],
+    "regression_batch": {
+      "files": [
+        "tests/test_strategy_list_default_view.py", "tests/test_strategies_list_fanout_read.py", "tests/test_strategy_list_latency.py",
+        "tests/test_strategy_list_test_scope.py", "tests/test_strategy_metrics_truth.py", "tests/test_strategy_synthetic_stubs.py",
+        "tests/test_strategy_operational_status.py", "tests/test_strategy_detail_overlap_reads.py", "tests/test_owner_unavailable_503_consistency.py",
+        "tests/test_strategy_ranking_router.py", "tests/test_event_loop_owner_reads_guard.py", "tests/test_bff_b2_list_detail_facade.py",
+        "tests/test_strategy_alpha_roundtrip.py", "strategies/test_router_isolation.py"
+      ],
+      "before_change": "12 failed, 193 passed, 1 skipped",
+      "after_change": "11 failed, 194 passed, 1 skipped",
+      "difference": "test_strategy_operational_status.py::test_default_list_ranking_join_timeout_is_ranking_unavailable_not_500 failed in the batch before the change (passes alone; order-dependent with the old warm_key ranking prefetch) and passes after; the other 11 failures are identical before and after and are listed in residual_findings"
+    },
+    "architecture": "tests/test_bff_test_architecture.py 39 passed with the new inventory row",
+    "assertions_changed": "none; no existing test weakened or deleted"
+  },
+  "residual_findings": [
+    "strategies/test_router_isolation.py::test_hide_retired_personas_without_state_filter_avoids_17_page_scan_over_3400_strategies fails on base_commit before this change (page 2 makes 0 owner page calls, expected 2); already recorded by BFF-STRATEGY-DETAIL-OVERLAP-READS-20261125",
+    "tests/test_strategy_ranking_router.py::test_bff_strategy_detail_spec_projection_real_shape_absent_fields_and_tenant_isolation fails on base_commit (detail spec carries title/hypothesis/objective the test does not expect); outside this scope",
+    "tests/test_bff_b2_list_detail_facade.py: 9 persona route tests fail on base_commit with AttributeError 'list' object has no attribute 'get' at personas/service.py:6975; outside this scope"
+  ]
+}

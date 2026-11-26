@@ -229,7 +229,38 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_PROPOSER_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/candidate_registration.py", "RESEARCH_GOVERNANCE_GATE_TOKEN"),
     ("alpha-replication-worker", "card_admission_path", "services/research/alpha_replication/replication_controller.py", "ALPHA_REPLICATION_CARD_ADMISSION_ENABLED"),
+    # 10. Hypothesis card compile + governed market binding in the distillation worker (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125)
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_ENABLED"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_LEDGER_PATH"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction.py", "PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction_client.py", "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction_client.py", "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/distillation_controller.py", "PANTHEON_L2_CARD_DATASET_ID"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/research/governed_market_dataset.py", "GOVERNED_MARKET_STORE_ROOT"),
 )
+
+# Every module of the hypothesis card path, by the container that runs it. The completeness check below reads
+# each module's environment reads from its AST and requires every one to be in CODE_READ_OWNER_ENV_SPECS for that
+# container (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125), so a new read cannot be added without compose wiring.
+CARD_PATH_MODULES: dict[str, tuple[str, ...]] = {
+    "strategy-distillation-worker": (
+        "services/source_ingestion/hypothesis_card.py",
+        "services/source_ingestion/hypothesis_compiler.py",
+        "services/source_ingestion/semantic_extraction.py",
+        "services/source_ingestion/semantic_extraction_client.py",
+        "services/research/governed_market_dataset.py",
+        # The controller module also reads its own (non-card) configuration; only its ``*_ENV`` names count here.
+        "services/source_ingestion/distillation_controller.py:env_constants",
+    ),
+    "alpha-replication-worker": (
+        "services/research/alpha_replication/card_production_wiring.py",
+        "services/research/governed_market_dataset.py",
+    ),
+}
+# Reads that are documented fallbacks of a name compose already passes (the client takes the first set one).
+CARD_PATH_FALLBACK_READS = {"OPENCLAW_GATEWAY_ADAPTER_URL", "PANTHEON_OPENCLAW_ADAPTER_URL"}
 
 
 def _default(interpolation: str) -> str:
@@ -320,7 +351,7 @@ def test_code_read_owner_env_vars_are_wired_and_missing_var_fails_contract() -> 
         area: (service, rel_file, env_var)
         for service, area, rel_file, env_var in CODE_READ_OWNER_ENV_SPECS
     }
-    assert len(representative_by_area) == 9
+    assert len(representative_by_area) == 10
     for area, (service, rel_file, env_var) in representative_by_area.items():
         mutated = copy.deepcopy(SERVICES)
         del mutated[service]["environment"][env_var]
@@ -330,6 +361,82 @@ def test_code_read_owner_env_vars_are_wired_and_missing_var_fails_contract() -> 
             service in item and env_var in item and rel_file in item and area in item
             for item in failures
         ), failures
+
+
+def _env_reads(module: str) -> set[str]:
+    """Environment names a module reads: ``os.getenv``/``environ.get``/``environ[...]`` literals, ``*_ENV``
+    constants, the required-name tuples of the card wiring and ``configured_service_token`` arguments.
+    ``<path>:env_constants`` counts only the module's ``*_ENV`` constants."""
+    relative_path, _, mode = module.partition(":")
+    tree = ast.parse((ROOT / relative_path).read_text(encoding="utf-8"), filename=relative_path)
+    names: set[str] = set()
+    constants: set[str] = set()
+
+    def literal(node: ast.AST) -> str | None:
+        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            attr = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+            owner = func.value if isinstance(func, ast.Attribute) else None
+            owner_name = (owner.attr if isinstance(owner, ast.Attribute) else owner.id if isinstance(owner, ast.Name)
+                          else "")
+            first = literal(node.args[0]) if node.args else None
+            if first and (attr == "getenv" or attr == "configured_service_token"
+                          or (attr == "get" and owner_name in {"environ", "env", "source"})):
+                names.add(first)
+        elif isinstance(node, ast.Subscript) and (
+                (isinstance(node.value, ast.Attribute) and node.value.attr == "environ")
+                or (isinstance(node.value, ast.Name) and node.value.id in {"env", "source"})):
+            key = literal(node.slice)
+            if key:
+                names.add(key)
+        elif (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)) or (
+                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None):
+            target = node.targets[0].id if isinstance(node, ast.Assign) else node.target.id
+            if target.endswith("_ENV") and literal(node.value):
+                constants.add(literal(node.value))
+            elif target.startswith("REQUIRED_") and isinstance(node.value, ast.Tuple):
+                names.update(v for v in map(literal, node.value.elts) if v)
+    found = constants if mode == "env_constants" else names | constants
+    return {n for n in found if n.isupper() and "_" in n}
+
+
+def scan_card_path_env_completeness(specs=CODE_READ_OWNER_ENV_SPECS) -> list[str]:
+    """Every environment name a card path module reads must be wired for its container in ``specs``."""
+    wired: dict[str, set[str]] = {}
+    for service, _area, _rel_file, env_var in specs:
+        wired.setdefault(service, set()).add(env_var[:-5] if env_var.endswith("_FILE") else env_var)
+    failures = []
+    for service, modules in CARD_PATH_MODULES.items():
+        for module in modules:
+            for name in sorted(_env_reads(module) - CARD_PATH_FALLBACK_READS - wired.get(service, set())):
+                failures.append(f"{service}: {module} reads {name}, which is not wired by compose for the card path")
+    return failures
+
+
+def test_every_environment_name_the_card_path_reads_is_passed_to_its_container() -> None:
+    """HYPOTHESIS-CARD-GOVERNED-BINDING-20261125 acceptance 3: the card path's reads (AST) == the wired names, and
+    compose passes each one to the container that reads it. On dev before this task the distillation worker had
+    neither PANTHEON_L2_CARD_DATASET_ID nor GOVERNED_MARKET_STORE_ROOT, so the scan below reported both."""
+    assert scan_card_path_env_completeness() == []
+    assert scan_code_read_owner_env_contract(SERVICES) == []
+    distill = _env("strategy-distillation-worker")
+    assert _default(distill["PANTHEON_L2_CARD_DATASET_ID"]) == "governed-market:tw-daily"
+    assert _default(distill["GOVERNED_MARKET_STORE_ROOT"]) == "/data/source-ingest/market_data_store"
+    assert "source-ingest-data:/data/source-ingest" in SERVICES["strategy-distillation-worker"]["volumes"]
+    # No fixed symbol list is read or wired anywhere.
+    assert not any("PANTHEON_L2_CARD_SYMBOLS" in (svc.get("environment") or {}) for svc in SERVICES.values())
+    for modules in CARD_PATH_MODULES.values():
+        assert not any("PANTHEON_L2_CARD_SYMBOLS" in _env_reads(m) for m in modules)
+    # Removing either new name from the distillation worker fails the contract; an unwired new read fails too.
+    for name in ("PANTHEON_L2_CARD_DATASET_ID", "GOVERNED_MARKET_STORE_ROOT"):
+        mutated = copy.deepcopy(SERVICES)
+        del mutated["strategy-distillation-worker"]["environment"][name]
+        assert any(name in f and "strategy-distillation-worker" in f for f in scan_code_read_owner_env_contract(mutated))
+    pruned = tuple(spec for spec in CODE_READ_OWNER_ENV_SPECS if spec[3] != "PANTHEON_L2_CARD_DATASET_ID")
+    assert any("PANTHEON_L2_CARD_DATASET_ID" in f for f in scan_card_path_env_completeness(pruned))
 
 
 def test_persona_owner_ports_resolve_configured_when_compose_and_issuer_are_applied(

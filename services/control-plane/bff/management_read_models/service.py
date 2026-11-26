@@ -938,8 +938,86 @@ def _management_evidence_degraded_payload(
     }
 
 
+_HUMAN_INBOX_ITEM_ID_PREFIX_CONTRIBUTORS: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
+    ("readiness_blocker:", ("persona_readiness",), "readiness_blocker"),
+    ("incident:", ("incidents",), "incident"),
+    ("meeting:", ("meetings",), "meeting"),
+    ("meeting_review:", ("meetings",), "meeting"),
+    ("meeting_refusal:", ("meetings",), "meeting"),
+    ("meeting_proposal:", ("meetings",), "meeting"),
+    ("meeting_action:", ("meetings",), "meeting"),
+    ("approval:", ("approval_queue", "governance_review_queue"), "approval"),
+    ("governance_review:", ("governance_review_queue", "approval_queue"), "governance_review"),
+)
+
+_HUMAN_INBOX_SOURCE_TYPE_CONTRIBUTORS: Dict[str, Tuple[str, ...]] = {
+    "readiness_blocker": ("persona_readiness",),
+    "persona_readiness": ("persona_readiness",),
+    "incident": ("incidents",),
+    "incidents": ("incidents",),
+    "meeting": ("meetings",),
+    "meetings": ("meetings",),
+    "meeting_review": ("meetings",),
+    "meeting_refusal": ("meetings",),
+    "meeting_proposal": ("meetings",),
+    "meeting_action": ("meetings",),
+    "approval": ("approval_queue", "governance_review_queue"),
+    "approval_queue": ("approval_queue", "governance_review_queue"),
+    "governance_approval": ("approval_queue", "governance_review_queue"),
+    "governance_review": ("governance_review_queue", "approval_queue"),
+    "governance_review_queue": ("governance_review_queue", "approval_queue"),
+}
+
+
+def _human_inbox_contributors_for_item_id(
+    item_id: Optional[str],
+) -> Optional[Tuple[str, ...]]:
+    clean = str(item_id or "").strip().lower()
+    if not clean:
+        return None
+    for prefix, contributors, _source_type in _HUMAN_INBOX_ITEM_ID_PREFIX_CONTRIBUTORS:
+        if clean.startswith(prefix) and clean[len(prefix):].strip():
+            return contributors
+    return None
+
+
+def _human_inbox_source_type_for_item_id(
+    item_id: Optional[str],
+) -> Optional[str]:
+    clean = str(item_id or "").strip().lower()
+    if not clean:
+        return None
+    for prefix, _contributors, source_type in _HUMAN_INBOX_ITEM_ID_PREFIX_CONTRIBUTORS:
+        if clean.startswith(prefix) and clean[len(prefix):].strip():
+            return source_type
+    return None
+
+
+def _human_inbox_contributors_for_source_type(
+    source_type: Optional[str],
+) -> Optional[Tuple[str, ...]]:
+    if not source_type or not str(source_type).strip():
+        return None
+    tokens = [part.strip().lower() for part in str(source_type).split(",") if part.strip()]
+    if not tokens:
+        return None
+    selected: List[str] = []
+    seen: Set[str] = set()
+    for token in tokens:
+        mapped = _HUMAN_INBOX_SOURCE_TYPE_CONTRIBUTORS.get(token)
+        if mapped is None:
+            return None
+        for contributor in mapped:
+            if contributor not in seen:
+                seen.add(contributor)
+                selected.append(contributor)
+    return tuple(selected) if selected else None
+
+
 def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
     clean = str(item_id or "").strip()
+    if not clean:
+        return False
     candidates = {
         str(item.get("id") or ""),
         str(item.get("inbox_id") or ""),
@@ -950,7 +1028,23 @@ def _human_inbox_detail_match(item: Dict[str, Any], item_id: str) -> bool:
         str(item.get("review_item_id") or ""),
         str(item.get("incident_id") or ""),
         str(item.get("persona_id") or ""),
+        str(item.get("meeting_id") or ""),
+        str(item.get("proposal_id") or ""),
+        str(item.get("action_id") or ""),
+        str(item.get("ticket_id") or ""),
     }
+    source_type = str(item.get("source_type") or item.get("inboxType") or "").strip().lower()
+    if source_type == "meeting":
+        for key in ("item_id", "source_id", "meeting_id", "proposal_id", "action_id", "ticket_id"):
+            val = str(item.get(key) or "").strip()
+            if val:
+                candidates.add(f"meeting:{val}")
+    elif source_type == "readiness_blocker":
+        pid = str(item.get("persona_id") or item.get("item_id") or item.get("source_id") or "").strip()
+        if pid:
+            candidates.add(f"readiness_blocker:{pid}")
+            candidates.add(f"readiness_blocker:persona:{pid}")
+    candidates.discard("")
     return clean in candidates
 
 
@@ -4964,6 +5058,7 @@ class ManagementService:
         page_size: int = 20,
         identity: Optional[Any] = None,
         completed_contributors: Optional[Dict[str, Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = None,
+        contributors: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Compose the human inbox from its contributors, read concurrently.
 
@@ -4976,13 +5071,23 @@ class ManagementService:
         store = _MANAGEMENT_STORE_OVERRIDE.get() or self._resolve_store()
         completed = completed_contributors if completed_contributors is not None else {}
         failures: Dict[str, Dict[str, Any]] = {}
-        readers = self._human_inbox_contributor_readers(store, snap, identity=identity)
+        target_contributors = (
+            tuple(contributors)
+            if contributors is not None
+            else _human_inbox_contributors_for_source_type(source_type)
+        )
+        readers = self._human_inbox_contributor_readers(
+            store,
+            snap,
+            identity=identity,
+            contributors=target_contributors,
+        )
         if not readers:
             return self.compose_human_inbox(
                 snap,
                 completed={},
                 failures={},
-                store_missing=True,
+                store_missing=store is None,
                 source_type=source_type,
                 status=status,
                 priority=priority,
@@ -5011,16 +5116,20 @@ class ManagementService:
             raw_store = getattr(store, "_target", store)
             raw_dict = getattr(raw_store, "__dict__", {})
             review_queue = getattr(getattr(raw_store, "ooda_management", None), "review_queue", None)
+            need_approvals = "approval_queue" in readers
+            need_reviews = "governance_review_queue" in readers
+            need_personas = "persona_readiness" in readers
             if (
-                review_queue is not None
+                (need_approvals or need_reviews)
+                and review_queue is not None
                 and "list_governance_review_queue_items" not in raw_dict
             ):
-                for raw_name, warm_name, attr_name in (
-                    ("list_approval_decisions", "read_pending_approval_decisions", "read_pending_approval_decisions"),
-                    ("list_deployment_plans", "list_deployment_plans", "_deployment_plans_reader"),
-                    ("list_evolution_decisions", "read_decidable_evolution_decisions", "read_decidable_evolution_decisions"),
+                for raw_name, warm_name, attr_name, enabled in (
+                    ("list_approval_decisions", "read_pending_approval_decisions", "read_pending_approval_decisions", need_approvals or need_reviews),
+                    ("list_deployment_plans", "list_deployment_plans", "_deployment_plans_reader", need_reviews),
+                    ("list_evolution_decisions", "read_decidable_evolution_decisions", "read_decidable_evolution_decisions", need_reviews),
                 ):
-                    if raw_name not in raw_dict:
+                    if enabled and raw_name not in raw_dict:
                         reader_fn = getattr(review_queue, attr_name, None)
                         if callable(reader_fn):
                             _warm = submit_owner_read(
@@ -5031,17 +5140,25 @@ class ManagementService:
                             if _warm is not None:
                                 warm_futures.append(_warm)
             if (
-                _is_unpatched_port_method(raw_store, "list_approval_queue_items")
+                (need_reviews or need_personas)
+                and _is_unpatched_port_method(raw_store, "list_approval_queue_items")
                 and _is_unpatched_port_method(raw_store, "list_governance_review_queue_items")
                 and _is_unpatched_port_method(raw_store, "list_incidents")
             ):
-                for warm_name in (
-                    "list_deployment_plans",
-                    "list_personas",
-                    "list_bindings",
-                    "list_capital_pools",
-                    "list_runtime_bindings",
-                ):
+                warm_targets: Tuple[str, ...] = (
+                    *(("list_deployment_plans",) if need_reviews else ()),
+                    *(
+                        (
+                            "list_personas",
+                            "list_bindings",
+                            "list_capital_pools",
+                            "list_runtime_bindings",
+                        )
+                        if need_personas
+                        else ()
+                    ),
+                )
+                for warm_name in warm_targets:
                     if _is_unpatched_port_method(raw_store, warm_name):
                         _warm = submit_owner_read(_HEALTH_OWNER_READ_EXECUTOR, getattr(raw_store, warm_name), warm_key=warm_name)
                         if _warm is not None:
@@ -5108,10 +5225,20 @@ class ManagementService:
         }
 
     def _human_inbox_contributor_readers(
-        self, store: Any, snap: str, *, identity: Optional[Any] = None
+        self,
+        store: Any,
+        snap: str,
+        *,
+        identity: Optional[Any] = None,
+        contributors: Optional[Sequence[str]] = None,
     ) -> Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]]:
         """One reader per contributor; each returns (records, surface) or raises."""
         readers: Dict[str, Callable[[], Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = {}
+        allowed = (
+            {str(c).strip() for c in contributors if str(c).strip()}
+            if contributors is not None
+            else None
+        )
 
         def _unavailable(message: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
             return [], {"status": "unavailable", "source": "missing", "snapshot_at": snap, "message": message}
@@ -5172,15 +5299,19 @@ class ManagementService:
             return read_human_inbox_meeting_items(snap, store=store, identity=identity)
 
         if store is not None:
-            readers["approval_queue"] = _approvals
-            readers["governance_review_queue"] = _reviews
-            readers["incidents"] = _incidents
-            if hasattr(store, "list_personas"):
+            if allowed is None or "approval_queue" in allowed:
+                readers["approval_queue"] = _approvals
+            if allowed is None or "governance_review_queue" in allowed:
+                readers["governance_review_queue"] = _reviews
+            if allowed is None or "incidents" in allowed:
+                readers["incidents"] = _incidents
+            if (allowed is None or "persona_readiness" in allowed) and hasattr(store, "list_personas"):
                 readers["persona_readiness"] = _personas
-        from services.consultation.client import ConsultationServiceClient
-        from services.control_plane.bff.research.client import resolve_orchestrator_base_url
-        if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured() or resolve_orchestrator_base_url():
-            readers["meetings"] = _meetings
+        if allowed is None or "meetings" in allowed:
+            from services.consultation.client import ConsultationServiceClient
+            from services.control_plane.bff.research.client import resolve_orchestrator_base_url
+            if (store is not None and hasattr(store, "list_meetings")) or ConsultationServiceClient.configured() or resolve_orchestrator_base_url():
+                readers["meetings"] = _meetings
         return readers
 
     def compose_human_inbox(
@@ -5280,9 +5411,44 @@ class ManagementService:
         item_id: str,
         identity: Optional[Any] = None,
     ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
-        res = self.get_human_inbox(page_size=2000, identity=identity)
+        target_contributors = _human_inbox_contributors_for_item_id(item_id)
+        target_source_type = _human_inbox_source_type_for_item_id(item_id)
+        inbox_kwargs: Dict[str, Any] = {
+            "page_size": 2000,
+            "identity": identity,
+        }
+        if target_source_type is not None:
+            inbox_kwargs["source_type"] = target_source_type
+        if target_contributors is not None:
+            try:
+                params = inspect.signature(self.get_human_inbox).parameters
+            except (TypeError, ValueError):
+                params = {}
+            if "contributors" in params or any(
+                p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+            ):
+                inbox_kwargs["contributors"] = target_contributors
+        res = self.get_human_inbox(**inbox_kwargs)
         items = res.get("data", {}).get("items", [])
-        failures = res.get("meta", {}).get("degradation", {}).get("contributors", [])
+        raw_failures = list(res.get("meta", {}).get("degradation", {}).get("contributors", []) or [])
+        if target_contributors is not None:
+            allowed_failures = set(target_contributors) | {"store"}
+            failures = [c for c in raw_failures if c in allowed_failures]
+            if "meetings" in failures:
+                meetings_surface = (res.get("meta", {}).get("surfaces", {}) or {}).get("meetings")
+                sub_surfaces = meetings_surface.get("surfaces") if isinstance(meetings_surface, dict) else None
+                if isinstance(sub_surfaces, dict):
+                    consult_surf = sub_surfaces.get("consultation") if isinstance(sub_surfaces.get("consultation"), dict) else {}
+                    research_surf = sub_surfaces.get("research") if isinstance(sub_surfaces.get("research"), dict) else {}
+                    clean_id = str(item_id or "").strip().lower()
+                    if (
+                        not clean_id.startswith("meeting_action:")
+                        and consult_surf.get("status") == "ok"
+                        and research_surf.get("reason") == "research_owner_unconfigured"
+                    ):
+                        failures = [c for c in failures if c != "meetings"]
+        else:
+            failures = raw_failures
         for item in items:
             if _human_inbox_detail_match(item, item_id):
                 return {"data": item, "meta": res.get("meta", {})}, failures
@@ -5314,7 +5480,13 @@ class ManagementService:
         page_size: int = 50,
         identity: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        inbox = self.get_human_inbox(status=status, priority=priority, page_size=2000, identity=identity)
+        inbox = self.get_human_inbox(
+            source_type=source_type,
+            status=status,
+            priority=priority,
+            page_size=2000,
+            identity=identity,
+        )
         items = inbox.get("data", {}).get("items", [])
 
         filtered = []

@@ -1,0 +1,194 @@
+{
+ "provenance": {
+  "task": "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125",
+  "state_of": "2026-11-25 06:20Z to 06:40Z, hosted dev, backend adc027da9",
+  "how_built": "Reconstructed by the task worker from the read-only hosted facts the coordinator recorded in the task source packet (EXECUTION_TASKS.md, conversation 2dc972b7). The worker had no hosted access and made no hosted read. The shapes are the served BFF envelopes (GET /bff/alpha-factory, GET /bff/v5/loop-health/strategy_distillation); only facts the packet states are filled in. A value the packet does not state is served as the owner would serve an unread value (status unavailable with its reason), never as 0 or ok.",
+  "facts_used": [
+   "3 template-search runs (2026-11-23 10:05Z, 2026-11-24 10:03Z twice) failed template_search_unavailable:ValueError:mandate_universe_missing",
+   "182 templates registered, 0 evaluated; PANTHEON_TAIWAN_EVAL_DATA_DIR set nowhere",
+   "4 alpha admissions 2026-09-13 to 2026-10-31, none with a passing replication gate; 9,316 strategy_spec entries, none with replication_success",
+   "4,204 drafts since 2026-11-12, 0 hypothesis cards, PANTHEON_L2_EXTRACTION_ENABLED=false (no extraction ledger)",
+   "distillation controller failed since its last success at 2026-11-13 10:50Z; 142 unresolved dead letters",
+   "card path disabled: RESEARCH_RETRAIN_CANONICAL_DATASET_PATH file not found; no governed snapshot ever written"
+  ]
+ },
+ "now": "2026-11-25T06:40:00Z",
+ "board": {
+  "data": {
+   "id": "alpha-factory",
+   "discovered": [
+    {
+     "id": "card:src-lottery:d1",
+     "lane": "discovered",
+     "kind": "hypothesis_card",
+     "source_id": "src-lottery",
+     "source_family": "news",
+     "title": "Evidence suggests: lottery numbers drawn",
+     "claim": null,
+     "claim_status": "ledger_unavailable",
+     "since": "2026-11-25T05:50:00Z"
+    },
+    {
+     "id": "card:src-dui:d2",
+     "lane": "discovered",
+     "kind": "hypothesis_card",
+     "source_id": "src-dui",
+     "source_family": "news",
+     "title": "Drink-driving report",
+     "claim": null,
+     "claim_status": "ledger_unavailable",
+     "since": "2026-11-25T04:10:00Z"
+    }
+   ],
+   "scaffolded": [
+    {
+     "id": "template-search:rd-1",
+     "lane": "scaffolded",
+     "kind": "template_search",
+     "demand_id": "rd-1",
+     "attempt_count": 3,
+     "latest_at": "2026-11-24T10:03:00Z",
+     "outcome": "failed",
+     "reason_code": "mandate_universe_missing",
+     "reason": "template_search_unavailable:ValueError:mandate_universe_missing"
+    }
+   ],
+   "replicated": [],
+   "document_checked": [
+    {
+     "id": "adm-1",
+     "lane": "document_checked",
+     "document_check_reason": "simulation_or_raw_market_seed",
+     "created_at": "2026-09-13T03:00:00Z"
+    },
+    {
+     "id": "adm-2",
+     "lane": "document_checked",
+     "document_check_reason": "no_passing_gate_result",
+     "created_at": "2026-10-02T03:00:00Z"
+    },
+    {
+     "id": "adm-3",
+     "lane": "document_checked",
+     "document_check_reason": "no_passing_gate_result",
+     "created_at": "2026-10-20T03:00:00Z"
+    },
+    {
+     "id": "adm-4",
+     "lane": "document_checked",
+     "document_check_reason": "no_passing_gate_result",
+     "created_at": "2026-10-31T03:00:00Z"
+    }
+   ],
+   "counts": {
+    "collected_text_records": {
+     "value": null,
+     "status": "unavailable",
+     "reason": "no_bounded_owner_read"
+    },
+    "closed_text_records": {
+     "value": null,
+     "status": "unavailable",
+     "reason": "no_bounded_owner_read"
+    },
+    "hypothesis_cards": {
+     "value": null,
+     "status": "unavailable",
+     "reason": "no_bounded_owner_read"
+    },
+    "hypothesis_cards_today": {
+     "value": null,
+     "status": "unavailable",
+     "reason": "no_bounded_owner_read"
+    },
+    "llm_calls_today": {
+     "value": null,
+     "status": "unavailable",
+     "reason": "extraction_ledger_missing"
+    },
+    "templates_registered": {
+     "value": 182,
+     "status": "ok"
+    },
+    "templates_evaluated": {
+     "value": 0,
+     "status": "ok"
+    },
+    "searches": {
+     "value": 3,
+     "status": "ok"
+    },
+    "passes": {
+     "value": 0,
+     "status": "ok"
+    }
+   },
+   "templates": [
+    {
+     "template_id": "tpl-ts-001",
+     "family": "momentum",
+     "scope": "time_series",
+     "status": "draft",
+     "evaluation": null
+    }
+   ],
+   "discovery_summary": {
+    "window": null
+   }
+  },
+  "meta": {
+   "surfaces": {
+    "alpha_factory": {
+     "status": "ok",
+     "source": "research_orchestrator"
+    },
+    "alpha_factory_templates": {
+     "status": "ok",
+     "source": "research_orchestrator"
+    },
+    "alpha_factory_demands": {
+     "status": "ok",
+     "source": "research_orchestrator"
+    },
+    "alpha_factory_runs": {
+     "status": "ok",
+     "source": "research_orchestrator"
+    },
+    "alpha_factory_hypothesis_cards": {
+     "status": "unavailable",
+     "source": "source_ingestion",
+     "reason": "no_bounded_owner_read"
+    },
+    "alpha_factory_source_records": {
+     "status": "unavailable",
+     "source": "source_ingestion",
+     "reason": "no_bounded_owner_read"
+    },
+    "alpha_factory_llm_calls": {
+     "status": "unavailable",
+     "source": "source_ingestion",
+     "reason": "extraction_ledger_missing"
+    }
+   }
+  }
+ },
+ "health": {
+  "data": {
+   "loop_id": "strategy_distillation",
+   "read_model": "loop_health",
+   "last_success": {
+    "at": "2026-11-13T10:50:00Z"
+   },
+   "last_failure": {
+    "at": "2026-11-25T06:30:00Z",
+    "reason": "registry_sync: Distillation Registry delivery is degraded; durable retry or DLQ remains"
+   },
+   "downstream_actual_state": {
+    "status": "ready",
+    "authoritative": true,
+    "checked_at": "2026-11-13T10:50:00Z",
+    "summary": null
+   }
+  }
+ }
+}

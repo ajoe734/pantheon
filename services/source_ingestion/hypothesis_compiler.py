@@ -473,15 +473,21 @@ def client_proposer(client: Any) -> Proposer:
     return propose
 
 
+def compiler_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """The one L2 switch (``PANTHEON_L2_EXTRACTION_ENABLED``) shared by the extractor and this compiler."""
+    import os
+
+    from services.source_ingestion.hypothesis_card import ENABLED_ENV
+
+    source = os.environ if env is None else env
+    return str(source.get(ENABLED_ENV, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
 def compiler_from_env(
     client: Any | None = None, store_path: str | Path | None = None
 ) -> Optional[HypothesisCompiler]:
     """Build the compiler only when L2 extraction is enabled (same switch as the extractor)."""
-    from services.source_ingestion.hypothesis_card import ENABLED_ENV
-
-    import os
-
-    if str(os.environ.get(ENABLED_ENV, "")).strip().lower() not in ("1", "true", "yes", "on"):
+    if not compiler_enabled():
         return None
     if client is None:
         from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient
@@ -496,6 +502,7 @@ __all__ = [
     "HypothesisCompiler",
     "build_compile_prompt",
     "client_proposer",
+    "compiler_enabled",
     "compiler_from_env",
     "card_key",
     "catalogue_summary",

@@ -274,6 +274,14 @@ def _schema_mismatch(path: str, detail: str) -> "OpenClawProviderError":
     )
 
 
+def _schema_declaration_error(path: str, detail: str) -> "OpenClawProviderError":
+    """A fault in the *schema* (not the value). Same typed 422, but marked so a
+    combinator (`anyOf`/`if`) never treats a broken branch as a mere non-match."""
+    error = _schema_mismatch(path, detail)
+    error.schema_declaration_error = True  # type: ignore[attr-defined]
+    return error
+
+
 def _json_value_matches_type(value: Any, declared_type: Any) -> bool:
     """Check `value` against a JSON-schema `type`, including a nullable
     `type: [<t>, "null"]` union list. Returns False for a single unsupported
@@ -323,7 +331,7 @@ def _validate_extraction_string_constraints(value: str, schema: Dict[str, Any], 
             if re.search(pattern, value) is None:
                 raise _schema_mismatch(path, f"does not match the declared pattern {pattern!r}")
         except re.error:
-            raise _schema_mismatch(path or "root", "declares a malformed pattern")
+            raise _schema_declaration_error(path or "root", "declares a malformed pattern")
 
 
 def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) -> None:
@@ -339,7 +347,7 @@ def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) ->
     if items_schema is None:
         return
     if not isinstance(items_schema, dict):
-        raise _schema_mismatch(path or "root", "declares a malformed items schema")
+        raise _schema_declaration_error(path or "root", "declares a malformed items schema")
     for index, item in enumerate(value):
         _validate_extraction_value(item, items_schema, f"{path}[{index}]" if path else f"[{index}]")
 
@@ -374,7 +382,7 @@ def _json_schema_value_equal(value: Any, candidate: Any) -> bool:
 
 
 # JSON-Schema keywords this dependency-free validator understands. A schema
-# that declares any other keyword (`anyOf`, `oneOf`, `not`, `format`,
+# that declares any other keyword (`oneOf`, `not`, `format`,
 # `multipleOf`, `patternProperties`, `$ref`, ...) is rejected explicitly
 # instead of silently ignoring a constraint the caller believed was
 # enforced, which would let arguments that violate that constraint reach
@@ -398,19 +406,100 @@ _SUPPORTED_SCHEMA_KEYWORDS = {
     "additionalProperties",
     "description",
     "title",
+    # Combinators, validated for real below (L2-HYPOTHESIS-CARD-ADAPTER-
+    # SCHEMA-CONTRACT-20261126): the hypothesis card answer is
+    # `anyOf: [null, card]` and the semantic extraction schemas add an
+    # `allOf: [{if, then, else}]` abstention conditional. Every subschema is
+    # held to this same allowlist.
+    "anyOf",
+    "allOf",
+    "if",
+    "then",
+    "else",
 }
+
+_COMBINATOR_LIST_KEYWORDS = ("anyOf", "allOf")
+_COMBINATOR_SCHEMA_KEYWORDS = ("if", "then", "else")
 
 
 def _reject_unsupported_schema_keywords(schema: Dict[str, Any], path: str) -> None:
     unsupported = sorted(set(schema.keys()) - _SUPPORTED_SCHEMA_KEYWORDS)
     if unsupported:
-        raise _schema_mismatch(path or "root", f"declares unsupported schema keyword(s) {unsupported!r}")
+        raise _schema_declaration_error(path or "root", f"declares unsupported schema keyword(s) {unsupported!r}")
+
+
+def unsupported_schema_keyword_paths(schema: Any, path: str = "") -> list:
+    """Statically walk `schema` and every subschema this validator descends into
+    (`properties`, `items`, `additionalProperties`, `anyOf`/`allOf` branches,
+    `if`/`then`/`else`) and return `"<path>: <keyword>"` for each keyword outside
+    the allowlist. Empty means the adapter accepts the schema's keywords. Used
+    before trying combinator branches (so an unsupported keyword in any branch
+    is refused even when a sibling branch would match) and by the cross-service
+    contract test that pins every client schema sent to `/structured`."""
+    where = path or "root"
+    if not isinstance(schema, dict):
+        return []
+    found = [f"{where}: {keyword}" for keyword in sorted(set(schema) - _SUPPORTED_SCHEMA_KEYWORDS)]
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, sub in properties.items():
+            found += unsupported_schema_keyword_paths(sub, f"{path}.{name}" if path else name)
+    for keyword in ("items", "additionalProperties", *_COMBINATOR_SCHEMA_KEYWORDS):
+        sub = schema.get(keyword)
+        if isinstance(sub, dict):
+            found += unsupported_schema_keyword_paths(sub, f"{where}/{keyword}")
+    for keyword in _COMBINATOR_LIST_KEYWORDS:
+        branches = schema.get(keyword)
+        if isinstance(branches, list):
+            for index, sub in enumerate(branches):
+                found += unsupported_schema_keyword_paths(sub, f"{where}/{keyword}[{index}]")
+    return found
+
+
+def _branch_matches(value: Any, branch: Dict[str, Any], path: str) -> bool:
+    """True when `value` satisfies `branch`; a value mismatch is False, but a
+    schema-declaration fault inside the branch propagates (fails closed)."""
+    try:
+        _validate_extraction_value(value, branch, path)
+    except OpenClawProviderError as error:
+        if getattr(error, "schema_declaration_error", False):
+            raise
+        return False
+    return True
+
+
+def _validate_extraction_combinators(value: Any, schema: Dict[str, Any], path: str) -> None:
+    if not any(keyword in schema for keyword in (*_COMBINATOR_LIST_KEYWORDS, *_COMBINATOR_SCHEMA_KEYWORDS)):
+        return
+    for keyword in _COMBINATOR_LIST_KEYWORDS:
+        if keyword in schema:
+            branches = schema[keyword]
+            if not isinstance(branches, list) or not branches or not all(isinstance(b, dict) for b in branches):
+                raise _schema_declaration_error(path or "root", f"declares a malformed {keyword} (must be a non-empty list of schemas)")
+    for keyword in _COMBINATOR_SCHEMA_KEYWORDS:
+        if keyword in schema and not isinstance(schema[keyword], dict):
+            raise _schema_declaration_error(path or "root", f"declares a malformed {keyword} schema")
+    combinator_only = {k: schema[k] for k in (*_COMBINATOR_LIST_KEYWORDS, *_COMBINATOR_SCHEMA_KEYWORDS) if k in schema}
+    unsupported = unsupported_schema_keyword_paths(combinator_only, path)
+    if unsupported:
+        raise _schema_declaration_error(path or "root", f"declares unsupported schema keyword(s) {unsupported!r}")
+
+    if "anyOf" in schema:
+        if not any(_branch_matches(value, branch, path) for branch in schema["anyOf"]):
+            raise _schema_mismatch(path or "root", f"matches none of the {len(schema['anyOf'])} declared anyOf branches")
+    for branch in schema.get("allOf", []):
+        _validate_extraction_value(value, branch, path)
+    if "if" in schema:
+        chosen = schema.get("then") if _branch_matches(value, schema["if"], path) else schema.get("else")
+        if chosen is not None:
+            _validate_extraction_value(value, chosen, path)
 
 
 def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) -> None:
     if not isinstance(schema, dict):
-        raise _schema_mismatch(path or "root", "declares an unsupported or malformed schema")
+        raise _schema_declaration_error(path or "root", "declares an unsupported or malformed schema")
     _reject_unsupported_schema_keywords(schema, path)
+    _validate_extraction_combinators(value, schema, path)
 
     if "const" in schema:
         const_value = schema["const"]
@@ -420,15 +509,17 @@ def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) ->
     enum_values = schema.get("enum")
     if enum_values is not None:
         if not isinstance(enum_values, list):
-            raise _schema_mismatch(path or "root", "declares a malformed enum (must be a list)")
+            raise _schema_declaration_error(path or "root", "declares a malformed enum (must be a list)")
         if not any(_json_schema_value_equal(value, candidate) for candidate in enum_values):
             raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
 
     declared_type = schema.get("type")
     if declared_type is not None:
         types = declared_type if isinstance(declared_type, list) else [declared_type]
-        if not isinstance(declared_type, (str, list)) or any(not isinstance(t, str) for t in types):
-            raise _schema_mismatch(path or "root", f"declares an unsupported type {declared_type!r}")
+        if not isinstance(declared_type, (str, list)) or any(
+            not isinstance(t, str) or (t != "null" and t not in _JSON_TYPE_TO_PYTHON) for t in types
+        ):
+            raise _schema_declaration_error(path or "root", f"declares an unsupported type {declared_type!r}")
         if not _json_value_matches_type(value, declared_type):
             raise _schema_mismatch(path, f"expected type {declared_type!r}")
 
@@ -459,15 +550,15 @@ def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -
         raise _schema_mismatch(path or "root", "must be a JSON object")
     required = schema.get("required", []) or []
     if not isinstance(required, list):
-        raise _schema_mismatch(path or "root", "declares a malformed required list")
+        raise _schema_declaration_error(path or "root", "declares a malformed required list")
     for field in required:
         if not isinstance(field, str):
-            raise _schema_mismatch(path or "root", "declares a malformed required list entry (must be a string)")
+            raise _schema_declaration_error(path or "root", "declares a malformed required list entry (must be a string)")
         if field not in value:
             raise _schema_mismatch(path, f"is missing required field {field!r}")
     properties = schema.get("properties", {}) or {}
     if not isinstance(properties, dict):
-        raise _schema_mismatch(path or "root", "declares a malformed properties map")
+        raise _schema_declaration_error(path or "root", "declares a malformed properties map")
     # `additionalProperties` defaults to permissive (True) per JSON Schema —
     # only an explicit `false` (or a schema for validating the extra
     # fields) tightens this.
