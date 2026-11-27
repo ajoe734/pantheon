@@ -35,7 +35,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # State machine ----------------------------------------------------------------
 
 # pending          -> create acknowledged locally; upstream call in flight or pending
-# active           -> upstream confirmed the session is live
+# active           -> upstream confirmed the session, or a healthy gateway uses
+#                     Pantheon-owned session metadata without a collection API
 # cancel_requested -> operator asked to cancel; upstream call in flight
 # canceled         -> upstream confirmed cancellation
 # failed           -> upstream rejected the create or cancel with a non-retryable error
@@ -258,12 +259,18 @@ class SessionLifecycleStore:
             return self._read(session_id), False
 
         upstream_id = str(upstream_payload.get("session_id") or upstream_payload.get("id") or "") or None
+        acknowledgement = {"upstream_session_id": upstream_id}
+        if upstream_payload.get("mode") == "pantheon_owned":
+            acknowledgement.update(
+                mode="pantheon_owned",
+                compatibility=upstream_payload.get("compatibility"),
+            )
         self._transition(
             session_id,
             "active",
             actor=operator_id,
             action="create_acknowledged",
-            detail={"upstream_session_id": upstream_id},
+            detail=acknowledgement,
             upstream_payload=upstream_payload,
             upstream_session_id=upstream_id,
         )
@@ -359,9 +366,8 @@ class SessionLifecycleStore:
         )
         upstream = self._upstream_factory()
         if upstream is None or record.upstream_session_id is None:
-            # No upstream channel; treat the cancel as final from Pantheon's
-            # perspective. The local state machine is the source of truth here
-            # because the upstream session never made it past the boundary.
+            # No upstream session to cancel (including pantheon_owned gateway
+            # compatibility mode); the local state machine is authoritative.
             self._transition(
                 session_id,
                 "canceled",

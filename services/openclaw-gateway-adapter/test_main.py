@@ -3036,6 +3036,106 @@ class TestSessions(unittest.TestCase):
         self.assertEqual(body["details"]["route"], "/api/sessions")
 
 
+class TestLifecycleGatewayCompatibility(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.upstream = MagicMock()
+        store = adapter_main.SessionLifecycleStore(
+            storage_path=Path(self.tmp.name) / "lifecycle.json",
+            upstream_factory=adapter_main._lifecycle_upstream_factory,
+        )
+        for patcher in (
+            patch.object(adapter_main, "_LIFECYCLE_STORE", store),
+            patch.object(adapter_main, "OPENCLAW_GATEWAY_URL", "http://gateway.test"),
+            patch.object(adapter_main, "_client", return_value=self.upstream),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.headers = {"X-Operator-Id": "alice", "X-Idempotency-Key": "compat-create"}
+        self.request = {"agent_id": "agent-test", "session_type": "interactive"}
+        self.path = "/api/openclaw-adapter/lifecycle/sessions"
+
+    def missing_collection(self):
+        self.upstream.create_session.side_effect = adapter_main.UpstreamClientError(
+            status_code=404, error_code="UPSTREAM_NOT_FOUND",
+            message="OpenClaw upstream returned HTTP 404.",
+            retryable=False, upstream_status=404,
+        )
+
+    def test_healthy_gateway_without_collection_keeps_local_session_active(self):
+        self.missing_collection()
+        with patch.object(adapter_main, "_probe_upstream", return_value={"reachable": True}) as probe:
+            created = client.post(self.path, headers=self.headers, json=self.request)
+            self.assertEqual(created.status_code, 201)
+            record = created.json()["session"]
+            self.assertEqual(record["state"], "active")
+            self.assertIsNone(record["upstream_session_id"])
+            self.assertIsNone(record["last_error"])
+            self.assertEqual(record["last_upstream_payload"]["mode"], "pantheon_owned")
+            self.assertEqual(record["audit_log"][-1]["detail"]["mode"], "pantheon_owned")
+            path = f'{self.path}/{record["session_id"]}'
+            self.assertEqual(client.get(path).json()["session"], record)
+            replay = client.post(self.path, headers=self.headers, json=self.request)
+            self.assertEqual(replay.status_code, 200)
+            self.assertTrue(replay.json()["replayed"])
+            self.assertEqual(replay.json()["session"], record)
+            canceled = client.post(f"{path}/cancel", headers=self.headers)
+            self.assertEqual(canceled.status_code, 200)
+            self.assertEqual(canceled.json()["session"]["state"], "canceled")
+            self.assertEqual(client.get(path).json()["session"]["state"], "canceled")
+            probe.assert_called_once_with()
+        self.upstream.create_session.assert_called_once()
+        self.upstream.get_session.assert_not_called()
+        self.upstream.cancel_session.assert_not_called()
+
+    def test_unreachable_gateway_with_missing_collection_is_lost(self):
+        self.missing_collection()
+        with patch.object(adapter_main, "_probe_upstream", return_value={"reachable": False}) as probe:
+            response = client.post(self.path, headers=self.headers, json=self.request)
+            probe.assert_called_once_with()
+        self.assertEqual(response.status_code, 201)
+        record = response.json()["session"]
+        self.assertEqual(record["state"], "lost")
+        self.assertEqual(record["last_error"]["error_code"], "UPSTREAM_UNAVAILABLE")
+        self.assertTrue(record["last_error"]["retryable"])
+        self.assertEqual(record["last_error"]["upstream_status"], 404)
+        self.assertIsNone(record["upstream_session_id"])
+
+    def test_auth_rejections_stay_failed_without_health_probe(self):
+        for status in (401, 403):
+            with self.subTest(status=status):
+                self.upstream.create_session.side_effect = adapter_main.UpstreamClientError(
+                    status_code=403, error_code="UPSTREAM_AUTH_DENIED",
+                    message="denied", retryable=False, upstream_status=status,
+                )
+                headers = {**self.headers, "X-Idempotency-Key": f"auth-{status}"}
+                with patch.object(adapter_main, "_probe_upstream") as probe:
+                    response = client.post(self.path, headers=headers, json=self.request)
+                    probe.assert_not_called()
+                self.assertEqual(response.status_code, 201)
+                record = response.json()["session"]
+                self.assertEqual(record["state"], "failed")
+                self.assertEqual(record["last_error"]["error_code"], "UPSTREAM_AUTH_DENIED")
+
+    def test_gateway_with_collection_retains_upstream_refresh_and_cancel(self):
+        self.upstream.create_session.return_value = {"session_id": "upstream-compat", "status": "created"}
+        self.upstream.get_session.return_value = {"session_id": "upstream-compat", "status": "active"}
+        self.upstream.cancel_session.return_value = {"session_id": "upstream-compat", "status": "canceled"}
+        with patch.object(adapter_main, "_probe_upstream") as probe:
+            response = client.post(self.path, headers=self.headers, json=self.request)
+            self.assertEqual(response.status_code, 201)
+            record = response.json()["session"]
+            self.assertEqual(record["state"], "active")
+            self.assertEqual(record["upstream_session_id"], "upstream-compat")
+            path = f'{self.path}/{record["session_id"]}'
+            self.assertEqual(client.get(path).json()["session"]["state"], "active")
+            self.assertEqual(client.post(f"{path}/cancel", headers=self.headers).json()["session"]["state"], "canceled")
+            probe.assert_not_called()
+        self.upstream.get_session.assert_called_once_with("upstream-compat")
+        self.upstream.cancel_session.assert_called_once_with("upstream-compat")
+
+
 class TestUpstreamClient(unittest.TestCase):
     def test_http_session_list_is_normalized(self):
         real_client = httpx.Client
