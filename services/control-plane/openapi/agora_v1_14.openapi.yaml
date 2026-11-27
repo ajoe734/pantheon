@@ -529,6 +529,123 @@
         "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
       }
     },
+    "/bff/agora/servant/sessions/{session_id}/messages": {
+      "post": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Queue one servant turn (command bar and conversation share this route)",
+        "operationId": "post_servant_session_message_bff_agora_servant_sessions__session_id__messages_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantMessageRequestV114"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Turn durably queued (AD-AG-05); the answer arrives on /stream."
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied or cross-user session."
+          },
+          "409": {
+            "description": "Session closed, full, or Idempotency-Key reused with a different message."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-business-owner": "agora+source-ingest",
+        "description": "AGORA-SERVANT-DATA-TOOLS-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. Uncovered requests list the missing data. No persona or meeting is called."
+      }
+    },
+    "/bff/agora/servant/sessions/{session_id}/stream": {
+      "get": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Replayable servant session events",
+        "operationId": "stream_servant_session_bff_agora_servant_sessions__session_id__stream_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode).",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantMessageCompletedEventData"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied or cross-user session."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
     "/bff/agora/trading-intents/{intent_id}/handoffs": {
       "post": {
         "tags": [
@@ -891,6 +1008,222 @@
           }
         },
         "description": "data contains the owner record/list. Memory review data contains entries (typed hits), lesson_candidates and owner authz. No locally generated records."
+      },
+      "ServantCommandContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Command-bar context (V6 §2.3). quick_task '分析分點' or 'analyze_broker_branches' with selected_symbols runs broker_branch_flow on those symbols in the first tool round.",
+        "properties": {
+          "page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "widget_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "selected_symbols": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          },
+          "quick_task": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          }
+        }
+      },
+      "ServantMessageRequestV114": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ],
+        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127).",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "attachment_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServantCommandContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ServantCitedFact": {
+        "type": "object",
+        "required": [
+          "id",
+          "tool",
+          "label",
+          "value",
+          "unit",
+          "source_id",
+          "as_of",
+          "freshness",
+          "query_hash",
+          "cited"
+        ],
+        "description": "One fact returned by a servant read-only tool. Every number in a servant answer is one of these, rendered by the BFF.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string",
+            "enum": [
+              "market_bars",
+              "candidate_pool",
+              "candidate_ranking",
+              "broker_branch_flow",
+              "disclosures",
+              "news",
+              "my_decisions",
+              "my_journal",
+              "my_shadow",
+              "institutional_facts",
+              "propose_research"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {},
+          "unit": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale",
+              "empty_fresh",
+              "unavailable",
+              "degraded",
+              "not_configured"
+            ]
+          },
+          "query_hash": {
+            "type": "string"
+          },
+          "cited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServantMessageCompletedEventData": {
+        "type": "object",
+        "description": "data of the servant.message.completed / servant.message.degraded SSE event.",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "provider_status": {
+            "type": "string"
+          },
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {},
+          "truncated": {
+            "type": "boolean"
+          },
+          "citations": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {
+              "$ref": "#/components/schemas/ServantCitedFact"
+            }
+          },
+          "missing_data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool_rounds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "answer_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "model",
+              "facts_only",
+              "none",
+              null
+            ]
+          }
+        }
       },
       "GovernedIntentHandoffV114": {
         "type": "object",

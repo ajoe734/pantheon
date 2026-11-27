@@ -51,6 +51,16 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/servant/sessions/{session_id}/messages",
+      "owner": "agora+source-ingest"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/sessions/{session_id}/stream",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/trading-intents/{intent_id}/handoffs",
       "owner": "paper_execution"
     }
@@ -77,6 +87,16 @@
     ],
     "agora-decision-lock": [
       "/api/attribution/shadow/{decision_id}"
+    ],
+    "source-ingest": [
+      "/api/source-ingest/broker-branch-flow",
+      "/api/source-ingest/source-records",
+      "/api/source-ingest/snapshots/latest"
+    ],
+    "agora": [
+      "agora.servant_sessions",
+      "agora.servant_turns",
+      "agora.decision_locks"
     ],
     "paper_execution": [
       "/internal/agora/paper-execution/handoffs",
