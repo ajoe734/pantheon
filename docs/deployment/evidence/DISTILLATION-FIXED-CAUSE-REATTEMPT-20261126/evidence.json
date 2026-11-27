@@ -1,0 +1,91 @@
+{
+  "task_id": "DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126",
+  "class": "RC2",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "hosted_input": {
+    "source": "task source document: /data/source-ingest/distill_job_queue.jsonl SQLite on 2026-11-26 15:05Z (backend b0eb2c259, read-only)",
+    "unresolved_dead_letters_total": 60,
+    "superseded_dead_letters": {
+      "total": 59,
+      "timeout_superseded_by_skipped_invalid_schema": 44,
+      "timeout_superseded_by_skipped_l2_extraction_disabled": 8,
+      "lease_expired_superseded_by_done": 6,
+      "lease_expired_superseded_by_skipped_l2_irrelevant": 1
+    },
+    "newest_version_actionable_dead_letters": {
+      "total": 1,
+      "reason": "hypothesis_extraction_unavailable: timeout"
+    },
+    "defect_closed_skipped_rows": {
+      "adapter_anyof_schema_mismatch": {
+        "rows": 302,
+        "sources": 141,
+        "fixed_by": "L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896)"
+      },
+      "client_interactive_token_budget_breach": {
+        "rows": 31,
+        "sources": 25,
+        "fixed_by": "L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 (#7908)"
+      },
+      "prompt_unstated_abstention_max_length": {
+        "rows": 4,
+        "fixed_by": "L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896)"
+      },
+      "tool_args_invalid_json_unfixed": {
+        "rows": 9
+      },
+      "sources_with_defect_closed_newest_version": 130
+    }
+  },
+  "root_cause": {
+    "superseded_dead_letters": "redrive_auth_dead_letters resolved older dead-lettered versions only for 401/403 Registry auth errors, while redrive_lease_expired_dead_letters skipped older versions without resolving them and no path handled extraction-unavailable dead letters, leaving 59 of 60 dead letters unresolved even though a newer outbox version of the same source had already reached a terminal state",
+    "extraction_unavailable_dead_letters": "no recovery path redrove a dead letter caused by hypothesis_extraction_unavailable once the L2 extractor was configured and answering",
+    "defect_closed_records": "catch_up and run_pending never re-opened terminal skipped rows, so ~130 finance-relevant sources whose newest outbox version was closed by our own adapter anyOf schema defect (#7896), unstated abstention_reason maxLength (#7896), or client 1000-token interactive budget_breach (#7908) were permanently abandoned after the fixes landed"
+  },
+  "decisions": {
+    "acceptance_1_superseded_dead_letters": "DistillationJobQueue.resolve_superseded_dead_letters resolves any unresolved dead letter whose source has a newer outbox version in a terminal state (done, skipped, failed, dead_letter, or a newer version already re-opened for defect re-attempt) by closing the stale outbox/inbox row as skipped with 'superseded by newer version <job_id> (<status>)' and recording last_redrive_actor, last_redrive_note and resolved_at on distillation_dead_letters, bounded per tick (100/tick). redrive_lease_expired_dead_letters and redrive_extraction_unavailable_dead_letters resolve superseded older versions through the same helper",
+    "acceptance_1_extraction_unavailable_redrive": "DistillationJobQueue.redrive_extraction_unavailable_dead_letters and DistillationWorker.run_pending redrive newest-version hypothesis_extraction_unavailable dead letters only when hypothesis_extractor is configured, within the 400-call daily cap and per-record attempt limits (3/day, 6/total via ExtractionLedger.can_attempt). When no earlier call in the tick has proved the extractor is answering, run_pending probes with at most 1 dead letter first; if the extractor is still failing (unavailable), mark_retry_or_dead_letter returns a previously redriven extraction dead letter directly to status='dead_letter' with resolved_at=NULL (preserving redrive_count) and stops redriving further rows in that tick",
+    "acceptance_2_checked_in_defect_list": "FIXED_DEFECT_REATTEMPT_OUTCOMES in services/source_ingestion/hypothesis_card.py checks in the eligible defect outcomes and the fix that made each obsolete: (1) adapter_anyof_schema_mismatch -> L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896), (2) prompt_unstated_abstention_max_length -> L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896), (3) client_interactive_token_budget_breach -> L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 (#7908). fixed_defect_for_skip_reason requires prefix 'hypothesis_extraction_failed:' and never matches l2_irrelevant, l2_admission_denied, no_hypothesis, hypothesis_rejected, pre-call input budget_breach, >3072 output budget_breach, or unfixed schema/JSON errors",
+    "acceptance_2_ordered_once_behind_fresh": "distillation_outbox gains additive column defect_reattempted INTEGER NOT NULL DEFAULT 0 and partial index distillation_outbox_defect_reattempt_idx. DistillationJobQueue.reattempt_fixed_defect_records re-opens only newest-version skipped rows with defect_reattempted=0 matching FIXED_DEFECT_REATTEMPT_OUTCOMES and stamps defect_reattempted=1 so each record is re-attempted at most once. DistillationWorker.run_pending processes all due fresh records in Phase 1 before re-opening defect-closed records in Phase 2, and claim_due ranks defect_reattempted=0 ahead of defect_reattempted=1 across ticks and budget deferrals",
+    "acceptance_2_hosted_backlog_calls_and_days": {
+      "hosted_defect_closed_sources": 130,
+      "calls_per_source_reattempt": 1,
+      "expected_total_calls": 130,
+      "daily_call_cap": 400,
+      "share_of_daily_cap": 0.325,
+      "expected_days_to_consume": 1,
+      "notes": "130 sources need 130 calls (1 re-attempt per newest version), which is 32.5% of one day's 400-call daily cap and drains in 1 day alongside up to 270 fresh relevant records (45-130 controller ticks at 120 s tick extraction budget), or 1-2 days if fresh relevant volume exceeds 270 calls on day 1; worst-case with transient provider timeouts is bounded by the existing 3/day (<=390 calls on day 1) and 6/total per-record limits over at most 2 days"
+    },
+    "acceptance_3_probe_and_readability": "DistillationJobQueue.dead_letter_count() and list_dead_letters() (default include_resolved=False) report only unresolved dead letters that still need action, which feeds distillation_controller actual.pending_dead_letter_count and acceptance/discovery_pipeline_day.py::stage_distillation_dead_letters. Resolved superseded rows remain in distillation_dead_letters until the 30-day retention prune and are readable with last_redrive_actor, last_redrive_note and resolved_at via list_dead_letters(include_resolved=True)"
+  },
+  "tests": {
+    "services/source_ingestion/tests/test_hypothesis_extraction.py": "104 passed (includes test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget, test_defect_closed_newest_versions_reattempted_once_behind_fresh_work_within_caps, test_defect_closed_record_failing_with_defect_again_is_not_reattempted_twice, test_extraction_unavailable_dead_letter_redriven_when_answering_and_held_when_still_failing)",
+    "services/source_ingestion/tests/test_distillation_worker.py": "75 passed (includes TestHostedShapeSupersededDeadLettersAndDefectReattempt covering the exact 59-of-60 hosted dead-letter breakdown, lease-expired superseded resolution, and claim_due ordering fresh records before defect re-attempts)",
+    "services/source_ingestion/tests/test_distillation_controller.py": "49 passed, 1 skipped (includes test_controller_and_discovery_probe_report_only_actionable_dead_letters_and_reattempt_defect_backlog verifying controller state and stage_distillation_dead_letters at 60 -> 1 while failing -> 0 once answering with fresh work ahead of the defect backlog)",
+    "services/source_ingestion/tests/test_distillation_queue_lifetime.py test_discovery_summary.py test_demand_priority.py acceptance/test_discovery_pipeline_day.py": "92 passed (320 passed, 1 skipped across all 7 suites)",
+    "scripts/check_storage_manifest.py": "passed"
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "existing_tables_modified": [
+      "distillation_outbox (additive column defect_reattempted INTEGER NOT NULL DEFAULT 0 and partial index distillation_outbox_defect_reattempt_idx in existing distill_job_queue.jsonl SQLite database)"
+    ],
+    "daily_call_cap": 400,
+    "per_record_limits": {
+      "max_attempts_per_day": 3,
+      "max_attempts_total": 6
+    },
+    "per_tick_bounds": {
+      "superseded_resolve_per_tick": 100,
+      "extraction_dead_letter_redrive_per_tick": 20,
+      "defect_reattempt_per_tick": 100,
+      "tick_extraction_budget_seconds": 120.0
+    }
+  },
+  "hosted_acceptance": "pending deploy (read-only): unresolved dead letters drop from 60 to the ones still actionable (1, then 0 once redriven when the extractor answers), the ~130-source defect-closed backlog is consumed within the 400/day cap over 1-2 days behind fresh relevant work, and cards or recorded abstentions appear for re-attempted records",
+  "residual_findings": [
+    "9 hosted skipped rows with OPENCLAW_TOOL_ARGS_INVALID_JSON are excluded from FIXED_DEFECT_REATTEMPT_OUTCOMES because malformed model JSON is not distinguishable in skip_reason from pre-#7908 output truncation (Gateway truncation returns no separate error code, as noted in L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 residual findings)",
+    "8 hosted timeout dead letters whose newer outbox version was closed skipped with l2_extraction_disabled have their older dead-lettered version resolved as superseded; the newer l2_extraction_disabled version reflects extraction being disabled at the time rather than a code defect in FIXED_DEFECT_REATTEMPT_OUTCOMES"
+  ]
+}
