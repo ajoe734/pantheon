@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from services.runtime_auth_inbound import encode_jwt_hs256
 from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+from services.source_ingestion.daily_bars_store import keyed_dataset_store
 from services.source_ingestion.market_data_storage import MarketDataStorageWriter
 from services.source_ingestion.routers.ingest_operations import create_ingest_operations_router
 from services.source_ingestion.tests.test_datasets_keyed_write import _finmind_broker_session_payload, _result
@@ -95,6 +96,40 @@ def test_symbol_side_and_range_filters(client):
         ("2026-11-25", "2317"), ("2026-11-25", "2330"), ("2026-11-26", "2317"), ("2026-11-26", "2330")}
     assert max(r["rank"] for r in body["rows"]) == 3 and len(body["rows"]) == 12
     assert body["symbols_without_rows"] == ["9999"]
+
+
+def test_mixed_legacy_and_compact_keyed_rows_return_both_sides(client, tmp_path):
+    """One session query must serve historical metadata rows and whole-market compact rows."""
+    day = "2026-11-26"
+    adapter = FinMindTaiwanBrokerDailyReportAdapter()
+    compact_rows = [
+        {"symbol": "2454", "date": day, "side": side, "rank": 1,
+         "broker": f"Compact-{side}", "broker_id": f"branch-{side}",
+         "buy_qty": buy, "sell_qty": sell, "net_qty": buy - sell,
+         "available_time": f"{day}T10:30:00Z"}
+        for side, buy, sell in (("buy", 9000, 1000), ("sell", 2000, 7000))
+    ]
+    compact_records = adapter.compact_keyed_records(compact_rows, run_id="whole-market-test")
+    store = keyed_dataset_store(tmp_path, "tw_broker_top")
+    store.write_records(compact_records)
+    stored = store.records(day)
+    assert any(r["metadata"].get("side") == "buy" for r in stored)
+    assert any(r["metadata"].get("side") == "sell" for r in stored)
+    assert all("side" not in r["metadata"] for r in compact_records)
+
+    response = client.get(URL, params={"symbols": "2330,2454", "top": 1}, headers=_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["symbols_without_rows"] == [] and body["truncated"] is False
+    assert {(r["symbol"], r["side"]) for r in body["rows"]} == {
+        ("2330", "buy"), ("2330", "sell"), ("2454", "buy"), ("2454", "sell")}
+    for expected in compact_rows:
+        row = next(r for r in body["rows"] if r["symbol"] == "2454" and r["side"] == expected["side"])
+        for field in ("date", "symbol", "side", "rank", "broker", "broker_id",
+                      "buy_qty", "sell_qty", "net_qty", "available_time"):
+            assert row[field] == expected[field]
+        assert row["source_id"] == f"finmind-broker-top:2454:{day}:{expected['side']}:1"
+        assert row["unit"] == "shares" and row["source"] == "FinMind TaiwanStockTradingDailyReport"
 
 
 def test_bounds_are_enforced(client):

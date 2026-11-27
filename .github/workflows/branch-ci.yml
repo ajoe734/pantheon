@@ -240,7 +240,9 @@ jobs:
   smoke:
     name: Smoke acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # Mixed source + deployment changes run every applicable gate serially.
+    # The full refresh regressions must still finish after the source shards.
+    timeout-minutes: 55
     needs:
       - trailers
       - generated-files
