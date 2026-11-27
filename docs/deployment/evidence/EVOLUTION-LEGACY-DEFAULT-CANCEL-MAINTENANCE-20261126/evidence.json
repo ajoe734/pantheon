@@ -1,0 +1,44 @@
+{
+  "task_id": "EVOLUTION-LEGACY-DEFAULT-CANCEL-MAINTENANCE-20261126",
+  "class": "RC2",
+  "parent_task": "EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "review_independence": "Owner Antigravity2 (Antigravity family); assigned reviewer Claude2 (Anthropic Claude family — different model family).",
+  "hosted_apply": "NOT made by this source task. Source + focused unit tests only; the coordinator executes plan and apply --digest inside pantheon-evolution-1 after deploy.",
+  "implementation": {
+    "module": "services/evolution/legacy_proposal_cancel.py (CLI: python -m services.evolution.legacy_proposal_cancel plan|apply)",
+    "off_by_default": "Every invocation is refused unless PANTHEON_EVOLUTION_LEGACY_CANCEL_ENABLED=true is set for that single command; no HTTP route, background worker, recurring timer, or compose variable is added.",
+    "plan": "Reads Evolution owner store across all tenants via store.list_all(tenant_id=None), selects every decision with created_at <= cutoff (default 2026-11-10T03:43:51.369000+00:00) that is either currently proposed or already canceled with a review_chain step citing --task-id (default EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110), and outputs deterministic JSON with decision_id, tenant_id, target_type, target_id, action_type, decision_state, created_at, counts_by_tenant, counts_by_state, counts_by_tenant_and_state, outside_counts_by_tenant_and_state, selection_digest (sha256:...), and outside_digest (sha256:...).",
+    "apply": "Requires --digest sha256:... matching the current plan selection_digest before mutating anything; for each selected decision still in proposed state, binds services.evolution.main._TENANT_CONTEXT to decision.tenant_id (resetting in finally) and invokes the existing cancel_proposal(decision_id, CancelRequest(actor_role='operator', actor_id=f'operator-maintenance:{task_id}', note=f'Cancelled legacy proposed decision per {task_id}', tenant_id=decision.tenant_id)) route handler; records every DecisionResponse receipt; and verifies post-apply that 0 legacy decisions remain proposed, selection_digest is unchanged, and outside_digest is byte-for-byte unchanged.",
+    "live_reload_visibility": "cancel_proposal persists through EvolutionDecisionStore.put under the store's exclusive lock and atomic file replacement, updating _file_signature() so the live running pantheon-evolution-1 process automatically reloads the updated decisions.json on its next read."
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -v services/evolution/test_legacy_proposal_cancel.py -> 6 passed in 1.29s"
+    ],
+    "tests_covered": [
+      "test_default_off_refusal: unset and false PANTHEON_EVOLUTION_LEGACY_CANCEL_ENABLED rejected across build_plan, apply_plan, and CLI main(plan|apply) with exit code 2 and 0 mutations",
+      "test_multi_tenant_plan_and_apply_preserves_outside_decisions: under EVOLUTION_AUTH_MODE=token and EVOLUTION_AUTH_ALLOWED_TENANTS=tenant-dev (where external HTTP POST /api/evolution/proposals/{id}/cancel for pantheon-default returns 403), plan + apply cancels pre-cutoff pantheon-default and tenant-dev proposed rows through cancel_proposal while leaving post-cutoff proposed and pre-cutoff approved/executed/unrelated-canceled rows untouched (outside_digest identical)",
+      "test_idempotent_rerun_with_same_digest: re-running plan and apply with the same selection_digest after completion keeps selection_digest and outside_digest identical and performs 0 additional cancellations",
+      "test_digest_mismatch_fails_closed_before_mutation: mismatched --digest raises LegacyProposalCancelError / exit code 2 before mutating any row",
+      "test_live_store_reload_visibility: an already-loaded EvolutionDecisionStore instance automatically detects the atomic file replacement via _file_signature() and reloads the canceled state without restart",
+      "test_invalid_arguments_and_tenant_context_reset_on_error: invalid --before timestamp and empty --task-id fail closed, and _TENANT_CONTEXT resets in finally even if cancel_proposal raises"
+    ]
+  },
+  "runtime_budget": {
+    "cadence": "one-shot operator maintenance CLI invocation only; 0 recurring jobs, 0 background loops, 0 event emitters",
+    "persistent_writers": "0 new files, tables, queues, or caches; mutates existing decisions.json rows in place via EvolutionDecisionStore.put (~250 B cancel ReviewStep appended to review_chain per cancelled decision, ~51 KB one-time bounded delta for 205 pantheon-default rows on hosted dev)",
+    "growth_per_day": "0 B/day",
+    "cap": "bounded to pre-cutoff (<= 2026-11-10T03:43:51.369000+00:00) proposed decisions in existing owner store",
+    "cleanup": "not applicable (no temporary or new persistent storage created)"
+  },
+  "coordinator_steps": [
+    "1. Confirm hosted dev is deployed with this task's merge commit.",
+    "2. Run dry-run plan inside pantheon-evolution-1: docker exec -e PANTHEON_EVOLUTION_LEGACY_CANCEL_ENABLED=true pantheon-evolution-1 python -m services.evolution.legacy_proposal_cancel plan",
+    "3. Verify selected_count=649 (to_cancel_count=205 pantheon-default proposed, already_canceled_count=444 tenant-dev canceled under EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110), record selection_digest and outside_digest.",
+    "4. Execute apply with the exact digest: docker exec -e PANTHEON_EVOLUTION_LEGACY_CANCEL_ENABLED=true pantheon-evolution-1 python -m services.evolution.legacy_proposal_cancel apply --digest <selection_digest>",
+    "5. Verify canceled_count=205, remaining_legacy_proposed_count=0, outside_digest_unchanged=true, and attach the hosted receipt to EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110."
+  ],
+  "residual_findings": []
+}

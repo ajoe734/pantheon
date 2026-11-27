@@ -1,0 +1,47 @@
+{
+  "task_id": "BFF-EVIDENCE-CITED-REG-ENTRY-NAMES-20261126",
+  "title": "Cited registry entries are named after their strategy and open the strategy page",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC6",
+  "delivery_state": "implemented_pending_review",
+  "operator_approval": "2026-11-26 conversation 52a1dacf (answer 都加): scope extended with ports/research_knowledge_source.py, management_read_models/service.py and ports/read_surface_ports.py; research/service.py not approved and not touched.",
+  "hosted_verification_note": "No VM or SSH access; no operator keys read. Functional evidence only, from the hosted facts in the task brief (hosted 8d506640a: 126 of the first 500 cited references are registry_entry reg-strategy-spec-persona-*, cited 255 times by approvals of decision_type registry_entry; GET /bff/artifacts/<reg-strategy-spec-*> answers 404) and the recorded Registry shapes (services/registry/paper_strategy_spec.py build_registry_entry, artifact_type strategy_spec). Hosted verification belongs to the operator acceptance task.",
+  "root_cause": "An owner ref {ref_type: registry_entry, ref_id: reg-strategy-spec-*} parses to ref_kind registry_entry, which cited_evidence.py neither read, named nor linked. The only bounded Registry read wired in (read_registry_strategy_artifact_detail) filters to artifact_type execution_bundle and answers (None, 'ok') for strategy_spec entries (same filter behind the GET /bff/artifacts 404), so it could never answer their strategy_id.",
+  "acceptance_as_delivered": [
+    "1. New bounded owner read DefaultResearchKnowledgeSourcePort.read_registry_entry_strategy (GET /api/registry/entries/{id} through the existing _registry_http_get: caller Authorization + X-Tenant-Id, 5 s timeout) answers any artifact_type and projects only registry_id, artifact_type, strategy_id, tenant_id, owner_tenant. ReadSurfacePorts.read_registry_entry_strategy delegates to it; ManagementReadModelService.get_cited_evidence passes it to compose_cited_evidence as registry_entry_reader. Reads run once per distinct registry_entry id on the visible page, in the same wanted list, executor, MAX_ITEM_READS (20) budget and read deadline as artifact and evidence item reads. The answer is validated by the existing _artifact_strategy (status, other tenant / owner_tenant, id mismatch). label = names.strategy(recorded strategy_id); label_parts = {registry_id, strategy_id}. test_registry_entry_named_by_recorded_strategy_and_links_to_strategy (entry cited twice -> one read; caller tenant header asserted).",
+    "2. route_href / resolved_link = /management/strategies/{strategy_id} only when the Registry answered a strategy_id, else null; the row never contains /management/artifacts/ (asserted on the serialized row). test_registry_entry_without_recorded_strategy_has_no_name_and_no_link covers strategy_id null and owner 404.",
+    "3. An approval citation whose target_id is the entry carries parts.target_display_name when the same read answered a named strategy (test 1, both approvals). Failed (503), slow (past deadline), other-tenant and over-budget reads keep label = ref_id, name_missing true, strategy_id null, route null, no target_display_name; failed/slow are counted in meta.item_reads.failed: test_failed_registry_entry_read_keeps_ref_id_and_is_counted, test_slow_registry_entry_read_is_abandoned_and_counted, test_registry_entry_of_another_tenant_is_never_used, test_registry_entry_reads_share_the_item_read_cap. BFF_API_CONTRACT.md states the rule (new BFF-EVIDENCE-CITED-REG-ENTRY-NAMES-20261126 bullet; budget and target_display_name bullets updated)."
+  ],
+  "unchanged_behaviour": [
+    "read_registry_strategy_artifact_detail and GET /bff/artifacts are unchanged: test_port_entry_reader_answers_strategy_spec_detail_reader_unchanged asserts the detail reader still answers (None, 'ok') for the strategy_spec entry while the new reader answers its strategy_id.",
+    "registry_artifact / member_virtual_book rows (artifact-* ids, including {ref_type: registry_entry, ref_id: artifact-*}) still use artifact_reader and link to /management/artifacts/{artifact}; all pre-existing tests in test_cited_evidence_list.py pass unmodified."
+  ],
+  "implementation": {
+    "services/control-plane/bff/ports/research_knowledge_source.py": "_registry_entry_identity helper; abstract ResearchKnowledgeSourcePort.read_registry_entry_strategy; DefaultResearchKnowledgeSourcePort.read_registry_entry_strategy (injected-store and HTTP paths; 404/403 -> (None,'ok'), other non-200 -> (None,'failed'), no base url -> (None,'unconfigured')).",
+    "services/control-plane/bff/ports/read_surface_ports.py": "ReadSurfacePorts.read_registry_entry_strategy delegation.",
+    "services/control-plane/bff/management_read_models/service.py": "get_cited_evidence wires store.read_registry_entry_strategy as registry_entry_reader.",
+    "services/control-plane/bff/management_read_models/cited_evidence.py": "registry_entry_reader parameter; 'entry' read kind in the shared budget; entry_strategies; _name_for/_route_for/_SOURCE_CLASS for registry_entry; _strategy_href; approval target names include answered entries; module docstring.",
+    "services/control-plane/bff/BFF_API_CONTRACT.md": "registry entry naming/link rule."
+  },
+  "cost_per_request": "At most one extra Registry GET per distinct registry_entry id on the visible page, inside the existing 20-read cap (never additional to it); no new store, writer, index or cache.",
+  "tests_run": [
+    {"command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_cited_evidence_list.py", "result": "35 passed (27 existing + 8 new)"},
+    {"command": "62 BFF test files referencing read_registry_strategy_artifact*, cited_evidence, ResearchKnowledgeSourcePort, BFF_API_CONTRACT or ReadSurfacePorts, in 4 bounded batches", "result": "1342 passed, 3 skipped, 17 failed; all 17 fail identically with services/control-plane/bff checked out at origin/dev b0eb2c259 (pre-existing, unrelated persona/auth/jobs/postmortem/inventory tests): test_bff_auth_facade::test_persona_fleet_owner_reads_allow_auth_and_portfolio_while_pending_and_batch_strategy_specs, test_bff_b2_list_detail_facade (9 persona tests), test_list_scope_classification::test_get_bff_artifacts_joins_list_scope_with_one_bounded_read_per_page_and_preserves_strategy_labels_shape, test_management_read_timeout_and_capacity::test_human_inbox_contributor_carries_caller_auth_context_and_projects_live_approvals, test_overlay_retirement::test_jobs_router_reads_strictly_canonical_read_store, test_owner_unavailable_503_consistency (2 persona detail params), test_postmortem_owner_read::test_ac3_owner_paging_filtering_and_learning_feedback_bridge_compat, test_read_surface_caller_migration::TestStaticRegressionReadSurfacePorts::test_main_py_all_read_store_attributes_are_inventoried_and_mapped"}
+  ],
+  "justified_changed_assertions": [],
+  "added_assertions": [
+    "test_parse_registry_entry_ref_keeps_its_kind",
+    "test_port_entry_reader_answers_strategy_spec_detail_reader_unchanged",
+    "test_registry_entry_named_by_recorded_strategy_and_links_to_strategy",
+    "test_registry_entry_without_recorded_strategy_has_no_name_and_no_link",
+    "test_failed_registry_entry_read_keeps_ref_id_and_is_counted",
+    "test_slow_registry_entry_read_is_abandoned_and_counted",
+    "test_registry_entry_of_another_tenant_is_never_used",
+    "test_registry_entry_reads_share_the_item_read_cap"
+  ],
+  "residual_findings": [
+    "The strategy_id value in the fixture (strategy-carry-spec-recorded-0007) is chosen to be non-derivable from the entry id; the brief did not record the hosted strategy_id value. Whether hosted reg-strategy-spec-persona-* entries carry a strategy_id that the strategy label directory names must be confirmed in hosted acceptance; if not, rows stay label = ref_id with route null by design.",
+    "research/service.py (ResearchPort aggregator) has no read_registry_entry_strategy; out of approved scope. The management store wired in get_cited_evidence is ReadSurfacePorts, which has it."
+  ]
+}

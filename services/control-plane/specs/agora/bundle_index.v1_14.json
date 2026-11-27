@@ -10,7 +10,7 @@
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "051da07a300530be6c6253ff136a5edc9138f919b24dfb6cc2e37b122c735197"
+    "sha256": "381cab2ef968f8a977778dcafc178f9fd3d467b0d174db5f325c42fbc91282ed"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [

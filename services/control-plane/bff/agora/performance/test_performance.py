@@ -685,7 +685,7 @@ def test_static_schema_accepts_live_projection_and_action_receipt(tmp_path: Path
 
 
 def test_performance_attribution_real_empty_scope_is_available_with_no_rows(tmp_path: Path) -> None:
-    """A reachable reader with zero owner journeys is an empty result, not an outage."""
+    """A caller with no Strategy Workshop session returns 200 with zero rows and never calls the reader."""
     store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
     reader = _ProjectionReader()
     client = TestClient(_app(store, reader))
@@ -714,7 +714,7 @@ def test_performance_attribution_real_empty_scope_is_available_with_no_rows(tmp_
         "status": "unavailable",
         "as_of": None,
         "source_ids": [],
-        "reason": "no_strategies_found",
+        "reason": "no_workshop_strategies",
     }
     assert meta["surfaces"]["telemetry"] == {
         "status": "unavailable",
@@ -728,17 +728,87 @@ def test_performance_attribution_real_empty_scope_is_available_with_no_rows(tmp_
         "source_ids": [],
         "reason": None,
     }
-    # The read was really made against the configured reader, tenant/environment scoped.
-    assert reader.page_calls == [
-        {
-            "tenant_id": "tenant-a",
-            "environment": "paper",
-            "filters": {},
-            "sort": "updated_at_desc",
-            "page_size": MAX_PAGE_SIZE,
-            "page_token": None,
-        }
-    ]
+    # No Strategy Workshop sessions means zero projection reader calls.
+    assert reader.page_calls == []
+
+
+def test_performance_attribution_no_workshop_sessions_never_calls_raising_reader(tmp_path: Path) -> None:
+    """Acceptance 3: caller with no Strategy Workshop session returns 200 with 0 rows
+    and no_workshop_strategies without calling the trade journey projection reader."""
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+
+    class _RaisingReader:
+        def page_journeys(self, **kwargs: Any) -> Any:
+            raise AssertionError("page_journeys must not be called when caller has no workshop sessions")
+
+        def page_timeline(self, **kwargs: Any) -> Any:
+            raise AssertionError("page_timeline must not be called when caller has no workshop sessions")
+
+    client = TestClient(_app(store, _RaisingReader(), workshop_store=_MockWorkshopStore(sessions=[])))
+    response = client.get(ATTRIBUTION_URL, headers=_headers())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["data"]["items"] == []
+    assert body["data"]["summary"]["row_count"] == 0
+    assert body["meta"]["surfaces"]["strategy_directory"]["reason"] == "no_workshop_strategies"
+
+
+def test_performance_attribution_excludes_non_workshop_persona_journeys_owned_by_same_user(
+    tmp_path: Path,
+) -> None:
+    """Acceptance 4: journeys are read per caller workshop strategy id through the reader
+    strategy filter; a journey whose strategy is not one of the caller's workshop
+    strategies never creates or feeds a row even when every event carries the caller's user id."""
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-1",
+                "strategy_id": "strategy-alpha",
+                "title": "Alice Workshop Alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
+    workshop_events = _events(user_id="alice", tenant_id="tenant-a")
+    workshop_events[2]["metrics"] = {"pnl": 250.0}
+
+    persona_events = _events(user_id="alice", tenant_id="tenant-a")
+    for idx, ev in enumerate(persona_events):
+        ev["journey_id"] = "journey-institutional-persona-001"
+        ev["event_id"] = f"event-persona-{idx:03d}"
+        ev["strategy_id"] = "persona-institutional-strategy"
+        ev["fill_id"] = "fill-persona-001"
+    persona_events[2]["metrics"] = {"pnl": 99999.0}
+
+    reader = _ProjectionReader(workshop_events + persona_events)
+    client = TestClient(_app(store, reader, workshop_store=workshop))
+
+    response = client.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    items = body["data"]["items"]
+    assert [row["dimension_key"] for row in items] == ["strategy-alpha"]
+    assert items[0]["total_pnl"] == 250.0
+    assert items[0]["metrics"]["total_trades"] == 1
+    assert body["data"]["summary"]["row_count"] == 1
+    assert body["data"]["summary"]["total_pnl"] == 250.0
+    assert body["data"]["summary"]["total_trades"] == 1
+    assert body["meta"]["surfaces"]["trade_journeys"]["source_ids"] == ["journey-001"]
+    assert "persona-institutional-strategy" not in response.text
+    assert "journey-institutional-persona-001" not in response.text
+    assert [call["filters"] for call in reader.page_calls] == [{"strategy_id": "strategy-alpha"}]
+
+    # Direct filter on the non-workshop strategy returns 0 rows and makes 0 reader calls.
+    reader.page_calls.clear()
+    filtered = client.get(
+        f"{ATTRIBUTION_URL}?strategy_id=persona-institutional-strategy",
+        headers=_headers(user="alice"),
+    )
+    assert filtered.status_code == 200, filtered.text
+    assert filtered.json()["data"]["items"] == []
+    assert reader.page_calls == []
 
 
 @pytest.mark.parametrize(
@@ -750,11 +820,17 @@ def test_performance_attribution_real_empty_scope_is_available_with_no_rows(tmp_
             "projection_reader_unavailable:PANTHEON_BFF_TRADE_JOURNEY_PROJECTION_DSN is required",
         ),
         (
-            _FailingReader(_events(), fail_on_journey=False),
+            _FailingReader(
+                [{**e, "strategy_id": "alice-strategy-alpha"} for e in _events()],
+                fail_on_journey=False,
+            ),
             "projection_reader_unavailable:Postgres projection reader is unavailable",
         ),
         (
-            _FailingReader(_events(), fail_on_journey=True),
+            _FailingReader(
+                [{**e, "strategy_id": "alice-strategy-alpha"} for e in _events()],
+                fail_on_journey=True,
+            ),
             "projection_reader_unavailable:Postgres projection reader is unavailable",
         ),
     ],
@@ -810,25 +886,44 @@ def test_performance_attribution_is_tenant_and_environment_scoped(tmp_path: Path
         event["environment"] = "live"
         event["journey_id"] = "journey-live-001"
         event["event_id"] = f"event-live-{index:03d}"
-        event["strategy_id"] = "strategy-live"
+        event["strategy_id"] = "strategy-alpha"
     other_tenant = _events(user_id="alice", tenant_id="tenant-b")
     for index, event in enumerate(other_tenant):
         event["journey_id"] = "journey-b-001"
         event["event_id"] = f"event-b-{index:03d}"
         event["strategy_id"] = "strategy-tenant-b"
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-a-1",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            {
+                "workshop_id": "ws-b-1",
+                "strategy_id": "strategy-tenant-b",
+                "title": "strategy-tenant-b",
+                "user_id": "alice",
+                "tenant_id": "tenant-b",
+            },
+        ]
+    )
     reader = _ProjectionReader(paper + live + other_tenant)
-    client = TestClient(_app(store, reader))
+    client = TestClient(_app(store, reader, workshop_store=workshop))
 
     default_paper = client.get(ATTRIBUTION_URL, headers=_headers())
     assert default_paper.status_code == 200, default_paper.text
     assert [row["dimension_key"] for row in default_paper.json()["data"]["items"]] == ["strategy-alpha"]
     assert default_paper.json()["meta"]["surfaces"]["trade_journeys"]["source_ids"] == ["journey-001"]
-    assert "strategy-live" not in default_paper.text
+    assert "journey-live-001" not in default_paper.text
     assert "strategy-tenant-b" not in default_paper.text
 
     operator_live = client.get(f"{ATTRIBUTION_URL}?environment=live", headers=_headers())
     assert operator_live.status_code == 200, operator_live.text
-    assert [row["dimension_key"] for row in operator_live.json()["data"]["items"]] == ["strategy-live"]
+    assert [row["dimension_key"] for row in operator_live.json()["data"]["items"]] == ["strategy-alpha"]
+    assert operator_live.json()["meta"]["surfaces"]["trade_journeys"]["source_ids"] == ["journey-live-001"]
     assert operator_live.json()["meta"]["scope"]["environment"] == "live"
 
     viewer_live = client.get(f"{ATTRIBUTION_URL}?environment=live", headers=_headers(role="viewer"))
@@ -845,7 +940,7 @@ def test_performance_attribution_is_tenant_and_environment_scoped(tmp_path: Path
 def test_performance_attribution_walks_reader_pages_and_scopes_owner_via_stage_reads(
     tmp_path: Path,
 ) -> None:
-    """Page rows carry no timeline; owner scoping must come from ``get_journey``."""
+    """Page rows carry no timeline; owner scoping must come from ``page_timeline``."""
     store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
     events: list[dict[str, Any]] = []
     for index in range(5):
@@ -856,22 +951,32 @@ def test_performance_attribution_walks_reader_pages_and_scopes_owner_via_stage_r
                     **event,
                     "journey_id": f"journey-{index:03d}",
                     "event_id": f"{event['event_id']}-{index:03d}",
-                    "strategy_id": f"strategy-{index:03d}",
+                    "strategy_id": "strategy-000",
                     "fill_id": f"fill-{index:03d}",
                     "occurred_at": event["occurred_at"].replace("T17", f"T{10 + index:02d}"),
                 }
             )
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-000",
+                "strategy_id": "strategy-000",
+                "title": "strategy-000",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
     reader = _ProjectionReader(events, page_limit=2)
-    client = TestClient(_app(store, reader))
+    client = TestClient(_app(store, reader, workshop_store=workshop))
 
     response = client.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
     assert response.status_code == 200, response.text
     body = response.json()
     assert [row["dimension_key"] for row in body["data"]["items"]] == [
         "strategy-000",
-        "strategy-002",
-        "strategy-004",
     ]
+    assert body["data"]["items"][0]["metrics"]["total_trades"] == 3
     assert "bob" not in response.text
     assert body["meta"]["availability"] == "available"
     assert body["meta"]["surfaces"]["trade_journeys"]["source_ids"] == [
@@ -903,8 +1008,26 @@ def test_performance_attribution_strategy_filter_and_period_narrow_the_reader_qu
         event["event_id"] = f"event-stale-{index:03d}"
         event["strategy_id"] = "strategy-stale"
         event["occurred_at"] = event["occurred_at"].replace("2026-07-22", "2026-06-01")
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            {
+                "workshop_id": "ws-stale",
+                "strategy_id": "strategy-stale",
+                "title": "strategy-stale",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+        ]
+    )
     reader = _ProjectionReader(recent + stale)
-    client = TestClient(_app(store, reader))
+    client = TestClient(_app(store, reader, workshop_store=workshop))
 
     filtered = client.get(f"{ATTRIBUTION_URL}?strategy_id=strategy-alpha", headers=_headers())
     assert filtered.status_code == 200, filtered.text
@@ -913,14 +1036,24 @@ def test_performance_attribution_strategy_filter_and_period_narrow_the_reader_qu
 
     seven_days = client.get(f"{ATTRIBUTION_URL}?period=7d", headers=_headers())
     assert seven_days.status_code == 200, seven_days.text
-    assert [row["dimension_key"] for row in seven_days.json()["data"]["items"]] == ["strategy-alpha"]
-    assert reader.page_calls[-1]["filters"] == {"date_from": "2026-07-15T18:00:00Z"}
+    assert [row["dimension_key"] for row in seven_days.json()["data"]["items"]] == [
+        "strategy-alpha",
+        "strategy-stale",
+    ]
+    assert reader.page_calls[-1]["filters"] == {
+        "strategy_id": "strategy-stale",
+        "date_from": "2026-07-15T18:00:00Z",
+    }
     assert seven_days.json()["meta"]["surfaces"]["trade_journeys"]["source_ids"] == ["journey-001"]
 
     everything = client.get(f"{ATTRIBUTION_URL}?period=all", headers=_headers())
     assert [row["dimension_key"] for row in everything.json()["data"]["items"]] == [
         "strategy-alpha",
         "strategy-stale",
+    ]
+    assert sorted(everything.json()["meta"]["surfaces"]["trade_journeys"]["source_ids"]) == [
+        "journey-001",
+        "journey-stale",
     ]
 
 
@@ -1012,7 +1145,18 @@ def test_performance_attribution_counts_two_fills_in_one_stage_exactly_once_each
         ).timeline
     } == {None, "fill-002"}
 
-    client = TestClient(_app(store, reader))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
+    client = TestClient(_app(store, reader, workshop_store=workshop))
     response = client.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
     assert response.status_code == 200, response.text
     data = response.json()["data"]
@@ -1043,13 +1187,34 @@ def test_performance_attribution_owner_conflict_on_earlier_event_stays_invisible
     )
     assert {event["user_id"] for event in latest_per_stage.timeline} == {"alice"}
 
-    client = TestClient(_app(store, reader))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            {
+                "workshop_id": "ws-bob-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "bob",
+                "tenant_id": "tenant-a",
+            },
+        ]
+    )
+    client = TestClient(_app(store, reader, workshop_store=workshop))
     for user in ("alice", "bob"):
         response = client.get(ATTRIBUTION_URL, headers=_headers(user=user))
         assert response.status_code == 200, response.text
-        assert response.json()["data"]["items"] == []
-        assert response.json()["meta"]["surfaces"]["trade_journeys"]["source_ids"] == []
-        assert response.json()["meta"]["availability"] == "available"
+        body = response.json()
+        assert len(body["data"]["items"]) == 1
+        assert body["data"]["items"][0]["metrics"]["total_trades"] == 0
+        assert body["data"]["items"][0]["total_pnl"] is None
+        assert body["meta"]["surfaces"]["trade_journeys"]["source_ids"] == []
+        assert body["meta"]["availability"] == "available"
         assert "fill-bob" not in response.text
 
 
@@ -1058,7 +1223,28 @@ def test_performance_attribution_never_exposes_other_owners_counts_or_ids(
 ) -> None:
     store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
     alice_events = _events(user_id="alice", tenant_id="tenant-a")
-    baseline = TestClient(_app(store, _ProjectionReader(alice_events)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            *[
+                {
+                    "workshop_id": f"ws-bob-{index:03d}",
+                    "strategy_id": f"bob-strategy-{index:03d}",
+                    "title": f"bob-strategy-{index:03d}",
+                    "user_id": "bob",
+                    "tenant_id": "tenant-a",
+                }
+                for index in range(3)
+            ],
+        ]
+    )
+    baseline = TestClient(_app(store, _ProjectionReader(alice_events), workshop_store=workshop))
     alone = baseline.get(ATTRIBUTION_URL, headers=_headers(user="alice")).json()
 
     bob_events: list[dict[str, Any]] = []
@@ -1073,7 +1259,7 @@ def test_performance_attribution_never_exposes_other_owners_counts_or_ids(
                     "fill_id": f"fill-bob-{index:03d}",
                 }
             )
-    shared = TestClient(_app(store, _ProjectionReader(alice_events + bob_events)))
+    shared = TestClient(_app(store, _ProjectionReader(alice_events + bob_events), workshop_store=workshop))
     with_bob = shared.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
     assert with_bob.status_code == 200, with_bob.text
     assert "bob" not in with_bob.text
@@ -1098,11 +1284,22 @@ def test_performance_attribution_truncated_owner_query_stays_partial(
                     **event,
                     "journey_id": f"journey-{index:03d}",
                     "event_id": f"{event['event_id']}-{index:03d}",
-                    "strategy_id": f"strategy-{index:03d}",
+                    "strategy_id": "strategy-000",
                     "occurred_at": event["occurred_at"].replace("T17", f"T{10 + index:02d}"),
                 }
             )
-    client = TestClient(_app(store, _ProjectionReader(events, page_limit=2)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-000",
+                "strategy_id": "strategy-000",
+                "title": "strategy-000",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
+    client = TestClient(_app(store, _ProjectionReader(events, page_limit=2), workshop_store=workshop))
     response = client.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
     assert response.status_code == 200, response.text
     body = response.json()
@@ -1110,7 +1307,8 @@ def test_performance_attribution_truncated_owner_query_stays_partial(
     assert body["meta"]["surfaces"]["trade_journeys"]["status"] == "partial"
     assert body["meta"]["surfaces"]["trade_journeys"]["reason"] == "journey_scan_truncated"
     assert body["meta"]["surfaces"]["telemetry"]["status"] == "unavailable"
-    assert [row["dimension_key"] for row in body["data"]["items"]] == ["strategy-002", "strategy-003"]
+    assert [row["dimension_key"] for row in body["data"]["items"]] == ["strategy-000"]
+    assert body["meta"]["surfaces"]["trade_journeys"]["source_ids"] == ["journey-002", "journey-003"]
 
 
 def test_performance_attribution_does_not_invent_fill_rate_or_slippage(tmp_path: Path) -> None:
@@ -1126,7 +1324,25 @@ def test_performance_attribution_does_not_invent_fill_rate_or_slippage(tmp_path:
         for event in _events(user_id="alice", tenant_id="tenant-a")
     ]
     measured[2]["metrics"] = {"pnl": 10.0, "fill_rate": 0.5, "slippage_bps": 4.0}
-    client = TestClient(_app(store, _ProjectionReader(_events() + measured)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+            {
+                "workshop_id": "ws-measured",
+                "strategy_id": "strategy-measured",
+                "title": "strategy-measured",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            },
+        ]
+    )
+    client = TestClient(_app(store, _ProjectionReader(_events() + measured), workshop_store=workshop))
     response = client.get(ATTRIBUTION_URL, headers=_headers(user="alice"))
     assert response.status_code == 200, response.text
     rows = {row["dimension_key"]: row for row in response.json()["data"]["items"]}
@@ -1268,7 +1484,13 @@ def test_performance_attribution_metrics_and_period_filtering(tmp_path: Path) ->
         },
     ]
 
-    client = TestClient(_app(store, _ProjectionReader(events)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {"workshop_id": "ws-1", "strategy_id": "strat-1", "title": "strat-1", "user_id": "alice", "tenant_id": "tenant-a"},
+            {"workshop_id": "ws-2", "strategy_id": "strat-2", "title": "strat-2", "user_id": "alice", "tenant_id": "tenant-a"},
+        ]
+    )
+    client = TestClient(_app(store, _ProjectionReader(events), workshop_store=workshop))
     response = client.get(
         "/bff/agora/trading-room/performance-attribution/by-strategy?period=latest",
         headers=_headers(),
@@ -1489,7 +1711,18 @@ def test_performance_attribution_single_fill_across_multiple_stages_reports_one_
     for ev in events:
         ev["strategy_id"] = "strategy-alpha"
 
-    client = TestClient(_app(store, _ProjectionReader(events)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
+    client = TestClient(_app(store, _ProjectionReader(events), workshop_store=workshop))
     response = client.get(
         "/bff/agora/trading-room/performance-attribution/by-strategy",
         headers=_headers(user="alice"),
@@ -1526,7 +1759,18 @@ def test_performance_attribution_deduplicates_trade_identifiers_across_multiple_
         ev["event_id"] = f"event-003-{i}"
         ev["fill_id"] = "fill-002"  # Distinct fill_id
 
-    client = TestClient(_app(store, _ProjectionReader(events1 + events2 + events3)))
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
+    client = TestClient(_app(store, _ProjectionReader(events1 + events2 + events3), workshop_store=workshop))
     response = client.get(
         "/bff/agora/trading-room/performance-attribution/by-strategy",
         headers=_headers(user="alice"),
@@ -1559,6 +1803,17 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
 
     read_surface = ReadSurfacePorts()
     monkeypatch.setattr(read_surface, "_trade_journey_projection_reader_override", None, raising=False)
+    workshop = _MockWorkshopStore(
+        sessions=[
+            {
+                "workshop_id": "ws-alice-alpha",
+                "strategy_id": "strategy-alpha",
+                "title": "strategy-alpha",
+                "user_id": "alice",
+                "tenant_id": "tenant-a",
+            }
+        ]
+    )
 
     app = FastAPI()
     app.include_router(
@@ -1569,6 +1824,7 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
             bff_error=_bff_error,
             utc_now=lambda: NOW,
             get_trade_journey_store=read_surface.trade_journey_projection_reader,
+            workshop_store=workshop,
             suggestion_store=mock.MagicMock(),
         )
     )
@@ -1582,7 +1838,8 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
     assert meta["surfaces"]["trade_journeys"]["reason"].startswith(
         ("projection_reader_unavailable:", "projection_reader_error:ProjectionReadUnavailable")
     )
-    assert unconfigured.json()["data"]["items"] == []
+    assert len(unconfigured.json()["data"]["items"]) == 1
+    assert unconfigured.json()["data"]["items"][0]["data_confidence"] == "unavailable"
 
     events = _events(user_id="alice", tenant_id="tenant-a")
     monkeypatch.setattr(
@@ -1610,6 +1867,7 @@ def test_assembled_bff_app_attribution_route_uses_configured_projection_reader(
     assert other_user.status_code == 200, other_user.text
     assert other_user.json()["data"]["items"] == []
     assert other_user.json()["meta"]["availability"] == "available"
+    assert other_user.json()["meta"]["surfaces"]["strategy_directory"]["reason"] == "no_workshop_strategies"
 
 
 def test_pm12_attribution_values_stock_future_with_multiplier_and_groups_by_instrument() -> None:
@@ -1634,6 +1892,8 @@ def test_pm12_attribution_values_stock_future_with_multiplier_and_groups_by_inst
         "multiplier": 100.0,
         "contract_month": "202611",
         "initial_margin_reserved": 92000.0,
+        "fee": 0.0,
+        "tax": 0.0,
     }
     for lfc, qty, price, meta in (
         (1, -5.0, 2299.0, cash_meta),

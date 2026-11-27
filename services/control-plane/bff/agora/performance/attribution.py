@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set
 from pydantic import BaseModel, ConfigDict, Field
 
 from .journeys import (
+    JourneyScan,
     JourneyScanStatus,
     parse_timestamp as _parse_timestamp,
     projection_strategy_id as _projection_strategy_id,
@@ -291,30 +292,10 @@ def project_agora_performance_attribution_by_strategy(
         except Exception:
             pass
 
-    # Owner-scoped, period-scoped journeys from the configured projection reader.
-    # The scan already applies tenant/environment (reader scope), period, and
-    # owner visibility; only the strategy grouping happens here.
+    # Filter by strategy_id if provided. Only the caller's Strategy Workshop
+    # strategies are eligible in Agora; institutional persona runtimes never
+    # create or feed Agora attribution rows.
     clean_strat_filter = str(strategy_id_filter or "").strip()
-    scan = scan_owner_journeys(
-        projection_reader,
-        tenant_id=tenant_id,
-        environment=environment,
-        owner_user_id=owner_user_id,
-        period=period,
-        now=now,
-        strategy_id=clean_strat_filter or None,
-    )
-    scoped_projections: List[Any] = []
-    projections_by_strategy: Dict[str, List[Any]] = defaultdict(list)
-    for projection in scan.projections:
-        s_id = _projection_strategy_id(projection)
-        if not s_id:
-            continue
-        user_strategies.setdefault(s_id, {"strategy_id": s_id, "title": s_id})
-        scoped_projections.append(projection)
-        projections_by_strategy[s_id].append(projection)
-
-    # Filter by strategy_id if provided
     if clean_strat_filter:
         if clean_strat_filter in user_strategies:
             target_strategy_ids = [clean_strat_filter]
@@ -323,6 +304,55 @@ def project_agora_performance_attribution_by_strategy(
             target_strategy_ids = []
     else:
         target_strategy_ids = sorted(list(user_strategies.keys()))
+
+    # Owner-scoped, period-scoped journeys from the configured projection reader,
+    # queried per caller workshop strategy id through the reader strategy filter.
+    # A caller with no workshop strategies makes no reader call at all.
+    scoped_projections: List[Any] = []
+    projections_by_strategy: Dict[str, List[Any]] = defaultdict(list)
+    if not target_strategy_ids:
+        scan = JourneyScan(status="available", reason=None, projections=[])
+    else:
+        resolved_reader = (
+            projection_reader()
+            if callable(projection_reader) and not hasattr(projection_reader, "page_journeys")
+            else projection_reader
+        )
+        scan_status: JourneyScanStatus = "available"
+        scan_reasons: List[str] = []
+        for s_id in target_strategy_ids:
+            strat_scan = scan_owner_journeys(
+                resolved_reader,
+                tenant_id=tenant_id,
+                environment=environment,
+                owner_user_id=owner_user_id,
+                period=period,
+                now=now,
+                strategy_id=s_id,
+            )
+            if strat_scan.status == "unavailable":
+                scan_status = "unavailable"
+                scan_reasons = [strat_scan.reason] if strat_scan.reason else []
+                scoped_projections.clear()
+                projections_by_strategy.clear()
+                break
+            if strat_scan.status == "partial":
+                scan_status = "partial"
+                if strat_scan.reason:
+                    for part in strat_scan.reason.split(","):
+                        if part and part not in scan_reasons:
+                            scan_reasons.append(part)
+            for projection in strat_scan.projections:
+                proj_s_id = _projection_strategy_id(projection)
+                if proj_s_id != s_id or proj_s_id not in user_strategies:
+                    continue
+                scoped_projections.append(projection)
+                projections_by_strategy[s_id].append(projection)
+        scan = JourneyScan(
+            status=scan_status,
+            reason=",".join(scan_reasons) or None,
+            projections=scoped_projections,
+        )
 
     # 2. Extract metrics and build rows for each strategy
     all_rows: List[TradingRoomPerformanceAttributionRow] = []
@@ -585,7 +615,7 @@ def project_agora_performance_attribution_by_strategy(
             "status": "available" if has_strategy_dir else "unavailable",
             "as_of": snapshot_at if has_strategy_dir else None,
             "source_ids": sorted(list(user_strategies.keys())),
-            "reason": None if has_strategy_dir else "no_strategies_found",
+            "reason": None if has_strategy_dir else "no_workshop_strategies",
         },
         "telemetry": {
             "status": telemetry_status,

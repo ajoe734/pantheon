@@ -15,6 +15,12 @@ real Registry owner read (``DefaultResearchKnowledgeSourcePort.
 read_registry_strategy_artifact_detail`` -> ``GET /api/registry/entries/{id}``,
 answering the recorded ``RegistryEntryView`` shape) and the strategy label
 directory is keyed by strategy id only, as ``get_strategy_labels`` answers.
+
+BFF-EVIDENCE-CITED-REG-ENTRY-NAMES-20261126: a cited ``registry_entry`` such as
+``reg-strategy-spec-persona-*`` (``artifact_type`` ``strategy_spec``, cited by
+approvals of ``decision_type`` ``registry_entry``) is named through the real
+``DefaultResearchKnowledgeSourcePort.read_registry_entry_strategy`` ->
+``GET /api/registry/entries/{id}`` and links to its strategy page.
 """
 from __future__ import annotations
 
@@ -196,6 +202,9 @@ class CitedStore:
 
     def read_registry_strategy_artifact_detail(self, artifact_id: Optional[str]) -> Any:
         return self.registry.read_registry_strategy_artifact_detail(artifact_id)
+
+    def read_registry_entry_strategy(self, entry_id: Optional[str]) -> Any:
+        return self.registry.read_registry_entry_strategy(entry_id)
 
     # Display-name directories.
     def list_personas(self) -> List[Dict[str, Any]]:
@@ -803,3 +812,162 @@ def test_approval_targeting_an_artifact_carries_its_strategy_name(store, owners)
     assert "target_display_name" not in persona_target["parts"]
     # Still one Registry read per distinct artifact.
     assert sorted(owners["registry_reads"]) == sorted([ART_A, ART_B])
+
+
+# ---------------------------------------------------------------------------
+# BFF-EVIDENCE-CITED-REG-ENTRY-NAMES-20261126: registry_entry (strategy_spec)
+# ---------------------------------------------------------------------------
+
+# Hosted 8d506640a: approvals of decision_type registry_entry cite these entries.
+REG_SPEC = "reg-strategy-spec-persona-715f5875971f2e342d8f"
+REG_SPEC_2 = "reg-strategy-spec-persona-0c1d2e3f405162738495"
+# Recorded by the Registry for REG_SPEC; not derivable from the entry id text.
+STRATEGY_SPEC = "strategy-carry-spec-recorded-0007"
+
+
+def strategy_spec_entry_view(registry_id: str, strategy_id: Optional[str], *,
+                             owner_tenant: str = TENANT) -> Dict[str, Any]:
+    """GET /api/registry/entries/{id} for a strategy spec (paper_strategy_spec.build_registry_entry shape)."""
+    entry: Dict[str, Any] = {
+        "registry_id": registry_id, "artifact_type": "strategy_spec", "strategy_id": strategy_id,
+        "version": "1", "artifact_state": "candidate", "created_at": "2026-11-20T00:00:00Z",
+        "lineage": {"parent_registry_ids": ["spec-src"], "source_run_ids": ["run-1"]},
+        "storage_ref": {"backend": "inline", "path": "$.strategy_spec"}, "checksum": "sha256:" + "1" * 64,
+        "metadata": {"persona_id": PERSONA, "paper_loop_candidate": True}, "owner_tenant": owner_tenant,
+    }
+    return {"entry": entry, "deployment_stage": "none"}
+
+
+def _registry_entry_approval(decision_id: str, entry_id: str, decided_at: str = "2026-11-25T15:00:00Z") -> Dict[str, Any]:
+    return {
+        "decision_id": decision_id, "tenant_id": TENANT, "decision_type": "registry_entry",
+        "target_id": entry_id, "decided_at": decided_at,
+        "evidence_refs": [{"ref_type": "registry_entry", "ref_id": entry_id}],
+    }
+
+
+@pytest.fixture
+def spec_labels(store, monkeypatch):
+    monkeypatch.setattr(store, "get_strategy_labels", lambda: {
+        STRATEGY_B: {"title": "Carry Basket B"}, STRATEGY_SPEC: {"title": "Carry Spec Recorded"},
+    })
+
+
+def test_parse_registry_entry_ref_keeps_its_kind():
+    parsed = cited_evidence.parse_ref({"ref_type": "registry_entry", "ref_id": REG_SPEC})
+    assert parsed.ref_kind == "registry_entry" and parsed.source_owner == "registry"
+    assert parsed.source_id == parsed.ref_id == REG_SPEC
+
+
+def test_port_entry_reader_answers_strategy_spec_detail_reader_unchanged(owners):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, STRATEGY_SPEC)
+    port = DefaultResearchKnowledgeSourcePort(registry_service_url=REGISTRY_URL)
+    # GET /bff/artifacts behaviour is unchanged: a strategy_spec entry is no artifact.
+    assert port.read_registry_strategy_artifact_detail(REG_SPEC) == (None, "ok")
+    detail, status = port.read_registry_entry_strategy(REG_SPEC)
+    assert status == "ok"
+    assert detail == {"registry_id": REG_SPEC, "artifact_type": "strategy_spec",
+                      "strategy_id": STRATEGY_SPEC, "owner_tenant": TENANT}
+    assert port.read_registry_entry_strategy("reg-strategy-spec-unknown") == (None, "ok")
+    owners["registry_fail"] = {REG_SPEC}
+    assert port.read_registry_entry_strategy(REG_SPEC) == (None, "failed")
+    assert DefaultResearchKnowledgeSourcePort().read_registry_entry_strategy(REG_SPEC)[1] in {"unconfigured", "ok"}
+
+
+def test_registry_entry_named_by_recorded_strategy_and_links_to_strategy(store, owners, spec_labels):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, STRATEGY_SPEC)
+    owners["approvals"].extend([
+        _registry_entry_approval("apr-reg-1", REG_SPEC),
+        _registry_entry_approval("apr-reg-2", REG_SPEC, "2026-11-25T16:00:00Z"),
+    ])
+    body = _cited(store, headers={**ADMIN, "X-Tenant-Id": TENANT}, page_size=100)
+    row = _rows(body)[REG_SPEC]
+    assert row["ref_kind"] == "registry_entry" and row["source_owner"] == "registry"
+    assert row["source_class"] == "registry_record"
+    assert row["label"] == "Carry Spec Recorded" and row["name_missing"] is False
+    assert row["label_parts"] == {"registry_id": REG_SPEC, "strategy_id": STRATEGY_SPEC}
+    href = f"/management/strategies/{STRATEGY_SPEC}"
+    assert row["route_href"] == row["resolved_link"]["route_href"] == href
+    assert "/management/artifacts/" not in json.dumps(row)
+    # Cited twice, read once (and the existing artifact reads are unchanged).
+    assert owners["registry_reads"].count(REG_SPEC) == 1
+    assert sorted(r for r in owners["registry_reads"] if r != REG_SPEC) == sorted([ART_A, ART_B])
+    assert set(owners["registry_tenants"]) == {TENANT}
+    for apr in row["cited_by"]:
+        assert apr["parts"] == {"decision_type": "registry_entry", "target_id": REG_SPEC,
+                                "target_display_name": "Carry Spec Recorded"}
+    reads = body["meta"]["item_reads"]
+    assert reads["attempted"] == 4 and reads["resolved"] == 3 and reads["failed"] == 0
+
+
+def test_registry_entry_without_recorded_strategy_has_no_name_and_no_link(store, owners, spec_labels):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, None)
+    owners["approvals"].extend([_registry_entry_approval("apr-reg-1", REG_SPEC),
+                                _registry_entry_approval("apr-reg-404", REG_SPEC_2)])
+    body = _cited(store, page_size=100)
+    rows = _rows(body)
+    for rid in (REG_SPEC, REG_SPEC_2):  # no strategy id recorded / owner 404
+        row = rows[rid]
+        assert row["label"] == rid and row["name_missing"] is True
+        assert row["label_parts"] == {"registry_id": rid, "strategy_id": None}
+        assert row["route_href"] is None and row["resolved_link"] is None
+        assert all("target_display_name" not in c["parts"] for c in row["cited_by"])
+    assert body["meta"]["item_reads"]["failed"] == 0
+
+
+def test_failed_registry_entry_read_keeps_ref_id_and_is_counted(store, owners, spec_labels):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, STRATEGY_SPEC)
+    owners["registry_fail"] = {REG_SPEC}
+    owners["approvals"].append(_registry_entry_approval("apr-reg-1", REG_SPEC))
+    body = _cited(store, page_size=100)
+    row = _rows(body)[REG_SPEC]
+    assert row["label"] == REG_SPEC and row["name_missing"] is True
+    assert row["label_parts"] == {"registry_id": REG_SPEC, "strategy_id": None}
+    assert row["route_href"] is None
+    assert "target_display_name" not in row["cited_by"][0]["parts"]
+    assert body["meta"]["item_reads"]["failed"] == 1
+    assert body["meta"]["surfaces"]["cited_evidence"]["status"] == "ok"
+
+
+def test_slow_registry_entry_read_is_abandoned_and_counted(store, owners, spec_labels, monkeypatch):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, STRATEGY_SPEC)
+    owners["approvals"].append(_registry_entry_approval("apr-reg-1", REG_SPEC))
+    gate = threading.Event()
+    owners["registry_block"] = gate
+    real_budget = cited_evidence.remaining_management_read_budget
+
+    def budget(deadline=None, *, reserve_seconds=0.0):
+        return 0.2 if reserve_seconds == 0.05 else real_budget(deadline, reserve_seconds=reserve_seconds)
+
+    monkeypatch.setattr(cited_evidence, "remaining_management_read_budget", budget)
+    try:
+        body = _cited(store, page_size=100)
+    finally:
+        gate.set()
+    row = _rows(body)[REG_SPEC]
+    assert row["label"] == REG_SPEC and row["name_missing"] is True and row["route_href"] is None
+    assert "target_display_name" not in row["cited_by"][0]["parts"]
+    assert body["meta"]["item_reads"]["failed"] >= 3  # REG_SPEC + both blocked artifact reads
+
+
+def test_registry_entry_of_another_tenant_is_never_used(store, owners, spec_labels):
+    owners["registry"][REG_SPEC] = strategy_spec_entry_view(REG_SPEC, STRATEGY_SPEC, owner_tenant="tenant-b")
+    owners["approvals"].append(_registry_entry_approval("apr-reg-1", REG_SPEC))
+    body = _cited(store, page_size=100)
+    row = _rows(body)[REG_SPEC]
+    assert row["label"] == REG_SPEC and row["name_missing"] is True and row["route_href"] is None
+    assert body["meta"]["item_reads"]["failed"] == 1
+
+
+def test_registry_entry_reads_share_the_item_read_cap(store, owners, spec_labels):
+    entries = [f"reg-strategy-spec-persona-{i:020x}" for i in range(30)]
+    owners["registry"].update({e: strategy_spec_entry_view(e, STRATEGY_SPEC) for e in entries})
+    owners["approvals"] = [_registry_entry_approval(f"apr-{i}", e) for i, e in enumerate(entries)]
+    body = _cited(store, page_size=100)
+    assert len(owners["registry_reads"]) == cited_evidence.MAX_ITEM_READS
+    assert len(owners["registry_reads"]) == len(set(owners["registry_reads"]))
+    reads = body["meta"]["item_reads"]
+    assert reads["truncated"] is True and reads["attempted"] == cited_evidence.MAX_ITEM_READS
+    unread = [r for r in body["data"]["items"]
+              if r["ref_kind"] == "registry_entry" and r["ref_id"] not in owners["registry_reads"]]
+    assert unread and all(r["name_missing"] is True and r["route_href"] is None for r in unread)

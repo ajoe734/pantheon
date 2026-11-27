@@ -28,6 +28,7 @@ from .models import (
     Lineage,
     RegistryEntry,
     RegistryEntryCreate,
+    entry_payloads_cas_equal,
     utc_now_iso,
 )
 
@@ -1653,7 +1654,7 @@ class RegistryStore:
         with self._lock:
             if expected is not None:
                 current = self._entries.get(entry.registry_id)
-                if current is None or current.to_dict() != expected:
+                if current is None or not entry_payloads_cas_equal(current.to_dict(), expected):
                     raise RegistryConcurrentUpdateError(entry.registry_id)
             entry.updated_at = utc_now_iso()
             if actor is not None:
@@ -2211,7 +2212,7 @@ class RegistryStore:
                     return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
             current = self._entries.get(registry_id)
-            if current is None or current.to_dict() != base_snapshot:
+            if current is None or not entry_payloads_cas_equal(current.to_dict(), base_snapshot):
                 raise RegistryConcurrentUpdateError(registry_id)
             entry = RegistryEntry.from_dict(base_snapshot)
             if validate is not None:
@@ -2308,7 +2309,7 @@ class RegistryStore:
                     return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
             current = self._entries.get(registry_id)
-            if current is None or current.to_dict() != base_snapshot:
+            if current is None or not entry_payloads_cas_equal(current.to_dict(), base_snapshot):
                 raise RegistryConcurrentUpdateError(registry_id)
             if validate is not None:
                 validate(RegistryEntry.from_dict(base_snapshot))
