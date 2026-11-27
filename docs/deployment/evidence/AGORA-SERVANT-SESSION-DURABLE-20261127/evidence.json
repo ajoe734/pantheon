@@ -45,12 +45,14 @@
   },
   "validation": {
     "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_run_agora_interaction_worker.py services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py services/control-plane/bff/tests/test_agora_servant_sessions.py",
       ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_sessions.py tests/agora_write_owner/test_agora_write_authority.py scripts/test_check_storage_manifest.py scripts/test_ci_test_inventory.py",
       ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
       ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check",
       ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_router.py"
     ],
     "results": {
+      "interaction_worker_and_servant_sessions": "29 passed",
       "test_agora_servant_sessions_and_manifest_suites": "44 passed",
       "check_storage_manifest": "passed (0 failures, 378 entries, 23 bounded)",
       "ci_test_inventory_check": "test inventory ok",

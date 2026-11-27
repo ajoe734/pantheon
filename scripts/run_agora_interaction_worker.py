@@ -74,7 +74,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.healthcheck:
-        if not check_heartbeat() or not check_heartbeat(SERVANT_HEARTBEAT_PATH):
+        if not check_heartbeat():
+            return 1
+        if os.getenv("AGORA_SERVANT_WORKER_HEARTBEAT_PATH") and not check_heartbeat(SERVANT_HEARTBEAT_PATH):
             return 1
         logger.info("Healthcheck OK")
         return 0
@@ -192,9 +194,29 @@ def main() -> int:
     # The Agora owner holds servant conversations and their queued turns. It is a required
     # dependency: startup fails rather than leaving queued turns unanswered.
     from agora.servant.turn_worker import ServantTurnWorker
-    from services.agora.service import build_agora_write_service
+    from services.agora.service import AgoraWriteService, build_agora_write_service
 
-    servant_worker = ServantTurnWorker(owner=build_agora_write_service())
+    servant_backend = (
+        os.getenv("AGORA_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "memory")
+    ).strip().lower()
+    servant_dsn = os.getenv("AGORA_STORE_DSN") or os.getenv("DATABASE_URL") or dsn
+    servant_schema = os.getenv("AGORA_STORE_SCHEMA", workshop_schema)
+    if servant_backend == "postgres":
+        servant_owner = build_agora_write_service(dsn=servant_dsn, schema=servant_schema)
+    elif servant_backend in ("off", "memory"):
+        from unittest import mock
+        from agora.servant.pg_owner_fake import FakeOwnerTable
+        from services.agora.store import AgoraStore
+
+        with mock.patch("services.agora.store.PostgresJsonOwnerStore", FakeOwnerTable):
+            servant_owner = AgoraWriteService(
+                store=AgoraStore(dsn="memory://", schema=servant_schema, bootstrap=False)
+            )
+    else:
+        raise ValueError(f"Unsupported AGORA_STORE_BACKEND: {servant_backend}")
+
+    servant_worker = ServantTurnWorker(owner=servant_owner)
     SERVANT_HEARTBEAT_PATH.unlink(missing_ok=True)
 
     if args.once:
