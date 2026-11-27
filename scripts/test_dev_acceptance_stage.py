@@ -163,11 +163,12 @@ def test_replay_root_44247825979_daily_probe_failure_does_not_fail_release():
         "probe:persona-member-book-admission",
         "probe:persona-pool-member-rules",
         "probe:persona-risk-profile-change",
+        "probe:trade-journey-parked-expired",
         "probe:trade-journey-readable",
         "probe:trading-pulse-operator",
     ]
     for probe_id in ("probe:paper-risk-journey", "probe:paper-risk-policy-binding",
-                     "probe:persona-risk-profile-change"):
+                     "probe:persona-risk-profile-change", "probe:trade-journey-parked-expired"):
         risk_probe = next(r for r in results if r["id"] == probe_id)
         assert risk_probe["status"] == "skipped" and risk_probe["exit_code"] == 77
     assert "probe:persona-day" not in {r["id"] for r in results}

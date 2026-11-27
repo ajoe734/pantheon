@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+# acceptance-owner: TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127
+"""Read-only hosted park/expire proof after deployment.json's deployedAt.
+
+Uses the existing viewer login, then GET only. Scans at most 20 journey pages
+and 5 timeline pages per journey (200 rows/page); exceeding either bound fails.
+Exit 77 means no new parked decision (or missing configuration); 0 passes, 1 fails.
+Required env: ACCEPTANCE_BFF_URL, ACCEPTANCE_FE_URL,
+ACCEPTANCE_VIEWER_CLIENT_ID, ACCEPTANCE_VIEWER_CLIENT_SECRET.
+"""
+from datetime import datetime, timezone
+import json
+import os
+import sys
+from urllib.parse import urlencode, quote
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+BASE = "/bff/management/trade-journeys"
+REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_FE_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
+
+
+def timestamp(value):
+    result = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if result.tzinfo is None:
+        raise ValueError("timezone required")
+    return result
+
+
+def pages(fetch, path, params, cap):
+    seen = set()
+    for _ in range(cap):
+        body = fetch(path + "?" + urlencode(params))
+        yield from body["data"]["items"]
+        token = (body.get("page_info") or {}).get("next_page_token")
+        if not token:
+            return
+        if token in seen:
+            raise ValueError("repeated page token")
+        seen.add(token)
+        params = {**params, "page_token": token}
+    raise ValueError("page bound exceeded")
+
+
+def check(fetch, manifest, *, now=None):
+    cutoff = timestamp(manifest["deployedAt"])
+    if cutoff > (now or datetime.now(timezone.utc)):
+        raise ValueError("deployment cutoff in future")
+    params = {"tenant_id": "tenant-dev", "environment": "paper", "page_size": 200, "from": cutoff.isoformat(), "include_probe": "true"}
+    parked, expired, failed = [], [], []
+    for row in pages(fetch, BASE, params, 20):
+        # updated_at query also returns old journeys updated since deployment.
+        if timestamp(row["created_at"]) < cutoff:
+            continue
+        jid = row["journey_id"]
+        scope = {"tenant_id": "tenant-dev", "environment": "paper", "page_size": 200}
+        events = list(pages(fetch, BASE + "/" + quote(jid, safe="") + "/timeline", scope, 5))
+        park = [e for e in events if e.get("decision_status") == "pending_settlement"]
+        expire = [e for e in events if e.get("decision_status") == "expired_no_price"]
+        if park:
+            parked.append(jid)
+        if expire:
+            expired.append(jid)
+            code = "target_session_not_reconciled_by_expiry"
+            if not park or any(e.get("reason_code") != code for e in expire):
+                failed.append("expire_event_reason:" + jid)
+            detail = fetch(BASE + "/" + quote(jid, safe="") + "?" + urlencode({"tenant_id": "tenant-dev", "environment": "paper"}))["data"]
+            for body in (row, detail):
+                if body.get("status") != "expired" or (body.get("outcome") or {}).get("reason_code") != code or (body.get("outcome") or {}).get("kind") != "expired":
+                    failed.append("expire_outcome:" + jid)
+                if (body.get("next_step") or {}).get("action_needed") != "review_market_data_refresh":
+                    failed.append("expire_next_step:" + jid)
+    return {"deployment_cutoff": cutoff.isoformat(), "parked": parked, "expired": expired,
+            "failed": failed, "exit_code": 1 if failed else 0 if parked else 77}
+
+
+def request(req):
+    try:
+        with urlopen(req, timeout=20) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        raise RuntimeError("http_" + str(exc.code)) from None
+    except Exception as exc:
+        raise RuntimeError("request_failed:" + type(exc).__name__) from None
+
+
+def main():
+    if any(not os.environ.get(key) for key in REQUIRED):
+        print("skipped: missing required probe configuration")
+        return 77
+    try:
+        body = json.dumps({"grant_type": "client_credentials", "client_id": os.environ[REQUIRED[2]], "client_secret": os.environ[REQUIRED[3]]}).encode()
+        base = os.environ[REQUIRED[0]].rstrip("/")
+        token = request(Request(base + "/bff/auth/dev-login", data=body, headers={"Content-Type": "application/json"}))["access_token"]
+        manifest = request(Request(os.environ[REQUIRED[1]].rstrip("/") + "/deployment.json"))
+        report = check(lambda path: request(Request(base + path, headers={"Authorization": "Bearer " + token})), manifest)
+    except (RuntimeError, ValueError, KeyError, TypeError) as exc:
+        print("failed: " + (str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__))
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return report["exit_code"]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

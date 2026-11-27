@@ -3690,3 +3690,53 @@ def test_postgres_cause_repair_backend_end_to_end(
             cur.execute(f"DROP SCHEMA IF EXISTS {proj_schema} CASCADE")
 
 
+
+
+def test_parked_decision_is_not_expired_by_reconciliation_age():
+    from services.control_plane.bff.tests.test_trade_journey_parked_expired import project_events
+    from services.execution.lean_runtime.test_paper_signal_producer import recorded_decision_producer
+    producer, store, emitter, raw, binding = recorded_decision_producer()
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    projection = project_events(emitter.events)
+    assert projection.snapshot["status"] == "open"
+    assert JourneyMaterializer.deadline_status(
+        projection.snapshot["stages"], datetime(2026, 11, 26, tzinfo=timezone.utc),
+        datetime(2026, 12, 3, tzinfo=timezone.utc),
+    ) is None
+    from services.trade_journey.projection_migration import RECLASSIFY_STALE_OPEN_SQL
+    assert "<> 'pending_settlement'" in RECLASSIFY_STALE_OPEN_SQL
+
+
+def test_recorded_park_expire_postgres_bff_roundtrip(relational_postgres_dsn):
+    from services.execution.lean_runtime.test_paper_signal_producer import recorded_decision_producer
+    from services.control_plane.bff.tests.test_trade_journey_readable import client, HEADERS, LIST
+    from services.control_plane.bff.trade_journey_projection_store import TradeJourneyProjectionStore
+    import psycopg
+    producer, signal_store, emitter, raw, binding = recorded_decision_producer("expired_2330_D20261125")
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    schema = "test_park_expire_" + uuid.uuid4().hex[:8]
+    store = ProjectionStore(relational_postgres_dsn, schema=schema, bootstrap=True)
+    try:
+        projector = RelationalLifecycleProjector(store, deployment_sha="park-expire-test")
+        reader = TradeJourneyProjectionStore(relational_postgres_dsn, schema=schema, token_secret="s" * 32)
+        c = client(reader)
+        jid = emitter.events[0]["journey_id"]
+        query = "?tenant_id=tenant-dev&environment=paper"
+        for seq, event in enumerate(emitter.events, 1):
+            result = projector.project_records([{
+                "ingested_seq": seq, "ingested_at": "2026-11-27T08:00:00Z",
+                "event_id": event["event_id"], "event_type": event["event_type"],
+                "created_at": event["created_at"], "payload": event,
+            }], mode="live", source_high_watermark=seq)
+            assert result.accepted == 1 and result.quarantined == 0
+            [row] = c.get(LIST, headers=HEADERS).json()["data"]["items"]
+            detail = c.get(f"/bff/management/trade-journeys/{jid}" + query, headers=HEADERS).json()["data"]
+            expected = "open" if seq == 1 else "expired"
+            assert row["outcome"]["kind"] == detail["outcome"]["kind"] == expected
+            attention = c.get(LIST + "&attention=attention", headers=HEADERS).json()
+            assert attention["page_info"]["total"] == (0 if seq == 1 else 1)
+        timeline = c.get(f"/bff/management/trade-journeys/{jid}/timeline" + query, headers=HEADERS).json()["data"]["items"]
+        assert [e["decision_status"] for e in timeline] == ["pending_settlement", "expired_no_price"]
+    finally:
+        with psycopg.connect(relational_postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
