@@ -6073,6 +6073,44 @@
     "contains": "_ACTION_NOTES_PER_TICKET_MAX = 128"
    },
    "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
+  },
+  {
+   "name": "services/control-plane/bff/persona_provisioning.py::{self.table}_revision",
+   "kind": "table",
+   "owner": "control-plane",
+   "task": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
+   "register_class": "RC3",
+   "bound_status": "bounded",
+   "bound_proof": {
+    "file": "services/control-plane/bff/persona_provisioning.py",
+    "contains": "singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton)"
+   },
+   "readers": [
+    "services/control-plane/bff/persona_provisioning.py"
+   ],
+   "growth_driver": "one transactional revision increment per INSERT/UPDATE/DELETE/TRUNCATE statement on persona_provisioning, including no-op statements; no recurring job",
+   "growth_per_day": "0 logical rows/day after bootstrap; one live row per schema, boolean plus bigint (9 bytes payload before tuple/page/index overhead); physical old versions and WAL use normal Postgres vacuum/WAL management; actual statement count may exceed the brief's 5 changed rows/day",
+   "cap": "exactly one logical row (boolean primary key checked true); bigint revision fails closed on overflow rather than wrapping",
+   "cleanup": "update single row in place logically; Postgres vacuum reclaims obsolete tuple versions; row retained for table lifetime, bootstrap does not reset revision",
+   "directory_cache": {
+    "name": "PostgresPersonaProvisioningStore._directory_cache",
+    "kind": "in_process_cache",
+    "owner": "control-plane",
+    "task": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
+    "register_class": "RC3",
+    "bound_status": "bounded",
+    "bound_proof": {
+     "file": "services/control-plane/bff/persona_provisioning.py",
+     "contains": "_DIRECTORY_MAX_BYTES = 64 * 1024 * 1024"
+    },
+    "readers": [
+     "services/control-plane/bff/personas/service.py"
+    ],
+    "growth_driver": "on-demand directory read; one revision SELECT on every call; no scheduled job, TTL or emitter",
+    "growth_per_day": "no append growth; replace per tenant (including one optional all-tenant key) on committed ledger change; hosted brief reports 5 changed rows/day",
+    "cap": "per BFF store: at most 8 keys; each holds a complete tenant directory, 170 rows at hosted scale (brief: about 6 MB stored / 17.6 MB text); 32 MiB recursive Python object size per entry, 64 MiB total retained object budget; oversized reads bypass retention; transient response/query allocations are separate",
+    "cleanup": "LRU eviction on insertion; changed revision replaces that key; process/store destruction releases all entries; no disk persistence"
+   }
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
