@@ -1,0 +1,67 @@
+{
+  "task_id": "PERSONA-CYCLE-SKIP-ADVISORY-PERSONAS-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "root_cause_class": "RC2 / WP2.3 persona-loop daily persona-day selection",
+  "implementation_status": "implemented_locally_verified_pending_independent_review",
+  "source_base": "1a1d3ce1f58afcc22701acda444ffe9a1f5b9091",
+  "implementation_pr": "https://github.com/ajoe734/pantheon/pull/7963",
+  "scope_reconciliation": "Human/Ops revised the existing task contract and reopened it on 2026-11-27 with all three owner/BFF classification paths. The previous contract blocker is resolved; no replacement task or third classifier was added.",
+  "review_recovery": {
+    "reason": "Supervisor returned PR #7963 to source ownership for a red canonical review gate on 2026-11-27 at 13:00:59Z.",
+    "diagnosis": "Actions run 45999869529 posted failure at 12:41:09Z because the exact-head review-proof tag did not yet exist. Antigravity's governed approval comment followed at 12:47:05Z. Remote git now contains the old head's approve tag and no reopen tag. The reported red status predates approval; no product test failure was identified.",
+    "evidence": [
+      "https://github.com/ajoe734/pantheon/actions/runs/45999869529",
+      "https://github.com/ajoe734/pantheon/pull/7963"
+    ],
+    "action": "Merged current dev 1a1d3ce1f (AGENTS.md, problem register and remediation-plan documentation only) without rewriting published history. Product implementation and tests are unchanged. Submit the refreshed evidence/head for new independent exact-head review; the previous approval does not authorize this head.",
+    "provider_incident": "GitHub REST briefly returned HTTP 403 rate limit exceeded at 13:03Z; a 13:04Z read succeeded after the quota reset. This is resolved and is not a task blocker."
+  },
+  "implementation": [
+    "Extracted the advisory enrollment predicate from persona_policy_resolver.evaluate_participant_action_capability into its stdlib-only non_trading_identity_source helper, reused by capability evaluation, controller and BFF. The helper preserves the existing BFF agora_user_id plus execution_authority=none rule so BFF and controller agree.",
+    "Advisory classes consult_panel/agora_servant/agora_advisor, origin private_servant/agora_advisor, user_private owner_scope and consult-panel.non-trading policy take precedence over trading/paper metadata. Metadata-free trading enrollment remains unchanged.",
+    "Controller filters advisory identities before existing registrar reconciliation, which removes stale daily jobs without consuming runs. Tick excluded entries and direct consume_run rejection use persona_not_enrolled_for_daily_execution before any packet claim or agent ensure.",
+    "BFF purpose projection uses the owner rule. The isolated read-only persona-day probe loads the same stdlib-only module from its trusted repo path and honors persona_purpose/personaPurpose=advisory_assistant. Existing left_out output carries the named reason; the pool-risk probe inherits this selection through its existing import."
+  ],
+  "acceptance_evidence": {
+    "AC1_AC2": "Controller regression covers eight advisory identity flags under paper_owner and legacy paper_running read shapes: existing daily job removed; terminal run not consumed; no cron.runs after exclusion, packet file, agent ensure or model call. Direct consume_run rejects the named reason.",
+    "AC3": "Metadata-free trading owner still registers, ensures its agent and creates one packet through the production controller fixture.",
+    "AC4": "Raw owner metadata, BFF purpose projection and controller agree for every exclusion in both paper lifecycles. Synthetic 2026-11-27 fixture: three actual trading IDs pass all seven checks; adding agora-servant-799a3ce8c021b91cbb54 in paper_owner leaves verdict and trading results unchanged with the servant in left_out. Both purpose field spellings are tested; no servant detail read.",
+    "AC5": "Runtime diff changes selection/read projection only, with no capital or runtime-binding mutation. Controller tests compare persisted owner, strategy pool and binding-bearing telemetry before/after exclusion. Pool-risk regression retains the exact servant paper RuntimeBinding and never reads its telemetry. No hosted mutation attempted.",
+    "pool_risk_regression": "Synthetic 11/27 replay retains pending trading health windows 3/20, 3/20 and 8/20. Adding the servant paper book no longer fails on its telemetry HTTP 404; both purpose field spellings covered.",
+    "isolated_probe": "Foreign-cwd subprocess under python -I -S loads the shared owner rule without site-packages/PYTHONPATH and returns documented missing-URL exit 77; this checks the import boundary, not hosted acceptance."
+  },
+  "validation": {
+    "provisioning": "python3 scripts/dev/provision_python_distribution.py succeeded; tests use task-local .venv-pantheon/bin/python3.",
+    "focused_command": "timeout 240s .venv-pantheon/bin/python3 -m pytest -q services/persona/test_persona_cycle_controller.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py services/control-plane/bff/personas/test_fleet_classification.py services/control-plane/persona/test_persona_policy_resolver.py services/persona/test_meeting_action_execution.py",
+    "focused_result": "Revalidated after the ci-red redispatch on 2026-11-27: 255 passed, 3 existing dependency deprecation warnings in 194.19s; exit 0; terminal output collected. The merged dev changes were documentation only; implementation and test code stayed unchanged during the batch.",
+    "iteration_notes": "Initial tests exposed fixture issues: counting the control-pass cron.runs, writing legacy paper_running through the current owner validator, and expecting JSON for plain-text missing-URL skip. Corrected test-only issues; runtime code unchanged. All failed runs collected to terminal status and not counted as passing.",
+    "static_checks": "git diff --check and python3 -m json.tool on this manifest passed; exit 0."
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "cadence": "Existing default controller poll every 120 seconds and weekday 10:00Z cycle unchanged; no new job or emitter.",
+    "size_and_count_at_hosted_scale": "Three trading daily jobs retained; incident servant daily job removed and zero new servant packets. Zero added persistent bytes, records, capital pools, bindings, tables, queues, caches or temporary directories. Exclusions appear only in the existing tick summary.",
+    "growth_per_day": "Zero added runtime bytes/records per day; removes one erroneous failed packet per advisory persona per weekday and its agent setup.",
+    "cap": "Existing OODA defaults unchanged: 30-day retention and 1000 records, with existing PANTHEON_OODA_PACKET_RETENTION_DAYS/MAX_RECORDS overrides; pool/binding counts unchanged.",
+    "cleanup": "Existing registrar removes stale advisory daily jobs with readback next reconciliation; existing OODA pruning/compaction handles history. Historical failure packets are not deleted by this change."
+  },
+  "hosted_acceptance": {
+    "status": "pending_review_merge_deploy_and_natural_weekday_cycle",
+    "owner": "persona-loop owner",
+    "expected_next_weekday_window": "2026-11-30 10:00Z natural cycle, persona-day probe after 10:45Z, provided deployment precedes that cycle.",
+    "required_evidence": [
+      "Hosted manifest and healthy expected services identify a release containing the reviewed change.",
+      "Read-only next-weekday cycle shows no new packet for agora-servant-799a3ce8c021b91cbb54 and tick exclusion reason persona_not_enrolled_for_daily_execution; historical packets may remain.",
+      "Existing executable python3 -I acceptance/persona_day.py judges only persona-2448c7053e33ea48da47, persona-ee7112a829d38b9135ac and persona-6507750312870d03a241, with servant in left_out under the named reason.",
+      "Read-only pool/binding readback confirms the existing servant paper pool and paper RuntimeBinding remain present."
+    ],
+    "claim_boundary": "Local fixtures are not hosted proof. No synthetic hosted cycle, waiver, deploy or accepted claim; persona-loop owner records natural post-deploy proof."
+  },
+  "residual_findings": [
+    {
+      "finding": "The servant's pool publish refusal is appended every ten minutes to bff.persona_pool_publish_records, as reported by the dispatch brief. This session did not probe hosted or verify those writes independently.",
+      "disposition": "Outside this selection repair; coordinator must attach the already-reported persistent-writer incident to its owning register class before chain closure."
+    }
+  ]
+}
