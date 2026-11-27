@@ -94,6 +94,52 @@ def test_probe_passes_independent_sources_with_zero_and_unknown():
     assert probe.check(fetcher(fixture()), "tenant-a")["passed"]
 
 
+@pytest.mark.parametrize("wrong_excluded_count", [False, True])
+def test_probe_three_trading_personas_pass_with_servant_telemetry_404(wrong_excluded_count):
+    world = fixture()
+    world["people"] += [
+        {"id": "p3", "name": "衡岳", "tenant_id": "tenant-a"},
+        {"id": "agora-servant", "name": "Agora Servant", "tenant_id": "tenant-a",
+         "metadata": {"persona_class": "agora_servant"}},
+    ]
+    world["bindings"] += [
+        {**world["bindings"][0], "persona_id": "p3", "runtime_id": "r-p3", "binding_id": "b-p3"},
+        {"persona_id": "agora-servant", "runtime_id": "rt-persona-paper-servant",
+         "runtime_binding_id": "rb-servant", "status": "active", "deployment_mode": "paper",
+         "metadata": {"tenant_id": "tenant-a", "book_kind": "trader_servant_paper_book", "paper_only": True}},
+    ]
+    world["raw"]["r-p3"] = {**world["raw"]["r-p2"], "runtime_id": "r-p3", "binding_id": "b-p3"}
+    world["pulse"]["runtime_rows"].append({**copy.deepcopy(world["pulse"]["runtime_rows"][1]),
+        "runtime_id": "r-p3", "runtime_binding_id": "b-p3", "persona_id": "p3", "persona_name": "衡岳",
+        "latest_outcome": {}, "links": {"persona": "/management/personas/p3"}})
+    scope = world["pulse"]["summary"]["operator_scope"]
+    scope.update(persona_count=3, runtime_count=3, excluded_non_trading_runtime_count=0 if wrong_excluded_count else 1,
+                 by_stage={"paper": {"persona_count": 3, "runtime_count": 3}})
+    world["rankings"]["summary"]["operator_scope"] = copy.deepcopy(scope)
+    world["pulse"]["summary"]["runtime_count"] = 3
+    world["pulse"]["summary"]["pnl_groups"][0]["eligible_persona_count"] = 3
+    for block in world["rankings"]["items"]:
+        if block["metric"] == "fill_rate":
+            block["items"].append({**copy.deepcopy(block["items"][0]), "runtime_id": "r-p3", "runtime_binding_id": "b-p3",
+                                   "persona_name": "衡岳", "links": {"persona": "/management/personas/p3"}})
+            block["eligible_item_count"] += 1
+        else:
+            block["missing_metric_count"] += 1
+    base, reads = fetcher(world), []
+
+    def fetch(path):
+        reads.append(path)
+        if path == "/api/v1/telemetry/rt-persona-paper-servant/summary":
+            raise probe.Unverifiable("source_http_404")
+        return base(path)
+
+    report = probe.check(fetch, "tenant-a")
+    assert report["runtime_count"] == report["persona_count"] == 3
+    assert report["passed"] is not wrong_excluded_count
+    assert report["failed"] == (["excluded_non_trading_denominator_mismatch"] if wrong_excluded_count else [])
+    assert not any("rt-persona-paper-servant" in path for path in reads)
+
+
 @pytest.mark.parametrize("location", ["metadata", "top_level", "both"])
 def test_probe_binding_tenant_wire_locations(location):
     # Viewer witness 2026-11-22T13:15Z: all four active owner bindings
