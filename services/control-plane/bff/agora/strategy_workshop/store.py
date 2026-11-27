@@ -1408,8 +1408,15 @@ class MemoryWorkshopStore:
 
     def create_completeness_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
+            snaps = self._snapshots.setdefault(snapshot["workshop_id"], [])
+            existing = next(
+                (row for row in snaps if snapshot.get("snapshot_id") and row["snapshot_id"] == snapshot["snapshot_id"]),
+                None,
+            )
+            if existing is not None:  # idempotent per snapshot_id (one per reconstruction job)
+                return dict(existing)
             snap = _format_snapshot_row(snapshot, snapshot["workshop_id"], snapshot.get("created_at") or _utc_now())
-            self._snapshots.setdefault(snapshot["workshop_id"], []).append(snap)
+            snaps.append(snap)
             return dict(snap)
 
     def get_latest_completeness_snapshot(
@@ -3309,12 +3316,14 @@ class PostgresWorkshopStore:
         now = _utc_now()
         row = _format_snapshot_row(snapshot, snapshot["workshop_id"], now)
         with self._connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 f"""
                 INSERT INTO {self._cst}
                     (snapshot_id, workshop_id, strategy_version_id,
                      state_map_json, blocking_items_json, next_question_json, created_at)
                 VALUES (%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)
+                ON CONFLICT (snapshot_id) DO NOTHING
+                RETURNING snapshot_id
                 """,
                 (
                     row["snapshot_id"], row["workshop_id"], row["strategy_version_id"],
@@ -3322,6 +3331,20 @@ class PostgresWorkshopStore:
                     _json_dumps(row["next_question_json"]), row["created_at"],
                 ),
             )
+            if cur.fetchone() is None:  # idempotent per snapshot_id (one per reconstruction job)
+                existing = conn.execute(
+                    f"""
+                    SELECT snapshot_id, workshop_id, strategy_version_id,
+                           state_map_json::text, blocking_items_json::text,
+                           next_question_json::text, created_at::text
+                    FROM {self._cst} WHERE snapshot_id = %s
+                    """,
+                    (row["snapshot_id"],),
+                ).fetchone()
+                if existing is not None:
+                    row = _row_to_dict(existing, _SNAPSHOT_COLS)
+                    for key in ("state_map_json", "blocking_items_json", "next_question_json"):
+                        row[key] = _decode_json(row.get(key))
         return row
 
     def get_latest_completeness_snapshot(

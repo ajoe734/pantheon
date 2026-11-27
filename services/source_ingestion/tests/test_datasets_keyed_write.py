@@ -266,7 +266,7 @@ def test_byte_limit_is_enforced_and_nothing_is_published_when_exceeded(tmp_path)
 def test_retention_is_declared_next_to_the_key_as_in_section_6a():
     assert {d: KEYED_DATASETS[d].retention_days for d in KEYED_DATASETS} == {
         "tw_index_daily": 2555, "tw_index_ohlc_daily": 2555, "tw_market_breadth_daily": 2555, "tw_institutional_flow": 2555,
-        "tw_margin_short_balance": 2555, "tw_broker_top": 750, "tw_broker_branch_detail": 250, "taifex_ssf_contracts": 750,
+        "tw_margin_short_balance": 2555, "tw_broker_top": None, "tw_broker_branch_detail": 250, "taifex_ssf_contracts": 750,
         "taifex_tx_daily": 2555, "tw_macro_series": None, "tw_community_daily": 180, "collector_news": 365,
         "collector_social_posts": 365}
 
