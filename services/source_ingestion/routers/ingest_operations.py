@@ -176,9 +176,12 @@ BROKER_FLOW_MAX_ROWS = 2000
 
 def _broker_flow_row(record: dict[str, Any]) -> dict[str, Any] | None:
     meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    normalized = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), dict) else {}
 
     def pick(*keys: str) -> Any:
-        for src in (meta, record):
+        # Whole-market rows keep their fields under normalized_row; older partitions
+        # keep them directly in metadata. Match parse_tw_broker_top_record precedence.
+        for src in (normalized, meta, record):
             for key in keys:
                 val = src.get(key)
                 if val not in (None, ""):
@@ -186,8 +189,8 @@ def _broker_flow_row(record: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     side = str(pick("side", "direction") or "").strip().lower()
-    symbol = str(pick("symbol", "stock_id") or "").strip().upper().split(".", 1)[0]
-    trade_date = str(pick("trade_date", "date", "event_time") or "")[:10]
+    symbol = str(pick("symbol", "stock_id", "code", "symbol_canonical") or "").strip().upper().split(".", 1)[0]
+    trade_date = str(pick("date", "trade_date", "as_of_date", "event_time") or "")[:10]
     if side not in {"buy", "sell"} or not symbol or not trade_date:
         return None
     try:
@@ -211,7 +214,7 @@ def _broker_flow_row(record: dict[str, Any]) -> dict[str, Any] | None:
         "unit": "shares",
         "source_id": str(record.get("source_id") or meta.get("source_id") or "") or None,
         "available_time": pick("available_time"),
-        "source": str(pick("source", "provider") or "tw_broker_top"),
+        "source": str(pick("source", "provider", "connector_id") or "tw_broker_top"),
     }
 
 
