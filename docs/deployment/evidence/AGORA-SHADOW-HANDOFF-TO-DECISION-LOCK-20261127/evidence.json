@@ -2,8 +2,8 @@
   "task_id": "AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127",
   "title": "送 Shadow writes a decision lock that evaluation settles; the unread shadow_research target is removed",
   "owner": "Antigravity",
-  "reviewer": "Claude",
-  "recorded_at": "2026-11-27T13:10:00Z",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-27T13:26:00Z",
   "delivery_state": "merged",
   "root_cause_class": "RC4 (Agora: the trading servant does not serve the human trader — SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §8.3 item 6 & §12 T6)",
   "declared_dependencies": {
