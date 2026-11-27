@@ -57,6 +57,11 @@
         "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py -k 'dlq or dead_letter or old_rule or oldest or resolved_entries or template_connector'",
         "code_commit": "788567080136178d99ccdbaf601e0e645ccf3ad8",
         "result": "85 passed, 156 deselected, 1 Starlette deprecation warning, 10.61s, exit 0; source code unchanged from 2207f90bd"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py -k 'dlq or dead_letter or old_rule or oldest or resolved_entries or template_connector'",
+        "code_commit": "ad5eeeca6d4bd4c6d22861c7ffcdec0de4ed8209",
+        "result": "85 passed, 156 deselected, 1 Starlette deprecation warning, 15.04s, exit 0; reviewer reassignment evidence only, product code unchanged"
       }
     ]
   },
@@ -219,13 +224,13 @@
   "hosted_acceptance": "pending deploy: two consecutive bounded refresh runs after deploy pass the tw-official-twse-margin-balances profile and report the four 2026-11-24 entries in pre_existing_unresolved_dlq_backlog until an operator replays them",
   "review_independence": {
     "owner": "Codex",
-    "reviewer": "Antigravity",
+    "reviewer": "Antigravity2",
     "owner_family": "Codex",
     "reviewer_family": "Antigravity",
     "status": "independent_family_reviewer_assigned",
-    "assignment_recorded_at": "2026-11-27T13:01:13Z",
-    "assignment_source": "governed ai-status.sh show on owner resumption: canonical owner Codex, reviewer Antigravity, status in_progress after ci-red source return; supersedes the prior Claude assignment",
+    "assignment_recorded_at": "2026-11-27T13:15:45Z",
+    "assignment_source": "governed ai-status.sh show on owner resumption: canonical owner Codex, reviewer Antigravity2, status in_progress. Human/Ops assigned Antigravity2 to resolve the prior reviewer reassignment cycle and requested renewed exact-head handoff on PR #7905; supersedes the prior Antigravity assignment",
     "coordinator_ac3_decision": "The coordinator confirms the live hosted read-only snapshot of 6824 pending entries across 19 connectors and 47 reason groups, with the historical 5776 distinguished, satisfies AC3. Residual findings above still require coordinator class attribution.",
-    "review_decision": "Antigravity approved 2207f90bdba14d8917a0c4b4a5488bd8b93932a6 at 2026-11-27T12:51:17Z (PR review PRR_kwDOR5tTNs8AAAABauWzyg). Task was subsequently reopened; pending fresh exact-head review of the dev sync and evidence correction. Prior approval does not authorize the new head."
+    "review_decision": "Antigravity approved 2207f90bdba14d8917a0c4b4a5488bd8b93932a6 at 2026-11-27T12:51:17Z (PR review PRR_kwDOR5tTNs8AAAABauWzyg). Task was subsequently reopened; pending fresh exact-head review by Antigravity2 of the dev sync and evidence corrections. Prior approval does not authorize the new head."
   }
 }
