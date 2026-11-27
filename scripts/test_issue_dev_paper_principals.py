@@ -1142,3 +1142,86 @@ def test_research_case_file_principals_are_read_only_file_delivered_and_mounted_
     for path in (root / "deploy").rglob("*"):
         if path.is_file() and path.suffix in {".yml", ".yaml", ".env", ""}:
             assert "RESEARCH_CASE_FILE_" not in path.read_text(errors="ignore"), str(path)
+
+
+def _research_backtest_owner_read_roles(root):
+    """GET /backtest-runs/{id}/owner-binding admission roles, read from services/research/main.py."""
+    import ast
+    from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES
+
+    tree = ast.parse((root / "services" / "research" / "main.py").read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", "") == "_BACKTEST_OWNER_READ_ROLES" for t in n.targets))
+    roles = [e.value for e in ast.walk(node.value) if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+    if any(isinstance(e, ast.Starred) and getattr(e.value, "id", "") == "AUTHENTICATED_SERVICE_ROLES"
+           for e in ast.walk(node.value)):
+        roles += list(AUTHENTICATED_SERVICE_ROLES)
+    return tuple(dict.fromkeys(roles))
+
+
+def test_consultation_case_file_research_reader_is_admitted_by_owner_binding_and_file_delivered(tmp_path, monkeypatch):
+    """The 2026-11-24 hosted 403 reproduced with the real strict verifier, then fixed by the issued reader."""
+    import yaml
+    from types import SimpleNamespace
+    from services.deployment.auth import authenticate_tenant
+    from services.knowledge.case_file import Owners
+    from services.research.write_owner import ResearchWriteOwner as Owner
+
+    root = Path(__file__).resolve().parents[1]
+    variable = "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"
+    assert variable in CONSUMER_FILES["consultation-svc"]
+    assert all(variable not in names for consumer, names in CONSUMER_FILES.items() if consumer != "consultation-svc")
+    import time
+    now = int(time.time())  # the real verifier below checks nbf/exp against the clock
+    values = issue_environment(configured(), now=now)
+    claims = verify(values[variable], now=now + 1)
+    assert claims["sub"] == "pantheon-dev-consultation-case-file-research-reader"
+    assert claims["roles"] == ["service"] and claims["scope"] == "pantheon:dev-owner-read"
+    assert claims["tenant_id"] == "tenant-dev" and claims["allowed_tenants"] == ["tenant-dev"]
+    for other in ("CONSULTATION_RESEARCH_SERVICE_TOKEN", "PERSONA_RESEARCH_SERVICE_TOKEN"):
+        assert values[variable] != values[other] and verify(values[other], now=now + 1)["sub"] != claims["sub"]
+
+    # Research owner double: the real strict tenant verifier with the route's real role set.
+    accepted = _research_backtest_owner_read_roles(root)
+    assert "viewer" not in accepted and "service" in accepted
+    for name, value in (("AUTH_MODE", "strict"), ("JWT_SECRET", KEY), ("JWT_ISSUER", "isolated-issuer"),
+                        ("JWT_AUDIENCE", "isolated-audience")):
+        monkeypatch.setenv("PANTHEON_RESEARCH_" + name, value)
+    monkeypatch.setenv("PANTHEON_ENV", "dev")
+
+    def owner_binding(token, tenant="tenant-dev"):
+        return authenticate_tenant(authorization="Bearer " + token, tenant_id=tenant,
+                                   service_prefix="RESEARCH", required_roles=accepted)
+
+    assert owner_binding(values[variable]).actor_id == claims["sub"]
+    # What hosted sent on 2026-11-24: PANTHEON_RESEARCH_SERVICE_TOKEN = persona-pool-cycle / viewer.
+    assert values["PANTHEON_RESEARCH_SERVICE_TOKEN"] == values["PERSONA_RESEARCH_SERVICE_TOKEN"]
+    with pytest.raises(AuthError) as refused:
+        owner_binding(values["PERSONA_RESEARCH_SERVICE_TOKEN"])
+    assert refused.value.status_code == 403 and "['viewer']" in refused.value.message
+    from services.deployment.auth import TenantBoundaryError
+    with pytest.raises(TenantBoundaryError):
+        owner_binding(values[variable], tenant="tenant-other")
+
+    # No broader authority: no decision/operator/registry-mutation role, and the research write owner's
+    # subject-bound "service" gates (meeting-action controllers) refuse this read subject.
+    assert not {"viewer", "operator", "admin", "approver", "automated_gate", "registry-writer",
+                "governance_reviewer", "risk_owner", "governance_committee"} & set(claims["roles"])
+    ctx = SimpleNamespace(actor_id=claims["sub"], roles=set(claims["roles"]), tenant_id="tenant-dev")
+    assert not Owner._action_operator(ctx)
+    for controller in Owner._ACTION_CONTROLLERS:
+        assert not Owner._action_controller(ctx, controller)
+
+    # Compose delivers the file to consultation-svc and the panel's Owners selects it over the shared key.
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["consultation-svc"]["environment"]
+    assert compose[variable + "_FILE"] == "${" + variable + "_FILE:-/run/pantheon-principals/" + variable + "}"
+    assert values[variable + "_FILE"] == "/run/pantheon-principals/" + variable
+    path = tmp_path / variable
+    path.write_text(values[variable]); path.chmod(0o600)
+    env = {"PANTHEON_RESEARCH_API_URL": "http://research-orchestrator-svc:8101",
+           "PANTHEON_RESEARCH_SERVICE_TOKEN": values["PERSONA_RESEARCH_SERVICE_TOKEN"], variable + "_FILE": str(path)}
+    from services.consultation.workflow_executor import CASE_FILE_TOKEN_KEYS
+    assert Owners.from_env(env, token_keys=CASE_FILE_TOKEN_KEYS).research.token == values[variable]
+    assert Owners.from_env(env).research.token == values["PERSONA_RESEARCH_SERVICE_TOKEN"]  # other callers unchanged
+    assert issuer.revoked_environment(
+        {**configured(), "PANTHEON_DEV_PAPER_PRINCIPALS_AUTHORIZED": "false"})[variable] == ""

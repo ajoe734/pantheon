@@ -822,6 +822,13 @@ def _owner_read(endpoint: Any, owner: str, token_env: str, path: str, *, tenant_
         raise
 
 
+# The panel case file reads research backtest owner-binding facts with consultation's own issued
+# reader (role service, read subject pantheon-dev-consultation-case-file-research-reader). The shared
+# PANTHEON_RESEARCH_SERVICE_TOKEN is the persona-pool-cycle viewer, which that route refuses (403).
+CASE_FILE_RESEARCH_TOKEN_ENV = "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"
+CASE_FILE_TOKEN_KEYS = {"research": CASE_FILE_RESEARCH_TOKEN_ENV}
+
+
 def _compose_panel_case_file(
     config: ExecutorConfig, request: Mapping[str, Any], decision: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -832,7 +839,7 @@ def _compose_panel_case_file(
     """
     from dataclasses import replace
 
-    owners = decision_case.Owners.from_env()
+    owners = decision_case.Owners.from_env(token_keys=CASE_FILE_TOKEN_KEYS)
     if config.memory_url:
         owners = replace(owners, memory=decision_case.OwnerEndpoint(
             config.memory_url, memory_read_identity()[0]))
@@ -922,6 +929,9 @@ def _compose_panel_case_file(
             group.pop("reason", None)
     case["subject"]["member_artifact_refs"] = list(dict.fromkeys(refs))
     case["subject"]["strategy_family"] = " ".join(families)
+    if len(families) > 1:
+        # The joined string is a display label; claims assert one family against this list.
+        case["subject"]["strategy_families"] = list(families)
     case["subject"]["underlyings"] = list(dict.fromkeys(u for f in files for u in f["subject"]["underlyings"]))
     case["subject"]["backtest_run_refs"] = list(dict.fromkeys(r for f in files for r in f["subject"]["backtest_run_refs"]))
     while sum(len(i["excerpt"]) for g in case["groups"].values() for i in g["items"]) > budgets.max_total_chars:
@@ -967,6 +977,75 @@ def _interpretation_rejection(record: Any) -> str | None:
     return "interpretation_mode_unknown"
 
 
+def _subject_value_attributed(asserted: Any, reference: Any) -> bool:
+    """True when ``asserted`` is stated by ``reference`` (attribution, not entailment).
+
+    A scalar must equal the reference scalar with the same JSON type (``1`` is not
+    ``true``, ``"20"`` is not ``20``).  A collection on the owner side may be cited
+    by one of its members or a subset: one underlying of ``underlyings``, one ref of
+    ``member_artifact_refs``, some keys of ``parameters``.  Nothing absent from the
+    reference is ever attributed.
+    """
+    if isinstance(reference, list):
+        if isinstance(asserted, list):
+            return bool(asserted) and all(
+                any(_subject_value_attributed(a, r) for r in reference) for a in asserted)
+        return any(_subject_value_attributed(asserted, r) for r in reference)
+    if isinstance(reference, Mapping):
+        return isinstance(asserted, Mapping) and bool(asserted) and all(
+            k in reference and _subject_value_attributed(v, reference[k]) for k, v in asserted.items())
+    if isinstance(asserted, (list, Mapping)) or asserted is None:
+        return False
+    if isinstance(asserted, bool) or isinstance(reference, bool):
+        return type(asserted) is type(reference) and asserted == reference
+    if isinstance(asserted, (int, float)) and isinstance(reference, (int, float)):
+        return asserted == reference
+    return type(asserted) is type(reference) and asserted == reference
+
+
+def _subject_field_attributed(field: Any, value: Any, refs: list, items: Mapping[str, Any],
+                              subject: Mapping[str, Any]) -> bool:
+    for ref in refs:
+        fields = items[ref].get("subject_fields") or {}
+        if field in fields and _subject_value_attributed(value, fields[field]):
+            return True
+    if field in subject and _subject_value_attributed(value, subject[field]):
+        return True
+    # A merged multi-family case keeps a display label in strategy_family and the
+    # owner-resolved families in strategy_families; one family is a valid assertion.
+    if field == "strategy_family" and isinstance(subject.get("strategy_families"), list):
+        return _subject_value_attributed(value, subject["strategy_families"])
+    return False
+
+
+def _detail_value(value: Any, limit: int = 80) -> str:
+    text = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def subject_field_contract(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Which ``subject_fields`` a participant may assert, derived from the case file.
+
+    Sent beside (not inside) the digest-bound case file so the panel prompt names
+    the assertable keys instead of leaving participants to guess them.
+    """
+    subject = case.get("subject") or {}
+    per_item = {
+        str(i["item_id"]): sorted(str(k) for k in (i.get("subject_fields") or {}))
+        for g in (case.get("groups") or {}).values() for i in g.get("items") or []
+        if isinstance(i, Mapping) and i.get("subject_fields")}
+    return {
+        "optional": True,
+        "case_subject_fields": sorted(str(k) for k in subject),
+        "cited_item_subject_fields": per_item,
+        "rule": ("subject_fields is optional; omit it or use {} when unsure. Each key must be one of "
+                 "case_subject_fields or a key listed for an item_id the claim cites in evidence_refs, and "
+                 "its value must be copied from that item's subject_fields or the case subject (one member "
+                 "of a list, or a subset of an object, is allowed). Any other key or value invalidates the "
+                 "whole contribution as claim_subject_mismatch."),
+    }
+
+
 def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str, Any]) -> str | None:
     """Every claim, summary and finding must cite an existing case item.
 
@@ -974,43 +1053,55 @@ def _case_file_rejection(contribution: QualifiedContribution, case: Mapping[str,
     Subject assertions, when supplied, must match the cited owner's fields or
     the decision subject. This checks attribution, not semantic entailment.
     """
+    found = _case_file_rejection_detail(contribution, case)
+    return found[0] if found else None
+
+
+def _case_file_rejection_detail(
+    contribution: QualifiedContribution, case: Mapping[str, Any]
+) -> tuple[str, str] | None:
+    """``(reason, detail)`` for an invalid contribution; detail names what failed."""
     items = {i["item_id"]: i for g in case["groups"].values() for i in g["items"]}
-    if any(not isinstance(e["id"], str) or e["id"] not in items for e in contribution.evidence):
-        return "evidence_not_in_case_file"
+    unknown = [e["id"] for e in contribution.evidence if not isinstance(e["id"], str) or e["id"] not in items]
+    if unknown:
+        return "evidence_not_in_case_file", f"evidence_id={_detail_value(unknown[0])}"
     attached = {e["id"] for e in contribution.evidence}
     claims = contribution.event_content.get("claims")
     if not isinstance(claims, list) or not claims:
-        return "claims_missing"
+        return "claims_missing", ""
     content = contribution.event_content
-    if set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs",
-                       "interpretation"}:
-        return "unvalidated_claim_fields"
+    extra = set(content) - {"claims", "summary_evidence_refs", "committee_memory_status", "claim", "evidence_refs",
+                            "interpretation"}
+    if extra:
+        return "unvalidated_claim_fields", f"fields={_detail_value(sorted(extra))}"
     interpretation_problem = _interpretation_rejection(content.get("interpretation"))
     if interpretation_problem:
-        return interpretation_problem
+        return interpretation_problem, ""
     nodes = [*claims, {"claim": contribution.summary, "evidence_refs": content.get("summary_evidence_refs")},
              *contribution.findings]
     # A legacy free claim beside the claims list cannot escape validation.
     if content.get("claim"):
         nodes.append({"claim": content["claim"], "evidence_refs": content.get("evidence_refs")})
-    for node in nodes:
+    for index, node in enumerate(nodes):
         if not isinstance(node, Mapping) or not str(node.get("claim") or "").strip():
-            return "claim_malformed"
+            return "claim_malformed", f"node={index}"
         refs = node.get("evidence_refs")
         if not isinstance(refs, list) or not refs:
-            return "claim_uncited"
-        if any(not isinstance(ref, str) or ref not in items for ref in refs):
-            return "case_item_unknown"
-        if any(ref not in attached for ref in refs):
-            return "case_item_not_attached"
+            return "claim_uncited", f"node={index}"
+        bad = [ref for ref in refs if not isinstance(ref, str) or ref not in items]
+        if bad:
+            return "case_item_unknown", f"node={index} ref={_detail_value(bad[0])}"
+        loose = [ref for ref in refs if ref not in attached]
+        if loose:
+            return "case_item_not_attached", f"node={index} ref={_detail_value(loose[0])}"
         fields = node.get("subject_fields", {})
         if not isinstance(fields, Mapping):
-            return "claim_subject_malformed"
+            return "claim_subject_malformed", f"node={index}"
         for field, value in fields.items():
-            if value is None or not any(
-                (field in items[ref].get("subject_fields", {}) and value == items[ref]["subject_fields"][field])
-                or (field in case["subject"] and value == case["subject"][field]) for ref in refs):
-                return "claim_subject_mismatch"
+            if value is None or not _subject_field_attributed(field, value, refs, items, case["subject"]):
+                return "claim_subject_mismatch", (
+                    f"node={index} field={_detail_value(field)} asserted={_detail_value(value)} "
+                    f"cited={_detail_value(refs[:3])}")
     return None
 
 
@@ -1039,6 +1130,8 @@ def _panel_contribution(
         "role": participant["role"],
         "agent": "persona_own_agent",
     }
+    if isinstance(request.get("case_file"), Mapping):
+        ask["subject_field_contract"] = subject_field_contract(request["case_file"])
     contribution = provider.obtain(
         tenant_id=config.tenant_id,
         request=ask,
@@ -1347,10 +1440,11 @@ def _execute_panel_claim(
                 participant=participant,
                 gathered=gathered,
             )
-        reason = _case_file_rejection(contribution, case)
-        if reason:
+        found = _case_file_rejection_detail(contribution, case)
+        if found:
+            reason, detail = found
             invalid = {"persona_id": participant["persona_id"], "contribution_id": contribution.contribution_id,
-                       "reason": reason, **case_binding}
+                       "reason": reason, "detail": detail, **case_binding}
             rejected.append(invalid)
             event = _api_post(config, f"/api/consult/requests/{claim.request_id}/events", {
                 "request_id": claim.request_id, "event_type": "panel_contribution_rejected",
@@ -1438,7 +1532,8 @@ def _execute_panel_claim(
     summary += f" Case file: {case['case_file_id']} digest={case['digest']}."
     if rejected:
         summary += " Invalid contributions excluded: " + "; ".join(
-            f"{r['persona_id']}: {r['reason']}" for r in rejected) + "."
+            f"{r['persona_id']}: {r['reason']}" + (f" ({r['detail']})" if r.get("detail") else "")
+            for r in rejected) + "."
     synth_ref = f"consult-panel:{claim.request_id}"
     synth_key = _stable_id("panel-synthesis", config.tenant_id, claim.request_id)
     claim = _renew(state, claim, config)
@@ -1829,7 +1924,7 @@ def _probe_case_file_credentials(config: ExecutorConfig) -> None:
     """
     from dataclasses import replace
 
-    owners = decision_case.Owners.from_env()
+    owners = decision_case.Owners.from_env(token_keys=CASE_FILE_TOKEN_KEYS)
     if config.memory_url:
         owners = replace(owners, memory=decision_case.OwnerEndpoint(
             config.memory_url, memory_read_identity()[0]))
