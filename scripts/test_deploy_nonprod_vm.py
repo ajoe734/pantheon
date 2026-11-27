@@ -7064,3 +7064,148 @@ def test_entrypoint_whole_market_complete_skips_per_symbol_path_and_refusal_fall
     assert hook.index('write_bounded_refresh_outcome "${wm_outcome_status}"') < hook.index("return 0") < hook.index("COORDINATOR NOTICE")
     # The outcome file carries the receipt and, on fallback, a coordinator notice.
     assert 'payload["broker_whole_market"] = wm' in text and 'payload["coordinator_notice"]' in text
+
+
+# --- SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127: two-year broker backfill inside source-ingest ---
+
+def _extract_broker_backfill_funcs() -> str:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    stamp_start = text.index("stamp_refresh_call_id() {")
+    stamp_end = text.index("\n# Proves the latest closed Taiwan session", stamp_start)
+    bf_start = text.index("run_finmind_broker_backfill() {")
+    bf_end = text.index("\n# Compose services of the source-ingest family.", bf_start)
+    return text[stamp_start:stamp_end] + "\n" + text[bf_start:bf_end]
+
+
+def _run_broker_backfill_func(
+    tmp_path: Path,
+    exec_mode: str,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]], Path]:
+    import sys as _sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    calls = tmp_path / "docker_calls.jsonl"
+    (bin_dir / "docker").write_text(f"""#!{_sys.executable}
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open({str(calls)!r}, "a") as fh:
+    fh.write(json.dumps(args) + "\\n")
+if args[:1] == ["compose"]:
+    print("cid-source-ingest"); sys.exit(0)
+if args[:1] == ["exec"]:
+    code = sys.stdin.read()
+    assert "run_backfill" in code and "verify_two_year_backfill_coverage" in code
+    mode = {exec_mode!r}
+    if mode == "ok":
+        print(json.dumps({{
+            "connector_id": "tw-finmind-broker-daily-report",
+            "dataset": "tw_broker_top",
+            "mode": "two_year_backfill",
+            "status": "ok",
+            "completed_count": 3,
+            "requests_made": 3,
+            "top_records": 120,
+            "detail_records": 0,
+            "total_stored_sessions": 3,
+        }}))
+    elif mode == "garbage":
+        print("Traceback: boom")
+    else:
+        env = dict(os.environ)
+        i = 0
+        while i < len(args):
+            if args[i] == "-e":
+                k, _, v = args[i + 1].partition("=")
+                if v or "=" in args[i + 1]:
+                    env[k] = v
+                i += 2
+            else:
+                i += 1
+        env["PYTHONPATH"] = {str(ROOT)!r}
+        env["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"] = {str(tmp_path / "mds")!r}
+        sys.exit(subprocess.run([{_sys.executable!r}, "-c", code], env=env).returncode)
+    sys.exit(0)
+sys.exit(1)
+""")
+    (bin_dir / "docker").chmod(0o755)
+    out_file = tmp_path / "backfill-outcome.json"
+    script = tmp_path / "run_backfill.sh"
+    script.write_text(
+        "set -euo pipefail\ninfo() { :; }\n"
+        + _extract_broker_backfill_funcs()
+        + f'\nrun_finmind_broker_backfill "{out_file}"\n'
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FINMIND_API_TOKEN": "tok-super-secret-value",
+        "PANTHEON_REFRESH_CALL_ID": "call-backfill-1",
+        **(extra_env or {}),
+    }
+    if extra_env and "FINMIND_API_TOKEN" in extra_env and not extra_env["FINMIND_API_TOKEN"]:
+        env.pop("FINMIND_API_TOKEN", None)
+    proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, check=False, timeout=120)
+    recorded = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+    return proc, recorded, out_file
+
+
+def test_broker_backfill_func_passes_token_by_name_and_restricts_egress(tmp_path: Path) -> None:
+    proc, calls, out_file = _run_broker_backfill_func(tmp_path, "ok")
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "ok" and payload["call_id"] == "call-backfill-1"
+    assert "tok-super-secret-value" not in out_file.read_text(encoding="utf-8")
+    exec_args = next(c for c in calls if c[:1] == ["exec"])
+    assert "FINMIND_API_TOKEN" in exec_args
+    assert not any(a.startswith("FINMIND_API_TOKEN=") for a in exec_args)
+    assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in exec_args
+    assert "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=api.finmindtrade.com,storage.googleapis.com" in exec_args
+    assert "cid-source-ingest" in exec_args
+
+
+def test_broker_backfill_func_rejects_wrong_hosts_and_missing_token_without_docker(tmp_path: Path) -> None:
+    bad_hosts_dir = tmp_path / "bad_hosts"
+    bad_hosts_dir.mkdir()
+    proc, calls, out_file = _run_broker_backfill_func(
+        bad_hosts_dir, "ok", {"PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": "evil.example.com"}
+    )
+    assert proc.returncode != 0 and calls == []
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed" and payload["reason"] == "invalid_egress_host_allowlist"
+
+    no_tok_dir = tmp_path / "no_tok"
+    no_tok_dir.mkdir()
+    proc2, calls2, out_file2 = _run_broker_backfill_func(
+        no_tok_dir, "ok", {"FINMIND_API_TOKEN": ""}
+    )
+    assert proc2.returncode != 0 and calls2 == []
+    payload2 = json.loads(out_file2.read_text(encoding="utf-8"))
+    assert payload2["status"] == "credential_unavailable" and payload2["reason"] == "missing_credential"
+
+
+def test_broker_backfill_in_container_verify_only_runs_with_egress_deny_and_no_token(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    proc, calls, out_file = _run_broker_backfill_func(
+        tmp_path,
+        "real",
+        {"BROKER_BACKFILL_VERIFY_ONLY": "true", "FINMIND_API_TOKEN": ""},
+    )
+    # Empty store fails the 480-session check cleanly while still writing the structured coverage report.
+    assert proc.returncode != 0
+    exec_args = next(c for c in calls if c[:1] == ["exec"])
+    assert "FINMIND_API_TOKEN" not in exec_args
+    assert "PANTHEON_EXTERNAL_EGRESS=deny" in exec_args
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["mode"] == "two_year_backfill_verify"
+    assert payload["coverage"]["read_only"] is True
+    assert payload["coverage"]["min_sessions_required"] == 480
+    assert not (tmp_path / "mds").exists()
+
+
+def test_refresh_only_routes_broker_backfill_flag() -> None:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "--broker-backfill) export BROKER_BACKFILL=true; shift ;;" in text
+    assert "--broker-backfill-verify) export BROKER_BACKFILL=true; export BROKER_BACKFILL_VERIFY_ONLY=true; shift ;;" in text
+    assert 'elif [[ "${BROKER_BACKFILL:-false}" == "true" ]]; then\n      run_finmind_broker_backfill "${REFRESH_OUTPUT_PATH:-}"' in text
