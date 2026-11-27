@@ -63,6 +63,21 @@
       "method": "POST",
       "path": "/bff/agora/trading-intents/{intent_id}/handoffs",
       "owner": "paper_execution"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/decisions",
+      "owner": "agora"
     }
   ],
   "owner_contracts": {
@@ -96,7 +111,9 @@
     "agora": [
       "agora.servant_sessions",
       "agora.servant_turns",
-      "agora.decision_locks"
+      "agora.decision_locks",
+      "agora.strategy_completeness_snapshot",
+      "agora.strategy_workshop_event"
     ],
     "paper_execution": [
       "/internal/agora/paper-execution/handoffs",

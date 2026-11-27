@@ -730,6 +730,192 @@
         "x-business-owner": "paper_execution",
         "description": "AGORA-PAPER-INTENT-EXECUTION-20261127: stage table paper -> paper_execution_request/paper_execution (shadow writes a declared_no_trade decision lock instead of a handoff queue, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127), canary and live -> promotion_review_request/promotion_review. A paper request carries the confirmed order (symbol, side from action, quantity in shares, optional limit) and the decision lock reference; the paper-signal-producer consumer validates owner, paper binding, risk and idempotency and executes it in the trader's own paper book through DecisionSignalProducer, at most 50 per trader per Taipei day. Canary and live stay request-only behind promotion review. Schema: specs/agora/v15/governed_intent_handoff.schema.json."
       }
+    },
+    "/bff/agora/workshops/{workshop_id}/completeness": {
+      "get": {
+        "tags": [
+          "agora-workshop"
+        ],
+        "summary": "Get latest workshop completeness snapshot with V10 twelve blocks and next decision",
+        "operationId": "get_workshop_completeness_bff_agora_workshops__workshop_id__completeness_get",
+        "parameters": [
+          {
+            "name": "workshop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest workshop completeness snapshot enriched with twelve V10 strategy blocks (5 states, one-line note, source citations, branch vs generic naming), 7 readiness dimensions, and next high-value decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkshopCompletenessTwelveBlockEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Cross-user or cross-tenant workshop forbidden."
+          },
+          "404": {
+            "description": "Workshop not found."
+          }
+        },
+        "x-business-owner": "agora",
+        "description": "AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127: Returns the latest workshop completeness snapshot enriched with the 12 V10 blocks in V10 order, 5 V10 states (confirmed, inferred, missing, weak, conflict), one-line notes, source citations, backward-compatible 7 readiness dimensions, and the next high-value decision."
+      },
+      "post": {
+        "tags": [
+          "agora-workshop"
+        ],
+        "summary": "Persist workshop completeness snapshot and project twelve V10 strategy blocks",
+        "operationId": "create_workshop_completeness_bff_agora_workshops__workshop_id__completeness_post",
+        "parameters": [
+          {
+            "name": "workshop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Persisted completeness snapshot with twelve V10 blocks, next decision, and readiness assessment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkshopCompletenessTwelveBlockEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing Idempotency-Key."
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Cross-user or cross-tenant workshop forbidden."
+          },
+          "404": {
+            "description": "Workshop not found."
+          },
+          "409": {
+            "description": "ETag mismatch or Idempotency-Key conflict."
+          },
+          "428": {
+            "description": "Missing If-Match precondition."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/workshops/{workshop_id}/decisions": {
+      "post": {
+        "tags": [
+          "agora-workshop"
+        ],
+        "summary": "Record the trader decision for the next high-value workshop question",
+        "operationId": "post_workshop_decision_bff_agora_workshops__workshop_id__decisions_post",
+        "parameters": [
+          {
+            "name": "workshop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkshopDecisionRequestV114"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Decision recorded as a workshop event for the next reconstruction.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkshopDecisionReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing Idempotency-Key."
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Cross-user or cross-tenant workshop forbidden."
+          },
+          "404": {
+            "description": "Workshop not found."
+          },
+          "409": {
+            "description": "ETag mismatch or duplicate Idempotency-Key."
+          },
+          "422": {
+            "description": "Invalid option selection."
+          },
+          "428": {
+            "description": "Missing If-Match header."
+          }
+        },
+        "x-business-owner": "agora",
+        "description": "AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127: Records the trader choice (or servant default) for the next high-value decision as a workshop event under existing write admission and idempotency so the next reconstruction folds it into the strategy map and advances the decision rail."
+      }
     }
   },
   "components": {
@@ -1394,6 +1580,522 @@
                 ]
               }
             }
+          },
+          "meta": {
+            "type": "object"
+          }
+        }
+      },
+      "WorkshopBlockCitationV114": {
+        "type": "object",
+        "required": [
+          "ref_type",
+          "ref_id"
+        ],
+        "properties": {
+          "ref_type": {
+            "type": "string"
+          },
+          "ref_id": {
+            "type": "string"
+          },
+          "message_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sequence_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "decision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkshopStrategyBlockV114": {
+        "type": "object",
+        "required": [
+          "order",
+          "block_id",
+          "block_key",
+          "v10_block_id",
+          "strategy_map_key",
+          "mapped_dimension",
+          "name",
+          "title",
+          "label_en",
+          "state",
+          "state_label_zh",
+          "note",
+          "summary",
+          "source_citations"
+        ],
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12
+          },
+          "block_id": {
+            "type": "string"
+          },
+          "block_key": {
+            "type": "string"
+          },
+          "block_name": {
+            "type": "string"
+          },
+          "v10_block_id": {
+            "type": "string",
+            "enum": [
+              "market_scope",
+              "insider_branch_mapping",
+              "winner_branch_scoring",
+              "migration_reverse_flow",
+              "event_lead",
+              "signal_formation",
+              "entry_holding",
+              "add_reduce_exit",
+              "sizing_leverage",
+              "cost_liquidity_capacity",
+              "validation_backtest_refutation",
+              "monitoring_update"
+            ]
+          },
+          "strategy_map_key": {
+            "type": "string"
+          },
+          "mapped_dimension": {
+            "type": "string",
+            "enum": [
+              "market_scope",
+              "data_dependencies",
+              "hypothesis",
+              "evaluation_plan",
+              "risk_constraints",
+              "execution_profile",
+              "governance"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "label_en": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "inferred",
+              "missing",
+              "weak",
+              "conflict"
+            ]
+          },
+          "state_label_zh": {
+            "type": "string",
+            "enum": [
+              "已確認",
+              "助理推定",
+              "尚缺",
+              "薄弱",
+              "衝突"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "missing_definitions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkshopBlockCitationV114"
+            }
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkshopBlockCitationV114"
+            }
+          }
+        }
+      },
+      "WorkshopDecisionOptionV114": {
+        "type": "object",
+        "required": [
+          "option_id",
+          "id",
+          "label",
+          "text",
+          "is_default"
+        ],
+        "properties": {
+          "option_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_default": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WorkshopServantDefaultV114": {
+        "type": "object",
+        "required": [
+          "option_id",
+          "label",
+          "summary"
+        ],
+        "properties": {
+          "option_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provisional_assumption": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkshopNextDecisionV114": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "question_id",
+          "question",
+          "text",
+          "why_now",
+          "resolves",
+          "target_blocks",
+          "options"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "question_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why_now": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why_it_matters": {
+            "type": "string"
+          },
+          "resolves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_blocks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/components/schemas/WorkshopDecisionOptionV114"
+            }
+          },
+          "answer_options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "servant_default": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkshopServantDefaultV114"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score_total": {
+            "type": "number"
+          },
+          "freeform_allowed": {
+            "type": "boolean"
+          },
+          "defer_allowed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WorkshopDecisionRequestV114": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "question_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "selected_option_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "option_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "custom_response": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "use_servant_default": {
+            "type": "boolean",
+            "default": false
+          },
+          "resolves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkshopDecisionReceiptEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "event_id",
+              "sequence_no",
+              "decision_id",
+              "question_id",
+              "question",
+              "option_id",
+              "option_label",
+              "used_servant_default",
+              "resolves",
+              "target_blocks"
+            ],
+            "properties": {
+              "event_id": {
+                "type": "string"
+              },
+              "sequence_no": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "decision_id": {
+                "type": "string"
+              },
+              "question_id": {
+                "type": "string"
+              },
+              "question": {
+                "type": "string"
+              },
+              "response_kind": {
+                "type": "string",
+                "enum": [
+                  "option",
+                  "freeform"
+                ]
+              },
+              "option_id": {
+                "type": "string"
+              },
+              "option_label": {
+                "type": "string"
+              },
+              "used_servant_default": {
+                "type": "boolean"
+              },
+              "resolves": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "target_blocks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "meta": {
+            "type": "object"
+          }
+        }
+      },
+      "WorkshopCompletenessTwelveBlockEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "snapshot_id": {
+                    "type": "string"
+                  },
+                  "workshop_id": {
+                    "type": "string"
+                  },
+                  "strategy_version_id": {
+                    "type": "string"
+                  },
+                  "strategy_family": {
+                    "type": "string",
+                    "enum": [
+                      "winner_branch",
+                      "generic"
+                    ]
+                  },
+                  "is_branch_strategy": {
+                    "type": "boolean"
+                  },
+                  "overall_grade": {
+                    "type": "string"
+                  },
+                  "research_ready": {
+                    "type": "boolean"
+                  },
+                  "blocks": {
+                    "type": "array",
+                    "minItems": 12,
+                    "maxItems": 12,
+                    "items": {
+                      "$ref": "#/components/schemas/WorkshopStrategyBlockV114"
+                    }
+                  },
+                  "twelve_blocks": {
+                    "type": "array",
+                    "minItems": 12,
+                    "maxItems": 12,
+                    "items": {
+                      "$ref": "#/components/schemas/WorkshopStrategyBlockV114"
+                    }
+                  },
+                  "next_decision": {
+                    "$ref": "#/components/schemas/WorkshopNextDecisionV114"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "meta": {
             "type": "object"

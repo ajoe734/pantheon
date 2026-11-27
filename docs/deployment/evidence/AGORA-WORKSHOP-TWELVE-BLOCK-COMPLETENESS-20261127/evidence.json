@@ -1,0 +1,205 @@
+{
+  "task_id": "AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127",
+  "class": "RC4",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "review_independence": {
+    "owner_family": "Antigravity",
+    "reviewer_family": "Claude",
+    "cross_family": true
+  },
+  "summary": "Workshop completeness responses (GET/POST /bff/agora/workshops/{id}/completeness) and completeness_update cards (GET /bff/agora/workshops/{id}/cards) expose the twelve V10 strategy blocks in V10 order with the five V10 states (confirmed, inferred, missing, weak, conflict), one-line notes, source citations, branch vs non-branch generic naming, and the next high-value decision with 2 to 4 selectable options and an optional servant default (V10 §4, §4.1). Adds POST /bff/agora/workshops/{id}/decisions under existing workshop write admission and idempotency to record the trader choice as one workshop event that the next reconstruction folds into the strategy map.",
+  "acceptance_coverage": {
+    "ac1_twelve_blocks_and_seven_readiness_dimensions": {
+      "v10_order": [
+        "market_scope",
+        "insider_branch_mapping",
+        "winner_branch_scoring",
+        "migration_reverse_flow",
+        "event_lead",
+        "signal_formation",
+        "entry_holding",
+        "add_reduce_exit",
+        "sizing_leverage",
+        "cost_liquidity_capacity",
+        "validation_backtest_refutation",
+        "monitoring_update"
+      ],
+      "states": ["confirmed", "inferred", "missing", "weak", "conflict"],
+      "state_labels_zh": {
+        "confirmed": "已確認",
+        "inferred": "助理推定",
+        "missing": "尚缺",
+        "weak": "薄弱",
+        "conflict": "衝突"
+      },
+      "block_fields": [
+        "order", "block_id", "block_key", "block_name", "v10_block_id",
+        "strategy_map_key", "mapped_dimension", "name", "title", "label_en",
+        "state", "state_label_zh", "note", "summary", "missing_definitions",
+        "source_citations", "citations"
+      ],
+      "backward_compatibility": "Existing 7 readiness dimensions (market_scope, data_dependencies, hypothesis, evaluation_plan, risk_constraints, execution_profile, governance) and 3 readiness gates (preliminary_research, full_validation, trading_room) remain intact."
+    },
+    "ac2_branch_vs_non_branch_naming": {
+      "branch_strategy": {
+        "strategy_family": "winner_branch",
+        "is_branch_strategy": true,
+        "titles_zh": [
+          "研究對象與市場範圍", "關係人與分點映射", "贏家分點評分", "分點遷移與反向流",
+          "事件領先關聯", "信號形成", "進場與持有週期", "加碼、減碼與出場",
+          "部位與槓桿", "成本、流動性與容量", "驗證、回測與反證", "監控與策略更新"
+        ]
+      },
+      "non_branch_strategy": {
+        "strategy_family": "generic",
+        "is_branch_strategy": false,
+        "titles_zh": [
+          "研究對象與市場範圍", "資料需求與來源映射", "核心假說與因子評分", "市場狀態遷移與失效條件",
+          "事件領先與風險過濾", "信號形成", "進場與持有週期", "加碼、減碼與出場",
+          "部位與槓桿", "成本、流動性與容量", "驗證、回測與反證", "監控與策略更新"
+        ],
+        "branch_terms_absent": true
+      }
+    },
+    "ac3_next_decision_and_writeback_route": {
+      "route": "POST /bff/agora/workshops/{workshop_id}/decisions",
+      "admission": "Uses _scope(write=True), mandatory If-Match (428 missing, 409 mismatch), mandatory Idempotency-Key (400 missing, 409 duplicate), cross-user 403, unknown workshop 404, invalid option_id (alone or with option_label) or unmatched option_label 422.",
+      "persistence": "Records one encrypted private-content workshop message event via store.append_event_cas; payload_refs_json carries only IDs (kind:workshop_decision or kind:workshop_decision_freeform, decision_id, option_id, and resolves targets) and never stores option_label or trader free text in stored events or SSE replay.",
+      "reconstruction_integration": "reconstruct_strategy_from_events reads answered decision events and decrypted private messages_content, marks resolved strategy_map blocks confirmed with the trader choice summary and message citation, updates reconstruction_id, and advances next_decision to the next unresolved block."
+    },
+    "ac4_contract_artifacts": {
+      "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+      "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+      "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json",
+      "backend_routes_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+    },
+    "ac5_hosted_proof_status": {
+      "status": "pending_post_merge_dev_deploy",
+      "note": "Functional source and contract tests complete; hosted walkthrough workshop proof (twelve blocks with states and one next decision in API, answering it changes the next reconstruction) runs after merge and dev deploy."
+    },
+    "ac6_runtime_budget": {
+      "new_recurring_jobs": 0,
+      "events_per_answered_decision": 1,
+      "event_size_bytes_approx": 512,
+      "store_tables_added": 0,
+      "retention": "Existing strategy_workshop_event and agora_private_content_object retention (workshop_default)",
+      "problem_register_row": "RC4 WP4.4 in docs/operations/problem-register.md"
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/strategy_workshop services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_route_diff.py",
+      ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
+      "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
+    ],
+    "result": "258 passed, 5 skipped; diff_budget and route manifest checks green"
+  },
+  "residual_findings": [],
+  "walkthrough_bodies": {
+    "note": "Full response payloads are referenced by canonical JSON sha256 digest and summarized below to stay within the 400-line evidence diff budget.",
+    "workshop_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+    "completeness_before_decision": {
+      "body_sha256": "e418167949159a16938126ba4db54f6a3c9b2b81fb6ed9e118b3a428e42118d3",
+      "body_bytes": 22009,
+      "snapshot_id": "snap_rjob_604fafd89b9a491fb1f942a10396ae15",
+      "strategy_family": "generic",
+      "is_branch_strategy": false,
+      "blocks": [
+        {"order": 1, "block_id": "market_scope", "state": "missing", "title": "研究對象與市場範圍", "note": "尚未定義研究對象與市場範圍。"},
+        {"order": 2, "block_id": "data_requirements", "state": "missing", "title": "資料需求與來源映射", "note": "尚未定義資料需求與來源映射。"},
+        {"order": 3, "block_id": "hypothesis_scoring", "state": "confirmed", "title": "核心假說與因子評分", "note": "Momentum alpha"},
+        {"order": 4, "block_id": "regime_invalidation", "state": "missing", "title": "市場狀態遷移與失效條件", "note": "尚未定義市場狀態遷移與失效條件。"},
+        {"order": 5, "block_id": "event_lead", "state": "missing", "title": "事件領先與風險過濾", "note": "尚未定義事件領先與風險過濾。"},
+        {"order": 6, "block_id": "signal_formation", "state": "missing", "title": "信號形成", "note": "尚未定義信號形成。"},
+        {"order": 7, "block_id": "entry_holding", "state": "missing", "title": "進場與持有週期", "note": "尚未定義進場與持有週期。"},
+        {"order": 8, "block_id": "add_reduce_exit", "state": "missing", "title": "加碼、減碼與出場", "note": "尚未定義加碼、減碼與出場。"},
+        {"order": 9, "block_id": "sizing_leverage", "state": "missing", "title": "部位與槓桿", "note": "尚未定義部位與槓桿。"},
+        {"order": 10, "block_id": "cost_liquidity_capacity", "state": "missing", "title": "成本、流動性與容量", "note": "尚未定義成本、流動性與容量。"},
+        {"order": 11, "block_id": "validation_backtest_refutation", "state": "missing", "title": "驗證、回測與反證", "note": "尚未定義驗證、回測與反證。"},
+        {"order": 12, "block_id": "monitoring_update", "state": "missing", "title": "監控與策略更新", "note": "尚未定義監控與策略更新。"}
+      ],
+      "next_decision": {
+        "decision_id": "q1",
+        "question": "Which signal?",
+        "target_blocks": ["signal_formation"],
+        "default_option_id": "opt_d",
+        "options": [
+          {"option_id": "opt_a", "label": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離", "is_default": false},
+          {"option_id": "opt_b", "label": "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持", "is_default": false},
+          {"option_id": "opt_c", "label": "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻", "is_default": false},
+          {"option_id": "opt_d", "label": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）", "is_default": true}
+        ],
+        "servant_default": {
+          "option_id": "opt_d",
+          "summary": "我先以核心評分加上反向流/短期過熱過濾建立基準信號，並保留變體供回測對照。"
+        }
+      }
+    },
+    "decision_post_response": {
+      "body_sha256": "edce43fcd880da5b5a15114259a35f9384fe2ed9a8f440e3139061dd0be7d77e",
+      "body_bytes": 606,
+      "event_id": "92cef85f-c11f-476f-b857-d156878c3551",
+      "sequence_no": 2,
+      "decision_id": "q1",
+      "option_id": "opt_a",
+      "option_label": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+      "used_servant_default": false,
+      "resolves": ["signal_formation", "signal_definition"],
+      "etag": "W/\"workshop:7eb33747-75e1-41a8-a288-a635356653cf:v2\""
+    },
+    "reconstruction_after_decision": {
+      "body_sha256": "94ba0510cf7808cfac3a355e756c4515a04be40d147540f35e67a7666a64678c",
+      "body_bytes": 24618,
+      "reconstruction_id": "recon-e65c22925b839b0d1de6",
+      "based_on_sequence_no": 2,
+      "strategy_family": "winner_branch",
+      "is_branch_strategy": true,
+      "delta": {
+        "resolved_block": "signal_formation",
+        "strategy_map_key": "signal_definition",
+        "previous_state": "missing",
+        "new_state": "confirmed",
+        "new_note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+        "source_citation": {
+          "ref_type": "workshop_decision",
+          "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+          "sequence_no": 2,
+          "decision_id": "q1",
+          "option_id": "opt_a"
+        },
+        "previous_next_decision_id": "q1",
+        "new_next_decision_id": "decision_migration_reverse_flow",
+        "new_next_decision_target_blocks": ["migration_reverse_flow"]
+      }
+    },
+    "completeness_after_decision": {
+      "body_sha256": "3797ee3531599d5136d80ebce53544ce465e01dbc723e9150048590961532ba4",
+      "body_bytes": 24583,
+      "snapshot_id": "snap_rjob_985f88d28b234177bb26420116576619",
+      "strategy_family": "winner_branch",
+      "is_branch_strategy": true,
+      "blocks": [
+        {"order": 1, "block_id": "market_scope", "state": "missing", "title": "研究對象與市場範圍"},
+        {"order": 2, "block_id": "insider_branch_mapping", "state": "missing", "title": "關係人與分點映射"},
+        {"order": 3, "block_id": "winner_branch_scoring", "state": "confirmed", "title": "贏家分點評分"},
+        {"order": 4, "block_id": "migration_reverse_flow", "state": "missing", "title": "分點遷移與反向流"},
+        {"order": 5, "block_id": "event_lead", "state": "missing", "title": "事件領先關聯"},
+        {"order": 6, "block_id": "signal_formation", "state": "confirmed", "title": "信號形成"},
+        {"order": 7, "block_id": "entry_holding", "state": "missing", "title": "進場與持有週期"},
+        {"order": 8, "block_id": "add_reduce_exit", "state": "missing", "title": "加碼、減碼與出場"},
+        {"order": 9, "block_id": "sizing_leverage", "state": "missing", "title": "部位與槓桿"},
+        {"order": 10, "block_id": "cost_liquidity_capacity", "state": "missing", "title": "成本、流動性與容量"},
+        {"order": 11, "block_id": "validation_backtest_refutation", "state": "missing", "title": "驗證、回測與反證"},
+        {"order": 12, "block_id": "monitoring_update", "state": "missing", "title": "監控與策略更新"}
+      ],
+      "next_decision": {
+        "decision_id": "decision_migration_reverse_flow",
+        "question": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+        "target_blocks": ["migration_reverse_flow"],
+        "default_option_id": "opt_d"
+      }
+    }
+  }
+}

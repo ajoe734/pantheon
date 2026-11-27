@@ -6,12 +6,12 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "b5e571c1c0355d524dfe5d29747718f50d4a110b182779bccf24bd5f1adcc94c",
+    "specs/agora/v15/capability_manifest_v1_14.json": "5255e967528eb00b98ca9cde1e97af5f98a10a5891d41ba5791dc2c5cb66419f",
     "specs/agora/v15/governed_intent_handoff.schema.json": "4ad22650e299799e19ca56f3a8aa582e4a44351430201a7df375841f16c5a4ee"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "a06543979de77a02a060bba86b5e530b2e2e5af30ebc75b238c48f65f67fdb4e"
+    "sha256": "9a28884c40386dcb6d05f64a9e495c7bfc06cf2ff18b85f75deced59fb1b7f3f"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -35,6 +35,11 @@
     ],
     "agora.trading.paper-execution.v1": [
       "POST /bff/agora/trading-intents/{intent_id}/handoffs"
+    ],
+    "agora.workshop.twelve-block-completeness.v1": [
+      "GET /bff/agora/workshops/{workshop_id}/completeness",
+      "POST /bff/agora/workshops/{workshop_id}/completeness",
+      "POST /bff/agora/workshops/{workshop_id}/decisions"
     ]
   },
   "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted. AGORA-PAPER-INTENT-EXECUTION-20261127 adds specs/agora/v15/governed_intent_handoff.schema.json (supersedes the frozen v4 handoff schema): paper handoffs target paper_execution; paper_validation_request and management_governance are removed."
