@@ -123,6 +123,8 @@ deploys fail and hosted stays old. Compensation itself can break the stack.
 2. Feature freeze until the three personas complete a full day on hosted.
    On 2026-11-27 the operator decided that the meeting leg counts within each
    persona's week; the other legs stay on one trading day (AGENTS.md).
+   The same day the operator decided that "results written back" includes
+   the pool publication ending published or unchanged (AGENTS.md).
 3. Coordinators are split by domain; the split is proposed in the register.
 4. If no deploy has succeeded by 2026-11-17 05:00Z, the source-ingest scheduler
    on hosted may be started by hand as a temporary live repair.
