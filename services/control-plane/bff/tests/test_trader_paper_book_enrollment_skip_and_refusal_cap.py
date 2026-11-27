@@ -500,6 +500,8 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         "CAPITAL_GOVERNANCE_SERVICE_TOKEN": issued["CAPITAL_GOVERNANCE_SERVICE_TOKEN"],
         "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance.test",
         "PANTHEON_CAPITAL_API_URL": "http://capital.test",
+        "PANTHEON_REGISTRY_API_URL": "http://registry.test",
+        "PANTHEON_DEPLOYMENT_API_URL": "http://deployment.test",
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"],
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
         "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": proposer_id,
@@ -516,6 +518,13 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     cap_main = importlib.reload(importlib.import_module("services.capital.main"))
     cap_client = TestClient(cap_main.app)
 
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+    )
+
+    authority_transport = FakeOwnerTransport(
+        governance_subject=issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
+    )
     seen_http: List[Tuple[str, str, str]] = []
 
     def _urlopen(request: Any, timeout: Any = None, **_kw: Any) -> _HttpResponse:
@@ -525,6 +534,36 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         path = path or "/"
         method = request.get_method().upper()
         seen_http.append((owner, method, path))
+        if owner in {"registry", "deployment"}:
+            if method == "GET":
+                found = authority_transport.get(owner, path)
+                if found is None:
+                    raise urllib.error.HTTPError(
+                        url,
+                        404,
+                        "not found",
+                        email.message.Message(),
+                        io.BytesIO(b'{"detail":"not found"}'),
+                    )
+                return _HttpResponse(json.dumps(found).encode("utf-8"))
+            payload = json.loads(request.data.decode("utf-8")) if request.data else {}
+            if owner == "registry" and path.endswith("/advance"):
+                decision_id = str(payload.get("approval_decision_id") or "").strip()
+                if decision_id:
+                    gov_path = f"/api/governance/approvals/{decision_id}"
+                    gov_resp = gov_client.get(
+                        gov_path,
+                        headers={
+                            "Authorization": "Bearer "
+                            + issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
+                        },
+                    )
+                    if gov_resp.status_code == 200:
+                        authority_transport.objects[("governance", gov_path)] = (
+                            gov_resp.json()
+                        )
+            created = authority_transport.post(owner, path, payload)
+            return _HttpResponse(json.dumps(created).encode("utf-8"))
         client = {"governance": gov_client, "capital": cap_client}[owner]
         headers = {k: v for k, v in request.header_items()}
         resp = client.request(method, path, content=request.data, headers=headers)
@@ -884,3 +923,311 @@ def test_ensure_trader_paper_book_obtains_p4_automated_gate_risk_policy_and_orde
     )
     assert rejected["accepted"] is False
     assert rejected["reason"] == "risk_policy_unavailable"
+
+
+def test_p4_risk_policy_gate_enforced_without_drafter_and_replays_existing_approved_mapping(
+    servant_paper_world: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P1 regression for PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127:
+    - When Capital and Governance owners are configured on _PersonaOwnerHttpTransport,
+      _transport_supports_paper_risk_gate returns True independently of drafter/proposer availability.
+    - _ensure_paper_book_risk_policy and ensure_trader_paper_book fail closed with zero deploy
+      and zero transition calls when no approved capital_pool_activation mapping exists and
+      drafting or approval cannot resolve (both new-book and in-place-repair paths).
+    - When the pool already carries a valid approved capital_pool_activation mapping,
+      _ensure_paper_book_risk_policy and ensure_trader_paper_book accept and replay it
+      without a drafter (both in-place binding repair and idempotent replay)."""
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        PersonaProvisioningCoordinationError,
+    )
+    from services.control_plane.bff.personas.trader_paper_book import (
+        _ensure_paper_book_risk_policy,
+        _transport_supports_paper_risk_gate,
+        trader_paper_runtime_id,
+    )
+    from services.runtime_manager.runtime_binding import (
+        DeploymentMode,
+        RuntimeBinding,
+        RuntimeBindingStatus,
+    )
+
+    world = servant_paper_world
+    persona_rec = world.persona_owner.get_persona(SERVANT_PERSONA)
+    ids = world.ids
+
+    deploy_calls: List[str] = []
+    transition_calls: List[str] = []
+    orig_deploy = world.rm_client.deploy
+    orig_transition = world.rm_client.transition
+
+    def _spy_deploy(request: Dict[str, Any]) -> Any:
+        deploy_calls.append(str(request.get("plan_id") or ""))
+        return orig_deploy(request)
+
+    def _spy_transition(binding_id: str, new_status: str, **kwargs: Any) -> Any:
+        transition_calls.append(f"{binding_id}:{new_status}")
+        return orig_transition(binding_id, new_status, **kwargs)
+
+    monkeypatch.setattr(world.rm_client, "deploy", _spy_deploy)
+    monkeypatch.setattr(world.rm_client, "transition", _spy_transition)
+
+    # Restore real _drafter (returns self.risk_policy_drafter, which is None when OPENCLAW_GATEWAY_URL is unset).
+    monkeypatch.setattr(
+        PersonaProvisioningCoordinator,
+        "_drafter",
+        lambda self: self.risk_policy_drafter,
+    )
+
+    no_drafter_coord = PersonaProvisioningCoordinator(
+        store=world.provisioning_store,
+        transport=_PersonaOwnerHttpTransport(tenant_id=TENANT),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="p4-no-drafter-check",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=world.issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
+        risk_policy_drafter=None,
+    )
+
+    minimal_owner_env = {
+        "PANTHEON_CAPITAL_API_URL": "http://capital.test",
+        "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance.test",
+        "PANTHEON_REGISTRY_API_URL": "http://registry.test",
+        "PANTHEON_DEPLOYMENT_API_URL": "http://deployment.test",
+    }
+    assert _transport_supports_paper_risk_gate(no_drafter_coord, env=minimal_owner_env) is True
+
+    # 1. New book with risk_policy_drafter=None: fails closed before any RuntimeBinding deploy.
+    with pytest.raises(PersonaProvisioningCoordinationError) as new_no_drafter_exc:
+        ensure_trader_paper_book(
+            TENANT,
+            SERVANT_PERSONA,
+            requested_by="trader-user-1",
+            agora_user_id="trader-user-1",
+            persona_record=persona_rec,
+            persona_write_owner=world.persona_owner,
+            coordinator=no_drafter_coord,
+            runtime_client=world.rm_client,
+            env=minimal_owner_env,
+        )
+    assert new_no_drafter_exc.value.reason_code == "risk_officer_draft_unavailable"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert world.rm_service.list_bindings() == []
+
+    # Direct bounded repro on _ensure_paper_book_risk_policy with a pool carrying empty metadata:
+    # reaches authoritative validation and fails closed rather than returning (unapproved_pool, None).
+    with pytest.raises(PersonaProvisioningCoordinationError) as direct_empty_meta_exc:
+        _ensure_paper_book_risk_policy(
+            no_drafter_coord,
+            tenant_id=TENANT,
+            persona_id=SERVANT_PERSONA,
+            ids=ids,
+            requested_by="trader-user-1",
+            capital_pool={"pool_id": ids.capital_pool_id, "metadata": {}},
+            persona_record=persona_rec,
+            persona_write_owner=world.persona_owner,
+            env=minimal_owner_env,
+        )
+    assert direct_empty_meta_exc.value.reason_code == "risk_officer_draft_unavailable"
+
+    # 2. New book with drafter available but Governance proposer unavailable (approval cannot resolve):
+    #    fails closed with trader_paper_book_risk_policy_unresolved and zero deploy/transition calls.
+    draft_res = DraftResult(
+        True,
+        policy=dict(world.drafted_policy),
+        provenance={
+            "source": "risk_officer_draft",
+            "risk_persona_id": "persona-risk-officer",
+            "input_digest": "servant-paper-book-e2e",
+        },
+    )
+    monkeypatch.delenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID", raising=False)
+    monkeypatch.delenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN", raising=False)
+    drafter_no_proposer_coord = PersonaProvisioningCoordinator(
+        store=world.provisioning_store,
+        transport=_PersonaOwnerHttpTransport(tenant_id=TENANT),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="p4-no-proposer-check",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=world.issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
+        governance_proposer=None,
+        risk_policy_drafter=lambda _inputs: draft_res,
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as new_no_proposer_exc:
+        ensure_trader_paper_book(
+            TENANT,
+            SERVANT_PERSONA,
+            requested_by="trader-user-1",
+            agora_user_id="trader-user-1",
+            persona_record=persona_rec,
+            persona_write_owner=world.persona_owner,
+            coordinator=drafter_no_proposer_coord,
+            runtime_client=world.rm_client,
+            env=minimal_owner_env,
+        )
+    assert new_no_proposer_exc.value.reason_code == "trader_paper_book_risk_policy_unresolved"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert world.rm_service.list_bindings() == []
+
+    # 3. In-place repair on an existing unprojected RuntimeBinding when pool risk policy is unresolved:
+    #    both drafter-unavailable and proposer-unavailable fail closed with zero deploy/transition calls.
+    legacy_rb_id = "rb-legacy-unprojected-p4-gate"
+    world.rm_service._store.create(
+        RuntimeBinding(
+            binding_id=legacy_rb_id,
+            runtime_id=trader_paper_runtime_id(ids),
+            capital_pool_id=ids.capital_pool_id,
+            plan_id=ids.deployment_plan_id,
+            artifact_id=ids.strategy_artifact_id,
+            artifact_version=ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.ACTIVE.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                "tenant_id": TENANT,
+                "persona_id": SERVANT_PERSONA,
+                "sponsor_persona_id": SERVANT_PERSONA,
+                "strategy_id": ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+                "requested_by": "trader-user-1",
+            },
+        )
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as repair_no_drafter_exc:
+        ensure_trader_paper_book(
+            TENANT,
+            SERVANT_PERSONA,
+            requested_by="trader-user-1",
+            agora_user_id="trader-user-1",
+            persona_record=persona_rec,
+            persona_write_owner=world.persona_owner,
+            coordinator=no_drafter_coord,
+            runtime_client=world.rm_client,
+            env=minimal_owner_env,
+        )
+    assert repair_no_drafter_exc.value.reason_code == "risk_officer_draft_unavailable"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert "object_store" not in (world.rm_service.get_binding(legacy_rb_id).metadata or {})
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as repair_no_proposer_exc:
+        ensure_trader_paper_book(
+            TENANT,
+            SERVANT_PERSONA,
+            requested_by="trader-user-1",
+            agora_user_id="trader-user-1",
+            persona_record=persona_rec,
+            persona_write_owner=world.persona_owner,
+            coordinator=drafter_no_proposer_coord,
+            runtime_client=world.rm_client,
+            env=minimal_owner_env,
+        )
+    assert repair_no_proposer_exc.value.reason_code == "trader_paper_book_risk_policy_unresolved"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert "object_store" not in (world.rm_service.get_binding(legacy_rb_id).metadata or {})
+
+    # 4. Existing-approved-mapping replay without a drafter:
+    #    First obtain and bind the P-4 risk policy onto the CapitalPool, then verify that with
+    #    risk_policy_drafter=None and proposer env vars removed, both in-place RuntimeBinding repair
+    #    and subsequent ensure replay accept the existing approved mapping with zero Capital/Governance mutations.
+    monkeypatch.setenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID", "pantheon-dev-persona-enrollment-proposer")
+    monkeypatch.setenv(
+        "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+        world.issued["PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN"],
+    )
+    full_coord = PersonaProvisioningCoordinator(
+        store=world.provisioning_store,
+        transport=_PersonaOwnerHttpTransport(tenant_id=TENANT),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="p4-bind-policy",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=world.issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
+        risk_policy_drafter=lambda _inputs: draft_res,
+    )
+    pool_snapshot = world.cap_main.pool_store.get(ids.capital_pool_id).to_dict()
+    bound_pool, bound_res = _ensure_paper_book_risk_policy(
+        full_coord,
+        tenant_id=TENANT,
+        persona_id=SERVANT_PERSONA,
+        ids=ids,
+        requested_by="trader-user-1",
+        capital_pool=pool_snapshot,
+        persona_record=persona_rec,
+        persona_write_owner=world.persona_owner,
+    )
+    assert isinstance(bound_res, dict) and bound_res["resolved"] is True
+    approval_id = bound_res["profile_mapping_approval_id"]
+    assert isinstance(approval_id, str) and approval_id.startswith("apv-risk-profile-")
+    assert "object_store" not in (world.rm_service.get_binding(legacy_rb_id).metadata or {})
+
+    # Remove proposer env vars and use no_drafter_coord (risk_policy_drafter=None).
+    monkeypatch.delenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID", raising=False)
+    monkeypatch.delenv("PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN", raising=False)
+    world.seen_http.clear()
+
+    repaired = ensure_trader_paper_book(
+        TENANT,
+        SERVANT_PERSONA,
+        requested_by="trader-user-1",
+        agora_user_id="trader-user-1",
+        persona_record=persona_rec,
+        persona_write_owner=world.persona_owner,
+        coordinator=no_drafter_coord,
+        runtime_client=world.rm_client,
+        env=minimal_owner_env,
+    )
+    assert repaired["runtime_binding_id"] == legacy_rb_id
+    assert repaired["risk_policy_resolution"]["resolved"] is True
+    assert repaired["risk_policy_resolution"]["profile_mapping_approval_id"] == approval_id
+    assert "object_store" in (world.rm_service.get_binding(legacy_rb_id).metadata or {})
+    assert deploy_calls == []
+    assert transition_calls == [
+        f"{legacy_rb_id}:pending_pause",
+        f"{legacy_rb_id}:paused",
+        f"{legacy_rb_id}:active",
+    ]
+    cap_mutations = [
+        (owner, method, path)
+        for owner, method, path in world.seen_http
+        if owner == "capital" and method != "GET"
+    ]
+    assert cap_mutations == []
+    risk_gov_mutations = [
+        (owner, method, path)
+        for owner, method, path in world.seen_http
+        if owner == "governance" and method != "GET" and "apv-risk-profile-" in path
+    ]
+    assert risk_gov_mutations == []
+
+    # Idempotent replay on the now-projected book without a drafter makes zero mutations and zero transitions.
+    world.seen_http.clear()
+    transition_calls.clear()
+    replay = ensure_trader_paper_book(
+        TENANT,
+        SERVANT_PERSONA,
+        requested_by="trader-user-1",
+        agora_user_id="trader-user-1",
+        persona_record=persona_rec,
+        persona_write_owner=world.persona_owner,
+        coordinator=no_drafter_coord,
+        runtime_client=world.rm_client,
+        env=minimal_owner_env,
+    )
+    assert replay["idempotent_replay"] is True
+    assert replay["runtime_binding_id"] == legacy_rb_id
+    assert replay["risk_policy_resolution"]["resolved"] is True
+    assert replay["risk_policy_resolution"]["profile_mapping_approval_id"] == approval_id
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert [
+        (owner, method, path)
+        for owner, method, path in world.seen_http
+        if method != "GET"
+    ] == []
