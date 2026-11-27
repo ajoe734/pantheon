@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +30,7 @@ from services.runtime_manager.runtime_binding import (  # noqa: E402
 
 
 class _EventProcess:
-    """Subprocess stub whose wait() can optionally block on a threading.Event."""
+    """Subprocess stub whose wait() can block on a threading.Event until explicit release."""
 
     def __init__(
         self,
@@ -38,6 +38,7 @@ class _EventProcess:
         *,
         wait_entered: Optional[threading.Event] = None,
         release_wait: Optional[threading.Event] = None,
+        wait_exited: Optional[threading.Event] = None,
     ) -> None:
         self.pid = pid
         self._returncode: Optional[int] = None
@@ -45,6 +46,7 @@ class _EventProcess:
         self.killed = False
         self._wait_entered = wait_entered
         self._release_wait = release_wait
+        self._wait_exited = wait_exited
 
     @property
     def returncode(self) -> Optional[int]:
@@ -63,12 +65,50 @@ class _EventProcess:
     def wait(self, timeout: float = 0) -> int:
         if self._wait_entered is not None:
             self._wait_entered.set()
-        if self._release_wait is not None:
-            if not self._release_wait.wait(timeout=5):
-                raise RuntimeError("timed out waiting for release_wait event in test")
-        if self._returncode is None:
-            self._returncode = -15 if self.terminated else 0
-        return self._returncode
+        try:
+            if self._release_wait is not None:
+                self._release_wait.wait()
+            if self._returncode is None:
+                self._returncode = -15 if self.terminated else 0
+            return self._returncode
+        finally:
+            if self._wait_exited is not None:
+                self._wait_exited.set()
+
+
+class _TrackedCycleLock:
+    """Wraps a threading.Lock to provide deterministic contender/acquisition events."""
+
+    def __init__(self, underlying: threading.Lock) -> None:
+        self._underlying = underlying
+        self._meta_lock = threading.Lock()
+        self._acquire_count = 0
+        self.contender_attempting = threading.Event()
+        self.contender_acquired = threading.Event()
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        with self._meta_lock:
+            self._acquire_count += 1
+            call_num = self._acquire_count
+        if call_num == 2:
+            self.contender_attempting.set()
+        acquired = (
+            self._underlying.acquire(blocking, timeout)
+            if timeout != -1
+            else self._underlying.acquire(blocking)
+        )
+        if call_num == 2 and acquired:
+            self.contender_acquired.set()
+        return acquired
+
+    def release(self) -> None:
+        self._underlying.release()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.release()
 
 
 def _make_binding_record(
@@ -133,6 +173,21 @@ def _stale_snapshot(symbol: str = "AAPL.US", snapshot_id: str = "snap-stale") ->
     }
 
 
+def _start_capturing_thread(
+    fn: Callable[[], Any],
+    errors: List[BaseException],
+) -> threading.Thread:
+    def _runner() -> None:
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    return thread
+
+
 class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
     """Verify state reads never block on reconcile cycle network/process waits."""
 
@@ -174,25 +229,59 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
                 server.server_close()
                 server_thread.join(timeout=5)
 
+    def _run_bounded_reader_while_writer_blocked(
+        self,
+        *,
+        cycle_thread: threading.Thread,
+        entered_event: threading.Event,
+        release_event: threading.Event,
+        exited_event: threading.Event,
+        reader_fn: Callable[[], None],
+    ) -> None:
+        """Wait for writer to enter blocked I/O, run reader in a bounded thread,
+        and assert the writer remains blocked when the reader finishes."""
+        self.assertTrue(entered_event.wait(timeout=5))
+        self.assertFalse(release_event.is_set())
+        self.assertFalse(exited_event.is_set())
+        self.assertTrue(cycle_thread.is_alive())
+
+        reader_errors: List[BaseException] = []
+        reader_thread = _start_capturing_thread(reader_fn, reader_errors)
+        self.addCleanup(reader_thread.join, timeout=5)
+        reader_thread.join(timeout=5)
+        self.assertFalse(
+            reader_thread.is_alive(),
+            "state reader thread blocked while reconcile cycle was waiting on I/O",
+        )
+        if reader_errors:
+            raise reader_errors[0]
+
+        # Writer must still be blocked inside the mocked I/O when readers finish.
+        self.assertFalse(release_event.is_set())
+        self.assertFalse(exited_event.is_set())
+        self.assertTrue(cycle_thread.is_alive())
+
     def test_state_reads_return_while_cycle_blocked_in_source_snapshot_fetch(self) -> None:
         store = RuntimeBindingStore()
         store.create(_make_binding_record("b-fetch-001", runtime_id="rt-fetch-001"), single_runtime_enforced=False)
 
         fetch_entered = threading.Event()
         release_fetch = threading.Event()
+        fetch_exited = threading.Event()
         block_next_fetch = False
-        next_snapshot = _fresh_snapshot(snapshot_id="snap-fetch-1")
 
         class _Reconciler(PaperFleetReconciler):
             def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _EventProcess:
                 return _EventProcess(pid=201)
 
             def _fetch_source_snapshot(inner_self, symbol: str) -> Optional[Dict[str, Any]]:
-                if block_next_fetch:
+                if symbol == "MSFT.US" and block_next_fetch:
                     fetch_entered.set()
-                    if not release_fetch.wait(timeout=5):
-                        raise RuntimeError("timed out waiting for release_fetch event")
-                return dict(next_snapshot)
+                    try:
+                        release_fetch.wait()
+                    finally:
+                        fetch_exited.set()
+                return _fresh_snapshot(symbol=symbol, snapshot_id=f"snap-{symbol}")
 
         recon = _Reconciler(
             store=store,
@@ -216,35 +305,25 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             single_runtime_enforced=False,
         )
         block_next_fetch = True
-        next_snapshot = _fresh_snapshot(symbol="MSFT.US", snapshot_id="snap-fetch-2")
 
-        def _fetch_by_symbol(symbol: str) -> Optional[Dict[str, Any]]:
-            if symbol == "MSFT.US" and block_next_fetch:
-                fetch_entered.set()
-                if not release_fetch.wait(timeout=5):
-                    raise RuntimeError("timed out waiting for release_fetch event")
-            return _fresh_snapshot(symbol=symbol, snapshot_id=f"snap-{symbol}")
-
-        with patch.object(recon, "_fetch_source_snapshot", side_effect=_fetch_by_symbol):
-            cycle_thread = threading.Thread(target=recon.reconcile_once, daemon=True)
-            cycle_thread.start()
-            self.assertTrue(fetch_entered.wait(timeout=5))
-            self.assertFalse(release_fetch.is_set())
-
-            # State reads on another thread must return before release_fetch is set.
-            read_results: Dict[str, Any] = {}
-
+        read_results: Dict[str, Any] = {}
+        cycle_errors: List[BaseException] = []
+        cycle_thread = _start_capturing_thread(recon.reconcile_once, cycle_errors)
+        try:
             def _reader() -> None:
                 read_results["snapshot"] = recon.snapshot()
                 read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
                 read_results["readyz"] = self._http_get_json(recon, "/readyz")
                 read_results["healthz"] = self._http_get_json(recon, "/healthz")
-                read_results["before_release"] = not release_fetch.is_set()
+                read_results["before_release"] = not release_fetch.is_set() and not fetch_exited.is_set()
 
-            reader_thread = threading.Thread(target=_reader, daemon=True)
-            reader_thread.start()
-            reader_thread.join(timeout=5)
-            self.assertFalse(reader_thread.is_alive())
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=cycle_thread,
+                entered_event=fetch_entered,
+                release_event=release_fetch,
+                exited_event=fetch_exited,
+                reader_fn=_reader,
+            )
             self.assertTrue(read_results.get("before_release"))
 
             snap_during = read_results["snapshot"]
@@ -266,10 +345,13 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             health_code, health_body = read_results["healthz"]
             self.assertEqual(health_code, 200)
             self.assertTrue(health_body["ready"])
-
+        finally:
             release_fetch.set()
             cycle_thread.join(timeout=5)
-            self.assertFalse(cycle_thread.is_alive())
+
+        self.assertFalse(cycle_thread.is_alive())
+        if cycle_errors:
+            raise cycle_errors[0]
 
         # After the event is set, the next read reflects the completed cycle's result.
         snap_after = recon.snapshot()
@@ -290,6 +372,7 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
 
         transition_entered = threading.Event()
         release_transition = threading.Event()
+        transition_exited = threading.Event()
         current_snapshot = [_fresh_snapshot(snapshot_id="snap-trans-fresh")]
 
         class _Reconciler(PaperFleetReconciler):
@@ -308,8 +391,10 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             ) -> bool:
                 if new_status == "pending_pause":
                     transition_entered.set()
-                    if not release_transition.wait(timeout=5):
-                        raise RuntimeError("timed out waiting for release_transition event")
+                    try:
+                        release_transition.wait()
+                    finally:
+                        transition_exited.set()
                 return super()._transition_binding(
                     binding_id,
                     new_status,
@@ -334,47 +419,52 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
 
         # Cycle 2 sees a stale snapshot and blocks inside _transition_binding.
         current_snapshot[0] = _stale_snapshot(snapshot_id="snap-trans-stale")
-        cycle_thread = threading.Thread(target=recon.reconcile_once, daemon=True)
-        cycle_thread.start()
-        self.assertTrue(transition_entered.wait(timeout=5))
-        self.assertFalse(release_transition.is_set())
-
         read_results: Dict[str, Any] = {}
+        cycle_errors: List[BaseException] = []
+        cycle_thread = _start_capturing_thread(recon.reconcile_once, cycle_errors)
+        try:
+            def _reader() -> None:
+                read_results["snapshot"] = recon.snapshot()
+                read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
+                read_results["readyz"] = self._http_get_json(recon, "/readyz")
+                read_results["before_release"] = (
+                    not release_transition.is_set() and not transition_exited.is_set()
+                )
 
-        def _reader() -> None:
-            read_results["snapshot"] = recon.snapshot()
-            read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
-            read_results["readyz"] = self._http_get_json(recon, "/readyz")
-            read_results["before_release"] = not release_transition.is_set()
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=cycle_thread,
+                entered_event=transition_entered,
+                release_event=release_transition,
+                exited_event=transition_exited,
+                reader_fn=_reader,
+            )
+            self.assertTrue(read_results.get("before_release"))
 
-        reader_thread = threading.Thread(target=_reader, daemon=True)
-        reader_thread.start()
-        reader_thread.join(timeout=5)
-        self.assertFalse(reader_thread.is_alive())
-        self.assertTrue(read_results.get("before_release"))
+            # While blocked in transition, the worker is not yet terminated and its
+            # monitoring session is still open (no torn view).
+            snap_during = read_results["snapshot"]
+            self.assertEqual(snap_during["cycle_count"], 1)
+            self.assertEqual(snap_during["worker_count"], 1)
+            self.assertEqual(snap_during["running_count"], 1)
+            self.assertEqual(snap_during["active_monitoring_session_count"], 1)
+            self._assert_consistent_worker_session_view(snap_during)
 
-        # While blocked in transition, the worker is not yet terminated and its
-        # monitoring session is still open (no torn view).
-        snap_during = read_results["snapshot"]
-        self.assertEqual(snap_during["cycle_count"], 1)
-        self.assertEqual(snap_during["worker_count"], 1)
-        self.assertEqual(snap_during["running_count"], 1)
-        self.assertEqual(snap_during["active_monitoring_session_count"], 1)
-        self._assert_consistent_worker_session_view(snap_during)
+            state_code, state_body = read_results["fleet_state"]
+            self.assertEqual(state_code, 200)
+            self.assertEqual(state_body["cycle_count"], 1)
+            self.assertEqual(state_body["worker_count"], 1)
+            self._assert_consistent_worker_session_view(state_body)
 
-        state_code, state_body = read_results["fleet_state"]
-        self.assertEqual(state_code, 200)
-        self.assertEqual(state_body["cycle_count"], 1)
-        self.assertEqual(state_body["worker_count"], 1)
-        self._assert_consistent_worker_session_view(state_body)
+            ready_code, ready_body = read_results["readyz"]
+            self.assertEqual(ready_code, 200)
+            self.assertTrue(ready_body["ready"])
+        finally:
+            release_transition.set()
+            cycle_thread.join(timeout=5)
 
-        ready_code, ready_body = read_results["readyz"]
-        self.assertEqual(ready_code, 200)
-        self.assertTrue(ready_body["ready"])
-
-        release_transition.set()
-        cycle_thread.join(timeout=5)
         self.assertFalse(cycle_thread.is_alive())
+        if cycle_errors:
+            raise cycle_errors[0]
 
         # After the event is set, the next read reflects the paused binding and stopped worker.
         snap_after = recon.snapshot()
@@ -398,10 +488,13 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
 
         spawn_entered = threading.Event()
         release_spawn = threading.Event()
+        spawn_exited = threading.Event()
         wait_entered = threading.Event()
         release_wait = threading.Event()
+        wait_exited = threading.Event()
         loop_write_entered = threading.Event()
         release_loop_write = threading.Event()
+        loop_write_exited = threading.Event()
 
         block_spawn = False
         block_loop_write = False
@@ -413,8 +506,10 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             async def record_success(self, **kwargs: Any) -> None:
                 if block_loop_write:
                     loop_write_entered.set()
-                    if not release_loop_write.wait(timeout=5):
-                        raise RuntimeError("timed out waiting for release_loop_write event")
+                    try:
+                        release_loop_write.wait()
+                    finally:
+                        loop_write_exited.set()
                 self.calls.append(kwargs)
 
             async def record_failure(self, **kwargs: Any) -> None:
@@ -426,12 +521,15 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _EventProcess:
                 if block_spawn:
                     spawn_entered.set()
-                    if not release_spawn.wait(timeout=5):
-                        raise RuntimeError("timed out waiting for release_spawn event")
+                    try:
+                        release_spawn.wait()
+                    finally:
+                        spawn_exited.set()
                 return _EventProcess(
                     pid=401,
                     wait_entered=wait_entered,
                     release_wait=release_wait,
+                    wait_exited=wait_exited,
                 )
 
             def _fetch_source_snapshot(inner_self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -450,56 +548,111 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
 
         # 1. Block inside _spawn during cycle 1.
         block_spawn = True
-        t1 = threading.Thread(target=recon.reconcile_once, daemon=True)
-        t1.start()
-        self.assertTrue(spawn_entered.wait(timeout=5))
+        spawn_reads: Dict[str, Any] = {}
+        t1_errors: List[BaseException] = []
+        t1 = _start_capturing_thread(recon.reconcile_once, t1_errors)
+        try:
+            def _read_during_spawn() -> None:
+                spawn_reads["snapshot"] = recon.snapshot()
+                spawn_reads["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
 
-        # Reader sees 0 workers and 0 active monitoring sessions (no torn session opened early).
-        snap_during_spawn = recon.snapshot()
-        self.assertEqual(snap_during_spawn["worker_count"], 0)
-        self.assertEqual(snap_during_spawn["active_monitoring_session_count"], 0)
-        self._assert_consistent_worker_session_view(snap_during_spawn)
-        release_spawn.set()
-        t1.join(timeout=5)
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=t1,
+                entered_event=spawn_entered,
+                release_event=release_spawn,
+                exited_event=spawn_exited,
+                reader_fn=_read_during_spawn,
+            )
+            # Reader sees 0 workers and 0 active monitoring sessions (no torn session opened early).
+            snap_during_spawn = spawn_reads["snapshot"]
+            self.assertEqual(snap_during_spawn["worker_count"], 0)
+            self.assertEqual(snap_during_spawn["active_monitoring_session_count"], 0)
+            self._assert_consistent_worker_session_view(snap_during_spawn)
+            code_spawn, body_spawn = spawn_reads["fleet_state"]
+            self.assertEqual(code_spawn, 200)
+            self._assert_consistent_worker_session_view(body_spawn)
+        finally:
+            release_spawn.set()
+            t1.join(timeout=5)
+
         self.assertFalse(t1.is_alive())
+        if t1_errors:
+            raise t1_errors[0]
         block_spawn = False
 
         snap_after_spawn = recon.snapshot()
         self.assertEqual(snap_after_spawn["worker_count"], 1)
         self.assertEqual(snap_after_spawn["active_monitoring_session_count"], 1)
         self._assert_consistent_worker_session_view(snap_after_spawn)
+        self.assertEqual(len(writer.calls), 1)
 
         # 2. Block inside loop-truth publish during cycle 2.
         block_loop_write = True
-        t2 = threading.Thread(target=recon.reconcile_once, daemon=True)
-        t2.start()
-        self.assertTrue(loop_write_entered.wait(timeout=5))
+        loop_reads: Dict[str, Any] = {}
+        t2_errors: List[BaseException] = []
+        t2 = _start_capturing_thread(recon.reconcile_once, t2_errors)
+        try:
+            def _read_during_loop_write() -> None:
+                loop_reads["snapshot"] = recon.snapshot()
+                loop_reads["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
+                loop_reads["readyz"] = self._http_get_json(recon, "/readyz")
 
-        code_during_loop, body_during_loop = self._http_get_json(recon, "/api/fleet/state")
-        self.assertEqual(code_during_loop, 200)
-        self.assertFalse(release_loop_write.is_set())
-        self._assert_consistent_worker_session_view(body_during_loop)
-        release_loop_write.set()
-        t2.join(timeout=5)
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=t2,
+                entered_event=loop_write_entered,
+                release_event=release_loop_write,
+                exited_event=loop_write_exited,
+                reader_fn=_read_during_loop_write,
+            )
+            self.assertEqual(len(writer.calls), 1)
+            code_during_loop, body_during_loop = loop_reads["fleet_state"]
+            self.assertEqual(code_during_loop, 200)
+            self._assert_consistent_worker_session_view(body_during_loop)
+            ready_code_loop, ready_body_loop = loop_reads["readyz"]
+            self.assertEqual(ready_code_loop, 200)
+            self.assertTrue(ready_body_loop["ready"])
+        finally:
+            release_loop_write.set()
+            t2.join(timeout=5)
+
         self.assertFalse(t2.is_alive())
+        if t2_errors:
+            raise t2_errors[0]
         block_loop_write = False
+        self.assertEqual(len(writer.calls), 2)
         self.assertEqual(recon.snapshot()["cycle_count"], 2)
 
         # 3. Retire binding so cycle 3 blocks inside process.wait() during _terminate_worker.
         store.transition_status("b-proc-001", "retired")
-        t3 = threading.Thread(target=recon.reconcile_once, daemon=True)
-        t3.start()
-        self.assertTrue(wait_entered.wait(timeout=5))
+        term_reads: Dict[str, Any] = {}
+        t3_errors: List[BaseException] = []
+        t3 = _start_capturing_thread(recon.reconcile_once, t3_errors)
+        try:
+            def _read_during_terminate() -> None:
+                term_reads["snapshot"] = recon.snapshot()
+                term_reads["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
 
-        snap_during_terminate = recon.snapshot()
-        self.assertFalse(release_wait.is_set())
-        self.assertEqual(snap_during_terminate["worker_count"], 1)
-        self.assertEqual(snap_during_terminate["active_monitoring_session_count"], 1)
-        self._assert_consistent_worker_session_view(snap_during_terminate)
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=t3,
+                entered_event=wait_entered,
+                release_event=release_wait,
+                exited_event=wait_exited,
+                reader_fn=_read_during_terminate,
+            )
+            snap_during_terminate = term_reads["snapshot"]
+            self.assertEqual(snap_during_terminate["worker_count"], 1)
+            self.assertEqual(snap_during_terminate["active_monitoring_session_count"], 1)
+            self._assert_consistent_worker_session_view(snap_during_terminate)
+            code_term, body_term = term_reads["fleet_state"]
+            self.assertEqual(code_term, 200)
+            self._assert_consistent_worker_session_view(body_term)
+        finally:
+            release_wait.set()
+            t3.join(timeout=5)
 
-        release_wait.set()
-        t3.join(timeout=5)
         self.assertFalse(t3.is_alive())
+        if t3_errors:
+            raise t3_errors[0]
 
         snap_after_terminate = recon.snapshot()
         self.assertEqual(snap_after_terminate["cycle_count"], 3)
@@ -514,46 +667,67 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
 
         cycle1_in_fetch = threading.Event()
         release_cycle1 = threading.Event()
+        cycle1_fetch_exited = threading.Event()
         cycle2_entered_fetch_fleet = threading.Event()
         spawned: List[Dict[str, Any]] = []
         fetch_calls = 0
         active_cycles = 0
         max_concurrent_cycles = 0
+        active_holder: Optional[threading.Thread] = None
+        events: List[str] = []
         counter_lock = threading.Lock()
 
         class _Reconciler(PaperFleetReconciler):
             def _fetch_fleet_state(inner_self):
-                nonlocal fetch_calls, active_cycles, max_concurrent_cycles
+                nonlocal fetch_calls, active_cycles, max_concurrent_cycles, active_holder
                 with counter_lock:
                     fetch_calls += 1
                     call_num = fetch_calls
                     active_cycles += 1
                     if active_cycles > max_concurrent_cycles:
                         max_concurrent_cycles = active_cycles
+                    active_holder = threading.current_thread()
+                    events.append(f"cycle{call_num}_enter_serialized")
                 if call_num == 2:
                     cycle2_entered_fetch_fleet.set()
                 return super()._fetch_fleet_state()
 
             def _fetch_source_snapshot(inner_self, symbol: str) -> Optional[Dict[str, Any]]:
+                with counter_lock:
+                    self.assertEqual(active_cycles, 1)
+                    self.assertIs(active_holder, threading.current_thread())
                 if not cycle1_in_fetch.is_set():
                     cycle1_in_fetch.set()
-                    if not release_cycle1.wait(timeout=5):
-                        raise RuntimeError("timed out waiting for release_cycle1 event")
+                    try:
+                        release_cycle1.wait()
+                    finally:
+                        cycle1_fetch_exited.set()
                 return _fresh_snapshot(symbol=symbol)
 
             def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _EventProcess:
+                with counter_lock:
+                    self.assertEqual(active_cycles, 1)
+                    self.assertIs(active_holder, threading.current_thread())
                 proc = _EventProcess(pid=500 + len(spawned))
                 spawned.append({"binding_id": binding_id, "port": port, "proc": proc})
                 return proc
 
-            def reconcile_once(inner_self, leader_store: Any | None = None) -> Dict[str, Any]:
-                nonlocal active_cycles
+            def _publish_loop_truth(
+                inner_self,
+                desired: Optional[Dict[str, Dict[str, Any]]],
+                *,
+                failure_reason: Optional[str] = None,
+            ) -> None:
+                nonlocal active_cycles, active_holder
                 try:
-                    return super().reconcile_once(leader_store=leader_store)
+                    super()._publish_loop_truth(desired, failure_reason=failure_reason)
                 finally:
                     with counter_lock:
-                        if active_cycles > 0:
-                            active_cycles -= 1
+                        self.assertEqual(active_cycles, 1)
+                        self.assertIs(active_holder, threading.current_thread())
+                        events.append(f"cycle{fetch_calls}_exit_serialized")
+                        active_cycles -= 1
+                        active_holder = None
 
         recon = _Reconciler(
             store=store,
@@ -563,31 +737,77 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
             worker_base_port=9400,
             market_input_bootstrap_grace_seconds=0.0,
         )
+        tracked_cycle_lock = _TrackedCycleLock(recon._cycle_lock)
+        recon._cycle_lock = tracked_cycle_lock  # type: ignore[assignment]
 
-        t1 = threading.Thread(target=recon.reconcile_once, daemon=True)
-        t1.start()
-        self.assertTrue(cycle1_in_fetch.wait(timeout=5))
+        t1_errors: List[BaseException] = []
+        t2_errors: List[BaseException] = []
+        t1 = _start_capturing_thread(recon.reconcile_once, t1_errors)
+        t2: Optional[threading.Thread] = None
+        try:
+            self.assertTrue(cycle1_in_fetch.wait(timeout=5))
 
-        t2 = threading.Thread(target=recon.reconcile_once, daemon=True)
-        t2.start()
+            t2 = _start_capturing_thread(recon.reconcile_once, t2_errors)
 
-        # Cycle 2 is serialized behind _cycle_lock and must not enter _fetch_fleet_state
-        # while Cycle 1 is still blocked inside _fetch_source_snapshot.
-        self.assertFalse(cycle2_entered_fetch_fleet.wait(timeout=0.1))
+            # Explicit contender/acquisition handshake: wait until Cycle 2 reaches
+            # _cycle_lock.acquire(), then verify it has not acquired the lock or
+            # entered _fetch_fleet_state while Cycle 1 is blocked in _fetch_source_snapshot.
+            self.assertTrue(tracked_cycle_lock.contender_attempting.wait(timeout=5))
+            self.assertFalse(tracked_cycle_lock.contender_acquired.is_set())
+            self.assertFalse(cycle2_entered_fetch_fleet.is_set())
 
-        # Meanwhile state reads still complete without waiting for either cycle.
-        code, body = self._http_get_json(recon, "/api/fleet/state")
-        self.assertEqual(code, 200)
-        self.assertEqual(body["cycle_count"], 0)
-        self.assertFalse(release_cycle1.is_set())
+            # Meanwhile state reads in a bounded reader thread complete without
+            # waiting for either cycle while Cycle 1 remains blocked and Cycle 2
+            # remains queued on _cycle_lock.
+            read_results: Dict[str, Any] = {}
 
-        release_cycle1.set()
-        t1.join(timeout=5)
-        t2.join(timeout=5)
+            def _reader() -> None:
+                read_results["snapshot"] = recon.snapshot()
+                read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
+
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=t1,
+                entered_event=cycle1_in_fetch,
+                release_event=release_cycle1,
+                exited_event=cycle1_fetch_exited,
+                reader_fn=_reader,
+            )
+            self.assertFalse(tracked_cycle_lock.contender_acquired.is_set())
+            self.assertFalse(cycle2_entered_fetch_fleet.is_set())
+            self.assertTrue(t2.is_alive())
+
+            code, body = read_results["fleet_state"]
+            self.assertEqual(code, 200)
+            self.assertEqual(body["cycle_count"], 0)
+            self.assertEqual(read_results["snapshot"]["cycle_count"], 0)
+        finally:
+            release_cycle1.set()
+            t1.join(timeout=5)
+            if t2 is not None:
+                t2.join(timeout=5)
+
         self.assertFalse(t1.is_alive())
+        self.assertIsNotNone(t2)
+        assert t2 is not None
         self.assertFalse(t2.is_alive())
+        if t1_errors:
+            raise t1_errors[0]
+        if t2_errors:
+            raise t2_errors[0]
 
+        self.assertTrue(tracked_cycle_lock.contender_acquired.is_set())
+        self.assertTrue(cycle2_entered_fetch_fleet.is_set())
+        self.assertEqual(active_cycles, 0)
         self.assertEqual(max_concurrent_cycles, 1)
+        self.assertEqual(
+            events,
+            [
+                "cycle1_enter_serialized",
+                "cycle1_exit_serialized",
+                "cycle2_enter_serialized",
+                "cycle2_exit_serialized",
+            ],
+        )
         self.assertEqual(len(spawned), 1)
         final_snap = recon.snapshot()
         self.assertEqual(final_snap["cycle_count"], 2)
