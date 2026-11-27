@@ -1265,6 +1265,179 @@ def test_extraction_unavailable_dead_letter_redriven_when_answering_and_held_whe
     assert resolved_rows["dl-newest"]["redrive_count"] == 4
 
 
+
+# --- DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127 -------------------
+# Each hourly collector run republishes an unchanged news item as a new source
+# version (only item XML outside the extracted text differs). One paid call per
+# source and unchanged extraction input; limits count per source.
+
+ABSTAIN = {"is_abstained": True, "abstention_reason": "no_testable_mechanism", "hypothesis_card": None}
+
+
+def _refetch(n: int, sid: str = "src-1", body: str = BODY) -> SourceRecord:
+    """Version ``n`` of the same article: only collector-side item fields differ."""
+    return _source(sid, body=body, content_sha256=f"sha256:{n:064x}", fetched_at=f"2026-11-27T0{n}:00:00Z")
+
+
+def _process_each(worker, queue, *versions: SourceRecord) -> list:
+    """Admit and process each version before the next one arrives (hourly refetch)."""
+    jobs = []
+    for version in versions:
+        jobs.append(worker.enqueue_from_source_record(version))
+        worker.run_pending()
+    return [queue.get(v.source_id, j.source_digest) for v, j in zip(versions, jobs)]
+
+
+def test_unchanged_extraction_input_reuses_the_answer_without_a_call(tmp_path):
+    transport = _Transport(ABSTAIN)
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport)
+    first, second, third = _process_each(worker, queue, _refetch(1), _refetch(2), _refetch(3))
+    assert len({first.source_digest, second.source_digest, third.source_digest}) == 3
+    assert len(transport.calls) == 1 and ledger.calls_today() == 1
+    answered = [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
+    assert len(answered) == 1
+    with ledger._conn() as c:
+        (first_event_id,) = c.execute("SELECT id FROM events WHERE outcome='no_hypothesis'").fetchone()
+    assert len(ledger.events("src-1")) == 1  # a reuse writes no ledger event
+    for job in (second, third):
+        assert job.status == "skipped"
+        assert job.skip_reason.startswith(f"no_hypothesis: reused L2 event {first_event_id}")
+    assert ledger.record_attempts("src-1")["total"] == 1
+    assert ledger.summary()["calls_per_source"] == 1.0
+
+
+def test_reused_card_creates_no_second_draft(tmp_path):
+    transport = _Transport()
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport)
+    first, second = _process_each(worker, queue, _refetch(1), _refetch(2))
+    assert len(transport.calls) == 1
+    assert first.status == "done"
+    assert second.status == "skipped"
+    assert second.skip_reason.startswith("hypothesis_card_reused: L2 event ")
+    assert first.job_id in second.skip_reason
+
+
+def test_changed_extraction_input_is_extracted_again(tmp_path):
+    transport = _Transport(ABSTAIN)
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport)
+    revised = BODY + " Analysts revised the forecast."
+    first, second = _process_each(worker, queue, _refetch(1), _refetch(2, body=revised))
+    assert len(transport.calls) == 2
+    assert [e["outcome"] for e in ledger.events("src-1")].count("no_hypothesis") == 2
+    assert second.skip_reason == "no_hypothesis: no_testable_mechanism"
+
+
+def test_failed_answer_is_never_reused(tmp_path):
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    ledger.put_input_answer("src-1", "sha256:x", outcome="failed", detail="boom", event_id=1)
+    ledger.put_input_answer("src-1", "sha256:y", outcome="irrelevant", detail="x", event_id=2)
+    assert ledger.input_answer("src-1", "sha256:x") is None
+    assert ledger.input_answer("src-1", "sha256:y") is None
+
+
+def test_extraction_input_digest_tracks_text_prompt_and_schema(monkeypatch):
+    base = hypothesis_card.extraction_input_digest(BODY, source_record_id="s", origin="news_article")
+    assert base == hypothesis_card.extraction_input_digest(BODY, source_record_id="s", origin="news_article")
+    assert base != hypothesis_card.extraction_input_digest(BODY + ".", source_record_id="s", origin="news_article")
+    assert base != hypothesis_card.extraction_input_digest(BODY, source_record_id="s2", origin="news_article")
+    monkeypatch.setattr(hypothesis_card, "HYPOTHESIS_CARD_SCHEMA_VERSION", "bumped")
+    assert base != hypothesis_card.extraction_input_digest(BODY, source_record_id="s", origin="news_article")
+
+
+def test_attempt_limits_count_per_source_across_versions(tmp_path):
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    assert [ledger.reserve_attempt("a", f"v{i}") for i in range(3)] == ["reserved"] * 3
+    assert ledger.reserve_attempt("a", "v9") == "record_daily_limit"
+    assert ledger.can_attempt("a", "v10") == "record_daily_limit"
+    assert ledger.record_attempts("a", "anything")["today"] == 3
+    assert ledger.reserve_attempt("b", "v0") == "reserved"
+    summary = ledger.summary()
+    assert summary["calls"] == 4 and summary["distinct_sources"] == 2 and summary["calls_per_source"] == 2.0
+
+
+def test_attempt_limits_sum_legacy_version_rows(tmp_path):
+    from datetime import datetime, timedelta
+
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    day = hypothesis_card._today()
+    with ledger._conn() as c:
+        c.execute("INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES('a','d1',4,?,2)", (day,))
+        yesterday = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+        c.execute("INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES('a','d2',1,?,1)", (yesterday,))
+    assert ledger.record_attempts("a")["total"] == 5
+    assert ledger.reserve_attempt("a", "d3") == "reserved"
+    assert ledger.reserve_attempt("a", "d4") == "record_total_limit"
+
+
+def test_fixed_defect_reattempt_gets_its_call_despite_an_earlier_answer(tmp_path):
+    transport = _Transport(ABSTAIN)
+    worker, queue, ledger, clock = _queue_worker(tmp_path, transport)
+    (first,) = _process_each(worker, queue, _refetch(1))
+    assert len(transport.calls) == 1 and first.status == "skipped"
+    # The newer version (same extraction input) was closed by a defect that
+    # has since been fixed: it is re-attempted once and makes its call.
+    job = queue.enqueue_source_record(_refetch(2), enqueued_at=clock[0] + 1)
+    claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=clock[0] + 1, job_ids=[job.job_id])[0]
+    started = queue.begin_job(claimed, lease_seconds=30, now=clock[0] + 1)
+    queue.mark_skipped(started.job_id, reason=ANYOF_SKIP_REASON, processed_at=clock[0] + 1,
+                       claim_token=started.lease_token)
+    clock[0] += 10
+    result = worker.run_pending()
+    assert result.defect_reattempted == 1
+    assert len(transport.calls) == 2
+    assert queue.get("src-1", job.source_digest).skip_reason == "no_hypothesis: no_testable_mechanism"
+
+
+def test_extractor_reuse_flag_off_always_calls(tmp_path):
+    transport = _Transport(ABSTAIN)
+    ledger = ExtractionLedger(tmp_path / "l.sqlite")
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    assert extractor.extract(_refetch(1), digest="d1").status == "no_hypothesis"
+    reused = extractor.extract(_refetch(2), digest="d2")
+    assert reused.status == "no_hypothesis" and "reused_event_id" in reused.extra
+    assert len(transport.calls) == 1
+    forced = extractor.extract(_refetch(3), digest="d3", reuse_answers=False)
+    assert forced.status == "no_hypothesis" and "reused_event_id" not in (forced.extra or {})
+    assert len(transport.calls) == 2
+
+
+def test_only_newest_version_is_called_when_versions_queue_up(tmp_path):
+    transport = _Transport(ABSTAIN)
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport)
+    jobs = [worker.enqueue_from_source_record(_refetch(n)) for n in (1, 2, 3)]
+    rows = {j.job_id: queue.get("src-1", j.source_digest) for j in jobs}
+    # Each admission closes the waiting older versions and records the newer job id.
+    for older, newer in zip(jobs, jobs[1:]):
+        row = rows[older.job_id]
+        assert row.status == "skipped"
+        assert row.skip_reason == f"superseded_by_newer_version: {newer.job_id}"
+    assert rows[jobs[2].job_id].status == "pending"
+    worker.run_pending()
+    assert len(transport.calls) == 1
+    assert "source_record_id='src-1'" in transport.calls[0]["prompt"]
+    assert queue.get("src-1").job_id == jobs[2].job_id
+
+
+def test_input_answers_hard_row_cap_holds_even_when_reuse_touches_old_rows(tmp_path, monkeypatch):
+    from services.source_ingestion import hypothesis_card as hc
+
+    monkeypatch.setattr(hc, "MAX_INPUT_ANSWER_ROWS", 5)
+    ledger = hc.ExtractionLedger(tmp_path / "l.sqlite", daily_cap=5)
+    for i in range(5):
+        ledger.put_input_answer(f"s{i}", "sha256:a", outcome="no_hypothesis", detail="x", event_id=i)
+    with ledger._conn() as c:
+        c.execute("UPDATE input_answers SET day=date('now', '-1 day')")
+    # Reusing the oldest answer keeps it alive (sliding retention) ...
+    ledger.touch_input_answer("s0", "sha256:a")
+    for i in range(5, 9):
+        ledger.put_input_answer(f"s{i}", "sha256:a", outcome="no_hypothesis", detail="x", event_id=i)
+    with ledger._conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM input_answers").fetchone()[0] == 5
+    # ... but the bound holds: the least recently used rows were evicted, not the touched one.
+    assert ledger.input_answer("s0", "sha256:a") is not None
+    assert ledger.input_answer("s1", "sha256:a") is None
+
+
 # --- L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127 -----------------------
 
 

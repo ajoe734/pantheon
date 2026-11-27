@@ -849,6 +849,7 @@ def run_controller_tick(
                 or run_result.skipped
                 or run_result.created
                 or run_result.refreshed
+                or run_result.superseded_versions
             ) and not run_result.lease_lost:
                 _NORMAL_WORK_SEEN[queue_key] = True
             lease_redriven: list[str] = []
@@ -885,6 +886,9 @@ def run_controller_tick(
                 ),
                 "extraction_dead_letters_redriven": run_result.extraction_dead_letters_redriven,
                 "defect_reattempted": run_result.defect_reattempted,
+                # Older versions closed at claim/start because a newer version
+                # of the same source exists (never called).
+                "superseded_versions": run_result.superseded_versions,
             }
         except Exception as exc:
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")

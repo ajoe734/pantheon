@@ -100,6 +100,13 @@ PLANNED_DEFERRAL_REASONS = frozenset({
 EXTRACTION_LEASE_MARGIN_SECONDS = 60.0
 EXTRACTION_ATTEMPTS_EXHAUSTED_REASON = "l2_extraction_attempts_exhausted"
 DEFAULT_MAX_LEASE_EXPIRIES = 5
+# Typed closure of an older pending/retry_wait (or claimed but not started)
+# version once a newer version of the same source was admitted. The reason
+# text carries the newer job id: ``superseded_by_newer_version: <job_id>``.
+SUPERSEDED_BY_NEWER_VERSION_REASON = "superseded_by_newer_version"
+# Typed closure of a version whose card was reused from an earlier version of
+# the same source that already delivered it (no call, no second draft).
+CARD_REUSED_REASON = "hypothesis_card_reused"
 LEASE_BACKOFF_BASE_SECONDS = 30.0
 LEASE_BACKOFF_CAP_SECONDS = 3600.0
 LEASE_RECOVER_BATCH = 200
@@ -460,6 +467,14 @@ class DistillationError(ValueError):
     """Raised when a distillation invariant is violated."""
 
 
+class DistillationSupersededError(DistillationError):
+    """``begin_job`` closed the claimed job because a newer version of its source exists.
+
+    The job was never started and no attempt was counted; ``run_pending``
+    counts it as skipped (not as a lost lease).
+    """
+
+
 class DistillationLeaseError(DistillationError):
     """A start/completion used a lease token that has been superseded.
 
@@ -497,6 +512,7 @@ class DistillationJob:
     deferred_since: str | None = None
     priority_reason: str | None = None
     demand_score: int = 0
+    defect_reattempted: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         status = self.status.value if isinstance(self.status, DistillationJobStatus) else str(self.status)
@@ -599,6 +615,8 @@ class DistillationRunResult:
     superseded_dead_letters_resolved: int = 0
     extraction_dead_letters_redriven: int = 0
     defect_reattempted: int = 0
+    # Claimed versions closed because a newer version of the source exists.
+    superseded_versions: int = 0
     lease_lost: tuple[str, ...] = ()
     # Today's L2 extraction spend (ledger summary) when an extractor is wired.
     extraction: Mapping[str, Any] | None = None
@@ -619,6 +637,7 @@ class DistillationRunResult:
             "superseded_dead_letters_resolved": self.superseded_dead_letters_resolved,
             "extraction_dead_letters_redriven": self.extraction_dead_letters_redriven,
             "defect_reattempted": self.defect_reattempted,
+            "superseded_versions": self.superseded_versions,
             "lease_lost": list(self.lease_lost),
             **({"extraction": dict(self.extraction)} if self.extraction is not None else {}),
         }
@@ -951,6 +970,7 @@ class DistillationJobQueue:
             deferred_since=_timestamp_text(row["deferred_since"]),
             priority_reason=row["priority_reason"],
             demand_score=int(row["demand_score"]),
+            defect_reattempted=bool(int(row["defect_reattempted"] or 0)) if "defect_reattempted" in row_keys else False,
         )
 
     def _select_job(self, connection: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:
@@ -1000,6 +1020,80 @@ class DistillationJobQueue:
             ):
                 return str(row["source_digest"])
         return source_digest
+
+    @staticmethod
+    def _newer_version_job_id(connection: sqlite3.Connection, job_id: str) -> str | None:
+        """Job id of the newest later-admitted version of this job's source, if any.
+
+        Only versioned rows take part (legacy source-id jobs carry no version).
+        A row holding a committed seed (``seed_id`` set while awaiting a Registry
+        replay) is never superseded: its replay is committed lineage, not a paid call.
+        Admission order is (enqueued_at, rowid); a PK lookup plus one range of
+        ``distillation_outbox_source_version_idx``.
+        """
+        row = connection.execute(
+            """
+            SELECT newer.job_id
+              FROM distillation_outbox AS current
+              JOIN distillation_outbox AS newer
+                ON newer.source_id = current.source_id
+               AND newer.source_digest <> ''
+               AND current.seed_id IS NULL
+               AND (newer.enqueued_at > current.enqueued_at
+                    OR (newer.enqueued_at = current.enqueued_at AND newer.rowid > current.rowid))
+             WHERE current.job_id = ? AND current.source_digest <> ''
+             ORDER BY newer.enqueued_at DESC, newer.rowid DESC
+             LIMIT 1
+            """,
+            (job_id,),
+        ).fetchone()
+        return str(row["job_id"]) if row is not None else None
+
+    def _supersede_older_versions(
+        self, connection: sqlite3.Connection, *, source_id: str, newer_job_id: str, now: float,
+    ) -> list[str]:
+        """Close older pending/retry_wait versions of ``source_id`` as superseded by ``newer_job_id``.
+
+        A leased older version is left to its lease holder: ``begin_job`` closes
+        it if it has not started; one already calling the model finishes and its
+        answer is reused by the newer version.
+        """
+        newer = connection.execute(
+            "SELECT rowid AS rid, enqueued_at FROM distillation_outbox WHERE job_id = ?", (newer_job_id,),
+        ).fetchone()
+        if newer is None:
+            return []
+        newer_at = float(newer["enqueued_at"])
+        rows = connection.execute(
+            """
+            SELECT job_id, status
+              FROM distillation_outbox
+             WHERE source_id = ? AND source_digest <> '' AND job_id <> ?
+               AND status IN ('pending', 'retry_wait')
+               AND seed_id IS NULL
+               AND (enqueued_at < ? OR (enqueued_at = ? AND rowid < ?))
+            """,
+            (source_id, newer_job_id, newer_at, newer_at, int(newer["rid"])),
+        ).fetchall()
+        closed: list[str] = []
+        for row in rows:
+            if self._close_row_skipped(
+                connection, str(row["job_id"]), from_status=str(row["status"]),
+                skip_reason=f"{SUPERSEDED_BY_NEWER_VERSION_REASON}: {newer_job_id}", now=now,
+            ):
+                closed.append(str(row["job_id"]))
+        return closed
+
+    def delivered_version(self, source_id: str, *, exclude_job_id: str) -> str | None:
+        """Job id of another version of ``source_id`` that is ``done`` (its card was delivered)."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT job_id FROM distillation_outbox
+                    WHERE source_id = ? AND job_id <> ? AND status = 'done'
+                    ORDER BY enqueued_at DESC, rowid DESC LIMIT 1""",
+                (source_id, exclude_job_id),
+            ).fetchone()
+        return str(row["job_id"]) if row is not None else None
 
     def _insert_source_version_and_job(
         self,
@@ -1072,7 +1166,7 @@ class DistillationJobQueue:
                     raise DistillationError(
                         f"source version identity collision: {source_id}:{source_digest}"
                     )
-                connection.execute(
+                inserted = connection.execute(
                     """
                     INSERT INTO distillation_outbox (
                         job_id, event_id, source_id, source_digest,
@@ -1093,7 +1187,7 @@ class DistillationJobQueue:
                         self._default_max_attempts,
                         enqueued_at,
                     ),
-                )
+                ).rowcount
                 row = self._select_job(connection, job_id)
                 if row is None:
                     raise DistillationError(f"distillation outbox insert failed: {job_id}")
@@ -1103,6 +1197,12 @@ class DistillationJobQueue:
                     or str(row["event_version"]) != event_version
                 ):
                     raise DistillationError(f"distillation job identity collision: {job_id}")
+                if inserted == 1 and versioned and source_digest:
+                    # Only the newest version of a source is eligible: older
+                    # versions still waiting are closed in the same transaction.
+                    self._supersede_older_versions(
+                        connection, source_id=source_id, newer_job_id=job_id, now=enqueued_at,
+                    )
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
@@ -1396,6 +1496,7 @@ class DistillationJobQueue:
         tenant_id: str | None = None,
         priority_by_tenant: Mapping[str, DemandPriority] | None = None,
         job_ids: Sequence[str] | None = None,
+        superseded_out: list[str] | None = None,
     ) -> list[DistillationJob]:
         """Claim up to ``limit`` due jobs without reading the whole backlog.
 
@@ -1403,6 +1504,9 @@ class DistillationJobQueue:
         count an attempt. ``begin_job`` starts each job's own lease and counts
         the attempt. Candidate selection reads at most ``limit`` new rows plus a
         bounded window of budget-deferred rows, in index order (no temp sort).
+        Only the newest version of a source is eligible: a candidate with a
+        later-admitted version is closed as superseded instead of leased (its
+        id is appended to ``superseded_out``).
         """
         effective_now = _timestamp(now) if now is not None else self._now()
         tenant = str(tenant_id or "").strip() or None
@@ -1517,6 +1621,16 @@ class DistillationJobQueue:
                 priorities = priority_by_tenant or {}
                 ranked = []
                 for candidate in selected.values():
+                    newer_job_id = self._newer_version_job_id(connection, str(candidate["job_id"]))
+                    if newer_job_id is not None:
+                        status_row = self._select_job(connection, str(candidate["job_id"]))
+                        if status_row is not None and self._close_row_skipped(
+                            connection, str(candidate["job_id"]), from_status=str(status_row["status"]),
+                            skip_reason=f"{SUPERSEDED_BY_NEWER_VERSION_REASON}: {newer_job_id}",
+                            now=effective_now,
+                        ) and superseded_out is not None:
+                            superseded_out.append(str(candidate["job_id"]))
+                        continue
                     payload_row = connection.execute(
                         """SELECT source.payload_json
                              FROM distillation_outbox
@@ -1630,9 +1744,13 @@ class DistillationJobQueue:
         Time spent in the claim and in earlier jobs of the same batch does not
         consume the job's lease. A job whose claim placeholder lease lapsed but
         which nobody recovered is still ours (the token is the fence), so it may
-        start; a superseded token raises ``DistillationLeaseError``.
+        start; a superseded token raises ``DistillationLeaseError``. A job whose
+        source got a newer version after the claim is closed as superseded and
+        raises ``DistillationSupersededError`` (no attempt, no call).
         """
         effective_now = _timestamp(now) if now is not None else self._now()
+        newer_job_id: str | None = None
+        current: sqlite3.Row | None = None
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1642,27 +1760,47 @@ class DistillationJobQueue:
                     raise DistillationLeaseError(
                         f"stale distillation lease start: {job.job_id}"
                     )
-                expires_at = effective_now + float(lease_seconds)
-                connection.execute(
-                    """UPDATE distillation_outbox
-                          SET attempts = attempts + 1, lease_started = 1,
-                              lease_expires_at = ?, updated_at = ?
-                        WHERE job_id = ?""",
-                    (expires_at, effective_now, job.job_id),
-                )
-                connection.execute(
-                    """UPDATE distillation_inbox
-                          SET attempts = attempts + 1, lease_expires_at = ?, updated_at = ?
-                        WHERE event_id = ? AND status = 'processing'""",
-                    (expires_at, effective_now, str(row["event_id"])),
-                )
-                current = self._select_job(connection, job.job_id)
-                connection.execute("COMMIT")
+                newer_job_id = self._newer_version_job_id(connection, job.job_id)
+                if newer_job_id is not None:
+                    # A newer version was admitted after the claim: close this
+                    # one (fenced by our token) without starting or calling it.
+                    self._close_row_skipped(
+                        connection, job.job_id, from_status="leased",
+                        skip_reason=f"{SUPERSEDED_BY_NEWER_VERSION_REASON}: {newer_job_id}",
+                        now=effective_now,
+                    )
+                    connection.execute("COMMIT")
+                else:
+                    current = self._start_claimed(connection, row, job, effective_now, lease_seconds)
+                    connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+        if newer_job_id is not None:
+            raise DistillationSupersededError(f"{job.job_id} superseded by newer version {newer_job_id}")
         assert current is not None
         return self._job_from_row(current)
+
+    def _start_claimed(
+        self, connection: sqlite3.Connection, row: sqlite3.Row, job: DistillationJob,
+        effective_now: float, lease_seconds: float,
+    ) -> sqlite3.Row | None:
+        """Count the attempt and start the job's own lease (inside the caller's transaction)."""
+        expires_at = effective_now + float(lease_seconds)
+        connection.execute(
+            """UPDATE distillation_outbox
+                  SET attempts = attempts + 1, lease_started = 1,
+                      lease_expires_at = ?, updated_at = ?
+                WHERE job_id = ?""",
+            (expires_at, effective_now, job.job_id),
+        )
+        connection.execute(
+            """UPDATE distillation_inbox
+                  SET attempts = attempts + 1, lease_expires_at = ?, updated_at = ?
+                WHERE event_id = ? AND status = 'processing'""",
+            (expires_at, effective_now, str(row["event_id"])),
+        )
+        return self._select_job(connection, job.job_id)
 
     def defer_budget(
         self,
@@ -1933,6 +2071,7 @@ class DistillationJobQueue:
         base_delay_seconds: float,
         now: str | datetime | float | None = None,
         permanent: bool = False,
+        committed_seed_id: str | None = None,
     ) -> DistillationJobStatus:
         effective_now = _timestamp(now) if now is not None else self._now()
         with self._connect() as connection:
@@ -1983,6 +2122,7 @@ class DistillationJobQueue:
                        SET status = ?, available_at = ?, processed_at = ?,
                            last_error = ?, lease_owner = NULL,
                            lease_token = NULL, lease_expires_at = NULL,
+                           seed_id = COALESCE(?, seed_id),
                            updated_at = ?
                      WHERE job_id = ?
                     """,
@@ -1991,6 +2131,7 @@ class DistillationJobQueue:
                         available_at,
                         effective_now if dead_letter else None,
                         error,
+                        committed_seed_id,
                         effective_now,
                         job.job_id,
                     ),
@@ -2450,8 +2591,9 @@ class DistillationJobQueue:
         if changed != 1:
             return False
         connection.execute(
-            """UPDATE distillation_inbox SET status = 'skipped', updated_at = ?
-                WHERE job_id = ? AND status IN ('dead_letter', 'retry_wait', 'pending')""",
+            """UPDATE distillation_inbox SET status = 'skipped', lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, updated_at = ?
+                WHERE job_id = ? AND status IN ('dead_letter', 'retry_wait', 'pending', 'processing')""",
             (now, job_id),
         )
         return True
@@ -3574,6 +3716,7 @@ class DistillationWorker:
         if self._hypothesis_extractor is not None and self._demand_reader is not None:
             for tenant in self._queue.due_tenants(now=effective_now, tenant_id=tenant_id):
                 priorities[tenant] = self._demand_reader.read(tenant, now=effective_now)
+        superseded_versions: list[str] = []
         claimed = self._queue.claim_due(
             worker_id=self._worker_id,
             lease_seconds=self._lease_seconds,
@@ -3581,6 +3724,7 @@ class DistillationWorker:
             limit=limit,
             tenant_id=tenant_id,
             priority_by_tenant=priorities,
+            superseded_out=superseded_versions,
         )
         self._tick_extraction_seconds = 0.0
         self._tick_extractor_answered = False
@@ -3604,6 +3748,11 @@ class DistillationWorker:
                     outcome, delivery = self._process_claimed(
                         job, source_records, now=now, effective_now=effective_now,
                     )
+                except DistillationSupersededError:
+                    # A newer version of the source arrived after the claim:
+                    # closed without a call; the newer version carries the work.
+                    superseded_versions.append(claimed_job.job_id)
+                    continue
                 except DistillationLeaseError:
                     # A superseded token on one job must not abort the tick: the
                     # job belongs to someone else or was recovered. Record it so
@@ -3716,6 +3865,7 @@ class DistillationWorker:
             superseded_dead_letters_resolved=len(superseded_resolved),
             extraction_dead_letters_redriven=extraction_dead_letters_redriven,
             defect_reattempted=defect_reattempted,
+            superseded_versions=len(superseded_versions),
             lease_lost=tuple(lease_lost),
             extraction=self._extraction_summary(),
         )
@@ -3842,6 +3992,7 @@ class DistillationWorker:
             superseded_dead_letters_resolved=run_result.superseded_dead_letters_resolved,
             extraction_dead_letters_redriven=run_result.extraction_dead_letters_redriven,
             defect_reattempted=run_result.defect_reattempted,
+            superseded_versions=run_result.superseded_versions,
             lease_lost=run_result.lease_lost,
             extraction=run_result.extraction,
         )
@@ -3948,7 +4099,14 @@ class DistillationWorker:
                     return "deferred", DEFERRAL_EXTRACTION_TICK_BUDGET
                 started = time.monotonic()
                 try:
-                    outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
+                    if job.defect_reattempted:
+                        # A fixed-defect re-attempt gets its one call even when
+                        # an earlier answer exists for the same input.
+                        outcome = self._hypothesis_extractor.extract(
+                            source, digest=version_key or "", reuse_answers=False,
+                        )
+                    else:
+                        outcome = self._hypothesis_extractor.extract(source, digest=version_key or "")
                 finally:
                     self._tick_extraction_seconds += time.monotonic() - started
                 if outcome.status == "unavailable":
@@ -3996,6 +4154,21 @@ class DistillationWorker:
                     )
                     return "skipped", reason
                 card = outcome.card
+                extra = outcome.extra or {}
+                if "reused_event_id" in extra:
+                    reused_event_id = extra["reused_event_id"]
+                    delivered_by = self._queue.delivered_version(source.source_id, exclude_job_id=job.job_id)
+                    if delivered_by is not None:
+                        # Same source, same extraction input, card already
+                        # delivered by an earlier version: no second draft.
+                        self._queue.mark_skipped(
+                            job.job_id,
+                            reason=(f"{CARD_REUSED_REASON}: L2 event {reused_event_id};"
+                                    f" card delivered by {delivered_by}"),
+                            processed_at=now,
+                            claim_token=job.lease_token,
+                        )
+                        return "skipped", CARD_REUSED_REASON
                 if self._hypothesis_compiler is not None:
                     compile_started = time.monotonic()
                     try:
@@ -4111,6 +4284,7 @@ class DistillationWorker:
                     error=f"registry_sync_failed: {type(exc).__name__}: {exc}",
                     base_delay_seconds=self._retry_base_seconds,
                     now=now,
+                    committed_seed_id=result.seed.seed_id,
                 )
                 return "failed", failure_status.value
             if registry_result.status == "skipped":

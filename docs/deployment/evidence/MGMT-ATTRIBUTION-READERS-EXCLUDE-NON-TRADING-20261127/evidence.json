@@ -5,7 +5,7 @@
   "review_independence": "Codex versus Antigravity model families; assigned canonical reviewer, no self-approval.",
   "root_cause_class": "RC2 / WP2.3: explicit advisory persona selected as an institutional trading persona after T7 paper book provisioning",
   "implementation_status": "source_validated_ready_for_independent_review",
-  "source_base": "50a65493c596eb00567e5ae34e5fe804559e77ad",
+  "source_base": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
   "anchors": [
     "8bb212957",
     "79bf07588"
@@ -204,6 +204,11 @@
   },
   "validation": [
     {
+      "command": "timeout 180 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_period_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py acceptance/test_trading_pulse_operator.py",
+      "exit_code": 0,
+      "result": "225 passed, 3 dependency deprecation warnings in 47.44s after composing dev d8b3be86c including Trading Pulse #7980; terminal output collected. Test inventory, probe CLI/compilation and git diff --check also passed."
+    },
+    {
       "command": "timeout 240 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_period_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/agora/performance/test_performance.py",
       "exit_code": 0,
       "result": "143 passed in 24.64s; before adding the older-Registry fallback case, covered by the boundary batch"
@@ -267,8 +272,9 @@
   ],
   "initial_source_base": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
   "base_refresh": {
-    "merge_commit": "355c913bf",
-    "reason": "Canonical handoff rejected the old head because it lacked six current-dev commits; merged current dev cleanly before repeating handoff. No canonical review was admitted for the stale head. Upstream Agora shadow repair and both problem-register entries preserved."
+    "base_sha": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
+    "previous_reviewed_head": "b9d21963eea8048b65207c2feab105d48ad0fb71",
+    "reason": "Owner redispatched after #7979/#7980 moved dev and conflicted in the WP2.3 register row. Preserved current-dev cycle/Pulse/Agora history and task-specific Management scope/residual findings. All 25 other incoming dev files are byte-for-byte identical to dev; no product code resolution was needed. Fresh exact-head independent review required; hosted proof remains pending."
   },
   "review_admission_blocker": {
     "failed_step": "Governed handoff into independent review",
