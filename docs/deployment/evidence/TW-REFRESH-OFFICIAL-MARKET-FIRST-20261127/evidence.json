@@ -233,7 +233,7 @@
       "failing_check": "Run baseline stage-0 gate",
       "ci_terminal_result": "1 failed, 233 passed, 2 skipped in 214.18s",
       "diagnosis": "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs still asserted TAIFEX before official market (7 < 6). The task-specific workflow suite did not include this stage-0 assertion.",
-      "repair": "Align the three existing stage-0 ordering assertions with the official-first task contract: one in scripts/test_deploy_nonprod_vm.py and TAIFEX/FinMind assertions in scripts/test_dev_tw_market_refresh.py. Retain all connector, dataset, egress, secret, failure and deployment-order assertions. No runtime or CI gate changes.",
+      "repair": "Align four existing ordering assertions across scripts/test_deploy_nonprod_vm.py, scripts/test_dev_tw_market_refresh.py and scripts/test_source_ingest_deploy_diagnostics_contract.py with the official-first task contract. Retain every connector, dataset, egress, secret, failure and deployment-order assertion. No runtime or CI gate changes.",
       "focused_command": "timeout 60 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
       "red": {
         "exit_code": 1,
@@ -265,6 +265,18 @@
         "exit_code": 2,
         "result": "3 failed, 227 passed, 2 skipped in 421.12s; interrupted, not a passed batch",
         "cause": "Inherited temporary venv lacked fastapi for three source-ingest auth-boundary tests. Replaced by the governed checkout provision without changing product dependencies."
+      },
+      "diagnostics_stale_assertion": {
+        "test": "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse",
+        "red": {
+          "exit_code": 1,
+          "result": "1 failed in 0.59s; assert 7 < 6"
+        },
+        "green_with_all_changed_assertions_and_ordering_regression": {
+          "exit_code": 0,
+          "result": "5 passed in 5.01s"
+        },
+        "search": "Searched scripts/test_*.py references to taifex_refresh, finmind_refresh, twse_idx and refresh_by_id to identify the remaining old refresh-order assertion; the separate nonprod-deploy order remains unchanged."
       }
     }
   },
