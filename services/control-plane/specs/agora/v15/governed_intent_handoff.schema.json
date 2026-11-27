@@ -1,0 +1,453 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/governed_intent_handoff/v1_14",
+  "title": "GovernedIntentHandoff",
+  "description": "Agora bundle v1.14 supersedes specs/agora/v4/governed_intent_handoff.schema.json (frozen bytes in bundle v1.3). AGORA-PAPER-INTENT-EXECUTION-20261127: the paper stage is handoff_type paper_execution_request with target_queue paper_execution, read by the paper execution lane (paper-signal-producer), which writes the state back (accepted, rejected with a typed reason, filled, partially_filled). paper_validation_request and management_governance had no reader and are removed. Agora keeps no order route.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "handoff_id",
+    "intent_id",
+    "requested_stage",
+    "handoff_type",
+    "state",
+    "strategy_id",
+    "strategy_spec_registry_id",
+    "requested_by",
+    "evidence_refs",
+    "no_order_route_proof",
+    "created_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": [
+        "1.0"
+      ]
+    },
+    "handoff_id": {
+      "type": "string"
+    },
+    "intent_id": {
+      "type": "string"
+    },
+    "decision_event_id": {
+      "type": "string"
+    },
+    "requested_stage": {
+      "type": "string",
+      "enum": [
+        "shadow",
+        "paper",
+        "canary",
+        "live"
+      ]
+    },
+    "handoff_type": {
+      "type": "string",
+      "enum": [
+        "shadow_start",
+        "paper_execution_request",
+        "promotion_review_request"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "submitted",
+        "accepted",
+        "rejected",
+        "filled",
+        "partially_filled",
+        "expired",
+        "withdrawn",
+        "converted"
+      ]
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_spec_registry_id": {
+      "type": "string"
+    },
+    "requested_by": {
+      "$ref": "#/definitions/actor"
+    },
+    "target_queue": {
+      "type": "string",
+      "enum": [
+        "shadow_research",
+        "paper_execution",
+        "promotion_review"
+      ]
+    },
+    "required_gate_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "action_proposal": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "enter",
+            "add",
+            "reduce",
+            "exit",
+            "review"
+          ]
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "size_hint": {
+          "type": "string"
+        },
+        "portfolio_pct": {
+          "type": "number"
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "limit_price": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "non_binding": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "risk_summary": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidence_ref"
+      }
+    },
+    "management_handoff_ref": {
+      "type": "string"
+    },
+    "deployment_plan_ref": {
+      "type": "string"
+    },
+    "runtime_binding_ref": {
+      "type": "string"
+    },
+    "paper_execution": {
+      "$ref": "#/definitions/paper_execution"
+    },
+    "no_order_route_proof": {
+      "type": "string",
+      "enum": [
+        "agora_request_only_no_order_route"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "actor": {
+      "type": "object",
+      "required": [
+        "actor_type",
+        "actor_ref"
+      ],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "trader",
+            "agora_servant",
+            "institutional_persona",
+            "system"
+          ]
+        },
+        "actor_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_ref": {
+      "type": "object",
+      "required": [
+        "ref_type",
+        "ref_id"
+      ],
+      "properties": {
+        "ref_type": {
+          "type": "string",
+          "enum": [
+            "evidence_bundle",
+            "evidence_item",
+            "source_record",
+            "citation",
+            "experiment_artifact",
+            "registry_entry",
+            "consult_memo",
+            "research_run",
+            "telemetry_snapshot",
+            "market_context"
+          ]
+        },
+        "ref_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "data_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "paper_execution": {
+      "description": "AGORA-PAPER-INTENT-EXECUTION-20261127: the trader-confirmed paper request and the state the paper execution owner (paper-signal-producer) writes back. Agora routes no order; environment is always paper.",
+      "type": "object",
+      "required": [
+        "environment",
+        "owner",
+        "order"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "const": "paper"
+        },
+        "owner": {
+          "type": "object",
+          "required": [
+            "tenant_id",
+            "user_id",
+            "servant_persona_id"
+          ],
+          "properties": {
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "user_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "servant_persona_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "order": {
+          "type": "object",
+          "required": [
+            "symbol",
+            "action",
+            "side",
+            "quantity",
+            "quantity_type",
+            "order_type"
+          ],
+          "properties": {
+            "symbol": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "enter",
+                "add",
+                "reduce",
+                "exit"
+              ]
+            },
+            "side": {
+              "type": "string",
+              "enum": [
+                "buy",
+                "sell"
+              ]
+            },
+            "quantity": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "quantity_type": {
+              "type": "string",
+              "enum": [
+                "SHARES"
+              ]
+            },
+            "order_type": {
+              "type": "string",
+              "enum": [
+                "market",
+                "limit"
+              ]
+            },
+            "limit_price": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "daily_cap": {
+          "type": "integer",
+          "const": 50
+        },
+        "decision_lock_ref": {
+          "type": "string"
+        },
+        "decision_event_id": {
+          "type": "string"
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "environment": {
+              "type": "string",
+              "const": "paper"
+            },
+            "no_order_route_proof": {
+              "type": "string",
+              "enum": [
+                "agora_request_only_no_order_route"
+              ]
+            },
+            "reason_code": {
+              "type": "string",
+              "enum": [
+                "daily_cap",
+                "owner_mismatch",
+                "paper_book_missing",
+                "binding_not_paper",
+                "non_paper_stage",
+                "invalid_order",
+                "symbol_not_executable",
+                "market_data_unavailable",
+                "market_data_stale",
+                "signal_validation_failed",
+                "enqueue_failed",
+                "broker_rejected",
+                "expired"
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "runtime_binding_id": {
+              "type": "string"
+            },
+            "capital_pool_id": {
+              "type": "string"
+            },
+            "signal_id": {
+              "type": "string"
+            },
+            "daily_slot": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "market_price": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "market_as_of": {
+              "type": "string"
+            },
+            "market_source_ref": {
+              "type": "string"
+            },
+            "broker_order_id": {
+              "type": "string"
+            },
+            "fill_qty": {
+              "type": "number",
+              "minimum": 0
+            },
+            "fill_price": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "filled_at": {
+              "type": "string"
+            },
+            "accepted_at": {
+              "type": "string"
+            },
+            "updated_by": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "state_history": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "reason_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

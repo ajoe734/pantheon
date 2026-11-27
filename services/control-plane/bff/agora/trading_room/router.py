@@ -4,6 +4,7 @@ Thin composition factory delegating to cohesive subrouters:
   - routes/workspaces.py: Workspace aggregations, proposals, layout mutation, views, widgets, rollbacks
   - routes/decisions.py: Trading decision events, recording, and SSE stream
   - routes/intents.py: Governed trading intents and handoffs
+  - routes/paper_execution.py: paper execution lane drain and state writeback (service only)
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from .routes import (
     build_workspaces_router,
     build_decisions_router,
     build_intents_router,
+    build_paper_execution_router,
     TradingDecisionEvent,
     TradingRoomAggregate,
     QueueSummary,
@@ -100,4 +102,5 @@ def create_trading_room_router(
     router.routes.extend(build_workspaces_router(ctx).routes)
     router.routes.extend(build_decisions_router(ctx).routes)
     router.routes.extend(build_intents_router(ctx).routes)
+    router.routes.extend(build_paper_execution_router(ctx).routes)
     return router
