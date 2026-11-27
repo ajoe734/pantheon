@@ -248,8 +248,15 @@ def test_authenticated_adapter_contract_controller_tick_compiles(tmp_path, monke
         return _Result({"is_abstained": False, "abstention_reason": None, "hypothesis_card": card})
 
     seen_status: list[int] = []
+    seen_bodies: list[dict[str, Any]] = []
+    seen_Invoke_kw: list[dict[str, Any]] = []
+
+    def tracking_invoke(prompt, **kw):
+        seen_Invoke_kw.append({"prompt": prompt, **kw})
+        return fake_invoke(prompt, **kw)
 
     def bridge(endpoint, *, body_bytes, headers, deadline_at, max_body_bytes=10_000_000):
+        seen_bodies.append(json.loads(body_bytes))
         path = "/" + endpoint.split("://", 1)[1].split("/", 1)[1]
         resp = tc.post(path, content=body_bytes, headers=headers)
         seen_status.append(resp.status_code)
@@ -267,10 +274,144 @@ def test_authenticated_adapter_contract_controller_tick_compiles(tmp_path, monke
         patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", token),
         patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
         patch.object(provider, "_gateway_call", return_value=snapshot),
-        patch.object(provider, "invoke_structured", side_effect=fake_invoke),
+        patch.object(provider, "invoke_structured", side_effect=tracking_invoke),
     ):
         res, config = _tick(tmp_path, monkeypatch)
     assert 401 not in seen_status and seen_status
     assert res["reconcile"]["created"] == 1
     assert calls.extract == 1 and calls.compile == 1
     assert [s for s, _ in _outcomes(config)] == ["compiled"]
+    assert len(seen_bodies) == 2 and len(seen_Invoke_kw) == 2
+    proposer_body = seen_bodies[1]
+    proposer_kw = seen_Invoke_kw[1]
+    assert proposer_body["prompt"].startswith("Propose a factor_rule_v1")
+    assert proposer_body["timeout_seconds"] == pytest.approx(88.0, abs=1.0)
+    assert proposer_body["max_output_tokens"] == 3072
+    assert proposer_kw["timeout_seconds"] == pytest.approx(88.0, abs=1.0)
+    assert proposer_kw["max_output_tokens"] == 3072
+
+
+def test_real_client_adapter_and_gateway_proposer_path_carries_deadline_and_limit(tmp_path, monkeypatch):
+    """Acceptance 1: real SemanticExtractionClient -> real adapter /structured route -> real
+    AssistantOpenClawProvider.invoke_structured -> Gateway /v1/responses body, with no stubbed
+    dispatcher, proves the proposer payload carries the governed HYPOTHESIS_CARD deadline and
+    max_output_tokens across client, adapter and gateway alike."""
+    import sys
+    import time
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+    from services.source_ingestion.hypothesis_compiler import (
+        COMPILED,
+        CompilerStore,
+        HypothesisCompiler,
+        client_proposer,
+    )
+
+    adapter_dir = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
+    monkeypatch.syspath_prepend(str(adapter_dir))
+    for stale in ("main", "assistant_openclaw_provider"):
+        if stale in sys.modules and not hasattr(sys.modules[stale], "OPENCLAW_STRUCTURED_AGENT_ID"):
+            monkeypatch.delitem(sys.modules, stale)
+    import assistant_openclaw_provider as provider_mod
+    import main as adapter_main
+    from fastapi.testclient import TestClient
+
+    tc = TestClient(adapter_main.app, raise_server_exceptions=True)
+    token = "adapter-test-secret"
+    monkeypatch.setenv("PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS", "60")
+    monkeypatch.setenv("PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://adapter.test")
+    monkeypatch.setenv("PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN", token)
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1")
+
+    adapter_requests: list[dict[str, Any]] = []
+    gateway_requests: list[dict[str, Any]] = []
+
+    def bridge(endpoint, *, body_bytes, headers, deadline_at, max_body_bytes=10_000_000):
+        adapter_requests.append({
+            "endpoint": endpoint,
+            "body": json.loads(body_bytes.decode("utf-8")),
+            "client_budget": deadline_at - time.monotonic(),
+        })
+        path = "/" + endpoint.split("://", 1)[1].split("/", 1)[1]
+        resp = tc.post(path, content=body_bytes, headers=headers)
+        return resp.status_code, resp.content, {}
+
+    class _SSE:
+        def __init__(self, events):
+            self._lines = [("data: " + json.dumps(e) + "\n").encode() for e in events] + [b"data: [DONE]\n"]
+
+        def __iter__(self):
+            return iter(self._lines)
+
+        def close(self):
+            pass
+
+    def fake_gateway_urlopen(req, timeout=None, deadline=None):
+        body = json.loads(req.data.decode("utf-8"))
+        gateway_requests.append({
+            "body": body,
+            "timeout": timeout,
+            "gateway_budget": (deadline - time.monotonic()) if deadline is not None else timeout,
+        })
+        proposal = _proposal()
+        usage = {"input_tokens": 12, "output_tokens": 896, "total_tokens": 12 + 896 + 2400}
+        return _SSE([
+            {"type": "response.output_text.done", "text": json.dumps(proposal)},
+            {"type": "response.completed", "response": {
+                "id": "resp-propose-1", "object": "response", "status": "completed",
+                "model": "openclaw/structured-extraction", "output": [], "usage": usage,
+            }},
+        ])
+
+    snapshot = {"valid": True, "config": {"agents": {
+        "defaults": {"cliBackends": {"claude-cli": {
+            "args": adapter_main._CLAUDE_CLI_TOOLSEARCH_ARGS,
+            "resumeArgs": adapter_main._CLAUDE_CLI_TOOLSEARCH_RESUME_ARGS}}},
+        "list": [{"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID,
+                  "tools": {"deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}]}}}
+    provider = provider_mod.AssistantOpenClawProvider(
+        gateway_url="ws://openclaw-gateway:18789",
+        agent_id="main",
+        token="t",
+        _which_func=lambda _: None,
+    )
+    monkeypatch.setattr(sec, "_perform_http_request", bridge)
+
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=400)
+    client = sec.SemanticExtractionClient()  # real HTTP adapter path, no transport_fn
+    compiler = HypothesisCompiler(
+        client_proposer(client),
+        CompilerStore(tmp_path / "compiler.sqlite"),
+        ledger=ledger,
+    )
+
+    with (
+        patch.object(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider),
+        patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", token),
+        patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
+        patch.object(provider, "_gateway_call", return_value=snapshot),
+        patch.object(provider_mod, "_urlopen_with_deadline", fake_gateway_urlopen),
+    ):
+        outcome = compiler.compile(_card(testability="testable"), source_id="src-1", digest="sha256:d1")
+
+    assert outcome.status == COMPILED and outcome.artifact is not None, outcome.reason
+    # 1. Client -> Adapter payload carries the bounded deadline (60s - 2s margin = 58s) and max_output_tokens (4096).
+    assert len(adapter_requests) == 1
+    assert adapter_requests[0]["client_budget"] == pytest.approx(60.0, abs=1.5)
+    assert adapter_requests[0]["body"]["timeout_seconds"] == pytest.approx(58.0, abs=1.0)
+    assert adapter_requests[0]["body"]["max_output_tokens"] == 4096
+    # 2. Adapter -> Gateway /v1/responses payload carries max_output_tokens (4096) and the bounded deadline (~58s).
+    assert len(gateway_requests) == 1
+    assert gateway_requests[0]["body"]["max_output_tokens"] == 4096
+    assert gateway_requests[0]["gateway_budget"] == pytest.approx(58.0, abs=2.0)
+    # 3. Ledger metered the proposer call and recorded the event with its outcome and usage.
+    assert ledger.calls_today() == 1
+    events = ledger.events("src-1")
+    assert len(events) == 1
+    assert events[0]["outcome"] == "compiled"
+    assert events[0]["detail"] == outcome.fingerprint
+    assert events[0]["usage"]["output_tokens"] == 896
+    assert events[0]["usage"]["input_tokens"] == 2412

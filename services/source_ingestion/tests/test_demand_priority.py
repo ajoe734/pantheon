@@ -297,7 +297,8 @@ def test_environment_controller_tick_drives_demand_deferral_across_two_windows(t
 
     monkeypatch.setattr(sec, "SemanticExtractionClient", Client)
     monkeypatch.setenv("PANTHEON_L2_EXTRACTION_ENABLED", "1")
-    monkeypatch.setenv("PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP", "2")
+    # Each testable card through run_controller_tick makes 1 card call + 1 metered proposer call = 2 ledger calls.
+    monkeypatch.setenv("PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP", "4")
     monkeypatch.setenv("PANTHEON_L2_EXTRACTION_LEDGER_PATH", str(tmp_path / "ledger.sqlite"))
     monkeypatch.setenv("SOURCE_INGEST_EVIDENCE_BACKEND", "jsonl")
     queue_path = tmp_path / "queue.sqlite"
