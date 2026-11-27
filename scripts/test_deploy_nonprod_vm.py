@@ -6555,7 +6555,7 @@ _RUN_FUNCTIONS = (
     "steady_check_health_bound_seconds", "bounded_runtime_state_dir", "bounded_runtime_list_state_dirs",
     "bounded_runtime_state_set", "bounded_runtime_record_memory", "bounded_runtime_market_open_guard",
     "bounded_runtime_validate_profile", "bounded_runtime_restore_from_state", "bounded_runtime_restore_all_states",
-    "execute_steady_posture_check", "execute_bounded_source_refresh_entrypoint",
+    "execute_steady_posture_check", "run_finmind_broker_whole_market", "execute_bounded_source_refresh_entrypoint",
 )
 
 
@@ -7004,3 +7004,106 @@ def test_dev_deploy_wires_agora_paper_execution_token_through_secret_pattern() -
     )
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     assert compose.count("AGORA_PAPER_EXECUTION_TOKEN_PROFILE: ${AGORA_PAPER_EXECUTION_TOKEN_PROFILE:-local}") == 2
+
+
+# --- SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole-market broker run inside source-ingest ---
+
+def _extract_broker_whole_market_func() -> str:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index("run_finmind_broker_whole_market() {")
+    end = text.index("\ncheck_taiwan_refresh_preflight() {", start)
+    return text[start:end]
+
+
+def _run_whole_market_func(tmp_path: Path, exec_mode: str) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    """exec_mode: 'real' runs the in-container python locally (repo on PYTHONPATH, no network: no token);
+    'complete' / 'garbage' print a canned receipt / non-JSON."""
+    import sys as _sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "docker_calls.jsonl"
+    (bin_dir / "docker").write_text(f"""#!{_sys.executable}
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open({str(calls)!r}, "a") as fh:
+    fh.write(json.dumps(args) + "\\n")
+if args[:1] == ["compose"]:
+    print("cid-source-ingest"); sys.exit(0)
+if args[:1] == ["exec"]:
+    code = sys.stdin.read()
+    assert "run_whole_market_session" in code
+    mode = {exec_mode!r}
+    if mode == "complete":
+        print(json.dumps({{"status": "complete", "rows": 80000, "stored_symbol_count": 2000, "requests_made": 1,
+                          "fallback_required": False}}))
+    elif mode == "garbage":
+        print("Traceback: boom")
+    else:
+        env = dict(os.environ)
+        i = 0
+        while i < len(args):
+            if args[i] == "-e":
+                k, _, v = args[i + 1].partition("=")
+                if v or "=" in args[i + 1]:
+                    env[k] = v
+                i += 2
+            else:
+                i += 1
+        env["PYTHONPATH"] = {str(ROOT)!r}
+        env["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"] = {str(tmp_path / "mds")!r}
+        sys.exit(subprocess.run([{_sys.executable!r}, "-c", code], env=env).returncode)
+    sys.exit(0)
+sys.exit(1)
+""")
+    (bin_dir / "docker").chmod(0o755)
+    script = tmp_path / "run.sh"
+    script.write_text("set -euo pipefail\ninfo() { :; }\n" + _extract_broker_whole_market_func()
+                      + '\nrun_finmind_broker_whole_market\nprintf "%s\\n" "${BROKER_WHOLE_MARKET_JSON}"\n')
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "FINMIND_API_TOKEN": "",
+           "SOURCE_INGEST_BOUNDED_TRADE_DATE": "2026-11-20"}
+    env.pop("FINMIND_API_TOKEN")
+    proc = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, check=False, timeout=120)
+    return proc, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+
+
+def test_whole_market_func_passes_token_by_name_and_restricts_egress(tmp_path: Path) -> None:
+    proc, calls = _run_whole_market_func(tmp_path, "complete")
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert receipt["status"] == "complete" and receipt["fallback_required"] is False
+    exec_args = next(c for c in calls if c[:1] == ["exec"])
+    assert "FINMIND_API_TOKEN" in exec_args  # by name only, never NAME=value
+    assert not any(a.startswith("FINMIND_API_TOKEN=") for a in exec_args)
+    assert "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=api.finmindtrade.com,storage.googleapis.com" in exec_args
+    assert "cid-source-ingest" in exec_args
+
+
+def test_whole_market_func_without_receipt_requires_fallback(tmp_path: Path) -> None:
+    proc, _ = _run_whole_market_func(tmp_path, "garbage")
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert receipt["status"] == "failed" and receipt["fallback_required"] is True and receipt["requests_made"] == 0
+
+
+def test_whole_market_in_container_python_runs_and_reports_missing_credential(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    proc, _ = _run_whole_market_func(tmp_path, "real")
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert receipt["status"] == "credential_unavailable" and receipt["fallback_required"] is True
+    assert receipt["trade_date"] == "2026-11-20" and receipt["requests_made"] == 0
+    assert (tmp_path / "mds/receipts/tw_broker_whole_market/date=2026-11-20.json").is_file()
+
+
+def test_entrypoint_whole_market_complete_skips_per_symbol_path_and_refusal_falls_back() -> None:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index("execute_bounded_source_refresh_entrypoint() {")
+    body = text[start:text.index('preflight_output="$(check_taiwan_refresh_preflight', start)]
+    hook = body[body.index("    run_finmind_broker_whole_market || true\n"):]
+    # complete/already_complete -> completed; partial -> partial (never fresh); both return before any job.
+    assert '[[ "${wm_status}" == "complete" || "${wm_status}" == "already_complete" ]] && wm_outcome_status="completed"' in hook
+    assert 'local wm_outcome_status="partial"' in hook
+    assert hook.index('write_bounded_refresh_outcome "${wm_outcome_status}"') < hook.index("return 0") < hook.index("COORDINATOR NOTICE")
+    # The outcome file carries the receipt and, on fallback, a coordinator notice.
+    assert 'payload["broker_whole_market"] = wm' in text and 'payload["coordinator_notice"]' in text

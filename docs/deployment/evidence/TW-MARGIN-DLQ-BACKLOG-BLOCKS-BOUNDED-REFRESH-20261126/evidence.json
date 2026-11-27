@@ -1,0 +1,236 @@
+{
+  "task": "TW-MARGIN-DLQ-BACKLOG-BLOCKS-BOUNDED-REFRESH-20261126",
+  "class": "TW-MARGIN-CHAIN-PROVIDER-REVISIONS",
+  "observed_failure": {
+    "hosted_run": "https://github.com/ajoe734/pantheon/actions/runs/45804988339",
+    "deployment_git_sha": "8d506640a6f3674e17e4d846ef0f2082ad5e4824",
+    "profile": "tw-official-twse-margin-balances",
+    "error": "ControllerTickError: authoritative source readback has 4 unresolved dead-letter entrie(s) in selected connector scope",
+    "stage": "actual_readback",
+    "cause": "four dead letters from session 2026-11-24 refused by the retired 99% chain rule (#7839 moved it to 0.90) stay pending; a bounded refresh (reconcile_and_pull) failed on every unresolved entry in its scope, the steady pull only on new ones"
+  },
+  "change": {
+    "bounded_refresh_gate": "run_controller_tick uses the pre/post unresolved count rule for bounded refresh and steady pull. Both pre-tick subtraction and terminal scoped admission now share _trusted_dlq_connector_counts: global totals must agree, each bucket must belong to a configured connector, all five statuses must be nonnegative integers (bool rejected), and every per-status sum must equal its global total. An invalid pre-tick map uses the strict terminal rule; it is never parsed or subtracted.",
+    "backlog_report": "accepted readback (loop success payload) and the top level of the tick result printed by the bounded refresh carry pre_existing_unresolved_dlq_backlog = {count, by_connector: {connector_id: {unresolved_count, oldest_rejected_at, oldest_age_seconds}}} for the selected connectors; steady-pull keys pre_existing_unresolved_dlq_by_connector/count are kept and now also emitted for bounded refresh",
+    "source_readback": "services/source_ingestion/runtime.py: controller readback adds dlq_oldest_unresolved_at_by_connector (oldest rejected_at of pending/replay_failed/schema_rejected entries per connector), computed in the existing single pass over DLQ entries; absent in an older image, the age is reported as null",
+    "steady_pull": "unchanged: same pre/post rule and keys; its 4 existing gate tests pass unchanged",
+    "artifact_contract_note": "Human/Ops added services/source_ingestion/runtime.py to the canonical artifacts contract at 2026-11-27T11:58:33Z; it supplies the per-connector oldest rejection timestamp required by acceptance 1."
+  },
+  "operator_resolution": {
+    "path": "POST /api/source-ingest/dlq/replay with {entry_ids: [the four 2026-11-24 entry ids], reason: <why the cause is fixed>, actor_id: <operator>}",
+    "what_happens": "the existing replay processor re-runs each entry through pipeline.replay_source_event: these entries carry no frontier_id, so the configured margin connector runs again under the live 0.90 chain rule (and the #7839 gap bridge); the provider serves the latest published session, so success stores that later session, which supersedes 2026-11-24. Each entry gets status replayed, replay_attempts+1, audit_action_ref, and one foundation.dlq.replay.applied audit action with the operator reason is appended to source_ingest_audit.jsonl. A replay that still fails sets replay_failed and leaves the entry unresolved.",
+    "nothing_deleted": "the DLQ journal is append-only (replace_entry appends the new status); no entry is removed. The deploy script's --force recovery covers only egress-denied entries and does not touch these.",
+    "no_new_writer": "no new status, endpoint or writer; superseding is the outcome of the replay run, not a separate mark",
+    "tests": [
+      "test_operator_replay_resolves_fixed_entries_with_audit_and_no_deletion",
+      "test_operator_replay_that_still_fails_keeps_entries_unresolved",
+      "test_old_rule_refuses_and_new_rule_accepts_the_2026_11_24_session"
+    ]
+  },
+  "tests": {
+    "new_file": "services/source_ingestion/tests/test_controller_worker_dlq_backlog.py (26 cases; real run_controller_tick, real create_runtime store: DLQ journal, controller state, requirement snapshot, readback projection, replay router; stand-ins only for the provider schedule RPC and desired-state load)",
+    "acceptance_cases": {
+      "old backlog plus clean run passes and reports backlog": "test_bounded_refresh_passes_over_old_backlog_and_reports_it",
+      "a run that adds one entry fails": "test_bounded_refresh_fails_on_one_entry_added_in_this_run",
+      "untrusted pre-tick map keeps strict rule": "test_bounded_refresh_without_a_trusted_pre_map_keeps_the_strict_rule",
+      "corrupt connector baseline cannot hide a new entry": "test_corrupt_pre_connector_counts_cannot_hide_a_new_dead_letter (17 cases including the review reproduction)"
+    },
+    "runs": [
+      {
+        "command": "pytest test_controller_worker_dlq_backlog.py test_controller_worker.py test_controller_worker_manual_once.py test_steady_tick_overhead.py (final head)",
+        "result": "244 passed"
+      },
+      {
+        "command": "pytest on the 21 source_ingestion test files that use controller_worker, controller readback or its summary, plus services/source_ingestion/test_service.py",
+        "result": "472 passed, 6 skipped"
+      },
+      {
+        "command": "pytest scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py",
+        "result": "178 passed"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_worker_manual_once.py services/source_ingestion/tests/test_steady_tick_overhead.py",
+        "code_commit": "01307a716",
+        "result": "261 passed, 1 Starlette deprecation warning, 121.69s, exit 0"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py -k 'dlq or dead_letter or old_rule or oldest or resolved_entries or template_connector'",
+        "code_commit": "788567080136178d99ccdbaf601e0e645ccf3ad8",
+        "result": "85 passed, 156 deselected, 1 Starlette deprecation warning, 10.61s, exit 0; source code unchanged from 2207f90bd"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_dlq_backlog.py services/source_ingestion/tests/test_controller_worker.py -k 'dlq or dead_letter or old_rule or oldest or resolved_entries or template_connector'",
+        "code_commit": "ad5eeeca6d4bd4c6d22861c7ffcdec0de4ed8209",
+        "result": "85 passed, 156 deselected, 1 Starlette deprecation warning, 15.04s, exit 0; reviewer reassignment evidence only, product code unchanged"
+      }
+    ]
+  },
+  "runtime_budget": {
+    "recurring_jobs": 0,
+    "new_writers": 0,
+    "dlq_writes": "unchanged; only the existing replay route changes a DLQ status, and only when an operator calls it",
+    "reads_per_run": "unchanged: the existing pre-tick and terminal readbacks; the oldest timestamp is taken in the same pass over DLQ entries that already counts statuses",
+    "readback_added_per_run": "source readback: one ISO timestamp per connector with an unresolved entry; controller tick result and loop success payload: one object per selected connector with a backlog (about 170 bytes; a bounded refresh selects one connector)",
+    "cadence": "unchanged: bounded refresh on demand/daily market workflow; existing steady scheduler defaults to 60s (at most 1440 ticks/day)",
+    "hosted_scale": "read-only snapshot has 19 connectors with pending DLQ; bounded refresh selects one connector and steady pull at most one per request",
+    "incremental_growth_per_day": "no new journal/status rows; backlog fields add <256 bytes per selected connector to an existing success payload (test bound), <=368640 bytes/day at 1440 successful single-connector ticks/day, plus existing JSON field names; transient source readback timestamps are not separately persisted",
+    "cap_and_cleanup": "in-memory readback map has one timestamp per distinct DLQ connector, discarded after each request; one selected connector per hosted pull. Existing loop_controller_records, source_ingest_dlq.jsonl and source_ingest_audit.jsonl writers are registered in docs/operations/storage-manifest.json; their total retention/cap remains unverified under RC3 WP3.1, with no new writer or cleanup job introduced here"
+  },
+  "hosted_pending_dlq_breakdown": {
+    "captured_at": "2026-11-27T12:18:13.691236+00:00",
+    "endpoint": "http://127.0.0.1:8097/api/source-ingest/dlq?status=pending",
+    "entry_count": 6824,
+    "pending_count": 6824,
+    "response_sha256": "8ce1850dd61cee8734b156d0cc22a490878c8280a5fe7e668f0375efc7220fb4",
+    "status_counts": {
+      "duplicate_skipped": 0,
+      "pending": 6824,
+      "replay_failed": 0,
+      "replayed": 85,
+      "schema_rejected": 0
+    },
+    "unresolved_count": 6824,
+    "status": "read_only_current_snapshot",
+    "host": "pantheon-dev-deploy / pantheon-dev-20260902 / asia-east1-b",
+    "transport": "scripts/dev_vm_ssh.sh using existing SSH identity and pinned known_hosts; docker exec python urllib GET only; no replay or status write",
+    "historical_brief_pending": 5776,
+    "count_drift": "current pending is 6824, 1048 more than the brief's historical 5776; no historical entry list was retained in the brief, so this snapshot does not reconstruct membership or reason counts at that earlier instant",
+    "by_connector_reason": [
+      {"connector_id": "collector-gdelt", "count": 34, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-gdelt", "count": 431, "reason": "collector empty outcome is not verified no-new-data: collector_source_paused:auto_paused_after_2_consecutive_blocks:gdelt_http_404:https://data.gdeltproject.org/gdeltv2/20261118101500.export.CSV.zip;gdelt_http_404:https://data.gdeltproject.org/gdeltv2/20261118111500.export.CSV.zip; newest_bundle_older_than_twice_cadence; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-gdelt", "count": 3, "reason": "collector empty outcome is not verified no-new-data: collector_source_paused:auto_paused_after_2_consecutive_blocks:http_429:https://api.gdeltproject.org/api/v2/doc/doc?query=Taiwan+semiconductor&mode=ArtList&maxrecords=250&timespan=3months&format=json;http_429:https://api.gdeltproject.org/api/v2/doc/doc?query=Taiwan+semiconductor&mode=ArtList&maxrecords=250&timespan=3months&format=json; newest_bundle_older_than_twice_cadence", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-gdelt", "count": 36, "reason": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:partial", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-gdelt", "count": 2, "reason": "collector empty outcome is not verified no-new-data: newest_bundle_older_than_twice_cadence; collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-gdelt", "count": 5, "reason": "scheduled ingest returned zero rows without explicit no-new-data marker", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-news-rss", "count": 4, "reason": "collector bundle item news-cna-202611110105-aspx published_at must be ISO-8601: 'Wed, 11 Nov 2026 04:37:00 GMT'", "residual_disposition": "temporal_schema"},
+      {"connector_id": "collector-paper-arxiv", "count": 24, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-paper-arxiv", "count": 34, "reason": "collector empty outcome is not verified no-new-data: collector_source_paused:auto_paused_after_2_consecutive_blocks:http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10;http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-paper-arxiv", "count": 430, "reason": "collector empty outcome is not verified no-new-data: collector_source_paused:auto_paused_after_2_consecutive_blocks:http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10;http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10; newest_bundle_older_than_twice_cadence", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-paper-arxiv", "count": 4, "reason": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:partial", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-paper-openalex", "count": 5, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-paper-openalex", "count": 424, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-cmoney-forum", "count": 13, "reason": "collector empty outcome is not verified no-new-data: collector_complete_time_mismatch; collector_complete_run_mismatch; collector_consumed_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-cmoney-forum", "count": 3, "reason": "collector empty outcome is not verified no-new-data: collector_consumed_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-cmoney-forum", "count": 2, "reason": "fetched record source_type must match job connector", "residual_disposition": "source_type_mapping"},
+      {"connector_id": "collector-tw-macro-cbc", "count": 4, "reason": "fetched record source_type must match job connector", "residual_disposition": "source_type_mapping"},
+      {"connector_id": "collector-tw-macro-dgbas", "count": 7, "reason": "collector empty outcome is not verified no-new-data: collector_status_missing_source; collector_source_status_unverified:missing; collector_last_run_missing", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-macro-dgbas", "count": 5, "reason": "scheduled ingest returned zero rows without explicit no-new-data marker", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-macro-ndc", "count": 2, "reason": "fetched record source_type must match job connector", "residual_disposition": "source_type_mapping"},
+      {"connector_id": "collector-tw-ptt-stock", "count": 284, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-ptt-stock", "count": 165, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-threads", "count": 74, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-threads", "count": 364, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-threads", "count": 1, "reason": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:complete", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-threads", "count": 89, "reason": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:partial; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-threads", "count": 2, "reason": "fetched record source_type must match job connector", "residual_disposition": "source_type_mapping"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 41, "reason": "Payload exceeded max byte limit (8388608 bytes)", "residual_disposition": "payload_limit"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 23, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 261, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 295, "reason": "collector empty outcome is not verified no-new-data: collector_consumed_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 5, "reason": "collector empty outcome is not verified no-new-data: collector_source_status_unverified:partial", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 51, "reason": "collector response body read exceeded the operation deadline", "residual_disposition": "collector_deadline"},
+      {"connector_id": "collector-tw-tpex-price-history", "count": 79, "reason": "external request exceeded the operation deadline", "residual_disposition": "collector_deadline"},
+      {"connector_id": "collector-tw-trading-holidays", "count": 42, "reason": "collector empty outcome is not verified no-new-data: collector_status_missing_source; collector_source_status_unverified:missing; collector_last_run_missing", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-trading-suspension", "count": 42, "reason": "collector empty outcome is not verified no-new-data: collector_status_missing_source; collector_source_status_unverified:missing; collector_last_run_missing", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-twse-index-breadth", "count": 235, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-twse-index-breadth", "count": 195, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-twse-price-history", "count": 152, "reason": "collector empty outcome is not verified no-new-data: collector_complete_boundary_unverified; cursor_lag_over_7_days", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-twse-price-history", "count": 2094, "reason": "collector empty outcome is not verified no-new-data: collector_consumed_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-tw-twse-taiex-history", "count": 22, "reason": "available_time must be >= event_time for PIT external source records", "residual_disposition": "temporal_schema"},
+      {"connector_id": "collector-youtube-finance", "count": 7, "reason": "collector empty outcome is not verified no-new-data: collector_status_missing_source; collector_source_status_unverified:missing; collector_last_run_missing", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-youtube-finance", "count": 389, "reason": "collector empty outcome is not verified no-new-data: newest_bundle_older_than_twice_cadence; collector_consumed_boundary_unverified", "residual_disposition": "collector_boundary"},
+      {"connector_id": "collector-youtube-finance", "count": 2, "reason": "scheduled ingest returned zero rows without explicit no-new-data marker", "residual_disposition": "collector_boundary"},
+      {"connector_id": "strategy-seed-paper-corpus", "count": 5, "reason": "collector bundle item rsshub-paper-w35986 published_at must be ISO-8601: 'Mon, 09 Nov 2026 00:00:00 GMT'", "residual_disposition": "temporal_schema"},
+      {"connector_id": "strategy-seed-paper-corpus", "count": 429, "reason": "collector empty outcome is not verified no-new-data: collector_source_paused:auto_paused_after_2_consecutive_blocks:http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10;http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10; newest_bundle_older_than_twice_cadence", "residual_disposition": "collector_boundary"},
+      {"connector_id": "tw-official-twse-margin-balances", "count": 4, "reason": "tw-official-twse-margin-balances tw_margin_short_balance: tw-official-twse-margin-balances: inferred session 2026-11-24 fails the provider balance chain (matched 1272, mismatched 39; need at least 99%); refusing to store", "residual_disposition": "margin_chain"}
+    ],
+    "by_connector": {
+      "collector-gdelt": 511,
+      "collector-news-rss": 4,
+      "collector-paper-arxiv": 492,
+      "collector-paper-openalex": 429,
+      "collector-tw-cmoney-forum": 18,
+      "collector-tw-macro-cbc": 4,
+      "collector-tw-macro-dgbas": 12,
+      "collector-tw-macro-ndc": 2,
+      "collector-tw-ptt-stock": 449,
+      "collector-tw-threads": 530,
+      "collector-tw-tpex-price-history": 755,
+      "collector-tw-trading-holidays": 42,
+      "collector-tw-trading-suspension": 42,
+      "collector-tw-twse-index-breadth": 430,
+      "collector-tw-twse-price-history": 2246,
+      "collector-tw-twse-taiex-history": 22,
+      "collector-youtube-finance": 398,
+      "strategy-seed-paper-corpus": 434,
+      "tw-official-twse-margin-balances": 4
+    },
+    "read_only_query": "GET http://127.0.0.1:8097/api/source-ingest/dlq?status=pending inside the source-ingest container; group all returned entries by (event.payload.connector_id, full reason); sum(groups)==entry_count==pending_count; record UTC time and SHA-256 of response bytes"
+  },
+  "residual_findings": [
+    {
+      "class": "margin_chain",
+      "pending_count": 4,
+      "finding": "four old 99% threshold refusals remain pending",
+      "action_for_coordinator": "existing TW-MARGIN-CHAIN-PROVIDER-REVISIONS row; operator replay after fix, no deletion"
+    },
+    {
+      "class": "collector_boundary",
+      "pending_count": 6608,
+      "finding": "unverified empty/consumed/complete boundaries, cursor lag, paused upstream or missing collector source",
+      "action_for_coordinator": "attach each connector/reason group to the owning collector intake/boundary class; verify its cause before audited replay"
+    },
+    {
+      "class": "source_type_mapping",
+      "pending_count": 10,
+      "finding": "fetched record source_type differs from connector",
+      "action_for_coordinator": "attach to existing collector schema/mapping owner or register class before opening work; preserve entries"
+    },
+    {
+      "class": "temporal_schema",
+      "pending_count": 31,
+      "finding": "RSS/arxiv publication time is not ISO-8601 or PIT available_time precedes event_time",
+      "action_for_coordinator": "attach to temporal schema owner or register class; preserve entries until corrected and replayed"
+    },
+    {
+      "class": "payload_limit",
+      "pending_count": 41,
+      "finding": "TPEx price-history payload exceeds 8388608-byte limit",
+      "action_for_coordinator": "attach to collector payload/read-budget class; do not increase limits or replay in this task"
+    },
+    {
+      "class": "collector_deadline",
+      "pending_count": 130,
+      "finding": "TPEx price-history body/external request deadline exceeded",
+      "action_for_coordinator": "attach to collector I/O deadline class; preserve entries; no provider call in this task"
+    },
+    {
+      "finding": "the same refresh run also failed the tw-twse-tpex-official-market and tw-finmind-valuation profiles because source-ingest-agora-projector timed out (TimeoutError), unrelated to the DLQ gate",
+      "action_for_coordinator": "register separately; this task does not change it"
+    },
+    {
+      "finding": "the pre/post rule counts net growth per connector, so an old entry resolved and a new one added in the same tick cancel out (inherited from the steady pull)",
+      "action_for_coordinator": "accept, or register a follow-up that compares entry ids instead of counts"
+    },
+    {
+      "finding": "existing loop-controller and DLQ journal retention/cap is unverified in storage manifest",
+      "action_for_coordinator": "retain with RC3 WP3.1; this task adds no writer and does not change retention"
+    },
+    {
+      "finding": "The 2026-11-27T13:01:13Z ci-red owner return cited the canonical review status from run 46000137554 (12:39Z, before independent approval at 12:51:17Z). The exact-head approve proof tag exists, and approval-triggered workflow run 46002137032 was still queued when inspected during owner resumption. No failing product test was identified by this return.",
+      "action_for_coordinator": "attach the stale-red versus pending-review-workflow distinction to the existing RC1 integrator/review-gate class; no tooling changes or review-proof writes in this source task"
+    }
+  ],
+  "hosted_acceptance": "pending deploy: two consecutive bounded refresh runs after deploy pass the tw-official-twse-margin-balances profile and report the four 2026-11-24 entries in pre_existing_unresolved_dlq_backlog until an operator replays them",
+  "review_independence": {
+    "owner": "Codex",
+    "reviewer": "Antigravity2",
+    "owner_family": "Codex",
+    "reviewer_family": "Antigravity",
+    "status": "independent_family_reviewer_assigned",
+    "assignment_recorded_at": "2026-11-27T13:15:45Z",
+    "assignment_source": "governed ai-status.sh show on owner resumption: canonical owner Codex, reviewer Antigravity2, status in_progress. Human/Ops assigned Antigravity2 to resolve the prior reviewer reassignment cycle and requested renewed exact-head handoff on PR #7905; supersedes the prior Antigravity assignment",
+    "coordinator_ac3_decision": "The coordinator confirms the live hosted read-only snapshot of 6824 pending entries across 19 connectors and 47 reason groups, with the historical 5776 distinguished, satisfies AC3. Residual findings above still require coordinator class attribution.",
+    "review_decision": "Antigravity approved 2207f90bdba14d8917a0c4b4a5488bd8b93932a6 at 2026-11-27T12:51:17Z (PR review PRR_kwDOR5tTNs8AAAABauWzyg). Task was subsequently reopened; pending fresh exact-head review by Antigravity2 of the dev sync and evidence corrections. Prior approval does not authorize the new head."
+  }
+}

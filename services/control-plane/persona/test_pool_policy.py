@@ -8,6 +8,16 @@ from pool_policy import load_policy, pool_health, reweight
 BASIS = "underlying_exposure_fraction_net_taiwan_costs_equal_notional"
 
 
+def test_newer_dispatch_is_not_erased_by_last_confirmed_publication():
+    from pool_policy import last_published, latest_publication
+    old = {"pool_version": 2, "status": "published", "members": []}
+    pending = {"pool_version": 6, "status": "dispatched", "members": []}
+    history = {"published": {"2": old, "6": pending}}
+    assert last_published(history) == old and latest_publication(history) == pending
+    assert last_published({"published": {"6": pending}}) is None
+    assert latest_publication(None) is None
+
+
 def book(returns, checksum="sum"):
     return {"source_ref": "test:observed-book", "checksum": checksum, "basis": BASIS,
             "since_inception": True, "dates": [(date(2026, 1, 1) + timedelta(days=i)).isoformat()

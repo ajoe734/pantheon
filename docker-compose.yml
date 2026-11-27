@@ -2028,6 +2028,13 @@ services:
       PERSONA_URL: ${PERSONA_URL:-http://persona:8002}
       PANTHEON_PERSONA_SERVICE_TOKEN: ${PANTHEON_PERSONA_SERVICE_TOKEN:-pantheon-local-persona-service-token}
       PANTHEON_PERSONA_SERVICE_ACTOR_ID: operator-bff
+      # Servant read-only data tools (AGORA-SERVANT-DATA-TOOLS-20261127) read
+      # source-ingest owner routes with a short service JWT; secret/issuer/
+      # audience must match the source-ingest verifier fallbacks above.
+      PANTHEON_SOURCE_INGEST_API_URL: ${PANTHEON_SOURCE_INGEST_API_URL:-http://source-ingest:8097}
+      PANTHEON_RUNTIME_JWT_SECRET: ${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}
+      PANTHEON_RUNTIME_JWT_ISSUER: ${PANTHEON_RUNTIME_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-${PANTHEON_DEV_BFF_JWT_ISSUER:-}}}
+      PANTHEON_RUNTIME_JWT_AUDIENCE: ${PANTHEON_RUNTIME_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-${PANTHEON_DEV_BFF_JWT_AUDIENCE:-}}}
     volumes:
       - bff-data:/data/bff
     depends_on:
@@ -2035,6 +2042,9 @@ services:
         condition: service_healthy
         required: false
       persona:
+        condition: service_healthy
+        required: false
+      source-ingest:
         condition: service_healthy
         required: false
       operator-bff:

@@ -6,7 +6,7 @@
   "owner": "Claude2",
   "reviewer": "Antigravity",
   "base": "a4754247d (origin/dev, after AGORA-SERVANT-SESSION-DURABLE-20261127 #7943 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 #7942)",
-  "delivery_state": "source_and_tests_verified_hosted_proof_pending_deploy_and_worker_env",
+  "delivery_state": "source_and_tests_verified_worker_env_wired_hosted_proof_pending_deploy",
   "design_choices": [
     "Tool rounds run in agora-interaction-worker (AD-AG-05), in BFF code (services/control-plane/bff/agora/servant/), so a tool call is resolved by the BFF and never by the model.",
     "Each round is one OpenClaw /structured call with SERVANT_TURN_SCHEMA (adapter-enforced keywords only; pinned by services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py). The conversation history (last 20 messages, T1) travels inside the turn packet.",
@@ -87,14 +87,19 @@
       ]
     },
     "ac7_hosted_proof": {
-      "status": "pending_post_merge_dev_deploy_and_worker_env",
-      "blocking_condition": "On hosted Dev the agora-interaction-worker compose service has no source-ingest URL and no runtime JWT secret, so every source-ingest tool would answer not_configured. docker-compose.yml is outside this task's artifact contract. The worker needs, in the agora-interaction-worker environment: PANTHEON_SOURCE_INGEST_API_URL=${PANTHEON_SOURCE_INGEST_API_URL:-http://source-ingest:8097}, PANTHEON_RUNTIME_JWT_SECRET=${PANTHEON_RUNTIME_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-${PANTHEON_DEV_BFF_JWT_SECRET:-}}}, PANTHEON_RUNTIME_JWT_ISSUER and PANTHEON_RUNTIME_JWT_AUDIENCE with the same fallbacks as the source-ingest service (docker-compose.yml:342-344).",
+      "status": "pending_post_merge_dev_deploy",
+      "blocking_condition": "Resolved in source by PR #7968: docker-compose.yml agora-interaction-worker now sets PANTHEON_SOURCE_INGEST_API_URL (${PANTHEON_SOURCE_INGEST_API_URL:-http://source-ingest:8097}) and PANTHEON_RUNTIME_JWT_SECRET/ISSUER/AUDIENCE with the same fallback chain as the source-ingest service, plus a non-required source-ingest health dependency. The hosted proof runs after that PR is merged and Dev is redeployed.",
       "procedure_after_deploy": [
         "POST /bff/agora/servant/sessions/{id}/messages with content 分析分點 and context {quick_task: analyze_broker_branches, selected_symbols: [<held symbol, e.g. 2330>]}",
         "GET /bff/agora/servant/sessions/{id}/stream: record the servant.message.completed citations (connector tw-finmind-broker-daily-report, as_of = latest stored session, source_id per row) and answer_mode",
         "Record MOPS (tw-mops-official-disclosures) and news (collector-news-rss) freshness from the disclosures and news tool results (newest record time and freshness state)"
       ],
-      "recorded": null
+      "recorded": null,
+      "worker_env_wiring": {
+        "pr": 7968,
+        "artifact": "docker-compose.yml (agora-interaction-worker environment, depends_on)",
+        "verified": "docker compose --profile root --profile workers config renders the four variables on agora-interaction-worker; scripts/test_current_l12_compose_wiring.py, test_source_ingest_scheduler_health_compose_contract.py, test_persona_provisioning_compose_contract.py, test_dev_release_artifacts.py pass"
+      }
     }
   },
   "contracts": {
@@ -128,9 +133,9 @@
   },
   "residual_findings": [
     {
-      "summary": "agora-interaction-worker compose env lacks the source-ingest URL and runtime JWT secret/issuer/audience the servant tools need on hosted (see ac7 blocking_condition). docker-compose.yml is outside this task's artifacts.",
+      "summary": "agora-interaction-worker compose env lacked the source-ingest URL and runtime JWT secret/issuer/audience the servant tools need on hosted.",
       "scope": "docker-compose.yml (agora-interaction-worker environment)",
-      "disposition": "needs artifact-contract addition or a follow-up deploy-config task before the hosted proof"
+      "disposition": "resolved by PR #7968 after docker-compose.yml was added to the artifact contract; hosted confirmation is part of ac7"
     },
     {
       "summary": "my_journal and institutional_facts are wired but will answer not_configured/unavailable in the worker until it has a decision-journal reader (the persona read client has no list_decision_journal_entries) and evaluation/memory owner URLs; they report the missing data instead of answering.",

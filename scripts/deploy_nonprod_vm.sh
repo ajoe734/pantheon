@@ -2685,6 +2685,72 @@ print(json.dumps({"source_records": records}))
 FINMIND_RECORDS_PY
 }
 
+# SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: tw_broker_top for the WHOLE market from one FinMind
+# SponsorPro whole-day parquet per published session (services/source_ingestion/finmind_broker_backfill.py
+# run_whole_market_session, the same bulk parquet adapter as the two-year backfill). It runs inside the
+# running source-ingest container against its own market_data_store; the token is passed by name from
+# this environment (docker exec -e NAME, never a value on a command line) and is never printed.
+# Sets BROKER_WHOLE_MARKET_JSON to the run receipt (counts, requests, bytes, coverage, status).
+run_finmind_broker_whole_market() {
+  local cid="" out="" rc=0
+  BROKER_WHOLE_MARKET_JSON=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  if [[ -z "${cid}" ]]; then
+    BROKER_WHOLE_MARKET_JSON='{"status": "failed", "reason": "source_ingest_container_missing", "fallback_required": true, "requests_made": 0}'
+    return 0
+  fi
+  out="$(docker exec -i \
+    -e FINMIND_API_TOKEN \
+    -e PANTHEON_EXTERNAL_EGRESS=allowlist \
+    -e PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=api.finmindtrade.com,storage.googleapis.com \
+    -e SOURCE_INGEST_BOUNDED_TRADE_DATE="${SOURCE_INGEST_BOUNDED_TRADE_DATE:-}" \
+    -e SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT:-}" \
+    -e PANTHEON_REFRESH_RUN_ID="${PANTHEON_REFRESH_RUN_ID:-}" \
+    "${cid}" python3 - 2>/dev/null <<'BROKER_WHOLE_MARKET_PY'
+import json, os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+from services.source_ingestion.finmind_broker_backfill import run_whole_market_session
+
+
+def session_day(day):
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+
+now = datetime.now(timezone.utc)
+selected = os.environ.get("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT", "").strip()
+if selected:
+    parsed = datetime.fromisoformat(selected.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None and parsed <= now:
+        now = parsed
+trade_date = latest_published_broker_session(now, is_session_day=session_day).isoformat()
+explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
+if explicit:
+    if explicit > trade_date:
+        print(json.dumps({"status": "failed", "reason": f"requested trade date {explicit} not yet published (latest {trade_date})",
+                          "fallback_required": False, "requests_made": 0}))
+        raise SystemExit(0)
+    trade_date = explicit
+data_dir = Path(os.environ.get("SOURCE_INGEST_DATA_DIR") or "/data/source-ingest")
+root = Path(os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT") or (data_dir / "market_data_store"))
+run_id = "broker-whole-market-" + (os.environ.get("PANTHEON_REFRESH_RUN_ID") or now.strftime("%Y%m%dT%H%M%SZ"))
+print(json.dumps(run_whole_market_session(market_data_root=root, trade_date=trade_date, run_id=run_id),
+                 ensure_ascii=False, sort_keys=True))
+BROKER_WHOLE_MARKET_PY
+  )" || rc=$?
+  out="$(printf '%s\n' "${out}" | tail -n1)"
+  if [[ -z "${out}" ]] || ! python3 -c 'import json,sys; json.loads(sys.argv[1])' "${out}" >/dev/null 2>&1; then
+    BROKER_WHOLE_MARKET_JSON="{\"status\": \"failed\", \"reason\": \"whole_market_run_no_receipt_rc_${rc}\", \"fallback_required\": true, \"requests_made\": 0}"
+    return 0
+  fi
+  BROKER_WHOLE_MARKET_JSON="${out}"
+  return 0
+}
+
 check_taiwan_refresh_preflight() {
   local force="${1:-false}" finmind_records_file=""
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
@@ -4279,6 +4345,16 @@ if dataset and "dataset" not in payload:
     payload["dataset"] = dataset
 if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
     payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
+if os.environ.get("BROKER_WHOLE_MARKET_JSON") and connector_id == "tw-finmind-broker-daily-report":
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: the whole-market run receipt (counts, requests, bytes, coverage).
+    try:
+        wm = json.loads(os.environ["BROKER_WHOLE_MARKET_JSON"])
+    except ValueError:
+        wm = {"status": "failed", "reason": "unreadable whole-market receipt"}
+    payload["broker_whole_market"] = wm
+    if wm.get("fallback_required") or wm.get("status") == "failed":
+        payload["coordinator_notice"] = ("FinMind whole-day broker file not stored (" + str(wm.get("status")) + ": "
+                                         + str(wm.get("reason") or "") + "); per-symbol fallback for the active symbols")
 if os.environ.get("PREVIOUS_PROFILE_ACTION", "none") != "none":
     payload["previous_profile_process"] = {"action": os.environ["PREVIOUS_PROFILE_ACTION"], "pids": os.environ.get("PREVIOUS_PROFILE_PIDS", ""), "seconds": int(os.environ.get("PREVIOUS_PROFILE_SECONDS") or 0)}
 pathlib.Path(out_path).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
@@ -4338,6 +4414,30 @@ OUTCOME_PY
   curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
     || error "source-ingest /readyz did not become ready before bounded refresh preflight"
   resolve_bounded_source_refresh_active_symbols
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && "${BROKER_WHOLE_MARKET_DISABLED:-false}" != "true" ]]; then
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market first, from one whole-day file. Only a
+    # provider refusal (or a run that produced no receipt) falls back to the per-symbol path below.
+    BROKER_WHOLE_MARKET_JSON=""
+    run_finmind_broker_whole_market || true
+    [[ -n "${BROKER_WHOLE_MARKET_JSON:-}" ]] || BROKER_WHOLE_MARKET_JSON='{"status": "failed", "reason": "whole_market_run_no_receipt", "fallback_required": true, "requests_made": 0}'
+    export BROKER_WHOLE_MARKET_JSON
+    local wm_status wm_fallback
+    wm_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "failed")' "${BROKER_WHOLE_MARKET_JSON}")"
+    wm_fallback="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print("true" if d.get("fallback_required") or d.get("status") == "failed" else "false")' "${BROKER_WHOLE_MARKET_JSON}")"
+    info "FinMind broker whole-market run: status=${wm_status} fallback=${wm_fallback}"
+    if [[ "${wm_fallback}" != "true" ]]; then
+      local wm_outcome_status="partial" wm_reason
+      [[ "${wm_status}" == "complete" || "${wm_status}" == "already_complete" ]] && wm_outcome_status="completed"
+      wm_reason="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("reason") or ("whole_market_" + str(d.get("status"))))' "${BROKER_WHOLE_MARKET_JSON}")"
+      write_bounded_refresh_outcome "${wm_outcome_status}" "${wm_reason}" '{"connector_id": "tw-finmind-broker-daily-report", "dataset": "tw_broker_top", "path": "whole_market_bulk_parquet"}'
+      trap - EXIT INT TERM
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      return 0
+    fi
+    # Coordinator notice: the plan refused (or the run failed before) the whole-day file. The reason is the
+    # provider's own (token-free); the active symbols keep the per-symbol path so they are not left stale.
+    info "COORDINATOR NOTICE: FinMind whole-day broker file not stored (status=${wm_status}); falling back to the per-symbol path for the active symbols"
+  fi
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
 
