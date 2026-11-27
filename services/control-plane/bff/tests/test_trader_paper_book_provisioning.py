@@ -231,14 +231,49 @@ def owner_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     provisioning_store = MemoryPersonaProvisioningStore()
     persona_owner = _InMemoryPersonaWriteOwner()
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+    )
+
+    authority_transport = FakeOwnerTransport(
+        governance_subject=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+    )
+
+    class _CompositeTraderPaperBookOwnerTransport:
+        owners = ("capital", "registry", "governance", "deployment")
+
+        def __init__(self, tenant_id: str) -> None:
+            self._capital = _PersonaOwnerHttpTransport(tenant_id=tenant_id)
+            self._authority = authority_transport
+
+        def get(self, owner: str, path: str) -> Any:
+            if owner == "capital":
+                return self._capital.get(owner, path)
+            return self._authority.get(owner, path)
+
+        def list(self, owner: str, path: str) -> Any:
+            if owner == "capital":
+                return self._capital.list(owner, path)
+            return self._authority.list(owner, path)
+
+        def post(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
+            if owner == "capital":
+                return self._capital.post(owner, path, payload)
+            return self._authority.post(owner, path, payload)
+
+        def patch(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
+            if owner == "capital":
+                return self._capital.patch(owner, path, payload)
+            return self._authority.patch(owner, path, payload)
 
     def _coordinator_for_tenant(tenant_id: str) -> PersonaProvisioningCoordinator:
         return PersonaProvisioningCoordinator(
             store=provisioning_store,
-            transport=_PersonaOwnerHttpTransport(tenant_id=tenant_id),
+            transport=_CompositeTraderPaperBookOwnerTransport(tenant_id=tenant_id),
             schedule_registrar=lambda *_a, **_kw: {},
             lease_owner="trader-paper-book-test-worker",
             actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+            governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
         )
 
     monkeypatch.setattr(personas_service, "_chain_paper_capital_coordinator", _coordinator_for_tenant)
@@ -317,6 +352,7 @@ def owner_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
             "persona_owner": persona_owner,
             "capital_calls": capital_calls,
             "coordinator_for_tenant": _coordinator_for_tenant,
+            "authority_transport": authority_transport,
         }
     finally:
         capital_client.close()
@@ -1200,3 +1236,352 @@ def test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_tr
     assert transition_calls == []
     assert deploy_calls == []
     assert rm_service.get_binding(paused_binding_id).status == "paused"
+
+
+def test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_deploy_or_repair_transitions(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 P1 / AC1):
+    - Missing Registry/Governance/Deployment owner configuration (including transport=None or incomplete env)
+      fails closed before producing an executable projection, deploying a new RuntimeBinding, or transitioning
+      an existing RuntimeBinding.
+    - Absent, incomplete, or unapproved (draft/candidate) RegistryEntry or DeploymentPlan receipts fail closed
+      rather than synthesizing approvals or defaulting authority fields.
+    """
+    from copy import deepcopy
+    from services.control_plane.bff.personas.trader_paper_book import (
+        _resolve_paper_book_execution_projection,
+        trader_paper_book_ids,
+        trader_paper_book_provisioning_record,
+        trader_paper_runtime_id,
+    )
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+    )
+    from services.runtime_manager.runtime_binding import (
+        DeploymentMode,
+        RuntimeBinding,
+        RuntimeBindingStatus,
+    )
+
+    rm_service: RuntimeManagerService = owner_stack["rm_service"]
+    rm_client: Any = owner_stack["rm_client"]
+    coordinator_for_tenant = owner_stack["coordinator_for_tenant"]
+
+    hosted_tenant = "tenant-dev"
+    hosted_persona = "agora-servant-799a3ce8c021b91cbb54"
+    starting_capital = resolve_trader_paper_starting_capital(
+        as_of="2026-11-27T09:42:00Z"
+    )
+    record = trader_paper_book_provisioning_record(
+        hosted_tenant,
+        hosted_persona,
+        requested_by="agora-trader-1",
+        starting_capital=starting_capital,
+        created_at="2026-11-27T09:42:00Z",
+    )
+    ids = trader_paper_book_ids(hosted_tenant, hosted_persona)
+
+    # 1. Exact independent repro from P1 review: transport=None and env={} fail closed.
+    no_transport_coordinator = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=None,  # type: ignore[arg-type]
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="repro-no-transport",
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as no_tx_exc:
+        _resolve_paper_book_execution_projection(
+            no_transport_coordinator,
+            record,
+            ids,
+            expected_currency="TWD",
+            env={},
+        )
+    assert no_tx_exc.value.reason_code == "deploy_authorities_unavailable"
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as no_rec_exc:
+        no_transport_coordinator.build_paper_execution_projection_metadata(record, ids)
+    assert no_rec_exc.value.reason_code == "registry_receipt_missing"
+
+    # Incomplete _PersonaOwnerHttpTransport configuration (missing registry/governance/deployment env) fails closed.
+    http_only_coordinator = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=hosted_tenant),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="repro-incomplete-env",
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as incomplete_env_exc:
+        _resolve_paper_book_execution_projection(
+            http_only_coordinator,
+            record,
+            ids,
+            expected_currency="TWD",
+            env={"PANTHEON_CAPITAL_API_URL": OWNER_BASE_URL},
+        )
+    assert incomplete_env_exc.value.reason_code == "deploy_authorities_unavailable"
+
+    # 2. Coordinate real approved authority receipts once so we can test missing/incomplete/draft variations.
+    valid_authority_tx = FakeOwnerTransport(
+        governance_subject=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID
+    )
+    valid_coord = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=valid_authority_tx,
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="valid-authorities",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+    )
+    valid_proj = _resolve_paper_book_execution_projection(
+        valid_coord, record, ids, expected_currency="TWD"
+    )
+    assert valid_proj["symbol"] == "2330.TW"
+    approved_reg = deepcopy(
+        valid_authority_tx.objects[
+            ("registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}")
+        ]
+    )
+    approved_plan = deepcopy(
+        valid_authority_tx.objects[
+            ("deployment", f"/api/deployment/plans/{ids.deployment_plan_id}")
+        ]
+    )
+
+    # Absent registry_receipt or absent deployment_plan_receipt fails closed.
+    with pytest.raises(PersonaProvisioningCoordinationError) as miss_reg:
+        valid_coord.build_paper_execution_projection_metadata(
+            record, ids, deployment_plan_receipt=approved_plan, registry_receipt=None
+        )
+    assert miss_reg.value.reason_code == "registry_receipt_missing"
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as miss_plan:
+        valid_coord.build_paper_execution_projection_metadata(
+            record, ids, deployment_plan_receipt=None, registry_receipt=approved_reg
+        )
+    assert miss_plan.value.reason_code == "deployment_plan_receipt_missing"
+
+    # Draft/candidate/incomplete RegistryEntry receipts fail closed.
+    candidate_reg = deepcopy(approved_reg)
+    candidate_reg["entry"]["artifact_state"] = "candidate"
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        valid_coord.build_paper_execution_projection_metadata(
+            record,
+            ids,
+            deployment_plan_receipt=approved_plan,
+            registry_receipt=candidate_reg,
+        )
+
+    draft_reg = deepcopy(approved_reg)
+    draft_reg["entry"]["artifact_state"] = "draft"
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        valid_coord.build_paper_execution_projection_metadata(
+            record,
+            ids,
+            deployment_plan_receipt=approved_plan,
+            registry_receipt=draft_reg,
+        )
+
+    no_approval_id_reg = deepcopy(approved_reg)
+    no_approval_id_reg["entry"]["approval_decision_id"] = None
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        valid_coord.build_paper_execution_projection_metadata(
+            record,
+            ids,
+            deployment_plan_receipt=approved_plan,
+            registry_receipt=no_approval_id_reg,
+        )
+
+    no_approved_at_reg = deepcopy(approved_reg)
+    no_approved_at_reg["entry"]["approved_at"] = None
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        valid_coord.build_paper_execution_projection_metadata(
+            record,
+            ids,
+            deployment_plan_receipt=approved_plan,
+            registry_receipt=no_approved_at_reg,
+        )
+
+    no_checksum_reg = deepcopy(approved_reg)
+    no_checksum_reg["entry"]["checksum"] = None
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        valid_coord.build_paper_execution_projection_metadata(
+            record,
+            ids,
+            deployment_plan_receipt=approved_plan,
+            registry_receipt=no_checksum_reg,
+        )
+
+    # Draft/rejected/incomplete DeploymentPlan receipts fail closed.
+    for bad_plan_mut in (
+        lambda p: p.update(status="draft"),
+        lambda p: p.update(status="rejected"),
+        lambda p: p.pop("status", None),
+        lambda p: p.pop("approval_decision_id", None),
+        lambda p: p.pop("rollback", None),
+        lambda p: p.update(target_stage="canary"),
+    ):
+        bad_plan = deepcopy(approved_plan)
+        bad_plan_mut(bad_plan)
+        with pytest.raises(PersonaProvisioningCoordinationError):
+            valid_coord.build_paper_execution_projection_metadata(
+                record,
+                ids,
+                deployment_plan_receipt=bad_plan,
+                registry_receipt=approved_reg,
+            )
+
+    # 3. End-to-end ensure_trader_paper_book (fresh deploy & in-place repair):
+    #    missing owners, missing receipts, or draft receipts emit zero deploy and zero transition calls.
+    transition_calls: List[str] = []
+    deploy_calls: List[str] = []
+    orig_transition = rm_client.transition
+    orig_deploy = rm_client.deploy
+
+    def _spy_transition(binding_id: str, new_status: str, **kwargs: Any) -> Any:
+        transition_calls.append(f"{binding_id}:{new_status}")
+        return orig_transition(binding_id, new_status, **kwargs)
+
+    def _spy_deploy(request: Dict[str, Any]) -> Any:
+        deploy_calls.append(str(request.get("plan_id") or ""))
+        return orig_deploy(request)
+
+    monkeypatch.setattr(rm_client, "transition", _spy_transition)
+    monkeypatch.setattr(rm_client, "deploy", _spy_deploy)
+
+    # 3a. Fresh book with capital-only transport (missing registry/governance/deployment owners):
+    #     fails closed with zero deploy calls.
+    capital_only_coord = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=TENANT_ID),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="capital-only-worker",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as cap_only_fresh_exc:
+        ensure_trader_paper_book(
+            TENANT_ID,
+            "agora-servant-missing-owners-fresh",
+            requested_by="trader-missing-owners",
+            coordinator=capital_only_coord,
+            runtime_client=rm_client,
+            env={"PANTHEON_CAPITAL_API_URL": OWNER_BASE_URL},
+        )
+    assert cap_only_fresh_exc.value.reason_code == "deploy_authorities_unavailable"
+    assert deploy_calls == []
+    assert transition_calls == []
+
+    # 3b. Existing legacy active binding without projection + missing/draft authority receipts:
+    #     fails closed with zero transition calls and leaves the binding unprojected.
+    legacy_persona = "agora-servant-draft-authority-repair"
+    legacy_ids = trader_paper_book_ids(TENANT_ID, legacy_persona)
+    legacy_rb_id = "rb-legacy-draft-authority-001"
+    base_coord = coordinator_for_tenant(TENANT_ID)
+    base_coord.ensure_chain_paper_capital(
+        tenant_id=TENANT_ID,
+        persona_id=legacy_persona,
+        capital_pool_id=legacy_ids.capital_pool_id,
+        binding_id=legacy_ids.persona_capital_binding_id,
+        requested_by="trader-draft-authority",
+        currency="TWD",
+        name=f"{legacy_persona} trader paper pool",
+        budget=10_000_000.0,
+        mandate="user_private_agora_servant_paper_book",
+        labels={"task_id": "PAPER-TRADER-BOOK-PROVISION-20261127", "paper_only": True},
+    )
+    rm_service._store.create(
+        RuntimeBinding(
+            binding_id=legacy_rb_id,
+            runtime_id=trader_paper_runtime_id(legacy_ids),
+            capital_pool_id=legacy_ids.capital_pool_id,
+            plan_id=legacy_ids.deployment_plan_id,
+            artifact_id=legacy_ids.strategy_artifact_id,
+            artifact_version=legacy_ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.ACTIVE.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=legacy_ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                "tenant_id": TENANT_ID,
+                "persona_id": legacy_persona,
+                "sponsor_persona_id": legacy_persona,
+                "strategy_id": legacy_ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+                "requested_by": "trader-draft-authority",
+            },
+        )
+    )
+
+    # Missing owners on repair -> fails closed with zero transitions.
+    with pytest.raises(PersonaProvisioningCoordinationError) as cap_only_repair_exc:
+        ensure_trader_paper_book(
+            TENANT_ID,
+            legacy_persona,
+            requested_by="trader-draft-authority",
+            coordinator=capital_only_coord,
+            runtime_client=rm_client,
+            env={"PANTHEON_CAPITAL_API_URL": OWNER_BASE_URL},
+        )
+    assert cap_only_repair_exc.value.reason_code == "deploy_authorities_unavailable"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert "object_store" not in (rm_service.get_binding(legacy_rb_id).metadata or {})
+
+    # Owner returning a draft DeploymentPlan after coordination -> fails closed with zero transitions.
+    class _DraftPlanTransport:
+        owners = ("capital", "registry", "governance", "deployment")
+
+        def __init__(self) -> None:
+            self._cap = _PersonaOwnerHttpTransport(tenant_id=TENANT_ID)
+            self._auth = FakeOwnerTransport(
+                governance_subject=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID
+            )
+
+        def get(self, owner: str, path: str) -> Any:
+            if owner == "capital":
+                return self._cap.get(owner, path)
+            res = self._auth.get(owner, path)
+            if owner == "deployment" and isinstance(res, dict):
+                res = {**res, "status": "draft"}
+            return res
+
+        def list(self, owner: str, path: str) -> Any:
+            if owner == "capital":
+                return self._cap.list(owner, path)
+            return self._auth.list(owner, path)
+
+        def post(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
+            if owner == "capital":
+                return self._cap.post(owner, path, payload)
+            res = self._auth.post(owner, path, payload)
+            if owner == "deployment" and isinstance(res, dict):
+                res = {**res, "status": "draft"}
+            return res
+
+        def patch(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
+            if owner == "capital":
+                return self._cap.patch(owner, path, payload)
+            return self._auth.patch(owner, path, payload)
+
+    draft_plan_coord = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=_DraftPlanTransport(),
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="draft-plan-worker",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError):
+        ensure_trader_paper_book(
+            TENANT_ID,
+            legacy_persona,
+            requested_by="trader-draft-authority",
+            coordinator=draft_plan_coord,
+            runtime_client=rm_client,
+        )
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert "object_store" not in (rm_service.get_binding(legacy_rb_id).metadata or {})

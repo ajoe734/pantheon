@@ -21,11 +21,11 @@
   "changes": [
     {
       "path": "services/control-plane/bff/persona_provisioning_coordinator.py",
-      "summary": "Added PersonaProvisioningCoordinator.build_paper_execution_projection_metadata(record, ids, deployment_plan_receipt=..., registry_receipt=...) reusing StagePlanner().build_execution_projection(plan_obj, entry), validate_strategy_artifact, strategy_artifact_checksum, and strategy_artifact_minimum_closes (the exact projection path used by DeploymentService.create_plan)."
+      "summary": "Added PersonaProvisioningCoordinator.build_paper_execution_projection_metadata(record, ids, deployment_plan_receipt=..., registry_receipt=...) reusing StagePlanner().build_execution_projection(plan_obj, entry), validate_strategy_artifact, strategy_artifact_checksum, and strategy_artifact_minimum_closes (the exact projection path used by DeploymentService.create_plan). Requires real validated Registry and DeploymentPlan owner receipts via self._validate_registry(..., state='approved') and DeploymentPlan.from_dict(deployment_plan_receipt).validate(), failing closed on absent, incomplete, or unapproved receipts with zero synthesized approvals or defaulted authority fields."
     },
     {
       "path": "services/control-plane/bff/personas/trader_paper_book.py",
-      "summary": "Updated ensure_trader_paper_book to attach the StagePlanner.build_execution_projection metadata (object_store, strategy_id, artifact_checksum, symbol='2330.TW' for TWD books, market_data_policy) on new RuntimeBinding creation and to repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
+      "summary": "Updated ensure_trader_paper_book to resolve the approved artifact projection from real Registry and Deployment owner receipts (failing closed with reason_code='deploy_authorities_unavailable' when Registry/Governance/Deployment owners are unconfigured or when receipts are absent/unapproved), attach the StagePlanner.build_execution_projection metadata on new RuntimeBinding creation, and repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
     },
     {
       "path": "services/execution/lean_runtime/paper_signal_producer.py",
@@ -41,7 +41,11 @@
     },
     {
       "path": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py",
-      "summary": "Added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1), test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2), test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding (P1 regression), and test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions (P1 regression)."
+      "summary": "Wired owner_stack with real authority receipts for Registry/Governance/Deployment and added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1), test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2), test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding (P1 regression), test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions (P1 regression), and test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_deploy_or_repair_transitions (P1 / AC1 regression)."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
+      "summary": "Wired servant_paper_world with Registry and Deployment authority endpoints backed by real Governance approval decisions so ensure_trader_paper_book resolves real approved authority receipts."
     },
     {
       "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
@@ -57,7 +61,8 @@
       "status": "verified_by_unit_and_integration_tests",
       "tests": [
         "services/runtime-manager/test_fleet_desired_state.py::TestStability::test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings",
-        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings"
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_deploy_or_repair_transitions"
       ],
       "no_exemption_in_fleet_desired_state": true
     },

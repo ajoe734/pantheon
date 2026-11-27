@@ -500,6 +500,8 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         "CAPITAL_GOVERNANCE_SERVICE_TOKEN": issued["CAPITAL_GOVERNANCE_SERVICE_TOKEN"],
         "PANTHEON_GOVERNANCE_APPROVAL_API_URL": "http://governance.test",
         "PANTHEON_CAPITAL_API_URL": "http://capital.test",
+        "PANTHEON_REGISTRY_API_URL": "http://registry.test",
+        "PANTHEON_DEPLOYMENT_API_URL": "http://deployment.test",
         "PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN": issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"],
         "PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID": issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
         "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID": proposer_id,
@@ -516,6 +518,13 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     cap_main = importlib.reload(importlib.import_module("services.capital.main"))
     cap_client = TestClient(cap_main.app)
 
+    from services.control_plane.bff.test_persona_provisioning_coordinator import (
+        FakeOwnerTransport,
+    )
+
+    authority_transport = FakeOwnerTransport(
+        governance_subject=issued["PANTHEON_PERSONA_GOVERNANCE_ACTOR_ID"],
+    )
     seen_http: List[Tuple[str, str, str]] = []
 
     def _urlopen(request: Any, timeout: Any = None, **_kw: Any) -> _HttpResponse:
@@ -525,6 +534,36 @@ def servant_paper_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         path = path or "/"
         method = request.get_method().upper()
         seen_http.append((owner, method, path))
+        if owner in {"registry", "deployment"}:
+            if method == "GET":
+                found = authority_transport.get(owner, path)
+                if found is None:
+                    raise urllib.error.HTTPError(
+                        url,
+                        404,
+                        "not found",
+                        email.message.Message(),
+                        io.BytesIO(b'{"detail":"not found"}'),
+                    )
+                return _HttpResponse(json.dumps(found).encode("utf-8"))
+            payload = json.loads(request.data.decode("utf-8")) if request.data else {}
+            if owner == "registry" and path.endswith("/advance"):
+                decision_id = str(payload.get("approval_decision_id") or "").strip()
+                if decision_id:
+                    gov_path = f"/api/governance/approvals/{decision_id}"
+                    gov_resp = gov_client.get(
+                        gov_path,
+                        headers={
+                            "Authorization": "Bearer "
+                            + issued["PANTHEON_PERSONA_GOVERNANCE_SERVICE_TOKEN"]
+                        },
+                    )
+                    if gov_resp.status_code == 200:
+                        authority_transport.objects[("governance", gov_path)] = (
+                            gov_resp.json()
+                        )
+            created = authority_transport.post(owner, path, payload)
+            return _HttpResponse(json.dumps(created).encode("utf-8"))
         client = {"governance": gov_client, "capital": cap_client}[owner]
         headers = {k: v for k, v in request.header_items()}
         resp = client.request(method, path, content=request.data, headers=headers)

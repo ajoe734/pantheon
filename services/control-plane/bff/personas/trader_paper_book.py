@@ -492,9 +492,11 @@ def _transport_supports_deploy_authorities(
         return True
     # Custom test transport injected directly into PersonaProvisioningCoordinator.
     owners = getattr(transport, "owners", None)
-    if isinstance(owners, Mapping):
+    if isinstance(owners, (Mapping, set, frozenset, list, tuple)):
         return all(owner in owners for owner in ("registry", "governance", "deployment"))
-    return False
+    return callable(getattr(transport, "get", None)) and callable(
+        getattr(transport, "post", None)
+    )
 
 
 def _transport_supports_paper_risk_gate(
@@ -513,10 +515,25 @@ def _transport_supports_paper_risk_gate(
             env_names = owner_envs.get(owner) or ()
             if not any(str(env_map.get(name) or "").strip() for name in env_names):
                 return False
-        return True
+        return (
+            any(
+                str(env_map.get(name) or "").strip()
+                for name in (
+                    "CAPITAL_GOVERNANCE_BASE_URL",
+                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID",
+                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
+                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE",
+                    "OPENCLAW_GATEWAY_URL",
+                )
+            )
+            or getattr(coordinator, "risk_policy_drafter", None) is not None
+        )
     owners = getattr(transport, "owners", None)
-    if isinstance(owners, Mapping):
-        return all(owner in owners for owner in ("capital", "governance"))
+    if isinstance(owners, (Mapping, set, frozenset, list, tuple)):
+        return (
+            all(owner in owners for owner in ("capital", "governance"))
+            and getattr(coordinator, "risk_policy_drafter", None) is not None
+        )
     return False
 
 
@@ -763,7 +780,7 @@ def _binding_has_executable_projection(
     binding: Mapping[str, Any],
     *,
     ids: ProvisioningIds,
-    expected_currency: str,
+    expected_currency: str = "",
 ) -> bool:
     """True when ``binding`` already carries the approved artifact projection required by desired-state."""
     from services.control_plane.governance.deployment_plan import StagePlanner
@@ -794,7 +811,14 @@ def _binding_has_executable_projection(
             return False
     if not isinstance(projected_metadata, Mapping):
         return False
-    if not str(projected_metadata.get("checksum") or "").strip():
+    if (
+        not str(projected_metadata.get("checksum") or "").strip()
+        or projected_metadata.get("registry_id") != ids.strategy_artifact_id
+        or projected_metadata.get("artifact_state") != "approved"
+        or projected_metadata.get("approval_decision_id")
+        != ids.strategy_artifact_approval_decision_id
+        or projected_metadata.get("deployment_plan_id") != ids.deployment_plan_id
+    ):
         return False
     projected_artifact = object_store.get(artifact_key)
     if not (
@@ -804,9 +828,14 @@ def _binding_has_executable_projection(
         return False
     symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
     if not symbol:
-        return False
-    if str(expected_currency or "").strip().upper() == "TWD" and symbol.upper() == "SPY":
-        return False
+        pool = binding.get("symbols") or metadata.get("symbols")
+        names = (
+            [str(s or "").strip() for s in pool]
+            if isinstance(pool, (list, tuple))
+            else []
+        )
+        if not (len(names) > 1 and all(names) and len(set(names)) == len(names)):
+            return False
     market_data_policy = (
         binding.get("market_data_policy") or metadata.get("market_data_policy")
     )
@@ -833,61 +862,65 @@ def _resolve_paper_book_execution_projection(
     record: ProvisioningRecord,
     ids: ProvisioningIds,
     *,
-    expected_currency: str,
+    expected_currency: str = "",
     coordinate_authorities: bool = True,
     env: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Resolve the approved artifact projection via StagePlanner.build_execution_projection."""
-    plan_receipt: Optional[Mapping[str, Any]] = None
-    reg_receipt: Optional[Mapping[str, Any]] = None
-    if _transport_supports_deploy_authorities(coordinator, env=env):
-        plan_receipt = coordinator._owner_get(
-            "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
+    """Resolve the approved artifact projection via StagePlanner.build_execution_projection.
+
+    Fails closed when Registry, Governance, or Deployment owners are unconfigured
+    or when the authoritative StrategyArtifact RegistryEntry or DeploymentPlan
+    receipt is absent, incomplete, or not approved.
+    """
+    if not _transport_supports_deploy_authorities(coordinator, env=env):
+        raise PersonaProvisioningCoordinationError(
+            "Registry, Governance, and Deployment owners must be configured to resolve "
+            "the trader paper book execution projection",
+            reason_code="deploy_authorities_unavailable",
         )
-        reg_receipt = coordinator._owner_get(
-            "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
-        )
-        reg_entry = (
-            reg_receipt.get("entry")
-            if isinstance(reg_receipt, Mapping) and isinstance(reg_receipt.get("entry"), Mapping)
-            else reg_receipt
-        )
-        authorities_ready = (
-            isinstance(plan_receipt, Mapping)
-            and plan_receipt.get("plan_id") == ids.deployment_plan_id
-            and plan_receipt.get("status") in {"approved", "executing", "executed"}
-            and isinstance(reg_entry, Mapping)
-            and reg_entry.get("registry_id") == ids.strategy_artifact_id
-            and reg_entry.get("artifact_state") == "approved"
-        )
-        if not authorities_ready and coordinate_authorities:
-            leased = _coordinate_paper_book_deploy_authorities(coordinator, record, ids)
-            plan_ref = leased.references.get("deployment_plan")
-            reg_ref = leased.references.get("strategy_artifact_approved")
-            if isinstance(plan_ref, Mapping):
-                plan_receipt = plan_ref
-            else:
-                plan_receipt = coordinator._owner_get(
-                    "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
-                )
-            if isinstance(reg_ref, Mapping):
-                reg_receipt = reg_ref
-            else:
-                reg_receipt = coordinator._owner_get(
-                    "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
-                )
-    projection = coordinator.build_paper_execution_projection_metadata(
+    plan_receipt = coordinator._owner_get(
+        "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
+    )
+    reg_receipt = coordinator._owner_get(
+        "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+    )
+    reg_entry = (
+        reg_receipt.get("entry")
+        if isinstance(reg_receipt, Mapping) and isinstance(reg_receipt.get("entry"), Mapping)
+        else reg_receipt
+    )
+    authorities_ready = (
+        isinstance(plan_receipt, Mapping)
+        and plan_receipt.get("plan_id") == ids.deployment_plan_id
+        and plan_receipt.get("status") in {"approved", "executing", "executed"}
+        and isinstance(reg_entry, Mapping)
+        and reg_entry.get("registry_id") == ids.strategy_artifact_id
+        and reg_entry.get("artifact_state") == "approved"
+        and reg_entry.get("approval_decision_id")
+        == ids.strategy_artifact_approval_decision_id
+    )
+    if not authorities_ready and coordinate_authorities:
+        leased = _coordinate_paper_book_deploy_authorities(coordinator, record, ids)
+        plan_ref = leased.references.get("deployment_plan")
+        reg_ref = leased.references.get("strategy_artifact_approved")
+        if isinstance(plan_ref, Mapping):
+            plan_receipt = plan_ref
+        else:
+            plan_receipt = coordinator._owner_get(
+                "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
+            )
+        if isinstance(reg_ref, Mapping):
+            reg_receipt = reg_ref
+        else:
+            reg_receipt = coordinator._owner_get(
+                "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+            )
+    return coordinator.build_paper_execution_projection_metadata(
         record,
         ids,
         deployment_plan_receipt=plan_receipt if isinstance(plan_receipt, Mapping) else None,
         registry_receipt=reg_receipt if isinstance(reg_receipt, Mapping) else None,
     )
-    if (
-        str(expected_currency or "").strip().upper() == "TWD"
-        and str(projection.get("symbol") or "").strip().upper() == "SPY"
-    ):
-        projection["symbol"] = "2330.TW"
-    return projection
 
 
 def _repair_runtime_binding_execution_projection_in_place(

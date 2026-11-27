@@ -597,15 +597,55 @@ class TestStability(unittest.TestCase):
             "non_executable_missing_artifact_store",
         )
 
-        # With the StagePlanner.build_execution_projection metadata attached, the binding
-        # is listed in desired-state bindings and not in excluded, and its artifact is loadable.
-        coordinator = PersonaProvisioningCoordinator(
+        # Without real approved Registry and DeploymentPlan authority receipts, projection resolution fails closed.
+        from services.control_plane.bff.persona_provisioning_coordinator import (
+            PersonaProvisioningCoordinationError,
+        )
+        from services.control_plane.bff.personas.trader_paper_book import (
+            _resolve_paper_book_execution_projection,
+        )
+        from services.control_plane.bff.test_persona_provisioning_coordinator import (
+            FakeOwnerTransport,
+        )
+
+        unconfigured_coordinator = PersonaProvisioningCoordinator(
             store=MemoryPersonaProvisioningStore(),
             transport=None,  # type: ignore[arg-type]
             schedule_registrar=lambda *_a, **_kw: {},
             lease_owner="test-fleet-desired-state",
         )
-        projection = coordinator.build_paper_execution_projection_metadata(record, ids)
+        with self.assertRaises(PersonaProvisioningCoordinationError):
+            unconfigured_coordinator.build_paper_execution_projection_metadata(
+                record, ids
+            )
+        with self.assertRaises(PersonaProvisioningCoordinationError):
+            _resolve_paper_book_execution_projection(
+                unconfigured_coordinator,
+                record,
+                ids,
+                expected_currency="TWD",
+                env={},
+            )
+
+        # With real approved Registry and DeploymentPlan authority receipts, the StagePlanner.build_execution_projection
+        # metadata is produced, the binding is listed in desired-state bindings and not in excluded, and its artifact is loadable.
+        owner_transport = FakeOwnerTransport(
+            governance_subject="pantheon-persona-provisioner"
+        )
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=owner_transport,
+            schedule_registrar=lambda *_a, **_kw: {},
+            lease_owner="test-fleet-desired-state",
+            actor_id="pantheon-persona-provisioner",
+            governance_actor_id="pantheon-persona-provisioner",
+        )
+        projection = _resolve_paper_book_execution_projection(
+            coordinator,
+            record,
+            ids,
+            expected_currency="TWD",
+        )
         projected = RuntimeBinding(
             binding_id="rb-77d962be4e324032808324109f2c154e",
             runtime_id=trader_paper_runtime_id(ids),
