@@ -161,12 +161,9 @@ def test_clarification_card_shape_matches_workshop_decision_v114(monkeypatch, tm
     assert detail.json()["data"]["pending_clarification"]["decision_id"] == "clarify_2330_horizon_side"
 
 
-def test_clarification_option_bounds_2_to_4_and_adapter_schema_contract():
-    import sys
-
+def test_clarification_option_bounds_2_to_4_and_adapter_schema_contract(monkeypatch):
     adapter_dir = REPO_ROOT / "services" / "openclaw-gateway-adapter"
-    if str(adapter_dir) not in sys.path:
-        sys.path.insert(0, str(adapter_dir))
+    monkeypatch.syspath_prepend(str(adapter_dir))
     from assistant_openclaw_provider import (
         OpenClawProviderError,
         _validate_extraction_arguments,
