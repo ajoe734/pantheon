@@ -54,6 +54,12 @@ SERVANT_HISTORY_MESSAGES = 20  # messages carried into one provider turn
 SERVANT_SESSION_RETENTION_DAYS = 180  # untouched sessions and their turns are purged after this
 SERVANT_TURN_MAX_ATTEMPTS = 3  # claims per turn (crash recovery) before it is settled as degraded
 SERVANT_TURNS_TABLE = "agora.servant_turns"  # table: one ~1 KB row per user message
+# AGORA-TRADER-HABIT-PROFILE-20261127 runtime budget (SD §6): one row per trader and strategy
+# in ``agora.habit_profiles`` holding the latest profile plus HABIT_PROFILE_HISTORY_VERSIONS
+# superseded versions; older versions are deleted on write.
+HABIT_PROFILES_TABLE = "agora.habit_profiles"
+HABIT_PROFILE_HISTORY_VERSIONS = 12
+HABIT_WIDGET_EVENTS_MAX = 200  # servant user messages read per profile derivation
 
 
 class ServantSessionMessageCapError(Exception):
@@ -245,6 +251,9 @@ class AgoraStore:
         )
         self._servant_turns = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.servant_turns", owner_service="agora-svc", bootstrap=bootstrap
+        )
+        self._habit_profiles = PostgresJsonOwnerStore(
+            dsn=self.dsn, table=f"{self.schema}.habit_profiles", owner_service="agora-svc", bootstrap=bootstrap
         )
 
     # -------------------------------------------------------------------------
@@ -1278,6 +1287,79 @@ class AgoraStore:
 
     def list_decision_locks(self) -> List[DictRecord]:
         return [DictRecord(row) for row in self._decision_locks.list_all()]
+
+    def list_trader_decision_locks(self, tenant_id: str, user_id: str) -> List[DictRecord]:
+        """Owner-scoped read: only this trader's locks (predicate in the owner query)."""
+        rows = self._decision_locks.select_where(
+            "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s",
+            (str(tenant_id), str(user_id)),
+        )
+        return [DictRecord(row) for row in rows]
+
+    # -------------------------------------------------------------------------
+    # Trader habit profiles (AGORA-TRADER-HABIT-PROFILE-20261127)
+    # -------------------------------------------------------------------------
+    def get_habit_row(self, profile_key: str) -> Optional[DictRecord]:
+        data = self._habit_profiles.get(profile_key)
+        return DictRecord(data) if data else None
+
+    def put_habit_profile(self, profile: Dict[str, Any], *, now: Optional[str] = None) -> tuple[bool, DictRecord]:
+        """Store the latest profile of one trader and strategy; a profile whose inputs did not
+        change is not written. The row keeps the latest profile plus
+        ``HABIT_PROFILE_HISTORY_VERSIONS`` superseded versions; older ones are deleted here."""
+        key = str(profile["profile_key"])
+        now = now or _utc_now_rfc3339()
+        for _attempt in range(8):
+            row = self._habit_profiles.get(key)
+            current = (row or {}).get("current")
+            if current and current.get("input_digest") == profile.get("input_digest") and not (row or {}).get("stale_since"):
+                return False, DictRecord(row)
+            if current and current.get("input_digest") == profile.get("input_digest"):
+                updated = {**row, "stale_since": None, "refreshed_at": now}
+            else:
+                version = int((current or {}).get("version") or 0) + 1
+                history = ([current] if current else []) + list((row or {}).get("history") or [])
+                updated = {
+                    "profile_key": key,
+                    "tenant_id": profile.get("tenant_id"),
+                    "user_id": profile.get("user_id"),
+                    "strategy_id": profile.get("strategy_id"),
+                    "current": {**profile, "version": version},
+                    "history": history[:HABIT_PROFILE_HISTORY_VERSIONS],
+                    "stale_since": None,
+                    "updated_at": now,
+                }
+            swapped, _cur = self._habit_profiles.compare_and_set(key, dict(row) if row else None, updated)
+            if swapped:
+                return True, DictRecord(updated)
+        raise RuntimeError(f"habit profile {key} write lost 8 concurrent races")
+
+    def mark_habit_profiles_stale(self, tenant_id: str, user_id: str, *, now: Optional[str] = None) -> int:
+        """A decision lock was written: flag this trader's profiles for recompute on next read."""
+        now = now or _utc_now_rfc3339()
+        marked = 0
+        for row in self._habit_profiles.select_where(
+            "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s", (str(tenant_id), str(user_id))
+        ):
+            swapped, _cur = self._habit_profiles.compare_and_set(
+                str(row["profile_key"]), dict(row), {**row, "stale_since": now}
+            )
+            marked += 1 if swapped else 0
+        return marked
+
+    def list_servant_user_messages(self, tenant_id: str, user_id: str) -> List[Dict[str, Any]]:
+        """User messages of this trader's servant sessions (bounded), for widget-order facts."""
+        out: List[Dict[str, Any]] = []
+        for session in self._sessions.select_where(
+            "payload ->> 'mode' = %s AND payload ->> 'userId' = %s", (SERVANT_SESSION_MODE, str(user_id))
+        ):
+            if str(session.get("tenantId")) != str(tenant_id):
+                continue
+            for message in session.get("messages") or []:
+                if isinstance(message, dict) and message.get("role") == "user":
+                    out.append({"session_id": session.get("id"), **message})
+        out.sort(key=lambda m: (str(m.get("createdAt")), str(m.get("id"))))
+        return out[-HABIT_WIDGET_EVENTS_MAX:]
 
 
 def build_agora_store(

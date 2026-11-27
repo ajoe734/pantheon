@@ -73,6 +73,16 @@
       "method": "POST",
       "path": "/bff/agora/workshops/{workshop_id}/decisions",
       "owner": "agora"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/habits",
+      "owner": "agora+memory"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/servant/habits",
+      "owner": "agora+memory"
     }
   ],
   "owner_contracts": {
@@ -89,7 +99,8 @@
     "memory": [
       "/api/memory/retrieve",
       "/api/memory/trade-lessons",
-      "/api/memory/trade-lessons/{candidate_id}/decide"
+      "/api/memory/trade-lessons/{candidate_id}/decide",
+      "/api/memory/persona-entries"
     ],
     "runtime_manager": [
       "/api/runtime-manager/runtime-bindings",
@@ -108,13 +119,15 @@
       "agora.servant_turns",
       "agora.decision_locks",
       "agora.strategy_completeness_snapshot",
-      "agora.strategy_workshop_event"
+      "agora.strategy_workshop_event",
+      "agora.habit_profiles"
     ]
   },
   "limitations": [
     "No BFF-owned committee or memory store",
     "No frontend delivery or hosted acceptance claimed",
     "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
-    "Shadow comparison route is read-only; 送 Shadow writes an immutable declared_no_trade decision lock settled by evaluation (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127)"
+    "Shadow comparison route is read-only; 送 Shadow writes an immutable declared_no_trade decision lock settled by evaluation (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127)",
+    "Habit facts are Agora-owned and shared; the servant's interpretations live only in the servant persona's private memory (persona_private) and cross only through meeting minutes. Habit profile is advice only: no execution authority (AGORA-TRADER-HABIT-PROFILE-20261127). Frontend and hosted delivery are not asserted."
   ]
 }
