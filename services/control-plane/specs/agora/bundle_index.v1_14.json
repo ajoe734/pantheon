@@ -6,11 +6,11 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "76472482b4b140eb79deb1eab40d79c9284f5e6d71adfa4699e497d011815db4"
+    "specs/agora/v15/capability_manifest_v1_14.json": "194323185cc1784e7daeca62fd7730f1a28bb14b21736b96fd61f2febc808ae9"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "068b6f009765f483ef0cee52e9392e0d089723593feb08baf66085a172cefbb0"
+    "sha256": "7636c91c8cfc44e38efb385428de8d7d2e6bf88d4419a5763fdead7f8442425b"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -26,7 +26,8 @@
       "POST /bff/agora/servant/paper-book/ensure"
     ],
     "agora.trading-room.shadow-comparison.owner.v1": [
-      "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison"
+      "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
+      "GET /bff/agora/trading-room/imitation-comparison"
     ],
     "agora.servant.data-tools.v1": [
       "POST /bff/agora/servant/sessions/{session_id}/messages",

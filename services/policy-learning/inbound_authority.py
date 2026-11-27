@@ -46,6 +46,8 @@ TENANT_HEADER_ALIAS = "X-Pantheon-Tenant"
 
 SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 SERVICE_TENANTS_ENV = "POLICY_LEARNING_SERVICE_TENANTS"
+BFF_HANDOFF_TOKEN_ENV = "AGORA_HANDOFF_SERVICE_TOKEN"
+BFF_HANDOFF_TENANTS_ENV = "AGORA_HANDOFF_SERVICE_TENANTS"
 ALLOWED_ROLES_ENV = "POLICY_LEARNING_ALLOWED_ROLES"
 DEFAULT_ALLOWED_ROLES = "policy-learning-service"
 
@@ -72,6 +74,13 @@ ENV_EXAMPLE_SERVICE_TOKEN = "replace-me-policy-learning-service-token"
 # a newly published default cannot silently become an accepted deployment
 # secret.
 PUBLISHED_SERVICE_TOKENS = (LOCAL_DEV_SERVICE_TOKEN, ENV_EXAMPLE_SERVICE_TOKEN)
+
+LOCAL_DEV_BFF_HANDOFF_TOKEN = "pantheon-local-agora-handoff-service-token"
+ENV_EXAMPLE_BFF_HANDOFF_TOKEN = "replace-me-agora-handoff-service-token"
+_PUBLISHED_BFF_HANDOFF_TOKENS = (
+    LOCAL_DEV_BFF_HANDOFF_TOKEN,
+    ENV_EXAMPLE_BFF_HANDOFF_TOKEN,
+)
 
 # Fill-me-in shapes an operator leaves behind when a template is copied but not
 # completed.  Matched against the token lowercased with ``_``/whitespace folded
@@ -239,7 +248,7 @@ def is_published_service_token(value: Any) -> bool:
     if not token:
         return False
     published = False
-    for known in PUBLISHED_SERVICE_TOKENS:
+    for known in (*PUBLISHED_SERVICE_TOKENS, *_PUBLISHED_BFF_HANDOFF_TOKENS):
         # Compared without an early return so the check does not reveal which
         # published value was supplied.  Both are public, but the habit is the
         # one the rest of this module keeps.
@@ -266,19 +275,47 @@ def service_token() -> str:
     return configured
 
 
+def bff_handoff_service_token(configured_primary: Optional[str] = None) -> str:
+    """The usable operator-bff Agora/policy-learning boundary token, or ``""``.
+
+    In ``docker-compose.yml`` ``operator-bff`` carries ``AGORA_HANDOFF_SERVICE_TOKEN``
+    while ``policy-learning-svc`` carries ``POLICY_LEARNING_SERVICE_TOKEN``.
+    On a staging or production posture any repository-published or placeholder
+    token is refused so deployments authenticate only via their provisioned secret.
+    """
+
+    primary = _clean(configured_primary) if configured_primary is not None else service_token()
+    if not primary:
+        return ""
+    configured_handoff = _clean(os.getenv(BFF_HANDOFF_TOKEN_ENV))
+    if configured_handoff:
+        if is_published_service_token(configured_handoff) and _enforced_posture():
+            return ""
+        return configured_handoff
+    if not _enforced_posture() and hmac.compare_digest(primary, LOCAL_DEV_SERVICE_TOKEN):
+        return LOCAL_DEV_BFF_HANDOFF_TOKEN
+    return ""
+
+
 def _service_context(authorization: str) -> Optional[AuthContext]:
-    """Recognize the in-cluster service token used by the scheduler sidecar."""
+    """Recognize the in-cluster service token used by the scheduler sidecar or operator-bff."""
 
     configured = service_token()
     if not configured or not authorization.startswith("Bearer "):
         return None
     presented = authorization.split(None, 1)[1].strip()
-    if not hmac.compare_digest(configured, presented):
+    matched_primary = hmac.compare_digest(configured, presented)
+    handoff_token = bff_handoff_service_token(configured)
+    matched_bff = bool(handoff_token and hmac.compare_digest(handoff_token, presented))
+    if not (matched_primary or matched_bff):
         return None
+    tenants = _split_values(os.getenv(SERVICE_TENANTS_ENV))
+    if not tenants and matched_bff:
+        tenants = _split_values(os.getenv(BFF_HANDOFF_TENANTS_ENV))
     return AuthContext(
-        actor_id="policy-learning-service",
+        actor_id="policy-learning-service" if matched_primary else "operator-bff",
         roles=frozenset(allowed_roles()) or frozenset({DEFAULT_ALLOWED_ROLES}),
-        claims={"allowed_tenants": _split_values(os.getenv(SERVICE_TENANTS_ENV))},
+        claims={"allowed_tenants": tenants},
         token_kind="service",
     )
 

@@ -526,7 +526,44 @@
           }
         },
         "x-business-owner": "agora-decision-lock+attribution",
-        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. IMITATION-TRADER-SHADOW-COMPARISON-20261127: also settles and returns the optional trader_imitation arm when present. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+      }
+    },
+    "/bff/agora/trading-room/imitation-comparison": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped trader imitation comparison",
+        "operationId": "get_trader_imitation_comparison_bff_agora_trading_room_imitation_comparison_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Strategy Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-scoped comparison of how close the trader's behaviour candidate (trader_imitation) is to human_actual: action agreement rate, outcome gap, 1,000-resample bootstrap intervals (labelled luck / 可能是運氣 when containing 0), and differences. Returns comparison_state=not_enough_decisions when the trader has fewer than 30 decisions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The composed Agora decision-lock owner is unavailable; no substitute is created (reason decision_lock_owner_unavailable)."
+          }
+        },
+        "x-business-owner": "agora-decision-lock+policy-learning+attribution",
+        "description": "IMITATION-TRADER-SHADOW-COMPARISON-20261127: Reads only. Compares the caller's trained behaviour candidate (at most 3 kept per trader and strategy, trained only after training approval and at least 30 decisions) against human_actual across the caller's decision locks and shadow settlements. Agreement and outcome gap carry 1,000-resample bootstrap intervals and any interval containing 0 is labelled luck (可能是運氣)."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/messages": {

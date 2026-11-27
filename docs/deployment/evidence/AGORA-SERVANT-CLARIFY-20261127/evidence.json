@@ -96,7 +96,7 @@
       ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
       "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
     ],
-    "result": "synced with origin/dev (ba06998bf, preserving PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 #7983, OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127 #7991, DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127 #7989, PAPER-RECONCILER-STATE-READ-WITHOUT-CYCLE-LOCK-20261127 #7987, AGORA-TRADER-HABIT-PROFILE-20261127 #7984, and OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127 #7952); all servant, clarify, habit profile, BFF test architecture, tenant fallback, and adapter schema contract suites green; storage manifest check green; route manifest matches snapshot; route diff baseline matches"
+    "result": "synced with origin/dev (7a366a60b, preserving IMITATION-TRADER-SHADOW-COMPARISON-20261127 #7988, PAPER-FLEET-RECONCILER-STATE-READ-NO-CYCLE-LOCK-20261127 #7990, PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 #7983, OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127 #7991, DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127 #7989, PAPER-RECONCILER-STATE-READ-WITHOUT-CYCLE-LOCK-20261127 #7987, AGORA-TRADER-HABIT-PROFILE-20261127 #7984, and OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127 #7952); all servant, clarify, habit profile, BFF test architecture, tenant fallback, and adapter schema contract suites green; storage manifest check green; route manifest matches snapshot; route diff baseline matches"
   },
   "residual_findings": []
 }

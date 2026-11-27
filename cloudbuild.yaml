@@ -47,7 +47,7 @@
 # research profile (auto-detectable via Stage 0 changed-path gating):
 #   mlflow-server     services/research/mlflow/Dockerfile
 #   dspy-worker       services/learning/dspy/Dockerfile
-#   imitation-worker  services/learning/imitation/Dockerfile
+#   (imitation-worker removed: services/learning/imitation/ is an offline LP-002 smoke harness and is not built or run as a runtime worker; trader imitation runs in policy-learning-svc + policy-learning-shadow-eval-scheduler)
 #   research-base     services/research/Dockerfile
 #   research-dspy     services/research/dspy/Dockerfile
 #   research-finrl    services/research/finrl/Dockerfile
@@ -102,7 +102,9 @@ steps:
         # ── research profile ─────────────────────────────────────────────────
         DOCKERFILES[mlflow-server]="services/research/mlflow/Dockerfile"
         DOCKERFILES[dspy-worker]="services/learning/dspy/Dockerfile"
-        DOCKERFILES[imitation-worker]="services/learning/imitation/Dockerfile"
+        # imitation-worker (services/learning/imitation/Dockerfile) is intentionally omitted:
+        # services/learning/imitation/ is an offline LP-002 smoke harness and is not run in runtime.
+        # Live trader imitation runs in policy-learning-svc + policy-learning-shadow-eval-scheduler.
         DOCKERFILES[research-base]="services/research/Dockerfile"
         DOCKERFILES[research-dspy]="services/research/dspy/Dockerfile"
         DOCKERFILES[research-finrl]="services/research/finrl/Dockerfile"

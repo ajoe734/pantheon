@@ -1340,6 +1340,13 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/imitation-comparison",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/imitation-comparison",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/trading-room/strategies/{param}",
         "method": "GET",
         "path": "/bff/agora/trading-room/strategies/{param}",
@@ -3939,17 +3946,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 687,
-    "failure_count": 556,
+    "backend_routes": 688,
+    "failure_count": 557,
     "failures": {
-      "backend_missing_frontend": 555,
+      "backend_missing_frontend": 556,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 556,
+    "mode_failure_count": 557,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

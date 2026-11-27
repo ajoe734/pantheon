@@ -1026,7 +1026,15 @@ def create_servant_router(
         from ..trading_room.service import TradingRoomService, get_active_trading_room_service
 
         if trading_room_store is not None:
-            return TradingRoomService(store=trading_room_store, utc_now=utc_now, bff_error=bff_error, institutional_knowledge_reader=knowledge_reader)
+            resolved_owner = _resolve_session_owner()
+            return TradingRoomService(
+                store=trading_room_store,
+                utc_now=utc_now,
+                bff_error=bff_error,
+                decision_lock_owner=resolved_owner,
+                institutional_knowledge_reader=knowledge_reader,
+                imitation_candidate_reader=getattr(resolved_owner, "imitation_candidate_resolver", None),
+            )
         active = get_active_trading_room_service()
         if getattr(active, "institutional_knowledge_reader", None) is None:
             active.institutional_knowledge_reader = knowledge_reader
