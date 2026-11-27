@@ -36,11 +36,14 @@ from services.source_ingestion.distillation_worker import (
 from services.source_ingestion.hypothesis_card import (
     BUDGET_PATH_ENV,
     daily_cap_from_env,
+    has_first_run_ritual_marker,
 )
 
 SUMMARY_SOURCE = "source_ingestion.distillation_queue"
 LEDGER_SOURCE = "source_ingestion.l2_extraction_ledger"
 LEDGER_FILENAME = "l2_extraction_ledger.sqlite"
+RELEASE_SWITCHED_AT_ENV = "PANTHEON_RELEASE_SWITCHED_AT"
+ACCEPTANCE_SWITCHED_AT_ENV = "ACCEPTANCE_RELEASE_SWITCHED_AT"
 
 WINDOW_SECONDS = 86400
 # Rows examined per window read; the tenant's newest-first index range is cut here.
@@ -48,6 +51,10 @@ WINDOW_ROW_CAP = 100_000
 NEWEST_CARD_LIMIT = 50
 # Newest done rows examined to find the newest external-text cards.
 NEWEST_CARD_SCAN = 500
+# Newest ledger outcome events examined for post-release-switch ritual checks.
+LEDGER_EVENT_SCAN_CAP = 5_000
+MAX_RITUAL_EVENT_SAMPLES = 50
+MAX_EVENT_DETAIL_CHARS = 200
 # Distinct reason codes listed per family/total; the rest fold into "other".
 MAX_REASONS = 40
 MAX_TITLE_CHARS = 200
@@ -58,6 +65,8 @@ READ_TIME_BUDGET_SECONDS = 2.0
 # Worst case: 50 cards x (title 200 + claim 400 + 2 ids x 200 chars, <= 3 bytes
 # each, + keys) plus 2 x 6 families x 41 reasons; tested against this bound.
 MAX_RESPONSE_BYTES = 256 * 1024
+
+_PROCESS_STARTED_EPOCH = float(int(time.time()))
 
 EXTERNAL_TEXT_FAMILIES = tuple(sorted(t.value for t in _EXTERNAL_TEXT_TYPES))
 _FAMILY_SQL = ", ".join(f"'{family}'" for family in EXTERNAL_TEXT_FAMILIES)
@@ -75,6 +84,67 @@ def _failure_reason(exc: BaseException, default: str) -> str:
 
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_epoch(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        return val if val == val and val > 0 else None
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.timestamp()
+
+
+def _resolve_release_switched_at(
+    queue_path: Path,
+    effective_now: float,
+    release_switched_at: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> tuple[Optional[float], Optional[str]]:
+    if release_switched_at is not None:
+        epoch = _parse_epoch(release_switched_at)
+        if epoch is None:
+            return None, "release_switch_time_invalid"
+        return epoch, None
+    effective_env = env if env is not None else os.environ
+    for key in (RELEASE_SWITCHED_AT_ENV, ACCEPTANCE_SWITCHED_AT_ENV):
+        if key in effective_env:
+            raw = str(effective_env.get(key) or "").strip()
+            if not raw:
+                return None, "release_switch_time_missing"
+            epoch = _parse_epoch(raw)
+            if epoch is None:
+                return None, "release_switch_time_invalid"
+            return epoch, None
+    for state_name in ("distill_controller_state.json", "controller_state.json"):
+        candidate = queue_path.with_name(state_name)
+        try:
+            if candidate.is_file() and candidate.stat().st_size <= 65_536:
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and payload.get("started_at") is not None:
+                    started_epoch = _parse_epoch(payload.get("started_at"))
+                    if started_epoch is None:
+                        return None, "release_switch_time_invalid"
+                    if started_epoch <= effective_now + 300:
+                        return started_epoch, None
+        except (OSError, ValueError):
+            return None, "release_switch_time_unreadable"
+    if effective_now >= _PROCESS_STARTED_EPOCH:
+        return _PROCESS_STARTED_EPOCH, None
+    return float(int(effective_now - WINDOW_SECONDS)), None
 
 
 def _clip(value: Any, limit: int) -> Optional[str]:
@@ -291,14 +361,22 @@ def _read_queue(connection: _BoundedConnection, tenant_id: str, now: float) -> d
 
 
 def _read_ledger(
-    ledger_path: Path, newest: list[dict[str, Any]], now: float, deadline: float, default_cap: int
+    ledger_path: Path,
+    newest: list[dict[str, Any]],
+    now: float,
+    deadline: float,
+    default_cap: int,
+    *,
+    switch_epoch: Optional[float] = None,
+    switch_error: Optional[str] = None,
 ) -> dict[str, Any]:
-    """LLM calls today and the claim of each newest card (PK reads only)."""
+    """LLM calls today, the claim of each newest card, and bounded post-switch ritual observation."""
     day = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
     if not ledger_path.is_file():
         for card in newest:
             card.update(claim=None, claim_status="ledger_unavailable")
         return _unavailable(LEDGER_SOURCE, "extraction_ledger_missing")
+    ritual_obs: dict[str, Any]
     try:
         with closing(_open_read_only(ledger_path, deadline)) as connection:
             tables = {str(r[0]) for r in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -325,6 +403,91 @@ def _read_ledger(
                 except (ValueError, AttributeError):
                     claim = None
                 card.update(claim=_clip(claim, MAX_CLAIM_CHARS), claim_status="ok" if claim else "claim_missing")
+            if switch_error is not None or switch_epoch is None:
+                ritual_obs = {
+                    "release_switched_at": None,
+                    "ritual_events_status": "unavailable",
+                    "ritual_events_reason": switch_error or "release_switch_time_missing",
+                    "ritual_events_since_switch": None,
+                }
+            elif "events" not in tables:
+                ritual_obs = {
+                    "release_switched_at": _iso(switch_epoch),
+                    "ritual_events_status": "unavailable",
+                    "ritual_events_reason": "extraction_ledger_events_missing",
+                    "ritual_events_since_switch": None,
+                }
+            else:
+                event_rows = connection.execute(
+                    "SELECT ts, source_id, outcome, detail FROM events ORDER BY id DESC LIMIT ?",
+                    (LEDGER_EVENT_SCAN_CAP + 1,),
+                ).fetchall()
+                ritual_since_switch = 0
+                examined_since_switch = 0
+                ritual_samples: list[dict[str, Any]] = []
+                total_ritual_scanned = 0
+                invalid_ts = False
+                oldest_scanned_epoch: Optional[float] = None
+                for erow in event_rows[:LEDGER_EVENT_SCAN_CAP]:
+                    ev_epoch = _parse_epoch(erow["ts"])
+                    if ev_epoch is None:
+                        invalid_ts = True
+                        break
+                    oldest_scanned_epoch = (
+                        ev_epoch if oldest_scanned_epoch is None else min(oldest_scanned_epoch, ev_epoch)
+                    )
+                    outcome_str = str(erow["outcome"] or "")
+                    detail_str = str(erow["detail"] or "")
+                    is_ritual = (
+                        outcome_str == "openclaw_workspace_first_run_ritual"
+                        or has_first_run_ritual_marker(detail_str)
+                        or has_first_run_ritual_marker(outcome_str)
+                    )
+                    if ev_epoch >= switch_epoch:
+                        examined_since_switch += 1
+                        if is_ritual:
+                            ritual_since_switch += 1
+                    if is_ritual:
+                        total_ritual_scanned += 1
+                        if len(ritual_samples) < MAX_RITUAL_EVENT_SAMPLES:
+                            ritual_samples.append(
+                                {
+                                    "ts": str(erow["ts"]),
+                                    "source_id": _clip(erow["source_id"], MAX_ID_CHARS),
+                                    "outcome": _clip(outcome_str, 80),
+                                    "detail": _clip(detail_str, MAX_EVENT_DETAIL_CHARS),
+                                }
+                            )
+                scan_hit_cap = len(event_rows) > LEDGER_EVENT_SCAN_CAP
+                truncated = bool(
+                    scan_hit_cap and (oldest_scanned_epoch is None or oldest_scanned_epoch >= switch_epoch)
+                )
+                if invalid_ts:
+                    ritual_obs = {
+                        "release_switched_at": _iso(switch_epoch),
+                        "ritual_events_status": "unavailable",
+                        "ritual_events_reason": "ledger_event_timestamp_invalid",
+                        "ritual_events_since_switch": None,
+                    }
+                elif truncated:
+                    ritual_obs = {
+                        "release_switched_at": _iso(switch_epoch),
+                        "ritual_events_status": "unavailable",
+                        "ritual_events_reason": "observation_truncated",
+                        "ritual_events_since_switch": None,
+                        "ritual_events_truncated": True,
+                        "events_examined_since_switch": examined_since_switch,
+                    }
+                else:
+                    ritual_obs = {
+                        "release_switched_at": _iso(switch_epoch),
+                        "ritual_events_status": "ok",
+                        "ritual_events_since_switch": ritual_since_switch,
+                        "events_examined_since_switch": examined_since_switch,
+                        "ritual_events_truncated": False,
+                        "ritual_events": ritual_samples,
+                        "ritual_events_sample_truncated": total_ritual_scanned > MAX_RITUAL_EVENT_SAMPLES,
+                    }
     except (sqlite3.Error, _ReadBudgetExceeded) as exc:
         for card in newest:
             card.setdefault("claim", None)
@@ -339,6 +502,7 @@ def _read_ledger(
         "calls": int(row["n"]) if row is not None else 0,
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
+        **ritual_obs,
     }
 
 
@@ -349,6 +513,7 @@ def read_discovery_summary(
     ledger_path: Optional[Path] = None,
     now: Optional[float] = None,
     daily_cap: Optional[int] = None,
+    release_switched_at: Any = None,
     time_budget_seconds: float = READ_TIME_BUDGET_SECONDS,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
@@ -358,6 +523,9 @@ def read_discovery_summary(
     queue_path = Path(queue_path)
     ledger = Path(ledger_path) if ledger_path is not None else resolve_ledger_path(queue_path)
     tenant = str(tenant_id or "").strip()
+    switch_epoch, switch_error = _resolve_release_switched_at(
+        queue_path, effective_now, release_switched_at=release_switched_at
+    )
 
     sections: dict[str, Any]
     if not tenant:
@@ -385,6 +553,8 @@ def read_discovery_summary(
         effective_now,
         deadline,
         daily_cap if daily_cap is not None else daily_cap_from_env(),
+        switch_epoch=switch_epoch,
+        switch_error=switch_error,
     )
     return {
         "tenant_id": tenant or None,
@@ -398,6 +568,7 @@ def read_discovery_summary(
             "window_row_cap": WINDOW_ROW_CAP,
             "newest_card_limit": NEWEST_CARD_LIMIT,
             "newest_card_scan": NEWEST_CARD_SCAN,
+            "ledger_event_scan_cap": LEDGER_EVENT_SCAN_CAP,
             "max_reasons": MAX_REASONS,
             "read_time_budget_ms": int(time_budget_seconds * 1000),
             "max_response_bytes": MAX_RESPONSE_BYTES,
@@ -409,6 +580,7 @@ def read_discovery_summary(
 
 __all__ = [
     "EXTERNAL_TEXT_FAMILIES",
+    "LEDGER_EVENT_SCAN_CAP",
     "MAX_RESPONSE_BYTES",
     "NEWEST_CARD_LIMIT",
     "WINDOW_ROW_CAP",

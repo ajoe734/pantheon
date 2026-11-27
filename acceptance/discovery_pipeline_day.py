@@ -176,16 +176,25 @@ def count_ritual_events_since_switch(
 ) -> int:
     """Count L2 ledger events at or after ``switched_at`` that carry first-run ritual markers."""
     cutoff = switched_at if isinstance(switched_at, datetime) else _parse_time(switched_at)
+    if cutoff is None:
+        raise ValueError("release_switch_time_invalid")
+    if events is None or isinstance(events, (str, bytes, Mapping)) or not isinstance(events, Iterable):
+        raise ValueError("ledger_events_invalid")
     matched = 0
-    for item in events or ():
+    for item in events:
         if not isinstance(item, Mapping):
-            continue
+            raise ValueError("ledger_event_not_mapping")
         ts = _parse_time(item.get("ts") or item.get("at") or item.get("since") or item.get("created_at"))
-        if cutoff is not None and ts is not None and ts < cutoff:
+        if ts is None:
+            raise ValueError("ledger_event_timestamp_invalid")
+        if ts < cutoff:
+            continue
+        if str(item.get("outcome") or "").strip() == "openclaw_workspace_first_run_ritual":
+            matched += 1
             continue
         text = " ".join(
             str(item.get(k) or "")
-            for k in ("detail", "abstention_reason", "reason", "skip_reason", "claim", "title")
+            for k in ("detail", "abstention_reason", "reason", "skip_reason", "claim", "title", "outcome")
             if item.get(k)
         )
         if has_first_run_ritual_marker(text):
@@ -198,53 +207,135 @@ def _ritual_events_since_switch(
     *,
     ledger_events: Optional[Iterable[Any]] = None,
     switched_at: Any = None,
-) -> int:
+) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     data = _dict(board.get("data"))
     summary = _dict(data.get("discovery_summary"))
     llm_calls = _dict(summary.get("llm_calls"))
     meta = _dict(board.get("meta"))
-    cutoff = (
+    surfaces = _dict(meta.get("surfaces"))
+    if "alpha_factory_llm_calls" in surfaces:
+        llm_surface_reason = _surface(board, "alpha_factory_llm_calls")
+        if llm_surface_reason:
+            return None, llm_surface_reason, None
+
+    if llm_calls.get("status") not in (None, "ok"):
+        return (
+            None,
+            f"unreadable:ritual_events_since_switch:{llm_calls.get('reason') or 'llm_calls_unavailable'}",
+            None,
+        )
+    if llm_calls.get("ritual_events_status") not in (None, "ok"):
+        return (
+            None,
+            f"unreadable:ritual_events_since_switch:{llm_calls.get('ritual_events_reason') or 'observation_unavailable'}",
+            None,
+        )
+
+    board_switch_raw = None
+    for candidate in (
+        llm_calls.get("release_switched_at"),
+        llm_calls.get("switched_at"),
+        summary.get("release_switched_at"),
+        summary.get("switched_at"),
+        meta.get("release_switched_at"),
+        meta.get("switched_at"),
+        meta.get("deployed_at"),
+    ):
+        if candidate is not None:
+            board_switch_raw = candidate
+            break
+
+    board_cutoff: Optional[datetime] = None
+    if board_switch_raw is not None:
+        if isinstance(board_switch_raw, str) and not board_switch_raw.strip():
+            return None, "unreadable:ritual_events_since_switch:release_switch_time_missing", None
+        board_cutoff = (
+            board_switch_raw
+            if isinstance(board_switch_raw, datetime)
+            else _parse_time(board_switch_raw)
+        )
+        if board_cutoff is None:
+            return None, "unreadable:ritual_events_since_switch:release_switch_time_invalid", None
+
+    env_switch = os.environ.get("ACCEPTANCE_RELEASE_SWITCHED_AT")
+    override_raw = (
         switched_at
         if switched_at is not None
-        else (
-            summary.get("release_switched_at")
-            or summary.get("switched_at")
-            or llm_calls.get("release_switched_at")
-            or llm_calls.get("switched_at")
-            or meta.get("release_switched_at")
-            or meta.get("switched_at")
-            or meta.get("deployed_at")
-            or os.environ.get("ACCEPTANCE_RELEASE_SWITCHED_AT")
-        )
+        else (env_switch if env_switch is not None else None)
     )
-    total = 0
-    explicit_count, _ = _count(board, "ritual_events_since_switch")
-    if explicit_count is not None and explicit_count > 0:
-        total = max(total, explicit_count)
-    for container in (summary, llm_calls):
-        val = _int(container.get("ritual_events_since_switch"))
-        if val is not None and val > 0:
-            total = max(total, val)
-    for event_list in (
-        summary.get("events"),
-        summary.get("l2_events"),
-        summary.get("events_since_switch"),
-        llm_calls.get("events"),
-        llm_calls.get("recent_events"),
-        llm_calls.get("events_since_switch"),
-        ledger_events,
+    if override_raw is not None:
+        if isinstance(override_raw, str) and not override_raw.strip():
+            return None, "unreadable:ritual_events_since_switch:release_switch_time_missing", None
+        cutoff = override_raw if isinstance(override_raw, datetime) else _parse_time(override_raw)
+        if cutoff is None:
+            return None, "unreadable:ritual_events_since_switch:release_switch_time_invalid", None
+    else:
+        cutoff = board_cutoff
+
+    if cutoff is None:
+        return None, "unreadable:ritual_events_since_switch:release_switch_time_missing", None
+
+    cutoff_iso = _iso(cutoff)
+    if llm_calls.get("ritual_events_truncated") is True or summary.get("ritual_events_truncated") is True:
+        return None, "unreadable:ritual_events_since_switch:observation_truncated", cutoff_iso
+
+    cutoff_overridden = board_cutoff is None or cutoff != board_cutoff
+
+    explicit_counts: List[int] = []
+    counts_map = _dict(data.get("counts"))
+    if "ritual_events_since_switch" in counts_map:
+        c_val, c_reason = _count(board, "ritual_events_since_switch")
+        if c_reason or c_val is None or c_val < 0:
+            return None, c_reason or "unreadable:ritual_events_since_switch:count_invalid", cutoff_iso
+        explicit_counts.append(c_val)
+
+    for container in (llm_calls, summary):
+        if "ritual_events_since_switch" in container:
+            val = _int(container.get("ritual_events_since_switch"))
+            if val is None or val < 0:
+                return None, "unreadable:ritual_events_since_switch:count_invalid", cutoff_iso
+            explicit_counts.append(val)
+
+    event_lists: List[Tuple[str, Any]] = []
+    for label, candidate_list in (
+        ("ledger_events", ledger_events),
+        ("llm_calls.ritual_events", llm_calls.get("ritual_events")),
+        ("llm_calls.events_since_switch", llm_calls.get("events_since_switch")),
+        ("llm_calls.events", llm_calls.get("events")),
+        ("llm_calls.recent_events", llm_calls.get("recent_events")),
+        ("discovery_summary.events_since_switch", summary.get("events_since_switch")),
+        ("discovery_summary.events", summary.get("events")),
+        ("discovery_summary.l2_events", summary.get("l2_events")),
     ):
-        if isinstance(event_list, Iterable) and not isinstance(event_list, (str, bytes, Mapping)):
-            total += count_ritual_events_since_switch(event_list, cutoff)
-    closed = _closed_reasons(board)
-    for reason_key, count_val in closed.items():
-        n = _int(count_val)
-        if n and n > 0 and (
-            reason_key == "openclaw_workspace_first_run_ritual"
-            or has_first_run_ritual_marker(reason_key)
-        ):
-            total = max(total, n)
-    return total
+        if candidate_list is not None:
+            event_lists.append((label, candidate_list))
+
+    list_counts: List[int] = []
+    for label, event_list in event_lists:
+        if label == "llm_calls.ritual_events" and llm_calls.get("ritual_events_sample_truncated") is True:
+            if cutoff_overridden:
+                return None, "unreadable:ritual_events_since_switch:observation_truncated", cutoff_iso
+            continue
+        try:
+            list_counts.append(count_ritual_events_since_switch(event_list, cutoff))
+        except ValueError as exc:
+            return None, f"unreadable:ritual_events_since_switch:{exc}", cutoff_iso
+
+    if cutoff_overridden:
+        if not list_counts:
+            if explicit_counts and max(explicit_counts) > 0 and board_cutoff is not None and cutoff <= board_cutoff:
+                return max(explicit_counts), None, cutoff_iso
+            return None, "unreadable:ritual_events_since_switch:observation_missing_for_switch_override", cutoff_iso
+        total = max(list_counts)
+        if explicit_counts and board_cutoff is not None and cutoff <= board_cutoff:
+            total = max(total, max(explicit_counts))
+        return total, None, cutoff_iso
+
+    if not explicit_counts and not list_counts:
+        return None, "unreadable:ritual_events_since_switch:observation_missing", cutoff_iso
+
+    total = max([*explicit_counts, *list_counts])
+    return total, None, cutoff_iso
 
 
 def stage_hypothesis_cards(
@@ -271,7 +362,7 @@ def stage_hypothesis_cards(
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
     today, _ = _count(board, "hypothesis_cards_today")
-    ritual_events = _ritual_events_since_switch(
+    ritual_events, ritual_reason, switch_iso = _ritual_events_since_switch(
         board, ledger_events=ledger_events, switched_at=switched_at
     )
     values = {
@@ -280,9 +371,12 @@ def stage_hypothesis_cards(
         "cards_today": today,
         "calls_today": calls,
         "cap": cap,
+        "release_switched_at": switch_iso,
         "ritual_events_since_switch": ritual_events,
         "closed_last_24h_by_reason": closed,
     }
+    if ritual_reason:
+        return _failed(name, ritual_reason, **values)
     if ritual_events != 0:
         return _failed(name, f"ritual_marked_events_since_switch:{ritual_events}", **values)
     if not verified:

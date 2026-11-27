@@ -175,6 +175,77 @@ def test_llm_cap_comes_from_the_writer_ledger(tmp_path):
     out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", daily_cap=999)
     assert out["llm_calls"]["calls"] == 2
     assert (out["llm_calls"]["daily_cap"], out["llm_calls"]["cap_source"]) == (250, "ledger")
+    assert out["llm_calls"]["ritual_events_status"] == "ok"
+    assert out["llm_calls"]["ritual_events_since_switch"] == 0
+
+
+def test_ledger_ritual_observation_tracks_post_switch_and_excludes_pre_switch(tmp_path, monkeypatch):
+    queue = _queue_with_jobs(tmp_path)
+    ledger_path, _ = _ledger(tmp_path, {}, calls=2, cap=400)
+    switch_iso = "2026-11-25T08:00:00Z"
+
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            ("2026-11-25T07:00:00Z", "s-pre", "no_hypothesis", "First-run setup is pending; what should I call you?", None),
+        )
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            ("2026-11-25T09:00:00Z", "s-post-ok", "no_hypothesis", "No testable market mechanism in article.", None),
+        )
+
+    out_clean = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        now=NOW,
+        release_switched_at=switch_iso,
+    )
+    llm_clean = out_clean["llm_calls"]
+    assert llm_clean["release_switched_at"] == switch_iso
+    assert llm_clean["ritual_events_status"] == "ok"
+    assert llm_clean["ritual_events_since_switch"] == 0
+    assert llm_clean["events_examined_since_switch"] == 1
+    assert llm_clean["ritual_events_truncated"] is False
+
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            ("2026-11-25T10:00:00Z", "s-post-ritual", "failed", "openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？", None),
+        )
+
+    # Also verify reading release switch time from sibling distill_controller_state.json when not passed explicitly.
+    (tmp_path / "distill_controller_state.json").write_text(
+        json.dumps({"started_at": switch_iso}), encoding="utf-8"
+    )
+    out_dirty = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", now=NOW)
+    llm_dirty = out_dirty["llm_calls"]
+    assert llm_dirty["release_switched_at"] == switch_iso
+    assert llm_dirty["ritual_events_status"] == "ok"
+    assert llm_dirty["ritual_events_since_switch"] == 1
+    assert llm_dirty["events_examined_since_switch"] == 2
+
+    # Invalid switch time or truncated scan fails closed with unavailable status, never zero.
+    out_bad_switch = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        now=NOW,
+        release_switched_at="not-a-timestamp",
+    )
+    assert out_bad_switch["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out_bad_switch["llm_calls"]["ritual_events_reason"] == "release_switch_time_invalid"
+    assert out_bad_switch["llm_calls"]["ritual_events_since_switch"] is None
+
+    monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 1)
+    out_trunc = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        now=NOW,
+        release_switched_at=switch_iso,
+    )
+    assert out_trunc["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out_trunc["llm_calls"]["ritual_events_reason"] == "observation_truncated"
+    assert out_trunc["llm_calls"]["ritual_events_truncated"] is True
+    assert out_trunc["llm_calls"]["ritual_events_since_switch"] is None
 
 
 def test_other_tenant_sees_only_its_rows(tmp_path):

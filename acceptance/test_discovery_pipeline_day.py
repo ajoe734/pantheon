@@ -56,7 +56,26 @@ def good_board():
             },
             "templates": [{"template_id": "t1", "evaluation": {"evaluation_context": {
                 "governed_snapshot_id": "gmd-abc123", "window_end": "2026-11-27"}}}],
-            "discovery_summary": {"collected_by_source_family": {"news": 120}, "closed_last_24h": {"by_reason": {}}},
+            "discovery_summary": {
+                "collected_by_source_family": {"news": 120},
+                "closed_last_24h": {"by_reason": {}},
+                "llm_calls": {
+                    "status": "ok",
+                    "source": "source_ingestion.l2_extraction_ledger",
+                    "scope": "service",
+                    "utc_day": "2026-11-28",
+                    "calls": 40,
+                    "daily_cap": 400,
+                    "cap_source": "ledger",
+                    "release_switched_at": "2026-11-28T06:00:00Z",
+                    "ritual_events_status": "ok",
+                    "ritual_events_since_switch": 0,
+                    "events_examined_since_switch": 3,
+                    "ritual_events_truncated": False,
+                    "ritual_events": [],
+                    "ritual_events_sample_truncated": False,
+                },
+            },
         },
         "meta": {"surfaces": {k: ok() for k in (
             "alpha_factory", "alpha_factory_templates", "alpha_factory_demands", "alpha_factory_runs",
@@ -204,6 +223,215 @@ def test_ritual_marked_events_since_release_switch_must_be_zero():
     from_board = run(board_with_summary_events)
     assert from_board["verdict"] == "failed"
     assert stage(from_board, "hypothesis_cards")["reason"] == "ritual_marked_events_since_switch:2"
+
+
+def test_missing_unreadable_or_incomplete_ritual_observation_or_switch_time_fails(monkeypatch):
+    monkeypatch.delenv("ACCEPTANCE_RELEASE_SWITCHED_AT", raising=False)
+
+    # Missing observation (neither count nor event list) must fail, never default to 0.
+    missing_obs = good_board()
+    missing_obs["data"]["discovery_summary"]["llm_calls"] = {
+        "status": "ok",
+        "release_switched_at": "2026-11-28T06:00:00Z",
+    }
+    report = run(missing_obs)
+    assert report["verdict"] == "failed"
+    assert report["ritual_events_since_switch"] is None
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_missing"
+
+    # Missing release switch time must fail.
+    missing_switch = good_board()
+    del missing_switch["data"]["discovery_summary"]["llm_calls"]["release_switched_at"]
+    report = run(missing_switch)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:release_switch_time_missing"
+
+    # Invalid release switch time must fail.
+    invalid_switch = good_board()
+    invalid_switch["data"]["discovery_summary"]["llm_calls"]["release_switched_at"] = "not-a-timestamp"
+    report = run(invalid_switch)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:release_switch_time_invalid"
+
+    # Truncated ledger event scan must fail.
+    truncated_obs = good_board()
+    truncated_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_truncated"] = True
+    report = run(truncated_obs)
+    assert report["verdict"] == "failed"
+    assert stage(report, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_truncated"
+
+    # Unreadable ritual_events_status must fail.
+    unreadable_obs = good_board()
+    unreadable_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_status"] = "unavailable"
+    unreadable_obs["data"]["discovery_summary"]["llm_calls"]["ritual_events_reason"] = "extraction_ledger_events_missing"
+    report = run(unreadable_obs)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:extraction_ledger_events_missing"
+    )
+
+    # Event list with missing/invalid timestamp must fail.
+    bad_event_ts = good_board()
+    bad_event_ts["data"]["discovery_summary"]["llm_calls"]["ritual_events"] = [
+        {"ts": "bad-ts", "outcome": "no_hypothesis", "detail": "what should I call you?"}
+    ]
+    report = run(bad_event_ts)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:ledger_event_timestamp_invalid"
+    )
+
+
+def test_e2e_check_and_main_with_real_queue_ledger_and_discovery_summary(tmp_path, server, monkeypatch, capsys):
+    import sqlite3
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.discovery_summary import read_discovery_summary
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    now_epoch = NOW.timestamp()
+    switch_iso = "2026-11-28T06:00:00Z"
+    queue_path = tmp_path / "distill_job_queue.jsonl"
+    ledger_path = tmp_path / "l2_extraction_ledger.sqlite"
+    queue = DistillationJobQueue(queue_path, now=lambda: now_epoch)
+    ledger = ExtractionLedger(ledger_path, daily_cap=400)
+
+    def make_source(sid: str) -> SourceRecord:
+        return SourceRecord(
+            source_id=sid,
+            connector_id="conn",
+            source_type="news",
+            title=f"TSMC supply chain {sid}",
+            content_ref=f"https://example.test/{sid}",
+            status="normalized",
+            metadata={"tenant_id": "tenant-dev", "body": "台積電月營收創高"},
+        )
+
+    # 1. Carded record + pre-switch ritual event + post-switch genuine abstention -> check/main must PASS.
+    assert ledger.reserve_call("s-card", "d-card")
+    job_card = queue.enqueue_source_record(make_source("s-card"), enqueued_at=now_epoch - 3600)
+    queue.mark_done(job_card.job_id, seed_id="seed-s-card", processed_at=now_epoch - 1800)
+    ledger.put_card("s-card", job_card.source_digest, {"claim": "Monthly revenue surprise drifts", "testability": "testable"})
+
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T05:00:00Z",
+                "s-pre-ritual",
+                "no_hypothesis",
+                "First-run setup is still open; what should I call you?",
+                None,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T07:00:00Z",
+                "s-post-genuine",
+                "no_hypothesis",
+                "Quarterly revenue report states no testable market mechanism.",
+                None,
+            ),
+        )
+
+    def project_board_from_summary(summary: dict) -> dict:
+        board = good_board()
+        collected = summary["collected_text_records"]
+        closed = summary["closed_text_records"]
+        cards = summary["hypothesis_cards"]
+        llm = summary["llm_calls"]
+        board["data"]["counts"]["collected_text_records"] = {"value": collected["last_24h"]["total"], "status": "ok"}
+        board["data"]["counts"]["hypothesis_cards_today"] = {"value": cards["today"], "status": "ok"}
+        board["data"]["counts"]["llm_calls_today"] = {
+            "value": llm["calls"],
+            "status": llm["status"],
+            "cap": llm["daily_cap"],
+            "scope": llm["scope"],
+        }
+        board["data"]["discovered"] = [
+            {
+                "kind": "hypothesis_card",
+                "source_id": c["source_id"],
+                "title": c["title"],
+                "claim": c["claim"],
+                "claim_status": c["claim_status"],
+                "since": c["carded_at"],
+            }
+            for c in cards["newest"]
+        ] + [d for d in board["data"]["discovered"] if d.get("kind") == "research_demand"]
+        board["data"]["discovery_summary"] = {
+            "window": summary.get("window"),
+            "collected_by_source_family": collected["last_24h"]["by_source_family"],
+            "closed_last_24h": closed["last_24h"],
+            "closed_total": closed["total"],
+            "llm_calls": llm,
+            "bounds": summary.get("bounds"),
+        }
+        return board
+
+    summary_clean = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at=switch_iso,
+    )
+    assert summary_clean["llm_calls"]["ritual_events_since_switch"] == 0
+    Handler.board = project_board_from_summary(summary_clean)
+    Handler.health = good_health()
+
+    for key, value in {
+        "ACCEPTANCE_BFF_URL": server,
+        "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+        "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("ACCEPTANCE_RELEASE_SWITCHED_AT", raising=False)
+
+    assert dpd.main(now=NOW) == 0
+    out_clean = capsys.readouterr().out
+    assert "VERDICT passed" in out_clean
+    assert '"ritual_events_since_switch": 0' in out_clean
+
+    # 2. Post-switch ritual failure (outbox collapses reason to hypothesis_extraction_failed) -> check/main must FAIL.
+    assert ledger.reserve_call("s-post-ritual", "d-post-ritual")
+    job_ritual = queue.enqueue_source_record(make_source("s-post-ritual"), enqueued_at=now_epoch - 1200)
+    queue.mark_skipped(
+        job_ritual.job_id,
+        reason="hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？",
+        processed_at=now_epoch - 900,
+    )
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-28T08:30:00Z",
+                "s-post-ritual",
+                "failed",
+                "openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？",
+                None,
+            ),
+        )
+
+    summary_contaminated = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at=switch_iso,
+    )
+    assert summary_contaminated["closed_text_records"]["last_24h"]["by_reason"] == {"hypothesis_extraction_failed": 1}
+    assert summary_contaminated["llm_calls"]["ritual_events_since_switch"] == 1
+    Handler.board = project_board_from_summary(summary_contaminated)
+
+    assert dpd.main(now=NOW) == 1
+    out_contaminated = capsys.readouterr().out
+    assert "VERDICT failed failed=hypothesis_cards" in out_contaminated
+    assert "reason=ritual_marked_events_since_switch:1" in out_contaminated
+    assert '"ritual_events_since_switch": 1' in out_contaminated
 
 
 @pytest.mark.parametrize("card", [
