@@ -4922,6 +4922,28 @@
    "task": "AGORA-SERVANT-SESSION-DURABLE-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "HABIT_PROFILE_HISTORY_VERSIONS = 12",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per trader and strategy (key habit-<sha256 of tenant, user, strategy>), about 4 KB per profile (HABIT_PROFILE_MAX_BYTES = 8192 hard cap, source refs trimmed first); the row holds the latest profile plus at most 12 superseded versions (HABIT_PROFILE_HISTORY_VERSIONS = 12), so at most about 13 profiles per row; derivation reads at most the trader's own decision locks and the last 200 servant user messages (HABIT_WIDGET_EVENTS_MAX = 200)",
+   "cleanup": "older versions are deleted on write in AgoraStore.put_habit_profile (the 13th superseded version is dropped when a new version is written); a profile whose inputs did not change is not written; the servant's private interpretations live in persona memory (memory.persona_memory_entries) as at most 24 live entries per servant persona (MAX_ACTIVE_INTERPRETATIONS = 24 in servant/habits.py), derived readings expire after 180 days and trader corrections after 365 days (expires_at, archived by the memory owner's archive_expired), superseded entries are kept until their expiry, never edited in place",
+   "growth_driver": "event-driven, no schedule: a decision lock write flags the trader's profile rows stale (AgoraWriteService._mark_habit_profiles_stale); the next read (GET /bff/agora/servant/habits or a servant turn) recomputes deterministically and writes a new version only when the inputs changed; a PATCH correction adds one memory entry (about 1 KB) and one training_example evidence item",
+   "growth_per_day": "at most one profile write per changed read per trader and strategy (about 4 KB); bounded by 13 versions per row, so a trader with 5 strategies holds at most about 5 x 13 x 4 KB = 260 KB",
+   "kind": "schema_table",
+   "name": "agora.habit_profiles",
+   "owner": "schema:agora",
+   "readers": [
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/control-plane/bff/agora/servant/habits.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-TRADER-HABIT-PROFILE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
