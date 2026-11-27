@@ -1,0 +1,793 @@
+{
+  "task_id": "SOURCE-EVIDENCE-READ-COST-TEST-PLAN-DETERMINISTIC-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "implementation_anchor": "50f8c86a0",
+  "scope": "Test-only determinism repair plus RC2 incident registration and this static evidence manifest. No production source, migration, planner setting or CI/deploy workflow changed.",
+  "problem_register_class": {
+    "root_cause": "RC2",
+    "row": "Required check that fails under CI load (market-data owner)",
+    "class_task": "SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118"
+  },
+  "reproduction": {
+    "source": "Original failed GitHub Actions job log inspected before edits with gh run view 46015911896 --job 140574003301 --log.",
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/46015911896/job/140574003301",
+    "dev_commit": "262a93081",
+    "failing_test": "test_real_pg_deep_page_cost_is_flat_with_the_offset_and_plan_is_id_first",
+    "failed_assertion": "assert \"source_evidence_page_idx\" in plan_text",
+    "original_ci_plan_excerpt": "E           AssertionError: Nested Loop  (cost=4454.32..5757.26 rows=200 width=435) (actual time=17.015..17.310 rows=200 loops=1)\nE               Buffers: shared hit=3997\nE               ->  Limit  (cost=4454.03..4475.76 rows=200 width=8) (actual time=16.993..17.091 rows=200 loops=1)\nE                     Buffers: shared hit=3397\nE                     ->  Index Scan Backward using evidence_pkey on evidence  (cost=0.29..4671.29 rows=43000 width=8) (actual time=0.003..15.799 rows=41200 loops=1)\nE                           Filter: ((record_type = 'evidence_item'::text) AND (evidence_tenant_id = 'pantheon-dev'::text))\nE                           Buffers: shared hit=3397\nE               ->  Index Scan using evidence_pkey on evidence t  (cost=0.29..6.41 rows=1 width=435) (actual time=0.001..0.001 rows=1 loops=200)\nE                     Index Cond: (append_id = evidence.append_id)\nE                     Buffers: shared hit=600\nE             Planning:\nE               Buffers: shared hit=11\nE             Planning Time: 0.239 ms\nE             Execution Time: 17.335 ms",
+    "explanation": "One tenant and one record_type make the predicate true for every fixture row. The backward evidence_pkey scan consumed 41200 append IDs; the outer indexed payload lookup ran 200 times and the query completed in 17.335 ms. Index choice is not an id-first correctness invariant.",
+    "local_unmodified_file": {
+      "result": "11 passed, 1 warning in 14.60s",
+      "exit_status": 0,
+      "interpretation": "Local planner chose the page index. The local original passing while CI failed is the nondeterministic index choice being repaired."
+    },
+    "real_pg_alternative_after_page_index_drop": {
+      "new_structural_guard": "passed in every counted run",
+      "legacy_named_index_predicate": false,
+      "interpretation": "Same valid backward primary-key plan as CI; reproduced naturally by dropping the test-only page index before its existing rebuild, without planner GUC changes."
+    }
+  },
+  "deterministic_plan_contract": [
+    "One inner Limit projects only evidence.append_id, returns 200 rows once, and has indexed evidence scans that also project only append_id.",
+    "The inner page subtree contains neither a Sort nor a sequential evidence scan; an outer sort of the selected 200 rows is allowed.",
+    "The outer payload-fetch relation visits exactly 200 rows (sum of Actual Rows times Actual Loops), root returns exactly 200 rows once, and no evidence Seq Scan appears anywhere.",
+    "No assertion names a specific index; no planner setting is changed."
+  ],
+  "negative_control": {
+    "sql": "SELECT payload FROM <fixture_schema>.evidence WHERE record_type = 'evidence_item' AND evidence_tenant_id = 'pantheon-dev' ORDER BY append_id DESC LIMIT 200 OFFSET 41000",
+    "explain_options": "ANALYZE, BUFFERS, VERBOSE, FORMAT JSON",
+    "result": "Rejected by _assert_id_first_page_plan with AssertionError: expected an id-only page Limit; checked by pytest.raises in every counted run. The payload-bearing index scan visits 41200 rows although the root returns 200."
+  },
+  "plan_summaries": {
+    "deep_page_query_plan": {
+      "root_node": "Nested Loop",
+      "returned_rows": 200,
+      "execution_ms": 7.264,
+      "scans": [
+        {
+          "Node Type": "Index Only Scan",
+          "Alias": "evidence",
+          "Index Name": "source_evidence_page_idx",
+          "Output": [
+            "evidence.append_id"
+          ],
+          "Actual Rows": 41200,
+          "Actual Loops": 1
+        },
+        {
+          "Node Type": "Index Scan",
+          "Alias": "t",
+          "Index Name": "evidence_pkey",
+          "Output": [
+            "t.append_id",
+            "t.record_id",
+            "t.record_type",
+            "t.payload",
+            "t.created_at",
+            "t.evidence_tenant_id",
+            "t.evidence_capture_time",
+            "t.evidence_linked_types",
+            "t.evidence_source_type",
+            "t.evidence_link_type",
+            "t.evidence_credibility_tier",
+            "t.evidence_verified"
+          ],
+          "Actual Rows": 1,
+          "Actual Loops": 200
+        }
+      ]
+    },
+    "id_first_plan_without_page_index": {
+      "root_node": "Nested Loop",
+      "returned_rows": 200,
+      "execution_ms": 19.782,
+      "scans": [
+        {
+          "Node Type": "Index Scan",
+          "Alias": "evidence",
+          "Index Name": "evidence_pkey",
+          "Output": [
+            "evidence.append_id"
+          ],
+          "Actual Rows": 41200,
+          "Actual Loops": 1
+        },
+        {
+          "Node Type": "Index Scan",
+          "Alias": "t",
+          "Index Name": "evidence_pkey",
+          "Output": [
+            "t.append_id",
+            "t.record_id",
+            "t.record_type",
+            "t.payload",
+            "t.created_at",
+            "t.evidence_tenant_id",
+            "t.evidence_capture_time",
+            "t.evidence_linked_types",
+            "t.evidence_source_type",
+            "t.evidence_link_type",
+            "t.evidence_credibility_tier",
+            "t.evidence_verified"
+          ],
+          "Actual Rows": 1,
+          "Actual Loops": 200
+        }
+      ]
+    },
+    "rejected_payload_first_query_plan": {
+      "root_node": "Limit",
+      "returned_rows": 200,
+      "execution_ms": 21.744,
+      "scans": [
+        {
+          "Node Type": "Index Scan",
+          "Alias": "evidence",
+          "Index Name": "evidence_pkey",
+          "Output": [
+            "payload",
+            "append_id"
+          ],
+          "Actual Rows": 41200,
+          "Actual Loops": 1
+        }
+      ]
+    }
+  },
+  "sample_real_postgres_plans": {
+    "deep_page_query_plan": [
+      {
+        "Plan": {
+          "Node Type": "Nested Loop",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Join Type": "Inner",
+          "Startup Cost": 2238.3,
+          "Total Cost": 3530.43,
+          "Plan Rows": 200,
+          "Plan Width": 435,
+          "Actual Startup Time": 6.893,
+          "Actual Total Time": 7.17,
+          "Actual Rows": 200,
+          "Actual Loops": 1,
+          "Output": [
+            "t.payload",
+            "t.append_id"
+          ],
+          "Inner Unique": true,
+          "Shared Hit Blocks": 968,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Limit",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 2238.01,
+              "Total Cost": 2248.93,
+              "Plan Rows": 200,
+              "Plan Width": 8,
+              "Actual Startup Time": 6.796,
+              "Actual Total Time": 6.838,
+              "Actual Rows": 200,
+              "Actual Loops": 1,
+              "Output": [
+                "evidence.append_id"
+              ],
+              "Shared Hit Blocks": 368,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Index Only Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "source_evidence_page_idx",
+                  "Relation Name": "evidence",
+                  "Schema": "evidence_deep_f7d6e96a8c50",
+                  "Alias": "evidence",
+                  "Startup Cost": 0.41,
+                  "Total Cost": 2347.16,
+                  "Plan Rows": 43000,
+                  "Plan Width": 8,
+                  "Actual Startup Time": 0.032,
+                  "Actual Total Time": 5.385,
+                  "Actual Rows": 41200,
+                  "Actual Loops": 1,
+                  "Output": [
+                    "evidence.append_id"
+                  ],
+                  "Index Cond": "(evidence.evidence_tenant_id = 'pantheon-dev'::text)",
+                  "Rows Removed by Index Recheck": 0,
+                  "Heap Fetches": 0,
+                  "Shared Hit Blocks": 368,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            },
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Inner",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Forward",
+              "Index Name": "evidence_pkey",
+              "Relation Name": "evidence",
+              "Schema": "evidence_deep_f7d6e96a8c50",
+              "Alias": "t",
+              "Startup Cost": 0.29,
+              "Total Cost": 6.41,
+              "Plan Rows": 1,
+              "Plan Width": 435,
+              "Actual Startup Time": 0.001,
+              "Actual Total Time": 0.001,
+              "Actual Rows": 1,
+              "Actual Loops": 200,
+              "Output": [
+                "t.append_id",
+                "t.record_id",
+                "t.record_type",
+                "t.payload",
+                "t.created_at",
+                "t.evidence_tenant_id",
+                "t.evidence_capture_time",
+                "t.evidence_linked_types",
+                "t.evidence_source_type",
+                "t.evidence_link_type",
+                "t.evidence_credibility_tier",
+                "t.evidence_verified"
+              ],
+              "Index Cond": "(t.append_id = evidence.append_id)",
+              "Rows Removed by Index Recheck": 0,
+              "Shared Hit Blocks": 600,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Planning": {
+          "Shared Hit Blocks": 9,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.465,
+        "Triggers": [],
+        "Execution Time": 7.264
+      }
+    ],
+    "id_first_plan_without_page_index": [
+      {
+        "Plan": {
+          "Node Type": "Nested Loop",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Join Type": "Inner",
+          "Startup Cost": 4454.32,
+          "Total Cost": 5757.26,
+          "Plan Rows": 200,
+          "Plan Width": 435,
+          "Actual Startup Time": 19.207,
+          "Actual Total Time": 19.562,
+          "Actual Rows": 200,
+          "Actual Loops": 1,
+          "Output": [
+            "t.payload",
+            "t.append_id"
+          ],
+          "Inner Unique": true,
+          "Shared Hit Blocks": 3997,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Limit",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 4454.03,
+              "Total Cost": 4475.76,
+              "Plan Rows": 200,
+              "Plan Width": 8,
+              "Actual Startup Time": 19.139,
+              "Actual Total Time": 19.271,
+              "Actual Rows": 200,
+              "Actual Loops": 1,
+              "Output": [
+                "evidence.append_id"
+              ],
+              "Shared Hit Blocks": 3397,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Backward",
+                  "Index Name": "evidence_pkey",
+                  "Relation Name": "evidence",
+                  "Schema": "evidence_deep_f7d6e96a8c50",
+                  "Alias": "evidence",
+                  "Startup Cost": 0.29,
+                  "Total Cost": 4671.29,
+                  "Plan Rows": 43000,
+                  "Plan Width": 8,
+                  "Actual Startup Time": 0.036,
+                  "Actual Total Time": 17.681,
+                  "Actual Rows": 41200,
+                  "Actual Loops": 1,
+                  "Output": [
+                    "evidence.append_id"
+                  ],
+                  "Filter": "((evidence.record_type = 'evidence_item'::text) AND (evidence.evidence_tenant_id = 'pantheon-dev'::text))",
+                  "Rows Removed by Filter": 0,
+                  "Shared Hit Blocks": 3397,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            },
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Inner",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Forward",
+              "Index Name": "evidence_pkey",
+              "Relation Name": "evidence",
+              "Schema": "evidence_deep_f7d6e96a8c50",
+              "Alias": "t",
+              "Startup Cost": 0.29,
+              "Total Cost": 6.41,
+              "Plan Rows": 1,
+              "Plan Width": 435,
+              "Actual Startup Time": 0.001,
+              "Actual Total Time": 0.001,
+              "Actual Rows": 1,
+              "Actual Loops": 200,
+              "Output": [
+                "t.append_id",
+                "t.record_id",
+                "t.record_type",
+                "t.payload",
+                "t.created_at",
+                "t.evidence_tenant_id",
+                "t.evidence_capture_time",
+                "t.evidence_linked_types",
+                "t.evidence_source_type",
+                "t.evidence_link_type",
+                "t.evidence_credibility_tier",
+                "t.evidence_verified"
+              ],
+              "Index Cond": "(t.append_id = evidence.append_id)",
+              "Rows Removed by Index Recheck": 0,
+              "Shared Hit Blocks": 600,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Planning": {
+          "Shared Hit Blocks": 239,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 2.321,
+        "Triggers": [],
+        "Execution Time": 19.782
+      }
+    ],
+    "rejected_payload_first_query_plan": [
+      {
+        "Plan": {
+          "Node Type": "Limit",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 4454.03,
+          "Total Cost": 4475.76,
+          "Plan Rows": 200,
+          "Plan Width": 435,
+          "Actual Startup Time": 21.606,
+          "Actual Total Time": 21.708,
+          "Actual Rows": 200,
+          "Actual Loops": 1,
+          "Output": [
+            "payload",
+            "append_id"
+          ],
+          "Shared Hit Blocks": 2303,
+          "Shared Read Blocks": 1094,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Index Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Scan Direction": "Backward",
+              "Index Name": "evidence_pkey",
+              "Relation Name": "evidence",
+              "Schema": "evidence_deep_f7d6e96a8c50",
+              "Alias": "evidence",
+              "Startup Cost": 0.29,
+              "Total Cost": 4671.29,
+              "Plan Rows": 43000,
+              "Plan Width": 435,
+              "Actual Startup Time": 0.035,
+              "Actual Total Time": 20.157,
+              "Actual Rows": 41200,
+              "Actual Loops": 1,
+              "Output": [
+                "payload",
+                "append_id"
+              ],
+              "Filter": "((evidence.record_type = 'evidence_item'::text) AND (evidence.evidence_tenant_id = 'pantheon-dev'::text))",
+              "Rows Removed by Filter": 0,
+              "Shared Hit Blocks": 2303,
+              "Shared Read Blocks": 1094,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        },
+        "Planning": {
+          "Shared Hit Blocks": 2,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0
+        },
+        "Planning Time": 0.202,
+        "Triggers": [],
+        "Execution Time": 21.744
+      }
+    ]
+  },
+  "file_wide_assertion_audit": [
+    {
+      "test": "test_summary_is_opt_out_and_legacy_callers_keep_the_population",
+      "cases": 1,
+      "disposition": "No planner-choice or wall-clock assertion; unchanged summary parity, opt-out call counts, response/filter assertions."
+    },
+    {
+      "test": "test_owner_link_shapes_filter_and_echo_without_changing_summary",
+      "cases": 5,
+      "disposition": "No planner-choice or wall-clock assertion; unchanged canonical link-shape normalization/filter and summary behavior."
+    },
+    {
+      "test": "test_real_pg_summary_exact_and_updated_by_independent_writes",
+      "previous_name": "test_real_pg_summary_exact_fast_and_updated_by_independent_writes",
+      "cases": 1,
+      "disposition": "Removed required max(summary timings) < 0.5 s and named summary-index assertion. Timings and EXPLAIN remain observational. Retains exact full summary equality, 9000 total, independent-writer verification tier changes and restored-summary equality."
+    },
+    {
+      "test": "test_real_pg_filtered_pages_match_memory_and_never_transfer_source_records",
+      "cases": 1,
+      "disposition": "No planner-choice or wall-clock assertion; elapsed time already observational. Retains full record parity with memory, 1800 total/unique rows and exclusion of raw source records."
+    },
+    {
+      "test": "test_real_pg_existing_table_migrates_idempotently_and_link_updates_stay_exact",
+      "cases": 1,
+      "disposition": "No planner-choice or wall-clock assertion; unchanged repeat bootstrap, tenant isolation, link update and count assertions."
+    },
+    {
+      "test": "test_real_pg_deep_pages_are_exact_and_plan_is_id_first",
+      "previous_name": "test_real_pg_deep_page_cost_is_flat_with_the_offset_and_plan_is_id_first",
+      "cases": 1,
+      "disposition": "Removed required named page-index assertion, max timing < 1.0 s and deep-offset timing < max(6x first-page timing, 0.25 s). Timings remain observational. Retains totals/page sizes at offsets 0/20000/41000 and strengthens first-row identity to all 200 row IDs. JSON structural guard accepts two real id-first plans and rejects the real payload-first negative control. Index size/rebuild timing remain measurements."
+    },
+    {
+      "test": "test_real_pg_tenant_item_under_bare_record_id_is_readable_by_detail_as_the_list_shows_it",
+      "cases": 1,
+      "disposition": "No planner-choice or wall-clock assertion; unchanged list/detail identity and foreign-tenant exclusion."
+    }
+  ],
+  "validation": {
+    "postgres_version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "postgres_image": "postgres:16-alpine",
+    "isolation": "Disposable task-owned PostgreSQL container, one fresh random schema per test invocation; schemas dropped in fixture/test finalizers; container removed after validation.",
+    "python_provisioning": "python3 scripts/dev/provision_python_distribution.py (exit 0; checkout-scoped .venv-pantheon)",
+    "environment": {
+      "SOURCE_INGEST_TEST_POSTGRES_DSN": "postgresql://postgres:<disposable-test-password>@127.0.0.1:<task-published-port>/source_evidence_plan",
+      "SOURCE_EVIDENCE_COST_MEASUREMENTS": "/tmp/source-evidence-run-NN.jsonl"
+    },
+    "execution": "20 sequential fresh pytest processes in five foreground batches of four; each process bounded by subprocess.run(timeout=90); all terminal outputs and exit statuses collected before handoff. No parallel invocations, skips, xfails, reruns or retry counting.",
+    "consecutive_file_runs": 20,
+    "tests_per_run": 11,
+    "total_passed": 220,
+    "failures": 0,
+    "skipped": 0,
+    "per_run": [
+      {
+        "run": 1,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.023,
+        "terminal_summary": "11 passed, 1 warning in 15.17s"
+      },
+      {
+        "run": 2,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 17.149,
+        "terminal_summary": "11 passed, 1 warning in 16.40s"
+      },
+      {
+        "run": 3,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.426,
+        "terminal_summary": "11 passed, 1 warning in 15.53s"
+      },
+      {
+        "run": 4,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.588,
+        "terminal_summary": "11 passed, 1 warning in 14.82s"
+      },
+      {
+        "run": 5,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 23.402,
+        "terminal_summary": "11 passed, 1 warning in 21.82s"
+      },
+      {
+        "run": 6,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 31.335,
+        "terminal_summary": "11 passed, 1 warning in 29.10s"
+      },
+      {
+        "run": 7,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 26.211,
+        "terminal_summary": "11 passed, 1 warning in 24.80s"
+      },
+      {
+        "run": 8,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 27.41,
+        "terminal_summary": "11 passed, 1 warning in 25.85s"
+      },
+      {
+        "run": 9,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 25.66,
+        "terminal_summary": "11 passed, 1 warning in 24.50s"
+      },
+      {
+        "run": 10,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 23.545,
+        "terminal_summary": "11 passed, 1 warning in 22.52s"
+      },
+      {
+        "run": 11,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 17.556,
+        "terminal_summary": "11 passed, 1 warning in 16.60s"
+      },
+      {
+        "run": 12,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.023,
+        "terminal_summary": "11 passed, 1 warning in 15.08s"
+      },
+      {
+        "run": 13,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.902,
+        "terminal_summary": "11 passed, 1 warning in 16.11s"
+      },
+      {
+        "run": 14,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.647,
+        "terminal_summary": "11 passed, 1 warning in 15.59s"
+      },
+      {
+        "run": 15,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.847,
+        "terminal_summary": "11 passed, 1 warning in 14.98s"
+      },
+      {
+        "run": 16,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.308,
+        "terminal_summary": "11 passed, 1 warning in 14.53s"
+      },
+      {
+        "run": 17,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.275,
+        "terminal_summary": "11 passed, 1 warning in 14.59s"
+      },
+      {
+        "run": 18,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.933,
+        "terminal_summary": "11 passed, 1 warning in 15.23s"
+      },
+      {
+        "run": 19,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 15.669,
+        "terminal_summary": "11 passed, 1 warning in 14.75s"
+      },
+      {
+        "run": 20,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+        "exit_status": 0,
+        "elapsed_seconds": 16.15,
+        "terminal_summary": "11 passed, 1 warning in 15.26s"
+      }
+    ],
+    "representative_full_terminal_output": "...........                                                              [100%]\n=============================== warnings summary ===============================\n../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e470f33558462c32/lib/python3.12/site-packages/fastapi/testclient.py:1\n  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e470f33558462c32/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n11 passed, 1 warning in 15.26s\n",
+    "per_run_output_sha256": {
+      "1": "54bf7b02b90f6139b85d546379ee708c894c0cf014900264fedee16ad6557f3c",
+      "2": "160ccab36db77340e972e7e1cab1daf64b46a2edc364d63d951b584909407e17",
+      "3": "3e87eeda9467e0b1afa5a1e58ac19671ad808bff623627c63776c8da9a60ddfb",
+      "4": "b1e29126d560381a6ca57a46e5c4bfc01237fabb352b6f7f0166ee1677511ec1",
+      "5": "b82486978f6ef227dc114ab7c41c166111a9c938e4e6c25c9c508d056812556b",
+      "6": "20d6e1336c10d39fa79215471c06e3431243d62264c2bac3ae7e67800994f8e7",
+      "7": "7ca9b7c9b295be95ca0307d1709905a6561ed10e69b65089d704b9fe56e9b8ac",
+      "8": "cd24da7a8478d4a2e874d6b97b85a353ad7f673c3f55b54edd313e410a7e6684",
+      "9": "f6d06b2bc758e57cd2445add707e9025ab34fff1f4d1e121ade781556d3d465e",
+      "10": "0c93a342ebcddb2b6251adeb8571b90cf414dbf0867300518ed0d52525269216",
+      "11": "aef79614bc5755170ebf24b14903fdc1bfccc72679bf937f27b2ccc844957148",
+      "12": "3f3283b37c7a2084833709b9d9d8a3b525bcd7b97ddd7a63b2a6afe41ab422de",
+      "13": "21162f94b763b1de15a68097892f8b23c76c6f90a5c917a5ba3bb5c3cf738092",
+      "14": "19a0ed94b2855a045b0e165447de41d3150d4b7cd3711faf1607d6e2b7ba9100",
+      "15": "65520149270f175e2dca4c17cc8881537e5385b090a308c51e31fa249efe78c2",
+      "16": "dd5af09b384086f809b0c6a4f12b42a3cf2c3fb6b657625e5ec06766fc65c601",
+      "17": "e6c04c1e009cdbd777a098e30a701356e9a5b461d24291e707357faa13669677",
+      "18": "a7f4ff3a0f16ecea9031ef25b3e8510367c6db1a5f4b5449a3dd7aaf07eae780",
+      "19": "a09f1c87327b62489b0f30ce12f90a8fd030653ddb9e40d19ae6dcd717da829d",
+      "20": "99102882b9693d991b983758c20f8afb85427d0f86fd818781ea53f8ddfadf69"
+    },
+    "test_file_sha256": "367d45e0df7d634dd5d016f2a58827b943c219efeb8daf209097b700c08d713f",
+    "observations_from_run_20": {
+      "summary_seconds": [
+        0.006395449978299439,
+        0.0028710190090350807,
+        0.002272430050652474,
+        0.0022123800008557737,
+        0.0021684400271624327
+      ],
+      "summary_query_plan": "GroupAggregate  (cost=0.29..310.36 rows=8 width=36) (actual time=0.217..1.922 rows=4 loops=1)\n  Group Key: evidence_source_type, evidence_link_type, evidence_credibility_tier, evidence_verified\n  Buffers: shared hit=10\n  ->  Index Only Scan using source_evidence_summary_idx on evidence  (cost=0.29..197.78 rows=9000 width=28) (actual time=0.029..0.706 rows=9000 loops=1)\n        Index Cond: (evidence_tenant_id = 'pantheon-dev'::text)\n        Heap Fetches: 0\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=13\nPlanning Time: 0.229 ms\nExecution Time: 1.950 ms",
+      "owner_pages_with_parity_seconds": 0.6365500499960035,
+      "deep_page_seconds_by_offset": {
+        "0": 0.019493028987199068,
+        "20000": 0.024167809984646738,
+        "41000": 0.02304334001382813
+      },
+      "page_idx_bytes_and_table_total_bytes": [
+        3162112,
+        43073536
+      ],
+      "page_idx_build_seconds": 0.06962071801535785
+    },
+    "warning": "Existing StarletteDeprecationWarning: using httpx with starlette.testclient is deprecated.",
+    "diff_check": "git diff --check origin/dev (exit 0)",
+    "cleanup": {
+      "schema_count_after_all_runs": 0,
+      "schema_query_exit_status": 0,
+      "task_container_stop_exit_status": 0,
+      "container_auto_remove": true
+    }
+  },
+  "runtime_budget": "No recurring job, emitter, cache or hosted persistent writer added or changed. Optional measurement sink already existed; the counted repeat validation writes 20 task-scoped measurement/log pairs under /tmp (plus bounded baseline/candidate diagnostics), with no daily growth. Existing test schemas are dropped in finalizers; disposable PostgreSQL --rm container is stopped after validation. The checked-in manifest is a single static task artifact.",
+  "delivery_boundary": "Source/test review only. This evidence makes no hosted deployment or hosted acceptance claim. Independent reviewer and canonical supervisor integration remain required.",
+  "residual_findings": []
+}
