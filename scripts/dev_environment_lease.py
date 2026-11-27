@@ -93,7 +93,15 @@ class LeaseLost(LeaseError):
 
 
 class InitialLeaseVisibilityPending(LeaseLost):
-    """Raised only when GitHub still serves the exact stale predecessor blob."""
+    """Raised only inside the bounded initial-visibility window after acquisition.
+
+    GitHub may still serve the exact stale predecessor blob, or (see
+    InitialLeaseMissingPending) briefly answer 404 for the newly created lease.
+    """
+
+
+class InitialLeaseMissingPending(InitialLeaseVisibilityPending):
+    """Raised when the lease path answers 404 inside the initial-visibility window."""
 
 
 class LeaseConflict(LeaseError):
@@ -1380,9 +1388,19 @@ class LeaseManager:
         *,
         require_active: bool,
         allow_exact_stale_predecessor: bool = False,
+        allow_initial_missing: bool = False,
     ) -> tuple[dict[str, Any], RemoteContent]:
         remote = self.client.get_content(self.repository, self.branch, self.path)
         if remote is None:
+            if allow_initial_missing:
+                # GitHub can briefly answer 404 for a lease file this run just
+                # created (e.g. after the predecessor was deleted on release).
+                # Only the caller's bounded initial-visibility window may retry
+                # this; the eventual content must still match this acquisition.
+                raise InitialLeaseMissingPending(
+                    "remote dev environment lease is missing during initial "
+                    "visibility after acquisition"
+                )
             raise LeaseLost("remote dev environment lease is missing")
         for key in ACQUISITION_IMMUTABLE_FIELDS:
             if remote.state.get(key) != local_state.get(key):
@@ -1461,6 +1479,7 @@ class LeaseManager:
                     allow_exact_stale_predecessor=(
                         initial_visibility_wait_seconds > 0
                     ),
+                    allow_initial_missing=initial_visibility_wait_seconds > 0,
                 )
                 heartbeat = parse_utc_iso(state["heartbeatAt"], "heartbeatAt")
                 age = (remote.server_now - heartbeat).total_seconds()
@@ -1501,9 +1520,14 @@ class LeaseManager:
             except InitialLeaseVisibilityPending as exc:
                 remaining = visibility_deadline - self._now_monotonic()
                 if remaining <= 0:
+                    observed = (
+                        "missing (404)"
+                        if isinstance(exc, InitialLeaseMissingPending)
+                        else "on the exact stale predecessor"
+                    )
                     raise LeaseLost(
-                        "initial lease visibility remained on the exact stale "
-                        "predecessor until the bounded timeout"
+                        f"initial lease visibility remained {observed} "
+                        "until the bounded timeout"
                     ) from exc
                 self._sleep(min(initial_visibility_poll_seconds, remaining))
 
