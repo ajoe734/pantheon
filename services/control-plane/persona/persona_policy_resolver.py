@@ -39,6 +39,34 @@ from types import SimpleNamespace
 from collections.abc import Mapping
 
 
+def non_trading_identity_source(persona: Mapping[str, Any]) -> Optional[str]:
+    """Existing advisory enrollment exclusions, independent of capital and capability.
+
+    Owner records use metadata; BFF fixtures may flatten or camel-case it.
+    Explicit advisory identity takes precedence over paper ownership/trading tags.
+    Keep this module stdlib-only so isolated acceptance probes can load it.
+    """
+    metadata = persona.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+
+    def values(*keys):
+        return {str(source.get(key) or "").strip().lower()
+                for source in (metadata, persona) for key in keys}
+
+    if values("persona_class", "personaClass") & {"consult_panel", "agora_servant", "agora_advisor"}:
+        return "persona_class"
+    if values("origin") & {"private_servant", "agora_advisor"}:
+        return "origin"
+    if "user_private" in values("owner_scope", "ownerScope"):
+        return "owner_scope"
+    if "consult-panel.non-trading" in values("consult_policy_id", "consultPolicyId"):
+        return "consult_policy_id"
+    # Preserve the existing BFF's explicit Agora no-execution rule as well.
+    if values("agora_user_id", "agoraUserId") - {""} and "none" in values("execution_authority"):
+        return "agora_scope"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Policy catalog entry types
 # ---------------------------------------------------------------------------
@@ -321,12 +349,7 @@ def evaluate_participant_action_capability(
         return deny("owner_unavailable", "capability_owner_unavailable")
     if persona.get("status") != "active" or persona.get("lifecycle_state") in {"frozen", "retired"}:
         return deny("suspended", "persona_not_active")
-    identity = persona.get("metadata") or {}
-    if persona.get("lifecycle_state") not in {"paper_owner", "paper_running"} or (
-            identity.get("persona_class") in {"consult_panel", "agora_servant", "agora_advisor"}
-            or identity.get("origin") in {"private_servant", "agora_advisor"}
-            or identity.get("owner_scope") == "user_private"
-            or persona.get("consult_policy_id") == "consult-panel.non-trading"):
+    if persona.get("lifecycle_state") not in {"paper_owner", "paper_running"} or non_trading_identity_source(persona):
         return deny("advisory_only", "persona_not_enrolled_for_daily_execution")
     if not snapshot or snapshot.get("persona_id") != pid:
         return deny("owner_unavailable", "capability_snapshot_missing")
