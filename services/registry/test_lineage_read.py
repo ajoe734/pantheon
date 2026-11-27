@@ -261,3 +261,130 @@ def test_http_lineage_is_tenant_scoped(strict_client):
     assert any(n["id"].startswith("b-") for n in admin["nodes"])
     assert strict_client.get("/api/registry/lineage").status_code in (401, 403)
     assert strict_client.get("/api/registry/lineage?limit=0", headers=_auth("tenant-a")).status_code == 422
+
+
+def test_entry_writes_are_visible_in_next_lineage_read_and_unknown_root_returns_empty_graph(strict_client):
+    store = get_store()
+    headers = _auth("tenant-a")
+    for e in persona_family_entries("tenant-a"):
+        store.put(e)
+
+    # 1. A root_id that matches nothing answers 200 ok with zero nodes and zero edges
+    unknown = strict_client.get("/api/registry/lineage?root_id=art_stg001_v320", headers=headers)
+    assert unknown.status_code == 200
+    unknown_body = unknown.json()
+    assert unknown_body["root_id"] == "art_stg001_v320"
+    assert unknown_body["nodes"] == []
+    assert unknown_body["edges"] == []
+    assert unknown_body["has_more"] is False
+
+    # 2. New entry write -> immediately visible in the next lineage read
+    new_spec_v1 = _entry(
+        "reg-spec-write-v1",
+        "strategy_spec",
+        "strat-write-family",
+        lineage={"source_run_ids": ["run-write-v1"], "source_dataset_refs": ["ds-write-1"]},
+        metadata={"persona_id": "persona-write-1", "capital_pool_id": "pool-write-1"},
+        state="candidate",
+        tenant="tenant-a",
+        version="1.0.0",
+        created_at="2026-11-27T01:00:00Z",
+    )
+    store.put(new_spec_v1)
+    g_new = strict_client.get("/api/registry/lineage?root_id=strat-write-family&depth=2", headers=headers).json()
+    assert {n["id"] for n in g_new["nodes"]} >= {
+        "reg-spec-write-v1", "run-write-v1", "ds-write-1", "persona-write-1", "pool-write-1",
+    }
+    assert ("reg-spec-write-v1", "persona-write-1", "persona") in _edge_set(g_new)
+    assert ("reg-spec-write-v1", "pool-write-1", "capital_pool") in _edge_set(g_new)
+
+    # 3. New version write -> immediately visible in the next lineage read
+    new_spec_v2 = _entry(
+        "reg-spec-write-v2",
+        "strategy_spec",
+        "strat-write-family",
+        lineage={
+            "source_run_ids": ["run-write-v2"],
+            "parent_registry_ids": ["reg-spec-write-v1"],
+        },
+        metadata={"persona_id": "persona-write-1", "capital_pool_id": "pool-write-1"},
+        state="candidate",
+        tenant="tenant-a",
+        version="1.0.1",
+        created_at="2026-11-27T02:00:00Z",
+    )
+    store.put(new_spec_v2)
+    g_ver = strict_client.get("/api/registry/lineage?root_id=strat-write-family&depth=2", headers=headers).json()
+    nodes_by_id = {n["id"]: n for n in g_ver["nodes"]}
+    assert "reg-spec-write-v2" in nodes_by_id
+    assert nodes_by_id["reg-spec-write-v2"]["version"] == "1.0.1"
+    assert ("reg-spec-write-v1", "reg-spec-write-v2", "parent") in _edge_set(g_ver)
+
+    # 4. Parent change write -> immediately visible in the next lineage read
+    alt_parent = _entry(
+        "reg-spec-write-alt-parent",
+        "strategy_spec",
+        "strat-write-family",
+        lineage={"source_run_ids": ["run-write-alt"]},
+        metadata={"persona_id": "persona-write-1"},
+        state="candidate",
+        tenant="tenant-a",
+        version="1.0.0",
+        created_at="2026-11-27T01:30:00Z",
+    )
+    store.put(alt_parent)
+    new_spec_v2_reparented = _entry(
+        "reg-spec-write-v2",
+        "strategy_spec",
+        "strat-write-family",
+        lineage={
+            "source_run_ids": ["run-write-v2"],
+            "parent_registry_ids": ["reg-spec-write-alt-parent"],
+        },
+        metadata={"persona_id": "persona-write-1", "capital_pool_id": "pool-write-1"},
+        state="candidate",
+        tenant="tenant-a",
+        version="1.0.1",
+        created_at="2026-11-27T02:00:00Z",
+    )
+    store.put(new_spec_v2_reparented)
+    g_parent = strict_client.get("/api/registry/lineage?root_id=reg-spec-write-v2&depth=1", headers=headers).json()
+    parent_edges = _edge_set(g_parent)
+    assert ("reg-spec-write-alt-parent", "reg-spec-write-v2", "parent") in parent_edges
+    assert ("reg-spec-write-v1", "reg-spec-write-v2", "parent") not in parent_edges
+
+    # 5. Persona or capital pool change write -> immediately visible in the next lineage read
+    r_patch = strict_client.patch(
+        "/api/registry/entries/reg-spec-write-v2/metadata",
+        headers=headers,
+        json={
+            "expected_metadata": new_spec_v2_reparented.metadata,
+            "metadata": {"persona_id": "persona-write-2", "capital_pool_id": "pool-write-2", "risk_level": "low"},
+            "command_key": "cmd-lineage-persona-pool-change",
+        },
+    )
+    assert r_patch.status_code == 200
+    g_persona_pool = strict_client.get("/api/registry/lineage?root_id=reg-spec-write-v2&depth=1", headers=headers).json()
+    pp_edges = _edge_set(g_persona_pool)
+    assert ("reg-spec-write-v2", "persona-write-2", "persona") in pp_edges
+    assert ("reg-spec-write-v2", "pool-write-2", "capital_pool") in pp_edges
+    assert ("reg-spec-write-v2", "persona-write-1", "persona") not in pp_edges
+    assert ("reg-spec-write-v2", "pool-write-1", "capital_pool") not in pp_edges
+    v2_node = next(n for n in g_persona_pool["nodes"] if n["id"] == "reg-spec-write-v2")
+    assert v2_node["risk"] == "low"
+
+    # 6. Retire write -> immediately visible in the next lineage read
+    r_retire = strict_client.post(
+        "/api/registry/entries/reg-spec-write-v2/advance",
+        headers=headers,
+        json={
+            "target_state": "retired",
+            "expected_artifact_state": "candidate",
+            "command_key": "cmd-lineage-retire-v2",
+        },
+    )
+    assert r_retire.status_code == 200
+    g_retired = strict_client.get("/api/registry/lineage?root_id=reg-spec-write-v2&depth=1", headers=headers).json()
+    retired_node = next(n for n in g_retired["nodes"] if n["id"] == "reg-spec-write-v2")
+    assert retired_node["state"] == "retired"
+

@@ -197,11 +197,27 @@ LINEAGE_ROW_KEYS = (
 LINEAGE_LIST_FIELDS = ("parent_registry_ids", "source_run_ids", "source_dataset_refs")
 LINEAGE_SCALAR_FIELDS = ("source_strategy_spec_id",)
 LINEAGE_META_FIELDS = ("persona_id", "capital_pool_id", "risk_level")
+LINEAGE_ALL_KEYS: tuple[str, ...] = (
+    *LINEAGE_ROW_KEYS,
+    *LINEAGE_LIST_FIELDS,
+    *LINEAGE_SCALAR_FIELDS,
+    *LINEAGE_META_FIELDS,
+)
 LINEAGE_DEFAULT_LIMIT = 200
 LINEAGE_MAX_LIMIT = 1000
 LINEAGE_MAX_DEPTH = 20
+LINEAGE_INDEX_MAX_TENANT_VIEWS = 16
 
 _LINEAGE_REGISTRY_TYPES = {"strategy_spec": "Strategy", "execution_bundle": "Artifact"}
+_LINEAGE_EDGE_FRM_ROLE: dict[str, str] = {
+    "source_strategy_spec": "Strategy",
+    "source_dataset": "Dataset",
+    "source_run": "Experiment",
+}
+_LINEAGE_EDGE_TO_ROLE: dict[str, str] = {
+    "persona": "Persona",
+    "capital_pool": "CapitalPool",
+}
 
 
 def lineage_row(entry: RegistryEntry) -> dict:
@@ -217,6 +233,38 @@ def lineage_row(entry: RegistryEntry) -> dict:
     for k in LINEAGE_META_FIELDS:
         row[k] = meta.get(k)
     return row
+
+
+def build_lineage_index_payload(payload: Any) -> Optional[dict[str, Any]]:
+    """Build the stored ``lineage_index`` JSONB document for a RegistryEntry payload.
+
+    Returns ``None`` for non-object payloads (after unwrapping legacy JSON-string
+    encodings). Null/absent leaves are omitted to match PostgreSQL
+    ``jsonb_strip_nulls`` in ``pantheon_registry_lineage_index_build(jsonb)``.
+    """
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return None
+    if not isinstance(payload, Mapping):
+        return None
+    out: dict[str, Any] = {
+        k: payload[k]
+        for k in LINEAGE_ROW_KEYS
+        if k in payload and payload[k] is not None
+    }
+    lin = payload.get("lineage")
+    if isinstance(lin, Mapping):
+        for k in LINEAGE_LIST_FIELDS + LINEAGE_SCALAR_FIELDS:
+            if k in lin and lin[k] is not None:
+                out[k] = lin[k]
+    meta = payload.get("metadata")
+    if isinstance(meta, Mapping):
+        for k in LINEAGE_META_FIELDS:
+            if k in meta and meta[k] is not None:
+                out[k] = meta[k]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +378,444 @@ def _lineage_id(value: Any) -> Optional[str]:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+class _CompiledLineageRow(dict):
+    """Flat lineage row dict with pre-parsed node and edge tuples.
+
+    Behaves identically to a plain ``dict`` returned by :func:`lineage_row` for
+    equality, key iteration, and JSON serialization while avoiding repeated dict
+    traversal, string stripping, and edge extraction on lineage reads.
+    """
+
+    __slots__ = ("_compiled_lineage", "_owner_tenant")
+
+    def __init__(
+        self,
+        data: Mapping[str, Any],
+        *,
+        owner_tenant: Optional[str] = None,
+        compiled_lineage: Optional[tuple[Any, ...]] = None,
+    ) -> None:
+        super().__init__(data)
+        self._owner_tenant = owner_tenant
+        self._compiled_lineage = compiled_lineage
+
+
+def _compile_lineage_row(row: Mapping[str, Any]) -> Optional[tuple[Any, ...]]:
+    if not isinstance(row, Mapping):
+        return None
+    rid = row.get("registry_id")
+    if not rid or not isinstance(rid, str):
+        return None
+    strategy_id = row.get("strategy_id")
+    artifact_type = row.get("artifact_type")
+    created_at = str(row.get("created_at") or "")
+    node: dict[str, Any] = {"id": rid, "label": rid}
+    ntype = _LINEAGE_REGISTRY_TYPES.get(artifact_type, artifact_type)
+    if ntype:
+        node["type"] = ntype
+    if row.get("artifact_state"):
+        node["state"] = row["artifact_state"]
+    sid = _lineage_id(strategy_id)
+    if sid:
+        node["strategy_id"] = sid
+    ver = _lineage_id(row.get("version"))
+    if ver:
+        node["version"] = ver
+    risk = _lineage_id(row.get("risk_level"))
+    if risk:
+        node["risk"] = risk
+
+    raw_edges: list[tuple[str, str, str]] = []
+    for p in _lineage_ids(row.get("parent_registry_ids")):
+        raw_edges.append((p, rid, "parent"))
+    spec = _lineage_id(row.get("source_strategy_spec_id"))
+    if spec:
+        raw_edges.append((spec, rid, "source_strategy_spec"))
+    for d in _lineage_ids(row.get("source_dataset_refs")):
+        raw_edges.append((d, rid, "source_dataset"))
+    for run in _lineage_ids(row.get("source_run_ids")):
+        raw_edges.append((run, rid, "source_run"))
+    persona = _lineage_id(row.get("persona_id"))
+    if persona:
+        raw_edges.append((rid, persona, "persona"))
+    pool = _lineage_id(row.get("capital_pool_id"))
+    if pool:
+        raw_edges.append((rid, pool, "capital_pool"))
+    return (
+        rid,
+        strategy_id,
+        artifact_type,
+        created_at,
+        node,
+        tuple(raw_edges),
+    )
+
+
+def compile_lineage_row_from_entry(entry: RegistryEntry) -> _CompiledLineageRow:
+    """Build a :class:`_CompiledLineageRow` from a :class:`RegistryEntry`."""
+    raw = lineage_row(entry)
+    row = _CompiledLineageRow(raw, owner_tenant=raw.get("owner_tenant"))
+    row._compiled_lineage = _compile_lineage_row(row)
+    return row
+
+
+class _CompiledLineageGraphIndex:
+    """Incremental compiled lineage adjacency index over a visible row set.
+
+    Eliminates per-request full-population scans and adjacency rebuilds while
+    producing answers identical to the reference ``build_lineage_graph`` pass.
+    Supports O(degree) incremental delta updates when rows are added, updated,
+    or removed.
+    """
+
+    __slots__ = (
+        "by_id",
+        "node_templates",
+        "row_edges_by_rid",
+        "strategy_to_rids",
+        "bundles_by_rid",
+        "edge_emitters",
+        "node_incident_edges",
+        "adj_by_node",
+        "_bundle_seeds_cache",
+    )
+
+    def __init__(self) -> None:
+        self.by_id: dict[str, Mapping[str, Any]] = {}
+        self.node_templates: dict[str, dict[str, Any]] = {}
+        self.row_edges_by_rid: dict[str, tuple[tuple[str, str, str], ...]] = {}
+        self.strategy_to_rids: dict[Any, set[str]] = {}
+        self.bundles_by_rid: dict[str, tuple[str, str]] = {}
+        self.edge_emitters: dict[tuple[str, str, str], dict[str, tuple[str, int]]] = {}
+        self.node_incident_edges: dict[str, set[tuple[str, str, str]]] = {}
+        self.adj_by_node: dict[str, tuple[tuple[tuple[str, int], tuple[str, str, str]], ...]] = {}
+        self._bundle_seeds_cache: Optional[tuple[str, ...]] = None
+
+    @classmethod
+    def from_rows(cls, rows: Sequence[Mapping[str, Any]]) -> "_CompiledLineageGraphIndex":
+        idx = cls()
+        dedup: dict[str, tuple[Mapping[str, Any], tuple[Any, ...]]] = {}
+        for r in rows:
+            compiled = getattr(r, "_compiled_lineage", None) or _compile_lineage_row(r)
+            if compiled is not None:
+                dedup[compiled[0]] = (r, compiled)
+        adj_lists: dict[str, list[tuple[tuple[str, int], tuple[str, str, str]]]] = {}
+        for rid in sorted(dedup):
+            r, (rid_val, strategy_id, artifact_type, created_at, node_dict, row_edges) = dedup[rid]
+            idx.by_id[rid_val] = r
+            idx.node_templates[rid_val] = node_dict
+            idx.row_edges_by_rid[rid_val] = row_edges
+            if strategy_id is not None:
+                idx.strategy_to_rids.setdefault(strategy_id, set()).add(rid_val)
+            if artifact_type == "execution_bundle":
+                idx.bundles_by_rid[rid_val] = (created_at, rid_val)
+            for local_idx, edge_key in enumerate(row_edges):
+                frm, to, _label = edge_key
+                order_key = (rid_val, local_idx)
+                emitters = idx.edge_emitters.get(edge_key)
+                if emitters is None:
+                    idx.edge_emitters[edge_key] = {rid_val: order_key}
+                    idx.node_incident_edges.setdefault(frm, set()).add(edge_key)
+                    idx.node_incident_edges.setdefault(to, set()).add(edge_key)
+                    adj_lists.setdefault(frm, []).append((order_key, edge_key))
+                    if to != frm:
+                        adj_lists.setdefault(to, []).append((order_key, edge_key))
+                elif rid_val not in emitters:
+                    emitters[rid_val] = order_key
+        for u, items in adj_lists.items():
+            idx.adj_by_node[u] = tuple(items)
+        return idx
+
+    def _remove_row_no_rebuild(self, rid: str) -> set[str]:
+        old_row = self.by_id.pop(rid, None)
+        if old_row is None:
+            return set()
+        self.node_templates.pop(rid, None)
+        old_sid = old_row.get("strategy_id")
+        if old_sid is not None:
+            rids_for_sid = self.strategy_to_rids.get(old_sid)
+            if rids_for_sid is not None:
+                rids_for_sid.discard(rid)
+                if not rids_for_sid:
+                    self.strategy_to_rids.pop(old_sid, None)
+        if rid in self.bundles_by_rid:
+            self.bundles_by_rid.pop(rid, None)
+            self._bundle_seeds_cache = None
+        old_edges = self.row_edges_by_rid.pop(rid, ())
+        dirty_nodes: set[str] = set()
+        for edge_key in old_edges:
+            frm, to, _label = edge_key
+            emitters = self.edge_emitters.get(edge_key)
+            if emitters is not None and rid in emitters:
+                del emitters[rid]
+                if not emitters:
+                    del self.edge_emitters[edge_key]
+                    for endpoint in (frm, to):
+                        inc = self.node_incident_edges.get(endpoint)
+                        if inc is not None:
+                            inc.discard(edge_key)
+                            if not inc:
+                                del self.node_incident_edges[endpoint]
+                dirty_nodes.add(frm)
+                dirty_nodes.add(to)
+        if rid in self.bundles_by_rid:
+            dirty_nodes.add(rid)
+        return dirty_nodes
+
+    def _insert_row_no_rebuild(
+        self, row: Mapping[str, Any], compiled: tuple[Any, ...],
+    ) -> set[str]:
+        rid, strategy_id, artifact_type, created_at, node_dict, row_edges = compiled
+        self.by_id[rid] = row
+        self.node_templates[rid] = node_dict
+        self.row_edges_by_rid[rid] = row_edges
+        if strategy_id is not None:
+            self.strategy_to_rids.setdefault(strategy_id, set()).add(rid)
+        if artifact_type == "execution_bundle":
+            self.bundles_by_rid[rid] = (created_at, rid)
+            self._bundle_seeds_cache = None
+        dirty_nodes: set[str] = set()
+        for local_idx, edge_key in enumerate(row_edges):
+            frm, to, _label = edge_key
+            order_key = (rid, local_idx)
+            emitters = self.edge_emitters.get(edge_key)
+            if emitters is None:
+                self.edge_emitters[edge_key] = {rid: order_key}
+            elif rid not in emitters:
+                emitters[rid] = order_key
+            self.node_incident_edges.setdefault(frm, set()).add(edge_key)
+            self.node_incident_edges.setdefault(to, set()).add(edge_key)
+            dirty_nodes.add(frm)
+            dirty_nodes.add(to)
+        return dirty_nodes
+
+    def _rebuild_dirty_nodes(self, dirty_nodes: set[str]) -> None:
+        for u in dirty_nodes:
+            if u in self.bundles_by_rid:
+                self._bundle_seeds_cache = None
+            inc = self.node_incident_edges.get(u)
+            if not inc:
+                self.adj_by_node.pop(u, None)
+                continue
+            ordered: list[tuple[tuple[str, int], tuple[str, str, str]]] = []
+            for edge_key in inc:
+                emitters = self.edge_emitters[edge_key]
+                win_order_key = (
+                    next(iter(emitters.values()))
+                    if len(emitters) == 1
+                    else min(emitters.values())
+                )
+                ordered.append((win_order_key, edge_key))
+            ordered.sort(key=lambda item: item[0])
+            self.adj_by_node[u] = tuple(ordered)
+
+    def apply_delta_rows(
+        self,
+        *,
+        removed_rids: Sequence[str] = (),
+        upserted_rows: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
+        dirty: set[str] = set()
+        for old_rid in removed_rids:
+            if old_rid:
+                dirty.update(self._remove_row_no_rebuild(old_rid))
+        for new_row in upserted_rows:
+            compiled = getattr(new_row, "_compiled_lineage", None) or _compile_lineage_row(new_row)
+            if compiled is None:
+                continue
+            rid = compiled[0]
+            if rid in self.by_id:
+                dirty.update(self._remove_row_no_rebuild(rid))
+            dirty.update(self._insert_row_no_rebuild(new_row, compiled))
+        if dirty:
+            self._rebuild_dirty_nodes(dirty)
+
+    def bundle_seeds(self) -> tuple[str, ...]:
+        if self._bundle_seeds_cache is None:
+            active_bundles = [
+                sort_key
+                for rid, sort_key in self.bundles_by_rid.items()
+                if self.adj_by_node.get(rid)
+            ]
+            active_bundles.sort(reverse=True)
+            self._bundle_seeds_cache = tuple(rid for _created_at, rid in active_bundles)
+        return self._bundle_seeds_cache
+
+    def role_for_node(self, nid: str) -> Optional[str]:
+        for _order_key, (frm, to, label) in self.adj_by_node.get(nid, ()):
+            if frm == nid:
+                role = _LINEAGE_EDGE_FRM_ROLE.get(label)
+                if role:
+                    return role
+            if to == nid:
+                role = _LINEAGE_EDGE_TO_ROLE.get(label)
+                if role:
+                    return role
+        return None
+
+    def query(
+        self,
+        *,
+        root_id: Optional[str] = None,
+        depth: int = 3,
+        limit: int = LINEAGE_DEFAULT_LIMIT,
+    ) -> dict[str, Any]:
+        depth = max(1, min(int(depth), LINEAGE_MAX_DEPTH))
+        limit = max(1, min(int(limit), LINEAGE_MAX_LIMIT))
+        has_more = False
+        seeds: list[str]
+        if root_id:
+            wanted = root_id.strip()
+            matched = set(self.strategy_to_rids.get(wanted, ()))
+            if wanted in self.by_id or wanted in self.adj_by_node:
+                matched.add(wanted)
+            seeds = sorted(matched)
+        else:
+            b_seeds = self.bundle_seeds()
+            has_more = len(b_seeds) > limit
+            seeds = list(b_seeds[:limit])
+
+        visited = set(seeds)
+        frontier = list(seeds)
+        picked: list[tuple[str, str, str]] = []
+        picked_set: set[tuple[str, str, str]] = set()
+        for _ in range(depth):
+            nxt: list[str] = []
+            for node in sorted(frontier):
+                for _order_key, edge_key in self.adj_by_node.get(node, ()):
+                    if edge_key in picked_set:
+                        continue
+                    picked_set.add(edge_key)
+                    picked.append(edge_key)
+                    if len(picked) > limit:
+                        break
+                    for end in edge_key[:2]:
+                        if end not in visited:
+                            visited.add(end)
+                            nxt.append(end)
+                if len(picked) > limit:
+                    break
+            if len(picked) > limit:
+                break
+            frontier = nxt
+            if not frontier:
+                break
+        if len(picked) > limit:
+            picked = picked[:limit]
+            has_more = True
+
+        node_ids: list[str] = []
+        seen_nodes: set[str] = set()
+        for sid in seeds:
+            if sid not in seen_nodes:
+                seen_nodes.add(sid)
+                node_ids.append(sid)
+        for edge_key in picked:
+            for end in edge_key[:2]:
+                if end not in seen_nodes:
+                    seen_nodes.add(end)
+                    node_ids.append(end)
+
+        nodes: list[dict[str, Any]] = []
+        for nid in node_ids:
+            tmpl = self.node_templates.get(nid)
+            if tmpl is not None:
+                nodes.append(dict(tmpl))
+            else:
+                node: dict[str, Any] = {"id": nid, "label": nid}
+                role = self.role_for_node(nid)
+                if role:
+                    node["type"] = role
+                nodes.append(node)
+        return {
+            "root_id": root_id or None,
+            "depth": depth,
+            "limit": limit,
+            "nodes": nodes,
+            "edges": [
+                {"from": e[0], "to": e[1], "label": e[2]} for e in picked
+            ],
+            "has_more": has_more,
+        }
+
+
+class _CompiledLineageRowList(list):
+    """List of flat lineage rows carrying an incrementally-updated compiled adjacency index."""
+
+    __slots__ = ("_graph_index", "_rows_by_record_id", "_tenant_key")
+
+    def __init__(
+        self,
+        iterable=(),
+        *,
+        tenant_key: Optional[frozenset] = None,
+        rows_by_record_id: Optional[dict[str, _CompiledLineageRow]] = None,
+        graph_index: Optional[_CompiledLineageGraphIndex] = None,
+    ) -> None:
+        super().__init__(iterable)
+        self._tenant_key = tenant_key
+        self._rows_by_record_id: dict[str, _CompiledLineageRow] = (
+            rows_by_record_id if rows_by_record_id is not None else {}
+        )
+        self._graph_index = graph_index
+
+    @classmethod
+    def from_record_map(
+        cls,
+        records: Mapping[str, tuple[int, _CompiledLineageRow]],
+        tenant_key: Optional[frozenset],
+    ) -> "_CompiledLineageRowList":
+        by_rec: dict[str, _CompiledLineageRow] = {
+            rec_key: row
+            for rec_key, (_rev, row) in records.items()
+            if tenant_key is None or row._owner_tenant in tenant_key
+        }
+        rows_list = list(by_rec.values())
+        graph_idx = _CompiledLineageGraphIndex.from_rows(rows_list)
+        return cls(
+            rows_list,
+            tenant_key=tenant_key,
+            rows_by_record_id=by_rec,
+            graph_index=graph_idx,
+        )
+
+    def get_or_build_graph_index(self) -> _CompiledLineageGraphIndex:
+        if self._graph_index is None:
+            self._graph_index = _CompiledLineageGraphIndex.from_rows(self)
+        return self._graph_index
+
+    def apply_delta_records(
+        self,
+        delta_records: Sequence[tuple[str, _CompiledLineageRow]],
+    ) -> None:
+        if not delta_records:
+            return
+        removed_rids: list[str] = []
+        upserted_rows: list[_CompiledLineageRow] = []
+        for rec_key, new_row in delta_records:
+            old_row = self._rows_by_record_id.pop(rec_key, None)
+            is_visible = self._tenant_key is None or new_row._owner_tenant in self._tenant_key
+            if old_row is not None:
+                old_rid = old_row.get("registry_id")
+                new_rid = new_row.get("registry_id") if is_visible else None
+                if isinstance(old_rid, str) and old_rid and old_rid != new_rid:
+                    removed_rids.append(old_rid)
+            if is_visible:
+                self._rows_by_record_id[rec_key] = new_row
+                upserted_rows.append(new_row)
+        self[:] = list(self._rows_by_record_id.values())
+        if self._graph_index is not None:
+            self._graph_index.apply_delta_rows(
+                removed_rids=removed_rids,
+                upserted_rows=upserted_rows,
+            )
+            for old_rid in removed_rids:
+                if old_rid not in self._graph_index.by_id and old_rid in self._rows_by_record_id:
+                    self._graph_index.apply_delta_rows(
+                        upserted_rows=[self._rows_by_record_id[old_rid]]
+                    )
+
+
 def build_lineage_graph(
     rows: list[dict], *, root_id: Optional[str] = None, depth: int = 3, limit: int = LINEAGE_DEFAULT_LIMIT,
 ) -> dict:
@@ -342,6 +828,9 @@ def build_lineage_graph(
     from the most recent ``execution_bundle`` rows, never the whole population.
     Traversal is breadth-first over ``depth`` hops (nearest edges win the ``limit`` cap).
     """
+    get_graph_index = getattr(rows, "get_or_build_graph_index", None)
+    if callable(get_graph_index):
+        return get_graph_index().query(root_id=root_id, depth=depth, limit=limit)
     depth = max(1, min(int(depth), LINEAGE_MAX_DEPTH))
     limit = max(1, min(int(limit), LINEAGE_MAX_LIMIT))
     by_id = {r["registry_id"]: r for r in rows if r.get("registry_id")}
@@ -1792,6 +2281,9 @@ class RegistryStore:
         # the rows it returns).
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: tuple[str, ...] = ()
+        self._lineage_rev_seq: int = 0
+        self._lineage_by_record_id: dict[str, tuple[int, _CompiledLineageRow]] = {}
+        self._lineage_tenant_views: dict[Optional[frozenset], _CompiledLineageRowList] = {}
 
     # -- Write operations -------------------------------------------------
 
@@ -1800,6 +2292,12 @@ class RegistryStore:
         self._strategy_index.setdefault(entry.strategy_id, [])
         if entry.registry_id not in self._strategy_index[entry.strategy_id]:
             self._strategy_index[entry.strategy_id].append(entry.registry_id)
+        self._lineage_rev_seq += 1
+        compiled_row = compile_lineage_row_from_entry(entry)
+        self._lineage_by_record_id.pop(entry.registry_id, None)
+        self._lineage_by_record_id[entry.registry_id] = (self._lineage_rev_seq, compiled_row)
+        for view in self._lineage_tenant_views.values():
+            view.apply_delta_records([(entry.registry_id, compiled_row)])
 
     @staticmethod
     def _new_entry(
@@ -2029,8 +2527,29 @@ class RegistryStore:
         )
 
     def list_lineage_rows(self, *, visible_tenants: Optional[frozenset] = None) -> list[dict]:
-        rows = [lineage_row(entry) for entry in self.list_all_entries()]
-        return [r for r in rows if persona_binding_row_visible(r, visible_tenants, None)]
+        tenant_key = frozenset(visible_tenants) if visible_tenants is not None else None
+        with self._lock:
+            if len(self._lineage_by_record_id) != len(self._entries):
+                self._lineage_by_record_id.clear()
+                self._lineage_tenant_views.clear()
+                for entry in self._entries.values():
+                    self._lineage_rev_seq += 1
+                    self._lineage_by_record_id[entry.registry_id] = (
+                        self._lineage_rev_seq,
+                        compile_lineage_row_from_entry(entry),
+                    )
+            cached_view = self._lineage_tenant_views.pop(tenant_key, None)
+            if cached_view is not None:
+                self._lineage_tenant_views[tenant_key] = cached_view
+                return cached_view
+            view_rows = _CompiledLineageRowList.from_record_map(
+                self._lineage_by_record_id, tenant_key
+            )
+            if len(self._lineage_tenant_views) >= LINEAGE_INDEX_MAX_TENANT_VIEWS:
+                oldest = next(iter(self._lineage_tenant_views))
+                self._lineage_tenant_views.pop(oldest, None)
+            self._lineage_tenant_views[tenant_key] = view_rows
+            return view_rows
 
     def list_strategy_artifact_rows(
         self, *, visible_tenants: Optional[frozenset] = None,

@@ -37,6 +37,8 @@ from .models import (
 from .storage import (
     DISCOVERY_ENTRY_KEYS,
     DISCOVERY_EXCLUDED_STATES,
+    LINEAGE_ALL_KEYS,
+    LINEAGE_INDEX_MAX_TENANT_VIEWS,
     LINEAGE_LIST_FIELDS,
     LINEAGE_META_FIELDS,
     LINEAGE_ROW_KEYS,
@@ -71,7 +73,12 @@ from .storage import (
     RegistryConcurrentUpdateError,
     _CompiledIndexRow,
     _CompiledIndexRowList,
+    _CompiledLineageGraphIndex,
+    _CompiledLineageRow,
+    _CompiledLineageRowList,
+    _compile_lineage_row,
     _compile_strategy_summary_index_row,
+    build_lineage_index_payload,
     build_strategy_summary_index_payload,
     discovery_candidate_from_payload,
     encode_strategy_artifact_page_token,
@@ -166,6 +173,15 @@ SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000
 SUMMARY_INDEX_BACKFILL_MAX_BATCHES = 50
 SUMMARY_INDEX_MAX_TENANT_VIEWS = 16
 
+# REGISTRY-LINEAGE-READ-NO-FULL-SCAN-20261127: GET /api/registry/lineage reuses
+# the summary_index / summary_rev trigger, sequence, stamp, indexed delta, and
+# bounded backfill mechanism so lineage reads never project payload leaves across
+# all entries or rebuild the full adjacency on each request.
+LINEAGE_INDEX_COLUMN = "lineage_index"
+LINEAGE_INDEX_SUFFIX = "_lineage_index_idx"
+LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000
+LINEAGE_INDEX_BACKFILL_MAX_BATCHES = 50
+
 
 def strategy_spec_summary_index_stamp_sql(table: str) -> str:
     """One cheap index-only query returning ``(count, max_rev, sum_rev)`` over stored summary-index rows."""
@@ -215,11 +231,67 @@ def strategy_spec_summary_index_stored_tenant_select_sql(
     return sql, tuple(params)
 
 
+def lineage_index_stamp_sql(table: str) -> str:
+    """One cheap query returning ``(count, max_rev, sum_rev)`` over stored lineage-index rows."""
+    return (
+        f"SELECT count(*), coalesce(max({SUMMARY_REV_COLUMN}), 0)::bigint, "
+        f"coalesce(sum({SUMMARY_REV_COLUMN}), 0)::bigint "
+        f"FROM {table} WHERE {LINEAGE_INDEX_COLUMN} IS NOT NULL"
+    )
+
+
+def lineage_index_stored_select_sql(table: str) -> str:
+    """Cold read of stored ``lineage_index`` column (never evaluates ``payload`` expressions)."""
+    return (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({LINEAGE_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {LINEAGE_INDEX_COLUMN} IS NOT NULL "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+
+
+def lineage_index_delta_sql(table: str) -> str:
+    """Indexed delta read of stored ``lineage_index`` rows written since a revision watermark."""
+    return (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({LINEAGE_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {LINEAGE_INDEX_COLUMN} IS NOT NULL AND {SUMMARY_REV_COLUMN} > %s "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+
+
+def lineage_index_stored_tenant_select_sql(
+    table: str, visible_tenants: Optional[frozenset] = None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Direct uncached stored-column lineage query filtered by ``visible_tenants`` without touching ``payload``."""
+    where = [f"{LINEAGE_INDEX_COLUMN} IS NOT NULL"]
+    params: list[Any] = []
+    if visible_tenants is not None:
+        named = sorted(t for t in visible_tenants if t is not None)
+        clauses = [f"{LINEAGE_INDEX_COLUMN} ->> 'owner_tenant' = ANY(%s::text[])"]
+        params.append(named)
+        if None in visible_tenants:
+            clauses.append(f"{LINEAGE_INDEX_COLUMN} ->> 'owner_tenant' IS NULL")
+        where.append("(" + " OR ".join(clauses) + ")")
+    sql = (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({LINEAGE_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {' AND '.join(where)} "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+    return sql, tuple(params)
+
+
 def _decode_stored_summary_index_row(raw_json: str) -> _CompiledIndexRow:
     data = json.loads(raw_json)
     owner_tenant = data.pop("owner_tenant", None)
     row = _CompiledIndexRow(data, owner_tenant=owner_tenant)
     row._compiled = _compile_strategy_summary_index_row(row)
+    return row
+
+
+def _decode_stored_lineage_index_row(raw_json: str) -> _CompiledLineageRow:
+    raw = json.loads(raw_json)
+    data = {k: raw.get(k) for k in LINEAGE_ALL_KEYS}
+    row = _CompiledLineageRow(data, owner_tenant=data.get("owner_tenant"))
+    row._compiled_lineage = _compile_lineage_row(row)
     return row
 
 
@@ -342,9 +414,83 @@ $fn$;
 """.strip()
 
 
+def _lineage_index_build_function_sql(fn_lineage_build: str) -> str:
+    """PL/pgSQL IMMUTABLE function extracting the lineage-index JSONB from any RegistryEntry payload."""
+    return f"""
+CREATE OR REPLACE FUNCTION {fn_lineage_build}(raw_payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+    p jsonb;
+    l jsonb;
+    m jsonb;
+BEGIN
+    IF raw_payload IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF jsonb_typeof(raw_payload) = 'string' THEN
+        BEGIN
+            p := (raw_payload #>> '{{}}')::jsonb;
+        EXCEPTION WHEN OTHERS THEN
+            RETURN NULL;
+        END;
+    ELSE
+        p := raw_payload;
+    END IF;
+    IF jsonb_typeof(p) <> 'object' THEN
+        RETURN NULL;
+    END IF;
+
+    l := CASE WHEN jsonb_typeof(p -> 'lineage') = 'object' THEN p -> 'lineage' ELSE NULL END;
+    m := CASE WHEN jsonb_typeof(p -> 'metadata') = 'object' THEN p -> 'metadata' ELSE NULL END;
+
+    RETURN jsonb_strip_nulls(jsonb_build_object(
+        'registry_id', p -> 'registry_id',
+        'artifact_type', p -> 'artifact_type',
+        'artifact_state', p -> 'artifact_state',
+        'strategy_id', p -> 'strategy_id',
+        'version', p -> 'version',
+        'owner_tenant', p -> 'owner_tenant',
+        'created_at', p -> 'created_at',
+        'parent_registry_ids', CASE WHEN l IS NOT NULL THEN l -> 'parent_registry_ids' ELSE NULL END,
+        'source_run_ids', CASE WHEN l IS NOT NULL THEN l -> 'source_run_ids' ELSE NULL END,
+        'source_dataset_refs', CASE WHEN l IS NOT NULL THEN l -> 'source_dataset_refs' ELSE NULL END,
+        'source_strategy_spec_id', CASE WHEN l IS NOT NULL THEN l -> 'source_strategy_spec_id' ELSE NULL END,
+        'persona_id', CASE WHEN m IS NOT NULL THEN m -> 'persona_id' ELSE NULL END,
+        'capital_pool_id', CASE WHEN m IS NOT NULL THEN m -> 'capital_pool_id' ELSE NULL END,
+        'risk_level', CASE WHEN m IS NOT NULL THEN m -> 'risk_level' ELSE NULL END
+    ));
+END;
+$fn$;
+""".strip()
+
+
 def _strategy_summary_index_trigger_function_sql(
-    fn_tg: str, fn_build: str, seq_ident: str,
+    fn_tg: str,
+    fn_build: str,
+    seq_ident: str,
+    fn_lineage_build: Optional[str] = None,
 ) -> str:
+    if fn_lineage_build:
+        return f"""
+CREATE OR REPLACE FUNCTION {fn_tg}()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $tg$
+BEGIN
+    NEW.{SUMMARY_INDEX_COLUMN} := {fn_build}(NEW.payload);
+    NEW.{LINEAGE_INDEX_COLUMN} := {fn_lineage_build}(NEW.payload);
+    IF NEW.{SUMMARY_INDEX_COLUMN} IS NOT NULL OR NEW.{LINEAGE_INDEX_COLUMN} IS NOT NULL THEN
+        NEW.{SUMMARY_REV_COLUMN} := nextval('{seq_ident}');
+    ELSE
+        NEW.{SUMMARY_REV_COLUMN} := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$tg$;
+""".strip()
     return f"""
 CREATE OR REPLACE FUNCTION {fn_tg}()
 RETURNS trigger
@@ -410,6 +556,7 @@ class PostgresRegistryStore:
             self._ensure_artifact_catalog_indexes()
             self._ensure_artifact_type_index()
             self._ensure_strategy_summary_index()
+            self._ensure_lineage_index()
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: list[str] = []
 
@@ -438,6 +585,36 @@ class PostgresRegistryStore:
             self.phase1_index_rows_fetched: int = 0
         if not hasattr(self, "phase1_payload_rescans"):
             self.phase1_payload_rescans: int = 0
+        if not hasattr(self, "_lineage_index_lock"):
+            self._lineage_index_lock = threading.Lock()
+        if not hasattr(self, "_lineage_index_by_record_id"):
+            self._lineage_index_by_record_id: Optional[dict[str, tuple[int, _CompiledLineageRow]]] = None
+        if not hasattr(self, "_lineage_index_stamp"):
+            self._lineage_index_stamp: Optional[tuple[int, int, int]] = None
+        if not hasattr(self, "_lineage_index_tenant_views"):
+            self._lineage_index_tenant_views: dict[Optional[frozenset], _CompiledLineageRowList] = {}
+        if not hasattr(self, "_lineage_index_ready"):
+            self._lineage_index_ready: bool = False
+        if not hasattr(self, "_lineage_index_cache_enabled"):
+            self._lineage_index_cache_enabled: bool = True
+        if not hasattr(self, "last_lineage_index_backfill"):
+            self.last_lineage_index_backfill: Optional[dict[str, Any]] = None
+        if not hasattr(self, "lineage_index_sql_reads"):
+            self.lineage_index_sql_reads: int = 0
+        if not hasattr(self, "lineage_index_delta_reads"):
+            self.lineage_index_delta_reads: int = 0
+        if not hasattr(self, "lineage_index_cache_hits"):
+            self.lineage_index_cache_hits: int = 0
+        if not hasattr(self, "lineage_index_rows_fetched"):
+            self.lineage_index_rows_fetched: int = 0
+        if not hasattr(self, "lineage_payload_rescans"):
+            self.lineage_payload_rescans: int = 0
+        if not hasattr(self, "lineage_adjacency_builds"):
+            self.lineage_adjacency_builds: int = 0
+        if not hasattr(self, "lineage_adjacency_delta_updates"):
+            self.lineage_adjacency_delta_updates: int = 0
+        if not hasattr(self, "lineage_adjacency_cache_hits"):
+            self.lineage_adjacency_cache_hits: int = 0
 
     def invalidate_strategy_summary_index_cache(self, *, full: bool = False) -> None:
         """Invalidate the in-process Phase 1 summary-index cache (or tenant views)."""
@@ -447,6 +624,17 @@ class PostgresRegistryStore:
             if full:
                 self._summary_index_by_record_id = None
                 self._summary_index_stamp = None
+        if full:
+            self.invalidate_lineage_index_cache(full=True)
+
+    def invalidate_lineage_index_cache(self, *, full: bool = False) -> None:
+        """Invalidate the in-process lineage-index and compiled-adjacency cache."""
+        self._init_summary_index_cache_state()
+        with self._lineage_index_lock:
+            self._lineage_index_tenant_views.clear()
+            if full:
+                self._lineage_index_by_record_id = None
+                self._lineage_index_stamp = None
 
     # -- Write operations ---------------------------------------------------
 
@@ -1231,12 +1419,164 @@ class PostgresRegistryStore:
         )
 
     def list_lineage_rows(self, *, visible_tenants: Optional[frozenset] = None) -> list[dict]:
-        """Flat lineage rows projected inside Postgres (no RegistryEntry rebuild).
+        """Flat lineage rows projected from stored ``lineage_index`` column (no payload detoast or RegistryEntry rebuild).
 
-        The verified visible owner population is the only filter; the JSON
-        leaves read are constant paths, request values travel as parameters.
+        Reuses the ``summary_index``/``summary_rev`` trigger, sequence, stamp,
+        indexed delta, and bounded backfill mechanism (REGISTRY-LINEAGE-READ-NO-FULL-SCAN-20261127),
+        returning a :class:`_CompiledLineageRowList` whose cached adjacency index
+        is updated incrementally from the ``summary_rev > prev_max_rev`` delta.
         """
+        self._init_summary_index_cache_state()
+        if hasattr(self._entries, "_use_conn") and hasattr(self._entries, "table"):
+            if not self._lineage_index_ready and hasattr(self._entries, "_connect"):
+                self._ensure_lineage_index()
+            if not self._lineage_index_cache_enabled:
+                sql, sql_params = lineage_index_stored_tenant_select_sql(
+                    self._entries.table, visible_tenants,
+                )
+                with self._entries._use_conn(None) as conn:
+                    cur = conn.execute(sql, sql_params) if sql_params else conn.execute(sql)
+                    raw_rows = [
+                        tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                        for r in cur.fetchall()
+                    ]
+                decoded_rows = [
+                    _decode_stored_lineage_index_row(raw_json)
+                    for _rec_id, _rev, raw_json in raw_rows
+                    if raw_json is not None
+                ]
+                self.lineage_index_sql_reads += 1
+                self.lineage_index_rows_fetched = len(decoded_rows)
+                self.lineage_adjacency_builds += 1
+                return _CompiledLineageRowList(
+                    decoded_rows,
+                    tenant_key=frozenset(visible_tenants) if visible_tenants is not None else None,
+                    graph_index=_CompiledLineageGraphIndex.from_rows(decoded_rows),
+                )
+
+            with self._lineage_index_lock:
+                table = self._entries.table
+                need_full_reload = self._lineage_index_by_record_id is None
+                did_delta = False
+                if not need_full_reload:
+                    with self._entries._use_conn(None) as conn:
+                        stamp_cur = conn.execute(lineage_index_stamp_sql(table))
+                        stamp_row = stamp_cur.fetchone()
+                    if isinstance(stamp_row, dict):
+                        vals = tuple(stamp_row.values())
+                    else:
+                        vals = tuple(stamp_row) if stamp_row is not None else (0, 0, 0)
+                    stamp = (int(vals[0] or 0), int(vals[1] or 0), int(vals[2] or 0))
+                    if stamp == self._lineage_index_stamp:
+                        self.lineage_index_cache_hits += 1
+                        self.lineage_index_rows_fetched = 0
+                    else:
+                        db_count, db_max_rev, _db_sum_rev = stamp
+                        prev_stamp = self._lineage_index_stamp
+                        if (
+                            db_count > 0
+                            and prev_stamp is not None
+                            and prev_stamp[1] > 0
+                            and db_max_rev > prev_stamp[1]
+                        ):
+                            with self._entries._use_conn(None) as conn:
+                                delta_cur = conn.execute(
+                                    lineage_index_delta_sql(table),
+                                    (prev_stamp[1],),
+                                )
+                                delta_raw = [
+                                    tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                                    for r in delta_cur.fetchall()
+                                ]
+                            by_id = self._lineage_index_by_record_id
+                            assert by_id is not None
+                            running_count = len(by_id)
+                            running_max_rev = prev_stamp[1]
+                            running_sum_rev = prev_stamp[2]
+                            seen_in_delta: dict[str, int] = {}
+                            for rec_id, rev_val, raw_json in delta_raw:
+                                if raw_json is None:
+                                    continue
+                                rec_key = str(rec_id)
+                                rev_int = int(rev_val or 0)
+                                if rec_key in seen_in_delta:
+                                    running_sum_rev += rev_int - seen_in_delta[rec_key]
+                                elif rec_key in by_id:
+                                    running_sum_rev += rev_int - by_id[rec_key][0]
+                                else:
+                                    running_count += 1
+                                    running_sum_rev += rev_int
+                                seen_in_delta[rec_key] = rev_int
+                                if rev_int > running_max_rev:
+                                    running_max_rev = rev_int
+                            if delta_raw and (running_count, running_max_rev, running_sum_rev) == stamp:
+                                delta_records: list[tuple[str, _CompiledLineageRow]] = []
+                                for rec_id, rev_val, raw_json in delta_raw:
+                                    if raw_json is None:
+                                        continue
+                                    rec_key = str(rec_id)
+                                    decoded_row = _decode_stored_lineage_index_row(raw_json)
+                                    by_id.pop(rec_key, None)
+                                    by_id[rec_key] = (int(rev_val or 0), decoded_row)
+                                    delta_records.append((rec_key, decoded_row))
+                                for view in self._lineage_index_tenant_views.values():
+                                    view.apply_delta_records(delta_records)
+                                self._lineage_index_stamp = stamp
+                                self.lineage_index_delta_reads += 1
+                                self.lineage_index_rows_fetched = len(delta_raw)
+                                did_delta = True
+                            else:
+                                need_full_reload = True
+                        else:
+                            need_full_reload = True
+
+                if need_full_reload:
+                    with self._entries._use_conn(None) as conn:
+                        full_cur = conn.execute(lineage_index_stored_select_sql(table))
+                        full_raw = [
+                            tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                            for r in full_cur.fetchall()
+                        ]
+                    new_by_id: dict[str, tuple[int, _CompiledLineageRow]] = {}
+                    actual_max_rev = 0
+                    actual_sum_rev = 0
+                    for rec_id, rev_val, raw_json in full_raw:
+                        if raw_json is None:
+                            continue
+                        rec_key = str(rec_id)
+                        rev_int = int(rev_val or 0)
+                        new_by_id[rec_key] = (rev_int, _decode_stored_lineage_index_row(raw_json))
+                        actual_sum_rev += rev_int
+                        if rev_int > actual_max_rev:
+                            actual_max_rev = rev_int
+                    self._lineage_index_by_record_id = new_by_id
+                    self._lineage_index_stamp = (len(new_by_id), actual_max_rev, actual_sum_rev)
+                    self._lineage_index_tenant_views.clear()
+                    self.lineage_index_sql_reads += 1
+                    self.lineage_index_rows_fetched = len(new_by_id)
+
+                tenant_key = frozenset(visible_tenants) if visible_tenants is not None else None
+                cached_view = self._lineage_index_tenant_views.pop(tenant_key, None)
+                if cached_view is not None:
+                    self._lineage_index_tenant_views[tenant_key] = cached_view
+                    if did_delta:
+                        self.lineage_adjacency_delta_updates += 1
+                    else:
+                        self.lineage_adjacency_cache_hits += 1
+                    return cached_view
+                assert self._lineage_index_by_record_id is not None
+                view_rows = _CompiledLineageRowList.from_record_map(
+                    self._lineage_index_by_record_id, tenant_key
+                )
+                if len(self._lineage_index_tenant_views) >= LINEAGE_INDEX_MAX_TENANT_VIEWS:
+                    oldest_key = next(iter(self._lineage_index_tenant_views))
+                    self._lineage_index_tenant_views.pop(oldest_key, None)
+                self._lineage_index_tenant_views[tenant_key] = view_rows
+                self.lineage_adjacency_builds += 1
+                return view_rows
+
         visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(visible_tenants, None)
+        self.lineage_payload_rescans += 1
         return lineage_rows_from_columns(
             self._entries.list_all_selected(
                 lineage_select_sql(), visible_sql=visible_sql, keep_params=params,
@@ -1318,18 +1658,34 @@ class PostgresRegistryStore:
         idx_name = quote_pg_identifier(base + SUMMARY_INDEX_SUFFIX)
         return seq_ident, fn_build, fn_tg, tg_name, idx_name
 
+    def _lineage_index_identifiers(self) -> tuple[str, str]:
+        table_name = getattr(self._entries, "table_name", "registry.entries")
+        schema = getattr(self._entries, "schema", None)
+        if schema is None:
+            schema = table_name.split(".", 1)[0] if "." in table_name else ""
+        base = table_name.split(".")[-1][:34]
+        prefix = f"{quote_pg_identifier(schema)}." if schema else ""
+        fn_lineage_build = f"{prefix}{quote_pg_identifier('pantheon_registry_lineage_index_build')}"
+        lineage_idx_name = quote_pg_identifier(base + LINEAGE_INDEX_SUFFIX)
+        return fn_lineage_build, lineage_idx_name
+
     def _ensure_strategy_summary_index(self) -> None:
-        """Ensure stored ``summary_index``/``summary_rev`` columns, write trigger, partial index, and bounded backfill."""
+        """Ensure stored ``summary_index``/``lineage_index``/``summary_rev`` columns, write trigger, partial indexes, and bounded backfill."""
         self._init_summary_index_cache_state()
         table = self._entries.table
         table_name = getattr(self._entries, "table_name", "registry.entries")
         seq_ident, fn_build, fn_tg, tg_name, idx_name = self._summary_index_identifiers()
+        fn_lineage_build, lineage_idx_name = self._lineage_index_identifiers()
         stmts = (
             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {SUMMARY_INDEX_COLUMN} JSONB",
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {LINEAGE_INDEX_COLUMN} JSONB",
             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {SUMMARY_REV_COLUMN} BIGINT",
             f"CREATE SEQUENCE IF NOT EXISTS {seq_ident}",
             _strategy_summary_index_build_function_sql(fn_build),
-            _strategy_summary_index_trigger_function_sql(fn_tg, fn_build, seq_ident),
+            _lineage_index_build_function_sql(fn_lineage_build),
+            _strategy_summary_index_trigger_function_sql(
+                fn_tg, fn_build, seq_ident, fn_lineage_build
+            ),
             (
                 f"CREATE OR REPLACE TRIGGER {tg_name} "
                 f"BEFORE INSERT OR UPDATE OF payload ON {table} "
@@ -1339,6 +1695,11 @@ class PostgresRegistryStore:
                 f"CREATE INDEX IF NOT EXISTS {idx_name} "
                 f"ON {table} ({SUMMARY_REV_COLUMN} ASC) "
                 f"WHERE {SUMMARY_INDEX_COLUMN} IS NOT NULL"
+            ),
+            (
+                f"CREATE INDEX IF NOT EXISTS {lineage_idx_name} "
+                f"ON {table} ({SUMMARY_REV_COLUMN} ASC) "
+                f"WHERE {LINEAGE_INDEX_COLUMN} IS NOT NULL"
             ),
         )
         with self._entries._connect() as conn:
@@ -1354,6 +1715,14 @@ class PostgresRegistryStore:
                         conn.rollback()
         self._summary_index_ready = True
         self.backfill_strategy_summary_index()
+
+    def _ensure_lineage_index(self) -> None:
+        """Ensure stored ``lineage_index``/``summary_rev`` schema and run bounded lineage backfill."""
+        self._init_summary_index_cache_state()
+        if not self._summary_index_ready:
+            self._ensure_strategy_summary_index()
+        self._lineage_index_ready = True
+        self.backfill_lineage_index()
 
     def backfill_strategy_summary_index(
         self,
@@ -1377,7 +1746,7 @@ class PostgresRegistryStore:
             ") "
             f"UPDATE {table} AS t "
             f"SET {SUMMARY_INDEX_COLUMN} = {fn_build}(t.payload), "
-            f"{SUMMARY_REV_COLUMN} = nextval('{seq_ident}') "
+            f"{SUMMARY_REV_COLUMN} = COALESCE(t.{SUMMARY_REV_COLUMN}, nextval('{seq_ident}')) "
             "FROM todo WHERE t.record_id = todo.record_id"
         )
         t_start = time.perf_counter()
@@ -1408,6 +1777,62 @@ class PostgresRegistryStore:
         self.last_summary_index_backfill = report
         if total_updated > 0:
             self.invalidate_strategy_summary_index_cache(full=False)
+        return report
+
+    def backfill_lineage_index(
+        self,
+        *,
+        batch_size: int = LINEAGE_INDEX_BACKFILL_BATCH_SIZE,
+        max_batches: int = LINEAGE_INDEX_BACKFILL_MAX_BATCHES,
+    ) -> dict[str, Any]:
+        """Idempotent, bounded batched backfill of ``lineage_index`` and ``summary_rev`` for pre-existing rows."""
+        self._init_summary_index_cache_state()
+        table = self._entries.table
+        seq_ident, _fn_build, _fn_tg, _tg_name, _idx_name = self._summary_index_identifiers()
+        fn_lineage_build, _lineage_idx_name = self._lineage_index_identifiers()
+        effective_batch = max(1, int(batch_size))
+        effective_max_batches = max(1, int(max_batches))
+        batch_sql = (
+            "WITH lineage_todo AS ("
+            f"SELECT record_id FROM {table} "
+            f"WHERE {LINEAGE_INDEX_COLUMN} IS NULL AND ("
+            "jsonb_typeof(payload) = 'object' "
+            f"OR (jsonb_typeof(payload) = 'string' AND {fn_lineage_build}(payload) IS NOT NULL)"
+            ") ORDER BY record_id ASC LIMIT %s FOR UPDATE SKIP LOCKED"
+            ") "
+            f"UPDATE {table} AS t "
+            f"SET {LINEAGE_INDEX_COLUMN} = {fn_lineage_build}(t.payload), "
+            f"{SUMMARY_REV_COLUMN} = COALESCE(t.{SUMMARY_REV_COLUMN}, nextval('{seq_ident}')) "
+            "FROM lineage_todo WHERE t.record_id = lineage_todo.record_id"
+        )
+        t_start = time.perf_counter()
+        total_updated = 0
+        batch_elapsed_ms: list[float] = []
+        for _ in range(effective_max_batches):
+            t_b0 = time.perf_counter()
+            with self._entries._connect() as conn:
+                cur = conn.execute(batch_sql, (effective_batch,))
+                updated = int(getattr(cur, "rowcount", 0) or 0)
+            elapsed_ms = (time.perf_counter() - t_b0) * 1000.0
+            batch_elapsed_ms.append(round(elapsed_ms, 3))
+            if updated <= 0:
+                break
+            total_updated += updated
+            if updated < effective_batch:
+                break
+        total_ms = round((time.perf_counter() - t_start) * 1000.0, 3)
+        report = {
+            "batch_size": effective_batch,
+            "max_batches": effective_max_batches,
+            "batches_executed": len(batch_elapsed_ms),
+            "rows_updated": total_updated,
+            "batch_elapsed_ms": batch_elapsed_ms,
+            "max_batch_lock_ms": max(batch_elapsed_ms) if batch_elapsed_ms else 0.0,
+            "total_elapsed_ms": total_ms,
+        }
+        self.last_lineage_index_backfill = report
+        if total_updated > 0:
+            self.invalidate_lineage_index_cache(full=False)
         return report
 
     def list_strategy_artifact_page(
