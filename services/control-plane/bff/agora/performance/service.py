@@ -1551,6 +1551,7 @@ def pm12_performance_attribution_response(
     else:
         sources = pm12_performance_attribution_sources(tenant_id, read_store=read_store)
     facts = pm12_performance_attribution_facts(sources)
+    unscoped_runtime_ids = {f.get("runtime_id") for f in facts}
 
     # These PM-12 functions serve Management, independently of Agora's owner-
     # scoped performance projections. Reuse the already-read persona directory;
@@ -1584,6 +1585,7 @@ def pm12_performance_attribution_response(
         facts, hidden_test_persona_count, hidden_test_strategy_count = (
             pm12_attribution_test_scope_hiding(facts, sources["personas_by_id"])
         )
+    excluded_runtime_ids = unscoped_runtime_ids - {f.get("runtime_id") for f in facts}
 
     # ``period`` is deliberately not passed: every fact carries the applied
     # period, so comparing it with itself would filter nothing while implying
@@ -1673,14 +1675,13 @@ def pm12_performance_attribution_response(
     }
     if surface_key != "performance_attribution":
         surfaces["performance_attribution"] = ranking_fn(attribution_surface, snapshot_at=snapshot_at)
-    # Counterfactual grades must use the same runtime cohort as the visible
-    # facts, rather than aggregating the excluded book's telemetry.
-    visible_runtime_ids = {f.get("runtime_id") for f in facts}
+    # Counterfactual grades exclude the same known persona cohort. Preserve
+    # legacy telemetry without binding/class metadata, as for unknown personas.
     learning = pm12_attribution_instrument_learning({
         **sources,
         "telemetry_by_runtime_id": {
             rid: telemetry for rid, telemetry in sources["telemetry_by_runtime_id"].items()
-            if rid in visible_runtime_ids
+            if rid not in excluded_runtime_ids
         },
     })
     summary = {

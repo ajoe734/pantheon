@@ -106,7 +106,7 @@ class PersonaStateLookup:
     def is_management_excluded(self, persona_ids: Iterable[str]) -> bool:
         ids = list(persona_ids)
         return bool(self.available and ids) and all(
-            pid in self.management_hidden_persona_ids for pid in ids
+            pid in self.test_persona_ids or pid in self.non_trading_persona_ids for pid in ids
         )
 
     def persona_states(self, persona_ids: Iterable[str]) -> List[Dict[str, str]]:
