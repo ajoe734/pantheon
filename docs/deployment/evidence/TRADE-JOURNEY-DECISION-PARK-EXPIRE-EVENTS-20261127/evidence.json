@@ -147,10 +147,39 @@
         "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
         "exit_code": 0,
         "result": "34 passed in 3.29s; bounded foreground command terminal status collected."
+      },
+      {
+        "command": "timeout 600 .venv-pantheon/bin/python scripts/ci_test_inventory.py run-shard --shard 11 --of 12 --jobs 3 --timeout 300",
+        "exit_code": 0,
+        "result": "56 test files passed, 0 failed, wall 161 seconds",
+        "tested_head": "03dcb0ee9c158498b8923ab142957302f329c472",
+        "full_output": {
+          "path": "/tmp/park-expire-shard11-repair.log",
+          "sha256": "b0414cacc00c1eaaecf03e5a41e96f395185278cb2a50fdb04a09b69424e1648"
+        }
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+        "exit_code": 0,
+        "result": "205 passed, 10 subtests passed, 3 deprecation warnings in 38.86 seconds",
+        "tested_head": "03dcb0ee9c158498b8923ab142957302f329c472",
+        "full_output": {
+          "path": "/tmp/park-expire-source-recheck.log",
+          "sha256": "2055f4fe6ddcbf6ef6fe45aa4f56f3d322b1edb74c281d2624e7b7cba2c72c5f"
+        }
       }
     ],
     "review": "New head requires fresh independent review by Claude2; no merged, deployed or accepted claim.",
-    "residual_findings": "No new out-of-scope defects. Existing market-data refresh residual remains recorded above."
+    "residual_findings": "No new out-of-scope defects. Existing market-data refresh residual remains recorded above.",
+    "final_base_refresh": {
+      "base_sha": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
+      "tested_head": "fe49b0b346ef9ad0bf19c588791f38c9efb464f5",
+      "composition": "Only upstream source-ingestion test/evidence and problem-register updates changed after the full shard batch. Task runtime, journey read path and acceptance-stage files match the tested tree. All upstream storage-manifest list entries retained, plus this task budget.",
+      "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+      "exit_code": 0,
+      "result": "34 passed in 5.14 seconds"
+    },
+    "checks": "Storage manifest passed (379 entries, 4 waivers, no failures); diff budget passed; auto-classified commit trailers and git diff --check passed. All foreground batches reached terminal exit 0 before publication and review handoff."
   },
   "ci_repair": {
     "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46035160872/job/140635789098",
