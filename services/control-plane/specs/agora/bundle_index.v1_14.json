@@ -6,11 +6,11 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "0745fb07c0b10b6ec02222a368ac9d27041b00346ced595a4ed73382b6ed116b"
+    "specs/agora/v15/capability_manifest_v1_14.json": "1bc413b5385da2302d24356082cdf4d2510dd95d8952257f7ded6e0249d16c29"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "b82ac1d745e3873531bd73cbec47a1363c152d8c1afdd6f42b53847400f7e556"
+    "sha256": "18ce2c6bef9456c7dc32b7234a6a12a2cd387d1b866f32d524e9bfe57a75e346"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -31,6 +31,10 @@
     "agora.servant.data-tools.v1": [
       "POST /bff/agora/servant/sessions/{session_id}/messages",
       "GET /bff/agora/servant/sessions/{session_id}/stream"
+    ],
+    "agora.servant.habits.v1": [
+      "GET /bff/agora/servant/habits",
+      "PATCH /bff/agora/servant/habits"
     ]
   },
   "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."
