@@ -1,0 +1,106 @@
+{
+  "task_id": "AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127",
+  "title": "送 Shadow writes a decision lock that evaluation settles; the unread shadow_research target is removed",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "recorded_at": "2026-11-27T13:10:00Z",
+  "delivery_state": "merged",
+  "root_cause_class": "RC4 (Agora: the trading servant does not serve the human trader — SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §8.3 item 6 & §12 T6)",
+  "declared_dependencies": {
+    "AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127": {
+      "status": "done",
+      "pr": 7935,
+      "merge_commit": "20dbdff8423d5ec10153dd8a6e4c1694a141ddf9"
+    }
+  },
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_persistent_writers": 0,
+    "note": "Reuses existing agora.decision_locks (AgoraDecisionLock) and services/evaluation (AttributionStore) without adding any new background loop, queue, or table; removes the unread shadow stage handoff queue."
+  },
+  "acceptance": {
+    "shadow_writes_immutable_decision_lock_and_evaluation_settles_arms": {
+      "status": "verified",
+      "decision_route": "POST /bff/agora/trading-room/decision-events/{decision_event_id}/decisions (decision='shadow')",
+      "intent_handoff_route": "POST /bff/agora/trading-intents/{intent_id}/handoffs (requested_stage='shadow', handoff_type='shadow_start')",
+      "decision_lock_owner": "services.agora.service.AgoraWriteService (agora.decision_locks)",
+      "lock_fields": {
+        "schema": "AgoraHumanDecisionLock.v1",
+        "decision": "no_trade",
+        "trading_room_verdict": "shadow",
+        "execution_observation_kind": "declared_no_trade",
+        "arms.human_actual.execution_observation_kind": "declared_no_trade",
+        "immutable": true
+      },
+      "evaluation_settlement": {
+        "owner": "services/evaluation (settle_decision_lock / GET /api/attribution/shadow/{decision_id})",
+        "canonical_arms": [
+          "human_actual",
+          "private_servant",
+          "base_strategy",
+          "committee_variant"
+        ],
+        "human_actual_settlement": {
+          "settlement_source": "declared_no_trade",
+          "action": "no_trade",
+          "return_pct": 0.0,
+          "cost_pct": 0.0
+        },
+        "counterfactual_arms_settlement": "private_servant, base_strategy, and committee_variant (institutional_view) settle via pantheon_paper_proxy over governed PIT market bars"
+      }
+    },
+    "no_shadow_research_target_remains_outside_archives": {
+      "status": "verified",
+      "removed_from": [
+        "services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json",
+        "services/control-plane/bff/agora/trading_room/routes/common.py",
+        "services/control-plane/bff/agora/trading_room/service.py",
+        "services/control-plane/bff/agora/trading_room/test_trading_room.py",
+        "services/control-plane/tests/agora/test_winner_branch_e2e_v13.py",
+        "services/control-plane/tests/agora/test_winner_branch_trading_room_e2e.py",
+        "tests/agora_product_journey/test_full_product_journey.py"
+      ],
+      "grep_check": "git grep -n shadow_research services/ tests/ returns zero matches"
+    },
+    "hosted_proof": {
+      "status": "pending_deploy",
+      "note": "Delivery state is 'merged', not 'deployed' or 'accepted'. Both AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127 (#7935) and this task's decision-lock + evaluation settlement changes take effect on hosted dev after this PR merges to dev and the dev deployment workflow switches and verifies the stack. End-to-end in-process verification is covered by test_shadow_decision_lock_settled_by_real_evaluation_on_owner_route, which exercises POST /bff/agora/trading-room/decision-events/{id}/decisions (decision='shadow') -> AgoraWriteService immutable lock (declared_no_trade) -> services/evaluation AttributionOwnerRuntime GET /api/attribution/shadow/{human_decision_id} settlement -> GET /bff/agora/trading-room/decision-events/{id}/shadow-comparison returning all four settled arms."
+    }
+  },
+  "artifacts_changed": [
+    "services/agora/shadow_mode.py",
+    "services/evaluation/attribution/settlement.py",
+    "services/evaluation/tests/test_shadow_settlement.py",
+    "services/control-plane/bff/agora/trading_room/routes/common.py",
+    "services/control-plane/bff/agora/trading_room/service.py",
+    "services/control-plane/bff/agora/trading_room/test_trading_room.py",
+    "services/control-plane/bff/tests/test_agora_shadow_mode.py",
+    "services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py",
+    "services/control-plane/tests/agora/test_winner_branch_e2e_v13.py",
+    "services/control-plane/tests/agora/test_winner_branch_trading_room_e2e.py",
+    "tests/agora_product_journey/test_full_product_journey.py",
+    "services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json",
+    "services/control-plane/specs/agora/bundle_index.v1_3.json",
+    "services/control-plane/specs/agora/bundle_index.v1_4.json",
+    "services/control-plane/specs/agora/bundle_index.v1_5.json",
+    "services/control-plane/specs/agora/bundle_index.v1_6.json",
+    "services/control-plane/specs/agora/bundle_index.v1_7.json",
+    "services/control-plane/specs/agora/bundle_index.v1_8.json",
+    "services/control-plane/specs/agora/bundle_index.v1_9.json",
+    "services/control-plane/specs/agora/bundle_index.v1_10.json",
+    "services/control-plane/specs/agora/bundle_index.v1_11.json",
+    "services/control-plane/specs/agora/bundle_index.v1_12.json",
+    "services/control-plane/specs/agora/bundle_index.v1_13.json",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "docs/contracts/agora/backend-generation-input.v1_13.json",
+    "docs/operations/problem-register.md"
+  ],
+  "verification": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/evaluation/tests/test_shadow_settlement.py services/control-plane/tests/agora/test_winner_branch_e2e_v13.py services/control-plane/tests/agora/test_winner_branch_trading_room_e2e.py scripts/test_agora_bundle_digests.py docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py",
+    "result": "all passed"
+  },
+  "residual_findings": []
+}

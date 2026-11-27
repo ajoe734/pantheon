@@ -2504,7 +2504,6 @@ def test_scoped_decision_pagination_and_queue_etag():
 
 
 @pytest.mark.parametrize("stage,kind,queue", [
-    ("shadow", "shadow_start", "shadow_research"),
     ("paper", "paper_validation_request", "management_governance"),
     ("canary", "promotion_review_request", "promotion_review"),
     ("live", "promotion_review_request", "promotion_review"),
@@ -2530,6 +2529,41 @@ def test_handoff_readback_remains_request_only(stage, kind, queue):
     assert client.post(url + "/withdraw", headers=_write_headers("withdraw")).status_code == 200
     detail = _client(store).get(url, headers=_write_headers()).json()
     assert detail["status"] == detail["handoffs"][0]["state"] == "withdrawn"
+
+
+def test_shadow_handoff_writes_declared_no_trade_decision_lock_without_handoff_queue():
+    store = TradingRoomStore()
+    store.upsert_decision_event(_make_event(event_id="evt-001"))
+    store.upsert_intent(_make_intent("int-shadow"))
+    client = _client(store)
+    url = "/bff/agora/trading-intents/int-shadow"
+    body = _make_handoff(
+        intent_id="int-shadow",
+        handoff_id="hof-shadow",
+        requested_stage="shadow",
+        handoff_type="shadow_start",
+    )
+    resp = client.post(url + "/handoffs", headers=_write_headers("shadow-lock"), json=body)
+    assert resp.status_code == 202, resp.text
+    data = resp.json()["data"]
+    assert data["requested_stage"] == "shadow"
+    assert data["execution_observation_kind"] == "declared_no_trade"
+    assert data["human_decision_id"].startswith("hdl-")
+    assert "target_queue" not in data
+    assert store.get_handoff("hof-shadow") is None
+    assert store.list_handoffs_for_intent("int-shadow") == []
+    assert store.get_intent_state("int-shadow") == "converted"
+    lock_resp = client.get(
+        "/bff/agora/trading-room/decision-events/evt-001/decision-lock",
+        headers=_write_headers("read-lock"),
+    )
+    assert lock_resp.status_code == 200, lock_resp.text
+    lock = lock_resp.json()["data"]
+    assert lock["human_decision_id"] == data["human_decision_id"]
+    assert lock["execution_observation_kind"] == "declared_no_trade"
+    assert lock["arms"]["human_actual"]["execution_observation_kind"] == "declared_no_trade"
+    assert lock["arms"]["human_actual"]["action"] == "no_trade"
+    assert lock["immutable"] is True
 
 
 def test_decision_changed_during_write_returns_412_without_orphan_intent():

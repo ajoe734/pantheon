@@ -208,13 +208,37 @@ def test_paper_proxy_never_labelled_actual_fill_and_no_order_side_effect(world):
     assert lock["no_order_route_proof"] == "agora_decision_lock_record_only"
 
 
-@pytest.mark.parametrize("verdict,kind", [("reject", "declared_no_trade"), ("defer", "declared_no_trade")])
+@pytest.mark.parametrize(
+    "verdict,kind",
+    [
+        ("reject", "declared_no_trade"),
+        ("defer", "declared_no_trade"),
+        ("shadow", "declared_no_trade"),
+    ],
+)
 def test_no_trade_verdicts_label_declared_no_trade(world, verdict, kind):
     store, owner = world
     store.upsert_decision_event(_event("evt-5"))
     client = _app(store, owner, TRADER)
-    assert _decide(client, "evt-5", {"decision": verdict}).status_code == 201
-    assert owner.store.list_decision_locks()[0]["execution_observation_kind"] == kind
+    resp = _decide(client, "evt-5", {"decision": verdict})
+    assert resp.status_code == 201
+    lock = owner.store.list_decision_locks()[0]
+    assert lock["execution_observation_kind"] == kind
+    assert lock["arms"]["human_actual"]["execution_observation_kind"] == kind
+    assert resp.json()["data"]["intent_ref"] is None
+
+
+def test_shadow_decision_rejects_non_no_trade_observation_kind(world):
+    store, owner = world
+    store.upsert_decision_event(_event("evt-shadow-invalid"))
+    client = _app(store, owner, TRADER)
+    resp = _decide(
+        client,
+        "evt-shadow-invalid",
+        {"decision": "shadow", "execution_observation_kind": "pantheon_paper_proxy"},
+    )
+    assert resp.status_code == 422
+    assert owner.store.list_decision_locks() == []
 
 
 def test_broker_fill_kinds_cannot_be_declared_through_decision_route(world):
