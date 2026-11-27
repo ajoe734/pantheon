@@ -304,4 +304,217 @@ def test_worker_missing_private_content_does_not_reconstruct_placeholder() -> No
         run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
                                   workshop_id=session["workshop_id"],
                                   tenant_id="tenant-test", user_id="user-test")
-    assert store.list_workshop_cards(session["workshop_id"]) == []
+    # The job is recorded as failed with a typed reason; no placeholder result.
+    [card] = store.list_workshop_cards(session["workshop_id"])
+    assert card["status"] == "failed"
+    assert card["payload"]["failure_reason"] == "private_content_unavailable"
+    assert "reconstruction" not in card["payload"]
+
+
+# --------------------------------------------------------------------------- #
+# AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127: one queued job per message.
+# --------------------------------------------------------------------------- #
+from services.control_plane.bff.agora.strategy_workshop.runner import (  # noqa: E402
+    admit_reconstruction_job,
+    run_reconstruction_job,
+)
+
+
+@pytest.fixture
+def provider_calls(monkeypatch, semantic_response):
+    from .semantic_provider import OpenClawOpsClient
+    calls: list = []
+
+    def request(*a, **kw):
+        calls.append(kw.get("body"))
+        return {"status": "ok", "data": {"provider": "openclaw", "status": "completed",
+                                            "output": {"structured_data": semantic_response}}}
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", request)
+    return calls
+
+
+def _scope(workshop_id: str) -> Dict[str, Any]:
+    return dict(workshop_id=workshop_id, tenant_id="tenant-test", user_id="user-test")
+
+
+def test_admission_queues_without_provider_call_and_one_run_completes(provider_calls) -> None:
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    admission = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    assert admission["admitted"] and admission["job_status"] == "queued"
+    assert admission["sequence_no"] == 1 and provider_calls == []
+    # A second admission for the same message joins the queued job.
+    again = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    assert not again["admitted"] and again["job_id"] == admission["job_id"]
+    # An explicit /reconstruct while it is queued does not call the provider.
+    in_flight = run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert in_flight["job_status"] == "queued" and in_flight["result"] is None
+    assert provider_calls == []
+
+    done = run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=admission["job_id"], **_scope(workshop_id))
+    assert done["job_status"] == "completed" and len(provider_calls) == 1
+    replay = run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert replay["job_status"] == "replayed" and replay["result"] == done["result"]
+    # Running the same job again is a no-op.
+    assert run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=admission["job_id"], **_scope(workshop_id))["job_status"] == "superseded"
+    assert len(provider_calls) == 1
+
+
+def test_non_message_events_do_not_start_a_second_job(provider_calls) -> None:
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    store.create_event({"workshop_id": workshop_id, "actor_type": "persona",
+                        "event_type": "persona_opinion", "redacted_summary": "opinion"})
+    assert run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
+                                     **_scope(workshop_id))["job_status"] == "replayed"
+    assert len(provider_calls) == 1
+
+
+def test_waiting_reconstruct_reads_the_job_finished_elsewhere(provider_calls, monkeypatch) -> None:
+    from services.control_plane.bff.agora.strategy_workshop import runner
+
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    admission = admit_reconstruction_job(store=store, **_scope(workshop_id))
+
+    def finish_on_first_poll(_seconds: float) -> None:
+        # The background job (another thread/replica) finishes meanwhile.
+        run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                               job_id=admission["job_id"], **_scope(workshop_id))
+
+    monkeypatch.setattr(runner.time, "sleep", finish_on_first_poll)
+    outcome = run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
+                                        wait_seconds=30, **_scope(workshop_id))
+    assert outcome["job_status"] == "replayed" and outcome["result"]["based_on_sequence_no"] == 1
+    assert len(provider_calls) == 1
+
+
+def test_deterministic_failure_is_replayed_with_its_reason_without_a_second_call(monkeypatch) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import (
+        OpenClawOpsClient, OpenClawOpsClientError, ReconstructionProviderError,
+    )
+    calls: list = []
+
+    def refused(*a, **kw):
+        calls.append(1)
+        raise OpenClawOpsClientError("model answer is not valid JSON", status_code=422,
+                                     error_code="OPENCLAW_TOOL_ARGS_INVALID_JSON")
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", refused)
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    for _ in range(2):
+        with pytest.raises(ReconstructionProviderError) as exc:
+            run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+        assert exc.value.reason == "provider_output_invalid_json"
+        assert exc.value.adapter_error_code == "OPENCLAW_TOOL_ARGS_INVALID_JSON"
+    assert len(calls) == 1
+    [card] = store.list_workshop_cards(workshop_id)
+    assert card["status"] == "failed" and card["summary"] == "Reconstruction failed: provider_output_invalid_json"
+    assert card["payload"]["failure_reason"] == "provider_output_invalid_json"
+    assert "not valid JSON" not in str(card)
+    # A new message is a new job.
+    _post_message(store, workshop_id, "Universe: BTC and ETH.")
+    with pytest.raises(ReconstructionProviderError):
+        run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert len(calls) == 2
+
+
+def test_abandoned_job_is_taken_over_only_after_its_lease(provider_calls) -> None:
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    crashed = admit_reconstruction_job(store=store, clock=lambda: 1000.0, **_scope(workshop_id))
+    fresh = admit_reconstruction_job(store=store, clock=lambda: 1100.0, **_scope(workshop_id))
+    assert not fresh["admitted"]
+    takeover = admit_reconstruction_job(store=store, clock=lambda: 1181.0, **_scope(workshop_id))
+    assert takeover["admitted"] and takeover["job_id"] != crashed["job_id"]
+    assert takeover["card"]["payload"]["attempt"] == 2
+    # The crashed job can no longer write to the card.
+    assert run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=crashed["job_id"], **_scope(workshop_id))["job_status"] == "superseded"
+    assert provider_calls == []
+
+
+def test_older_job_never_overwrites_the_newer_messages_job(provider_calls) -> None:
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    first = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    _post_message(store, workshop_id, "Universe: BTC and ETH.")
+    second = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    assert second["admitted"] and second["sequence_no"] == 2
+    assert run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=first["job_id"], **_scope(workshop_id))["job_status"] == "superseded"
+    done = run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=second["job_id"], **_scope(workshop_id))
+    assert done["result"]["based_on_sequence_no"] == 2 and len(provider_calls) == 1
+
+
+def test_postgres_job_record_is_compare_and_set_on_the_card(request, provider_calls) -> None:
+    import os
+    import uuid
+
+    dsn = os.getenv("TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is not set")
+    import psycopg
+    from services.control_plane.bff.agora.strategy_workshop.store import PostgresWorkshopStore
+
+    schema = f"agora_ws_recon_{uuid.uuid4().hex[:12]}"
+
+    def cleanup_schema() -> None:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+    request.addfinalizer(cleanup_schema)
+    store = PostgresWorkshopStore(dsn=dsn, schema=schema)
+    workshop_id = _new_session(store, workshop_id=f"ws-{uuid.uuid4().hex}")["workshop_id"]
+    card_id = reconstruction_card_id(workshop_id)
+    base = {"card_id": card_id, "card_type": "strategy_reconstruction", "workshop_id": workshop_id,
+            "status": "running", "title": "t"}
+    assert store.compare_and_set_workshop_card({**base, "payload": {"job_id": "a"}}, expected_job_id=None)
+    assert store.compare_and_set_workshop_card({**base, "payload": {"job_id": "b"}}, expected_job_id=None) is None
+    assert store.compare_and_set_workshop_card({**base, "payload": {"job_id": "b"}}, expected_job_id="x") is None
+    assert store.compare_and_set_workshop_card({**base, "payload": {"job_id": "b"}}, expected_job_id="a")
+    [card] = store.list_workshop_cards(workshop_id)
+    assert card["payload"]["job_id"] == "b"
+
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    first = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    assert first["admitted"]
+    assert not admit_reconstruction_job(store=store, **_scope(workshop_id))["admitted"]
+    done = run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=first["job_id"], **_scope(workshop_id))
+    assert done["job_status"] == "completed" and len(provider_calls) == 1
+    restarted = PostgresWorkshopStore(dsn=dsn, schema=schema)
+    replay = run_reconstruction_worker(store=restarted, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert replay["job_status"] == "replayed" and len(provider_calls) == 1
+
+
+def test_legacy_failed_card_without_a_job_is_re_admitted_once(provider_calls) -> None:
+    """Hosted walkthrough workshops hold a pre-job failed card (no job_id, no
+    reason); it must not be replayed as a permanent failure."""
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import ENGINE_VERSION
+
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    store.record_workshop_card({
+        "card_id": reconstruction_card_id(workshop_id), "card_type": "strategy_reconstruction",
+        "workshop_id": workshop_id, "status": "failed", "title": "Semantic reconstruction unavailable",
+        "payload": {"based_on_sequence_no": 1, "job_status": "failed", "engine_version": ENGINE_VERSION},
+    })
+    outcome = run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert outcome["job_status"] == "completed" and len(provider_calls) == 1
+    assert run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
+                                     **_scope(workshop_id))["job_status"] == "replayed"
+    assert len(provider_calls) == 1

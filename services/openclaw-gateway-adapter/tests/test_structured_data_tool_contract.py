@@ -1493,3 +1493,47 @@ class TestStructuredTokenLimitAndUsage:
             assert invoke.call_args.kwargs["max_output_tokens"] == value
         else:
             invoke.assert_not_called()
+
+
+class TestUnsupportedSchemaRefusedBeforeModelCall:
+    """AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127: hosted workshop
+    reconstruction sent a pydantic schema with `$defs`/`$ref`; every answer was
+    paid for and then refused as OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH (422). An
+    unenforceable schema is now refused before the Gateway is called."""
+
+    @pytest.mark.parametrize("schema", [
+        {"type": "object", "$defs": {"X": {"type": "string"}},
+         "properties": {"x": {"$ref": "#/$defs/X"}}},
+        {"type": "object", "properties": {"x": {"anyOf": [{"$ref": "#/definitions/X"}, {"type": "null"}]}}},
+        {"type": "object", "definitions": {"X": {"type": "string"}}, "properties": {"x": {"type": "string"}}},
+    ])
+    def test_unsupported_keyword_is_typed_422_without_gateway_call(self, schema):
+        def no_gateway(*_args, **_kwargs):
+            raise AssertionError("the Gateway must not be called for an unenforceable schema")
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", no_gateway):
+            with pytest.raises(OpenClawProviderError) as exc:
+                _make_provider().invoke_structured("extract", extraction_schema=schema, operator_id="op-1")
+        assert exc.value.status_code == 422
+        assert exc.value.error_code == "OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED"
+
+    @pytest.mark.parametrize("schema", [
+        EXTRACTION_SCHEMA,
+        # A non-reference unsupported keyword on a branch the answer never
+        # reaches keeps working as before (e.g. meeting synthesis `uniqueItems`).
+        {**EXTRACTION_SCHEMA, "properties": {**EXTRACTION_SCHEMA["properties"],
+                                             "tags": {"type": "array", "uniqueItems": True}}},
+    ])
+    def test_supported_schema_still_reaches_the_gateway(self, schema):
+        calls = []
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = _make_provider().invoke_structured(
+                "extract", extraction_schema=schema, operator_id="op-1",
+            )
+        assert len(calls) == 1
+        assert result.status == "completed"
