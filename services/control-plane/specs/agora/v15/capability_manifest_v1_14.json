@@ -43,6 +43,11 @@
       "method": "POST",
       "path": "/bff/agora/servant/paper-book/ensure",
       "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-intents/{intent_id}/handoffs",
+      "owner": "paper_execution"
     }
   ],
   "owner_contracts": {
@@ -64,11 +69,17 @@
     "runtime_manager": [
       "/api/runtime-manager/runtime-bindings",
       "/api/runtime-manager/runtime-bindings/{runtime_binding_id}"
+    ],
+    "paper_execution": [
+      "/internal/agora/paper-execution/handoffs",
+      "/internal/agora/paper-execution/handoffs/{handoff_id}/state",
+      "/api/broker/paper/orders"
     ]
   },
   "limitations": [
     "No BFF-owned committee or memory store",
     "No frontend delivery or hosted acceptance claimed",
-    "Entry quarantine unavailable until the memory owner supplies an entry mutation API"
+    "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
+    "Paper execution: Agora stores the request and the written-back state only; the paper-signal-producer consumer executes in the trader's paper book (at most 50 per trader per Taipei day); canary and live stay behind promotion review"
   ]
 }

@@ -2559,6 +2559,13 @@
       },
       {
         "family": "unknown",
+        "key": "GET /internal/agora/paper-execution/handoffs",
+        "method": "GET",
+        "path": "/internal/agora/paper-execution/handoffs",
+        "status": "implemented"
+      },
+      {
+        "family": "unknown",
         "key": "GET /internal/agora/platform-source",
         "method": "GET",
         "path": "/internal/agora/platform-source",
@@ -3853,6 +3860,13 @@
         "status": "implemented"
       },
       {
+        "family": "unknown",
+        "key": "POST /internal/agora/paper-execution/handoffs/{param}/state",
+        "method": "POST",
+        "path": "/internal/agora/paper-execution/handoffs/{param}/state",
+        "status": "implemented"
+      },
+      {
         "family": "management-console",
         "key": "PUT /bff/management/data-sources/{param}/schedule",
         "method": "PUT",
@@ -3911,17 +3925,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 683,
-    "failure_count": 552,
+    "backend_routes": 685,
+    "failure_count": 554,
     "failures": {
-      "backend_missing_frontend": 551,
+      "backend_missing_frontend": 553,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 552,
+    "mode_failure_count": 554,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

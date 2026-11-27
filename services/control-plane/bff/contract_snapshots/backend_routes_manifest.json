@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 683,
+    "total_routes": 685,
     "status_values": [
       "implemented",
       "alias",
@@ -3911,6 +3911,12 @@
     },
     {
       "method": "GET",
+      "path": "/internal/agora/paper-execution/handoffs",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/internal/agora/platform-source",
       "family": "unknown",
       "status": "implemented"
@@ -4111,6 +4117,12 @@
     {
       "method": "POST",
       "path": "/internal/agora/dataset-handoffs/{param}/ack",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/agora/paper-execution/handoffs/{param}/state",
       "family": "unknown",
       "status": "implemented"
     },
