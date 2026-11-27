@@ -292,8 +292,8 @@ def _source_version_identity_with_exclusions(
 def source_version_identity(source: SourceRecord) -> dict[str, Any]:
     """Return the content projection that defines one normalized source version.
 
-    Run-local correlation fields, collector observations and raw archive references are
-    deliberately excluded so that re-ingesting the same normalized content in a
+    Run-local correlation fields, collector observations and raw archive
+    references are deliberately excluded so that re-ingesting the same content in a
     later run maps to the same version, while a revised title, reference, body,
     content hash, or governed metadata creates a distinct event and
     distillation job. Top-level created_at and trace_id are already absent from

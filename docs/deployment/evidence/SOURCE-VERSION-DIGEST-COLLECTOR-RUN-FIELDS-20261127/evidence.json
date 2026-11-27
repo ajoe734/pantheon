@@ -40,9 +40,11 @@
   },
   "validation": {
     "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_hypothesis_extraction.py",
-    "status": "running; terminal result will be recorded before review handoff",
+    "status": "passed: terminal exit 0; 399 passed, 1 skipped, 2 existing jsonschema.RefResolver deprecation warnings in 120.01s",
     "regressions": "20 new cases passed: actual verified collector-adapter outputs with different runs, fetch/PIT/ingest times, raw paths and batch hashes; first-seen snapshot after restart; changed content/governed metadata; both historical digest generations, pending and terminal rows, Registry lineage and preserved ledger cards/input_answers. Fixtures reproduce the measured field shape; they are not copies of undisclosed hosted payloads.",
-    "initial_attempts": "First combined run: 258 passed, 20 failed, 1 skipped, exit 1 (new fixture used nonexistent pull_bundles). Focused reruns exposed test-only event_id accessor and missing seed hypothesis issues; fixed before the 20-case passing rerun. None counted as acceptance passes."
+    "initial_attempts": "First combined run: 258 passed, 20 failed, 1 skipped, exit 1 (new fixture used nonexistent pull_bundles). Focused reruns exposed test-only event_id accessor and missing seed hypothesis issues; fixed before the 20-case passing rerun. None counted as acceptance passes.",
+    "focused_terminal_log": "/tmp/source-version-digest-focused-tests.log (worker-local; result summarized here)",
+    "probe_validation": "Executed the committed evidence probe against an actual temporary DistillationJobQueue database: positive control 4/2 versions before -> 2/2 after, closures 2 -> 0, payload bytes 996 -> 496, exit 0; negative control 3/2 versions after (1.5/source), exit 1; incomplete/future hosted window refused, exit 1. This is synthetic probe validation, not hosted evidence."
   },
   "runtime_budget": {
     "new_recurring_jobs_or_writers": 0,
