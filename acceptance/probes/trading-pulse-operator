@@ -23,6 +23,12 @@ from urllib.parse import urlencode, quote
 # Allow standalone execution from an installed checkout, without PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
+from runpy import run_path
+
+# The same stdlib-only owner rule used by persona_day under isolated Python.
+non_trading_identity_source = run_path(str(
+    Path(__file__).resolve().parents[2] / "services/control-plane/persona/persona_policy_resolver.py"
+))["non_trading_identity_source"]
 
 
 class Unverifiable(RuntimeError):
@@ -165,7 +171,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
         pid = str(b.get("persona_id") or "")
         if pid not in directory:
             raise Unverifiable("independent_identity_missing")
-        if is_probe_or_test_persona(directory[pid]):
+        if is_probe_or_test_persona(directory[pid]) or non_trading_identity_source(directory[pid]):
             continue
         bid = b.get("runtime_binding_id") or b.get("binding_id") or b.get("id")
         expected[(b.get("runtime_id"), bid)] = b

@@ -96,6 +96,7 @@ from services.control_plane.bff.governance.service import human_inbox_surface_ti
 from services.control_plane.bff.management_read_models.models import ManagementObservation
 from services.control_plane.bff.ports.persona_training import OwnerReadUnconfiguredError
 from services.control_plane.bff.persona_paper_enrollment import is_probe_or_test_persona
+from services.control_plane.persona.persona_policy_resolver import non_trading_identity_source
 from services.control_plane.bff.core.display_names import _persona_label
 
 
@@ -1864,7 +1865,7 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]], directory:
         pid = person.get("persona_id") or person.get("id")
         if pid:
             personas[str(pid)] = person
-    admitted, unresolved = [], 0
+    admitted, unresolved, excluded_non_trading = [], 0, 0
     for binding in bindings:
         if not isinstance(binding, dict) or _trading_pulse_binding_is_retired(binding):
             continue
@@ -1885,6 +1886,8 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]], directory:
         person = personas.get(str(binding.get("persona_id") or ""))
         if person is None:
             unresolved += 1
+        elif non_trading_identity_source(person):
+            excluded_non_trading += 1
         elif not is_probe_or_test_persona(person):
             # Normalize a copy for telemetry/journey/baseline joins downstream;
             # do not modify the owner's record or its provenance metadata.
@@ -1900,6 +1903,7 @@ def _pulse_operator_scope(store: Any, bindings: List[Dict[str, Any]], directory:
         "persona_count": len({b["persona_id"] for b in admitted}) if not unresolved else None,
         "runtime_count": len(admitted) if not unresolved else None,
         "verified_runtime_count": len(admitted),
+        "excluded_non_trading_runtime_count": excluded_non_trading,
         "reason": "binding_identity_unverified" if unresolved else None,
         "by_stage": {stage: {"persona_count": len(g["persona_ids"]), "runtime_count": g["runtime_count"]}
                      for stage, g in stages.items()},
