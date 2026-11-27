@@ -52,14 +52,15 @@ class FakeTransport(BundleTransport):
 
 
 def make_bundle(source_id="collector-tw-ptt-stock", run_id="run1", date="2026-11-10", attribution=None,
-                finished="2026-11-10T02:05:00Z", status="complete", author="hmac-abc", extra_item=None):
+                finished="2026-11-10T02:05:00Z", status="complete", author="hmac-abc", extra_item=None,
+                fetched=FETCHED):
     raw = {"a": b"<html>post a</html>", "b": b"<html>post b</html>"}
     manifest_items, rows = [], []
     for item_id, body in raw.items():
         sha = hashlib.sha256(body).hexdigest()
         manifest_items.append({"item_id": item_id, "url": f"https://example.test/{item_id}", "http_status": 200,
                                "content_sha256": sha, "raw_path": f"raw/{sha}.html", "bytes": len(body)})
-        rows.append({"id": item_id, "url": f"https://example.test/{item_id}", "fetched_at": FETCHED,
+        rows.append({"id": item_id, "url": f"https://example.test/{item_id}", "fetched_at": fetched,
                      "published_at": PUBLISHED, "text": f"text {item_id}", "lang": "zh-TW",
                      "hashed_author": author, "metrics": {"likes": 1}, "title": f"t {item_id}"})
     manifest = {
@@ -92,6 +93,60 @@ def adapter_for(files, entries, tmp_path, **kw):
 
 def raw_files(tmp_path):
     return [p for p in (tmp_path / "store").rglob("*") if p.is_file()] if (tmp_path / "store").exists() else []
+
+
+def _news_refetch_records(tmp_path):
+    """Real adapter outputs with the run differences measured on hosted news rows.
+
+    The second bundle contains only a, so its batch hash changes even though
+    article a's raw bytes, title, URL and text are identical.
+    """
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    records = []
+    for hour in (2, 3):
+        run = f"run-20261127T{hour:02d}0000Z"
+        fetched = f"2026-11-27T{hour:02d}:00:00Z"
+        finished = f"2026-11-27T{hour:02d}:05:00Z"
+        files, entry, manifest = make_bundle(
+            source_id="collector-news-rss", date="2026-11-27", run_id=run,
+            fetched=fetched, finished=finished,
+        )
+        base = f"bundles/collector-news-rss/2026-11-27/{run}"
+        if hour == 3:
+            manifest["items"] = manifest["items"][:1]
+            manifest["bundle_sha256"] = compute_bundle_sha256(
+                [manifest["items"][0]["content_sha256"]]
+            )
+            files[f"{base}/manifest.json"] = json.dumps(manifest).encode()
+            files[f"{base}/items.jsonl"] = files[f"{base}/items.jsonl"].splitlines()[0]
+        adapter = adapter_for(
+            files, [entry], tmp_path / run, source_id="collector-news-rss", source_type="news",
+        )
+        result = adapter.pull_bundles(trace_id=f"trace-{run}")
+        payload = result.records[0].to_dict()
+        payload["created_at"] = finished
+        payload["metadata"].update(
+            tenant_id="tenant-dev", source_ingest_run_id=f"ingest-{run}", ingest_time=finished,
+        )
+        records.append(SourceRecord.from_dict(payload))
+    return tuple(records)
+
+
+def test_news_refetch_preserves_observation_fields_but_has_one_content_identity(tmp_path):
+    from services.source_ingestion.distillation_worker import source_version_digest
+
+    first, later = _news_refetch_records(tmp_path)
+    assert first.source_id == later.source_id
+    assert first.metadata["body"] == later.metadata["body"]
+    for key in ("available_time", "ingest_time", "raw_uri", "source_ingest_run_id", "trace_id"):
+        assert first.metadata[key] != later.metadata[key]
+    for key in ("run_id", "bundle_sha256"):
+        assert first.metadata["collector"][key] != later.metadata["collector"][key]
+    assert first.metadata["pit"]["available_time"] != later.metadata["pit"]["available_time"]
+    assert first.created_at != later.created_at
+    assert first.trace_id != later.trace_id
+    assert source_version_digest(first) == source_version_digest(later)
 
 
 # AC1 ------------------------------------------------------------------------------
