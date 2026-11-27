@@ -1874,7 +1874,9 @@ _INTERVENTION_VERDICTS = frozenset(
     {"modify", "modified", "edit", "edited", "intervene", "intervention", "override", "manual_override"}
 )
 _REJECTION_VERDICTS = frozenset({"reject", "rejected", "rejection", "decline", "declined"})
-_DEFERRAL_VERDICTS = frozenset({"defer", "deferred", "deferral", "postpone", "postponed", "wait", "hold_off"})
+_DEFERRAL_VERDICTS = frozenset(
+    {"defer", "deferred", "deferral", "postpone", "postponed", "wait", "hold_off", "shadow", "no_trade"}
+)
 _DECISION_VERDICTS = frozenset({"approve", "approved", "decision", "confirm", "confirmed", "enter", "add", "reduce", "exit", "hold"})
 
 _INTERVENTION_TAGS = frozenset(
@@ -1903,6 +1905,8 @@ _ACTION_CODE_MAP: Dict[str, float] = {
     "hold": 0.0,
     "review": 0.0,
     "defer": -0.25,
+    "shadow": -0.25,
+    "no_trade": -0.25,
     "reduce": -0.5,
     "trim": -0.5,
     "exit": -1.0,

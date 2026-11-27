@@ -72,6 +72,7 @@ VERDICT_TO_EVIDENCE_KIND = {
     "approve": "decision",
     "reject": "rejection",
     "defer": "deferral",
+    "shadow": "deferral",
     "modify": "intervention",
 }
 
@@ -110,6 +111,8 @@ def a4_decision(body_decision: str, event_kind: str) -> str:
         return "reject"
     if body_decision == "defer":
         return "defer"
+    if body_decision == "shadow":
+        return "no_trade"
     raise DecisionLockInvalidError(f"unsupported_decision:{body_decision}")
 
 
@@ -118,11 +121,11 @@ def decision_evidence_kind(
     modifications: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Map a Trading Room verdict and modifications to one of the four learning evidence kinds."""
-    if body_decision == "modify" or (body_decision == "approve" and bool(modifications)):
+    if body_decision == "modify" or (body_decision in ("approve", "shadow") and bool(modifications)):
         return "intervention"
     if body_decision == "reject":
         return "rejection"
-    if body_decision == "defer":
+    if body_decision in ("defer", "shadow"):
         return "deferral"
     if body_decision == "approve":
         return "decision"
@@ -207,11 +210,11 @@ def resolve_observation_kind(body_decision: str, declared: Optional[str]) -> str
             raise DecisionLockInvalidError(
                 f"execution_observation_kind_not_declarable:{declared}"
             )
-        if body_decision in ("reject", "defer") and declared != "declared_no_trade":
+        if body_decision in ("reject", "defer", "shadow") and declared != "declared_no_trade":
             raise DecisionLockInvalidError("no_trade_decision_requires_declared_no_trade")
         return declared
     # Default: approve/modify map to the paper proxy path (A4 §3 item 3); the
-    # lock itself carries no fill. reject/defer produce no order.
+    # lock itself carries no fill. reject/defer/shadow produce no order.
     return "pantheon_paper_proxy" if body_decision in ("approve", "modify") else "declared_no_trade"
 
 
@@ -318,6 +321,17 @@ def build_decision_lock(
         "fill_refs": [],
         "outcome": unavailable("settlement_owned_by_attribution_task"),
         "arms": {
+            "human_actual": {
+                "available": True,
+                "action": a4_decision(body_decision, event_kind),
+                "decision": a4_decision(body_decision, event_kind),
+                "trading_room_verdict": body_decision,
+                "execution_observation_kind": kind,
+                "execution_display_label": DISPLAY_LABELS[kind],
+                "execution_confidence": DEFAULT_CONFIDENCE[kind],
+                "execution_verified": False,
+                "actual_fill_claimed": False,
+            },
             "base_strategy": _arm_base_strategy(event),
             "private_servant": _arm_from_event_key(
                 event,
