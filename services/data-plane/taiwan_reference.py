@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 try:
     from .models.dataset_lineage import FeatureDataset, NormalizedDataset, RawDataset
@@ -343,6 +344,146 @@ def build_tw_broker_top_row(
     if source_dataset not in (None, ""):
         row["source_dataset"] = str(source_dataset).strip()
     return row
+
+
+def parse_tw_broker_top_record(
+    record: Mapping[str, Any],
+    *,
+    default_venue: str = "TWSE",
+) -> dict[str, Any]:
+    """Normalize one stored keyed or normalized ``tw_broker_top`` record into the canonical row contract."""
+    meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
+    nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
+    raw_row = meta.get("raw_row") if isinstance(meta.get("raw_row"), Mapping) else {}
+    body_dict: Mapping[str, Any] = {}
+    body = meta.get("body")
+    if isinstance(body, str) and body.startswith("{"):
+        try:
+            parsed = json.loads(body)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, Mapping):
+            body_dict = parsed
+    sources: tuple[Mapping[str, Any], ...] = (nrow, raw_row, body_dict, meta, record)
+
+    def _first(*keys: str) -> Any:
+        for src in sources:
+            for key in keys:
+                val = src.get(key)
+                if val not in (None, ""):
+                    return val
+        return None
+
+    raw_date = str(_first("date", "trade_date", "as_of_date", "event_time") or "")[:10]
+    raw_symbol = str(_first("symbol", "stock_id", "code", "symbol_canonical") or "").strip().upper()
+    venue = str(_first("venue", "exchange") or "").strip()
+    if "." in raw_symbol:
+        native_sym, suffix = raw_symbol.split(".", 1)
+        raw_symbol = native_sym
+        if not venue and suffix.upper() in _TW_VENUE_ALIASES:
+            venue = suffix
+    resolved_venue = venue or default_venue
+    side = str(_first("side", "direction") or "").strip().lower()
+    rank = int(_first("rank", "broker_rank") or 0)
+    broker = str(_first("broker", "securities_trader", "broker_id") or f"broker-{rank}").strip()
+    source = str(_first("source", "provider", "connector_id") or "tw_broker_top").strip()
+    buy_qty = int(_first("buy_qty", "buy") or 0)
+    sell_qty = int(_first("sell_qty", "sell") or 0)
+    net_raw = _first("net_qty", "net")
+    net_qty = int(net_raw) if net_raw is not None else None
+    available_time = _first("available_time")
+    source_url = _first("source_url", "api_endpoint")
+    broker_id = _first("broker_id", "securities_trader_id")
+    source_dataset = _first("source_dataset")
+    return build_tw_broker_top_row(
+        date=raw_date,
+        symbol=raw_symbol,
+        source=source,
+        side=side,
+        rank=rank,
+        broker=broker,
+        buy_qty=buy_qty,
+        sell_qty=sell_qty,
+        net_qty=net_qty,
+        venue=resolved_venue,
+        available_time=str(available_time) if available_time is not None else None,
+        source_url=str(source_url) if source_url is not None else None,
+        broker_id=str(broker_id) if broker_id is not None else None,
+        source_dataset=str(source_dataset) if source_dataset is not None else None,
+    )
+
+
+def read_tw_broker_top_rows(
+    root: str | Path,
+    *,
+    trade_date: str | None = None,
+    symbol: str | None = None,
+    side: str | None = None,
+    default_venue: str = "TWSE",
+    env: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read ``tw_broker_top`` rows (both ``buy`` and ``sell`` sides) from ``keyed/tw_broker_top``
+    (or ``normalized/tw_broker_top`` when ``PANTHEON_KEYED_DATASET_READER=run_files`` is explicitly set)."""
+    from services.source_ingestion.daily_bars_store import KEYED_DATASETS, KeyedDatasetStore, keyed_dataset_store
+    from services.source_ingestion.market_data_storage import _iter_normalized_rows, keyed_dataset_reader_mode
+
+    root_path = Path(root)
+    explicit_run_files = env is not None and keyed_dataset_reader_mode(env) == "run_files"
+    store = keyed_dataset_store(root_path, "tw_broker_top")
+    if store is None:
+        return []
+
+    raw_records: list[Mapping[str, Any]] = []
+    stored_partitions = store.partitions()
+    if stored_partitions and not explicit_run_files:
+        target_partitions = [trade_date] if trade_date is not None else stored_partitions
+        part_set = set(stored_partitions)
+        for part in target_partitions:
+            if part in part_set:
+                raw_records.extend(store.records(part))
+    else:
+        norm_base = root_path / "normalized" / "tw_broker_top"
+        if norm_base.is_dir():
+            deduped: dict[tuple[str, ...], Mapping[str, Any]] = {}
+            key_store = KeyedDatasetStore(root_path, KEYED_DATASETS["tw_broker_top"])
+            files = sorted(
+                (
+                    p
+                    for part_dir in norm_base.glob("date=*")
+                    if part_dir.is_dir()
+                    for p in part_dir.iterdir()
+                    if p.is_file()
+                ),
+                key=lambda p: (p.parent.name, p.stat().st_mtime_ns, p.name),
+            )
+            for path in files:
+                for item in _iter_normalized_rows(path):
+                    keyed = key_store.key_of(item)
+                    if keyed is None:
+                        continue
+                    key_tuple, part = keyed
+                    if trade_date is not None and part != trade_date:
+                        continue
+                    deduped[key_tuple] = item
+            raw_records = [deduped[k] for k in sorted(deduped)]
+
+    want_symbol = str(symbol).strip().upper().split(".", 1)[0] if symbol not in (None, "") else None
+    want_side = str(side).strip().lower() if side not in (None, "") else None
+    rows: list[dict[str, Any]] = []
+    for rec in raw_records:
+        row = parse_tw_broker_top_record(rec, default_venue=default_venue)
+        if trade_date is not None and row["date"] != trade_date:
+            continue
+        if want_symbol is not None and row["symbol"] != want_symbol:
+            continue
+        if want_side is not None and row["side"] != want_side:
+            continue
+        rows.append(row)
+    rows.sort(key=lambda r: (r["date"], r["symbol"], r["side"], int(r["rank"])))
+    return rows
+
+
+read_keyed_tw_broker_top_rows = read_tw_broker_top_rows
 
 
 def build_tw_broker_top_normalized_dataset(
