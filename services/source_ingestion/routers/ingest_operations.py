@@ -165,6 +165,56 @@ def _taipei_trade_date(event_time: str) -> str:
     return parsed.astimezone(timezone(timedelta(hours=8))).date().isoformat()
 
 
+
+# AGORA-SERVANT-DATA-TOOLS-20261127: bounded owner read of the keyed ``tw_broker_top`` dataset.
+BROKER_FLOW_CONNECTOR_ID = "tw-finmind-broker-daily-report"
+BROKER_FLOW_MAX_SYMBOLS = 20
+BROKER_FLOW_MAX_SESSIONS = 10
+BROKER_FLOW_MAX_RANK = 20
+BROKER_FLOW_MAX_ROWS = 2000
+
+
+def _broker_flow_row(record: dict[str, Any]) -> dict[str, Any] | None:
+    meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+
+    def pick(*keys: str) -> Any:
+        for src in (meta, record):
+            for key in keys:
+                val = src.get(key)
+                if val not in (None, ""):
+                    return val
+        return None
+
+    side = str(pick("side", "direction") or "").strip().lower()
+    symbol = str(pick("symbol", "stock_id") or "").strip().upper().split(".", 1)[0]
+    trade_date = str(pick("trade_date", "date", "event_time") or "")[:10]
+    if side not in {"buy", "sell"} or not symbol or not trade_date:
+        return None
+    try:
+        rank = int(pick("rank", "broker_rank") or 0)
+        buy_qty = int(pick("buy_qty", "buy") or 0)
+        sell_qty = int(pick("sell_qty", "sell") or 0)
+        net_raw = pick("net_qty", "net")
+        net_qty = int(net_raw) if net_raw is not None else buy_qty - sell_qty
+    except (TypeError, ValueError):
+        return None
+    return {
+        "date": trade_date,
+        "symbol": symbol,
+        "side": side,
+        "rank": rank,
+        "broker": str(pick("broker", "securities_trader", "broker_id") or f"broker-{rank}"),
+        "broker_id": str(pick("broker_id", "securities_trader_id") or "") or None,
+        "buy_qty": buy_qty,
+        "sell_qty": sell_qty,
+        "net_qty": net_qty,
+        "unit": "shares",
+        "source_id": str(record.get("source_id") or meta.get("source_id") or "") or None,
+        "available_time": pick("available_time"),
+        "source": str(pick("source", "provider") or "tw_broker_top"),
+    }
+
+
 def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRouter:
     router = APIRouter(tags=["ingest-operations"])
 
@@ -822,6 +872,83 @@ def create_ingest_operations_router(runtime: SourceIngestionRuntime) -> APIRoute
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
         return runtime.run_scheduled_connectors(request, authorization=authorization)
+
+    @router.get("/api/source-ingest/broker-branch-flow")
+    def get_broker_branch_flow(
+        symbols: str = Query(..., min_length=1, max_length=400),
+        date_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        date_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        side: Literal["buy", "sell", "both"] = "both",
+        top: int = Query(default=15, ge=1, le=BROKER_FLOW_MAX_RANK),
+        authorization: str | None = Header(default=None),
+        tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        """Bounded read of the keyed ``tw_broker_top`` dataset by symbol, session range and side.
+
+        Read-only; never calls a connector. At most 20 symbols, 10 stored sessions, the top 20
+        ranks per side and 2000 rows. Without dates it returns the latest stored session. It reads
+        only the requested session partitions, never the tenant-wide source-records list.
+        """
+        _source_read_tenant(authorization, tenant_id)
+        from ..daily_bars_store import keyed_dataset_store
+
+        wanted = list(dict.fromkeys(
+            s.strip().upper().split(".", 1)[0] for s in symbols.split(",") if s.strip()
+        ))
+        if not wanted:
+            raise HTTPException(status_code=422, detail={"code": "symbols_required"})
+        if len(wanted) > BROKER_FLOW_MAX_SYMBOLS:
+            raise HTTPException(status_code=422, detail={
+                "code": "too_many_symbols", "limit": BROKER_FLOW_MAX_SYMBOLS, "requested": len(wanted)})
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(status_code=422, detail={"code": "invalid_date_range"})
+        try:
+            store = keyed_dataset_store(runtime.MARKET_DATA_STORAGE_ROOT, "tw_broker_top")
+            stored = sorted(store.partitions()) if store is not None else []
+        except Exception as exc:  # noqa: BLE001 - unreadable store is an owner outage, not empty data
+            raise HTTPException(status_code=503, detail={"code": "broker_top_unavailable", "detail": str(exc)}) from exc
+        latest_stored = stored[-1] if stored else None
+        in_range = [p for p in stored if (not date_from or p >= date_from) and (not date_to or p <= date_to)]
+        sessions = in_range[-1:] if not date_from else in_range[-BROKER_FLOW_MAX_SESSIONS:]
+        sessions_truncated = len(in_range) > len(sessions) and bool(date_from)
+        want = set(wanted)
+        sides = {"buy", "sell"} if side == "both" else {side}
+        rows: list[dict[str, Any]] = []
+        truncated = sessions_truncated
+        for part in sessions:
+            try:
+                records = store.records(part)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=503, detail={"code": "broker_top_unavailable", "detail": str(exc)}) from exc
+            for rec in records:
+                row = _broker_flow_row(rec) if isinstance(rec, dict) else None
+                if row is None or row["symbol"] not in want or row["side"] not in sides or row["rank"] > top:
+                    continue
+                if len(rows) >= BROKER_FLOW_MAX_ROWS:
+                    truncated = True
+                    break
+                rows.append(row)
+        rows.sort(key=lambda r: (r["date"], r["symbol"], r["side"], r["rank"]))
+        found = {r["symbol"] for r in rows}
+        return {
+            "schema_version": "broker_branch_flow.v1",
+            "dataset": "tw_broker_top",
+            "connector_id": BROKER_FLOW_CONNECTOR_ID,
+            "symbols": wanted,
+            "side": side,
+            "top": top,
+            "sessions": sessions,
+            "latest_stored_session": latest_stored,
+            "rows": rows,
+            "symbols_without_rows": [s for s in wanted if s not in found],
+            "truncated": truncated,
+            "limits": {
+                "max_symbols": BROKER_FLOW_MAX_SYMBOLS,
+                "max_sessions": BROKER_FLOW_MAX_SESSIONS,
+                "max_rank": BROKER_FLOW_MAX_RANK,
+                "max_rows": BROKER_FLOW_MAX_ROWS,
+            },
+        }
 
     @router.get("/api/source-ingest/audit")
     def list_audit() -> dict[str, Any]:

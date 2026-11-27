@@ -2,11 +2,14 @@
 
 ``POST /bff/agora/servant/sessions/{id}/messages`` only appends the trader's message to the
 Agora owner and queues a turn. This worker (run by ``agora-interaction-worker``) claims the
-queued turn, makes the one provider call with the last 20 messages of the session, appends the
-servant's answer through the owner ``append_session_message`` and settles the turn. The trader
-reads the answer over the existing ``/stream`` route.
+queued turn, runs it with the last 20 messages of the session, appends the servant's answer
+through the owner ``append_session_message`` and settles the turn. The trader reads the answer
+over the existing ``/stream`` route.
 
-The worker holds no order route and computes no number: it relays the provider answer.
+AGORA-SERVANT-DATA-TOOLS-20261127: the turn may use the fixed read-only data tools
+(``data_tools``) in at most 4 rounds; every number in the answer is a cited fact rendered here,
+never a number the model wrote (``tool_turn``). The worker holds no order route and calls no
+persona.
 """
 from __future__ import annotations
 
@@ -23,6 +26,9 @@ from services.agora.store import (
     ServantSessionMessageCapError,
 )
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+
+from .data_tools import ServantDataTools, ToolContext, normalize_command_context
+from .tool_turn import SERVANT_TURN_SCHEMA, TurnOutcome, run_tool_turn
 
 logger = logging.getLogger("agora.servant.turn_worker")
 
@@ -88,8 +94,11 @@ class ServantTurnWorker:
         lease_seconds: float = DEFAULT_LEASE_SECONDS,
         purge_interval_seconds: float = DEFAULT_PURGE_INTERVAL_SECONDS,
         clock: Callable[[], str] = _utc_now,
+        tools: Optional[ServantDataTools] = None,
     ) -> None:
         self.owner = owner
+        # SD §4.3: the fixed read-only tool set, resolved here and never by the model.
+        self.tools = tools if tools is not None else ServantDataTools(agora_owner=owner)
         self.client_factory = client_factory or OpenClawOpsClient
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_SERVANT_WORKER_ID", f"servant-turn-worker-{uuid.uuid4().hex[:12]}"
@@ -101,6 +110,26 @@ class ServantTurnWorker:
         self.metrics: Dict[str, int] = {"completed": 0, "degraded": 0, "failed": 0, "purged_sessions": 0}
 
     # -- one turn -----------------------------------------------------------------
+
+    @staticmethod
+    def _structured_round(client: Any, prompt: str, turn: Mapping[str, Any], audit: Mapping[str, Any]) -> Dict[str, Any]:
+        """One structured provider call of the tool turn; returns the validated JSON object."""
+        raw = client.invoke_structured_extraction(
+            prompt=prompt,
+            extraction_schema=SERVANT_TURN_SCHEMA,
+            operator_id=str(turn.get("operator_id") or ""),
+            trace_id=str(audit.get("trace_id") or "") or None,
+        )
+        data = raw.get("data") if isinstance(raw, dict) else None
+        output = data.get("output") if isinstance(data, dict) else None
+        structured = output.get("structured_data") if isinstance(output, dict) else None
+        if not isinstance(structured, dict):
+            raise OpenClawOpsClientError(
+                "structured servant turn missing from provider response",
+                status_code=502,
+                error_code="SERVANT_TURN_SHAPE",
+            )
+        return structured
 
     def process_turn(self, turn: Dict[str, Any]) -> str:
         """Run one claimed turn and settle it. Returns the final status."""
@@ -133,55 +162,32 @@ class ServantTurnWorker:
         provider_status = "completed"
         answer: Optional[str] = None
         error: Optional[Dict[str, Any]] = None
+        outcome: Optional[TurnOutcome] = None
         if int(turn.get("attempts") or 0) > SERVANT_TURN_MAX_ATTEMPTS:
             provider_status = "degraded"
             error = {"code": "SERVANT_TURN_ATTEMPTS_EXHAUSTED", "message": "worker did not finish the turn"}
         else:
             history = history_for_turn(messages, user_message_id)
-            prompt = next(
-                (m["content"] for m in reversed(history) if m["role"] == "user"), ""
-            )
-            attachment_refs = next(
-                (m.get("attachment_refs") or [] for m in reversed(history) if m["role"] == "user"), []
+            user_message = next((m for m in messages if m.get("id") == user_message_id), {})
+            user_meta = user_message.get("metadata") if isinstance(user_message.get("metadata"), dict) else {}
+            ctx = ToolContext(
+                tenant_id=str(turn.get("tenant_id") or ""),
+                user_id=str(turn.get("user_id") or ""),
+                operator_id=str(turn.get("operator_id") or ""),
+                servant_persona_id=persona_id,
+                command_context=normalize_command_context(user_meta.get("command_context")),
             )
             try:
-                raw = self.client_factory().invoke_assistant_provider(
-                    provider="openclaw",
-                    mode="user",
-                    prompt=prompt,
-                    context_pack={
-                        "source": "agora.servant.session",
-                        "session_id": session_id,
-                        "session_type": turn.get("session_type"),
-                        "servant_persona_id": persona_id,
-                        "history_messages": len(history),
-                        "audit": audit,
-                    },
-                    operator_id=str(turn.get("operator_id") or ""),
-                    metadata={
-                        "audit": audit,
-                        "session_type": turn.get("session_type"),
-                        "servant_persona_id": persona_id,
-                        "openclaw_lifecycle_session_id": session_id,
-                    },
-                    trace_id=str(audit.get("trace_id") or ""),
-                    messages=history,
-                    attachments=[{"ref": ref} for ref in attachment_refs],
+                client = self.client_factory()
+                outcome = run_tool_turn(
+                    tools=self.tools,
+                    ctx=ctx,
+                    history=history,
+                    invoke=lambda prompt: self._structured_round(client, prompt, turn, audit),
                 )
-                data = raw.get("data") if isinstance(raw, dict) else None
-                if isinstance(data, dict):
-                    answer = provider_answer_from(data)
-                    provider_status = str(data.get("status") or raw.get("status") or "completed")
-                elif isinstance(raw, dict):
-                    provider_status = str(raw.get("status") or "completed")
-            except OpenClawOpsClientError as exc:
-                provider_status = "degraded"
-                error = {
-                    "code": OPENCLAW_DEGRADED_CODE,
-                    "source_error_code": exc.error_code,
-                    "status_code": exc.status_code,
-                    "message": exc.message,
-                }
+                answer = outcome.answer or None
+                provider_status = outcome.provider_status
+                error = outcome.error
             except Exception as exc:  # a poison turn must settle, not loop on the lease
                 logger.exception("servant turn %s failed", turn_id)
                 provider_status = "degraded"
@@ -197,12 +203,14 @@ class ServantTurnWorker:
                 payload={
                     "role": "assistant",
                     "sender": {"type": "servant", "id": persona_id},
+                    "citations": list(outcome.facts) if outcome is not None else [],
                     "metadata": {
                         "turn_id": turn_id,
                         "reply_to": user_message_id,
                         "provider_status": provider_status,
                         "error": error,
                         "audit": audit,
+                        **({"tool_turn": outcome.metadata()} if outcome is not None else {}),
                     },
                 },
                 created_at=self.clock(),
