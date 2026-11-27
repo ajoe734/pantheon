@@ -260,7 +260,7 @@ class TradingRoomAggregate(BaseModel):
 
 
 class TraderDecisionRequest(BaseModel):
-    decision: Literal["approve", "reject", "defer", "modify"]
+    decision: Literal["approve", "reject", "defer", "modify", "shadow"]
     rationale: Optional[str] = None
     modifications: Optional[Dict[str, Any]] = None
     # Shadow mode (A4): optional, kept as recorded in the Agora decision lock.
@@ -329,6 +329,7 @@ class GovernedIntentHandoffRequest(BaseModel):
     spec_version: Literal["1.0"] = "1.0"
     handoff_id: str
     intent_id: str
+    decision_event_id: Optional[str] = None
     requested_stage: Literal["shadow", "paper", "canary", "live"]
     handoff_type: Literal["shadow_start", "paper_execution_request", "promotion_review_request"]
     state: Literal["draft", "submitted", "accepted", "rejected", "expired", "withdrawn", "converted"]
@@ -338,7 +339,7 @@ class GovernedIntentHandoffRequest(BaseModel):
     evidence_refs: List[EvidenceRef] = Field(default_factory=list)
     no_order_route_proof: Literal["agora_request_only_no_order_route"] = "agora_request_only_no_order_route"
     created_at: str
-    target_queue: Optional[Literal["shadow_research", "paper_execution", "promotion_review"]] = None
+    target_queue: Optional[Literal["paper_execution", "promotion_review"]] = None
     required_gate_refs: List[str] = Field(default_factory=list)
     action_proposal: Optional[GovernedActionProposal] = None
     rationale: Optional[str] = None

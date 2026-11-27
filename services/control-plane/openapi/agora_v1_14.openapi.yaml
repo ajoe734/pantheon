@@ -526,7 +526,7 @@
           }
         },
         "x-business-owner": "agora-decision-lock+attribution",
-        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/messages": {
@@ -728,7 +728,7 @@
           }
         },
         "x-business-owner": "paper_execution",
-        "description": "AGORA-PAPER-INTENT-EXECUTION-20261127: stage table shadow -> shadow_start/shadow_research, paper -> paper_execution_request/paper_execution, canary and live -> promotion_review_request/promotion_review. A paper request carries the confirmed order (symbol, side from action, quantity in shares, optional limit) and the decision lock reference; the paper-signal-producer consumer validates owner, paper binding, risk and idempotency and executes it in the trader's own paper book through DecisionSignalProducer, at most 50 per trader per Taipei day. Canary and live stay request-only behind promotion review. Schema: specs/agora/v15/governed_intent_handoff.schema.json."
+        "description": "AGORA-PAPER-INTENT-EXECUTION-20261127: stage table paper -> paper_execution_request/paper_execution (shadow writes a declared_no_trade decision lock instead of a handoff queue, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127), canary and live -> promotion_review_request/promotion_review. A paper request carries the confirmed order (symbol, side from action, quantity in shares, optional limit) and the decision lock reference; the paper-signal-producer consumer validates owner, paper binding, risk and idempotency and executes it in the trader's own paper book through DecisionSignalProducer, at most 50 per trader per Taipei day. Canary and live stay request-only behind promotion review. Schema: specs/agora/v15/governed_intent_handoff.schema.json."
       }
     }
   },
@@ -1289,7 +1289,6 @@
           "target_queue": {
             "type": "string",
             "enum": [
-              "shadow_research",
               "paper_execution",
               "promotion_review"
             ]
@@ -1378,7 +1377,6 @@
               "target_queue": {
                 "type": "string",
                 "enum": [
-                  "shadow_research",
                   "paper_execution",
                   "promotion_review"
                 ]

@@ -37,7 +37,7 @@
       "changes": [
         "GovernedIntentHandoffRequest handoff_type and target_queue literals",
         "TradingRoomService._handoff_stage_rule (paper -> paper_execution_request / paper_execution)",
-        "new superseding schema services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json registered in bundle_index.v1_14.json; v4 bytes stay frozen because bundle v1.3 pins them and the v1.14 note states prior version bytes remain frozen"
+        "new superseding schema services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json registered in bundle_index.v1_14.json; v4 stays in bundle v1.3 (AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127 later removed shadow_research there; this task also drops shadow_research from v15 since shadow now writes a decision lock)"
       ],
       "test": "services/control-plane/bff/tests/test_agora_paper_intent_execution.py::test_paper_validation_request_and_management_governance_are_removed"
     },

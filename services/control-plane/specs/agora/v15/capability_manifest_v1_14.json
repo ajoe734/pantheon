@@ -108,7 +108,7 @@
     "No BFF-owned committee or memory store",
     "No frontend delivery or hosted acceptance claimed",
     "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
-    "Shadow comparison route is read-only; hosted proof is recorded separately (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127)",
+    "Shadow comparison route is read-only; 送 Shadow writes an immutable declared_no_trade decision lock settled by evaluation (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127)",
     "Paper execution: Agora stores the request and the written-back state only; the paper-signal-producer consumer executes in the trader's paper book (at most 50 per trader per Taipei day); canary and live stay behind promotion review"
   ]
 }

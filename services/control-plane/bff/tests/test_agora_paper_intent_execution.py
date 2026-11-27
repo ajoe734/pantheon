@@ -325,7 +325,8 @@ def test_drain_returns_only_open_paper_execution_handoffs_of_the_tenant():
     store = TradingRoomStore()
     assert _submit(store, "int-1").status_code == 202
     assert _submit(store, "int-2").status_code == 202
-    for stage in ("shadow", "canary", "live"):
+    # Shadow writes a decision lock, not a handoff (AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127).
+    for stage in ("canary", "live"):
         intent_id = f"int-{stage}"
         store.upsert_intent(_intent(intent_id))
         assert _client(store).post(
