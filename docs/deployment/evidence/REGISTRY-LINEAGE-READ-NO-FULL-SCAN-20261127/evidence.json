@@ -1,0 +1,153 @@
+{
+  "task_id": "REGISTRY-LINEAGE-READ-NO-FULL-SCAN-20261127",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "register_class": "RC1",
+  "delivery_state": "merged_pending_review",
+  "evidence_posture": "functional_evidence_only_no_vm_or_ssh_access",
+  "design_choice_and_rationale": {
+    "chosen_mechanism": "Reuses the summary_index / summary_rev mechanism merged in REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127 instead of introducing a second cache design: stored column lineage_index JSONB on registry.entries (holding the 14 pre-projected flat lineage fields for every object entry row) shares the existing summary_rev BIGINT column, sequence pantheon_registry_summary_rev_seq, and BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn calling pantheon_registry_summary_index_build and pantheon_registry_lineage_index_build), plus partial index entries_lineage_index_idx (ON registry.entries (summary_rev ASC) WHERE lineage_index IS NOT NULL) and idempotent bounded batched backfill at store bootstrap (LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED, leaving updated_at unchanged), paired with a single-flight in-process stamp-validated compiled adjacency cache (_CompiledLineageRowList / _CompiledLineageGraphIndex, bounded to LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 tenant views) validated on every read by one cheap aggregate query (SELECT count(*), coalesce(max(summary_rev), 0)::bigint, coalesce(sum(summary_rev), 0)::bigint FROM registry.entries WHERE lineage_index IS NOT NULL) and updated incrementally in O(degree) time after writes via partial index entries_lineage_index_idx (WHERE lineage_index IS NOT NULL AND summary_rev > %s).",
+    "why_both_stored_columns_and_incremental_cached_adjacency": [
+      "1. Eliminates per-request full-table payload detoasting and 14 JSON path evaluations in PostgreSQL: storing the pre-projected ~410.4-byte lineage_index JSONB and shared 8-byte summary_rev BIGINT on registry.entries drops Postgres lineage read buffer hits on 9,944 hosted-shape rows (9,418 strategy_spec, 344 execution_bundle, 182 alpha_template) from 114,607 shared buffers / 712.06 ms down to 2,881 shared buffers / 59.48 ms on a cold stored-column scan, 2,881 shared buffers / 4.81 ms on a warm stamp query, and 6 shared buffers / 0.101 ms on a post-write 1-row delta index scan.",
+      "2. Eliminates per-request full-population Python JSON decoding and adjacency graph reconstruction: across 8 concurrent cold reads on a fresh process, single-flight stamp-validated compiled adjacency (_CompiledLineageGraphIndex) collapses 8 reads to 1 SQL load + 1 adjacency build + 7 cache hits, cutting wall time from 11,509.03-22,332.28 ms to 2,007.74-3,809.58 ms (vs 16,244.52-28,424.18 ms for uncached stored-column reads) and peak RSS (VmHWM) from 460.61-541.42 MiB (+371.24-452.08 MiB delta) to 216.19-216.71 MiB (+126.81-127.33 MiB delta, well within DEV_MEM_LIMIT_REGISTRY=768m). Subsequent warm reads complete in 21.71-25.01 ms.",
+      "3. Immediate write visibility and single unified cache invalidation design: every write path atomically advances summary_rev and updates both summary_index and lineage_index in the same BEFORE trigger; the next read detects the stamp change, fetches only modified rows via summary_rev > prev_max_rev, and splices old/new edges incrementally in _CompiledLineageGraphIndex.apply_delta_rows."
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_no_payload_rescan_and_reuses_summary_rev_mechanism": {
+      "status": "passed",
+      "sql_lineage_reads": {
+        "stamp_query": "SELECT count(*), coalesce(max(summary_rev), 0)::bigint, coalesce(sum(summary_rev), 0)::bigint FROM registry.entries WHERE lineage_index IS NOT NULL",
+        "full_load_query": "SELECT record_id, coalesce(summary_rev, 0)::bigint, (lineage_index)::text FROM registry.entries WHERE lineage_index IS NOT NULL ORDER BY updated_at ASC, record_id ASC",
+        "delta_load_query": "SELECT record_id, coalesce(summary_rev, 0)::bigint, (lineage_index)::text FROM registry.entries WHERE lineage_index IS NOT NULL AND summary_rev > %s ORDER BY updated_at ASC, record_id ASC"
+      },
+      "payload_referenced_in_lineage_read_sql": false,
+      "reused_mechanisms_from_registry_summary_page_no_rescan": [
+        "summary_rev BIGINT column and pantheon_registry_summary_rev_seq sequence on registry.entries",
+        "entries_strategy_summary_index_tg BEFORE INSERT OR UPDATE OF payload trigger and pantheon_registry_summary_index_tg_fn trigger function",
+        "stamp validation tuple (count(*), max(summary_rev), sum(summary_rev)) and summary_rev > prev_max_rev indexed delta query pattern",
+        "idempotent bounded batched backfill pattern (FOR UPDATE SKIP LOCKED, preserving updated_at)"
+      ],
+      "write_paths_keeping_lineage_index_and_adjacency_current": [
+        "PostgreSQL BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg -> pantheon_registry_summary_index_tg_fn() -> pantheon_registry_lineage_index_build(NEW.payload) + nextval('pantheon_registry_summary_rev_seq')",
+        "PostgresRegistryStore: create_if_absent, put, _cas_entry (update/advance/promote/rollback/deprecate/metadata CAS), create_with_receipt, register_strategy_spec_revision, and backfill_lineage_index",
+        "RegistryStore._put_unlocked (in-memory test double updates _lineage_by_record_id and incremental _lineage_tenant_views)"
+      ],
+      "contract_documented": "services/registry/contract.md lines 388-390 (### Lineage read)"
+    },
+    "ac2_identical_answers_and_immediate_write_visibility": {
+      "status": "passed",
+      "test_lineage_read_vectors": "8 passed in services/registry/test_lineage_read.py (7 original vectors unchanged for registry id, strategy id, persona id, capital pool id, no root, depth, limit, has_more, tenant visibility, and non-ScanningStore proof + 1 new write-visibility and unknown-root test)",
+      "test_lineage_graph_index_vectors": "8 passed in services/registry/test_lineage_graph_index.py (SQL/DDL verification, full parity across all root types and large_corpus, real-Postgres stamp/delta/adjacency cache verification across all 5 write kinds, idempotent bounded backfill + rollback/roll-forward repair, 8 concurrent cold reads, and deterministic concurrency test with 20k execution_bundle rows + 4 reader threads querying during 3k delta updates + copy-on-write immutable published view proof)",
+      "tested_write_transitions_visible_on_next_read": [
+        "new_entry: registering strategy_spec strat_write_vis v1.0.0 is immediately visible on root_id=strat_write_vis_v100 or strat_write_vis (delta_loaded=1, adjacency_delta_updates=1)",
+        "new_version: registering v1.1.0 with parent_registry_ids=[strat_write_vis_v100] immediately adds node strat_write_vis_v110 and edge strat_write_vis_v100 -> strat_write_vis_v110 (parent)",
+        "parent_change: re-parenting v1.2.0 to strat_alpha_v200 and registering execution_bundle art_write_vis_v120 with source_strategy_spec_id=strat_write_vis_v120 immediately reflects new parent and source_strategy_spec edges",
+        "persona_or_pool_change: PATCH /api/registry/entries/{id}/metadata (or store._cas_entry) from persona_vis_a/pool_vis_a to persona_vis_b/pool_vis_b immediately removes old persona/pool edges and makes entry visible under new persona/pool roots",
+        "retire: advancing artifact_state to retired immediately updates node.state to 'retired' on the next read",
+        "unknown_root_art_stg001_v320: GET /api/registry/lineage?root_id=art_stg001_v320 answers 200 OK with {root_id: 'art_stg001_v320', depth: 3, nodes: [], edges: [], has_more: false}"
+      ]
+    },
+    "ac3_local_postgres_9944_rows_measurements": {
+      "status": "passed",
+      "raw_samples_digest_sha256": "0677ea9b44550e217542c1f109628137cfc8a51d9dcccd066b18abd9d9bed88d",
+      "explain_analyze_plans_digest_sha256": "6f6d3a62839732da97756f84cdc3b1acea4295a83c48a782884187bdeba34760",
+      "environment": {
+        "postgres_version": "PostgreSQL 16.15 (127.0.0.1:41525)",
+        "python_version": "Python 3.12 (.venv-pantheon)",
+        "dataset_shape": {
+          "total_registry_entries_rows": 9944,
+          "strategy_spec_rows": 9418,
+          "execution_bundle_rows": 344,
+          "alpha_template_rows": 182,
+          "lineage_index_non_null_rows": 9944,
+          "avg_compressed_payload_bytes_per_row": 2430.8
+        }
+      },
+      "single_call_timings_ms": {
+        "unknown_root_art_stg001_v320": {"root_id": "art_stg001_v320", "before_ms": 1104.16, "after_cold_load_and_build_ms": 594.38, "after_warm_stamp_cached_hit_ms": 22.79, "nodes": 0, "edges": 0, "has_more": false, "parity": true},
+        "strategy_root_live_persona": {"root_id": "strategy-persona-a81b4fd15944698341aa", "before_ms": 1123.77, "after_cold_load_and_build_ms": 664.03, "after_warm_stamp_cached_hit_ms": 21.71, "nodes": 10, "edges": 20, "has_more": false, "parity": true},
+        "no_root_default_view": {"root_id": null, "before_ms": 1158.12, "after_cold_load_and_build_ms": 653.17, "after_warm_stamp_cached_hit_ms": 25.01, "nodes": 339, "edges": 200, "has_more": true, "parity": true}
+      },
+      "concurrent_8_cold_reads_fresh_process": {
+        "unknown_root_art_stg001_v320": {
+          "before": {"wall_ms": 11509.03, "p50_ms": 10396.61, "p95_ms": 11478.36, "min_ms": 3416.93, "max_ms": 11478.36, "idle_rss_mib": 89.44, "peak_hwm_mib": 460.98, "delta_hwm_mib": 371.54, "tracemalloc_peak_delta_mib": 103.76},
+          "after_stored_column_and_cached_adjacency": {"wall_ms": 2007.74, "p50_ms": 1937.91, "p95_ms": 1994.29, "min_ms": 1883.54, "max_ms": 1994.29, "idle_rss_mib": 89.38, "peak_hwm_mib": 216.19, "delta_hwm_mib": 126.81, "tracemalloc_peak_delta_mib": 51.69, "sql_reads": 1, "cache_hits": 7, "adjacency_builds": 1},
+          "after_stored_column_uncached_comparison": {"wall_ms": 16244.52, "p50_ms": 14487.18, "p95_ms": 16225.2, "peak_hwm_mib": 888.14, "delta_hwm_mib": 798.78, "tracemalloc_peak_delta_mib": 304.96, "sql_reads": 8, "adjacency_builds": 8}
+        },
+        "strategy_root_live_persona": {
+          "before": {"wall_ms": 11575.61, "p50_ms": 10337.93, "p95_ms": 11560.54, "min_ms": 2858.2, "max_ms": 11560.54, "idle_rss_mib": 89.37, "peak_hwm_mib": 460.61, "delta_hwm_mib": 371.24, "tracemalloc_peak_delta_mib": 104.26},
+          "after_stored_column_and_cached_adjacency": {"wall_ms": 3809.58, "p50_ms": 3665.06, "p95_ms": 3780.92, "min_ms": 3562.18, "max_ms": 3780.92, "idle_rss_mib": 89.38, "peak_hwm_mib": 216.32, "delta_hwm_mib": 126.94, "tracemalloc_peak_delta_mib": 51.69, "sql_reads": 1, "cache_hits": 7, "adjacency_builds": 1},
+          "after_stored_column_uncached_comparison": {"wall_ms": 27030.19, "p50_ms": 25275.34, "p95_ms": 26997.01, "peak_hwm_mib": 910.03, "delta_hwm_mib": 820.59, "tracemalloc_peak_delta_mib": 329.94, "sql_reads": 8, "adjacency_builds": 8}
+        },
+        "no_root_default_view": {
+          "before": {"wall_ms": 22332.28, "p50_ms": 21323.59, "p95_ms": 22306.65, "min_ms": 9106.23, "max_ms": 22306.65, "idle_rss_mib": 89.34, "peak_hwm_mib": 541.42, "delta_hwm_mib": 452.08, "tracemalloc_peak_delta_mib": 155.87},
+          "after_stored_column_and_cached_adjacency": {"wall_ms": 3387.77, "p50_ms": 3245.1, "p95_ms": 3361.17, "min_ms": 3157.62, "max_ms": 3361.17, "idle_rss_mib": 89.38, "peak_hwm_mib": 216.71, "delta_hwm_mib": 127.33, "tracemalloc_peak_delta_mib": 51.69, "sql_reads": 1, "cache_hits": 7, "adjacency_builds": 1},
+          "after_stored_column_uncached_comparison": {"wall_ms": 28424.18, "p50_ms": 25266.1, "p95_ms": 28372.87, "peak_hwm_mib": 866.95, "delta_hwm_mib": 777.52, "tracemalloc_peak_delta_mib": 276.38, "sql_reads": 8, "adjacency_builds": 8}
+        }
+      },
+      "explain_analyze_summary": {
+        "before_legacy_payload_scan": {"plan": "CTE facts Seq Scan + Nested Loop Index Scan on entries_pkey", "rows": 9944, "shared_buffers_hit": 114607, "planning_ms": 0.986, "execution_ms": 712.059},
+        "after_cold_stored_lineage_index_scan": {"plan": "Seq Scan on entries WHERE lineage_index IS NOT NULL + Sort", "rows": 9944, "shared_buffers_hit": 2881, "planning_ms": 0.291, "execution_ms": 59.481},
+        "after_warm_stamp_query": {"plan": "Aggregate count/max/sum(summary_rev) WHERE lineage_index IS NOT NULL", "rows": 1, "shared_buffers_hit": 2881, "planning_ms": 0.322, "execution_ms": 4.811},
+        "after_write_delta_index_scan": {"plan": "Index Scan using entries_lineage_index_idx WHERE summary_rev > watermark", "rows": 1, "shared_buffers_hit": 6, "planning_ms": 0.153, "execution_ms": 0.101}
+      }
+    },
+    "ac4_runtime_budget_backfill_rollback_and_test_integrity": {
+      "status": "passed",
+      "runtime_budget": {
+        "registered_in_storage_manifest": true,
+        "manifest_entry_name": "registry.entries stored lineage_index / summary_rev columns, partial index entries_lineage_index_idx, and stamp-validated incremental lineage adjacency cache",
+        "bound_proof": {"file": "services/registry/storage.py", "contains": "LINEAGE_INDEX_MAX_TENANT_VIEWS = 16"},
+        "cadence": "DDL and idempotent batched backfill run once at store bootstrap; shared trigger entries_strategy_summary_index_tg runs once per registry.entries INSERT or UPDATE OF payload (~300 writes/day on hosted); stamp validation query runs once per GET /api/registry/lineage read (4.8 ms); delta index query runs only for rows with summary_rev > cached_max_rev",
+        "size_at_hosted_scale_9944_rows": {
+          "lineage_index_column_total_bytes": 4081370,
+          "lineage_index_avg_bytes_per_row": 410.4,
+          "lineage_index_max_bytes_per_row": 646,
+          "lineage_index_strategy_spec_avg_bytes": 409.9,
+          "lineage_index_execution_bundle_avg_bytes": 472.8,
+          "lineage_index_alpha_template_avg_bytes": 320.3,
+          "summary_rev_column_total_bytes": 79552,
+          "entries_lineage_index_idx_bytes": 417792
+        },
+        "growth_per_day": "about 300 new rows/day x (410.4 B lineage_index + ~24 B partial index tuple; summary_rev shared with summary_index) = ~130 KB/day (~47 MB/year); 0 B net logical growth on in-place updates after VACUUM; 0 B/day net in-process cache growth beyond the entry set and LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 cap",
+        "cap": "1 lineage_index JSONB (~410 B) and 1 shared summary_rev BIGINT (8 B) per object row in registry.entries; bootstrap backfill bounded by LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000 and LINEAGE_INDEX_BACKFILL_MAX_BATCHES = 50; in-process lineage tenant view + adjacency cache bounded to LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 with FIFO eviction",
+        "cleanup": "stored columns and partial index tuples follow registry.entries row lifecycle with PostgreSQL VACUUM; non-object rows set lineage_index = NULL via trigger; in-process cache evicts oldest tenant view beyond LINEAGE_INDEX_MAX_TENANT_VIEWS = 16, updates existing adjacency views incrementally on stamp change or evicts stale views on delete/retire, and supports full eviction via invalidate_lineage_index_cache(full=True)"
+      },
+      "backfill_measurement_on_9944_rows": {
+        "idempotent": true,
+        "bounded": true,
+        "batch_size": 1000,
+        "max_batches": 50,
+        "locking_clause": "FOR UPDATE SKIP LOCKED",
+        "preserves_updated_at": true,
+        "first_run": {"batches_executed": 10, "rows_updated": 9944, "max_single_batch_lock_ms": 854.133, "total_elapsed_ms": 7558.947},
+        "second_run_idempotent": {"batches_executed": 1, "rows_updated": 0, "max_single_batch_lock_ms": 22.69, "total_elapsed_ms": 22.709}
+      },
+      "rollback_compatibility": {
+        "verified_in_postgres_test": "test_real_pg_idempotent_bounded_backfill_and_rollback_compatibility in services/registry/test_lineage_graph_index.py",
+        "mechanism": "lineage_index and summary_rev are nullable columns maintained by BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg; during a rollback, the previous release's INSERT/UPDATE/SELECT statements continue to succeed. If a rollback to the previous release replaces pantheon_registry_summary_index_tg_fn with the summary-only trigger (leaving lineage_index stale or summary_rev NULL on rows written during the rollback window), roll-forward bootstrap restores the shared trigger and backfill_lineage_index re-backfills any row where lineage_index IS NULL OR summary_rev IS NULL OR lineage_index IS DISTINCT FROM pantheon_registry_lineage_index_build(payload), bumping summary_rev via nextval whenever summary_rev was NULL or an existing lineage_index was stale."
+      },
+      "existing_tests_weakened_or_deleted": false,
+      "changed_assertions_justified": []
+    }
+  },
+  "verification_runs": [
+    {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:41525/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/registry/test_lineage_read.py services/registry/test_lineage_graph_index.py services/registry/test_strategy_summary_page_index.py services/registry/test_strategy_summary_page_bounded.py services/registry/test_pg_store_artifact_type_index.py services/registry/test_service.py",
+      "exit_code": 0,
+      "summary": "167 passed (8 lineage_read + 8 lineage_graph_index + 7 strategy_summary_page_index + 31 strategy_summary_page_bounded + pg_store_artifact_type_index + test_service)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "summary": "passed: true, failures: []"
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "summary": "evidence.json <= 400 added lines cap satisfied"
+    }
+  ],
+  "residual_findings": []
+}

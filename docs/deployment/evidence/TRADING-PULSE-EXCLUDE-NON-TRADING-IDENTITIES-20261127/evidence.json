@@ -1,0 +1,59 @@
+{
+  "task_id": "TRADING-PULSE-EXCLUDE-NON-TRADING-IDENTITIES-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "problem_register_ref": "docs/operations/problem-register.md; WP2.3 servant-selection instance per task brief (persona-loop owner 77b586b6)",
+  "composes_with": "PERSONA-CYCLE-SKIP-ADVISORY-PERSONAS-20261127 (#7963), shared non_trading_identity_source",
+  "defect": "An active Agora servant paper book was admitted as a fourth Trading Pulse runtime. Its missing telemetry summary made the release probe unverifiable with source_http_404.",
+  "source_change": {
+    "selection": "BFF _pulse_operator_scope and the independent release probe use the existing is_probe_or_test_persona and persona_policy_resolver.non_trading_identity_source functions after tenant, stage and binding status checks, before per-runtime telemetry reads. No new classifier or persona name/id list.",
+    "scope": "Admitted trading bindings alone contribute persona_count, runtime_count, verified_runtime_count and by_stage. excluded_non_trading_runtime_count counts eligible same-tenant bindings rejected by the owner non-trading rule (including those also marked as probes). It is omitted when scope resolution fails before identity selection.",
+    "probe": "Loads the stdlib-only owner rule using run_path, as acceptance/persona_day.py does. Independently verifies the excluded count (missing field is compatible with zero exclusions); never fetches excluded binding telemetry.",
+    "contract": "services/control-plane/bff/BFF_API_CONTRACT.md, Trading Pulse trading persona scope",
+    "unchanged": [
+      "servant paper book, binding and runtime owner records",
+      "Agora pages",
+      "trade journey selection",
+      "persona cycle",
+      "existing Trading Pulse test assertions"
+    ]
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped interpreter installed and imports verified from a foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_b3_trading_pulse.py acceptance/test_trading_pulse_operator.py",
+      "exit_code": 0,
+      "result": "126 passed, 3 dependency deprecation warnings in 19.68s; existing assertions unchanged."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    }
+  ],
+  "regression_evidence": {
+    "bff": "Six owner identity shapes, each with three trading personas and an active paper binding with metadata.book_kind=trader_servant_paper_book and paper_only=true. Servant telemetry stub returns HTTP 404 if requested. Pulse and rankings both have verified scope, persona_count=runtime_count=3, paper stage count=3 and excluded_non_trading_runtime_count=1. No servant telemetry read; owner records remain identical.",
+    "probe": "Three trading personas plus metadata.persona_class=agora_servant, with an active metadata-scoped servant paper book and source_http_404 if its telemetry is requested. Probe passes with persona_count=runtime_count=3 and performs no servant telemetry read. Corrupting only the excluded count fails exactly excluded_non_trading_denominator_mismatch."
+  },
+  "hosted_acceptance": {
+    "status": "pending_merge_and_first_root_release",
+    "release_verdict_line": null,
+    "required_proof": "First Dev Root carrying this source records probe:trading-pulse-operator passed (not skipped), runtime_count=3, while binding rb-77d962be4e324032808324109f2c154e remains active. Record exact release run, served BFF commit, probe verdict line and same-tenant read-only active binding witness here.",
+    "claim": "Local fixture validation only; no merged, deployed or accepted claim. The owner must collect release evidence before terminal completion."
+  },
+  "runtime_budget": {
+    "cadence": "Existing request-driven BFF read and existing probe once per Dev release; unchanged.",
+    "hosted_scale": "Three trading runtime bindings admitted; one active non-trading book excluded in the reported hosted shape.",
+    "extra_owner_requests": 0,
+    "new_recurring_jobs": 0,
+    "new_persistent_writers": 0,
+    "new_stored_records": 0,
+    "growth_bytes_per_day": 0,
+    "cap_and_cleanup": "No new persistent data or cache to cap or clean; existing 200-runtime probe cap and bounded consistent-read budget unchanged."
+  },
+  "residual_findings": []
+}

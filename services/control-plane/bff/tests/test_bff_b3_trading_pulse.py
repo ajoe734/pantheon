@@ -900,6 +900,51 @@ def test_operator_zero_fill_ledger_and_unknown_pnl_are_distinct():
     assert data["summary"]["pnl_groups"][0]["eligible_persona_count"] == 2
 
 
+@pytest.mark.parametrize("identity", [
+    {"metadata": {"persona_class": "agora_servant"}},
+    {"personaClass": "agora_advisor"},
+    {"metadata": {"origin": "private_servant"}},
+    {"ownerScope": "user_private"},
+    {"consult_policy_id": "consult-panel.non-trading"},
+    {"agoraUserId": "user-1", "execution_authority": "none"},
+])
+def test_operator_excludes_non_trading_book_from_three_persona_fleet(identity):
+    import copy
+    from fastapi import HTTPException
+
+    store = _OperatorStore()
+    store.people += [
+        {"id": "p3", "name": "衡岳", "tenant_id": "tenant-test"},
+        {"id": "agora-servant", "name": "Agora Servant", "tenant_id": "tenant-test", **identity},
+    ]
+    store.bindings += [
+        {**store.bindings[0], "id": "b-p3", "binding_id": "b-p3", "runtime_id": "r-p3", "persona_id": "p3"},
+        {"runtime_binding_id": "rb-servant", "runtime_id": "rt-persona-paper-servant",
+         "persona_id": "agora-servant", "status": "active", "deployment_mode": "paper",
+         "metadata": {"tenant_id": "tenant-test", "book_kind": "trader_servant_paper_book", "paper_only": True}},
+    ]
+    store.records.append({**store.records[1], "runtime_id": "r-p3", "binding_id": "b-p3"})
+    original = copy.deepcopy((store.people, store.bindings, store.records))
+    reads = []
+
+    def telemetry(runtime_id):
+        reads.append(runtime_id)
+        if runtime_id == "rt-persona-paper-servant":
+            raise HTTPException(status_code=404)
+        return next((r for r in store.records if r["runtime_id"] == runtime_id), None)
+
+    store.get_telemetry_summary = telemetry
+    for data in (_operator_pulse(store)["data"], ManagementService(read_store=store).get_trading_pulse_rankings(snapshot_at=SNAP)["data"]):
+        scope = data["summary"]["operator_scope"]
+        assert scope["status"] == "verified"
+        assert scope["runtime_count"] == scope["persona_count"] == 3
+        assert scope["excluded_non_trading_runtime_count"] == 1
+        assert scope["by_stage"] == {"paper": {"runtime_count": 3, "persona_count": 3}}
+        assert "rt-persona-paper-servant" not in str(data)
+    assert "rt-persona-paper-servant" not in reads
+    assert (store.people, store.bindings, store.records) == original
+
+
 @pytest.mark.parametrize("location", ["metadata", "top_level", "both"])
 def test_operator_binding_tenant_wire_locations_preserve_scoped_joins(location):
     import copy
