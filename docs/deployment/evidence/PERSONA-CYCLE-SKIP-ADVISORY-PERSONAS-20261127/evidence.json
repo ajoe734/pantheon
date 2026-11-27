@@ -37,7 +37,9 @@
     "next_action": "Add the three required paths through the existing governed artifact-contract command while blocked, then reopen and redispatch the same task. Do not create a replacement task."
   },
   "validation": {
-    "focused_suites": "Existing focused suites running; no runtime implementation retained. New regression reproduces the unfixed incident and is intentionally not reported as passed.",
+    "focused_suites": "107 passed, 4 skipped, 2 deselected in 107.00s; exit 0. The two new regression cases were excluded from this baseline run and fail separately. No runtime implementation retained.",
+    "baseline_command": "timeout 180s /tmp/agvenv/bin/python -m pytest -q services/persona/test_persona_cycle_controller.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py -k 'not hosted_1127'",
+    "static_checks": "git diff --check and python3 -m json.tool evidence.json passed (exit 0)",
     "pool_risk_regression": {
       "command": "timeout 120s uv run --no-project --with pytest python -m pytest -q acceptance/test_pool_risk_snapshot_day.py -k hosted_1127",
       "exit_status": 1,
