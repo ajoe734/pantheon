@@ -216,7 +216,20 @@ case "$tool" in
       [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
     fi
     [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
-  findmnt|blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  findmnt)
+    if [[ "$*" == *"-o SOURCE /"* ]]; then
+      if [[ -f "$FAKE_STATE/fake_root_source" ]]; then
+        cat "$FAKE_STATE/fake_root_source"
+      else
+        printf '%s\n' "${FAKE_ROOT_SOURCE:-/dev/sda1}"
+      fi
+      exit 0
+    fi
+    printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  growpart|resize2fs)
+    echo "$tool $*" >> "$FAKE_STATE/root_grow.log"
+    exit 0 ;;
   mount)
     echo "mount $*" >> "$FAKE_STATE/mount.log"
     if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
@@ -620,6 +633,7 @@ class OpsHarness(unittest.TestCase):
         for tool in (
             "docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount",
             "systemctl", "mkfs", "mkfs.ext4", "apt-get", "gpg", "dpkg", "install", "chmod", "tee",
+            "growpart", "resize2fs",
         ):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
@@ -1610,6 +1624,7 @@ class BootstrapTests(OpsHarness):
         self.assertNotEqual(r_fail.returncode, 0)
         self.assertIn("IMAGE_PULL_FAILED", r_fail.stderr)
         self.assertIn("after 3 attempts", r_fail.stderr)
+        self.assertIn("total_mb=", r_fail.stderr)
         self.assertIn("free_mb=", r_fail.stderr)
         self.assertIn("failed to register layer: no space left on device", r_fail.stderr)
 
@@ -4274,6 +4289,25 @@ PY
     rm -f "$S/disks/$disk"
     echo "deleted_disk $disk" >> "$S/disks_deleted.log"
     exit 0 ;;
+  "compute disks resize "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "resize_new_boot_disk" ]] && exit 1
+    disk="$4"
+    rsize="$(arg_val --size "$@")"
+    rsize="${rsize%GB}"
+    echo "resize_disk $disk size=${rsize}GB" >> "$S/disk_resize.log"
+    if [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$rsize" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+for d in doc.get("disks") or []:
+    if isinstance(d, dict) and str(d.get("source") or "").rsplit("/", 1)[-1] == sys.argv[2]:
+        d["diskSizeGb"] = str(sys.argv[3])
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
+    exit 0 ;;
   "compute instances stop "*)
     echo "stopped $4" >> "$S/vm_lifecycle.log"
     exit 0 ;;
@@ -4298,9 +4332,12 @@ PY
     mt="$(arg_val --machine-type "$@")"
     ip="$(arg_val --address "$@")"
     meta="$(arg_val --metadata "$@")"
+    bsize="$(arg_val --boot-disk-size "$@")"
+    bsize="${bsize%GB}"
     if [[ -n "$tpl" ]]; then
       [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
       [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+      echo "$all" >> "$S/instance_creates.log"
       if [[ -z "$mt" ]]; then
         mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
       fi
@@ -4311,18 +4348,20 @@ PY
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
-      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" "$S/templates/${tpl}.json" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" "$S/templates/${tpl}.json" "$bsize" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-}" > "$S/vm.json" <<'PY'
 import json, sys
-vm, new_id, mt, boot_disk, data_disk, ip, tpl_path = sys.argv[1:8]
+vm, new_id, mt, boot_disk, data_disk, ip, tpl_path, cli_bsize, override_bsize = sys.argv[1:10]
 tpl = json.load(open(tpl_path))
 props = tpl.get("properties") or {}
 meta_obj = props.get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
-tpl_disks = props.get("disks") or []
-boot_size_gb = "120"
-if tpl_disks and isinstance(tpl_disks[0], dict):
-    init_p = tpl_disks[0].get("initializeParams") or {}
-    if init_p.get("diskSizeGb"):
-        boot_size_gb = str(init_p["diskSizeGb"])
+# Real GCE behavior: passing --disk alongside --source-instance-template overrides the template's disks array and
+# synthesizes a 10GB default boot disk unless --boot-disk-size is explicitly passed on 'instances create'.
+if override_bsize:
+    boot_size_gb = str(override_bsize)
+elif cli_bsize:
+    boot_size_gb = str(cli_bsize)
+else:
+    boot_size_gb = "10"
 print(json.dumps({
     "id": new_id,
     "name": vm,
@@ -4997,12 +5036,12 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
         self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
 
-        # Verify created v3 template has >= 120GB boot disk.
+        # Verify created v3 template has >= 150GB boot disk.
         v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
-        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "120")
-        self.assertIn("--boot-disk-size=120GB", (self.state / "template_creates.log").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        self.assertIn("--boot-disk-size=150GB", (self.state / "template_creates.log").read_text())
         vm_now = json.loads((self.state / "vm.json").read_text())
-        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "120")
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
 
         # Direct prod_ops.sh restore_active_release and protected rollback also succeed under PROD_USE_SUDO=true + FAKE_SUDO_RESET_ENV=true.
         direct_restore = subprocess.run(
@@ -5083,13 +5122,13 @@ class ReplaceVmHarness(RealControllerBase):
         out = json.loads(r.stdout.strip().splitlines()[-1])
         self.assertEqual(out["status"], "prod_vm_replaced")
         self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
-        # Template missing diskSizeGb was deleted and recreated with 120GB boot disk.
+        # Template missing diskSizeGb was deleted and recreated with 150GB boot disk.
         self.assertIn(
             "deleted_template pantheon-prod-control-template-e2s8-v3",
             (self.state / "template_deletes.log").read_text(),
         )
         v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
-        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "120")
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
         # wait_for_ssh ran stability re-probe after transient drop (4 total 'true' SSH calls) and SCP retried after 1 transient failure.
         self.assertEqual(int((self.state / "new_vm_ssh_true_calls").read_text().strip()), 4)
         self.assertEqual(int((self.state / "new_vm_scp_attempts").read_text().strip()), 2)
@@ -5106,6 +5145,76 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(fail_out["failed_stage"], "upload_bundle_new_vm")
         self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
         self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
+
+    def test_replace_vm_passes_150gb_boot_disk_size_on_instances_create_resizes_undersized_boot_disk_and_grows_root_fs(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-150}"', script_text)
+
+        # 1. Seed a pre-existing v3 template with 120GB boot disk (< PROD_MIN_BOOT_DISK_GB=150): must recreate v3 with 150GB
+        #    and explicitly pass --boot-disk-size=150GB and --boot-disk-type=pd-balanced alongside --source-instance-template
+        #    and --disk on 'gcloud compute instances create', plus run growpart/resize2fs on /dev/sda1 before bootstrap.sh.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "120",
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            GITHUB_RUN_ID="45914340903",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        create_cmd = (self.state / "instance_creates.log").read_text().strip()
+        self.assertIn("--source-instance-template pantheon-prod-control-template-e2s8-v3", create_cmd)
+        self.assertIn("--boot-disk-size=150GB", create_cmd)
+        self.assertIn("--boot-disk-type=pd-balanced", create_cmd)
+        self.assertIn(f"--disk name={PROD_ENV['PROD_DATA_DISK']},", create_cmd)
+        vm_now = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
+        grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/sda 1", grow_log)
+        self.assertIn("resize2fs /dev/sda1", grow_log)
+
+        # 2. If GCE returns an undersized boot disk (< PROD_MIN_BOOT_DISK_GB) on the new VM describe, NEW_VM_VARS
+        #    resizes the new boot disk online to TARGET_BOOT_SIZE_GB (150GB) via 'gcloud compute disks resize' and
+        #    grows an nvme root partition (/dev/nvme0n1p1 -> growpart /dev/nvme0n1 1 + resize2fs /dev/nvme0n1p1).
+        self.setUp()
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        (self.state / "fake_root_source").write_text("/dev/nvme0n1p1\n", encoding="utf-8")
+        r_resize = self._run_replace_vm(
+            FAKE_NEW_BOOT_DISK_SIZE_GB="10",
+            GITHUB_RUN_ID="45914340903",
+            GITHUB_RUN_ATTEMPT="2",
+        )
+        self.assertEqual(r_resize.returncode, 0, f"stdout={r_resize.stdout}\nstderr={r_resize.stderr}")
+        self.assertIn(
+            "resize_disk pantheon-prod-control-boot-fresh-e2s8 size=150GB",
+            (self.state / "disk_resize.log").read_text(),
+        )
+        vm_resized = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_resized["disks"][0]["diskSizeGb"], "150")
+        nvme_grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/nvme0n1 1", nvme_grow_log)
+        self.assertIn("resize2fs /dev/nvme0n1p1", nvme_grow_log)
 
 
 if __name__ == "__main__":

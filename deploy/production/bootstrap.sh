@@ -661,9 +661,11 @@ PY
     done
     if [[ "$pulled_ok" != "true" ]]; then
       sanitized_pull_err="$(tail -c 400 <<<"$pull_err" | tr '\n\r"\\' '    ' | sed 's/  */ /g; s/^ //; s/ $//')"
+      total_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $2}' | tr -d '[:space:]' || true)"
+      [[ -n "$total_mb" ]] || total_mb="unknown"
       free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d '[:space:]' || true)"
       [[ -n "$free_mb" ]] || free_mb="unknown"
-      fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img} after ${PROD_IMAGE_PULL_TRIES} attempts (free_mb=${free_mb}): ${sanitized_pull_err}"
+      fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img} after ${PROD_IMAGE_PULL_TRIES} attempts (total_mb=${total_mb}, free_mb=${free_mb}): ${sanitized_pull_err}"
     fi
     run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 || fail IMAGE_INSPECT_FAILED "pulled image ${img} failed inspect"
   done <<< "$IMAGE_LIST"
