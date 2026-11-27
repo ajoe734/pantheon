@@ -754,5 +754,29 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_replace_vm_instances_create_150gb_boot_disk_override_repair_20261127": {
+    "task_generation": 84,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45914340903 passed preflight, Environment approval, WIF auth, READY data/boot snapshots, and offline_boot_disk migration, then revealed that when 'gcloud compute instances create --source-instance-template $TARGET_TEMPLATE --disk name=$PROD_DATA_DISK,...' runs, GCE overrides the template's disks array and synthesizes a default 10GB boot disk unless --boot-disk-size is explicitly passed on 'instances create' too",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh sets PROD_MIN_BOOT_DISK_GB=\"${PROD_MIN_BOOT_DISK_GB:-150}\" (TARGET_BOOT_SIZE_GB = max(OLD_BOOT_SIZE_GB, PROD_MIN_BOOT_DISK_GB)) and passes --boot-disk-size=\"${TARGET_BOOT_SIZE_GB}GB\" and --boot-disk-type=pd-balanced directly on the 'gcloud compute instances create \"$PROD_VM_NAME\" --source-instance-template \"$TARGET_TEMPLATE\" ...' command at step 6",
+      "scripts/deploy/prod_replace_vm.sh NEW_VM_VARS extracts NEW_BOOT_SIZE_GB from the replacement VM's boot disk diskSizeGb and, if present and < PROD_MIN_BOOT_DISK_GB, runs 'gcloud compute disks resize \"$NEW_BOOT_DISK\" --size=\"${TARGET_BOOT_SIZE_GB}GB\" --zone \"$PROD_GCP_ZONE\" --project \"$PROD_GCP_PROJECT_ID\" --quiet' (rolling back to old_boot_disk on failure), and in RESTORE_OUT on the replacement VM before calling bootstrap.sh runs growpart and resize2fs on the root partition if present",
+      "deploy/production/bootstrap.sh includes total_mb alongside free_mb from 'df -Pm /' in the IMAGE_PULL_FAILED diagnostic message",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD to model GCE's 10GB default boot-disk override when --disk is passed with --source-instance-template without --boot-disk-size, asserts total_mb= alongside free_mb= in BootstrapTests, and adds test_replace_vm_passes_150gb_boot_disk_size_on_instances_create_resizes_undersized_boot_disk_and_grows_root_fs in ReplaceVmHarness"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g82: no new recurring job, emitter, persistent writer, or background daemon; replacement control VM boot disk size minimum increased from 120 GB to 150 GB pd-balanced and explicitly passed on gcloud compute instances create"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }
