@@ -243,8 +243,19 @@
         "exit_code": 0,
         "result": "1 passed in 1.83s"
       },
-      "broader_validation": "Governed 415-test batch still collecting terminal output; it loaded the two additional stale assertions before repair. Not yet counted as passed.",
-      "delivery": "Prior approval does not apply to the changed head. Requires new exact-head handoff to Antigravity and canonical supervisor merge; hosted acceptance remains pending.",
+      "broader_validation": {
+        "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout --signal=INT 900 .venv-pantheon/bin/python3 -m pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py --durations=5",
+        "exit_code": 124,
+        "terminal_result": "2 failed, 408 passed, 2 skipped in 899.50s; timeout/KeyboardInterrupt, NOT a passed batch",
+        "failures": "The TAIFEX and FinMind ordering tests in test_dev_tw_market_refresh.py were imported at collection before their fixes. Both subsequently pass in the final focused batch. No remaining fastapi import errors in the governed provision.",
+        "unfinished_tests": [
+          "test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime",
+          "test_chip_and_fundamentals_profile_hosts_match_the_plan_table",
+          "test_morning_run_cap_covers_full_market_chip_profile_budget"
+        ],
+        "disposition": "Do not report the full timed-out batch as passed. Final bounded verification explicitly reruns all four repaired assertions, the new ordering regression and these final three tests. Fresh GitHub stage-0 and required checks remain delivery gates for the new head."
+      },
+      "delivery": "Existing PR #7972 will publish this new source head with fresh CI. Requires new exact-head handoff to Antigravity; prior approval is invalid for this head. Only the canonical supervisor integrator may merge. Acceptance 6 remains outstanding on the first qualifying post-merge timer run.",
       "additional_stale_assertions": {
         "tests": [
           "test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
@@ -277,7 +288,34 @@
           "result": "5 passed in 5.01s"
         },
         "search": "Searched scripts/test_*.py references to taifex_refresh, finmind_refresh, twse_idx and refresh_by_id to identify the remaining old refresh-order assertion; the separate nonprod-deploy order remains unchanged."
-      }
+      },
+      "final_focused_validation": {
+        "interpreter": ".venv-pantheon/bin/python3; checkout provision via python3 scripts/dev/provision_python_distribution.py, checked from foreign cwd; checkout bin first on PATH for subprocesses",
+        "command_prefix": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout --signal=INT 300 .venv-pantheon/bin/python3 -m pytest -q",
+        "test_nodes": [
+          "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
+          "scripts/test_dev_tw_market_refresh.py::test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+          "scripts/test_dev_tw_market_refresh.py::test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe",
+          "scripts/test_source_ingest_deploy_diagnostics_contract.py::test_workflows_dispatch_taifex_ssf_contracts_as_separate_bounded_run_after_twse",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_official_market_runs_first_and_steady_check_follows_every_refresh",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_every_profile_of_the_workflow_is_inside_the_planned_union_and_runs_in_the_one_runtime",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_chip_and_fundamentals_profile_hosts_match_the_plan_table",
+          "scripts/test_dev_tw_market_refresh_workflow.py::test_morning_run_cap_covers_full_market_chip_profile_budget"
+        ],
+        "exit_code": 0,
+        "terminal_result": "8 passed in 45.83s"
+      },
+      "current_base": "2a87d33e407b4fc0bd69cfe73debf83af0451e96",
+      "composition": "Merged current dev (Agora reconstruction source/evidence and register) without rewriting published history. Upstream refresh workflow, deploy script and all related tests unchanged. Full YAML equality after only unchanged refresh mapping relocation: PASS. Current-dev ordering regression: expected AssertionError; task regression: PASS (exit 0).",
+      "diff_check": {
+        "command": "git diff --check",
+        "exit_code": 0
+      },
+      "scoped_ci_repairs": [
+        "scripts/test_deploy_nonprod_vm.py",
+        "scripts/test_dev_tw_market_refresh.py",
+        "scripts/test_source_ingest_deploy_diagnostics_contract.py"
+      ]
     }
   },
   "acceptance_5_runtime_budget": {
