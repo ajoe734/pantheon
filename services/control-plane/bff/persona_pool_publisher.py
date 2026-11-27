@@ -172,17 +172,67 @@ class PersonaPoolPublisher:
     def history(self, tenant_id: str, persona_id: str) -> dict[str, Any]:
         return self._load(tenant_id, persona_id)
 
+    MAX_REFUSALS = 20
+
+    @staticmethod
+    def _kept_envelope_summary(record: Mapping[str, Any]) -> dict[str, Any] | None:
+        current = record.get("current_envelope")
+        if not isinstance(current, Mapping):
+            return None
+        pool_version = current.get("pool_version")
+        if pool_version is None and isinstance(current.get("parameters"), Mapping):
+            pool_version = current["parameters"].get("pool_version")
+        version = (
+            current.get("version")
+            or current.get("envelope_version")
+            or (f"1.{int(pool_version)}.0" if pool_version is not None else None)
+        )
+        published = record.get("published") if isinstance(record.get("published"), Mapping) else {}
+        published_entry = published.get(str(pool_version)) if pool_version is not None else None
+        digest = (
+            current.get("digest")
+            or current.get("pool_digest")
+            or current.get("checksum")
+            or (current["parameters"].get("pool_digest") if isinstance(current.get("parameters"), Mapping) else None)
+            or (published_entry.get("pool_digest") if isinstance(published_entry, Mapping) else None)
+            or canonical_digest(dict(current))
+        )
+        return {
+            "version": str(version) if version is not None else None,
+            "digest": str(digest),
+        }
+
     def _refuse(self, tenant_id, persona_id, pool_version, reason, *, status_code, step):
         def mutate(record):
-            record["refusals"].append(
-                {
-                    "at": self.now(),
-                    "pool_version": pool_version,
-                    "step": step,
-                    "reason": reason,
-                    "previous_envelope_kept": record.get("current_envelope"),
-                }
-            )
+            ts = self.now()
+            kept = self._kept_envelope_summary(record)
+            refusals = list(record.get("refusals") or [])
+            if (
+                refusals
+                and isinstance(refusals[-1], Mapping)
+                and refusals[-1].get("step") == step
+                and refusals[-1].get("reason") == reason
+            ):
+                newest = dict(refusals[-1])
+                newest.setdefault("at", ts)
+                newest["last_at"] = ts
+                newest["count"] = int(newest.get("count") or 1) + 1
+                newest["pool_version"] = pool_version
+                newest["previous_envelope_kept"] = kept
+                refusals[-1] = newest
+            else:
+                refusals.append(
+                    {
+                        "at": ts,
+                        "last_at": ts,
+                        "count": 1,
+                        "pool_version": pool_version,
+                        "step": step,
+                        "reason": reason,
+                        "previous_envelope_kept": kept,
+                    }
+                )
+            record["refusals"] = refusals[-self.MAX_REFUSALS :]
 
         self._save(tenant_id, persona_id, mutate)
         raise PoolPublishRefused(reason, status_code=status_code, step=step)
