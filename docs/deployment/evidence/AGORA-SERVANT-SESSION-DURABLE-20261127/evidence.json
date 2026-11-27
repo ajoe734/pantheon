@@ -50,7 +50,7 @@
       ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
       ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check",
       ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_router.py",
-      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_bff_route_diff.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py"
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_bff_route_diff.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py"
     ],
     "results": {
       "interaction_worker_and_servant_sessions": "29 passed",
@@ -58,7 +58,7 @@
       "check_storage_manifest": "passed (0 failures, 378 entries, 23 bounded)",
       "ci_test_inventory_check": "test inventory ok",
       "bff_architecture_tenant_and_agora_router": "206 passed, 1 skipped",
-      "merged_dev_route_diff_and_paper_book_composition": "21 passed"
+      "merged_dev_route_diff_paper_book_and_shadow_comparison_composition": "29 passed"
     }
   },
   "residual_findings": [

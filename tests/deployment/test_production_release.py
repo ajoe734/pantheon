@@ -290,11 +290,13 @@ case "$tool" in
       exit 0
     fi
     if [[ "$args" == "cp "*":/data/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
       dst="${@: -1}"
       [[ -d "$FAKE_STATE/incumbent_caddy_data" ]] && cp -a "$FAKE_STATE/incumbent_caddy_data/." "$dst/"
       exit 0
     fi
     if [[ "$args" == "cp "*":/config/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
       dst="${@: -1}"
       [[ -d "$FAKE_STATE/incumbent_caddy_config" ]] && cp -a "$FAKE_STATE/incumbent_caddy_config/." "$dst/"
       exit 0
@@ -470,6 +472,8 @@ PY
       printf '200 -\n'; exit 0
     fi
     if [[ "$args" == "inspect -f {{if .State.Health}}"* ]]; then printf '%s' "${FAKE_WORKER_HEALTH:-healthy}"; exit 0; fi
+    if [[ "$args" == "inspect -f {{range .Mounts}}"* ]]; then [[ -f "$FAKE_STATE/caddy_mounts" ]] && cat "$FAKE_STATE/caddy_mounts"; exit 0; fi
+    if [[ "$args" == "logs "* ]]; then [[ -f "$FAKE_STATE/caddy_logs" ]] && cat "$FAKE_STATE/caddy_logs"; exit 0; fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
       cid="${@: -1}"
@@ -492,6 +496,28 @@ PY
   curl)
     url="${@: -1}"; all="$*"; port="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\)/.*#\1#p' <<<"$url")"
     out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+    if [[ "${FAKE_GCE_NO_HAIRPIN_NAT:-}" == "true" && ( "$url" == "https://${PROD_FE_HOST:-}"* || "$url" == "https://${PROD_BFF_HOST:-}"* ) ]]; then
+      hosts_f="${PROD_HOSTS_PATH:-${FAKE_STATE:+${FAKE_STATE}/etc/hosts}}"
+      if ! python3 - "$hosts_f" "${PROD_FE_HOST:-}" "${PROD_BFF_HOST:-}" <<'PY' >/dev/null 2>&1; then
+import sys
+from pathlib import Path
+hp, fe, bff = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if not hp.is_file() or not fe or not bff:
+    raise SystemExit(1)
+mapped = {
+    tok
+    for line in hp.read_text(encoding="utf-8").splitlines()
+    for parts in [line.split("#", 1)[0].split()]
+    if len(parts) >= 2 and parts[0] == "127.0.0.1"
+    for tok in parts[1:]
+}
+if fe not in mapped or bff not in mapped:
+    raise SystemExit(1)
+PY
+        echo "curl: (28) Connection timed out after 10001 milliseconds" >&2
+        exit 28
+      fi
+    fi
     if [[ "$url" == *computeMetadata/v1/instance/service-accounts* ]]; then
       [[ "${FAKE_METADATA_FAIL:-}" == "true" ]] && exit 22
       printf '{"access_token":"ya29.fake-prod-runtime-token"}'
@@ -4370,6 +4396,9 @@ PY
       new_boot="${FAKE_NEW_BOOT_DISK:-${vm}-boot-fresh-e2s8}"
       touch "$S/disks/$new_boot"
       rm -rf "${PROD_ROOT:-}"
+      hosts_target="${PROD_HOSTS_PATH:-$S/etc/hosts}"
+      mkdir -p "$(dirname "$hosts_target")"
+      printf '127.0.0.1 localhost\n' > "$hosts_target"
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
@@ -5283,6 +5312,79 @@ class ReplaceVmHarness(RealControllerBase):
         nvme_grow_log = (self.state / "root_grow.log").read_text()
         self.assertIn("growpart /dev/nvme0n1 1", nvme_grow_log)
         self.assertIn("resize2fs /dev/nvme0n1p1", nvme_grow_log)
+
+    def test_replace_vm_populates_idempotent_hosts_loopback_and_succeeds_under_gce_no_hairpin_nat(self):
+        hosts_file = self.tmp / "custom-etc-hosts"
+        hosts_file.write_text(f"127.0.0.1 localhost {PROD_ENV['PROD_FE_HOST']}\n", encoding="utf-8")
+
+        # 1. Without PROD_BFF_HOST (or PROD_FE_HOST) mapped to 127.0.0.1, restore_active_release fails under
+        #    FAKE_GCE_NO_HAIRPIN_NAT=true with RUNTIME_CONFIG_FETCH / curl exit 28 timeout (run 45938984639 symptom).
+        no_loopback = self.tmp / "no-loopback-hosts"
+        no_loopback.write_text("127.0.0.1 localhost\n", encoding="utf-8")
+        r_no_loop = subprocess.run(
+            [str(OPS), "restore_active_release", self.active_release_id],
+            env=self.env(
+                FAKE_GCE_NO_HAIRPIN_NAT="true",
+                PROD_HOSTS_PATH=str(no_loopback),
+                PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertNotEqual(r_no_loop.returncode, 0)
+        self.assertIn("RUNTIME_CONFIG_FETCH", r_no_loop.stderr)
+
+        # 2. bootstrap.sh idempotently populates 127.0.0.1 loopback entries for PROD_FE_HOST and PROD_BFF_HOST in
+        #    HOSTS_FILE (mode 0644, never duplicating existing 127.0.0.1 tokens across repeated runs).
+        for _ in range(2):
+            b_res = subprocess.run(
+                [str(BOOTSTRAP)],
+                env=self.env(
+                    PROD_HOSTS_PATH=str(hosts_file),
+                    PROD_SECRETS_ENV_FILE=str(self.data_mount / "secrets" / "prod.secrets.env"),
+                    PROD_POSTGRES_PASSWORD_FILE=str(self.data_mount / "secrets" / "postgres_password"),
+                    PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                    RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(b_res.returncode, 0, b_res.stderr)
+        self.assertEqual(hosts_file.stat().st_mode & 0o777, 0o644)
+        toks = [
+            tok
+            for ln in hosts_file.read_text(encoding="utf-8").splitlines()
+            for parts in [ln.split("#", 1)[0].split()]
+            if len(parts) >= 2 and parts[0] == "127.0.0.1"
+            for tok in parts[1:]
+        ]
+        self.assertEqual(toks.count(PROD_ENV["PROD_FE_HOST"]), 1)
+        self.assertEqual(toks.count(PROD_ENV["PROD_BFF_HOST"]), 1)
+
+        # 3. End-to-end prod_replace_vm.sh succeeds under FAKE_GCE_NO_HAIRPIN_NAT=true: online_ssh skips docker cp
+        #    when /data and /config are already bind-mounted from PROD_DATA_MOUNT/proxy/caddy-data and caddy-config,
+        #    and RESTORE_OUT on the fresh Debian 12 boot disk re-populates HOSTS_FILE and restores Caddyfile + release.
+        (self.state / "caddy_mounts").write_text(
+            f"/data={self.data_mount}/proxy/caddy-data\n/config={self.data_mount}/proxy/caddy-config\n",
+            encoding="utf-8",
+        )
+        (self.data_mount / "proxy" / "Caddyfile").unlink(missing_ok=True)
+        r = self._run_replace_vm(
+            FAKE_GCE_NO_HAIRPIN_NAT="true",
+            PROD_HOSTS_PATH=str(hosts_file),
+            GITHUB_RUN_ID="45938984639",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertFalse((self.state / "caddy_cp.log").exists())
+        self.assertTrue((self.data_mount / "proxy" / "Caddyfile").is_file())
+        self.assertIn(PROD_ENV["PROD_FE_HOST"], hosts_file.read_text(encoding="utf-8"))
+        self.assertIn(PROD_ENV["PROD_BFF_HOST"], hosts_file.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

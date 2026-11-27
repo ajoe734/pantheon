@@ -371,6 +371,44 @@ PY
 [[ "$PROD_FE_HOST" != "$PROD_BFF_HOST" ]] || fail HOST_COLLISION "FE and BFF hosts must differ"
 [[ "$PROD_IDP_ISSUER" == https://* ]] || fail IDP_NOT_HTTPS "IdP issuer must be https"
 
+# GCE VPCs provide no hairpin NAT to a VM's own external 1:1 natIP; ensure 127.0.0.1 loopback entries for
+# PROD_FE_HOST and PROD_BFF_HOST so same-VM HTTPS probes reach pantheon-caddy on 127.0.0.1:443 with TLS SNI.
+HOSTS_FILE=${PROD_HOSTS_PATH:-${FAKE_STATE:+${FAKE_STATE}/etc/hosts}}
+HOSTS_FILE="${HOSTS_FILE:-/etc/hosts}"
+run_priv python3 - "$HOSTS_FILE" "$PROD_FE_HOST" "$PROD_BFF_HOST" <<'PY' \
+  || fail HOSTS_LOOPBACK_INIT "cannot ensure 127.0.0.1 loopback entries for PROD_FE_HOST and PROD_BFF_HOST in ${HOSTS_FILE}"
+import os, sys, tempfile
+from pathlib import Path
+
+hp = Path(sys.argv[1])
+fe_host, bff_host = sys.argv[2].strip(), sys.argv[3].strip()
+hp.parent.mkdir(parents=True, exist_ok=True)
+lines = hp.read_text(encoding="utf-8").splitlines() if hp.is_file() else ["127.0.0.1 localhost"]
+mapped = {
+    tok
+    for line in lines
+    for parts in [line.split("#", 1)[0].split()]
+    if len(parts) >= 2 and parts[0] == "127.0.0.1"
+    for tok in parts[1:]
+}
+missing = [h for h in (fe_host, bff_host) if h and h not in mapped]
+if missing or not hp.is_file():
+    if missing:
+        lines.append(f"127.0.0.1 {' '.join(missing)}")
+    fd, tmp = tempfile.mkstemp(dir=str(hp.parent), prefix=".prod-hosts.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, hp)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+elif (hp.stat().st_mode & 0o777) != 0o644:
+    os.chmod(hp, 0o644)
+PY
+
 if [[ -f "${SCRIPT_DIR}/Caddyfile" ]]; then
   [[ "$(readlink -f "${SCRIPT_DIR}/Caddyfile" 2>/dev/null)" == "$(readlink -f "${PROD_ROOT}/proxy/Caddyfile" 2>/dev/null)" ]] \
     || run_priv cp -f "${SCRIPT_DIR}/Caddyfile" "${PROD_ROOT}/proxy/Caddyfile" || fail INSTALL_CADDYFILE "cannot install Caddyfile"
