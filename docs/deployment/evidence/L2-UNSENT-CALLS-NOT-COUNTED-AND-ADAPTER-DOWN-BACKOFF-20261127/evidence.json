@@ -11,8 +11,9 @@
     "6a30ca66e4c1402d58df1e2e1f4fb2c20f8a83e4"
   ],
   "delivery": {
-    "source": "implemented, awaiting independent exact-head review and supervisor integration",
-    "hosted": "pending deployment and next Root switch; no hosted proof claimed"
+    "source": "PR #7998 published; canonical handoff rejected for omitted artifact-contract paths; no review binding or approval claimed",
+    "hosted": "pending deployment and next Root switch; no hosted proof claimed",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7998"
   },
   "root_cause": "The ledger reserved spend before dispatch but client errors lost transport-phase evidence; the worker continued the claimed batch during adapter outage.",
   "implementation": {
@@ -80,5 +81,30 @@
       "finding": "Existing calls day rows and non-unsent events/cards lack a verified global retention cap; the added unsent events are independently capped.",
       "disposition": "Existing RC3 WP3.1 writer obligation retained in storage manifest; no claim that the whole ledger is bounded."
     }
-  ]
+  ],
+  "handoff_gate": {
+    "status": "blocked",
+    "attempted_head": "479737f0f817feb2645117b8a4efba1408e53d8f",
+    "rejection": "changed file 'docs/operations/storage-manifest.json' is outside the task artifact contract for repository 'pantheon'",
+    "required_artifacts": [
+      {
+        "path": "pantheon:services/source_ingestion/semantic_extraction.py",
+        "reason": "typed unsent reason must survive client result serialization"
+      },
+      {
+        "path": "pantheon:services/source_ingestion/hypothesis_compiler.py",
+        "reason": "proposer shares the same daily ledger and must refund its own proven-unsent reservation"
+      },
+      {
+        "path": "pantheon:services/source_ingestion/discovery_summary.py",
+        "reason": "read-only hosted owner summary must expose the separate unsent counter to the existing probe"
+      },
+      {
+        "path": "pantheon:docs/operations/storage-manifest.json",
+        "reason": "repository runtime budget rule requires registration of this changed persistent ledger writer"
+      }
+    ],
+    "recovery": "Human/Ops must add these four paths using governed artifact-contract while the task is blocked; owner then reopens and repeats handoff with the current PR/head/committed manifest. No direct JSON edits or command-root patching.",
+    "authority_evidence": "scripts/ai_status.py::command_artifact_contract explicitly checks current_actor() == Human/Ops; Codex2 cannot revise it. Existing owner/runtime authority is preserved."
+  }
 }
