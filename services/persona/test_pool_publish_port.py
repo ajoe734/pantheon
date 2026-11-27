@@ -36,10 +36,40 @@ def test_only_own_pending_decisions_for_confirmed_membership_are_superseded():
     assert ports.supersede_publication_operator_decisions(PERSONA, current, confirmed) == ["old"]
     assert writes[0][0] == "/api/evolution/proposals/old/supersede"
     assert writes[0][1]["note"] == "publication_membership_already_confirmed"
+    assert writes[0][1]["persona_id"] == PERSONA["persona_id"]
     assert ports.supersede_publication_operator_decisions(PERSONA, current, confirmed) == []
     changed = pool(m("a"), m("b"))
     assert ports.supersede_publication_operator_decisions(PERSONA, changed, confirmed) == []
     assert len(writes) == 1
+
+
+def test_withdrawal_http_forwards_rotating_publication_credential_only_to_supersede(monkeypatch, tmp_path):
+    import io
+    import pytest
+    from services.persona import pool_autonomy_cycle as cycle
+    credential_file = tmp_path / "publication-credential"
+    credential_file.write_text("first-publication-token")
+    credential_file.chmod(0o600)
+    env = {"EVOLUTION_AUTH_TOKEN": "evolution-tenant-token",
+           "PERSONA_POOL_PUBLISH_BFF_TOKEN_FILE": str(credential_file),
+           "PERSONA_POOL_PUBLISH_BFF_TOKEN": "stale-token"}
+    requests = []
+    def http(request, timeout):
+        requests.append(request)
+        return io.StringIO("{}")
+    monkeypatch.setattr(cycle, "urlopen", http)
+    ports = HttpPoolCyclePorts(env=env)
+    for token in ("first-publication-token", "rotated-publication-token"):
+        credential_file.write_text(token)
+        ports._urllib("POST", "evolution", "/api/evolution/proposals/d/supersede", "t1", {})
+        assert requests[-1].get_header("Authorization") == "Bearer evolution-tenant-token"
+        assert requests[-1].get_header("X-pool-publication-authorization") == "Bearer " + token
+    ports._urllib("POST", "evolution", "/api/evolution/proposals", "t1", {})
+    assert requests[-1].get_header("X-pool-publication-authorization") is None
+    credential_file.unlink()
+    with pytest.raises(RuntimeError, match="Configured service credential unavailable"):
+        ports._urllib("POST", "evolution", "/api/evolution/proposals/d/supersede", "t1", {})
+    assert len(requests) == 3
 
 
 def m(ref, stage="active", weight=.5):

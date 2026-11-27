@@ -2257,6 +2257,7 @@ def reject_proposal(decision_id: str, body: RejectRequest):
 
 class SupersedePoolPublicationRequest(BaseModel):
     tenant_id: str
+    persona_id: str
     actor_role: str
     actor_id: str
     membership_digest: str
@@ -2264,8 +2265,57 @@ class SupersedePoolPublicationRequest(BaseModel):
     note: str
 
 
+def _confirmed_publication_authority(request: Request, body: SupersedePoolPublicationRequest) -> None:
+    """Ask the existing BFF owner to authenticate the service and read its pins.
+
+    The shared Evolution bearer scopes the tenant, but cannot identify persona-svc.
+    The separate rotating publication principal is verified by its existing strict
+    BFF route. Neither caller actor fields nor a plausible approval id are proof.
+    """
+    from urllib.error import HTTPError, URLError
+    from urllib.parse import quote
+    from urllib.request import Request as OwnerRequest, urlopen
+    from services.control_plane.persona.pool_policy import latest_publication
+    from services.persona.pool_publish_port import membership_digest
+
+    credential = request.headers.get("x-pool-publication-authorization", "")
+    if not credential.startswith("Bearer ") or not credential[7:].strip():
+        raise HTTPException(status_code=403, detail="pool_publication_service_authority_required")
+    base = os.getenv("PANTHEON_BFF_URL", "http://operator-bff:8001").rstrip("/")
+    path = f"/bff/personas/{quote(body.persona_id, safe='')}/strategy-pool/publish-history"
+    try:
+        with urlopen(OwnerRequest(base + path, headers={"Authorization": credential,
+                     "X-Tenant-Id": body.tenant_id}), timeout=15) as response:
+            payload = json.load(response)
+    except HTTPError as exc:
+        raise HTTPException(status_code=403 if exc.code in (401, 403) else 503,
+                            detail="pool_publication_authority_refused") from exc
+    except (URLError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="pool_publication_authority_unavailable") from exc
+    try:
+        authority = payload["meta"]["publication_authority"]
+        history = payload["data"]
+        confirmed = latest_publication(history)
+        current = history.get("current_envelope") or {}
+        valid = (authority.get("strict_auth") is True
+                 and authority.get("subject") == "persona-pool-cycle"
+                 and "persona_pool_publisher" in authority.get("roles", [])
+                 and authority.get("tenant_id") == body.tenant_id
+                 and authority.get("persona_id") == body.persona_id
+                 and confirmed is not None and confirmed.get("status") == "published"
+                 and confirmed.get("approval_decision_id") == body.superseded_by
+                 and current.get("pool_version") == confirmed["pool_version"]
+                 and current.get("artifact_id") == confirmed["envelope_artifact_id"]
+                 and current.get("version") == confirmed["envelope_version"]
+                 and membership_digest(confirmed) == body.membership_digest)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise HTTPException(status_code=403, detail="pool_publication_authority_binding_mismatch")
+
+
 @app.post("/api/evolution/proposals/{decision_id}/supersede", response_model=DecisionResponse)
-def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationRequest):
+def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationRequest, request: Request):
     """A controller may withdraw only its own pending paper-publication escalation."""
     decision = store.get(decision_id)
     if decision is None:
@@ -2274,6 +2324,10 @@ def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationR
     meta = decision.metadata or {}
     if (body.actor_role != "evolution_controller" or body.actor_id != "persona-svc"
             or decision.created_by_id != body.actor_id
+            or decision.created_by_role != EvolutionActorRole.EVOLUTION_CONTROLLER
+            or decision.target_type != EvolutionTargetType.PERSONA
+            or not body.persona_id or decision.persona_id != body.persona_id
+            or decision.target_id != body.persona_id
             or decision.action_type != EvolutionActionType.FLAG_FOR_REVIEW
             or meta.get("decision_kind") != "pool_envelope_publication"
             or meta.get("paper_only") is not True
@@ -2281,6 +2335,7 @@ def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationR
             or not body.superseded_by.startswith("apv-persona-pool-")
             or body.note != "publication_membership_already_confirmed"):
         raise HTTPException(status_code=403, detail="pool_publication_withdrawal_binding_mismatch")
+    _confirmed_publication_authority(request, body)
     if decision.decision_state == EvolutionDecisionState.SUPERSEDED:
         if decision.superseded_by == body.superseded_by:
             return _decision_to_response(decision)

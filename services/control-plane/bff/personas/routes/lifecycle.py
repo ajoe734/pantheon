@@ -554,7 +554,14 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
-        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
+        from ...auth.policy import bff_auth_mode, bff_auth_stub_enabled
+
+        # Evolution validates the forwarded publication credential here rather
+        # than trusting actor fields supplied with a withdrawal. No binding read.
+        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher",
+                "publication_authority": {"subject": identity.operator_id, "roles": list(identity.roles),
+                    "tenant_id": tenant_id, "persona_id": persona_id,
+                    "strict_auth": bff_auth_mode() == "strict" and not bff_auth_stub_enabled()}}}
 
     @router.get("/api/v1/personas/{persona_id}/strategy-matches")
     @router.get("/bff/personas/{persona_id}/strategy-matches")

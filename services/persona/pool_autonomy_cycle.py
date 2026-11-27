@@ -617,10 +617,15 @@ class HttpPoolCyclePorts(PoolPublishPort):
         token = configured_service_token(variable, self.env)
         if not token:  # fail closed: never send an empty bearer
             raise RuntimeError(f"owner_credential_unconfigured:{service}")
+        headers = {"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant,
+                   "Content-Type": "application/json"}
+        if service == "evolution" and method == "POST" and path.endswith("/supersede"):
+            publication_token = configured_service_token("PERSONA_POOL_PUBLISH_BFF_TOKEN", self.env)
+            if not publication_token:
+                raise RuntimeError("owner_credential_unconfigured:publication_authority")
+            headers["X-Pool-Publication-Authorization"] = f"Bearer {publication_token}"
         request = Request(self.env.get(name, default).rstrip("/") + path, method=method,
-                          data=None if body is None else json.dumps(body).encode(),
-                          headers={"Authorization": f"Bearer {token}", "X-Tenant-Id": tenant,
-                                   "Content-Type": "application/json"})
+                          data=None if body is None else json.dumps(body).encode(), headers=headers)
         with urlopen(request, timeout=15) as response:
             return json.load(response)
 
