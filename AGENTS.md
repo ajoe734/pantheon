@@ -18,7 +18,10 @@ open new feature tasks. A full day means that on one trading day each of the
 three is enrolled, its daily cycle ticked, a decision used memory and results
 were written back, and that each held a meeting within its current week
 (operator decision 2026-11-27: MT-1 runs on a fixed weekday per persona and
-MT-2 on the lesson count, so the three never meet on the same day). Open only
+MT-2 on the lesson count, so the three never meet on the same day). Results
+written back includes the cycle's pool publication: it must end published or
+unchanged, not held for a consultation or an operator decision; the probe
+passing alone is not enough (operator decision 2026-11-27). Open only
 tasks that belong to a root-cause class in the problem register or that finish
 or repair work that is already merged. An operator instruction in the current
 conversation that names a specific feature overrides the freeze for that
