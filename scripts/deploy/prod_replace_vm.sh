@@ -418,7 +418,8 @@ PY
            PROD_IMAGE_PULL_TRIES PROD_IMAGE_PULL_RETRY_DELAY \
            PROD_BASELINE_READY_TRIES PROD_BASELINE_READY_INTERVAL \
            PROD_WORKER_CRED_TRIES PROD_WORKER_CRED_INTERVAL PROD_WORKER_HEALTH_WAIT_SECONDS \
-           PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE; do
+           PROD_SECRETS_ENV_FILE PROD_POSTGRES_PASSWORD_FILE PROD_HOSTS_PATH \
+           FAKE_GCE_NO_HAIRPIN_NAT; do
     if [[ -n "${!v+x}" ]]; then
       printf 'export %s=%q\n' "$v" "${!v}"
     fi
@@ -510,8 +511,13 @@ PY
       caddy_img=\"\$PROD_CADDY_DEFAULT_IMAGE\"
     fi
     printf '%s\n' \"\$caddy_img\" | sudo tee \"\$PROD_DATA_MOUNT/proxy/caddy-image.txt\" >/dev/null
-    sudo \"\$DOCKER\" cp \"\${PROD_CADDY_CONTAINER}:/data/.\" \"\$PROD_DATA_MOUNT/proxy/caddy-data/\" >/dev/null 2>&1 || true
-    sudo \"\$DOCKER\" cp \"\${PROD_CADDY_CONTAINER}:/config/.\" \"\$PROD_DATA_MOUNT/proxy/caddy-config/\" >/dev/null 2>&1 || true
+    caddy_mounts=\"\$(sudo \"\$DOCKER\" inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{\"\n\"}}{{end}}' \"\$PROD_CADDY_CONTAINER\" 2>/dev/null || true)\"
+    if ! grep -Fqx \"/data=\${PROD_DATA_MOUNT%/}/proxy/caddy-data\" <<<\"\$caddy_mounts\"; then
+      sudo \"\$DOCKER\" cp \"\${PROD_CADDY_CONTAINER}:/data/.\" \"\$PROD_DATA_MOUNT/proxy/caddy-data/\" >/dev/null 2>&1 || true
+    fi
+    if ! grep -Fqx \"/config=\${PROD_DATA_MOUNT%/}/proxy/caddy-config\" <<<\"\$caddy_mounts\"; then
+      sudo \"\$DOCKER\" cp \"\${PROD_CADDY_CONTAINER}:/config/.\" \"\$PROD_DATA_MOUNT/proxy/caddy-config/\" >/dev/null 2>&1 || true
+    fi
     sudo sync
     printf 'DATA_UUID=%s\nCADDY_IMAGE=%s\n' \"\$data_uuid\" \"\$caddy_img\"
   " 2>&1)"; then
@@ -1065,6 +1071,7 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
   [[ \"\$caddy_img\" == *@sha256:* ]] || caddy_img=\"${CADDY_IMAGE}\"
   sudo \"\$DOCKER\" image inspect \"\$caddy_img\" >/dev/null 2>&1 || sudo \"\$DOCKER\" pull \"\$caddy_img\" >/dev/null 2>&1
   sudo mkdir -p \"\$PROD_DATA_MOUNT/proxy/caddy-data\" \"\$PROD_DATA_MOUNT/proxy/caddy-config\"
+  [[ -f \"\$PROD_DATA_MOUNT/proxy/Caddyfile\" ]] || sudo install -m 0644 \"\$B/Caddyfile\" \"\$PROD_DATA_MOUNT/proxy/Caddyfile\"
   sudo \"\$DOCKER\" rm -f \"\$PROD_CADDY_CONTAINER\" >/dev/null 2>&1 || true
   sudo \"\$DOCKER\" run -d --name \"\$PROD_CADDY_CONTAINER\" --restart unless-stopped --network host \
     -e \"PROD_BFF_HOST=\$PROD_BFF_HOST\" -e \"PROD_FE_HOST=\$PROD_FE_HOST\" -e \"PROD_ROOT=\$PROD_ROOT\" \
@@ -1073,10 +1080,15 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
     -v \"\$PROD_DATA_MOUNT/proxy/caddy-data:/data\" \
     -v \"\$PROD_DATA_MOUNT/proxy/caddy-config:/config\" \
     \"\$caddy_img\" >/dev/null
+  caddy_ready=false
   for _ in \$(seq 1 15); do
-    \"\$CURL\" -fsS -m 5 -o /dev/null \"\${PROD_FE_BASE_URL:-https://\${PROD_FE_HOST}}/deployment.json\" >/dev/null 2>&1 && break
+    if \"\$CURL\" -fsS -m 5 -o /dev/null \"\${PROD_FE_BASE_URL:-https://\${PROD_FE_HOST}}/deployment.json\" >/dev/null 2>&1; then
+      caddy_ready=true
+      break
+    fi
     sleep 1
   done
+  [[ \"\$caddy_ready\" == \"true\" ]] || sudo \"\$DOCKER\" logs --tail 40 \"\$PROD_CADDY_CONTAINER\" >&2 2>&1 || true
   sudo -H -E env PROD_USE_SUDO=true \
     PROD_BASELINE_READY_TRIES=\"\${PROD_BASELINE_READY_TRIES:-60}\" \
     PROD_COMPOSE_FILE=\"\$PROD_ROOT/bin/docker-compose.prod-control.yml\" \
