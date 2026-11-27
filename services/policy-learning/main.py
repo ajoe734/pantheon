@@ -1528,7 +1528,7 @@ def readback_candidate_target(
 class TraderTrainingApprovalBody(BaseModel):
     user_id: str
     strategy_id: str = "*"
-    approved_by: str = "operator"
+    approved_by: Optional[str] = None
     approval_id: Optional[str] = None
     approved_at: Optional[str] = None
     notes: Optional[str] = None
@@ -1556,16 +1556,19 @@ def approve_trader_imitation_training(
 ) -> Dict[str, Any]:
     """Grant training approval for a trader and strategy inside the authenticated tenant."""
     tenant_id = bind_tenant(authority, body.tenant_id)
-    approval = record_trader_training_approval(
-        store,
-        tenant_id=tenant_id,
-        user_id=body.user_id,
-        strategy_id=body.strategy_id,
-        approved_by=body.approved_by or authority.actor_id,
-        approval_id=body.approval_id,
-        approved_at=body.approved_at,
-        notes=body.notes,
-    )
+    try:
+        approval = record_trader_training_approval(
+            store,
+            tenant_id=tenant_id,
+            user_id=body.user_id,
+            strategy_id=body.strategy_id,
+            approved_by=authority.actor_id,
+            approval_id=body.approval_id,
+            approved_at=body.approved_at,
+            notes=body.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "approved", "tenant_id": tenant_id, "approval": approval}
 
 

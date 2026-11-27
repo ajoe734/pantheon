@@ -815,9 +815,13 @@ class PolicyLearningStore:
         strategy_id: str = "*",
         approval: Dict[str, Any],
     ) -> Dict[str, Any]:
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        if not clean_tenant or not clean_user:
+            raise ValueError("tenant_id and user_id are required for training approval")
         key = (
-            str(tenant_id or "").strip(),
-            str(user_id or "*").strip() or "*",
+            clean_tenant,
+            clean_user,
             str(strategy_id or "*").strip() or "*",
         )
         stored = json.loads(json.dumps(approval))
@@ -835,6 +839,8 @@ class PolicyLearningStore:
         clean_tenant = str(tenant_id or "").strip()
         clean_user = str(user_id or "").strip()
         clean_strategy = str(strategy_id or "").strip()
+        if not clean_tenant or not clean_user or not clean_strategy:
+            return None
         with self._thread_lock:
             for key in (
                 (clean_tenant, clean_user, clean_strategy),

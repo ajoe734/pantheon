@@ -164,10 +164,12 @@ def record_trader_training_approval(
 ) -> Dict[str, Any]:
     """Record or revoke experiment/training approval for a trader and strategy in PolicyLearningStore."""
     clean_tenant = _clean(tenant_id)
-    clean_user = _clean(user_id) or "*"
+    clean_user = _clean(user_id)
     clean_strategy = _clean(strategy_id) or "*"
     if not clean_tenant:
         raise ValueError("tenant_id is required for training approval")
+    if not clean_user:
+        raise ValueError("user_id is required for training approval")
     timestamp = _clean(approved_at) or _utc_now()
     job_id = approval_job_id(clean_tenant, clean_user, clean_strategy)
     resolved_approval_id = _clean(approval_id) or f"apv-{job_id}"
@@ -210,6 +212,8 @@ def get_trader_training_approval(
     clean_tenant = _clean(tenant_id)
     clean_user = _clean(user_id)
     clean_strategy = _clean(strategy_id) or DEFAULT_STRATEGY_ID
+    if not clean_tenant or not clean_user:
+        return None
 
     if hasattr(store, "get_trader_training_approval"):
         found = store.get_trader_training_approval(
@@ -220,22 +224,41 @@ def get_trader_training_approval(
         if found:
             return found
 
-    # Check approved jobs in PolicyLearningStore matching this trader/strategy or wildcard
+    # Check explicitly approved jobs in PolicyLearningStore matching this tenant/trader/strategy.
+    # Never treat proposed/dispatched jobs or missing tenant/user/strategy constraints as approved.
     if hasattr(store, "list_jobs"):
         matching_policy_ids = {
             approval_policy_id(clean_tenant, clean_user, clean_strategy),
             approval_policy_id(clean_tenant, clean_user, "*"),
+            approval_policy_id(clean_tenant, "*", clean_strategy),
             approval_policy_id(clean_tenant, "*", "*"),
         }
         for job in store.list_jobs():
             if not isinstance(job, Mapping):
                 continue
             status = _clean(job.get("status")).lower()
-            pol_id = _clean(job.get("policy_id"))
+            if status not in {"approved", "active"}:
+                continue
+            if job.get("training_approved") is False:
+                continue
             constraints = job.get("constraints") if isinstance(job.get("constraints"), Mapping) else {}
-            if pol_id in matching_policy_ids and status in {"approved", "active", "proposed", "dispatched"}:
-                if job.get("training_approved") is False or status == "rejected":
-                    continue
+            c_tenant = _clean(constraints.get("tenant_id"))
+            c_user = _clean(constraints.get("user_id"))
+            c_strategy = _clean(constraints.get("strategy_id"))
+            if not c_tenant or not c_user or not c_strategy:
+                continue
+            if c_tenant != clean_tenant:
+                continue
+            if c_user not in {clean_user, "*"}:
+                continue
+            if c_strategy not in {clean_strategy, "*"}:
+                continue
+            pol_id = _clean(job.get("policy_id"))
+            if (
+                pol_id in matching_policy_ids
+                or constraints.get("training_approved") is True
+                or constraints.get("experiment_approval_satisfied") is True
+            ):
                 return {
                     "approval_id": _clean(job.get("approval_id") or job.get("job_id")),
                     "tenant_id": clean_tenant,
@@ -245,36 +268,6 @@ def get_trader_training_approval(
                     "approved_by": _clean(job.get("approved_by") or job.get("created_by") or "operator"),
                     "approved_at": _clean(job.get("approved_at") or job.get("updated_at") or job.get("created_at")),
                 }
-            if (
-                _clean(constraints.get("tenant_id") or clean_tenant) == clean_tenant
-                and _clean(constraints.get("user_id") or clean_user) in {clean_user, "*"}
-                and _clean(constraints.get("strategy_id") or clean_strategy) in {clean_strategy, "*"}
-                and (
-                    constraints.get("training_approved") is True
-                    or constraints.get("experiment_approval_satisfied") is True
-                )
-                and status != "rejected"
-            ):
-                return {
-                    "approval_id": _clean(job.get("job_id")),
-                    "tenant_id": clean_tenant,
-                    "user_id": clean_user,
-                    "strategy_id": clean_strategy,
-                    "approved": True,
-                    "approved_by": _clean(job.get("created_by") or "operator"),
-                    "approved_at": _clean(job.get("updated_at") or job.get("created_at")),
-                }
-
-    if _clean(os.getenv(TRAINING_APPROVED_ENV)).lower() in {"true", "1", "yes"}:
-        return {
-            "approval_id": "env-policy-learning-trader-imitation-approved",
-            "tenant_id": clean_tenant,
-            "user_id": clean_user,
-            "strategy_id": clean_strategy,
-            "approved": True,
-            "approved_by": "environment_gate",
-            "approved_at": _utc_now(),
-        }
     return None
 
 

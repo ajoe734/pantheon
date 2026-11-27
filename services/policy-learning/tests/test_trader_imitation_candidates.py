@@ -291,6 +291,156 @@ def test_30_decisions_requires_training_approval_then_trains_in_hourly_scheduler
     assert kept_ids == list(reversed(created_ids[-3:]))
 
 
+def test_training_approval_gate_rejects_proposed_dispatched_and_tenantless_jobs_and_binds_actor_id(tmp_path) -> None:
+    module = _load_service_module(str(tmp_path))
+    client = authorized_client(module.app, tenant_id="tenant-a")
+
+    # 1. Unauthenticated POST /api/policy-learning/jobs creates status='proposed' jobs.
+    # Even if a caller passes matching policy_id and training_approved=True, it must NOT count as approved.
+    prop_resp = client.post(
+        "/api/policy-learning/jobs",
+        json={
+            "policy_id": "trader-imitation-approval:tenant-b:victim:s1",
+            "objective": "attempt unauthorized training approval via proposed job",
+            "constraints": {
+                "tenant_id": "tenant-b",
+                "user_id": "victim",
+                "strategy_id": "s1",
+                "training_approved": True,
+            },
+        },
+    )
+    assert prop_resp.status_code == 201, prop_resp.text
+    assert prop_resp.json()["status"] == "proposed"
+    assert (
+        module.get_trader_training_approval(
+            module.store,
+            tenant_id="tenant-b",
+            user_id="victim",
+            strategy_id="s1",
+        )
+        is None
+    )
+
+    # 2. Direct store jobs with status proposed/dispatched or missing tenant/user/strategy constraints must yield None.
+    module.store.put_job(
+        {
+            "job_id": "plj-repro-proposed-tenantless",
+            "policy_id": "any-policy",
+            "status": "proposed",
+            "constraints": {"training_approved": True},
+        }
+    )
+    module.store.put_job(
+        {
+            "job_id": "plj-repro-dispatched",
+            "policy_id": "trader-imitation-approval:tenant-b:victim:s1",
+            "status": "dispatched",
+            "constraints": {
+                "tenant_id": "tenant-b",
+                "user_id": "victim",
+                "strategy_id": "s1",
+                "training_approved": True,
+            },
+        }
+    )
+    module.store.put_job(
+        {
+            "job_id": "plj-repro-approved-missing-tenant",
+            "policy_id": "trader-imitation-approval:tenant-b:victim:s1",
+            "status": "approved",
+            "constraints": {
+                "user_id": "victim",
+                "strategy_id": "s1",
+                "training_approved": True,
+            },
+        }
+    )
+    module.store.put_job(
+        {
+            "job_id": "plj-repro-approved-missing-user",
+            "policy_id": "trader-imitation-approval:tenant-b:victim:s1",
+            "status": "approved",
+            "constraints": {
+                "tenant_id": "tenant-b",
+                "strategy_id": "s1",
+                "training_approved": True,
+            },
+        }
+    )
+    module.store.put_job(
+        {
+            "job_id": "plj-repro-approved-other-tenant",
+            "policy_id": "trader-imitation-approval:tenant-a:*:*",
+            "status": "approved",
+            "constraints": {
+                "tenant_id": "tenant-a",
+                "user_id": "*",
+                "strategy_id": "*",
+                "training_approved": True,
+            },
+        }
+    )
+    assert (
+        module.get_trader_training_approval(
+            module.store,
+            tenant_id="tenant-b",
+            user_id="victim",
+            strategy_id="s1",
+        )
+        is None
+    )
+
+    # 3. Only an explicitly approved job with tenant_id, user_id, and strategy_id present and matching succeeds.
+    module.store.put_job(
+        {
+            "job_id": "plj-explicit-approved-tenant-b",
+            "policy_id": "trader-imitation-approval:tenant-b:victim:s1",
+            "status": "approved",
+            "approved_by": "approval-authority",
+            "constraints": {
+                "tenant_id": "tenant-b",
+                "user_id": "victim",
+                "strategy_id": "s1",
+                "training_approved": True,
+            },
+        }
+    )
+    approved_b = module.get_trader_training_approval(
+        module.store,
+        tenant_id="tenant-b",
+        user_id="victim",
+        strategy_id="s1",
+    )
+    assert approved_b is not None
+    assert approved_b["approval_id"] == "plj-explicit-approved-tenant-b"
+    assert (
+        module.get_trader_training_approval(
+            module.store,
+            tenant_id="tenant-b",
+            user_id="other-trader",
+            strategy_id="s1",
+        )
+        is None
+    )
+
+    # 4. POST /api/policy-learning/trader-imitation/approvals binds approved_by to authority.actor_id,
+    # ignoring any self-asserted approved_by in the request body.
+    approve_resp = client.post(
+        "/api/policy-learning/trader-imitation/approvals",
+        json={
+            "tenant_id": "tenant-a",
+            "user_id": "trader-lin",
+            "strategy_id": "strat-twse-1",
+            "approved_by": "spoofed-self-asserted-approver",
+        },
+    )
+    assert approve_resp.status_code == 201, approve_resp.text
+    approval_payload = approve_resp.json()["approval"]
+    assert approval_payload["approved_by"] == "policy-learning-service"
+    assert approval_payload["experiment_approval"]["approved_by"] == "policy-learning-service"
+
+
 def test_dead_learning_imitation_service_not_built_in_cloudbuild() -> None:
     cloudbuild_text = (REPO_ROOT / "cloudbuild.yaml").read_text(encoding="utf-8")
     assert 'DOCKERFILES[imitation-worker]="services/learning/imitation/Dockerfile"' not in cloudbuild_text
