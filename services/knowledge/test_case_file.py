@@ -602,3 +602,228 @@ def test_http_json_memory_owner_timeout_default_and_override():
         assert open_url.call_args.kwargs["timeout"] == 15.0
         cf.http_json(endpoint, "/api/memory/retrieve", tenant_id="t1", timeout=23.0)
         assert open_url.call_args.kwargs["timeout"] == 23.0
+
+
+# ---- PUBLICATION-PANEL-CASE-FILE-SOURCES-AND-CLAIM-SUBJECT-20261127 -------------------------------
+
+def _research_owner_binding_roles() -> frozenset:
+    """The roles the real research owner admits on GET .../owner-binding, read from its source.
+
+    Parsed (not imported) so the double enforces exactly what services/research/main.py enforces.
+    """
+    import ast
+
+    from services.deployment.auth import AUTHENTICATED_SERVICE_ROLES
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "research" / "main.py").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "_BACKTEST_OWNER_READ_ROLES" for t in node.targets):
+            roles = set()
+            for element in ast.walk(node.value):
+                if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                    roles.add(element.value)
+                if isinstance(element, ast.Starred) and getattr(element.value, "id", "") == "AUTHENTICATED_SERVICE_ROLES":
+                    roles.update(AUTHENTICATED_SERVICE_ROLES)
+            return frozenset(roles)
+    raise AssertionError("_BACKTEST_OWNER_READ_ROLES not found in research main")
+
+
+def _unsigned_token(subject: str, roles: list) -> str:
+    import base64
+
+    enc = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    return ".".join([enc(b'{"alg":"none"}'), enc(json.dumps({"sub": subject, "roles": roles}).encode()), "sig"])
+
+
+class _OwnersDouble:
+    """Local HTTP owners: a research owner enforcing roles and a search gateway with a delay."""
+
+    def __init__(self, *, search_delay: float = 0.0):
+        import base64
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        accepted = _research_owner_binding_roles()
+        self.seen_research_subjects: list = []
+        double = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # quiet
+                pass
+
+            def _send(self, code, body):
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                if "/owner-binding" in self.path:
+                    bearer = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+                    try:
+                        payload = bearer.split(".")[1]
+                        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+                    except Exception:
+                        return self._send(401, {"detail": "Missing or invalid bearer"})
+                    double.seen_research_subjects.append(claims.get("sub"))
+                    roles = list(claims.get("roles") or [])
+                    if not set(roles) & accepted:
+                        return self._send(403, {"detail": f"Role {roles} not authorized; need one of {sorted(accepted)}"})
+                    return self._send(200, {"status": "completed", "gate_verdict": {"admission_status": "admitted"},
+                                            "evaluation_digest": "d1", "dataset_id": "ds1"})
+                return self._send(404, {"detail": "not found"})
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                if self.path.startswith("/api/search"):
+                    import time as _t
+                    _t.sleep(search_delay)
+                    try:
+                        return self._send(200, {"retrieval_mode": "hybrid", "results": []})
+                    except OSError:  # client gave up (bounded timeout)
+                        return None
+                return self._send(404, {"detail": "not found"})
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _offline_http(real, *, research=True):
+    """Real http_json for research/search (the doubles); the default fake for every other owner."""
+    other = fake()
+
+    def call(endpoint, path, **kw):
+        if ("/owner-binding" in path and research) or path.startswith("/api/search"):
+            return real(endpoint, path, **kw)
+        return other(endpoint, path, **kw)
+    return call
+
+
+def _env_with_token_file(tmp_path, url, variable, token, **extra):
+    path = tmp_path / variable
+    path.write_text(token)
+    path.chmod(0o600)
+    return {"PANTHEON_RESEARCH_API_URL": url, "PANTHEON_SEARCH_API_URL": url,
+            "PANTHEON_RESEARCH_SERVICE_TOKEN": _unsigned_token("persona-pool-cycle", ["viewer"]),
+            variable + "_FILE": str(path), **extra}
+
+
+def test_issued_case_file_research_reader_role_is_admitted_by_owner_binding_and_no_broader():
+    from scripts.issue_dev_paper_principals import CONSUMER_FILES, READERS
+
+    subject_id, role = READERS["CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"]
+    roles = [role] if isinstance(role, str) else list(role)
+    accepted = _research_owner_binding_roles()
+    assert roles == ["service"] and set(roles) <= accepted
+    # No decision/operator/registry-mutation role and no viewer (which the route refuses).
+    assert not {"viewer", "operator", "admin", "approver", "automated_gate", "registry-writer",
+                "governance_reviewer", "risk_owner", "governance_committee"} & set(roles)
+    # Distinct read subject: the research write owner honours "service" only for these named subjects.
+    assert subject_id not in {"consultation-svc", "persona-pool-cycle", "research-orchestrator"}
+    assert "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN" in CONSUMER_FILES["consultation-svc"]
+    # The 2026-11-24 403: the shared PANTHEON_RESEARCH_SERVICE_TOKEN is persona-pool-cycle/viewer.
+    assert READERS["PERSONA_RESEARCH_SERVICE_TOKEN"] == ("persona-pool-cycle", "viewer")
+    assert "viewer" not in accepted
+
+
+def test_owners_from_env_token_keys_selects_issued_research_reader(tmp_path):
+    key = "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"
+    issued = _unsigned_token("pantheon-dev-consultation-case-file-research-reader", ["service"])
+    env = _env_with_token_file(tmp_path, "http://research.invalid", key, issued)
+    assert cf.Owners.from_env(env).research.token == env["PANTHEON_RESEARCH_SERVICE_TOKEN"]  # other callers
+    assert cf.Owners.from_env(env, token_keys={"research": key}).research.token == issued
+    # Unconfigured override -> shared default; configured-but-unreadable -> no credential, never the default.
+    bare = {k: v for k, v in env.items() if not k.startswith(key)}
+    assert cf.Owners.from_env(bare, token_keys={"research": key}).research.token == bare["PANTHEON_RESEARCH_SERVICE_TOKEN"]
+    (tmp_path / key).chmod(0o644)
+    assert cf.Owners.from_env(env, token_keys={"research": key}).research.token == ""
+
+
+def test_case_file_research_facts_available_with_issued_reader_and_403_with_viewer(tmp_path):
+    key = "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"
+    double = _OwnersDouble()
+    try:
+        env = _env_with_token_file(tmp_path, double.url, key,
+                                   _unsigned_token("pantheon-dev-consultation-case-file-research-reader", ["service"]))
+        real = cf.http_json
+        run = "persona-provisioning-forward-artifact-039ad01f8bcd2b4aa466"
+        for owners, expect_ok in ((cf.Owners.from_env(env, token_keys={"research": key}), True),
+                                  (cf.Owners.from_env(env), False)):
+            owners = cf.Owners(*(getattr(owners, n) or cf.OwnerEndpoint("http://x")
+                                 for n in ("registry", "research", "pool", "telemetry", "memory", "search")))
+            with mock.patch.object(cf, "http_json", _offline_http(real)):
+                out = cf.compose_case_file(subject(backtest_run_refs=(run,)), OP, owners)
+            facts = out["groups"]["facts"]
+            verdicts = [i for i in facts["items"] if i["kind"] == "backtest_gate_verdict"]
+            missing = {u["owner"]: u["reason"] for u in facts["unavailable"]}
+            if expect_ok:
+                assert verdicts and f"research:{run}" not in missing
+            else:  # reproduces the hosted 2026-11-24 answer
+                assert not verdicts and missing[f"research:{run}"].startswith("http_403:Role ['viewer'] not authorized")
+        assert double.seen_research_subjects == ["pantheon-dev-consultation-case-file-research-reader",
+                                                 "persona-pool-cycle"]
+    finally:
+        double.close()
+
+
+def test_search_gateway_timeout_is_bounded_named_and_does_not_fail_other_sources(tmp_path, monkeypatch):
+    import time
+
+    monkeypatch.setenv(cf.SEARCH_TIMEOUT_ENV, "1")
+    double = _OwnersDouble(search_delay=3.0)
+    try:
+        owners = cf.Owners(*(cf.OwnerEndpoint("http://x") for _ in range(5)), cf.OwnerEndpoint(double.url))
+        started = time.monotonic()
+        with mock.patch.object(cf, "http_json", _offline_http(cf.http_json, research=False)):
+            out = cf.compose_case_file(subject(), OP, owners)
+        elapsed = time.monotonic() - started
+    finally:
+        double.close()
+    assert elapsed < 2.8, elapsed  # bounded by the search budget, not the 15s owner default
+    evidence = out["groups"]["evidence"]
+    assert evidence["status"] == "unavailable"
+    assert evidence["unavailable"] == [{"owner": "search_gateway", "reason": "owner_timeout:1s"}]
+    assert evidence["reason"] == "search_gateway:owner_timeout:1s"
+    assert out["groups"]["facts"]["status"] == "ok" and out["groups"]["facts"]["items"]
+    baseline = compose()  # same owners, search answering normally
+    for name in ("facts", "similar_history", "lessons"):
+        assert out["groups"][name] == baseline["groups"][name], name
+    jsonschema.validate(out, SCHEMA)
+
+
+def test_search_timeout_seconds_default_and_clamped():
+    assert cf.search_timeout_seconds({}) == cf.SEARCH_TIMEOUT_DEFAULT
+    assert cf.search_timeout_seconds({cf.SEARCH_TIMEOUT_ENV: "0"}) == 1.0
+    assert cf.search_timeout_seconds({cf.SEARCH_TIMEOUT_ENV: "600"}) == 15.0
+    assert cf.search_timeout_seconds({cf.SEARCH_TIMEOUT_ENV: "nan"}) == cf.SEARCH_TIMEOUT_DEFAULT
+    assert cf.search_timeout_seconds({cf.SEARCH_TIMEOUT_ENV: "junk"}) == cf.SEARCH_TIMEOUT_DEFAULT
+
+
+def test_http_json_names_timeouts_and_keeps_other_transport_errors():
+    import socket
+
+    endpoint = cf.OwnerEndpoint("http://owner.invalid")
+    for exc in (TimeoutError("slow"), socket.timeout("slow"), cf.urllib.error.URLError(TimeoutError("slow"))):
+        with mock.patch.object(cf.urllib.request, "urlopen", side_effect=exc):
+            try:
+                cf.http_json(endpoint, "/x", tenant_id="t1", timeout=2.5)
+            except cf.OwnerUnavailable as err:
+                assert err.reason == "owner_timeout:2.5s"
+            else:
+                raise AssertionError("expected OwnerUnavailable")
+    with mock.patch.object(cf.urllib.request, "urlopen", side_effect=ConnectionRefusedError()):
+        try:
+            cf.http_json(endpoint, "/x", tenant_id="t1")
+        except cf.OwnerUnavailable as err:
+            assert err.reason == "owner_unreachable:ConnectionRefusedError"

@@ -12,15 +12,16 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "release (default: blue/green switch) or rollback (protected drill rollback of the ACTIVE release; release_id only, other release inputs ignored)"
+        description: "release (default: blue/green switch), rollback (protected drill rollback of the ACTIVE release; release_id only), or replace_vm (protected fresh-boot VM replacement drill of the ACTIVE release)"
         required: false
         default: "release"
         type: choice
         options:
           - release
           - rollback
+          - replace_vm
       release_id:
-        description: "Immutable release ID (pantheon-YYYYMMDD-NNN). For operation=rollback: the currently ACTIVE release to roll back"
+        description: "Immutable release ID (pantheon-YYYYMMDD-NNN). For operation=rollback or replace_vm: the currently ACTIVE release"
         required: true
         type: string
       release_manifest_path:
@@ -82,7 +83,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Require the release inputs for operation=release
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         env:
           RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
           EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
@@ -93,7 +94,7 @@ jobs:
             [[ -n "${!v}" ]] || { echo "${v} is required for operation=release" >&2; exit 1; }
           done
       - name: Validate manifest checksum and staging_verified evidence binding
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         env:
           RELEASE_MANIFEST_PATH: ${{ inputs.release_manifest_path }}
           EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
@@ -104,7 +105,7 @@ jobs:
             --expected-sha256 "${EXPECTED_MANIFEST_SHA256}"
           test -f "${STAGING_EVIDENCE_PATH}"
       - name: Validate public write posture input (true/false only)
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         env:
           VITE_BFF_REAL_WRITES: ${{ inputs.VITE_BFF_REAL_WRITES || 'false' }}
         run: |
@@ -126,8 +127,8 @@ jobs:
       STAGING_EVIDENCE_PATH: ${{ inputs.staging_evidence_path }}
       FE_ARTIFACT_URI: ${{ inputs.frontend_artifact_uri }}
       OPERATION: ${{ inputs.operation || 'release' }}
-      # A rollback drill never bootstraps: rolling back a first release would remove Production.
-      PROD_BOOTSTRAP_FIRST_RELEASE: ${{ inputs.operation == 'rollback' && 'false' || inputs.bootstrap_first_release }}
+      # A rollback or VM replacement drill never bootstraps: rolling back or replacing without an active release is refused.
+      PROD_BOOTSTRAP_FIRST_RELEASE: ${{ inputs.operation != 'release' && 'false' || inputs.bootstrap_first_release }}
       PANTHEON_PROVIDER_ENABLED: "false"
       PANTHEON_LIVE_BROKER_ENABLED: "false"
       PANTHEON_REAL_WRITES_ENABLED: "false"
@@ -136,10 +137,13 @@ jobs:
       PROD_GCP_ZONE: ${{ vars.PROD_GCP_ZONE }}
       PROD_WIF_PROVIDER: ${{ vars.PROD_WIF_PROVIDER }}
       PROD_SERVICE_ACCOUNT: ${{ vars.PROD_SERVICE_ACCOUNT }}
+      PROD_RUNTIME_SERVICE_ACCOUNT: ${{ vars.PROD_RUNTIME_SERVICE_ACCOUNT || '' }}
+      PROD_INSTANCE_TEMPLATE: ${{ vars.PROD_INSTANCE_TEMPLATE || '' }}
       PROD_IAM_POLICY_REF: ${{ vars.PROD_IAM_POLICY_REF }}
       PROD_SECRETS_REF: ${{ vars.PROD_SECRETS_REF }}
       PROD_DATA_DISK: ${{ vars.PROD_DATA_DISK }}
       PROD_NETWORK: ${{ vars.PROD_NETWORK }}
+      PROD_SUBNETWORK: ${{ vars.PROD_SUBNETWORK || '' }}
       PROD_BFF_HOST: ${{ vars.PROD_BFF_HOST }}
       PROD_FE_HOST: ${{ vars.PROD_FE_HOST }}
       PROD_IDP_ISSUER: ${{ vars.PROD_IDP_ISSUER }}
@@ -182,8 +186,17 @@ jobs:
             --approvals "${RUNNER_TEMP}/approvals.json" \
             --env-policy "${RUNNER_TEMP}/env-policy.json" \
             --initiator "${WORKFLOW_INITIATOR}"
+      - name: Replace-VM preflight (production config + approver vs actual Environment policy; before any cloud access)
+        if: ${{ inputs.operation == 'replace_vm' }}
+        env:
+          WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
+        run: |
+          python3 scripts/deploy/prod_preflight.py replace-vm \
+            --approvals "${RUNNER_TEMP}/approvals.json" \
+            --env-policy "${RUNNER_TEMP}/env-policy.json" \
+            --initiator "${WORKFLOW_INITIATOR}"
       - name: Full production preflight incl. approver vs actual Environment policy (before any cloud access)
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         env:
           WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
         run: |
@@ -203,6 +216,7 @@ jobs:
           service_account: ${{ vars.PROD_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
       - name: Control VM size gate (read-only; minimum e2-standard-8 = 8 vCPUs)
+        if: ${{ inputs.operation != 'replace_vm' }}
         run: |
           machine_type="$(gcloud compute instances describe "${PROD_VM_NAME}" --project "${PROD_GCP_PROJECT_ID}" \
             --zone "${PROD_GCP_ZONE}" --format='value(machineType.basename())')"
@@ -210,7 +224,7 @@ jobs:
             --zone "${PROD_GCP_ZONE}" --format='value(guestCpus)')"
           python3 -I scripts/deploy/prod_preflight.py vm-size --vcpus "${vcpus}" --machine-type "${machine_type}"
       - name: Retrieve immutable FE bundle and pre-release data-disk snapshot
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         run: |
           mkdir -p "${RUNNER_TEMP}/bundle"
           gcloud storage cp "${FE_ARTIFACT_URI}" "${RUNNER_TEMP}/bundle/fe.tar.gz"
@@ -228,7 +242,7 @@ jobs:
                             "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}))
           PY
       - name: Transport immutable artifacts, evidence and controller scripts to the control VM (IAP)
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         run: |
           cp "${RELEASE_MANIFEST_PATH}" "${RUNNER_TEMP}/bundle/manifest.json"
           cp "${STAGING_EVIDENCE_PATH}" "${RUNNER_TEMP}/bundle/staging_evidence.json"
@@ -263,7 +277,7 @@ jobs:
             --project "${PROD_GCP_PROJECT_ID}" --zone "${PROD_GCP_ZONE}" \
             "${RUNNER_TEMP}/bundle" "${PROD_VM_NAME}:/tmp/pantheon-release-${RELEASE_ID}"
       - name: Run atomic switch on the production control VM (bootstrap + digest pre-pull + blue/green switch)
-        if: ${{ inputs.operation != 'rollback' }}
+        if: ${{ inputs.operation == 'release' }}
         run: |
           # The remote shell installs the bundle, runs bootstrap.sh (bare-Debian runtime check,
           # secret validation, 503 placeholder if first release, digest-pinned image pre-acquisition,
@@ -341,3 +355,9 @@ jobs:
               PROD_COMPOSE_FILE=\"\$PROD_ROOT/bin/docker-compose.prod-control.yml\" \
               PROD_COMPOSE_ENV_FILE=\"\$PROD_DATA_MOUNT/config/compose.env\" \
               \"\$PROD_ROOT/bin/prod_rollback.sh\" --protected \"\$RELEASE_ID\""
+      - name: Run protected fresh-boot VM replacement on the production control VM (operation=replace_vm)
+        if: ${{ inputs.operation == 'replace_vm' }}
+        env:
+          WORKFLOW_INITIATOR: ${{ github.triggering_actor }}
+        run: |
+          bash scripts/deploy/prod_replace_vm.sh "${RELEASE_ID}"

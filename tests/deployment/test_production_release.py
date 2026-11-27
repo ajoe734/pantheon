@@ -121,6 +121,7 @@ PRODUCT_SERVICES="registry telemetry incidents postmortems evolution lineage-rea
 echo "$tool $*" >> "$BIN_LOG"
 case "$tool" in
   sudo)
+    export FAKE_IN_SUDO=1
     preserve_env=false; target_home=false
     while [[ "${1:-}" == -* ]]; do
       case "$1" in
@@ -136,13 +137,187 @@ case "$tool" in
     if [[ "$preserve_env" == true ]]; then exec "$@"; fi
     if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
       # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
-      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" HOME="${HOME:-/}" "$@"
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" FAKE_COMPOSE_REQUIRED="${FAKE_COMPOSE_REQUIRED:-}" FAKE_IN_SUDO=1 HOME="${HOME:-/}" "$@"
     fi
     exec "$@"
     ;;
-  mountpoint) [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
+  install|chmod|tee)
+    mapped=()
+    for a in "$@"; do
+      if [[ "$a" == /etc/apt/* || "$a" == /etc/apt ]]; then
+        mapped+=("${FAKE_STATE}${a}")
+      else
+        mapped+=("$a")
+      fi
+    done
+    exec "/usr/bin/$tool" "${mapped[@]}" ;;
+  dpkg)
+    if [[ "${1:-}" == "--print-architecture" ]]; then
+      printf '%s\n' "${FAKE_DPKG_ARCH:-amd64}"
+      exit 0
+    fi
+    exec /usr/bin/dpkg "$@" ;;
+  gpg)
+    [[ "${FAKE_GPG_FAIL:-}" == "true" ]] && exit 1
+    out=""
+    prev=""
+    for a in "$@"; do
+      if [[ "$prev" == "-o" || "$prev" == "--output" ]]; then
+        out="$a"
+      fi
+      prev="$a"
+    done
+    if [[ "$out" == /etc/apt/* ]]; then
+      out="${FAKE_STATE}${out}"
+    fi
+    data="$(cat)"
+    [[ -n "$data" && -n "$out" ]] || exit 1
+    mkdir -p "$(dirname "$out")"
+    printf 'DEARMOURED:%s\n' "$data" > "$out"
+    exit 0 ;;
+  apt-get)
+    echo "apt-get $*" >> "$FAKE_STATE/apt.log"
+    if [[ "$*" == *"update"* ]]; then
+      [[ "${FAKE_APT_FAIL:-}" == "update" ]] && exit 100
+      count=$(( $(cat "$FAKE_STATE/apt_update_count" 2>/dev/null || echo 0) + 1 ))
+      printf '%s' "$count" > "$FAKE_STATE/apt_update_count"
+      if [[ "${FAKE_APT_FAIL:-}" == "update_docker_repo" && "$count" -ge 2 ]]; then
+        exit 100
+      fi
+      exit 0
+    fi
+    if [[ "$*" == *"install"* ]]; then
+      if [[ "$*" == *"docker-compose-plugin"* ]]; then
+        [[ "${FAKE_APT_FAIL:-}" == "install_docker" ]] && exit 100
+        keyring_check="${PROD_DOCKER_GPG_KEYRING:-${FAKE_STATE}/etc/apt/keyrings/docker.gpg}"
+        [[ "$keyring_check" == /etc/apt/* ]] && keyring_check="${FAKE_STATE}${keyring_check}"
+        list_check="${PROD_DOCKER_APT_LIST:-${FAKE_STATE}/etc/apt/sources.list.d/docker.list}"
+        [[ "$list_check" == /etc/apt/* ]] && list_check="${FAKE_STATE}${list_check}"
+        if [[ ! -s "$keyring_check" || ! -s "$list_check" ]]; then
+          echo "E: Unable to locate package docker-compose-plugin" >&2
+          exit 100
+        fi
+        if [[ "${FAKE_APT_KEEP_NO_COMPOSE:-}" != "true" ]]; then
+          printf 'installed\n' > "$FAKE_STATE/docker_compose_installed"
+          printf 'installed\n' > "$FAKE_STATE/docker_ce_installed"
+        fi
+        exit 0
+      fi
+      [[ "${FAKE_APT_FAIL:-}" == "install_base" || "${FAKE_APT_FAIL:-}" == "install" ]] && exit 100
+      if [[ " $* " == *" caddy "* ]]; then
+        printf 'active' > "$FAKE_STATE/host_systemd_caddy"
+      fi
+      printf 'installed\n' > "$FAKE_STATE/base_packages_installed"
+      exit 0
+    fi
+    exit 0 ;;
+  mountpoint)
+    if [[ -f "$FAKE_STATE/mounted_state" ]]; then
+      [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
+    fi
+    [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
+  findmnt)
+    if [[ "$*" == *"-o SOURCE /"* ]]; then
+      if [[ -f "$FAKE_STATE/fake_root_source" ]]; then
+        cat "$FAKE_STATE/fake_root_source"
+      else
+        printf '%s\n' "${FAKE_ROOT_SOURCE:-/dev/sda1}"
+      fi
+      exit 0
+    fi
+    printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  growpart|resize2fs)
+    echo "$tool $*" >> "$FAKE_STATE/root_grow.log"
+    exit 0 ;;
+  mount)
+    echo "mount $*" >> "$FAKE_STATE/mount.log"
+    if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "mount_old_boot_ro" ]] && exit 1
+      target="${@: -1}"
+      mkdir -p "$target"
+      old_boot="$(cat "$FAKE_STATE/attached_ro_pantheon-old-boot-ro" 2>/dev/null || true)"
+      if [[ -n "$old_boot" && -d "$FAKE_STATE/saved_boot_${old_boot}" ]]; then
+        if [[ -n "${PROD_ROOT:-}" ]]; then
+          mkdir -p "${target}${PROD_ROOT}"
+          cp -a "$FAKE_STATE/saved_boot_${old_boot}/." "${target}${PROD_ROOT}/"
+        fi
+        mkdir -p "${target}/opt/pantheon-production"
+        cp -a "$FAKE_STATE/saved_boot_${old_boot}/." "${target}/opt/pantheon-production/"
+      fi
+      if [[ -d "$FAKE_STATE/old_boot_var_lib_docker" ]]; then
+        mkdir -p "${target}/var/lib/docker"
+        cp -a "$FAKE_STATE/old_boot_var_lib_docker/." "${target}/var/lib/docker/"
+      fi
+      printf 'yes' > "$FAKE_STATE/old_boot_mounted_state"
+      exit 0
+    fi
+    printf 'yes' > "$FAKE_STATE/mounted_state"
+    exit 0 ;;
+  umount)
+    echo "umount $*" >> "$FAKE_STATE/mount.log"
+    if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
+      target="${@: -1}"
+      rm -rf "$target" 2>/dev/null || true
+      printf 'no' > "$FAKE_STATE/old_boot_mounted_state"
+      exit 0
+    fi
+    printf 'no' > "$FAKE_STATE/mounted_state"
+    exit 0 ;;
+  systemctl)
+    echo "systemctl $*" >> "$FAKE_STATE/systemctl.log"
+    if [[ "$*" == *"disable"*"caddy.service"* || "$*" == *"stop"*"caddy.service"* ]]; then
+      printf 'inactive' > "$FAKE_STATE/host_systemd_caddy"
+    fi
+    exit 0 ;;
+  mkfs|mkfs.*) echo "FORBIDDEN_MKFS $*" >> "$FAKE_STATE/mkfs_called"; exit 99 ;;
   docker)
     args="$*"
+    if [[ "$args" == "compose version"* ]]; then
+      if [[ "${FAKE_DOCKER_FAIL:-}" == *"compose_version"* ]]; then
+        echo "docker: 'compose' is not a docker command." >&2
+        exit 1
+      fi
+      if [[ ( "${FAKE_DOCKER_NO_COMPOSE:-}" == "true" || -f "$FAKE_STATE/docker_no_compose" ) && ! -f "$FAKE_STATE/docker_compose_installed" ]]; then
+        echo "docker: 'compose' is not a docker command." >&2
+        exit 1
+      fi
+      if [[ "${FAKE_COMPOSE_NEEDS_SUDO:-}" == "true" && "${FAKE_IN_SUDO:-0}" != "1" ]]; then
+        echo "permission denied without sudo" >&2
+        exit 1
+      fi
+      echo "Docker Compose version v2.29.7"
+      exit 0
+    fi
+    if [[ "$args" == "cp "*":/data/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
+      dst="${@: -1}"
+      [[ -d "$FAKE_STATE/incumbent_caddy_data" ]] && cp -a "$FAKE_STATE/incumbent_caddy_data/." "$dst/"
+      exit 0
+    fi
+    if [[ "$args" == "cp "*":/config/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
+      dst="${@: -1}"
+      [[ -d "$FAKE_STATE/incumbent_caddy_config" ]] && cp -a "$FAKE_STATE/incumbent_caddy_config/." "$dst/"
+      exit 0
+    fi
+    if [[ "$args" == "run -d --name "* ]]; then
+      if [[ "$(cat "$FAKE_STATE/host_systemd_caddy" 2>/dev/null)" == "active" ]]; then
+        echo "port 80/443 in use by host systemd caddy.service" >&2
+        exit 1
+      fi
+      echo "$args" >> "$FAKE_STATE/caddy_runs.log"
+      img="${@: -1}"
+      printf '%s' "$img" > "$FAKE_STATE/image_${PROD_CADDY_CONTAINER:-pantheon-caddy}"
+      exit 0
+    fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-* && "${FAKE_REPLACE_FAIL:-}" == "restore_active_release" && "$(cat "$FAKE_STATE/vm_generation" 2>/dev/null)" == "new" ]]; then
+      exit 1
+    fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-* && "${FAKE_ROLLBACK_RESTORE_FAIL:-}" == "true" && "$(cat "$FAKE_STATE/vm_generation" 2>/dev/null)" == "rolled_back" ]]; then
+      echo "simulated rollback restore failure on old boot disk" >&2
+      exit 1
+    fi
     if [[ "$args" == "login "* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"login"* ]] && exit 1
       cat >/dev/null
@@ -154,11 +329,28 @@ case "$tool" in
       exit 0
     fi
     if [[ "$args" == "pull "* ]]; then
-      [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]] && exit 1
-      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
-        [[ -f "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login" ]] || exit 1
-      fi
       img="${2:-}"
+      attempt=$(( $(cat "$FAKE_STATE/pull_attempts_total" 2>/dev/null || echo 0) + 1 ))
+      printf '%s' "$attempt" > "$FAKE_STATE/pull_attempts_total"
+      echo "$img" >> "$FAKE_STATE/pull_attempts"
+      if [[ -n "${FAKE_DOCKER_PULL_FAIL_COUNT:-}" ]]; then
+        fail_n="${FAKE_DOCKER_PULL_FAIL_COUNT}"
+        if [[ -z "${FAKE_DOCKER_PULL_FAIL_IMAGE:-}" || "$img" == "${FAKE_DOCKER_PULL_FAIL_IMAGE}" ]]; then
+          cur_fail=$(( $(cat "$FAKE_STATE/pull_fail_counter" 2>/dev/null || echo 0) + 1 ))
+          printf '%s' "$cur_fail" > "$FAKE_STATE/pull_fail_counter"
+          if (( cur_fail <= fail_n )); then
+            echo "${FAKE_DOCKER_PULL_ERR:-error pulling image layer: unexpected EOF}" >&2
+            exit 1
+          fi
+        fi
+      fi
+      if [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]]; then
+        echo "${FAKE_DOCKER_PULL_ERR:-failed to register layer: no space left on device}" >&2
+        exit 1
+      fi
+      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
+        [[ -f "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login" ]] || { echo "unauthorized: authentication required" >&2; exit 1; }
+      fi
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
     fi
@@ -280,6 +472,8 @@ PY
       printf '200 -\n'; exit 0
     fi
     if [[ "$args" == "inspect -f {{if .State.Health}}"* ]]; then printf '%s' "${FAKE_WORKER_HEALTH:-healthy}"; exit 0; fi
+    if [[ "$args" == "inspect -f {{range .Mounts}}"* ]]; then [[ -f "$FAKE_STATE/caddy_mounts" ]] && cat "$FAKE_STATE/caddy_mounts"; exit 0; fi
+    if [[ "$args" == "logs "* ]]; then [[ -f "$FAKE_STATE/caddy_logs" ]] && cat "$FAKE_STATE/caddy_logs"; exit 0; fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
       cid="${@: -1}"
@@ -302,9 +496,43 @@ PY
   curl)
     url="${@: -1}"; all="$*"; port="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\)/.*#\1#p' <<<"$url")"
     out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+    if [[ -z "${IN_FAKE_GCLOUD_SSH:-}" && ( "$url" == "https://${PROD_FE_HOST:-}"* || "$url" == "https://${PROD_BFF_HOST:-}"* ) ]]; then
+      [[ -n "${FAKE_STATE:-}" && -d "${FAKE_STATE}" ]] && echo "$url" >> "$FAKE_STATE/external_https_probes.log"
+      if [[ "${FAKE_REPLACE_FAIL:-}" == "external_https_verify" ]]; then
+        echo "curl: (28) Connection timed out after 10001 milliseconds" >&2
+        exit 28
+      fi
+    fi
+    if [[ "${FAKE_GCE_NO_HAIRPIN_NAT:-}" == "true" && ( "$url" == "https://${PROD_FE_HOST:-}"* || "$url" == "https://${PROD_BFF_HOST:-}"* ) ]]; then
+      hosts_f="${PROD_HOSTS_PATH:-${FAKE_STATE:+${FAKE_STATE}/etc/hosts}}"
+      if ! python3 - "$hosts_f" "${PROD_FE_HOST:-}" "${PROD_BFF_HOST:-}" <<'PY' >/dev/null 2>&1; then
+import sys
+from pathlib import Path
+hp, fe, bff = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if not hp.is_file() or not fe or not bff:
+    raise SystemExit(1)
+mapped = {
+    tok
+    for line in hp.read_text(encoding="utf-8").splitlines()
+    for parts in [line.split("#", 1)[0].split()]
+    if len(parts) >= 2 and parts[0] == "127.0.0.1"
+    for tok in parts[1:]
+}
+if fe not in mapped or bff not in mapped:
+    raise SystemExit(1)
+PY
+        echo "curl: (28) Connection timed out after 10001 milliseconds" >&2
+        exit 28
+      fi
+    fi
     if [[ "$url" == *computeMetadata/v1/instance/service-accounts* ]]; then
       [[ "${FAKE_METADATA_FAIL:-}" == "true" ]] && exit 22
       printf '{"access_token":"ya29.fake-prod-runtime-token"}'
+      exit 0
+    fi
+    if [[ "$url" == *download.docker.com*/gpg* || "$url" == */docker.gpg* ]]; then
+      [[ "${FAKE_DOCKER_GPG_FAIL:-}" == "true" ]] && exit 22
+      printf 'FAKE-DOCKER-GPG-PUBLIC-KEY-BLOCK\n'
       exit 0
     fi
     if [[ "$url" == */runtime-config.js ]]; then
@@ -435,7 +663,11 @@ class OpsHarness(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        for tool in ("docker", "curl", "mountpoint", "sudo"):
+        for tool in (
+            "docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount",
+            "systemctl", "mkfs", "mkfs.ext4", "apt-get", "gpg", "dpkg", "install", "chmod", "tee",
+            "growpart", "resize2fs",
+        ):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
         self.state = self.tmp / "fake_state"
@@ -1332,6 +1564,103 @@ class BootstrapTests(OpsHarness):
         self.assertTrue((data_mount / "secrets" / "postgres_password").is_file())
         self.assertTrue((data_mount / "config" / "compose.env").is_file())
 
+    def test_bootstrap_requires_docker_compose_v2_and_installs_official_docker_debian_apt_repo(self):
+        # 1. When docker compose v2 is missing and PROD_ALLOW_APT_INSTALL is false, fail closed with RUNTIME_BINARY_MISSING.
+        r_missing = self._run(FAKE_DOCKER_NO_COMPOSE="true", PROD_ALLOW_APT_INSTALL="false")
+        self.assertNotEqual(r_missing.returncode, 0)
+        self.assertIn("RUNTIME_BINARY_MISSING", r_missing.stderr)
+        self.assertFalse((self.state / "apt.log").exists())
+
+        # 2. When unprivileged 'docker compose version' fails under OS Login non-root mode, run_priv fallback succeeds.
+        r_priv = self._run(FAKE_OSLOGIN_NONROOT="true", FAKE_COMPOSE_NEEDS_SUDO="true")
+        self.assertEqual(r_priv.returncode, 0, r_priv.stderr)
+
+        # 3. Bare Debian 12 Bookworm host with PROD_ALLOW_APT_INSTALL=true: installs base packages (omitting host 'caddy'),
+        # configures official Docker Debian apt repo (/etc/apt/keyrings/docker.gpg + /etc/apt/sources.list.d/docker.list),
+        # installs docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin, enables docker.service, and succeeds.
+        self.setUp()
+        os_rel = self.tmp / "os-release"
+        os_rel.write_text('ID=debian\nVERSION_CODENAME=bookworm\n', encoding="utf-8")
+        r_apt = self._run(
+            FAKE_DOCKER_NO_COMPOSE="true",
+            FAKE_OSLOGIN_NONROOT="true",
+            PROD_ALLOW_APT_INSTALL="true",
+            PROD_OS_RELEASE_FILE=str(os_rel),
+        )
+        self.assertEqual(r_apt.returncode, 0, f"stdout={r_apt.stdout}\nstderr={r_apt.stderr}")
+        apt_log = (self.state / "apt.log").read_text()
+        self.assertIn("apt-get install -y ca-certificates curl gnupg util-linux python3", apt_log)
+        self.assertNotIn(" caddy", apt_log)
+        self.assertNotIn("docker.io", apt_log)
+        self.assertFalse((self.state / "host_systemd_caddy").exists())
+        self.assertIn("apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin", apt_log)
+        self.assertEqual((self.state / "apt_update_count").read_text(), "2")
+        keyring = self.state / "etc" / "apt" / "keyrings" / "docker.gpg"
+        apt_list = self.state / "etc" / "apt" / "sources.list.d" / "docker.list"
+        self.assertTrue(keyring.is_file())
+        self.assertIn("DEARMOURED:FAKE-DOCKER-GPG-PUBLIC-KEY-BLOCK", keyring.read_text())
+        self.assertTrue(bool(keyring.stat().st_mode & 0o004))
+        self.assertEqual(
+            apt_list.read_text().strip(),
+            "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable",
+        )
+        self.assertIn("systemctl enable --now docker", (self.state / "systemctl.log").read_text())
+
+        # 4. Negative gates: apt-get update/install or GPG key failures fail closed with distinct error codes.
+        for extra_env, expected_code in (
+            ({"FAKE_APT_FAIL": "update"}, "APT_UPDATE_FAILED"),
+            ({"FAKE_APT_FAIL": "install_base"}, "APT_INSTALL_FAILED"),
+            ({"FAKE_DOCKER_GPG_FAIL": "true"}, "DOCKER_REPO_KEY_FAILED"),
+            ({"FAKE_GPG_FAIL": "true"}, "DOCKER_REPO_KEY_FAILED"),
+            ({"FAKE_APT_FAIL": "update_docker_repo"}, "APT_UPDATE_FAILED"),
+            ({"FAKE_APT_FAIL": "install_docker"}, "APT_DOCKER_INSTALL_FAILED"),
+            ({"FAKE_APT_KEEP_NO_COMPOSE": "true"}, "RUNTIME_BINARY_MISSING"),
+        ):
+            with self.subTest(expected_code=expected_code, extra_env=extra_env):
+                self.setUp()
+                r_fail = self._run(
+                    FAKE_DOCKER_NO_COMPOSE="true",
+                    PROD_ALLOW_APT_INSTALL="true",
+                    **extra_env,
+                )
+                self.assertNotEqual(r_fail.returncode, 0)
+                self.assertIn(expected_code, r_fail.stderr)
+
+    def test_bootstrap_retries_transient_docker_pull_failures_and_reports_disk_diagnostics(self):
+        # 1. Transient pull failures (< PROD_IMAGE_PULL_TRIES) re-authenticate with docker_registry_login and succeed.
+        target_img = self.manifest["backend"]["images"]["operator_bff"]
+        r_retry = self._run(
+            PROD_REGISTRY_AUTH="true",
+            PROD_IMAGE_PULL_TRIES="3",
+            PROD_IMAGE_PULL_RETRY_DELAY="0",
+            FAKE_DOCKER_PULL_FAIL_COUNT="2",
+            FAKE_DOCKER_PULL_FAIL_IMAGE=target_img,
+            FAKE_DOCKER_PULL_ERR="error pulling image layer: unexpected EOF",
+        )
+        self.assertEqual(r_retry.returncode, 0, f"stdout={r_retry.stdout}\nstderr={r_retry.stderr}")
+        self.assertEqual((self.state / "pull_fail_counter").read_text(), "3")
+        logins = (self.state / "docker_logins").read_text().splitlines()
+        self.assertEqual(len(logins), 3)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(target_img, pulled)
+
+        # 2. Persistent pull failure across all PROD_IMAGE_PULL_TRIES attempts fails closed with sanitized error + free_mb.
+        self.setUp()
+        r_fail = self._run(
+            PROD_REGISTRY_AUTH="true",
+            PROD_IMAGE_PULL_TRIES="3",
+            PROD_IMAGE_PULL_RETRY_DELAY="0",
+            FAKE_DOCKER_PULL_FAIL_COUNT="3",
+            FAKE_DOCKER_PULL_FAIL_IMAGE=target_img,
+            FAKE_DOCKER_PULL_ERR="failed to register layer: no space left on device",
+        )
+        self.assertNotEqual(r_fail.returncode, 0)
+        self.assertIn("IMAGE_PULL_FAILED", r_fail.stderr)
+        self.assertIn("after 3 attempts", r_fail.stderr)
+        self.assertIn("total_mb=", r_fail.stderr)
+        self.assertIn("free_mb=", r_fail.stderr)
+        self.assertIn("failed to register layer: no space left on device", r_fail.stderr)
+
 
 PROD_ENV = {
     "PROD_GCP_PROJECT_ID": "acme-trading-prod-01",
@@ -2051,9 +2380,8 @@ class SwitchTests(SwitchHarness):
         self.assertIn("PORT_COLLISION", r.stderr)
 
 
-class RealControllerAndOpsIntegrationTests(OpsHarness):
-    """Executes the REAL bootstrap.sh, prod_atomic_switch.sh, prod_rollback.sh, and prod_ops.sh
-    together under constrained host binaries (no FAKE_OPS shortcut)."""
+class RealControllerBase(OpsHarness):
+    """Shared real controller helper base (no test_* methods so subclasses do not duplicate the suite)."""
 
     def _prepare_release(self, *, release_id: str, fe_marker: str, fe_commit: str, bff_commit: str,
                          digest_char: str, bootstrap: bool = False, rollback_baseline: dict | None = None):
@@ -2121,6 +2449,46 @@ class RealControllerAndOpsIntegrationTests(OpsHarness):
             **extra_env,
         )
         return subprocess.run([str(SWITCH)], env=env, capture_output=True, text=True, timeout=60)
+
+    def _two_successful_releases(self):
+        m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
+            release_id="pantheon-20261025-001", fe_marker="fe-v1", fe_commit="1" * 40,
+            bff_commit="2" * 40, digest_char="1", bootstrap=True)
+        self.assertEqual(self._run_bootstrap(mpath1).returncode, 0)
+        sw1 = self._run_switch(m1, sha1, art1, mpath1, epath1, apath1, bootstrap=True, FAKE_READY_PORTS="8002")
+        self.assertEqual(sw1.returncode, 0, sw1.stderr)
+        rb = {
+            "previous_release_id": "pantheon-20261025-001",
+            "frontend_commit": m1["frontend"]["commit"],
+            "frontend_artifact_sha256": m1["frontend"]["artifact_sha256"],
+            "backend_commit": m1["backend"]["commit"],
+            "backend_operator_bff_image": m1["backend"]["images"]["operator_bff"],
+            "backend_images": m1["backend"]["images"],
+            "config_schema_version": m1["config_schema_version"],
+        }
+        m2, sha2, art2, mpath2, epath2, apath2 = self._prepare_release(
+            release_id="pantheon-20261025-002", fe_marker="fe-v2", fe_commit="3" * 40,
+            bff_commit="4" * 40, digest_char="2", bootstrap=False, rollback_baseline=rb)
+        return (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2)
+
+    def _rollback_mode(self, release_id: str, mpath: Path | None = None, **extra):
+        env = self.env(PROD_OPS_CMD=str(OPS), RELEASE_ID=release_id, FAKE_READY_PORTS="8001 8002", **extra)
+        if mpath is not None:
+            env["RELEASE_MANIFEST_PATH"] = str(mpath)
+        else:
+            env.pop("RELEASE_MANIFEST_PATH", None)  # default: the retained ${PROD_ROOT}/manifests/<release_id>.json
+        return subprocess.run([str(ROLLBACK), "--protected", release_id], capture_output=True, text=True, timeout=60, env=env)
+
+    def _switch_second_release(self):
+        (m1, mpath1), (m2, sha2, art2, mpath2, epath2, apath2) = self._two_successful_releases()
+        sw2 = self._run_switch(m2, sha2, art2, mpath2, epath2, apath2, bootstrap=False, FAKE_READY_PORTS="8001 8002")
+        self.assertEqual(sw2.returncode, 0, sw2.stderr)
+        return m1, m2
+
+
+class RealControllerAndOpsIntegrationTests(RealControllerBase):
+    """Executes the REAL bootstrap.sh, prod_atomic_switch.sh, prod_rollback.sh, and prod_ops.sh
+    together under constrained host binaries (no FAKE_OPS shortcut)."""
 
     def test_real_first_release_bootstrap_and_switch_with_only_green_ready(self):
         m1, sha1, art1, mpath1, epath1, apath1 = self._prepare_release(
@@ -3304,7 +3672,8 @@ class StaticContractTests(unittest.TestCase):
             reg_runtime_env = {**rendered_kv, **{k: str(v) for k, v in reg_env.items()}, "PANTHEON_ENV": "production"}
             with mock.patch.dict(os.environ, reg_runtime_env, clear=True), \
                  mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
-                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None):
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
+                 mock.patch.object(PostgresRegistryStore, "_ensure_artifact_type_index", return_value=None):
                 owner_reg = build_registry_store()
                 self.assertIsInstance(owner_reg, PostgresRegistryStore)
 
@@ -3338,6 +3707,7 @@ class StaticContractTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, runtime_env, clear=True), \
                      mock.patch.object(PostgresJsonOwnerStore, "bootstrap", return_value=None), \
                      mock.patch.object(PostgresRegistryStore, "_ensure_artifact_catalog_indexes", return_value=None), \
+                     mock.patch.object(PostgresRegistryStore, "_ensure_artifact_type_index", return_value=None), \
                      mock.patch.object(PostgresSourceManagementStore, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresActionLedger, "_bootstrap", return_value=None), \
                      mock.patch.object(PostgresTradingRoomStore, "_bootstrap", return_value=None), \
@@ -3438,20 +3808,43 @@ class StaticContractTests(unittest.TestCase):
         inputs = wf[True]["workflow_dispatch"]["inputs"]
         self.assertLessEqual(len(inputs), 25)
         op = inputs["operation"]
-        self.assertEqual((op["type"], op["default"], op["options"]), ("choice", "release", ["release", "rollback"]))
+        self.assertEqual(
+            (op["type"], op["default"], op["options"]),
+            ("choice", "release", ["release", "rollback", "replace_vm"]),
+        )
         text = WORKFLOW.read_text()
         self.assertIn("prod_rollback.sh\\\" --protected", text)
+        self.assertIn("scripts/deploy/prod_replace_vm.sh", text)
         self.assertIn("PRODUCTION_RELEASE_ENABLED", text)
         self.assertEqual(wf["jobs"]["deploy"]["environment"], "production")
+        deploy_env = wf["jobs"]["deploy"]["env"]
+        self.assertEqual(
+            deploy_env["PROD_BOOTSTRAP_FIRST_RELEASE"],
+            "${{ inputs.operation != 'release' && 'false' || inputs.bootstrap_first_release }}",
+        )
+        for key in ("PROD_INSTANCE_TEMPLATE", "PROD_RUNTIME_SERVICE_ACCOUNT", "PROD_SUBNETWORK"):
+            self.assertIn(key, deploy_env)
+        pre_steps = {st["name"]: st for st in wf["jobs"]["preflight"]["steps"] if "name" in st}
+        for name, st in pre_steps.items():
+            if name.startswith(("Require the release inputs", "Validate manifest checksum", "Validate public write posture")):
+                self.assertEqual(st["if"], "${{ inputs.operation == 'release' }}", name)
         steps = {st["name"]: st for st in wf["jobs"]["deploy"]["steps"] if "name" in st}
         for name, st in steps.items():
             if name.startswith(("Retrieve immutable FE", "Transport immutable", "Run atomic switch", "Full production preflight")):
-                self.assertEqual(st["if"], "${{ inputs.operation != 'rollback' }}", name)
+                self.assertEqual(st["if"], "${{ inputs.operation == 'release' }}", name)
+        vm_gate = next(st for n, st in steps.items() if n.startswith("Control VM size gate"))
+        self.assertEqual(vm_gate["if"], "${{ inputs.operation != 'replace_vm' }}")
         rb = next(st for n, st in steps.items() if n.startswith("Run protected rollback"))
         self.assertEqual(rb["if"], "${{ inputs.operation == 'rollback' }}")
         for forbidden in ("bootstrap.sh", "prepull_images", " migrate ", "snapshot"):
             self.assertNotIn(forbidden, rb["run"].replace("snapshot.json", ""))
-        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for both operations
+        rvm_pre = next(st for n, st in steps.items() if n.startswith("Replace-VM preflight"))
+        self.assertEqual(rvm_pre["if"], "${{ inputs.operation == 'replace_vm' }}")
+        self.assertIn("prod_preflight.py replace-vm", rvm_pre["run"])
+        rvm = next(st for n, st in steps.items() if n.startswith("Run protected fresh-boot VM replacement"))
+        self.assertEqual(rvm["if"], "${{ inputs.operation == 'replace_vm' }}")
+        self.assertIn("scripts/deploy/prod_replace_vm.sh", rvm["run"])
+        self.assertIn("approvals", text)  # genuine approval fetch + env policy retained for all operations
         self.assertIn("prod_preflight.py rollback", text)
 
     def test_prod_rollback_rto_fast_stop_and_healthcheck_parity(self) -> None:
@@ -3777,6 +4170,1351 @@ class SnapshotDrillHarness(unittest.TestCase):
         r = self.run_script(self.DRILL, FAKE_PROJECT="other-proj")
         self.assertEqual(r.returncode, 1)
         self.assertNotIn("disks create", self.calls())
+
+
+FAKE_REPLACE_GCLOUD = r"""#!/usr/bin/env bash
+set -uo pipefail
+S="$FAKE_STATE"
+mkdir -p "$S/disks" "$S/templates" "$S/snapshots"
+echo "gcloud $*" >> "$S/gcloud_calls.log"
+all="$*"
+
+arg_val() {
+  local want="$1"; shift
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$want" ]]; then echo "${2:-}"; return 0; fi
+    if [[ "$1" == "${want}="* ]]; then echo "${1#*=}"; return 0; fi
+    shift
+  done
+}
+
+case "$all" in
+  "config get-value project")
+    echo "${FAKE_GCLOUD_PROJECT:-${PROD_GCP_PROJECT_ID:-acme-trading-prod-01}}"
+    exit 0 ;;
+  "compute instances describe "*)
+    [[ -f "$S/vm.json" ]] || exit 1
+    fmt="$(arg_val --format "$@")"
+    if [[ "$fmt" == "value(name)" ]]; then
+      python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$S/vm.json"
+    else
+      cat "$S/vm.json"
+    fi
+    exit 0 ;;
+  "compute addresses list "*)
+    cat "$S/addresses.json"
+    exit 0 ;;
+  "compute disks snapshot "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot" ]] && exit 1
+    disk="$4"
+    snap="$(arg_val --snapshot-names "$@")"
+    [[ -n "$snap" && -e "$S/disks/$disk" ]] || exit 1
+    echo "${disk}:${snap}" >> "$S/snapshots_taken.log"
+    printf '%s' "${FAKE_SNAPSHOT_STATUS:-READY}" > "$S/snapshots/$snap"
+    exit 0 ;;
+  "compute snapshots describe "*)
+    snap="$4"
+    [[ -f "$S/snapshots/$snap" ]] || exit 1
+    cat "$S/snapshots/$snap"
+    exit 0 ;;
+  "compute snapshots list "*)
+    [[ -f "$S/auto_snapshot_line" ]] && cat "$S/auto_snapshot_line"
+    exit 0 ;;
+  "compute resource-policies describe "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot_schedule_check" ]] && exit 1
+    echo '{"snapshotSchedulePolicy":{"schedule":{"hourlySchedule":{"hoursInCycle":1}},"retentionPolicy":{"maxRetentionDays":3}}}'
+    exit 0 ;;
+  "compute disks describe "*)
+    disk="$4"
+    [[ -e "$S/disks/$disk" ]] || exit 1
+    fmt="$(arg_val --format "$@")"
+    if [[ "$fmt" == "value(resourcePolicies)" ]]; then
+      if [[ "${FAKE_REPLACE_FAIL:-}" == "snapshot_schedule_check" ]]; then
+        echo ""
+      else
+        echo "https://www.googleapis.com/compute/v1/projects/p/regions/asia-east1/resourcePolicies/pantheon-prod-data-hourly"
+      fi
+    else
+      echo "$disk"
+    fi
+    exit 0 ;;
+  "compute instance-templates describe "*)
+    tpl="$4"
+    [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+    cat "$S/templates/${tpl}.json"
+    exit 0 ;;
+  "compute instance-templates delete "*)
+    tpl="$4"
+    rm -f "$S/templates/${tpl}.json"
+    echo "deleted_template $tpl" >> "$S/template_deletes.log"
+    exit 0 ;;
+  "compute instance-templates create "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "template_create" ]] && exit 1
+    tpl="$4"
+    mt="$(arg_val --machine-type "$@")"
+    net="$(arg_val --network "$@")"
+    sub="$(arg_val --subnet "$@")"
+    sa="$(arg_val --service-account "$@")"
+    tags="$(arg_val --tags "$@")"
+    meta="$(arg_val --metadata "$@")"
+    bsize="$(arg_val --boot-disk-size "$@")"
+    bsize="${bsize%GB}"
+    btype="$(arg_val --boot-disk-type "$@")"
+    echo "$all" >> "$S/template_creates.log"
+    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" "$meta" "${bsize:-120}" "${btype:-pd-standard}" > "$S/templates/${tpl}.json" <<'PY'
+import json, sys
+tpl, mt, net, sub, sa, tags, meta, bsize, btype = sys.argv[1:10]
+meta_items = []
+for pair in (meta or "serial-port-enable=FALSE").split(","):
+    if "=" in pair:
+        k, v = pair.split("=", 1)
+        if k.strip() and v.strip():
+            meta_items.append({"key": k.strip(), "value": v.strip()})
+print(json.dumps({
+    "name": tpl,
+    "properties": {
+        "machineType": mt or "e2-standard-8",
+        "scheduling": {
+            "automaticRestart": True,
+            "onHostMaintenance": "MIGRATE",
+            "preemptible": False,
+            "provisioningModel": "STANDARD",
+        },
+        "disks": [{
+            "boot": True,
+            "autoDelete": True,
+            "mode": "READ_WRITE",
+            "type": "PERSISTENT",
+            "initializeParams": {
+                "diskSizeGb": bsize or "120",
+                "diskType": btype or "pd-standard",
+                "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+            },
+        }],
+        "networkInterfaces": [{"network": net, "subnetwork": sub}],
+        "serviceAccounts": [{"email": sa, "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+        "tags": {"items": [t for t in tags.split(",") if t]},
+        "metadata": {"items": meta_items},
+    },
+}, sort_keys=True))
+PY
+    exit 0 ;;
+  "compute instances set-disk-auto-delete "*)
+    disk="$(arg_val --disk "$@")"
+    echo "$4 $disk no-auto-delete" >> "$S/auto_delete.log"
+    exit 0 ;;
+  "compute instances attach-disk "*)
+    disk="$(arg_val --disk "$@")"
+    dev="$(arg_val --device-name "$@")"
+    mode="$(arg_val --mode "$@")"
+    if [[ "$mode" == "ro" ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
+    else
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_data_disk_new_vm" ]] && exit 1
+    fi
+    [[ -n "$disk" && -e "$S/disks/$disk" ]] || exit 1
+    echo "attach-disk $4 disk=$disk device-name=$dev mode=$mode" >> "$S/disk_attach.log"
+    if [[ "$mode" == "ro" ]]; then
+      printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    elif [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$dev" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+disk, dev = sys.argv[2:4]
+disks = [d for d in (doc.get("disks") or []) if str(d.get("source") or "").rsplit("/", 1)[-1] != disk]
+disks.append({"boot": False, "autoDelete": False, "deviceName": dev or disk, "source": f"zones/asia-east1-b/disks/{disk}", "diskSizeGb": "200"})
+doc["disks"] = disks
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
+    exit 0 ;;
+  "compute instances detach-disk "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "detach_old_boot_disk_ro" ]] && exit 1
+    disk="$(arg_val --disk "$@")"
+    echo "detach-disk $4 disk=$disk" >> "$S/disk_attach.log"
+    rm -f "$S"/attached_ro_*
+    exit 0 ;;
+  "compute disks delete "*)
+    disk="$4"
+    rm -f "$S/disks/$disk"
+    echo "deleted_disk $disk" >> "$S/disks_deleted.log"
+    exit 0 ;;
+  "compute disks resize "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "resize_new_boot_disk" ]] && exit 1
+    disk="$4"
+    rsize="$(arg_val --size "$@")"
+    rsize="${rsize%GB}"
+    echo "resize_disk $disk size=${rsize}GB" >> "$S/disk_resize.log"
+    if [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$rsize" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+for d in doc.get("disks") or []:
+    if isinstance(d, dict) and str(d.get("source") or "").rsplit("/", 1)[-1] == sys.argv[2]:
+        d["diskSizeGb"] = str(sys.argv[3])
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
+    exit 0 ;;
+  "compute instances stop "*)
+    echo "stopped $4" >> "$S/vm_lifecycle.log"
+    exit 0 ;;
+  "compute instances delete "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "delete_incumbent_vm" ]] && exit 1
+    [[ -f "$S/vm.json" ]] || exit 1
+    cur_boot="$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print([x["source"].rsplit("/",1)[-1] for x in d["disks"] if x.get("boot")][0])' "$S/vm.json")"
+    if [[ "$all" != *"--keep-disks=all"* ]]; then
+      rm -f "$S/disks/$cur_boot" "$S/disks/${PROD_DATA_DISK:-}"
+    fi
+    rm -rf "$S/saved_boot_${cur_boot}"
+    if [[ -d "${PROD_ROOT:-}" ]]; then
+      cp -a "${PROD_ROOT}" "$S/saved_boot_${cur_boot}"
+      rm -rf "${PROD_ROOT}"
+    fi
+    rm -f "$S/vm.json" "$S/singleton_up" "$S"/image_cid-* "$S/image_${PROD_CADDY_CONTAINER:-pantheon-caddy}"
+    echo "deleted $4 keep=$([[ "$all" == *"--keep-disks=all"* ]] && echo all || echo none)" >> "$S/vm_lifecycle.log"
+    exit 0 ;;
+  "compute instances create "*)
+    vm="$4"
+    tpl="$(arg_val --source-instance-template "$@")"
+    mt="$(arg_val --machine-type "$@")"
+    ip="$(arg_val --address "$@")"
+    net="$(arg_val --network "$@")"
+    sub="$(arg_val --subnet "$@")"
+    create_disk="$(arg_val --create-disk "$@")"
+    meta="$(arg_val --metadata "$@")"
+    bsize="$(arg_val --boot-disk-size "$@")"
+    bsize="${bsize%GB}"
+    if [[ -n "$tpl" ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
+      [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+      echo "$all" >> "$S/instance_creates.log"
+      if [[ -n "$bsize" ]]; then
+        echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - Required field [disk.initializeParams.sourceImage] not specified" >&2
+        exit 1
+      fi
+      has_cli_disk="false"
+      [[ "$all" == *" --disk "* ]] && has_cli_disk="true"
+      if [[ -z "$mt" ]]; then
+        mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
+      fi
+      new_id="${FAKE_NEW_INSTANCE_ID:-2222222222222222222}"
+      cd_size=""
+      if [[ -n "$create_disk" ]]; then
+        cd_name="$(sed -n 's/.*name=\([^,]*\).*/\1/p' <<<"$create_disk")"
+        cd_size="$(sed -n 's/.*size=\([0-9]*\)GB.*/\1/p' <<<"$create_disk")"
+        if [[ "$create_disk" != *"image-family="* && "$create_disk" != *"image="* ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - Required field [disk.initializeParams.sourceImage] not specified" >&2
+          exit 1
+        fi
+        if [[ -z "$cd_name" || -e "$S/disks/$cd_name" ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - The resource 'zones/asia-east1-b/disks/${cd_name}' already exists" >&2
+          exit 1
+        fi
+        new_boot="$cd_name"
+      else
+        if [[ -e "$S/disks/$vm" ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - The resource 'zones/asia-east1-b/disks/${vm}' already exists" >&2
+          exit 1
+        fi
+        new_boot="${FAKE_NEW_BOOT_DISK:-${vm}-boot-fresh-e2s8}"
+      fi
+      touch "$S/disks/$new_boot"
+      rm -rf "${PROD_ROOT:-}"
+      hosts_target="${PROD_HOSTS_PATH:-$S/etc/hosts}"
+      mkdir -p "$(dirname "$hosts_target")"
+      printf '127.0.0.1 localhost\n' > "$hosts_target"
+      printf 'no' > "$S/mounted_state"
+      printf 'active' > "$S/host_systemd_caddy"
+      printf 'new' > "$S/vm_generation"
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "$ip" "$S/templates/${tpl}.json" "$has_cli_disk" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-${cd_size}}" "$net" "$sub" "${FAKE_NEW_VM_NETWORK:-}" "${FAKE_NEW_VM_SUBNETWORK:-}" > "$S/vm.json" <<'PY'
+import json, sys
+(vm, new_id, mt, boot_disk, ip, tpl_path, has_cli_disk,
+ override_bsize, cli_net, cli_sub, force_net, force_sub) = sys.argv[1:13]
+tpl = json.load(open(tpl_path))
+props = tpl.get("properties") or {}
+meta_obj = props.get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+tpl_disks = props.get("disks") or []
+tpl_bsize = ""
+if tpl_disks and isinstance(tpl_disks[0], dict):
+    tpl_bsize = str((tpl_disks[0].get("initializeParams") or {}).get("diskSizeGb") or "").strip()
+if override_bsize:
+    boot_size_gb = str(override_bsize)
+elif has_cli_disk == "true":
+    boot_size_gb = "10"
+else:
+    boot_size_gb = tpl_bsize or "150"
+tpl_nics = props.get("networkInterfaces") or [{}]
+tpl_nic = tpl_nics[0] if tpl_nics and isinstance(tpl_nics[0], dict) else {}
+if force_net:
+    net_name = force_net.rsplit("/", 1)[-1]
+elif cli_net:
+    net_name = cli_net.rsplit("/", 1)[-1]
+elif ip:
+    net_name = "default"
+else:
+    net_name = str(tpl_nic.get("network") or "pantheon-prod-net").rsplit("/", 1)[-1]
+if force_sub:
+    sub_name = force_sub.rsplit("/", 1)[-1]
+elif cli_sub:
+    sub_name = cli_sub.rsplit("/", 1)[-1]
+elif ip and not cli_net:
+    sub_name = "default"
+else:
+    sub_name = str(tpl_nic.get("subnetwork") or "pantheon-prod-subnet").rsplit("/", 1)[-1]
+print(json.dumps({
+    "id": new_id,
+    "name": vm,
+    "machineType": f"zones/asia-east1-b/machineTypes/{mt}",
+    "status": "RUNNING",
+    "disks": [
+        {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": boot_size_gb},
+    ],
+    "networkInterfaces": [{
+        "network": f"global/networks/{net_name}",
+        "subnetwork": f"regions/asia-east1/subnetworks/{sub_name}",
+        "accessConfigs": [{"name": "External NAT", "natIP": ip, "type": "ONE_TO_ONE_NAT"}],
+    }],
+    "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+    "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+    "metadata": meta_obj,
+}, sort_keys=True))
+PY
+      echo "created_from_template $vm tpl=$tpl mt=$mt boot=$new_boot ip=$ip" >> "$S/vm_lifecycle.log"
+      exit 0
+    else
+      # Rollback VM creation from preserved old_boot_disk + data_disk + static_ip
+      boot_spec=""
+      for a in "$@"; do
+        if [[ "$a" == *boot=yes* ]]; then
+          boot_spec="$a"
+        fi
+      done
+      old_boot="$(sed -n 's/.*name=\([^,]*\).*/\1/p' <<<"$boot_spec")"
+      [[ -n "$old_boot" && -e "$S/disks/$old_boot" ]] || exit 1
+      rm -rf "${PROD_ROOT:-}"
+      if [[ -d "$S/saved_boot_${old_boot}" ]]; then
+        cp -a "$S/saved_boot_${old_boot}" "${PROD_ROOT}"
+      fi
+      printf 'yes' > "$S/mounted_state"
+      printf 'inactive' > "$S/host_systemd_caddy"
+      printf 'rolled_back' > "$S/vm_generation"
+      python3 -I - "$vm" "1111111111111111111" "$mt" "$old_boot" "${PROD_DATA_DISK}" "$ip" "$meta" > "$S/vm.json" <<'PY'
+import json, sys
+vm, old_id, mt, boot_disk, data_disk, ip, meta = sys.argv[1:8]
+meta_items = []
+for pair in (meta or "serial-port-enable=FALSE").split(","):
+    if "=" in pair:
+        k, v = pair.split("=", 1)
+        if k.strip() and v.strip():
+            meta_items.append({"key": k.strip(), "value": v.strip()})
+print(json.dumps({
+    "id": old_id,
+    "name": vm,
+    "machineType": f"zones/asia-east1-b/machineTypes/{mt}",
+    "status": "RUNNING",
+    "disks": [
+        {"boot": True, "autoDelete": False, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": "50"},
+        {"boot": False, "autoDelete": False, "deviceName": "pantheon-prod-data", "source": f"zones/asia-east1-b/disks/{data_disk}", "diskSizeGb": "200"},
+    ],
+    "networkInterfaces": [{
+        "network": "global/networks/pantheon-prod-net",
+        "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+        "accessConfigs": [{"name": "External NAT", "natIP": ip, "type": "ONE_TO_ONE_NAT"}],
+    }],
+    "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
+    "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+    "metadata": {"items": meta_items},
+}, sort_keys=True))
+PY
+      echo "recreated_from_old_boot $vm mt=$mt boot=$old_boot ip=$ip meta=$meta" >> "$S/vm_lifecycle.log"
+      exit 0
+    fi ;;
+  "compute machine-types describe "*)
+    mt="$4"
+    python3 -I - "$mt" <<'PY'
+import re, sys
+m = re.search(r"-([0-9]+)$", sys.argv[1])
+print(m.group(1) if m else "2")
+PY
+    exit 0 ;;
+  "compute scp "*)
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "incumbent" ]]; then
+      vm_st="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status","RUNNING"))' "$S/vm.json" 2>/dev/null || echo RUNNING)"
+      if [[ "$vm_st" != "RUNNING" || "${FAKE_INCUMBENT_SSH_FAIL:-}" == "true" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
+      scp_att="$(( $(cat "$S/new_vm_scp_attempts" 2>/dev/null || echo 0) + 1 ))"
+      echo "$scp_att" > "$S/new_vm_scp_attempts"
+      if (( ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} > 0 && scp_att <= ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} )); then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
+    src="${@: -2:1}"
+    dst_spec="${@: -1}"
+    dst="${dst_spec#*:}"
+    mkdir -p "$dst"
+    cp -a "$src" "$dst/"
+    exit 0 ;;
+  "compute ssh "*)
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "incumbent" ]]; then
+      vm_st="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1])).get("status","RUNNING"))' "$S/vm.json" 2>/dev/null || echo RUNNING)"
+      if [[ "$vm_st" != "RUNNING" || "${FAKE_INCUMBENT_SSH_FAIL:-}" == "true" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
+    if [[ "${FAKE_REPLACE_FAIL:-}" == "ssh_new_vm" && "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
+      exit 255
+    fi
+    cmd="$(arg_val --command "$@")"
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" && "$cmd" == "true" ]]; then
+      true_calls="$(( $(cat "$S/new_vm_ssh_true_calls" 2>/dev/null || echo 0) + 1 ))"
+      echo "$true_calls" > "$S/new_vm_ssh_true_calls"
+      if [[ "${FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE:-}" == "true" && "$true_calls" == "2" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
+    IN_FAKE_GCLOUD_SSH=1 bash -c "$cmd"
+    exit $? ;;
+  *)
+    echo "unexpected fake gcloud call: $all" >&2
+    exit 99 ;;
+esac
+"""
+
+
+class ReplaceVmHarness(RealControllerBase):
+    """Exercises scripts/deploy/prod_replace_vm.sh and prod_preflight.py replace-vm against a fake
+    gcloud/IAP-SSH/Docker/systemd/fstab harness and the real bootstrap.sh, prod_ops.sh, and prod_rollback.sh."""
+
+    REPLACE_VM = REPO_ROOT / "scripts" / "deploy" / "prod_replace_vm.sh"
+
+    def setUp(self):
+        super().setUp()
+        (self.bin / "gcloud").write_text(FAKE_REPLACE_GCLOUD)
+        (self.bin / "gcloud").chmod(0o755)
+        self.m1, self.m2 = self._switch_second_release()
+        self.active_release_id = self.m2["release_id"]
+        self.baseline_release_id = self.m1["release_id"]
+        self.data_mount = self.tmp / "data"
+        self.fstab = self.tmp / "etc" / "fstab"
+        self.remote_tmp = self.tmp / "remote-tmp"
+        self.remote_tmp.mkdir(parents=True, exist_ok=True)
+
+        # Populate full production secrets closure on PROD_DATA_MOUNT for PROD_REQUIRE_FULL_SECRET_KEYS=true.
+        prod_dsn = "postgresql://pantheon_prod:prod-db-pw@127.0.0.1:5432/pantheon_production"
+        full_secrets = [
+            "PANTHEON_BFF_JWT_SECRET=prod-bff-jwt-secret-0123456789abcdef",
+            "PANTHEON_RUNTIME_JWT_SECRET=prod-runtime-jwt-secret-0123456789abcdef",
+            f"PANTHEON_DATABASE_URL={prod_dsn}",
+            f"DATABASE_URL={prod_dsn}",
+            f"TELEMETRY_DB_DSN={prod_dsn}",
+            f"LIFECYCLE_PROJECTOR_PROJECTION_DSN={prod_dsn}",
+            f"PERSONA_STORE_DSN={prod_dsn}",
+            f"PERSONA_CAPABILITY_STORE_DSN={prod_dsn}",
+            f"AGORA_WORKSHOP_STORE_DSN={prod_dsn}",
+            f"AGORA_DATASET_STORE_DSN={prod_dsn}",
+            f"AGORA_GOVERNANCE_STORE_DSN={prod_dsn}",
+            f"AGORA_RESEARCH_STORE_DSN={prod_dsn}",
+            f"RECONCILER_LOOP_CONTROLLER_DSN={prod_dsn}",
+            "PANTHEON_RUNTIME_MANAGER_TOKEN=prod-rm-token-0123456789abcdef",
+            "CONSULTATION_SERVICE_TOKEN=prod-consult-token-0123456789abcdef",
+            "CONSULTATION_HANDOFF_TOKEN=prod-handoff-token-0123456789abcdef",
+            "PANTHEON_TELEMETRY_SERVICE_TOKEN=prod-telem-token-0123456789abcdef",
+            "EVOLUTION_AUTH_TOKEN=prod-evol-token-0123456789abcdef",
+            "RECONCILIATION_DRIFT_AUTH_TOKEN=prod-drift-token-0123456789abcdef",
+            "POLICY_LEARNING_SERVICE_TOKEN=prod-policy-token-0123456789abcdef",
+            "PANTHEON_PERSONA_SERVICE_TOKEN=prod-persona-token-0123456789abcdef",
+            "PANTHEON_RESEARCH_JWT_SECRET=prod-research-jwt-0123456789abcdef",
+            "PANTHEON_REGISTRY_JWT_SECRET=prod-registry-jwt-0123456789abcdef",
+            "PANTHEON_TELEMETRY_JWT_SECRET=prod-telemetry-jwt-0123456789abcdef",
+            "PERSONA_JWT_SECRET=prod-persona-jwt-0123456789abcdef",
+            "TRAINING_SESSION_JWT_SECRET=prod-training-jwt-0123456789abcdef",
+            "CAPITAL_JWT_SECRET=prod-capital-jwt-0123456789abcdef",
+            "PANTHEON_CAPITAL_JWT_SECRET=prod-pcapital-jwt-0123456789abcdef",
+            "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=prod-openclaw-token-0123456789abcdef",
+        ]
+        secrets_file = self.data_mount / "secrets" / "prod.secrets.env"
+        secrets_file.write_text("\n".join(full_secrets) + "\n", encoding="utf-8")
+        secrets_file.chmod(0o600)
+        (self.tmp / "secrets.env").write_text("\n".join(full_secrets) + "\n", encoding="utf-8")
+        (self.tmp / "secrets.env").chmod(0o600)
+
+        # Seed incumbent Caddy container + ACME certificate/config state to prove preservation across replacement.
+        self.caddy_image = "caddy:2.8.4@sha256:" + "e" * 64
+        (self.state / "image_pantheon-caddy").write_text(self.caddy_image)
+        caddy_data = self.state / "incumbent_caddy_data" / "caddy" / "certificates"
+        caddy_cfg = self.state / "incumbent_caddy_config" / "caddy"
+        caddy_data.mkdir(parents=True)
+        caddy_cfg.mkdir(parents=True)
+        (caddy_data / "acme-prod.crt").write_text("-----BEGIN CERTIFICATE-----\nFAKE-PROD-ACME-CERT\n-----END CERTIFICATE-----\n")
+        (caddy_cfg / "autosave.json").write_text('{"apps":{"http":{"servers":{}}}}')
+
+        # Seed incumbent GCP VM state (starts as undersized e2-standard-2 with old boot disk and old template).
+        self.old_boot_disk = "pantheon-prod-control-boot-old"
+        self.static_ip = "35.220.10.20"
+        for d in (self.old_boot_disk, PROD_ENV["PROD_DATA_DISK"]):
+            (self.state / "disks").mkdir(parents=True, exist_ok=True)
+            (self.state / "disks" / d).write_text("disk")
+        (self.state / "templates").mkdir(parents=True, exist_ok=True)
+        (self.state / "templates" / "pantheon-prod-control-template-old-e2s2.json").write_text(
+            json.dumps({"name": "pantheon-prod-control-template-old-e2s2", "properties": {"machineType": "e2-standard-2"}})
+        )
+        (self.state / "addresses.json").write_text(
+            json.dumps([{"name": "pantheon-prod-ip", "address": self.static_ip, "addressType": "EXTERNAL", "status": "IN_USE"}])
+        )
+        import datetime as dt
+        snap_ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=120)).isoformat()
+        (self.state / "auto_snapshot_line").write_text(f"auto-snap-hourly-1\t{snap_ts}\n")
+        (self.state / "mounted_state").write_text("yes")
+        (self.state / "vm_generation").write_text("incumbent")
+        (self.state / "vm.json").write_text(
+            json.dumps({
+                "id": "1111111111111111111",
+                "name": "pantheon-prod-control",
+                "machineType": "zones/asia-east1-b/machineTypes/e2-standard-2",
+                "status": "RUNNING",
+                "disks": [
+                    {
+                        "boot": True,
+                        "autoDelete": True,
+                        "deviceName": self.old_boot_disk,
+                        "source": f"zones/asia-east1-b/disks/{self.old_boot_disk}",
+                        "diskSizeGb": "50",
+                    },
+                    {
+                        "boot": False,
+                        "autoDelete": False,
+                        "deviceName": "pantheon-prod-data",
+                        "source": f"zones/asia-east1-b/disks/{PROD_ENV['PROD_DATA_DISK']}",
+                        "diskSizeGb": "200",
+                    },
+                ],
+                "networkInterfaces": [{
+                    "network": "global/networks/pantheon-prod-net",
+                    "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+                    "accessConfigs": [{"name": "External NAT", "natIP": self.static_ip, "type": "ONE_TO_ONE_NAT"}],
+                }],
+                "serviceAccounts": [{
+                    "email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
+                    "scopes": ["https://www.googleapis.com/auth/cloud-platform"],
+                }],
+                "tags": {"items": ["pantheon-iap", "pantheon-https"]},
+            })
+        )
+
+    def _run_replace_vm(self, release_id: str | None = None, **extra):
+        defaults = {
+            "GCLOUD_BIN": str(self.bin / "gcloud"),
+            "PROD_VM_NAME": "pantheon-prod-control",
+            "PROD_INSTANCE_TEMPLATE": "pantheon-prod-control-template-old-e2s2",
+            "PROD_RUNTIME_SERVICE_ACCOUNT": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com",
+            "PROD_SUBNETWORK": "pantheon-prod-subnet",
+            "PROD_REMOTE_TMP_BASE": str(self.remote_tmp),
+            "PROD_REMOTE_PATH_PREFIX": str(self.bin),
+            "PROD_FSTAB_PATH": str(self.fstab),
+            "PROD_SSH_WAIT_TRIES": "2",
+            "PROD_SSH_WAIT_INTERVAL": "0",
+            "PROD_INCUMBENT_SSH_INTERVAL": "0",
+            "PROD_UPLOAD_BUNDLE_INTERVAL": "0",
+            "CLOUDSDK_CORE_PROJECT": PROD_ENV["PROD_GCP_PROJECT_ID"],
+        }
+        defaults.update(extra)
+        env = self.env(**defaults)
+        return subprocess.run(
+            ["bash", str(self.REPLACE_VM), release_id or self.active_release_id],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    def test_replace_vm_preflight_requires_config_and_environment_approval(self):
+        apath = self.tmp / "approvals.json"
+        apath.write_text(json.dumps(APPROVALS))
+        p_ok = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                "replace-vm",
+                "--approvals",
+                str(apath),
+                "--initiator",
+                "initiator-a",
+            ],
+            env={**os.environ, **PROD_ENV},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(p_ok.returncode, 0, p_ok.stderr)
+        self.assertEqual(json.loads(p_ok.stdout)["status"], "replace_vm_preflight_passed")
+        p_self = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(REPO_ROOT / "scripts/deploy/prod_preflight.py"),
+                "replace-vm",
+                "--approvals",
+                str(apath),
+                "--initiator",
+                "reviewer-b",
+            ],
+            env={**os.environ, **PROD_ENV},
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(p_self.returncode, 0)
+
+    def test_replace_vm_happy_path_template_upgrade_boot_disk_migration_and_caddy_acme_preservation(self):
+        # Simulate pre-g77 incumbent VM where state/ and proxy/ were still real directories on the boot disk.
+        for d in ("state", "proxy"):
+            link = self.root / d
+            target = self.data_mount / d
+            if link.is_symlink():
+                link.unlink()
+                shutil.copytree(target, link, symlinks=True)
+                shutil.rmtree(target)
+
+        r = self._run_replace_vm(GITHUB_RUN_ID="45000000001", GITHUB_RUN_ATTEMPT="1")
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["release_id"], self.active_release_id)
+        self.assertEqual(out["old_instance_id"], "1111111111111111111")
+        self.assertEqual(out["new_instance_id"], "2222222222222222222")
+        self.assertNotEqual(out["old_instance_id"], out["new_instance_id"])
+        self.assertEqual(out["old_machine_type"], "e2-standard-2")
+        self.assertEqual(out["old_vm_status"], "RUNNING")
+        self.assertEqual(out["migration_mode"], "online_ssh")
+        self.assertEqual(out["machine_type"], "e2-standard-8")
+        self.assertEqual(out["vcpus"], 8)
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
+        self.assertTrue(out["old_boot_disk_preserved"])
+        self.assertNotEqual(out["new_boot_disk"], self.old_boot_disk)
+        self.assertEqual(out["static_ip"], self.static_ip)
+        self.assertEqual(out["data_disk_uuid"], "d4a7a000-1111-2222-3333-444455556666")
+        self.assertTrue(out["boot_disk_decoupled"])
+        self.assertTrue(out["caddy_restored"])
+        self.assertEqual(out["caddy_image"], self.caddy_image)
+        self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+        self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+        self.assertTrue(out["snapshot_schedule"]["policy_present"] and out["snapshot_schedule"]["attached"])
+
+        # Both data and boot pre-replacement snapshots were taken with <= 62 char lowercase names.
+        for snap_key in ("data_snapshot", "boot_snapshot"):
+            self.assertLessEqual(len(out[snap_key]), 62)
+            self.assertRegex(out[snap_key], r"^[a-z]([-a-z0-9]{0,60}[a-z0-9])?$")
+        snaps_taken = (self.state / "snapshots_taken.log").read_text()
+        self.assertIn(f"{PROD_ENV['PROD_DATA_DISK']}:{out['data_snapshot']}", snaps_taken)
+        self.assertIn(f"{self.old_boot_disk}:{out['boot_snapshot']}", snaps_taken)
+
+        # Old boot disk and data disk were both protected with --no-auto-delete and preserved via --keep-disks=all.
+        auto_del = (self.state / "auto_delete.log").read_text()
+        self.assertIn(f"pantheon-prod-control {self.old_boot_disk} no-auto-delete", auto_del)
+        self.assertIn(f"pantheon-prod-control {PROD_ENV['PROD_DATA_DISK']} no-auto-delete", auto_del)
+        self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+        self.assertTrue((self.state / "disks" / PROD_ENV["PROD_DATA_DISK"]).exists())
+
+        # /etc/fstab entry written by UUID and mkfs was NEVER called.
+        self.assertFalse((self.state / "mkfs_called").exists())
+        self.assertIn(
+            f"UUID=d4a7a000-1111-2222-3333-444455556666 {self.data_mount} ext4 defaults,nofail 0 2",
+            self.fstab.read_text(),
+        )
+
+        # Host systemd caddy.service was disabled and pantheon-caddy container was recreated with preserved ACME certs.
+        self.assertIn("disable --now caddy.service", (self.state / "systemctl.log").read_text())
+        self.assertEqual((self.state / "host_systemd_caddy").read_text(), "inactive")
+        self.assertIn("FAKE-PROD-ACME-CERT", (self.data_mount / "proxy" / "caddy-data" / "caddy" / "certificates" / "acme-prod.crt").read_text())
+        self.assertTrue((self.data_mount / "proxy" / "caddy-config" / "caddy" / "autosave.json").is_file())
+        self.assertIn("--network host", (self.state / "caddy_runs.log").read_text())
+
+        # Protected rollback after VM replacement succeeds using retained data-disk journal and baseline.
+        rb = self._rollback_mode(
+            self.active_release_id,
+            PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+        )
+        self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+        rb_out = json.loads(rb.stdout.strip().splitlines()[-1])
+        self.assertEqual(rb_out["status"], "rolled_back")
+        self.assertEqual(rb_out["from_release"], self.active_release_id)
+        self.assertEqual(rb_out["to_release"], self.baseline_release_id)
+
+    def test_replace_vm_refuses_unreserved_static_ip_or_release_mismatch_before_deleting_vm(self):
+        # Unreserved static IP -> refuses before VM delete.
+        (self.state / "addresses.json").write_text("[]")
+        r_ip = self._run_replace_vm()
+        self.assertEqual(r_ip.returncode, 1)
+        self.assertIn("STATIC_IP_NOT_RESERVED", r_ip.stderr)
+        self.assertFalse((self.state / "vm_lifecycle.log").exists())
+
+        # Restore reserved static IP; pass non-active release_id -> refuses before VM delete.
+        (self.state / "addresses.json").write_text(
+            json.dumps([{"name": "pantheon-prod-ip", "address": self.static_ip, "addressType": "EXTERNAL", "status": "IN_USE"}])
+        )
+        r_rel = self._run_replace_vm(release_id=self.baseline_release_id)
+        self.assertEqual(r_rel.returncode, 1)
+        self.assertIn("PRE_REPLACE_MIGRATE_FAILED", r_rel.stderr)
+        self.assertFalse((self.state / "vm_lifecycle.log").exists())
+
+    def test_replace_vm_rto_over_budget_exits_6(self):
+        self.assertIn(
+            'if [[ -n "${FAKE_STATE:-}" && -n "${PROD_REPLACE_RTO_ELAPSED_SECONDS:-}" ]]; then',
+            self.REPLACE_VM.read_text(encoding="utf-8"),
+        )
+        r = self._run_replace_vm(PROD_REPLACE_RTO_ELAPSED_SECONDS="1801", PROD_RTO_SECONDS="1800")
+        self.assertEqual(r.returncode, 6, r.stdout + r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "replace_vm_over_budget")
+        self.assertEqual(out["rto_seconds"], 1801)
+        self.assertEqual(out["rto_budget_seconds"], 1800)
+
+    def test_replace_vm_rolls_back_to_old_boot_disk_when_replacement_or_restore_fails(self):
+        for fail_mode, expected_stage, expect_orphan_cleaned, extra_kw in (
+            ("create_new_vm", "create_new_vm", False, {}),
+            ("verify_new_vm_identity", "verify_new_vm_identity", True, {"FAKE_NEW_INSTANCE_ID": "1111111111111111111"}),
+            ("ssh_new_vm", "wait_for_ssh", True, {}),
+            ("restore_active_release", "restore_active_release", True, {}),
+        ):
+            with self.subTest(fail_mode=fail_mode):
+                self.setUp()
+                r = self._run_replace_vm(FAKE_REPLACE_FAIL=fail_mode, **extra_kw)
+                self.assertEqual(r.returncode, 3, f"{fail_mode}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "replace_vm_rolled_back", out)
+                self.assertEqual(out["failed_stage"], expected_stage)
+                self.assertTrue(out["rolled_back_to_old_boot_disk"])
+                self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
+                self.assertEqual(out["static_ip"], self.static_ip)
+                self.assertEqual(out["orphaned_new_boot_disk_deleted"], expect_orphan_cleaned)
+                if expect_orphan_cleaned:
+                    self.assertEqual(out["orphaned_new_boot_disk"], "pantheon-prod-control-boot-fresh-e2s8")
+                    self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
+                    self.assertIn("deleted_disk pantheon-prod-control-boot-fresh-e2s8", (self.state / "disks_deleted.log").read_text())
+                self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+                self.assertTrue((self.state / "disks" / PROD_ENV["PROD_DATA_DISK"]).exists())
+                lifecycle = (self.state / "vm_lifecycle.log").read_text()
+                self.assertIn(f"recreated_from_old_boot pantheon-prod-control mt=e2-standard-2 boot={self.old_boot_disk}", lifecycle)
+                vm_now = json.loads((self.state / "vm.json").read_text())
+                self.assertEqual(vm_now["id"], "1111111111111111111")
+
+    def _seed_pre_g77_offline_boot_disk_incumbent(self, vm_status: str = "TERMINATED"):
+        # Move all 6 durable control directories back onto the incumbent boot disk (PROD_ROOT) and remove from data_mount
+        # to simulate an unmigrated pre-g77 incumbent VM that is TERMINATED or unreachable over IAP SSH.
+        for d in ("secrets", "state", "manifests", "fe", "config", "proxy"):
+            link = self.root / d
+            target = self.data_mount / d
+            if link.is_symlink():
+                link.unlink()
+                shutil.copytree(target, link, symlinks=True)
+                shutil.rmtree(target)
+        # Seed Docker container config.v2.json + volume MountPoints for pantheon-caddy on the old boot disk.
+        vol_data = self.state / "old_boot_var_lib_docker" / "volumes" / "caddy_data_vol" / "_data"
+        vol_cfg = self.state / "old_boot_var_lib_docker" / "volumes" / "caddy_cfg_vol" / "_data"
+        (vol_data / "caddy" / "certificates").mkdir(parents=True, exist_ok=True)
+        (vol_cfg / "caddy").mkdir(parents=True, exist_ok=True)
+        (vol_data / "caddy" / "certificates" / "acme-prod.crt").write_text(
+            "-----BEGIN CERTIFICATE-----\nOFFLINE-BOOT-DISK-ACME-CERT\n-----END CERTIFICATE-----\n"
+        )
+        (vol_cfg / "caddy" / "autosave.json").write_text('{"apps":{"http":{"servers":{"offline":true}}}}')
+        cid_dir = self.state / "old_boot_var_lib_docker" / "containers" / ("c" * 64)
+        cid_dir.mkdir(parents=True, exist_ok=True)
+        (cid_dir / "config.v2.json").write_text(
+            json.dumps({
+                "Name": "/pantheon-caddy",
+                "Config": {"Image": self.caddy_image},
+                "MountPoints": {
+                    "/data": {
+                        "Destination": "/data",
+                        "Source": "/var/lib/docker/volumes/caddy_data_vol/_data",
+                    },
+                    "/config": {
+                        "Destination": "/config",
+                        "Source": "/var/lib/docker/volumes/caddy_cfg_vol/_data",
+                    },
+                },
+            })
+        )
+        # Seed a pre-existing template with forced enable-oslogin=TRUE,block-project-ssh-keys=TRUE while the incumbent
+        # VM has NO enable-oslogin or block-project-ssh-keys metadata items -> must reject mismatched template and create
+        # pantheon-prod-control-template-e2s8-v2 preserving incumbent metadata (serial-port-enable=FALSE only).
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "metadata": {
+                        "items": [
+                            {"key": "enable-oslogin", "value": "TRUE"},
+                            {"key": "block-project-ssh-keys", "value": "TRUE"},
+                            {"key": "serial-port-enable", "value": "FALSE"},
+                        ]
+                    },
+                },
+            })
+        )
+        vm_doc = json.loads((self.state / "vm.json").read_text())
+        vm_doc["status"] = vm_status
+        vm_doc["metadata"] = {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+        (self.state / "vm.json").write_text(json.dumps(vm_doc))
+
+    def test_replace_vm_offline_boot_disk_mode_recovers_terminated_or_unreachable_incumbent_and_preserves_metadata(self):
+        for case_name, vm_status, extra_env in (
+            ("terminated_incumbent", "TERMINATED", {}),
+            ("running_ssh_unreachable", "RUNNING", {"FAKE_INCUMBENT_SSH_FAIL": "true"}),
+        ):
+            with self.subTest(case=case_name):
+                self.setUp()
+                self._seed_pre_g77_offline_boot_disk_incumbent(vm_status=vm_status)
+                r = self._run_replace_vm(
+                    PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8",
+                    GITHUB_RUN_ID="45867118448",
+                    GITHUB_RUN_ATTEMPT="1",
+                    **extra_env,
+                )
+                self.assertEqual(r.returncode, 0, f"{case_name}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "prod_vm_replaced")
+                self.assertEqual(out["migration_mode"], "offline_boot_disk")
+                self.assertEqual(out["old_vm_status"], vm_status)
+                self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+                self.assertEqual(out["machine_type"], "e2-standard-8")
+                self.assertEqual(out["vcpus"], 8)
+                self.assertEqual(out["caddy_image"], self.caddy_image)
+                self.assertTrue(out["boot_disk_decoupled"])
+                self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+                self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+
+                # Verify template metadata preserved incumbent keys without forcing enable-oslogin/block-project-ssh-keys.
+                created_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+                tpl_meta_keys = {i["key"]: i["value"] for i in created_tpl["properties"]["metadata"]["items"]}
+                self.assertEqual(tpl_meta_keys, {"serial-port-enable": "FALSE"})
+                self.assertNotIn("enable-oslogin", tpl_meta_keys)
+                self.assertNotIn("block-project-ssh-keys", tpl_meta_keys)
+
+                # Verify old boot disk was attached read-only, mounted ro,noload, unmounted, and detached.
+                attach_log = (self.state / "disk_attach.log").read_text()
+                self.assertIn(
+                    f"attach-disk pantheon-prod-control disk={self.old_boot_disk} device-name=pantheon-old-boot-ro mode=ro",
+                    attach_log,
+                )
+                self.assertIn(f"detach-disk pantheon-prod-control disk={self.old_boot_disk}", attach_log)
+                mount_log = (self.state / "mount.log").read_text()
+                self.assertIn("mount -o ro,noload /dev/disk/by-id/google-pantheon-old-boot-ro-part1", mount_log)
+                self.assertIn("umount ", mount_log)
+                self.assertEqual((self.state / "old_boot_mounted_state").read_text(), "no")
+
+                # Verify Caddy ACME certificates & config were migrated from Docker config.v2.json MountPoints.
+                self.assertIn(
+                    "OFFLINE-BOOT-DISK-ACME-CERT",
+                    (self.data_mount / "proxy" / "caddy-data" / "caddy" / "certificates" / "acme-prod.crt").read_text(),
+                )
+                self.assertIn(
+                    '"offline":true',
+                    (self.data_mount / "proxy" / "caddy-config" / "caddy" / "autosave.json").read_text(),
+                )
+                self.assertTrue((self.data_mount / "state" / "snapshots" / f"vm-replace-{self.active_release_id}.json").is_file())
+                self.assertEqual((self.data_mount / "state" / "data_disk_uuid").read_text().strip(), "d4a7a000-1111-2222-3333-444455556666")
+                self.assertEqual(os.readlink(self.data_mount / "fe" / "current"), f"{self.root}/fe/releases/{self.active_release_id}")
+
+                # Protected rollback after offline_boot_disk VM replacement succeeds.
+                rb = self._rollback_mode(
+                    self.active_release_id,
+                    PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                )
+                self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+                self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
+
+    def test_replace_vm_bare_debian_installs_docker_compose_plugin_and_enforces_ssh_wait_defaults(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"', script_text)
+        self.assertIn('PROD_INCUMBENT_SSH_TRIES="${PROD_INCUMBENT_SSH_TRIES:-4}"', script_text)
+        self.assertIn('PROD_INCUMBENT_SSH_INTERVAL="${PROD_INCUMBENT_SSH_INTERVAL:-3}"', script_text)
+
+        # Simulate TERMINATED incumbent replaced by a fresh bare Debian 12 VM where docker compose v2 is absent until
+        # bootstrap.sh configures the official Docker Debian apt repository and installs docker-compose-plugin.
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        (self.state / "docker_no_compose").write_text("true\n", encoding="utf-8")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8",
+            GITHUB_RUN_ID="45886746072",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["migration_mode"], "offline_boot_disk")
+        self.assertTrue((self.state / "docker_compose_installed").is_file())
+        apt_log = (self.state / "apt.log").read_text()
+        self.assertIn("apt-get install -y ca-certificates curl gnupg util-linux python3", apt_log)
+        self.assertNotIn(" caddy", apt_log)
+        self.assertIn("apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin", apt_log)
+        self.assertTrue((self.state / "etc" / "apt" / "keyrings" / "docker.gpg").is_file())
+        self.assertTrue((self.state / "etc" / "apt" / "sources.list.d" / "docker.list").is_file())
+
+    def test_replace_vm_offline_boot_disk_release_mismatch_rolls_back_and_cleans_up_orphaned_new_boot_disk(self):
+        for case_name, pre_g77 in (
+            ("already_migrated_terminated_incumbent", False),
+            ("pre_g77_unmigrated_terminated_incumbent", True),
+        ):
+            with self.subTest(case=case_name):
+                self.setUp()
+                if pre_g77:
+                    self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+                else:
+                    vm_doc = json.loads((self.state / "vm.json").read_text())
+                    vm_doc["status"] = "TERMINATED"
+                    vm_doc["metadata"] = {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+                    (self.state / "vm.json").write_text(json.dumps(vm_doc))
+                self.assertTrue((self.data_mount / "fe" / "releases" / self.baseline_release_id).is_dir() or pre_g77)
+                r = self._run_replace_vm(release_id=self.baseline_release_id)
+                self.assertEqual(r.returncode, 3, f"{case_name}: stdout={r.stdout}\nstderr={r.stderr}")
+                out = json.loads(r.stdout.strip().splitlines()[-1])
+                self.assertEqual(out["status"], "replace_vm_rolled_back", out)
+                self.assertEqual(out["failed_stage"], "offline_boot_disk_migrate")
+                self.assertEqual(out["migration_mode"], "offline_boot_disk")
+                self.assertEqual(out["old_vm_status"], "TERMINATED")
+                self.assertTrue(out["rolled_back_to_old_boot_disk"])
+                self.assertTrue(out["orphaned_new_boot_disk_deleted"])
+                self.assertEqual(
+                    os.readlink(self.data_mount / "fe" / "current"),
+                    f"{self.root}/fe/releases/{self.active_release_id}",
+                )
+                self.assertFalse((self.data_mount / "proxy" / "caddy-image.txt").exists())
+                self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
+                self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
+                self.assertIn("meta=serial-port-enable=FALSE", (self.state / "vm_lifecycle.log").read_text())
+
+    def test_replace_vm_preserves_sudo_compose_env_and_upgrades_50gb_boot_disk_template_to_v3_120gb(self):
+        # Seed a pre-existing pantheon-prod-control-template-e2s8-v2 template with e2-standard-8 and matching
+        # metadata, but an undersized 50GB boot disk (< PROD_MIN_BOOT_DISK_GB=120).
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v2.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v2",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "50",
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v2",
+            PROD_USE_SUDO="true",
+            FAKE_OSLOGIN_NONROOT="true",
+            FAKE_SUDO_RESET_ENV="true",
+            GITHUB_RUN_ID="45897091923",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["migration_mode"], "offline_boot_disk")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+        self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+
+        # Verify created v3 template has >= 150GB boot disk.
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        self.assertIn("--boot-disk-size=150GB", (self.state / "template_creates.log").read_text())
+        vm_now = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
+
+        # Direct prod_ops.sh restore_active_release and protected rollback also succeed under PROD_USE_SUDO=true + FAKE_SUDO_RESET_ENV=true.
+        direct_restore = subprocess.run(
+            [str(OPS), "restore_active_release", self.active_release_id],
+            env=self.env(
+                PROD_USE_SUDO="true",
+                FAKE_SUDO_RESET_ENV="true",
+                PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(direct_restore.returncode, 0, direct_restore.stdout + direct_restore.stderr)
+        rb = self._rollback_mode(
+            self.active_release_id,
+            PROD_USE_SUDO="true",
+            FAKE_SUDO_RESET_ENV="true",
+            PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+        )
+        self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+        self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
+
+        # Verify rollback_to_old_boot_disk captures rollback stderr in rollback_error if rollback restoration fails.
+        self.setUp()
+        r_rb_fail = self._run_replace_vm(
+            FAKE_REPLACE_FAIL="restore_active_release",
+            FAKE_ROLLBACK_RESTORE_FAIL="true",
+        )
+        self.assertEqual(r_rb_fail.returncode, 3, f"stdout={r_rb_fail.stdout}\nstderr={r_rb_fail.stderr}")
+        rb_fail_out = json.loads(r_rb_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(rb_fail_out["status"], "replace_vm_rollback_failed")
+        self.assertFalse(rb_fail_out["rolled_back_to_old_boot_disk"])
+        self.assertIn("simulated rollback restore failure", rb_fail_out["rollback_error"] or "")
+
+    def test_replace_vm_retries_transient_first_boot_iap_upload_and_rejects_template_missing_disk_size_gb(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_UPLOAD_BUNDLE_TRIES="${PROD_UPLOAD_BUNDLE_TRIES:-6}"', script_text)
+        self.assertIn('PROD_UPLOAD_BUNDLE_INTERVAL="${PROD_UPLOAD_BUNDLE_INTERVAL:-5}"', script_text)
+        self.assertIn('PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-5}"', script_text)
+
+        # Seed a pre-existing pantheon-prod-control-template-e2s8-v3 template whose boot disk initializeParams
+        # has sourceImage (GCE Debian 12 default 10GB) but omits diskSizeGb -> template_is_compatible must reject,
+        # delete, and recreate it with diskSizeGb=120. Also simulate transient first-boot IAP upload failure
+        # (first SCP attempt fails, second succeeds) and a transient second-probe SSH drop during wait_for_ssh.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            PROD_SSH_WAIT_TRIES="3",
+            PROD_SSH_STABILITY_DELAY="1",
+            FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE="true",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="1",
+            GITHUB_RUN_ID="45908618778",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        # Template missing diskSizeGb was deleted and recreated with 150GB boot disk.
+        self.assertIn(
+            "deleted_template pantheon-prod-control-template-e2s8-v3",
+            (self.state / "template_deletes.log").read_text(),
+        )
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        # wait_for_ssh ran stability re-probe after transient drop (4 total 'true' SSH calls) and SCP retried after 1 transient failure.
+        self.assertEqual(int((self.state / "new_vm_ssh_true_calls").read_text().strip()), 4)
+        self.assertEqual(int((self.state / "new_vm_scp_attempts").read_text().strip()), 2)
+
+        # When all PROD_UPLOAD_BUNDLE_TRIES attempts fail on the new VM, it rolls back to old_boot_disk at upload_bundle_new_vm.
+        self.setUp()
+        r_fail = self._run_replace_vm(
+            PROD_UPLOAD_BUNDLE_TRIES="2",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="3",
+        )
+        self.assertEqual(r_fail.returncode, 3, f"stdout={r_fail.stdout}\nstderr={r_fail.stderr}")
+        fail_out = json.loads(r_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(fail_out["status"], "replace_vm_rolled_back")
+        self.assertEqual(fail_out["failed_stage"], "upload_bundle_new_vm")
+        self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
+        self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
+
+    def test_replace_vm_passes_150gb_boot_disk_size_on_instances_create_resizes_undersized_boot_disk_and_grows_root_fs(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-150}"', script_text)
+        self.assertIn('PROD_BOOT_DISK_TYPE="${PROD_BOOT_DISK_TYPE:-pd-standard}"', script_text)
+
+        r_bad_type = self._run_replace_vm(PROD_BOOT_DISK_TYPE="pd-extreme")
+        self.assertEqual(r_bad_type.returncode, 1)
+        self.assertIn("INVALID_BOOT_DISK_TYPE", r_bad_type.stderr)
+
+        # 1. Seed a pre-existing v3 template with 150GB pd-balanced boot disk (mismatches PROD_BOOT_DISK_TYPE=pd-standard):
+        #    must reject, delete, and recreate v3 with 150GB pd-standard (--boot-disk-type=pd-standard), then create VM
+        #    without disk flags and attach PROD_DATA_DISK via attach-disk, plus run growpart/resize2fs on /dev/sda1.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "150",
+                            "diskType": "zones/asia-east1-b/diskTypes/pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            GITHUB_RUN_ID="45929804773",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertIn(
+            "deleted_template pantheon-prod-control-template-e2s8-v3",
+            (self.state / "template_deletes.log").read_text(),
+        )
+        self.assertIn("--boot-disk-type=pd-standard", (self.state / "template_creates.log").read_text())
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskType"], "pd-standard")
+        create_cmd = (self.state / "instance_creates.log").read_text().strip()
+        self.assertIn("--source-instance-template pantheon-prod-control-template-e2s8-v3", create_cmd)
+        self.assertNotIn("--disk", create_cmd)
+        self.assertNotIn("--boot-disk-size", create_cmd)
+        self.assertNotIn("--boot-disk-type", create_cmd)
+        attach_log = (self.state / "disk_attach.log").read_text()
+        self.assertIn(
+            f"attach-disk pantheon-prod-control disk={PROD_ENV['PROD_DATA_DISK']} device-name=pantheon-prod-data mode=rw",
+            attach_log,
+        )
+        vm_now = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
+        grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/sda 1", grow_log)
+        self.assertIn("resize2fs /dev/sda1", grow_log)
+
+        # 2. If GCE returns an undersized boot disk (< PROD_MIN_BOOT_DISK_GB) on the new VM describe, NEW_VM_VARS
+        #    resizes the new boot disk online to TARGET_BOOT_SIZE_GB (150GB) via 'gcloud compute disks resize' and
+        #    grows an nvme root partition (/dev/nvme0n1p1 -> growpart /dev/nvme0n1 1 + resize2fs /dev/nvme0n1p1).
+        #    Also seed v3 template with omitted diskType (GCE default pd-standard) and verify it is reused without deletion.
+        self.setUp()
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "150",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        (self.state / "fake_root_source").write_text("/dev/nvme0n1p1\n", encoding="utf-8")
+        r_resize = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            FAKE_NEW_BOOT_DISK_SIZE_GB="10",
+            GITHUB_RUN_ID="45929804773",
+            GITHUB_RUN_ATTEMPT="2",
+        )
+        self.assertEqual(r_resize.returncode, 0, f"stdout={r_resize.stdout}\nstderr={r_resize.stderr}")
+        self.assertFalse((self.state / "template_deletes.log").exists())
+        self.assertFalse((self.state / "template_creates.log").exists())
+        self.assertIn(
+            "resize_disk pantheon-prod-control-boot-fresh-e2s8 size=150GB",
+            (self.state / "disk_resize.log").read_text(),
+        )
+        vm_resized = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_resized["disks"][0]["diskSizeGb"], "150")
+        nvme_grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/nvme0n1 1", nvme_grow_log)
+        self.assertIn("resize2fs /dev/nvme0n1p1", nvme_grow_log)
+
+    def test_replace_vm_populates_idempotent_hosts_loopback_and_succeeds_under_gce_no_hairpin_nat(self):
+        hosts_file = self.tmp / "custom-etc-hosts"
+        hosts_file.write_text(f"127.0.0.1 localhost {PROD_ENV['PROD_FE_HOST']}\n", encoding="utf-8")
+
+        # 1. Without PROD_BFF_HOST (or PROD_FE_HOST) mapped to 127.0.0.1, restore_active_release fails under
+        #    FAKE_GCE_NO_HAIRPIN_NAT=true with RUNTIME_CONFIG_FETCH / curl exit 28 timeout (run 45938984639 symptom).
+        no_loopback = self.tmp / "no-loopback-hosts"
+        no_loopback.write_text("127.0.0.1 localhost\n", encoding="utf-8")
+        r_no_loop = subprocess.run(
+            [str(OPS), "restore_active_release", self.active_release_id],
+            env=self.env(
+                FAKE_GCE_NO_HAIRPIN_NAT="true",
+                PROD_HOSTS_PATH=str(no_loopback),
+                PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertNotEqual(r_no_loop.returncode, 0)
+        self.assertIn("RUNTIME_CONFIG_FETCH", r_no_loop.stderr)
+
+        # 2. bootstrap.sh idempotently populates 127.0.0.1 loopback entries for PROD_FE_HOST and PROD_BFF_HOST in
+        #    HOSTS_FILE (mode 0644, never duplicating existing 127.0.0.1 tokens across repeated runs).
+        for _ in range(2):
+            b_res = subprocess.run(
+                [str(BOOTSTRAP)],
+                env=self.env(
+                    PROD_HOSTS_PATH=str(hosts_file),
+                    PROD_SECRETS_ENV_FILE=str(self.data_mount / "secrets" / "prod.secrets.env"),
+                    PROD_POSTGRES_PASSWORD_FILE=str(self.data_mount / "secrets" / "postgres_password"),
+                    PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                    RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(b_res.returncode, 0, b_res.stderr)
+        self.assertEqual(hosts_file.stat().st_mode & 0o777, 0o644)
+        toks = [
+            tok
+            for ln in hosts_file.read_text(encoding="utf-8").splitlines()
+            for parts in [ln.split("#", 1)[0].split()]
+            if len(parts) >= 2 and parts[0] == "127.0.0.1"
+            for tok in parts[1:]
+        ]
+        self.assertEqual(toks.count(PROD_ENV["PROD_FE_HOST"]), 1)
+        self.assertEqual(toks.count(PROD_ENV["PROD_BFF_HOST"]), 1)
+
+        # 3. End-to-end prod_replace_vm.sh succeeds under FAKE_GCE_NO_HAIRPIN_NAT=true: online_ssh skips docker cp
+        #    when /data and /config are already bind-mounted from PROD_DATA_MOUNT/proxy/caddy-data and caddy-config,
+        #    and RESTORE_OUT on the fresh Debian 12 boot disk re-populates HOSTS_FILE and restores Caddyfile + release.
+        (self.state / "caddy_mounts").write_text(
+            f"/data={self.data_mount}/proxy/caddy-data\n/config={self.data_mount}/proxy/caddy-config\n",
+            encoding="utf-8",
+        )
+        (self.data_mount / "proxy" / "Caddyfile").unlink(missing_ok=True)
+        r = self._run_replace_vm(
+            FAKE_GCE_NO_HAIRPIN_NAT="true",
+            PROD_HOSTS_PATH=str(hosts_file),
+            GITHUB_RUN_ID="45938984639",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertFalse((self.state / "caddy_cp.log").exists())
+        self.assertTrue((self.data_mount / "proxy" / "Caddyfile").is_file())
+        self.assertIn(PROD_ENV["PROD_FE_HOST"], hosts_file.read_text(encoding="utf-8"))
+        self.assertIn(PROD_ENV["PROD_BFF_HOST"], hosts_file.read_text(encoding="utf-8"))
+
+    def test_replace_vm_restores_prod_network_from_default_avoids_boot_disk_name_collision_and_verifies_external_https(self):
+        # Seed incumbent VM matching run 45948784751 state: accidentally attached to 'global/networks/default' and
+        # 'regions/asia-east1/subnetworks/default' with boot disk named 'pantheon-prod-control' (== PROD_VM_NAME).
+        def seed_default_net_same_name_boot():
+            self.setUp()
+            (self.state / "disks" / self.old_boot_disk).unlink(missing_ok=True)
+            self.old_boot_disk = "pantheon-prod-control"
+            (self.state / "disks" / "pantheon-prod-control").write_text("disk", encoding="utf-8")
+            vm_doc = json.loads((self.state / "vm.json").read_text(encoding="utf-8"))
+            vm_doc["id"] = "9190220965460877841"
+            vm_doc["machineType"] = "zones/asia-east1-b/machineTypes/e2-standard-8"
+            vm_doc["disks"][0]["deviceName"] = "pantheon-prod-control"
+            vm_doc["disks"][0]["source"] = "zones/asia-east1-b/disks/pantheon-prod-control"
+            vm_doc["disks"][0]["diskSizeGb"] = "150"
+            vm_doc["networkInterfaces"][0]["network"] = "global/networks/default"
+            vm_doc["networkInterfaces"][0]["subnetwork"] = "regions/asia-east1/subnetworks/default"
+            (self.state / "vm.json").write_text(json.dumps(vm_doc), encoding="utf-8")
+
+        # 1. Happy path: INSPECT_VARS prioritizes PROD_NETWORK/PROD_SUBNETWORK over incumbent's 'default' NIC,
+        #    Step 6 passes --network/--subnet alongside --address plus --create-disk with a fresh
+        #    'pantheon-prod-control-os-*' boot disk name (avoiding collision with retained 'pantheon-prod-control'),
+        #    and runner-side external HTTPS reachability is verified against /deployment.json and /bff/readyz.
+        seed_default_net_same_name_boot()
+        r = self._run_replace_vm(
+            FAKE_GCE_NO_HAIRPIN_NAT="true",
+            GITHUB_RUN_ID="45948784751",
+            GITHUB_RUN_ATTEMPT="2",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["old_boot_disk"], "pantheon-prod-control")
+        self.assertTrue(out["old_boot_disk_preserved"])
+        self.assertRegex(out["new_boot_disk"], r"^pantheon-prod-control-os-[0-9]{8}t[0-9]{6}z$")
+        self.assertNotEqual(out["new_boot_disk"], "pantheon-prod-control")
+        self.assertTrue((self.state / "disks" / "pantheon-prod-control").exists())
+        self.assertTrue((self.state / "disks" / out["new_boot_disk"]).exists())
+
+        create_cmd = (self.state / "instance_creates.log").read_text(encoding="utf-8").strip()
+        self.assertIn(f"--network {PROD_ENV['PROD_NETWORK']}", create_cmd)
+        self.assertIn("--subnet pantheon-prod-subnet", create_cmd)
+        self.assertIn(
+            f"--create-disk name={out['new_boot_disk']},image-family=debian-12,image-project=debian-cloud,size=150GB,type=pd-standard,boot=yes,mode=rw,auto-delete=yes",
+            create_cmd,
+        )
+        vm_now = json.loads((self.state / "vm.json").read_text(encoding="utf-8"))
+        self.assertEqual(vm_now["networkInterfaces"][0]["network"], f"global/networks/{PROD_ENV['PROD_NETWORK']}")
+        self.assertEqual(vm_now["networkInterfaces"][0]["subnetwork"], "regions/asia-east1/subnetworks/pantheon-prod-subnet")
+        self.assertEqual(vm_now["disks"][0]["SizeGb" if "SizeGb" in vm_now["disks"][0] else "diskSizeGb"], "150")
+
+        ext_probes = (self.state / "external_https_probes.log").read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"https://{PROD_ENV['PROD_FE_HOST']}/deployment.json", ext_probes)
+        self.assertIn(f"https://{PROD_ENV['PROD_BFF_HOST']}/bff/readyz", ext_probes)
+
+        # 2. If runner-side external HTTPS verification fails (e.g. firewall/network block), prod_replace_vm.sh
+        #    rolls back via rollback_to_old_boot_disk 'external_https_verify' and cleans up the orphaned new boot disk.
+        seed_default_net_same_name_boot()
+        r_ext_fail = self._run_replace_vm(
+            FAKE_REPLACE_FAIL="external_https_verify",
+            PROD_EXTERNAL_HTTPS_TRIES="2",
+        )
+        self.assertEqual(r_ext_fail.returncode, 3, f"stdout={r_ext_fail.stdout}\nstderr={r_ext_fail.stderr}")
+        fail_out = json.loads(r_ext_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(fail_out["status"], "replace_vm_rolled_back", fail_out)
+        self.assertEqual(fail_out["failed_stage"], "external_https_verify")
+        self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
+        self.assertEqual(fail_out["old_boot_disk"], "pantheon-prod-control")
+        self.assertRegex(fail_out["orphaned_new_boot_disk"] or "", r"^pantheon-prod-control-os-[0-9]{8}t[0-9]{6}z$")
+        self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
+        self.assertTrue((self.state / "disks" / "pantheon-prod-control").exists())
+        self.assertFalse((self.state / "disks" / fail_out["orphaned_new_boot_disk"]).exists())
+
+        # 3. If NEW_VM_VARS detects a network mismatch on the created VM, it fails closed at verify_new_vm_identity and rolls back.
+        seed_default_net_same_name_boot()
+        r_net_fail = self._run_replace_vm(FAKE_NEW_VM_NETWORK="default")
+        self.assertEqual(r_net_fail.returncode, 3, f"stdout={r_net_fail.stdout}\nstderr={r_net_fail.stderr}")
+        net_out = json.loads(r_net_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(net_out["status"], "replace_vm_rolled_back", net_out)
+        self.assertEqual(net_out["failed_stage"], "verify_new_vm_identity")
+        self.assertIn("NETWORK_MISMATCH", net_out["message"])
+        self.assertTrue(net_out["rolled_back_to_old_boot_disk"])
 
 
 if __name__ == "__main__":

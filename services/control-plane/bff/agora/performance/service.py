@@ -354,7 +354,7 @@ class PerformanceProjectionService:
             page_size=page_size,
             page_token=page_token,
             strategy_id_filter=strategy_id_filter,
-            projection_reader=self.get_projection_reader(),
+            projection_reader=self.get_projection_reader,
             workshop_store=workshop_store,
             suggestion_store=self.suggestion_store,
             utc_now=self.utc_now,

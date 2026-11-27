@@ -64,6 +64,7 @@ _OBJECT_ID_EXPR = (
     "WHEN 'knowledge_object' THEN payload->>'knowledge_object_id' "
     "END)"
 )
+_SOURCE_CONNECTOR_EXPR = "payload->>'connector_id'"
 _DEDUPE_FIELDS_BY_RECORD_TYPE: Dict[str, str] = {
     "source_record": "source_dedupe_key",
     "evidence_item": "evidence_dedupe_key",
@@ -77,7 +78,17 @@ _CONCURRENT_LOOKUP_INDEX_SPECS: tuple[tuple[str, str], ...] = (
         "source_evidence_object_id_lookup_idx",
         f"(record_type, {_OBJECT_ID_EXPR}, append_id DESC)",
     ),
+    (
+        # Connector-scoped newest-first source-record pages
+        # (AGORA-PROJECTOR-SOURCE-RECORDS-BOUNDED-READ-20261126): one tenant's
+        # one connector is an index range, never a scan of the tenant table.
+        "source_evidence_source_connector_page_idx",
+        f"(evidence_tenant_id, ({_SOURCE_CONNECTOR_EXPR}), append_id DESC) "
+        "WHERE record_type = 'source_record'",
+    ),
 )
+# Hard owner cap for one connector-scoped source-record page.
+SOURCE_RECORD_PAGE_MAX = 1000
 
 
 def _quote_pg(identifier: str) -> str:
@@ -358,9 +369,9 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
             JOIN pg_class c ON c.oid = i.indexrelid
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = COALESCE(NULLIF(%s, ''), current_schema())
-              AND c.relname IN (%s, %s)
+              AND c.relname = ANY(%s)
             """,
-            (self.schema, index_names[0], index_names[1]),
+            (self.schema, list(index_names)),
         ).fetchall()
         index_states: Dict[str, tuple[bool, bool]] = {}
         for row in rows or ():
@@ -635,6 +646,57 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
     def list_source_records(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[SourceRecord]:
         return self._read_many("source_record", tenant_id)
 
+    def list_source_records_page(
+        self,
+        tenant_id: str,
+        *,
+        connector_id: str,
+        limit: int,
+        before_append_id: int | None = None,
+    ) -> tuple[List[SourceRecord], int | None]:
+        """One tenant's one connector, newest append first, at most ``limit`` rows.
+
+        Served by ``source_evidence_source_connector_page_idx``; the cursor is the
+        last returned ``append_id`` (keyset, so page cost does not grow with depth).
+        Returns ``(records, next_cursor)``; ``next_cursor`` is None on the last page.
+        """
+        tenant = str(tenant_id or "").strip()
+        connector = str(connector_id or "").strip()
+        if not tenant or tenant == "*":
+            raise ValueError("an explicit non-wildcard tenant_id is required for source record pages")
+        if not connector:
+            raise ValueError("connector_id is required for source record pages")
+        page = max(1, min(int(limit), SOURCE_RECORD_PAGE_MAX))
+        where = f"record_type = 'source_record' AND evidence_tenant_id = %s AND {_SOURCE_CONNECTOR_EXPR} = %s"
+        params: tuple[Any, ...] = (tenant, connector)
+        if before_append_id is not None:
+            where += " AND append_id < %s"
+            params += (int(before_append_id),)
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT append_id, payload FROM {self.table} WHERE {where} "
+                    "ORDER BY append_id DESC LIMIT %s",
+                    (*params, page + 1),
+                ).fetchall()
+        except Exception as exc:
+            raise RuntimeError(f"PostgreSQL evidence query failed: {type(exc).__name__}") from None
+        records: list[SourceRecord] = []
+        last_append_id: int | None = None
+        for row in rows[:page]:
+            append_id = row[0] if isinstance(row, (tuple, list)) else row.get("append_id")
+            payload = row[1] if isinstance(row, (tuple, list)) else row.get("payload")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                raise EvidenceValidationError("Source evidence owner returned a malformed source record")
+            source = SourceRecord.from_dict(payload)
+            if source.tenant_id != tenant or source.connector_id != connector:
+                raise EvidenceValidationError("Source evidence owner returned a record outside the requested scope")
+            records.append(source)
+            last_append_id = int(append_id)
+        return records, (last_append_id if len(rows) > page else None)
+
     def get_evidence_item(self, evidence_item_id: str, tenant_id: str | None | _Unscoped = _UNSCOPED) -> EvidenceItem | None:
         if getattr(self, "_replaying", False):
             return super().get_evidence_item(evidence_item_id, tenant_id=tenant_id)
@@ -868,6 +930,41 @@ class PostgresSourceEvidenceRepository(InMemoryEvidenceRepository):
 
     def list_knowledge_objects(self, tenant_id: str | None | _Unscoped = _UNSCOPED) -> List[KnowledgeObject]:
         return self._read_many("knowledge_object", tenant_id)
+
+
+def read_source_records_page(
+    repository: Any,
+    tenant_id: str,
+    *,
+    connector_id: str,
+    limit: int,
+    cursor: int | None = None,
+) -> tuple[List[SourceRecord], int | None]:
+    """Connector-scoped newest-first page from any source evidence owner.
+
+    PostgreSQL owners answer from the connector page index with an ``append_id``
+    keyset cursor. In-memory/JSONL owners (local and test configurations) page
+    the tenant's records in reverse insertion order with the same contract; there
+    the cursor is the count of newest records already returned.
+    """
+    page = max(1, min(int(limit), SOURCE_RECORD_PAGE_MAX))
+    if isinstance(repository, PostgresSourceEvidenceRepository):
+        return repository.list_source_records_page(
+            tenant_id, connector_id=connector_id, limit=page, before_append_id=cursor
+        )
+    tenant = str(tenant_id or "").strip()
+    connector = str(connector_id or "").strip()
+    if not tenant or tenant == "*":
+        raise ValueError("an explicit non-wildcard tenant_id is required for source record pages")
+    if not connector:
+        raise ValueError("connector_id is required for source record pages")
+    matching = [
+        source for source in reversed(repository.list_source_records(tenant_id=tenant))
+        if source.connector_id == connector
+    ]
+    start = max(0, int(cursor or 0))
+    end = start + page
+    return matching[start:end], (end if end < len(matching) else None)
 
 
 def read_source_records_for_tenant(

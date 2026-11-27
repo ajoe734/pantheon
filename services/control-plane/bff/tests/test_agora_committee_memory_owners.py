@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.auth.policy import extract_identity, require_operator_role, require_read_role
 from services.control_plane.bff.core.app_factory import build_bff_app, mount_agora_review_routers
+from services.control_plane.bff.meetings.router import create_meetings_router
 from services.control_plane.bff.models import utc_now
 from services.consultation import models as cm
 from services.consultation.store import ConsultationStore
@@ -31,6 +32,11 @@ def headers(tenant="tenant-a", roles=None):
     token = encode_jwt_hs256({"sub": "alice", "roles": roles or ["operator"],
                              "tenant_id": tenant, "exp": 4102444800}, secret=SECRET)
     return {"Authorization": "Bearer " + token, "Idempotency-Key": "quarantine-test"}
+
+
+def _body(response):
+    """Error body without the per-request correlation id (non-enumerating comparison)."""
+    return {k: v for k, v in response.json().items() if k != "meta"}
 
 
 @pytest.fixture
@@ -139,23 +145,31 @@ def stack(tmp_path, monkeypatch):
     app = build_bff_app()
     mount_agora_review_routers(app, extract_identity=extract_identity, require_read_role=require_read_role,
                               require_write_role=require_operator_role, utc_now=utc_now)
+    # Persona gate panels are served by the Management meetings center (decision 2026-11-26).
+    app.include_router(create_meetings_router(extract_identity=extract_identity, require_read_role=require_read_role,
+                                              require_operator_role=require_operator_role, utc_now=utc_now))
     calls.clear()
     yield TestClient(app), calls, control, candidate, clients, store
 
 
 def test_all_restored_routes_reach_real_owners(stack):
     client, calls, _, candidate, owners, store = stack
-    panels = client.get(PANEL, headers=headers())
-    assert panels.status_code == 200, panels.text
-    assert [p["request_id"] for p in panels.json()["data"]] == ["panel-a"]
-    assert client.get(PANEL + "/panel-a", headers=headers()).json()["data"]["consultation_type"] == "persona_panel"
-    assert client.get(PANEL + "/panel-a/memos", headers=headers()).json()["data"][0]["memo_id"] == "memo-panel-a"
+    # Operator decision 2026-11-26: persona gate panels are never served by Agora.
+    sessions = client.get(PANEL, headers=headers())
+    assert sessions.status_code == 200, sessions.text
+    assert sessions.json()["data"] == []
+    assert sessions.json()["reason"] == "no_trader_meetings"
+    missing = client.get(PANEL + "/no-such-session", headers=headers())
+    assert missing.status_code == 404
+    for path in (PANEL + "/panel-a", PANEL + "/panel-a/memos"):
+        hidden = client.get(path, headers=headers())
+        assert hidden.status_code == 404, hidden.text
+        assert _body(hidden) == _body(missing)
     path = PANEL + "/panel-a/memos/memo-panel-a/publish"
-    published = client.post(path, headers=headers())
-    assert published.status_code == 200, published.text
-    assert published.json()["data"]["status"] == "published"
-    assert store.get_memo("memo-panel-a").status.value == "published"
-    assert client.post(path, headers=headers()).json()["data"] == published.json()["data"]
+    refused = client.post(path, headers=headers())
+    assert refused.status_code == 404, refused.text
+    assert _body(refused) == _body(missing)
+    assert store.get_memo("memo-panel-a").status.value == "submitted"
     review = client.get(MEMORY + "?persona_id=persona-a", headers=headers())
     assert review.status_code == 200, review.text
     data = review.json()["data"]
@@ -245,8 +259,8 @@ def test_malformed_memory_response_is_unavailable(stack, body):
 
 def test_empty_owner_results_record_reason(stack):
     client, _, control, *_ = stack
-    control["response"][("consultation.test", "/api/consult/requests")] = []
-    assert client.get(PANEL, headers=headers()).json()["reason"] == "no_persona_panels"
+    control["response"][("consultation.test", "/api/consult/meetings")] = {"items": [], "next_cursor": None}
+    assert client.get(PANEL, headers=headers()).json()["reason"] == "no_trader_meetings"
     control["response"][("memory.test", "/api/memory/retrieve")] = {"hits": [], "authz": {"allowed": True}}
     control["response"][("memory.test", "/api/memory/trade-lessons")] = {"candidates": []}
     assert client.get(MEMORY + "?persona_id=persona-a", headers=headers()).json()["reason"] == "no_memory_records"
@@ -289,7 +303,7 @@ def test_unconfigured_owners_and_credentials_never_fall_back(stack, monkeypatch)
     assert calls == []
 
 
-def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rounds(stack):
+def test_committee_sessions_list_only_the_callers_meetings_newest_first(stack):
     client, _, control, *_ = stack
     control["response"][("consultation.test", "/api/consult/meetings")] = {
         "items": [
@@ -299,6 +313,7 @@ def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rou
                 "status": "closed",
                 "outcome": "completed",
                 "chair_persona_id": "persona-a",
+                "convened_by": {"kind": "agora_user", "id": "alice"},
                 "participants": [
                     {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
                     {"persona_id": "agora-servant-alice", "role": "servant", "origin": "private_servant", "agora_user_id": "alice"},
@@ -321,6 +336,30 @@ def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rou
                 "created_at": "2026-11-16T11:00:00Z",
                 "closed_at": "2026-11-16T11:05:00Z",
             },
+            {
+                "meeting_id": "mtg-institutional",
+                "meeting_type": "MT-1",
+                "status": "closed",
+                "outcome": "completed",
+                "chair_persona_id": "persona-a",
+                "convened_by": {"kind": "persona", "id": "persona-a"},
+                "participants": [{"persona_id": "persona-a", "role": "chair", "origin": "institutional"}],
+                "round": 1,
+                "created_at": "2026-11-16T12:00:00Z",
+                "closed_at": "2026-11-16T12:05:00Z",
+            },
+            {
+                "meeting_id": "mtg-mt4-alice",
+                "meeting_type": "MT-4",
+                "status": "convened",
+                "chair_persona_id": "persona-a",
+                "convened_by": {"kind": "operator", "id": "ops"},
+                "subject_ref": "trader:alice",
+                "participants": [{"persona_id": "persona-a", "role": "chair", "origin": "institutional"}],
+                "round": 0,
+                "created_at": "2026-11-16T13:00:00Z",
+                "closed_at": None,
+            },
         ],
         "next_cursor": None,
     }
@@ -330,6 +369,9 @@ def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rou
         "status": "closed",
         "outcome": "completed",
         "chair_persona_id": "persona-a",
+        "convened_by": {"kind": "agora_user", "id": "alice"},
+        "created_at": "2026-11-16T10:00:00Z",
+        "closed_at": "2026-11-16T10:05:00Z",
         "participants": [
             {"persona_id": "persona-a", "role": "chair", "origin": "institutional"},
             {"persona_id": "agora-servant-alice", "role": "servant", "origin": "private_servant", "agora_user_id": "alice"},
@@ -422,22 +464,66 @@ def test_committee_sessions_lists_gate_panels_and_deliberative_meetings_with_rou
         ],
     }
 
+    control["response"][("consultation.test", "/api/consult/meetings/mtg-institutional")] = {
+        **meeting_detail,
+        "meeting_id": "mtg-institutional",
+        "meeting_type": "MT-1",
+        "convened_by": {"kind": "persona", "id": "persona-a"},
+        "participants": [{"persona_id": "persona-a", "role": "chair", "origin": "institutional"}],
+    }
+    control["response"][("consultation.test", "/api/consult/meetings/mtg-mt4-alice")] = {
+        **meeting_detail,
+        "meeting_id": "mtg-mt4-alice",
+        "meeting_type": "MT-4",
+        "status": "convened",
+        "convened_by": {"kind": "operator", "id": "ops"},
+        "subject_ref": "trader:alice",
+        "created_at": "2026-11-16T13:00:00Z",
+        "closed_at": None,
+    }
+
+    # The tenant holds a gate panel (panel-a), an institutional meeting, another
+    # trader's meeting, the caller's own meeting and an MT-4 review of the caller.
     sessions = client.get(PANEL, headers=headers())
     assert sessions.status_code == 200, sessions.text
     items = sessions.json()["data"]
+    assert [item["session_id"] for item in items] == ["mtg-mt4-alice", "mtg-a"]
     by_id = {item["session_id"]: item for item in items}
-    assert set(by_id) == {"panel-a", "mtg-a"}
-    assert by_id["panel-a"]["session_class"] == "gate_panel"
-    assert len(by_id["panel-a"]["rounds"]) == 1
     assert by_id["mtg-a"]["session_class"] == "deliberative_meeting"
+    assert by_id["mtg-a"]["created_at"] == "2026-11-16T10:00:00Z"
+    assert by_id["mtg-a"]["closed_at"] == "2026-11-16T10:05:00Z"
     assert [r["round"] for r in by_id["mtg-a"]["rounds"]] == [1, 2]
     assert "Must not leak" not in sessions.text
     assert "Private servant note" not in sessions.text
     assert by_id["mtg-a"]["private_items_withheld"] == 2
     assert by_id["mtg-a"]["proposals"][0]["approval_path"] == "agora_candidate_decision"
+    servant = next(p for p in by_id["mtg-a"]["participants"] if p["persona_id"] == "agora-servant-alice")
+    assert servant["display_name"] == "Your servant"
+    assert servant["is_caller_servant"] is True
+    assert by_id["mtg-a"]["chair_display_name"]
+    assert all(p.get("display_name") for p in by_id["mtg-a"]["participants"])
+
+    for include_panels in ("false", "true"):
+        listed = client.get("/bff/agora/committee/meetings?include_panels=" + include_panels, headers=headers())
+        assert listed.status_code == 200, listed.text
+        assert [m["meeting_id"] for m in listed.json()["data"]] == ["mtg-mt4-alice", "mtg-a"]
+    only_panels = client.get(PANEL + "?session_class=gate_panel", headers=headers())
+    assert only_panels.json()["data"] == [] and only_panels.json()["reason"] == "no_trader_meetings"
 
     detail = client.get(PANEL + "/mtg-a", headers=headers())
     assert detail.status_code == 200, detail.text
     assert detail.json()["data"]["session_class"] == "deliberative_meeting"
     assert len(detail.json()["data"]["rounds"]) == 2
-    assert client.get(PANEL + "/mtg-bob-private", headers=headers()).status_code == 404
+
+    missing = client.get(PANEL + "/mtg-does-not-exist", headers=headers())
+    assert missing.status_code == 404
+    for hidden in ("mtg-bob-private", "mtg-institutional", "panel-a"):
+        for path in (
+            PANEL + "/" + hidden,
+            PANEL + "/" + hidden + "/memos",
+            "/bff/agora/committee/meetings/" + hidden,
+            "/bff/agora/committee/meetings/" + hidden + "/proposals",
+        ):
+            response = client.get(path, headers=headers())
+            assert response.status_code == 404, (path, response.text)
+            assert _body(response) == _body(missing), path

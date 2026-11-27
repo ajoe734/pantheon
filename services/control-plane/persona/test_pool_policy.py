@@ -188,3 +188,110 @@ def test_legacy_book_without_the_field_reads_as_not_since_inception():
     [legacy_snapshot] = legacy.snapshot()
     assert legacy_snapshot["since_inception"] is False and snapshot[0]["since_inception"] is True
 
+
+
+# ---- pool admission time carried end to end (POOL-MEMBER-JOINED-AT-CARRY-20261126) ---------------
+# Real segments only: a pool version member as the persona owner serves it, the BFF publisher's
+# envelope build (schema validated), the paper signal producer's member views, the runtime member
+# virtual book and the reweight.  No segment after the pool version is handed joined_at or
+# since_inception; on a dev without the carry the reweight refuses with
+# virtual_book_high_water_history_missing.
+HOSTED_JOINED_AT = "2026-11-08T18:10:02Z"  # persona-ee7112a829d38b9135ac members[0], read 2026-11-26
+
+
+def _published_envelope(joined_at=HOSTED_JOINED_AT):
+    from types import SimpleNamespace
+    from services.control_plane.bff.persona_pool_publisher import PersonaPoolPublisher
+    from services.registry.strategy_artifact import strategy_artifact_checksum, validate_strategy_artifact
+    from services.registry.test_portfolio_envelope import member_artifact
+
+    artifact = member_artifact()
+    checksum = strategy_artifact_checksum(artifact)
+    entry = {"registry_id": artifact["artifact_id"], "version": artifact["version"], "checksum": checksum,
+             "owner_tenant": "t", "artifact_state": "approved", "metadata": {"strategy_artifact": artifact}}
+    publisher = PersonaPoolPublisher(
+        coordinator=SimpleNamespace(transport=SimpleNamespace(get=lambda *_: entry)), pool_store=None)
+    # Pool version member shape of the persona owner (strategy-pool/versions/<n>).
+    member = {"artifact_ref": artifact["artifact_id"], "checksum": checksum, "stage": "active",
+              "risk_weight": 1.0, "baseline_ref": "apv-baseline", **({"joined_at": joined_at} if joined_at else {})}
+    envelope, pins = publisher._build_envelope(
+        "t", SimpleNamespace(strategy_id="persona-pool"), {"pool_version": 6, "members": [member]},
+        "artifact-persona-pool-chain-v6", "1.6.0", 6, "sha256:" + "0" * 64,
+        {"artifact_id": "artifact-persona-pool-chain-v5"})
+    validate_strategy_artifact(envelope)
+    return envelope, pins, member
+
+
+def _producer_books(envelope, first_day="2026-11-09", sessions=8):
+    from datetime import datetime
+    from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
+    from services.execution.lean_runtime.paper_signal_producer import CurrentArtifactStrategy
+    from services.execution.lean_runtime.test_portfolio_target_positions import portfolio_binding
+
+    books, snapshot, closes = MemberVirtualBooks(), [], [100.0, 101.0]
+    day = date.fromisoformat(first_day)
+    for i in range(sessions):
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        closes = closes + [closes[-1] * (1 + (.02 if i % 3 else -.015))]
+        binding = portfolio_binding(envelope, closes=closes)
+        # A one-underlying envelope is decided from the binding's single market input.
+        [row] = binding.pop("market_inputs").values()
+        binding["market_input"] = {**row, "event_time": f"{day}T05:30:00Z", "observed_at": f"{day}T06:00:00Z"}
+        output = CurrentArtifactStrategy()(binding, f"{day}T06:00:00Z")
+        metadata = output["metadata"]
+        # paper_runtime._handle_order_event feeds the producer's member views to the book as is.
+        snapshot = books.observe(
+            binding_id=binding["binding_id"], envelope_checksum=binding["artifact_checksum"],
+            symbol=output["symbol"], event_time=f"{day}T05:30:00+00:00", price=closes[-1],
+            open_price=closes[-2], source_ref="recorded:" + day.isoformat(),
+            members=metadata["portfolio_member_views"], bar_frequency=metadata["portfolio_bar_frequency"])
+        day += timedelta(days=1)
+    return books, snapshot
+
+
+def test_pool_joined_at_reaches_the_book_and_the_reweight_through_real_segments():
+    envelope, pins, member = _published_envelope()
+    _, [book] = _producer_books(envelope)
+    # The reweight is the decisive segment: without the carry it raises
+    # virtual_book_high_water_history_missing here.
+    stats = reweight([member], {book["member_id"]: {**book, **book["net_of_costs"]}},
+                     load_policy(), "2026-11-20")[1][member["artifact_ref"]]
+    assert stats["days"] == len(book["returns"]) and stats["volatility"] > 0
+    [pinned] = envelope["strategy_logic"]["members"]
+    assert pinned["joined_at"] == HOSTED_JOINED_AT and pins[0]["joined_at"] == HOSTED_JOINED_AT
+    assert book["admitted_at"] == HOSTED_JOINED_AT and book["since_inception"] is True
+
+
+def test_envelope_published_before_the_carry_stays_valid_and_records_no_admission():
+    envelope, pins, member = _published_envelope(joined_at=None)
+    assert "joined_at" not in envelope["strategy_logic"]["members"][0]
+    _, [book] = _producer_books(envelope)
+    assert book["admitted_at"] is None and book["since_inception"] is False
+    with pytest.raises(ValueError, match="virtual_book_high_water_history_missing"):
+        reweight([member], {book["member_id"]: {**book, **book["net_of_costs"]}}, load_policy(), "2026-11-20")
+
+
+def test_hosted_late_book_records_admission_but_stays_not_since_inception():
+    # Hosted 2026-11-26: books start 2026-11-19, 11 days after admission; the gap is another task's.
+    envelope, _, member = _published_envelope()
+    _, [book] = _producer_books(envelope, first_day="2026-11-19", sessions=4)
+    assert book["admitted_at"] == HOSTED_JOINED_AT and book["since_inception"] is False
+    with pytest.raises(ValueError, match="virtual_book_high_water_history_missing"):
+        reweight([member], {book["member_id"]: {**book, **book["net_of_costs"]}}, load_policy(), "2026-11-26")
+
+
+def test_publication_change_reports_running_pins_without_or_with_other_joined_at():
+    from pool_policy import admission_only, publication_change
+    pool = {"members": [{"artifact_ref": "a", "stage": "active", "risk_weight": 1.0, "joined_at": HOSTED_JOINED_AT},
+                        {"artifact_ref": "r", "stage": "removed", "risk_weight": 0, "joined_at": HOSTED_JOINED_AT}]}
+    pin = {"artifact_ref": "a", "stage": "active", "risk_weight": 1.0, "virtual_only": False}
+    missing = publication_change({"pool_version": 6, "members": [pin]}, pool, load_policy())
+    assert missing == {"changed": True, "membership_changed": False, "published_pool_version": 6,
+                       "reasons": ["envelope_member_admission_missing:a"]} and admission_only(missing)
+    other = publication_change({"pool_version": 6, "members": [{**pin, "joined_at": "2026-11-09T00:00:00Z"}]}, pool, load_policy())
+    assert other["reasons"] == ["envelope_member_admission_missing:a"]
+    carried = publication_change({"pool_version": 7, "members": [{**pin, "joined_at": HOSTED_JOINED_AT}]}, pool, load_policy())
+    assert carried["changed"] is False and not admission_only(carried)
+    moved = publication_change({"pool_version": 6, "members": [{**pin, "risk_weight": .5}]}, pool, load_policy())
+    assert not admission_only(moved) and moved["reasons"][0] == "weight_changed:a"

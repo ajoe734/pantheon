@@ -47,7 +47,9 @@ from services.source_ingestion.semantic_extraction import (
     StrategySeedExtractionPayload,
     TradeLessonExtractionPayload,
     CANONICAL_FIELD_PATHS,
+    estimate_prompt_tokens,
     hypothesis_card_deadline_seconds,
+    hypothesis_card_token_limits,
     is_claim_grounded,
     compute_schema_id,
     get_semantic_extraction_json_schema,
@@ -278,6 +280,7 @@ class SemanticExtractionClient:
         official_rates: Optional[dict[str, float]] = None,
         fallback_to_baseline: bool = False,
         hypothesis_deadline_seconds: Optional[float] = None,
+        hypothesis_token_limits: Optional[dict[str, int]] = None,
     ) -> None:
         self._adapter_url = (
             adapter_url
@@ -299,6 +302,13 @@ class SemanticExtractionClient:
         self._rate_provenance = "official_catalog_2026" if official_rates is None else "custom_override"
         self._fallback_to_baseline = fallback_to_baseline
         self._hypothesis_deadline_seconds = hypothesis_card_deadline_seconds(hypothesis_deadline_seconds)
+        self._hypothesis_token_limits = dict(hypothesis_token_limits or hypothesis_card_token_limits())
+
+    def token_limits_for(self, task_type: ExtractionTaskType) -> dict[str, int]:
+        """HYPOTHESIS_CARD has its own limits; every other turn keeps the interactive ones."""
+        if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+            return dict(self._hypothesis_token_limits)
+        return dict(self._token_limits)
 
     @property
     def hypothesis_deadline_seconds(self) -> float:
@@ -443,6 +453,33 @@ class SemanticExtractionClient:
             max_attempts = 1 + max_retries
 
         prompt = self._build_prompt(request)
+        token_limits = self.token_limits_for(task_type)
+        # The card turn states its output limit to the provider, and its input
+        # limit is checked on the prompt before any call is paid for.
+        max_output_tokens: Optional[int] = None
+        if task_type == ExtractionTaskType.HYPOTHESIS_CARD:
+            max_output_tokens = token_limits["max_output_tokens"]
+            estimated_input = estimate_prompt_tokens(prompt, json.dumps(schema, ensure_ascii=False))
+            if estimated_input > token_limits["max_input_tokens"]:
+                return SemanticExtractionResult(
+                    extraction_id=str(uuid.uuid4()),
+                    source_id=request.source_id,
+                    tenant_id=request.tenant_id,
+                    task_type=task_type.value,
+                    status="abstained",
+                    is_abstained=True,
+                    abstention_reason=AbstentionReason.BUDGET_BREACH.value,
+                    failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
+                    failure_message=(
+                        f"Prompt estimate {estimated_input} tokens exceeds input limit "
+                        f"{token_limits['max_input_tokens']}; no model call made"
+                    ),
+                    schema_id=schema_id,
+                    model_identity=self._resolve_model_identity(None, request),
+                    prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    config_digest=hashlib.sha256(b"budget_breach_precall").hexdigest()[:16],
+                    latency_ms=(time.monotonic() - start_time) * 1000.0,
+                )
         attempt = 0
         last_error_code: Optional[ExtractionFailureCode] = None
         last_error_msg: Optional[str] = None
@@ -464,6 +501,7 @@ class SemanticExtractionClient:
                     schema=schema,
                     request=request,
                     timeout_seconds=remaining,
+                    max_output_tokens=max_output_tokens,
                 )
                 # Check wall-clock deadline immediately after dispatch
                 elapsed_after = time.monotonic() - start_time
@@ -561,6 +599,7 @@ class SemanticExtractionClient:
             total_deadline=total_deadline,
             retry_count=attempt,
             accumulated_usage=accumulated_usage,
+            token_limits=token_limits,
         )
 
     def _dispatch_turn(
@@ -570,6 +609,7 @@ class SemanticExtractionClient:
         schema: dict[str, Any],
         request: SemanticExtractionRequest,
         timeout_seconds: float,
+        max_output_tokens: Optional[int] = None,
     ) -> dict[str, Any]:
         """Dispatch a single turn via transport_fn, provider, or HTTP adapter."""
         # 1. Custom transport function (injected / test harness)
@@ -584,6 +624,8 @@ class SemanticExtractionClient:
                 "trace_id": request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
                 "timeout_seconds": timeout_seconds,
             }
+            if max_output_tokens is not None:
+                payload["max_output_tokens"] = max_output_tokens
             return self._transport_fn(payload)
 
         # 2. Direct provider object (AssistantOpenClawProvider)
@@ -595,6 +637,9 @@ class SemanticExtractionClient:
             if time.monotonic() >= deadline_at:
                 raise TimeoutError(f"Turn deadline of {timeout_seconds:.3f}s exhausted during policy verification")
             try:
+                limit_kwargs: dict[str, Any] = (
+                    {"max_output_tokens": max_output_tokens} if max_output_tokens is not None else {}
+                )
                 res = self._provider.invoke_structured(
                     prompt,
                     extraction_schema=schema,
@@ -604,6 +649,7 @@ class SemanticExtractionClient:
                     operator_id=request.operator_id or "system",
                     trace_id=request.trace_id or f"trace-extract-{uuid.uuid4().hex[:8]}",
                     timeout_seconds=rem_timeout,
+                    **limit_kwargs,
                 )
                 if time.monotonic() >= deadline_at:
                     raise TimeoutError(f"Turn deadline of {timeout_seconds:.3f}s exhausted during invoke_structured")
@@ -638,6 +684,8 @@ class SemanticExtractionClient:
                 # socket deadline instead of finishing after we hung up.
                 "timeout_seconds": round(max(0.5, timeout_seconds - _ADAPTER_DEADLINE_MARGIN_SECONDS), 3),
             }
+            if max_output_tokens is not None:
+                body["max_output_tokens"] = max_output_tokens
             headers = {
                 "Content-Type": "application/json",
                 "X-Operator-Id": request.operator_id or "system",
@@ -716,7 +764,9 @@ class SemanticExtractionClient:
         total_deadline: float,
         retry_count: int,
         accumulated_usage: dict[str, int],
+        token_limits: Optional[dict[str, int]] = None,
     ) -> SemanticExtractionResult:
+        limits = token_limits or self.token_limits_for(task_type)
         elapsed = time.monotonic() - start_time
         model_identity = self._resolve_model_identity(raw_response, request)
 
@@ -789,12 +839,15 @@ class SemanticExtractionClient:
                 retry_count=retry_count,
             )
 
-        # Budget breach check
+        # Budget breach check. The card turn's input limit was checked on the
+        # prompt before the call (it is not stated to the provider), so a paid
+        # card answer is only held to the output limit the request stated.
+        check_input_after_call = task_type != ExtractionTaskType.HYPOTHESIS_CARD
         if usage_obj is not None:
             in_t = usage_obj.get("input_tokens")
             out_t = usage_obj.get("output_tokens")
-            if (in_t is not None and in_t > self._token_limits["max_input_tokens"]) or \
-               (out_t is not None and out_t > self._token_limits["max_output_tokens"]):
+            if (check_input_after_call and in_t is not None and in_t > limits["max_input_tokens"]) or \
+               (out_t is not None and out_t > limits["max_output_tokens"]):
                 return SemanticExtractionResult(
                     extraction_id=str(uuid.uuid4()),
                     source_id=request.source_id,
@@ -804,7 +857,7 @@ class SemanticExtractionClient:
                     is_abstained=True,
                     abstention_reason=AbstentionReason.BUDGET_BREACH.value,
                     failure_code=ExtractionFailureCode.BUDGET_BREACH.value,
-                    failure_message=f"Usage exceeded limits: input {in_t} > {self._token_limits['max_input_tokens']} or output {out_t} > {self._token_limits['max_output_tokens']}",
+                    failure_message=f"Usage exceeded limits: input {in_t} > {limits['max_input_tokens']} or output {out_t} > {limits['max_output_tokens']}",
                     schema_id=schema_id,
                     model_identity=model_identity,
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
@@ -901,7 +954,7 @@ class SemanticExtractionClient:
                 schema_id=schema_id,
                 model_identity=model_identity,
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
-                config_digest=hashlib.sha256(json.dumps(self._token_limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+                config_digest=hashlib.sha256(json.dumps(limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
                 usage=usage_obj,
                 cost_usd=cost_usd,
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
@@ -1159,7 +1212,7 @@ class SemanticExtractionClient:
             schema_id=schema_id,
             model_identity=model_identity,
             prompt_identity=_DEFAULT_PROMPT_VERSION,
-            config_digest=hashlib.sha256(json.dumps(self._token_limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
+            config_digest=hashlib.sha256(json.dumps(limits, sort_keys=True).encode("utf-8")).hexdigest()[:16],
             failure_code=ExtractionFailureCode.MISSING_SUPPORT.value if missing_support else None,
             failure_message=missing_support_reason or None,
             usage=usage_obj,

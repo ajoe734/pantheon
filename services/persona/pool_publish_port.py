@@ -42,7 +42,7 @@ def envelope_publication_requirement(tenant_id: str, persona_id: str, pool: Mapp
 
 
 class PoolPublishPort:
-    """Needs ``self._call``, ``self.pool_store`` and ``self.consultation_factory`` from the host ports."""
+    """Needs ``self._call``, ``self._is_not_found``, ``self.pool_store`` and ``self.consultation_factory`` from the host ports."""
 
     def publication_state(self, persona):
         out = self._call("GET", "bff", f"/bff/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/publish-history", persona)
@@ -82,9 +82,10 @@ class PoolPublishPort:
             latest = max(dead, key=lambda item: item[0])[1]
             failure = {"state": "failed", "reason": "consultation_dead_lettered", "failed_request_id": latest["request_id"]}
             if len(dead) > MAX_CONSULT_REPLACEMENTS:
+                bound = max(dead, key=lambda item: item[0])[0] or pool["pool_version"]
                 return {"state": "operator", "reason": "consultation_dead_lettered_retries_exhausted",
-                        "request_id": latest["request_id"], "decision_id": envelope_publication_requirement(
-                            tenant, pid, pool, pool["pool_version"]).decision_id}
+                        "request_id": latest["request_id"], "pool_version": bound, "decision_id": envelope_publication_requirement(
+                            tenant, pid, pool, bound).decision_id}
             requirement, created = open_panel(f"consult-{envelope_publication_requirement(tenant, pid, pool, pool['pool_version']).decision_id}-r{len(dead)}")
             return {**failure, "request_id": created["request_id"], "decision_id": requirement.decision_id,
                     "replacement_opened": True}
@@ -94,7 +95,7 @@ class PoolPublishPort:
             return {"state": "opened", "request_id": created["request_id"], "decision_id": requirement.decision_id}
         bound, request = max(found, key=lambda item: item[0])
         requirement = envelope_publication_requirement(tenant, pid, pool, bound)
-        ids = {"decision_id": requirement.decision_id, "request_id": request["request_id"]}
+        ids = {"decision_id": requirement.decision_id, "request_id": request["request_id"], "pool_version": bound}
         status = str(request.get("status") or "")
         if status in CONSULT_FAILED_STATES:
             return {"state": "operator", "reason": "consultation_" + status, **ids}
@@ -108,4 +109,66 @@ class PoolPublishPort:
             check = verify_published_memo(reader, memo["memo_id"], tenant_id=tenant, persona_id=pid, requirement=requirement)
             if check.ok:
                 return {"state": "verified", "memo_id": memo["memo_id"], **ids}
-        return {"state": "operator", "reason": check.reason, **ids}
+        return {"state": "operator", "reason": check.reason, "memo_id": memo["memo_id"], **ids}
+
+    # --- operator decision for an escalated envelope publication -------------------------------------
+    # The same governance queue trial admissions use (evolution proposals, flag_for_review). One entry per
+    # escalated consultation: its decision id binds tenant, persona, live membership and pool version, so a
+    # repeat cycle reads the same entry and never queues a second one.
+
+    @staticmethod
+    def publication_operator_decision_id(consult: Mapping[str, Any]) -> str:
+        return "pool-publication-op-" + hashlib.sha256(str(consult["decision_id"]).encode()).hexdigest()[:24]
+
+    def publication_operator_decision(self, persona, consult):
+        """The operator's decision on this escalated publication as the evolution owner holds it, or None.
+
+        Reads ``GET /api/evolution/proposals/{id}``, the record Management's ReviewMutation /
+        ApproveEvolutionDecision / RejectMutation commands write. A record that does not bind this tenant,
+        persona and consultation fails closed (raises) instead of being taken as an approval.
+        """
+        decision_id = self.publication_operator_decision_id(consult)
+        try:
+            record = self._call("GET", "evolution", "/api/evolution/proposals/" + quote(decision_id, safe=""), persona)
+        except Exception as exc:  # noqa: BLE001 - only a confirmed absence means "not queued yet"
+            if self._is_not_found(exc):
+                return None
+            raise
+        record = (record or {}).get("data", record) or {}
+        metadata = record.get("metadata") or {}
+        if (record.get("decision_id") != decision_id or record.get("tenant_id") != persona["tenant_id"]
+                or record.get("persona_id") != persona["persona_id"]
+                or metadata.get("consultation_decision_id") != consult["decision_id"]):
+            raise ValueError("operator_decision_binding_mismatch:" + decision_id)
+        chain = [step for step in record.get("review_chain") or [] if isinstance(step, Mapping)]
+        last = chain[-1] if chain else {}
+        return {"decision_id": decision_id, "decision_state": str(record.get("decision_state") or ""),
+                "actor_id": last.get("actor_id"), "note": last.get("note"),
+                "approval_decision_id": record.get("approval_decision_id")}
+
+    def queue_publication_operator_decision(self, persona, pool, consult):
+        """Queue the escalated publication once as an operator decision (paper only, never auto-approved)."""
+        decision_id = self.publication_operator_decision_id(consult)
+        pool_version = int(consult.get("pool_version") or pool["pool_version"])
+        reason = consult.get("reason") or "consultation_operator"
+        body = {"decision_id": decision_id, "tenant_id": persona["tenant_id"], "target_type": "persona",
+                "target_id": persona["persona_id"], "target_version": str(pool_version),
+                "action_type": "flag_for_review", "created_by_id": "persona-svc", "created_by_role": "evolution_controller",
+                "persona_id": persona["persona_id"],
+                "rationale": (f"Paper envelope publication of strategy pool v{pool_version} (live membership changed) "
+                              f"needs an operator decision: {reason}"),
+                "evidence_refs": [{"ref_type": "service_handoff", "ref_id": consult.get("request_id") or consult["decision_id"],
+                                   "storage_ref": {"owner": "consultation-svc", "persona_id": persona["persona_id"],
+                                                   "kind": "envelope_publication_consultation"}}],
+                "metadata": {"operator_required": True, "decision_kind": "pool_envelope_publication", "reason": reason,
+                             "pool_version": pool_version, "membership_digest": membership_digest(pool),
+                             "consultation_decision_id": consult["decision_id"],
+                             "consultation_request_id": consult.get("request_id"),
+                             "consultation_memo_id": consult.get("memo_id"), "paper_only": True}}
+        try:
+            self._call("POST", "evolution", "/api/evolution/proposals", persona, body)
+        except Exception as exc:  # noqa: BLE001 - a repeated id is the existing queue entry, not a new one
+            if getattr(exc, "code", None) != 409:
+                raise
+            return {"decision_id": decision_id, "status": "already_queued"}
+        return {"decision_id": decision_id, "status": "queued"}

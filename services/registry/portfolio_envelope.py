@@ -213,7 +213,10 @@ def build_portfolio_envelope(*, artifact_id, strategy_id, version, members,
         pinned.append({"member_id": member["member_id"], "artifact_id": child["artifact_id"],
                        "version": child["version"], "checksum": strategy_artifact_checksum(child),
                        "risk_weight": member["risk_weight"],
-                       "virtual_only": member.get("virtual_only", False), "artifact": child})
+                       "virtual_only": member.get("virtual_only", False), "artifact": child,
+                       # The pool admission time rides inside the checksummed logic so each
+                       # runtime's member virtual book can state since-inception history.
+                       **({"joined_at": member["joined_at"]} if member.get("joined_at") else {})})
     symbols_by_underlying = {}
     for member in pinned:
         for symbol in ([] if is_screened(member["artifact"]) else member["artifact"]["parameters"]["symbols"]):

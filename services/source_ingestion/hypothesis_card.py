@@ -391,6 +391,10 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
             )
+            if "usage" not in {row[1] for row in c.execute("PRAGMA table_info(events)")}:
+                # Provider token usage of the call behind this outcome (JSON);
+                # NULL when no call was made, null fields when not reported.
+                c.execute("ALTER TABLE events ADD COLUMN usage TEXT")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS cards (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " card TEXT NOT NULL, PRIMARY KEY(source_id, digest))"
@@ -468,6 +472,30 @@ class ExtractionLedger:
         """Consume one call; False when the cap or a per-record limit refuses."""
         return self.reserve_attempt(source_id, digest) == RESERVED
 
+    def can_attempt(self, source_id: str = "", digest: str = "") -> str:
+        """Read-only check whether one call may be reserved now for (source_id, digest)."""
+        with self._lock, self._conn() as c:
+            day = _today()
+            if source_id:
+                row = c.execute(
+                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
+                    (source_id, digest),
+                ).fetchone()
+                if row is not None:
+                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
+                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                        return RECORD_TOTAL_LIMIT
+                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                        return RECORD_DAILY_LIMIT
+            used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
+            if (used_row[0] if used_row else 0) >= self._daily_cap:
+                return DAILY_CAP_REACHED
+            return RESERVED
+
+    def remaining_daily_calls(self) -> int:
+        """Remaining calls under today's daily cap (0 when exhausted)."""
+        return max(0, self._daily_cap - self.calls_today())
+
     def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:
         """Count a spent call that yielded nothing, and keep the record's reason."""
         column = {"timeout": "timeouts", "provider_billing": "billing"}.get(failure_code, "unavailable")
@@ -530,22 +558,32 @@ class ExtractionLedger:
             row = c.execute("SELECT n FROM calls WHERE day=?", (_today(),)).fetchone()
         return int(row[0]) if row else 0
 
-    def record(self, source_id: str, outcome: str, detail: str = "") -> None:
+    def record(
+        self, source_id: str, outcome: str, detail: str = "",
+        usage: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        usage_json = json.dumps(dict(usage), sort_keys=True) if usage is not None else None
         with self._lock, self._conn() as c:
             c.execute(
-                "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500]),
+                "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500], usage_json),
             )
 
-    def events(self, source_id: str | None = None) -> list[dict[str, str]]:
+    def events(self, source_id: str | None = None) -> list[dict[str, Any]]:
         with self._conn() as c:
             rows = c.execute(
-                "SELECT ts, source_id, outcome, detail FROM events"
+                "SELECT ts, source_id, outcome, detail, usage FROM events"
                 + (" WHERE source_id=?" if source_id else "")
                 + " ORDER BY id",
                 (source_id,) if source_id else (),
             ).fetchall()
-        return [dict(zip(("ts", "source_id", "outcome", "detail"), r)) for r in rows]
+        events: list[dict[str, Any]] = []
+        for ts, sid, outcome, detail, usage in rows:
+            event: dict[str, Any] = {"ts": ts, "source_id": sid, "outcome": outcome, "detail": detail}
+            if usage is not None:
+                event["usage"] = json.loads(usage)
+            events.append(event)
+        return events
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +594,107 @@ class ExtractionLedger:
 # A billing-only failure (every provider key skipped for billing) is retried
 # with backoff, never recorded as "no hypothesis".
 UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
+
+
+@dataclass(frozen=True)
+class FixedDefectOutcome:
+    """A terminal extraction failure caused by our own defect that a deployed fix removed.
+
+    Records whose newest outbox version was closed ``skipped`` with a matching
+    ``skip_reason`` are eligible for at most one re-attempt, ordered after fresh
+    relevant records and within the 400-call daily cap and the existing
+    per-record attempt limits (3 a day, 6 in total).
+    """
+
+    code: str
+    fix: str
+    description: str
+    required_substrings: tuple[str, ...]
+    any_substrings: tuple[str, ...] = ()
+    excluded_substrings: tuple[str, ...] = ()
+
+    def matches(self, skip_reason: str | None) -> bool:
+        text = str(skip_reason or "").strip()
+        if not text.startswith("hypothesis_extraction_failed:"):
+            return False
+        if not all(needle in text for needle in self.required_substrings):
+            return False
+        if self.any_substrings and not any(needle in text for needle in self.any_substrings):
+            return False
+        if any(needle in text for needle in self.excluded_substrings):
+            return False
+        return True
+
+
+# Hosted backlog (2026-11-26 15:05Z, backend b0eb2c259): 130 sources have a
+# defect-closed row as their newest outbox version (from 302 anyOf rows across
+# 141 sources, 31 budget_breach rows across 25 sources, and 4 abstention_reason
+# maxLength rows). One re-attempt per newest version needs 130 model calls
+# (32.5% of the 400-call daily cap), draining in 1 day alongside up to 270
+# fresh relevant records (or 1-2 days if fresh relevant volume exceeds 270
+# calls on day 1, or up to 390 calls on day 1 / 650 calls over 2 days if
+# transient provider timeouts trigger per-record retries up to 3/day, 6/total).
+HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 130
+HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 130
+HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS = 1
+
+FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
+    FixedDefectOutcome(
+        code="adapter_anyof_schema_mismatch",
+        fix="L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896)",
+        description=(
+            "OpenClaw adapter structured validator rejected hypothesis_card_model_schema() "
+            "with OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH for unsupported keyword anyOf"
+        ),
+        required_substrings=("anyOf",),
+        any_substrings=(
+            "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+            "unsupported schema keyword",
+            "invalid_schema",
+        ),
+    ),
+    FixedDefectOutcome(
+        code="prompt_unstated_abstention_max_length",
+        fix="L2-HYPOTHESIS-CARD-ADAPTER-SCHEMA-CONTRACT-20261126 (#7896)",
+        description=(
+            "abstention_reason exceeded 200 characters before build_hypothesis_prompt() "
+            "stated ABSTENTION_REASON_MAX_CHARS"
+        ),
+        required_substrings=("invalid_schema", "abstention_reason"),
+        any_substrings=("maxLength", "too long"),
+    ),
+    FixedDefectOutcome(
+        code="client_interactive_token_budget_breach",
+        fix="L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 (#7908)",
+        description=(
+            "SemanticExtractionClient applied the interactive 8000/1000 token limits "
+            "after paid HYPOTHESIS_CARD answers arrived without sending max_output_tokens"
+        ),
+        required_substrings=("budget_breach",),
+        excluded_substrings=("no model call made", "> 3072"),
+    ),
+)
+
+
+def fixed_defect_for_skip_reason(skip_reason: str | None) -> Optional[FixedDefectOutcome]:
+    """Return the FixedDefectOutcome that matches ``skip_reason``, or None.
+
+    Irrelevant (``l2_irrelevant``), admission-denied (``l2_admission_denied``),
+    model-abstained (``no_hypothesis``), citation-rejected (``hypothesis_rejected``)
+    and unfixed schema/JSON failures never match.
+    """
+    for outcome in FIXED_DEFECT_REATTEMPT_OUTCOMES:
+        if outcome.matches(skip_reason):
+            return outcome
+    return None
+
+
+def call_usage(result: Any) -> Optional[dict[str, Optional[int]]]:
+    """Input/output tokens the provider reported for this call (None: unknown)."""
+    usage = getattr(result, "usage", None)
+    if not isinstance(usage, Mapping):
+        return None
+    return {key: usage.get(key) for key in ("input_tokens", "output_tokens")}
 
 _TEXT_KEYS = ("body", "text", "abstract", "excerpt", "summary")
 
@@ -707,14 +846,15 @@ class HypothesisExtractor:
             detail = f"{type(exc).__name__}: {exc}"
             self._ledger.note_call_failure(sid, digest, "transport_error", detail)
             return self._done(sid, "unavailable", detail)
+        usage = call_usage(result)
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
             detail = f"{result.failure_code}: {result.failure_message}"
             if result.failure_code in UNAVAILABLE_FAILURE_CODES:
                 self._ledger.note_call_failure(sid, digest, str(result.failure_code), detail)
-                return self._done(sid, "unavailable", detail)
-            return self._done(sid, "failed", detail)
+                return self._done(sid, "unavailable", detail, usage=usage)
+            return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
-            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained")
+            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage)
         try:
             prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
@@ -725,16 +865,19 @@ class HypothesisExtractor:
                 prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
-            return self._done(sid, "rejected", str(exc), {"code": exc.code})
+            return self._done(sid, "rejected", str(exc), {"code": exc.code}, usage=usage)
         for rejection in prediction_rejections:
             self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
-            return self._done(sid, "no_hypothesis", "not_testable")
-        self._ledger.record(sid, "card", card["testability"])
+            return self._done(sid, "no_hypothesis", "not_testable", usage=usage)
+        self._ledger.record(sid, "card", card["testability"], usage=usage)
         return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
 
-    def _done(self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None) -> ExtractionOutcome:
-        self._ledger.record(sid, status, detail)
+    def _done(
+        self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
+        *, usage: Optional[Mapping[str, Any]] = None,
+    ) -> ExtractionOutcome:
+        self._ledger.record(sid, status, detail, usage=usage)
         return ExtractionOutcome(status, detail=detail, extra=extra or {})
 
 
@@ -766,18 +909,28 @@ def extractor_from_env(client: Any | None = None, ledger_path: str | Path | None
 
 
 __all__ = [
-    "MAX_RECORD_ATTEMPTS_PER_DAY",
-    "MAX_RECORD_ATTEMPTS_TOTAL",
+    "ABSTENTION_REASON_MAX_CHARS",
     "CardRejected",
+    "DAILY_CAP_REACHED",
     "DEFAULT_DAILY_CALL_CAP",
     "ExtractionLedger",
     "ExtractionOutcome",
+    "FIXED_DEFECT_REATTEMPT_OUTCOMES",
+    "FixedDefectOutcome",
+    "HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG",
+    "HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS",
+    "HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS",
     "HypothesisExtractor",
+    "MAX_RECORD_ATTEMPTS_PER_DAY",
+    "MAX_RECORD_ATTEMPTS_TOTAL",
+    "RECORD_DAILY_LIMIT",
+    "RECORD_TOTAL_LIMIT",
+    "RESERVED",
     "card_to_strategy_seed_metadata",
     "extractor_from_env",
     "finalize_card",
+    "fixed_defect_for_skip_reason",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
-    "ABSTENTION_REASON_MAX_CHARS",
     "verify_cited_spans",
 ]

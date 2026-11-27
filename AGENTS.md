@@ -13,12 +13,16 @@ open instances live in `docs/operations/problem-register.md`.
 
 ### Feature Freeze
 
-Until the three trading personas complete one full day on hosted dev (enrolled,
-daily cycle ticked, a decision used memory, a meeting was held, results were
-written back), do not open new feature tasks. Open only tasks that belong to a
-root-cause class in the problem register or that finish or repair work that is
-already merged. An operator instruction in the current conversation that names
-a specific feature overrides the freeze for that feature only.
+Until the three trading personas complete one full day on hosted dev, do not
+open new feature tasks. A full day means that on one trading day each of the
+three is enrolled, its daily cycle ticked, a decision used memory and results
+were written back, and that each held a meeting within its current week
+(operator decision 2026-11-27: MT-1 runs on a fixed weekday per persona and
+MT-2 on the lesson count, so the three never meet on the same day). Open only
+tasks that belong to a root-cause class in the problem register or that finish
+or repair work that is already merged. An operator instruction in the current
+conversation that names a specific feature overrides the freeze for that
+feature only.
 
 ### One Problem, One Class
 

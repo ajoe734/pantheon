@@ -7690,15 +7690,40 @@ class PaperRuntimeService:
         from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks
 
         member_book_path = str(resolved_lifecycle_path) + ".member-books.json"
-        # Deployment replaces runtime IDs when publishing an envelope. Keep
-        # immutable member histories under the persona identity across replacements.
-        if not configured_lifecycle_path and not performance_state_path and self._identity.persona_id:
+        member_book_options: dict[str, Any] = {}
+        # Deployment replaces runtime IDs and RuntimeBindings when publishing an envelope. Keep
+        # immutable member histories under the persona identity across replacements, also when the
+        # reconciler sets a per-binding PANTHEON_PERFORMANCE_STATE_PATH (hosted): one book file per
+        # persona, never one per binding (MEMBER-BOOK-ADMISSION-GAP-FILL-20261126).
+        if not configured_lifecycle_path and self._identity.persona_id:
             import hashlib
+            from services.execution.lean_runtime.member_virtual_book import (
+                governed_admission_replay_source,
+            )
+
+            tenant_for_books = os.getenv("PANTHEON_TENANT_ID", "default")
             member_scope = hashlib.sha256(json.dumps([
-                os.getenv("PANTHEON_TENANT_ID", "default"), self._identity.persona_id
+                tenant_for_books, self._identity.persona_id
             ]).encode()).hexdigest()
-            member_book_path = str(Path(resolved_lifecycle_path).parent / "member-books" / (member_scope + ".json"))
-        self._member_virtual_books = MemberVirtualBooks(member_book_path)
+            books_dir = Path(resolved_lifecycle_path).parent
+            member_book_path = str(books_dir / "member-books" / (member_scope + ".json"))
+            # Books written under earlier per-binding files (<binding state>.lifecycle-outbox.json
+            # .member-books.json) are read, never moved or deleted, to carry a member's recorded marks once.
+            member_book_options["legacy_paths"] = (
+                sorted(books_dir.glob("*.member-books.json")) if books_dir.is_dir() else []
+            )
+
+            def _registry_entry(artifact_id: str, tenant_id: str) -> Any:
+                from services.evolution.approved_baselines import http_registry_entry_reader
+
+                reader = getattr(self, "_member_entry_reader", None) or http_registry_entry_reader
+                return reader(artifact_id, tenant_id)
+
+            member_book_options["history_source"] = governed_admission_replay_source(
+                entry_reader=_registry_entry,
+                tenant_id=(tenant_for_books.strip() or "default"),
+            )
+        self._member_virtual_books = MemberVirtualBooks(member_book_path, **member_book_options)
         self._lifecycle_outbox = LifecycleTelemetryOutbox(resolved_lifecycle_path)
         try:
             self._lifecycle_chains = self._lifecycle_outbox.chains()

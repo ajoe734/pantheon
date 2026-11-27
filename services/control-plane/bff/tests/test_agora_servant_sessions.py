@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from unittest import mock
+
+import pytest
 from fastapi.testclient import TestClient
 
 from datetime import datetime, timezone
@@ -25,6 +29,14 @@ except (ImportError, ValueError):
     from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClientError
     from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
+try:
+    from agora.servant.pg_owner_fake import FakeOwnerTable
+except ImportError:
+    from services.control_plane.bff.agora.servant.pg_owner_fake import FakeOwnerTable
+from services.agora.service import AgoraWriteService
+from services.agora.store import AgoraStore
+from services.control_plane.bff.agora.servant.turn_worker import ServantTurnWorker
+from services.control_plane.bff.agora.servant.tool_turn import PACKET_MARKER
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.personas.service import (
     _extract_identity,
@@ -281,6 +293,40 @@ class FakeOpenClawClient:
         self.sessions[session_id] = record
         return {"status": "ok", "session": record}
 
+    def invoke_structured_extraction(self, **kwargs: Any) -> dict[str, Any]:
+        """AGORA-SERVANT-DATA-TOOLS-20261127: the servant turn is a structured tool turn.
+
+        Recorded in the old call shape (``messages`` rebuilt from the turn packet) so the T1
+        history assertions keep proving what the provider received.
+        """
+        packet = json.loads(kwargs["prompt"].split(PACKET_MARKER, 1)[1])
+        messages = [dict(m) for m in packet["history"]] + [
+            {"role": "user", "content": packet["trader_message"], "attachment_refs": packet["attachment_refs"]}
+        ]
+        self.invoke_calls.append({**kwargs, "provider": "openclaw", "packet": packet, "messages": messages})
+        if self.fail_next_invoke:
+            self.fail_next_invoke = False
+            raise OpenClawOpsClientError(
+                "adapter unavailable",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_UNREACHABLE",
+            )
+        return {
+            "status": "ok",
+            "data": {
+                "status": "completed",
+                "output": {
+                    "structured_data": {
+                        "action": "answer",
+                        "tool_calls": [],
+                        "answer_text": "Servant response grounded in the supplied context.",
+                        "cited_fact_ids": [],
+                        "missing_data": [],
+                    }
+                },
+            },
+        }
+
     def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
         self.invoke_calls.append(kwargs)
         if self.fail_next_invoke:
@@ -303,13 +349,29 @@ def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _install_client(monkeypatch: Any, tmp_path: Path) -> tuple[TestClient, FakeOpenClawClient]:
+def _build_owner() -> AgoraWriteService:
+    """An Agora owner over the shared fake Postgres rows (a new one models a restarted process)."""
+    with mock.patch("services.agora.store.PostgresJsonOwnerStore", FakeOwnerTable):
+        return AgoraWriteService(store=AgoraStore(dsn="postgresql://test/none", bootstrap=False))
+
+
+def _install_client(
+    monkeypatch: Any,
+    tmp_path: Path,
+    *,
+    owner: AgoraWriteService | None = None,
+    fake: FakeOpenClawClient | None = None,
+    reset_rows: bool = True,
+) -> tuple[TestClient, FakeOpenClawClient]:
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    if reset_rows:
+        FakeOwnerTable.reset()
+    owner = owner or _build_owner()
     store = _create_test_agora_store()
-    fake = FakeOpenClawClient()
+    fake = fake or FakeOpenClawClient()
     monkeypatch.setattr(servant_router, "OpenClawOpsClient", lambda: fake)
-    servant_router._SERVANT_SESSION_EVENTS.clear()
+    monkeypatch.setattr(servant_router, "_default_servant_session_owner", lambda: owner)
 
     router = create_agora_router(
         extract_identity=_extract_identity,
@@ -342,7 +404,15 @@ def _install_client(monkeypatch: Any, tmp_path: Path) -> tuple[TestClient, FakeO
         return JSONResponse(status_code=exc.status_code, content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}})
 
     app.include_router(router)
-    return TestClient(app, raise_server_exceptions=False), fake
+    client = TestClient(app, raise_server_exceptions=False)
+    client.servant_owner = owner  # type: ignore[attr-defined]
+    return client, fake
+
+
+def _run_worker(client: TestClient, fake: FakeOpenClawClient) -> ServantTurnWorker:
+    worker = ServantTurnWorker(owner=client.servant_owner, client_factory=lambda: fake)  # type: ignore[attr-defined]
+    worker.run_once()
+    return worker
 
 
 def _ensure_servant(client: TestClient) -> str:
@@ -460,19 +530,22 @@ def test_servant_session_detail_message_stream_and_terminate(
     )
     assert message.status_code == 202, message.text
     message_body = message.json()
-    assert message_body["data"]["provider"]["status"] == "completed"
-    assert message_body["data"]["provider"]["answer"] == "Servant response grounded in the supplied context."
+    # AD-AG-05: 202 means durably queued; no provider call ran inside the request.
+    assert message_body["data"]["provider"] == {"status": "queued", "answer": None, "error": None}
+    assert fake.invoke_calls == []
+
+    _run_worker(client, fake)
     invoke = fake.invoke_calls[-1]
     assert invoke["provider"] == "openclaw"
-    assert invoke["metadata"]["audit"]["trace_id"] == "trace-message-001"
-    assert invoke["metadata"]["audit"]["request_id"] == "req-message-001"
-    assert invoke["metadata"]["audit"]["persona_id"] == persona_id
+    assert invoke["trace_id"] == "trace-message-001"
+    assert invoke["operator_id"] == "agora-test-user"
     assert invoke["messages"][0]["attachment_refs"] == ["evidence://seed-1"]
 
     stream = client.get(f"/bff/agora/servant/sessions/{session_id}/stream", headers=AUTH)
     assert stream.status_code == 200, stream.text
     assert "text/event-stream" in stream.headers["content-type"]
     assert "event: servant.message.completed" in stream.text
+    assert "Servant response grounded in the supplied context." in stream.text
     assert "trace-message-001" in stream.text
 
     terminated = client.post(
@@ -508,6 +581,169 @@ def test_servant_message_reports_openclaw_degraded(monkeypatch: Any, tmp_path: P
     )
 
     assert response.status_code == 202, response.text
-    provider = response.json()["data"]["provider"]
-    assert provider["status"] == "degraded"
-    assert provider["error"]["code"] == "OPENCLAW_UPSTREAM_DEGRADED"
+    assert fake.invoke_calls == []
+    _run_worker(client, fake)
+    stream = client.get(f"/bff/agora/servant/sessions/{session_id}/stream", headers=AUTH)
+    assert "event: servant.message.degraded" in stream.text
+    assert "OPENCLAW_UPSTREAM_DEGRADED" in stream.text
+
+
+# --------------------------------------------------------------------------- #
+# AGORA-SERVANT-SESSION-DURABLE-20261127
+# --------------------------------------------------------------------------- #
+
+def _send(client: TestClient, session_id: str, content: str, key: str, *, auth: dict | None = None):
+    return client.post(
+        f"/bff/agora/servant/sessions/{session_id}/messages",
+        json={"content": content},
+        headers={**(auth or AUTH), "Idempotency-Key": key, "X-Request-Id": f"req-{key}", "X-Trace-Id": f"trace-{key}"},
+    )
+
+
+def _stream_events(client: TestClient, session_id: str, *, last_event_id: str | None = None) -> list[dict[str, Any]]:
+    headers = dict(AUTH)
+    if last_event_id:
+        headers["Last-Event-ID"] = last_event_id
+    response = client.get(f"/bff/agora/servant/sessions/{session_id}/stream", headers=headers)
+    assert response.status_code == 200, response.text
+    events: list[dict[str, Any]] = []
+    for block in response.text.strip().split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        if fields:
+            events.append({"id": fields["id"], "type": fields["event"], "data": json.loads(fields["data"])})
+    return events
+
+
+def test_servant_history_survives_bff_restart(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    assert _send(client, session_id, "第一個問題", "restart-001").status_code == 202
+    _run_worker(client, fake)
+    before = [(e["type"], e["data"].get("content") or e["data"].get("answer")) for e in _stream_events(client, session_id)]
+
+    # A new app object over a new owner object, same Postgres rows: the process dict is gone.
+    assert not hasattr(servant_router, "_SERVANT_SESSION_EVENTS")
+    restarted, fake2 = _install_client(monkeypatch, tmp_path, fake=fake, reset_rows=False)
+    _ensure_servant(restarted)
+    after = [(e["type"], e["data"].get("content") or e["data"].get("answer")) for e in _stream_events(restarted, session_id)]
+
+    assert after == before
+    assert ("servant.message.accepted", "第一個問題") in after
+    assert ("servant.message.completed", "Servant response grounded in the supplied context.") in after
+    # ... and the conversation continues on the restarted app with the earlier turn in its history.
+    assert _send(restarted, session_id, "第二個問題", "restart-002").status_code == 202
+    _run_worker(restarted, fake2)
+    contents = [m["content"] for m in fake2.invoke_calls[-1]["messages"]]
+    assert contents[0] == "第一個問題" and contents[-1] == "第二個問題"
+
+
+def test_servant_message_request_makes_no_provider_call(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+
+    def _boom(**_kw: Any) -> Any:
+        raise AssertionError("provider call inside the request")
+
+    monkeypatch.setattr(fake, "invoke_assistant_provider", _boom)
+    monkeypatch.setattr(fake, "invoke_structured_extraction", _boom)
+    response = _send(client, session_id, "no provider here", "noprov-001")
+
+    assert response.status_code == 202, response.text
+    queued = [e for e in _stream_events(client, session_id) if e["type"] == "servant.message.queued"]
+    assert queued and queued[0]["data"]["status"] == "queued"
+    turns = client.servant_owner.list_servant_turns(session_id)  # type: ignore[attr-defined]
+    assert [t["status"] for t in turns] == ["queued"]
+
+
+def test_servant_message_idempotency_key_replay_queues_once(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    first = _send(client, session_id, "same", "idem-001").json()["data"]
+    second = _send(client, session_id, "same", "idem-001").json()["data"]
+    assert first["turn_id"] == second["turn_id"] and first["message_id"] == second["message_id"]
+    _run_worker(client, fake)
+    assert len(fake.invoke_calls) == 1
+    reused = _send(client, session_id, "different text", "idem-001")
+    assert reused.status_code == 409, reused.text
+
+
+def test_servant_turn_carries_last_20_messages(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    for i in range(15):  # 30 messages: 15 user + 15 servant
+        assert _send(client, session_id, f"q{i}", f"hist-{i:02d}").status_code == 202
+        _run_worker(client, fake)
+    assert _send(client, session_id, "q15", "hist-15").status_code == 202
+    _run_worker(client, fake)
+
+    carried = fake.invoke_calls[-1]["messages"]
+    assert len(carried) == 20
+    assert carried[-1] == {"role": "user", "content": "q15", "attachment_refs": []}
+    assert [m["role"] for m in carried] == ["assistant", "user"] * 10
+    assert carried[0]["role"] == "assistant"
+    assert carried[1]["content"] == "q6"  # 31 messages exist; the oldest 11 (q0..a4, q5) are not carried
+
+
+def test_servant_session_message_cap_and_size_budget(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    owner = client.servant_owner  # type: ignore[attr-defined]
+    # Fill the owner row to 498 messages directly, then the route enforces the cap of 500.
+    for i in range(498):
+        owner.append_session_message(session_id, f"fill-{i}", "x", "agora-test-user", ("trader",))
+    assert _send(client, session_id, "fits", "cap-001").status_code == 202  # 499th; its answer is the 500th
+    _run_worker(client, fake)
+    full = _send(client, session_id, "one too many", "cap-002")
+    assert full.status_code == 409, full.text
+    assert len(owner.get_servant_session(session_id, tenant_id="pantheon-dev", user_id="agora-test-user")["messages"]) == 500
+
+    too_long = _send(client, session_id, "x" * 4001, "cap-003")
+    assert too_long.status_code == 422, too_long.text
+
+
+def test_servant_session_is_owner_scoped(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    assert _send(client, session_id, "mine", "scope-001").status_code == 202
+    owner = client.servant_owner  # type: ignore[attr-defined]
+    assert owner.get_servant_session(session_id, tenant_id="pantheon-dev", user_id="someone-else") is None
+    assert owner.get_servant_session(session_id, tenant_id="other-tenant", user_id="agora-test-user") is None
+
+
+def test_servant_sessions_kept_180_days_then_purged(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    assert _send(client, session_id, "old", "purge-001").status_code == 202
+    owner = client.servant_owner  # type: ignore[attr-defined]
+    session = owner.store.get_session(session_id)
+
+    young = owner.purge_expired_servant_sessions(actor_roles=("system",), now="2026-12-01T00:00:00Z")
+    assert young == {"sessions": 0, "turns": 0}
+    touched = session["updatedAt"][:4]
+    assert touched == "2026" or touched  # the session was just written
+
+    far = owner.purge_expired_servant_sessions(actor_roles=("system",), now="2099-01-01T00:00:00Z")
+    assert far == {"sessions": 1, "turns": 1}
+    assert owner.store.get_session(session_id) is None
+    with pytest.raises(Exception):
+        owner.purge_expired_servant_sessions(actor_roles=("trader",))
+
+
+def test_servant_crashed_turn_is_reclaimed_after_lease(monkeypatch: Any, tmp_path: Path) -> None:
+    client, fake = _install_client(monkeypatch, tmp_path)
+    _ensure_servant(client)
+    session_id = _create_session(client)["data"]["session_id"]
+    assert _send(client, session_id, "crash me", "crash-001").status_code == 202
+    owner = client.servant_owner  # type: ignore[attr-defined]
+    claimed = owner.claim_servant_turn(lease_owner="dead-worker", actor_roles=("persona",), lease_seconds=60, now="2026-11-27T00:00:00Z")
+    assert claimed and claimed["attempts"] == 1
+    assert owner.claim_servant_turn(lease_owner="w2", actor_roles=("persona",), now="2026-11-27T00:00:30Z") is None
+    again = owner.claim_servant_turn(lease_owner="w2", actor_roles=("persona",), now="2026-11-27T00:02:00Z")
+    assert again and again["attempts"] == 2 and again["lease_owner"] == "w2"

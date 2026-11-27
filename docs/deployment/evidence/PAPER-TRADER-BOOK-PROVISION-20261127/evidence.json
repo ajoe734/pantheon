@@ -1,0 +1,89 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-PROVISION-20261127",
+  "title": "Each trader's servant gets one paper capital pool and one paper RuntimeBinding on first paper use",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T7)",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "delivery_state": "source_and_tests_verified_hosted_proof_pending_deploy",
+  "acceptance_criteria": {
+    "ac1_first_paper_use_idempotent_single_pool_and_binding": {
+      "status": "verified_local_owner_integration",
+      "implementation": [
+        "services/control-plane/bff/personas/trader_paper_book.py::ensure_trader_paper_book",
+        "services/control-plane/bff/personas/trader_paper_book.py::read_trader_paper_book",
+        "services/control-plane/bff/agora/servant/router.py::ensure_agora_servant_paper_book (POST /bff/agora/servant/paper-book/ensure)",
+        "services/control-plane/bff/agora/servant/router.py::get_agora_servant_paper_book (GET /bff/agora/servant/paper-book)",
+        "services/control-plane/bff/personas/routes/provisioning.py::bff_ensure_persona_trader_paper_book (POST /bff/personas/{persona_id}/provisioning/paper-book)"
+      ],
+      "owner_paths_exercised": [
+        "Capital owner: GET /api/capital-pools/{pool_id}, POST /api/capital-pools, GET /api/bindings/{binding_id}, POST /api/bindings, POST /api/bindings/{binding_id}/activate via PersonaProvisioningCoordinator.ensure_chain_paper_capital",
+        "Runtime-Manager owner: RuntimeManagerClient.list_by_pool, RuntimeManagerClient.deploy, RuntimeManagerClient.get with dynamic bearer auth from PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125"
+      ],
+      "test": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_first_paper_use_provisions_one_paper_pool_and_one_paper_binding_idempotently"
+    },
+    "ac2_no_canary_or_live_binding": {
+      "status": "verified_fail_closed",
+      "implementation": [
+        "services/control-plane/bff/personas/trader_paper_book.py::validate_paper_only_stage",
+        "services/control-plane/bff/personas/trader_paper_book.py::validate_servant_persona_paper_ceiling"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_no_canary_or_live_binding_can_be_created_from_trader_paper_book_path",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_persona_with_non_paper_ceiling_is_rejected_before_any_owner_write"
+      ]
+    },
+    "ac3_starting_capital_operator_setting_and_source": {
+      "status": "verified",
+      "setting_env": "PANTHEON_TRADER_PAPER_STARTING_CAPITAL",
+      "currency_setting_env": "PANTHEON_TRADER_PAPER_STARTING_CAPITAL_CURRENCY",
+      "default_amount": 10000000.0,
+      "default_currency": "TWD",
+      "source_values": [
+        "operator_env (env:PANTHEON_TRADER_PAPER_STARTING_CAPITAL)",
+        "operator_setting_default (default:PANTHEON_TRADER_PAPER_STARTING_CAPITAL)"
+      ],
+      "test": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_starting_capital_comes_from_operator_setting_and_shows_source"
+    },
+    "ac4_hosted_proof": {
+      "status": "pending_post_merge_dev_deploy",
+      "note": "Worker environment has no direct write access to hosted dev before this branch merges and deploys. After dev deploy switches to a release containing PAPER-TRADER-BOOK-PROVISION-20261127, invoke POST /bff/agora/servant/paper-book/ensure and GET /bff/agora/servant/paper-book for the dev trader account to record the hosted CapitalPool ID and RuntimeBinding ID."
+    }
+  },
+  "contracts": {
+    "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "openapi_sha256": "94926cfb38e3e1776ffbe8d01d3d4eeb849a7c3956bb295cd516055b1a81b370",
+    "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "capability_manifest_sha256": "2b06f01da7c271b88f83b0e53892fccf1eecd159ca4ca9d58b7c17443bd3dd0c",
+    "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "backend_routes_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "route_diff_baseline": "docs/bff/contract_snapshots/route-diff-baseline.json"
+  },
+  "runtime_budget": {
+    "new_persistent_stores_or_tables": "none",
+    "new_recurring_jobs_or_timers": "none",
+    "llm_calls": 0,
+    "cadence": "on-demand only (first paper use per trader servant persona; GET-first idempotent no-op on subsequent calls)",
+    "hosted_scale_size_and_count": "1 CapitalPool row (~1 KB), 1 PersonaCapitalBinding row (~1 KB), and 1 RuntimeBinding row (~1.5 KB) per trader account in the existing Capital and Runtime-Manager stores (<350 KB total at 100 traders)",
+    "growth_per_day": "0 B/day steady state after initial trader enrollment (idempotent GET-first readback writes 0 bytes when pool, capital binding, and active RuntimeBinding already exist; persona metadata write is skipped when paper_book summary is unchanged)",
+    "cap_and_cleanup": "Bounded 1:1 to trader servant personas (CapitalPool.single_runtime_enforced=true); retired through the existing binding-before-pool retirement path (retire_chain_paper_capital and RuntimeManagerClient.retire)"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_package_boundary_prerequisite.py scripts/test_bff_route_diff.py scripts/test_agora_compat_manifest.py"
+    ],
+    "tests_passed": 151
+  },
+  "residual_findings": [
+    {
+      "summary": "Base dev (84b002124) had 13 /bff/agora/persona-lab/* routes present in services/control-plane/bff/contract_snapshots/backend_routes_manifest.json that had not been written into docs/bff/contract_snapshots/route-diff-baseline.json (508 vs 495 backend_missing_frontend). Regenerating backend_routes_manifest.json and route-diff-baseline.json via scripts/bff_route_manifest_backend.py and scripts/bff_route_diff.py --write-baseline synchronized the baseline alongside the 3 new paper-book routes.",
+      "scope": "docs/bff/contract_snapshots/route-diff-baseline.json",
+      "disposition": "resolved_in_task_snapshot_refresh"
+    },
+    {
+      "summary": "Two tests in services/control-plane/bff/tests/test_agora_servant_production_write_owner.py fail on base dev when PANTHEON_EVOLUTION_API_URL is unset (/bff/management/persona-fleet returns 422 on unconfigured Evolution reader) and because cross-tenant personas are now omitted from excluded[] in participants:eligible rather than returned with reason tenant_mismatch.",
+      "scope": "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+      "disposition": "outside_task_scope_recorded_for_coordinator"
+    }
+  ]
+}

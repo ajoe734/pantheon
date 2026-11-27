@@ -20,6 +20,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+import time
 from typing import Any, Callable, Optional, Sequence
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore, quote_pg_identifier
@@ -29,6 +31,7 @@ from .models import (
     DeploymentSummary,
     RegistryEntry,
     RegistryEntryCreate,
+    entry_payloads_cas_equal,
     utc_now_iso,
 )
 from .storage import (
@@ -66,9 +69,14 @@ from .storage import (
     STRATEGY_SUMMARY_ROW_KEYS,
     STRATEGY_SUMMARY_SPEC_KEYS,
     RegistryConcurrentUpdateError,
+    _CompiledIndexRow,
+    _CompiledIndexRowList,
+    _compile_strategy_summary_index_row,
+    build_strategy_summary_index_payload,
     discovery_candidate_from_payload,
     encode_strategy_artifact_page_token,
     page_strategy_artifact_rows,
+    project_cached_summary_index_row,
     strategy_artifact_sort_key,
 )
 
@@ -144,6 +152,216 @@ _DISCOVERY_SELECT_SQL = (
 ARTIFACT_TYPE_INDEX_SUFFIX = "_artifact_type_idx"
 ARTIFACT_TYPE_INDEX_SQL = "(payload ->> 'artifact_type')"
 
+# REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127: Phase 1 of strategy_summary_page reads
+# pre-projected candidate-index fields from stored columns (summary_index JSONB,
+# summary_rev BIGINT) kept current on every write path via a BEFORE INSERT OR UPDATE
+# OF payload trigger (and idempotently backfilled in bounded batches at bootstrap),
+# paired with a stamp-validated in-process Phase 1 cache checked by one cheap
+# index-only query on entries_strategy_summary_idx.
+SUMMARY_INDEX_COLUMN = "summary_index"
+SUMMARY_REV_COLUMN = "summary_rev"
+SUMMARY_INDEX_SUFFIX = "_strategy_summary_idx"
+SUMMARY_INDEX_TRIGGER_SUFFIX = "_strategy_summary_index_tg"
+SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000
+SUMMARY_INDEX_BACKFILL_MAX_BATCHES = 50
+SUMMARY_INDEX_MAX_TENANT_VIEWS = 16
+
+
+def strategy_spec_summary_index_stamp_sql(table: str) -> str:
+    """One cheap index-only query returning ``(count, max_rev, sum_rev)`` over stored summary-index rows."""
+    return (
+        f"SELECT count(*), coalesce(max({SUMMARY_REV_COLUMN}), 0)::bigint, "
+        f"coalesce(sum({SUMMARY_REV_COLUMN}), 0)::bigint "
+        f"FROM {table} WHERE {SUMMARY_INDEX_COLUMN} IS NOT NULL"
+    )
+
+
+def strategy_spec_summary_index_stored_select_sql(table: str) -> str:
+    """Cold Phase 1 read of stored ``summary_index`` column (never evaluates ``payload`` expressions)."""
+    return (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({SUMMARY_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {SUMMARY_INDEX_COLUMN} IS NOT NULL "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+
+
+def strategy_spec_summary_index_delta_sql(table: str) -> str:
+    """Indexed delta Phase 1 read of stored ``summary_index`` rows written since a revision watermark."""
+    return (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({SUMMARY_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {SUMMARY_INDEX_COLUMN} IS NOT NULL AND {SUMMARY_REV_COLUMN} > %s "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+
+
+def strategy_spec_summary_index_stored_tenant_select_sql(
+    table: str, visible_tenants: Optional[frozenset] = None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Direct uncached stored-column Phase 1 query filtered by ``visible_tenants`` without touching ``payload``."""
+    where = [f"{SUMMARY_INDEX_COLUMN} IS NOT NULL"]
+    params: list[Any] = []
+    if visible_tenants is not None:
+        named = sorted(t for t in visible_tenants if t is not None)
+        clauses = [f"{SUMMARY_INDEX_COLUMN} ->> 'owner_tenant' = ANY(%s::text[])"]
+        params.append(named)
+        if None in visible_tenants:
+            clauses.append(f"{SUMMARY_INDEX_COLUMN} ->> 'owner_tenant' IS NULL")
+        where.append("(" + " OR ".join(clauses) + ")")
+    sql = (
+        f"SELECT record_id, coalesce({SUMMARY_REV_COLUMN}, 0)::bigint, ({SUMMARY_INDEX_COLUMN})::text "
+        f"FROM {table} WHERE {' AND '.join(where)} "
+        "ORDER BY updated_at ASC, record_id ASC"
+    )
+    return sql, tuple(params)
+
+
+def _decode_stored_summary_index_row(raw_json: str) -> _CompiledIndexRow:
+    data = json.loads(raw_json)
+    owner_tenant = data.pop("owner_tenant", None)
+    row = _CompiledIndexRow(data, owner_tenant=owner_tenant)
+    row._compiled = _compile_strategy_summary_index_row(row)
+    return row
+
+
+def _strategy_summary_index_build_function_sql(fn_build: str) -> str:
+    """PL/pgSQL IMMUTABLE function extracting the candidate-index JSONB from a RegistryEntry payload."""
+    return f"""
+CREATE OR REPLACE FUNCTION {fn_build}(raw_payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+AS $fn$
+DECLARE
+    p jsonb;
+    m jsonb;
+    mp jsonb;
+    s jsonb;
+    sp jsonb;
+    sm jsonb;
+    meta_out jsonb;
+    spec_out jsonb;
+    inner_meta_out jsonb;
+    row_out jsonb;
+BEGIN
+    IF raw_payload IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF jsonb_typeof(raw_payload) = 'string' THEN
+        BEGIN
+            p := (raw_payload #>> '{{}}')::jsonb;
+        EXCEPTION WHEN OTHERS THEN
+            RETURN NULL;
+        END;
+    ELSE
+        p := raw_payload;
+    END IF;
+    IF jsonb_typeof(p) <> 'object' OR COALESCE(p ->> 'artifact_type', '') <> 'strategy_spec' THEN
+        RETURN NULL;
+    END IF;
+
+    m := CASE WHEN jsonb_typeof(p -> 'metadata') = 'object' THEN p -> 'metadata' ELSE NULL END;
+    mp := CASE WHEN m IS NOT NULL AND jsonb_typeof(m -> 'provenance') = 'object' THEN m -> 'provenance' ELSE NULL END;
+    s := CASE WHEN m IS NOT NULL AND jsonb_typeof(m -> 'strategy_spec') = 'object' THEN m -> 'strategy_spec' ELSE NULL END;
+    sp := CASE WHEN s IS NOT NULL AND jsonb_typeof(s -> 'provenance') = 'object' THEN s -> 'provenance' ELSE NULL END;
+    sm := CASE WHEN s IS NOT NULL AND jsonb_typeof(s -> 'metadata') = 'object' THEN s -> 'metadata' ELSE NULL END;
+
+    IF sm IS NOT NULL THEN
+        inner_meta_out := jsonb_strip_nulls(jsonb_build_object(
+            'persona_id', sm -> 'persona_id',
+            'lifecycle_state', sm -> 'lifecycle_state',
+            'state', sm -> 'state',
+            'status', sm -> 'status',
+            'data_scope', sm -> 'data_scope',
+            'dataScope', sm -> 'dataScope'
+        ));
+    ELSE
+        inner_meta_out := NULL;
+    END IF;
+
+    IF s IS NOT NULL THEN
+        spec_out := jsonb_strip_nulls(jsonb_build_object(
+            'strategy_id', s -> 'strategy_id',
+            'spec_version', s -> 'spec_version',
+            'lifecycle_state', s -> 'lifecycle_state',
+            'state', s -> 'state',
+            'status', s -> 'status',
+            'persona_ids', s -> 'persona_ids',
+            'created_at', s -> 'created_at',
+            'updated_at', s -> 'updated_at',
+            'last_modified_at', s -> 'last_modified_at',
+            'title', s -> 'title',
+            'name', s -> 'name',
+            'provenance', CASE WHEN sp IS NOT NULL THEN jsonb_strip_nulls(jsonb_build_object('created_at', sp -> 'created_at')) ELSE NULL END,
+            'metadata', inner_meta_out
+        ));
+    ELSE
+        spec_out := NULL;
+    END IF;
+
+    IF m IS NOT NULL THEN
+        meta_out := jsonb_strip_nulls(jsonb_build_object(
+            'spec_version_id', m -> 'spec_version_id',
+            'spec_version', m -> 'spec_version',
+            'version', m -> 'version',
+            'personaIds', m -> 'personaIds',
+            'persona_ids', m -> 'persona_ids',
+            'persona_id', m -> 'persona_id',
+            'lifecycle_state', m -> 'lifecycle_state',
+            'state', m -> 'state',
+            'status', m -> 'status',
+            'title', m -> 'title',
+            'name', m -> 'name',
+            'data_scope', m -> 'data_scope',
+            'dataScope', m -> 'dataScope',
+            'provenance', CASE WHEN mp IS NOT NULL THEN jsonb_strip_nulls(jsonb_build_object('created_at', mp -> 'created_at')) ELSE NULL END,
+            'strategy_spec', spec_out
+        ));
+    ELSE
+        meta_out := '{{}}'::jsonb;
+    END IF;
+
+    row_out := jsonb_strip_nulls(jsonb_build_object(
+        'registry_id', p -> 'registry_id',
+        'artifact_type', p -> 'artifact_type',
+        'artifact_state', p -> 'artifact_state',
+        'strategy_id', p -> 'strategy_id',
+        'version', p -> 'version',
+        'owner_tenant', p -> 'owner_tenant',
+        'created_at', p -> 'created_at',
+        'updated_at', p -> 'updated_at'
+    ));
+    IF (p -> 'created_at') IS NOT NULL AND jsonb_typeof(p -> 'created_at') = 'null' THEN
+        row_out := row_out || '{{"created_at": null}}'::jsonb;
+    END IF;
+    IF (p -> 'updated_at') IS NOT NULL AND jsonb_typeof(p -> 'updated_at') = 'null' THEN
+        row_out := row_out || '{{"updated_at": null}}'::jsonb;
+    END IF;
+    RETURN row_out || jsonb_build_object('metadata', meta_out);
+END;
+$fn$;
+""".strip()
+
+
+def _strategy_summary_index_trigger_function_sql(
+    fn_tg: str, fn_build: str, seq_ident: str,
+) -> str:
+    return f"""
+CREATE OR REPLACE FUNCTION {fn_tg}()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $tg$
+BEGIN
+    NEW.{SUMMARY_INDEX_COLUMN} := {fn_build}(NEW.payload);
+    IF NEW.{SUMMARY_INDEX_COLUMN} IS NOT NULL THEN
+        NEW.{SUMMARY_REV_COLUMN} := nextval('{seq_ident}');
+    ELSE
+        NEW.{SUMMARY_REV_COLUMN} := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$tg$;
+""".strip()
+
 
 def artifact_type_select_sql(table: str) -> str:
     """Rows of one artifact type, ``updated_at`` ascending, as JSON text.
@@ -187,11 +405,48 @@ class PostgresRegistryStore:
         self._receipts = PostgresJsonOwnerStore(
             dsn=dsn, table=receipts_table, owner_service="registry-svc", bootstrap=bootstrap,
         )
+        self._init_summary_index_cache_state()
         if bootstrap:
             self._ensure_artifact_catalog_indexes()
             self._ensure_artifact_type_index()
+            self._ensure_strategy_summary_index()
         self.full_summary_rows_extracted: int = 0
         self.full_summary_row_ids_extracted: list[str] = []
+
+    def _init_summary_index_cache_state(self) -> None:
+        if not hasattr(self, "_summary_index_lock"):
+            self._summary_index_lock = threading.Lock()
+        if not hasattr(self, "_summary_index_by_record_id"):
+            self._summary_index_by_record_id: Optional[dict[str, tuple[int, _CompiledIndexRow]]] = None
+        if not hasattr(self, "_summary_index_stamp"):
+            self._summary_index_stamp: Optional[tuple[int, int, int]] = None
+        if not hasattr(self, "_summary_index_tenant_views"):
+            self._summary_index_tenant_views: dict[tuple[Any, bool, bool], _CompiledIndexRowList] = {}
+        if not hasattr(self, "_summary_index_ready"):
+            self._summary_index_ready: bool = False
+        if not hasattr(self, "_summary_index_cache_enabled"):
+            self._summary_index_cache_enabled: bool = True
+        if not hasattr(self, "last_summary_index_backfill"):
+            self.last_summary_index_backfill: Optional[dict[str, Any]] = None
+        if not hasattr(self, "phase1_index_sql_reads"):
+            self.phase1_index_sql_reads: int = 0
+        if not hasattr(self, "phase1_index_delta_reads"):
+            self.phase1_index_delta_reads: int = 0
+        if not hasattr(self, "phase1_index_cache_hits"):
+            self.phase1_index_cache_hits: int = 0
+        if not hasattr(self, "phase1_index_rows_fetched"):
+            self.phase1_index_rows_fetched: int = 0
+        if not hasattr(self, "phase1_payload_rescans"):
+            self.phase1_payload_rescans: int = 0
+
+    def invalidate_strategy_summary_index_cache(self, *, full: bool = False) -> None:
+        """Invalidate the in-process Phase 1 summary-index cache (or tenant views)."""
+        self._init_summary_index_cache_state()
+        with self._summary_index_lock:
+            self._summary_index_tenant_views.clear()
+            if full:
+                self._summary_index_by_record_id = None
+                self._summary_index_stamp = None
 
     # -- Write operations ---------------------------------------------------
 
@@ -253,7 +508,9 @@ class PostgresRegistryStore:
             )
             if created:
                 self._store_creation_receipt(registry_id, entry.to_dict(), conn=conn)
-                return entry, True
+        if created:
+            self.invalidate_strategy_summary_index_cache(full=False)
+            return entry, True
         # Reviewer finding 5: the *comparison* a caller runs against a
         # same-registry_id collision must use the row's immutable
         # original-creation content (see :meth:`get_creation_receipt`), never
@@ -303,6 +560,45 @@ class PostgresRegistryStore:
         """Unconditional overwrite — restricted to idempotent built-in bootstrap
         registration at startup, never a caller-facing mutation path."""
         self._entries.put(entry.registry_id, entry.to_dict())
+        self.invalidate_strategy_summary_index_cache(full=False)
+
+    def _cas_entry(
+        self,
+        registry_id: str,
+        expected: Optional[dict[str, Any]],
+        new_payload: dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ) -> tuple[bool, Optional[dict[str, Any]]]:
+        """CAS one entry row under the shared registry equality rule.
+
+        The JSONB ``payload = expected`` predicate compares raw stored JSON,
+        so a legacy row that lacks keys the model now defaults (e.g.
+        ``replication_success``/``replication_proof``) never equals the
+        caller's ``to_dict()`` snapshot (REGISTRY-CAS-LEGACY-ROW-NORMALIZE-
+        20261126). On a miss, ``compare_and_set`` hands back the row it
+        actually saw; if that row equals ``expected`` under
+        :func:`entry_payloads_cas_equal` (absent key == model default, every
+        present value identical) the CAS is retried once against that exact
+        raw row. The retry is itself an atomic JSONB-equality CAS, so a
+        writer that changed the row in between still makes it fail, and any
+        real field difference never reaches the retry.
+        """
+        ok, canonical = self._entries.compare_and_set(
+            registry_id, expected, new_payload, conn=conn,
+        )
+        if ok or expected is None or canonical is None or canonical == expected:
+            if ok:
+                self.invalidate_strategy_summary_index_cache(full=False)
+            return ok, canonical
+        if not entry_payloads_cas_equal(canonical, expected):
+            return ok, canonical
+        ok, canonical = self._entries.compare_and_set(
+            registry_id, canonical, new_payload, conn=conn,
+        )
+        if ok:
+            self.invalidate_strategy_summary_index_cache(full=False)
+        return ok, canonical
 
     def update(
         self,
@@ -324,7 +620,7 @@ class PostgresRegistryStore:
         if actor is not None:
             entry.last_actor = actor
         new_payload = entry.to_dict()
-        ok, canonical = self._entries.compare_and_set(entry.registry_id, expected, new_payload)
+        ok, canonical = self._cas_entry(entry.registry_id, expected, new_payload)
         if not ok:
             if expected is None:
                 # No guard was requested but the row does not exist at all.
@@ -510,7 +806,7 @@ class PostgresRegistryStore:
             if validate is not None:
                 validate(RegistryEntry.from_dict(base_snapshot))
 
-            ok, canonical = self._entries.compare_and_set(
+            ok, canonical = self._cas_entry(
                 registry_id, base_snapshot, new_payload, conn=conn,
             )
             if not ok:
@@ -662,7 +958,7 @@ class PostgresRegistryStore:
                 entry.last_actor = actor
             new_payload = entry.to_dict()
 
-            ok, canonical = self._entries.compare_and_set(
+            ok, canonical = self._cas_entry(
                 registry_id, base_snapshot, new_payload, conn=conn,
             )
             if not ok:
@@ -790,6 +1086,7 @@ class PostgresRegistryStore:
                     by_reg_finalized = dict(finalized)
                     by_reg_finalized["receipt_key"] = by_reg_id_key
                     self._receipts.insert_if_absent(by_reg_id_key, by_reg_finalized, conn=conn)
+        self.invalidate_strategy_summary_index_cache(full=False)
         return RegistryEntry.from_dict(committed_entry), False
 
     def register_strategy_spec_revision(
@@ -836,7 +1133,9 @@ class PostgresRegistryStore:
             )
             if created:
                 self._store_creation_receipt(registry_id, entry.to_dict(), conn=conn)
-                return entry, True
+        if created:
+            self.invalidate_strategy_summary_index_cache(full=False)
+            return entry, True
         # See create_if_absent's docstring: returns the live current row;
         # callers use get_creation_receipt() for the immutable-content
         # comparison instead.
@@ -1004,6 +1303,112 @@ class PostgresRegistryStore:
                     raise
                 if hasattr(conn, "rollback"):
                     conn.rollback()
+
+    def _summary_index_identifiers(self) -> tuple[str, str, str, str, str]:
+        table_name = getattr(self._entries, "table_name", "registry.entries")
+        schema = getattr(self._entries, "schema", None)
+        if schema is None:
+            schema = table_name.split(".", 1)[0] if "." in table_name else ""
+        base = table_name.split(".")[-1][:34]
+        prefix = f"{quote_pg_identifier(schema)}." if schema else ""
+        seq_ident = f"{prefix}{quote_pg_identifier('pantheon_registry_summary_rev_seq')}"
+        fn_build = f"{prefix}{quote_pg_identifier('pantheon_registry_summary_index_build')}"
+        fn_tg = f"{prefix}{quote_pg_identifier('pantheon_registry_summary_index_tg_fn')}"
+        tg_name = quote_pg_identifier(base + SUMMARY_INDEX_TRIGGER_SUFFIX)
+        idx_name = quote_pg_identifier(base + SUMMARY_INDEX_SUFFIX)
+        return seq_ident, fn_build, fn_tg, tg_name, idx_name
+
+    def _ensure_strategy_summary_index(self) -> None:
+        """Ensure stored ``summary_index``/``summary_rev`` columns, write trigger, partial index, and bounded backfill."""
+        self._init_summary_index_cache_state()
+        table = self._entries.table
+        table_name = getattr(self._entries, "table_name", "registry.entries")
+        seq_ident, fn_build, fn_tg, tg_name, idx_name = self._summary_index_identifiers()
+        stmts = (
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {SUMMARY_INDEX_COLUMN} JSONB",
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {SUMMARY_REV_COLUMN} BIGINT",
+            f"CREATE SEQUENCE IF NOT EXISTS {seq_ident}",
+            _strategy_summary_index_build_function_sql(fn_build),
+            _strategy_summary_index_trigger_function_sql(fn_tg, fn_build, seq_ident),
+            (
+                f"CREATE OR REPLACE TRIGGER {tg_name} "
+                f"BEFORE INSERT OR UPDATE OF payload ON {table} "
+                f"FOR EACH ROW EXECUTE FUNCTION {fn_tg}()"
+            ),
+            (
+                f"CREATE INDEX IF NOT EXISTS {idx_name} "
+                f"ON {table} ({SUMMARY_REV_COLUMN} ASC) "
+                f"WHERE {SUMMARY_INDEX_COLUMN} IS NOT NULL"
+            ),
+        )
+        with self._entries._connect() as conn:
+            if hasattr(self._entries, "advisory_xact_lock"):
+                self._entries.advisory_xact_lock(f"{table_name}:summary_index", conn=conn)
+            for stmt in stmts:
+                try:
+                    conn.execute(stmt)
+                except Exception as exc:
+                    if getattr(exc, "sqlstate", "") not in ("23505", "42P07", "42701", "42710"):
+                        raise
+                    if hasattr(conn, "rollback"):
+                        conn.rollback()
+        self._summary_index_ready = True
+        self.backfill_strategy_summary_index()
+
+    def backfill_strategy_summary_index(
+        self,
+        *,
+        batch_size: int = SUMMARY_INDEX_BACKFILL_BATCH_SIZE,
+        max_batches: int = SUMMARY_INDEX_BACKFILL_MAX_BATCHES,
+    ) -> dict[str, Any]:
+        """Idempotent, bounded batched backfill of ``summary_index`` and ``summary_rev`` for pre-existing ``strategy_spec`` rows."""
+        self._init_summary_index_cache_state()
+        table = self._entries.table
+        seq_ident, fn_build, _fn_tg, _tg_name, _idx_name = self._summary_index_identifiers()
+        effective_batch = max(1, int(batch_size))
+        effective_max_batches = max(1, int(max_batches))
+        batch_sql = (
+            "WITH todo AS ("
+            f"SELECT record_id FROM {table} "
+            f"WHERE {SUMMARY_INDEX_COLUMN} IS NULL AND ("
+            f"{ARTIFACT_TYPE_INDEX_SQL} = 'strategy_spec' "
+            f"OR (jsonb_typeof(payload) = 'string' AND {fn_build}(payload) IS NOT NULL)"
+            ") ORDER BY record_id ASC LIMIT %s FOR UPDATE SKIP LOCKED"
+            ") "
+            f"UPDATE {table} AS t "
+            f"SET {SUMMARY_INDEX_COLUMN} = {fn_build}(t.payload), "
+            f"{SUMMARY_REV_COLUMN} = nextval('{seq_ident}') "
+            "FROM todo WHERE t.record_id = todo.record_id"
+        )
+        t_start = time.perf_counter()
+        total_updated = 0
+        batch_elapsed_ms: list[float] = []
+        for _ in range(effective_max_batches):
+            t_b0 = time.perf_counter()
+            with self._entries._connect() as conn:
+                cur = conn.execute(batch_sql, (effective_batch,))
+                updated = int(getattr(cur, "rowcount", 0) or 0)
+            elapsed_ms = (time.perf_counter() - t_b0) * 1000.0
+            batch_elapsed_ms.append(round(elapsed_ms, 3))
+            if updated <= 0:
+                break
+            total_updated += updated
+            if updated < effective_batch:
+                break
+        total_ms = round((time.perf_counter() - t_start) * 1000.0, 3)
+        report = {
+            "batch_size": effective_batch,
+            "max_batches": effective_max_batches,
+            "batches_executed": len(batch_elapsed_ms),
+            "rows_updated": total_updated,
+            "batch_elapsed_ms": batch_elapsed_ms,
+            "max_batch_lock_ms": max(batch_elapsed_ms) if batch_elapsed_ms else 0.0,
+            "total_elapsed_ms": total_ms,
+        }
+        self.last_summary_index_backfill = report
+        if total_updated > 0:
+            self.invalidate_strategy_summary_index_cache(full=False)
+        return report
 
     def list_strategy_artifact_page(
         self,
@@ -1208,9 +1613,164 @@ class PostgresRegistryStore:
         include_title: bool = False,
         include_scope: bool = False,
     ) -> list[dict]:
-        """Lightweight candidate-index rows projected inside Postgres for Phase 1 of strategy_summary_page."""
+        """Lightweight candidate-index rows for Phase 1 of strategy_summary_page.
+
+        Reads pre-extracted candidate-index fields from the stored ``summary_index``
+        column on ``registry.entries`` (never evaluating ``payload`` JSON expressions
+        across ``strategy_spec`` rows on each request) paired with a stamp-validated
+        in-process cache checked by one cheap index-only query on ``summary_rev``.
+        """
+        self._init_summary_index_cache_state()
         self.full_summary_rows_extracted = 0
         self.full_summary_row_ids_extracted = ()
+        if (
+            artifact_type == "strategy_spec"
+            and hasattr(self._entries, "_use_conn")
+            and hasattr(self._entries, "table")
+        ):
+            if not self._summary_index_ready and hasattr(self._entries, "_connect"):
+                self._ensure_strategy_summary_index()
+            if not self._summary_index_cache_enabled:
+                sql, sql_params = strategy_spec_summary_index_stored_tenant_select_sql(
+                    self._entries.table, visible_tenants,
+                )
+                with self._entries._use_conn(None) as conn:
+                    cur = conn.execute(sql, sql_params) if sql_params else conn.execute(sql)
+                    raw_rows = [
+                        tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                        for r in cur.fetchall()
+                    ]
+                out = _CompiledIndexRowList(
+                    project_cached_summary_index_row(
+                        _decode_stored_summary_index_row(raw_json),
+                        include_title=include_title,
+                        include_scope=include_scope,
+                    )
+                    for _rec_id, _rev, raw_json in raw_rows
+                    if raw_json is not None
+                )
+                self.phase1_index_sql_reads += 1
+                self.phase1_index_rows_fetched = len(out)
+                return out
+
+            with self._summary_index_lock:
+                table = self._entries.table
+                need_full_reload = self._summary_index_by_record_id is None
+                if not need_full_reload:
+                    with self._entries._use_conn(None) as conn:
+                        stamp_cur = conn.execute(strategy_spec_summary_index_stamp_sql(table))
+                        stamp_row = stamp_cur.fetchone()
+                    if isinstance(stamp_row, dict):
+                        vals = tuple(stamp_row.values())
+                    else:
+                        vals = tuple(stamp_row) if stamp_row is not None else (0, 0, 0)
+                    stamp = (int(vals[0] or 0), int(vals[1] or 0), int(vals[2] or 0))
+                    if stamp == self._summary_index_stamp:
+                        self.phase1_index_cache_hits += 1
+                        self.phase1_index_rows_fetched = 0
+                    else:
+                        db_count, db_max_rev, _db_sum_rev = stamp
+                        prev_stamp = self._summary_index_stamp
+                        if (
+                            db_count > 0
+                            and prev_stamp is not None
+                            and prev_stamp[1] > 0
+                            and db_max_rev > prev_stamp[1]
+                        ):
+                            with self._entries._use_conn(None) as conn:
+                                delta_cur = conn.execute(
+                                    strategy_spec_summary_index_delta_sql(table),
+                                    (prev_stamp[1],),
+                                )
+                                delta_raw = [
+                                    tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                                    for r in delta_cur.fetchall()
+                                ]
+                            by_id = self._summary_index_by_record_id
+                            assert by_id is not None
+                            running_count = len(by_id)
+                            running_max_rev = prev_stamp[1]
+                            running_sum_rev = prev_stamp[2]
+                            seen_in_delta: dict[str, int] = {}
+                            for rec_id, rev_val, raw_json in delta_raw:
+                                if raw_json is None:
+                                    continue
+                                rec_key = str(rec_id)
+                                rev_int = int(rev_val or 0)
+                                if rec_key in seen_in_delta:
+                                    running_sum_rev += rev_int - seen_in_delta[rec_key]
+                                elif rec_key in by_id:
+                                    running_sum_rev += rev_int - by_id[rec_key][0]
+                                else:
+                                    running_count += 1
+                                    running_sum_rev += rev_int
+                                seen_in_delta[rec_key] = rev_int
+                                if rev_int > running_max_rev:
+                                    running_max_rev = rev_int
+                            if delta_raw and (running_count, running_max_rev, running_sum_rev) == stamp:
+                                for rec_id, rev_val, raw_json in delta_raw:
+                                    if raw_json is None:
+                                        continue
+                                    rec_key = str(rec_id)
+                                    by_id.pop(rec_key, None)
+                                    by_id[rec_key] = (
+                                        int(rev_val or 0),
+                                        _decode_stored_summary_index_row(raw_json),
+                                    )
+                                self._summary_index_stamp = stamp
+                                self._summary_index_tenant_views.clear()
+                                self.phase1_index_delta_reads += 1
+                                self.phase1_index_rows_fetched = len(delta_raw)
+                            else:
+                                need_full_reload = True
+                        else:
+                            need_full_reload = True
+
+                if need_full_reload:
+                    with self._entries._use_conn(None) as conn:
+                        full_cur = conn.execute(strategy_spec_summary_index_stored_select_sql(table))
+                        full_raw = [
+                            tuple(r.values()) if isinstance(r, dict) else tuple(r)
+                            for r in full_cur.fetchall()
+                        ]
+                    new_by_id: dict[str, tuple[int, _CompiledIndexRow]] = {}
+                    actual_max_rev = 0
+                    actual_sum_rev = 0
+                    for rec_id, rev_val, raw_json in full_raw:
+                        if raw_json is None:
+                            continue
+                        rec_key = str(rec_id)
+                        rev_int = int(rev_val or 0)
+                        new_by_id[rec_key] = (rev_int, _decode_stored_summary_index_row(raw_json))
+                        actual_sum_rev += rev_int
+                        if rev_int > actual_max_rev:
+                            actual_max_rev = rev_int
+                    self._summary_index_by_record_id = new_by_id
+                    self._summary_index_stamp = (len(new_by_id), actual_max_rev, actual_sum_rev)
+                    self._summary_index_tenant_views.clear()
+                    self.phase1_index_sql_reads += 1
+                    self.phase1_index_rows_fetched = len(new_by_id)
+
+                tenant_key = frozenset(visible_tenants) if visible_tenants is not None else None
+                view_key = (tenant_key, bool(include_title), bool(include_scope))
+                cached_view = self._summary_index_tenant_views.pop(view_key, None)
+                if cached_view is not None:
+                    self._summary_index_tenant_views[view_key] = cached_view
+                    return cached_view
+                assert self._summary_index_by_record_id is not None
+                view_rows = _CompiledIndexRowList(
+                    project_cached_summary_index_row(
+                        row, include_title=include_title, include_scope=include_scope,
+                    )
+                    for _rev, row in self._summary_index_by_record_id.values()
+                    if tenant_key is None or row._owner_tenant in tenant_key
+                )
+                if len(self._summary_index_tenant_views) >= SUMMARY_INDEX_MAX_TENANT_VIEWS:
+                    oldest_key = next(iter(self._summary_index_tenant_views))
+                    self._summary_index_tenant_views.pop(oldest_key, None)
+                self._summary_index_tenant_views[view_key] = view_rows
+                return view_rows
+
         visible_sql, _fam, _bound, params = persona_binding_family_keep_sql(
             visible_tenants, artifact_type,
         )
@@ -1228,6 +1788,7 @@ class PostgresRegistryStore:
                     tuple(r.values()) if isinstance(r, dict) else tuple(r)
                     for r in cursor.fetchall()
                 ]
+            self.phase1_payload_rescans += 1
             return strategy_spec_summary_index_rows_from_columns(
                 raw_rows, include_title=include_title, include_scope=include_scope,
             )

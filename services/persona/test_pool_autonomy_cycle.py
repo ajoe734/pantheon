@@ -537,14 +537,20 @@ class PublishPorts(Ports):
         return {"status": "published", "envelope_artifact_id": "env-%d" % version, "deployment_plan_id": "plan-%d" % version}
 
 
-def pins(*items):
-    return {"published": {"2": {"status": "published", "pool_version": 2, "members": [
-        {"artifact_ref": r, "risk_weight": w, "virtual_only": v, "stage": s} for r, w, v, s in items]}}}
+JOINED = "2026-10-01T00:00:00Z"
+
+
+def pins(*items, joined=JOINED, version=2):
+    # A publish record written since the publisher carries joined_at (POOL-MEMBER-JOINED-AT-CARRY-20261126);
+    # joined=None is a record from before, whose pins have no admission time.
+    return {"published": {str(version): {"status": "published", "pool_version": version, "members": [
+        {"artifact_ref": r, "risk_weight": w, "virtual_only": v, "stage": s, **({"joined_at": joined} if joined else {})}
+        for r, w, v, s in items]}}}
 
 
 def live_pool(version, *items):
     return {"persona_id": "p1", "tenant_id": "t1", "pool_version": version, "members": [
-        {"artifact_ref": r, "checksum": "ck", "stage": s, "risk_weight": w, "joined_at": "2026-10-01T00:00:00Z"} for r, w, s in items]}
+        {"artifact_ref": r, "checksum": "ck", "stage": s, "risk_weight": w, "joined_at": JOINED} for r, w, s in items]}
 
 
 def run_publish(ports, p):
@@ -608,9 +614,241 @@ def test_unreadable_publication_state_fails_closed_without_publishing():
     assert out["status"] == "failed" and out["step"] == "compare" and ports.published == []
 
 
+class RepublishPorts(PublishPorts):
+    """The owner appends a version (identical members) and the publisher records pins with joined_at."""
+
+    def __init__(self, history, **kw):
+        super().__init__(history, **kw)
+        self.versions, self.republish_calls = [self.pool_now], []
+
+    def current_pool(self, persona): return self.versions[-1]
+
+    def republish_pool_version(self, persona, pool, reasons):
+        self.republish_calls.append((pool["pool_version"], list(reasons)))
+        assert pool is self.versions[-1]
+        self.versions.append({**pool, "pool_version": pool["pool_version"] + 1, "members": [dict(m) for m in pool["members"]]})
+        return self.versions[-1]
+
+    def publish_pool(self, persona, version):
+        receipt = super().publish_pool(persona, version)
+        [published] = [v for v in self.versions if v["pool_version"] == version]
+        self.history["published"][str(version)] = {"status": "published", "pool_version": version, "members": [
+            {"artifact_ref": m["artifact_ref"], "risk_weight": m["risk_weight"], "virtual_only": False,
+             "stage": m["stage"], "joined_at": m.get("joined_at")} for m in published["members"] if m["stage"] != "removed"]}
+        return receipt
+
+
+def test_running_envelope_without_joined_at_republishes_once_with_one_new_version():
+    ports = RepublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(3, ("a", .6, "active"), ("b", .4, "active")))
+    first = run_publish(ports, ports.pool_now)
+    assert first["status"] == "published" and first["republished_version"] == 4 and ports.published == [4]
+    assert first["reasons"] == ["envelope_member_admission_missing:a", "envelope_member_admission_missing:b"]
+    assert ports.consults == []  # never a membership change: no consultation, no admission
+    assert [m for m in ports.versions[-1]["members"]] == ports.versions[0]["members"]  # no reweight
+    second = run_publish(ports, ports.versions[-1])
+    assert second["status"] == "unchanged" and second["reasons"] == []
+    assert len(ports.republish_calls) == 1 and ports.published == [4] and len(ports.versions) == 2
+
+
+def test_newer_pool_version_already_present_publishes_it_without_appending():
+    # Hosted: refused reweights already appended versions newer than the running envelope.
+    ports = RepublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(7, ("a", 1.0, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and ports.published == [7] and ports.republish_calls == []
+    assert "republished_version" not in out and run_publish(ports, ports.pool_now)["status"] == "unchanged"
+
+
+def test_failed_republish_is_retried_without_a_second_version():
+    ports = RepublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3),
+                           pool_now=live_pool(3, ("a", 1.0, "active")))
+    ports.fail = RuntimeError("owner_unavailable")
+    assert run_publish(ports, ports.pool_now)["status"] == "failed" and len(ports.versions) == 2
+    ports.fail = None
+    out = run_publish(ports, ports.versions[-1])
+    assert out["status"] == "published" and ports.published == [4] and len(ports.republish_calls) == 1
+
+
+def test_admission_missing_with_a_real_change_publishes_the_change_only():
+    ports = RepublishPorts(pins(("a", .6, False, "active"), ("b", .4, False, "active"), joined=None, version=2),
+                           pool_now=live_pool(3, ("a", .8, "active"), ("b", .2, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and ports.published == [3] and ports.republish_calls == []
+
+
+def test_republish_without_owner_port_is_not_attempted():
+    ports = PublishPorts(pins(("a", 1.0, False, "active"), joined=None, version=3), pool_now=live_pool(3, ("a", 1.0, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "not_attempted" and out["reason"] == "republish_port_unconfigured" and ports.published == []
+
+
 def test_unconfigured_publish_port_is_recorded_not_guessed():
     ports = Ports(pool_now=live_pool(3, ("a", .6, "active")))
     assert run_publish(ports, ports.pool_now) == {"status": "not_attempted", "reason": "publish_port_unconfigured"}
+
+
+# --- escalated envelope publication -> one operator decision the next cycle consumes ----------------------------
+# Real HttpPoolCyclePorts (PoolPublishPort) and the real publication code; only the owners are doubles: the
+# consultation client, the persona pool store, the BFF publish routes and the evolution governance queue.
+
+class _OwnerError(Exception):
+    def __init__(self, code, detail=""):
+        super().__init__(f"HTTP {code}: {detail}")
+        self.code = code
+
+
+class GovernanceDouble:
+    """The evolution owner's proposal queue as Management drives it (review -> approve / reject)."""
+
+    def __init__(self):
+        self.proposals, self.posts, self.reads = {}, [], 0
+
+    def post(self, body):
+        self.posts.append(body)
+        if body["decision_id"] in self.proposals:  # evolution main.py: occupied decision_id -> 409
+            raise _OwnerError(409, "decision_id is already occupied by an evolution decision")
+        self.proposals[body["decision_id"]] = {**body, "decision_state": "proposed", "review_chain": [],
+                                               "approval_decision_id": None}
+        return self.proposals[body["decision_id"]]
+
+    def get(self, decision_id):
+        self.reads += 1
+        if decision_id not in self.proposals:
+            raise _OwnerError(404, "not found")
+        return self.proposals[decision_id]
+
+    def operator(self, decision_id, action, note):
+        record = self.proposals[decision_id]
+        record["review_chain"].append({"step_type": "reviewed", "actor_role": "risk_owner", "actor_id": "op-1",
+                                       "note": "seen"})
+        record["approval_decision_id"] = "appr-1"
+        record["decision_state"] = {"approve": "approved", "reject": "rejected"}[action]
+        record["review_chain"].append({"step_type": record["decision_state"], "actor_role": "risk_owner",
+                                       "actor_id": "op-1", "note": note})
+
+
+def _escalated_world(monkeypatch, *, pool_version=5):
+    from types import SimpleNamespace
+    from services.persona import consult_triggers as ct
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts
+    from services.persona.pool_publish_port import envelope_publication_requirement
+
+    world = SimpleNamespace(governance=GovernanceDouble(), published=[], opened=[],
+                            pool=live_pool(pool_version, ("a", .9, "active"), ("n", .1, "trial")),
+                            history=pins(("a", 1.0, False, "active"), version=2))
+    requirement = envelope_publication_requirement("t1", "p1", world.pool, 4)  # the panel reviewed v4 (same membership)
+    request = {"request_id": "consult-" + requirement.decision_id, "status": "published", "from_persona_id": "p1",
+               "metadata": {"panel": requirement.to_panel_metadata()}}
+
+    class Consultation:
+        def list_requests(self, **kw): return [request]
+        def list_memos(self, **kw): return [{"memo_id": "consult-envelope-publication-memo-1"}]
+        def open_persona_panel(self, requirement, **kw):
+            world.opened.append(kw["request_id"])
+            return {"request_id": kw["request_id"]}
+
+    monkeypatch.setattr(ct, "verify_published_memo", lambda *a, **k: ct.MemoCheck(False, "risk_persona_requires_operator"))
+
+    def transport(method, service, path, tenant, body=None):
+        assert tenant == "t1"
+        if service == "evolution" and method == "POST" and path == "/api/evolution/proposals":
+            return world.governance.post(body)
+        if service == "evolution" and method == "GET" and path.startswith("/api/evolution/proposals/"):
+            return world.governance.get(path.rsplit("/", 1)[1])
+        if service == "bff" and method == "GET" and path.endswith("/publish-history"):
+            return {"data": world.history}
+        if service == "bff" and method == "POST" and path.endswith("/strategy-pool/publish"):
+            world.published.append(body)
+            return {"data": {"status": "published", "envelope_artifact_id": "env-%d" % body["pool_version"],
+                             "deployment_plan_id": "plan-1"}}
+        raise AssertionError((method, service, path))
+
+    store = SimpleNamespace(current=lambda pid, tenant: world.pool)
+    world.ports = HttpPoolCyclePorts(transport, pool_store=store, consultation_factory=lambda t, a=None: Consultation(), env={})
+    world.cycle = PoolAutonomyCycle(world.ports)
+    world.consult_decision_id = requirement.decision_id
+    return world
+
+
+def test_escalated_publication_queues_one_operator_decision_with_memo_reason_and_pool_version(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    first = world.cycle._publish(PERSONA, "pk-1")
+    assert first["status"] == "consultation_operator" and first["reason"] == "risk_persona_requires_operator"
+    assert first["operator_decision"]["status"] == "queued" and world.published == []
+    [body] = world.governance.posts
+    assert body["action_type"] == "flag_for_review" and body["target_type"] == "persona" and body["target_id"] == "p1"
+    assert body["persona_id"] == "p1" and body["target_version"] == "4"
+    assert body["metadata"]["consultation_memo_id"] == "consult-envelope-publication-memo-1"
+    assert body["metadata"]["reason"] == "risk_persona_requires_operator" and body["metadata"]["pool_version"] == 4
+    assert body["metadata"]["consultation_decision_id"] == world.consult_decision_id
+    assert first["operator_decision"]["decision_id"] == body["decision_id"]
+    # Repeat cycles (and the daily re-weight's newer version with the same membership) never queue a duplicate.
+    world.pool = {**world.pool, "pool_version": 6}
+    for packet in ("pk-2", "pk-3"):
+        again = world.cycle._publish(PERSONA, packet)
+        assert again["status"] == "consultation_operator"
+        assert again["operator_decision"] == {"decision_id": body["decision_id"], "status": "awaiting_operator",
+                                              "decision_state": "proposed"}
+    assert len(world.governance.posts) == 1 and len(world.governance.proposals) == 1 and world.published == []
+    assert world.opened == []
+
+
+def test_operator_approval_is_consumed_by_the_next_cycle_and_recorded_on_the_receipt(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    decision_id = world.cycle._publish(PERSONA, "pk-1")["operator_decision"]["decision_id"]
+    world.governance.operator(decision_id, "approve", "ok to publish")
+    out = world.cycle._publish(PERSONA, "pk-2")
+    assert out["status"] == "published" and out["operator_decision_id"] == decision_id
+    assert out["pool_version"] == 5 and out["envelope_artifact_id"] == "env-5"
+    assert world.published == [{"pool_version": 5, "stage": "paper"}] and len(world.governance.posts) == 1
+
+
+def test_operator_rejection_keeps_the_previous_envelope_and_records_the_reason(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    decision_id = world.cycle._publish(PERSONA, "pk-1")["operator_decision"]["decision_id"]
+    world.governance.operator(decision_id, "reject", "book observations insufficient")
+    result = {"status": "completed", "persona_id": "p1",
+              "act": {"publication": world.cycle._publish(PERSONA, "pk-2")}}
+    out = result["act"]["publication"]
+    assert out["status"] == "operator_rejected" and out["reason"] == "book observations insufficient"
+    assert out["operator_decision"] == {"decision_id": decision_id, "status": "rejected", "actor_id": "op-1"}
+    assert world.published == [] and len(world.governance.posts) == 1  # no re-queue for this pool version
+    packet = {"packet_id": "pk-2", "audit_refs": [], "observe": {"telemetry_refs": []}, "orient": {"evidence_bundle_refs": []},
+              "decide": {}, "act": {}, "learn": {"telemetry_refs": []}}
+    apply_to_packet(packet, {**result, "observe": {}, "orient": {}})
+    assert "pool-publication:operator_rejected:book observations insufficient" in packet["audit_refs"]
+    assert world.cycle._publish(PERSONA, "pk-3")["status"] == "operator_rejected" and len(world.governance.posts) == 1
+
+
+def test_operator_decision_of_another_consultation_is_never_taken_as_approval(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    decision_id = world.cycle._publish(PERSONA, "pk-1")["operator_decision"]["decision_id"]
+    world.governance.operator(decision_id, "approve", "ok")
+    world.governance.proposals[decision_id]["metadata"]["consultation_decision_id"] = "envelope-publication-other"
+    out = world.cycle._publish(PERSONA, "pk-2")
+    assert out["status"] == "consultation_operator" and out["operator_decision"]["status"] == "read_failed"
+    assert "operator_decision_binding_mismatch" in out["operator_decision"]["error"] and world.published == []
+
+
+def test_unreadable_or_unqueueable_governance_keeps_the_publication_held(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    world.governance.post = lambda body: (_ for _ in ()).throw(_OwnerError(503, "down"))
+    out = world.cycle._publish(PERSONA, "pk-1")
+    assert out["status"] == "consultation_operator" and out["operator_decision"]["status"] == "queue_failed"
+    world.governance.get = lambda decision_id: (_ for _ in ()).throw(_OwnerError(503, "down"))
+    out = world.cycle._publish(PERSONA, "pk-2")
+    assert out["operator_decision"]["status"] == "read_failed" and world.published == []
+
+
+def test_unchanged_membership_needs_no_consultation_or_operator_decision(monkeypatch):
+    world = _escalated_world(monkeypatch)
+    world.history = pins(("a", .9, False, "active"), ("n", .1, False, "trial"), version=4)
+    assert world.cycle._publish(PERSONA, "pk-1")["status"] == "unchanged"
+    world.pool = live_pool(5, ("a", .5, "active"), ("n", .5, "trial"))  # weight move beyond tolerance, same members
+    out = world.cycle._publish(PERSONA, "pk-2")
+    assert out["status"] == "published" and "operator_decision_id" not in out and "consultation_memo_id" not in out
+    assert world.governance.posts == [] and world.governance.reads == 0 and world.opened == []
 
 
 # --- Persona memory principals against the real memory route gates (only HTTP transport is faked) -------------------

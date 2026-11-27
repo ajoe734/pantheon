@@ -2879,6 +2879,13 @@ def _scheduled_lifecycle_event(
         producer_revision=1,
     )
     metadata = json.loads(json.dumps(identity.get("metadata") or {}))
+    inherited_reason = metadata.pop("reason_code", None)
+    if (
+        isinstance(inherited_reason, str)
+        and inherited_reason.strip() in _EXPRESSION_CHOICE_REASON_CODES
+        and not str(metadata.get("expression_reason_code") or "").strip()
+    ):
+        metadata["expression_reason_code"] = inherited_reason.strip()
     metadata.update(
         {
             "reconciliation_evaluation_id": evaluation_id,

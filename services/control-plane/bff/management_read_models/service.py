@@ -6982,6 +6982,9 @@ class ManagementService:
         artifact_reader = (
             getattr(store, "read_registry_strategy_artifact_detail", None) if store is not None else None
         )
+        # Registry entry read of any artifact type (a strategy_spec entry has
+        # no /bff/artifacts page): names a cited registry_entry by its strategy.
+        entry_reader = getattr(store, "read_registry_entry_strategy", None) if store is not None else None
         try:
             names = current_resolver(store)
         except Exception:
@@ -6990,6 +6993,7 @@ class ManagementService:
             ctx,
             item_reader=item_reader if callable(item_reader) else None,
             artifact_reader=artifact_reader if callable(artifact_reader) else None,
+            registry_entry_reader=entry_reader if callable(entry_reader) else None,
             names=names,
             redact=_redact,
             page_token=page_token,

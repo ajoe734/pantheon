@@ -443,13 +443,14 @@ def test_adapter_503_then_200_retries_to_one_card_and_counts_every_call(tmp_path
     source = _source("src-1", "news")
     worker.enqueue_from_source_record(source)
     first = worker.run_pending()
-    assert (first.failed, first.retried, first.skipped, first.created) == (1, 1, 0, 0)
+    # Not ``failed``: the controller reads that as Registry delivery trouble.
+    assert (first.failed, first.extraction_retried, first.retried, first.skipped, first.created) == (0, 1, 1, 0, 0)
     job = queue.get("src-1")
     assert job.status == "retry_wait" and "hypothesis_extraction_unavailable" in (job.error or "")
     assert transport.calls == 1 and ledger.calls_today() == 1
     assert not [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
     clock[0] += 120
-    assert worker.run_pending().failed == 1
+    assert worker.run_pending().extraction_retried == 1
     clock[0] += 240
     third = worker.run_pending()
     assert third.created == 1
@@ -791,3 +792,462 @@ def test_adapter_structured_route_deadline_is_the_callers_bounded_by_its_own(mon
     assert budget(88.0) == 88.0
     assert budget(500.0) == 170.0
     assert [budget(v) for v in (None, -1, 0, float("nan"), "x")] == [170.0] * 5
+
+
+# --- L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 ----------------------
+
+_ADAPTER_DIR = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
+
+
+def _card_answer_usage(output_tokens: int, input_tokens: int = 3, **extra: int) -> dict[str, Any]:
+    return {"output": {"structured_data": {"is_abstained": False, "abstention_reason": None,
+                                           "hypothesis_card": _card()},
+                       "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, **extra}}}
+
+
+def test_card_turn_has_its_own_bounded_token_limits(monkeypatch):
+    for env in (semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV,
+                semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV):
+        monkeypatch.delenv(env, raising=False)
+    limits = semantic_extraction.hypothesis_card_token_limits()
+    # 1.5x the largest hosted card answer (2 061 output tokens).
+    assert limits == {"max_output_tokens": 3072, "max_input_tokens": 40_000}
+    assert limits["max_output_tokens"] >= 1.45 * 2061
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV, "4096")
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV, "not-a-number")
+    assert semantic_extraction.hypothesis_card_token_limits() == {"max_output_tokens": 4096, "max_input_tokens": 40_000}
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV, "999999")
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV, "1")
+    assert semantic_extraction.hypothesis_card_token_limits() == {"max_output_tokens": 8192, "max_input_tokens": 8000}
+    client = SemanticExtractionClient(transport_fn=_Transport())
+    assert client.token_limits_for(ExtractionTaskType.INTENT) == {"max_input_tokens": 8000, "max_output_tokens": 1000}
+
+
+@pytest.mark.parametrize("output_tokens", [1438, 1820, 2061])
+def test_measured_card_answer_is_kept_and_the_limit_is_sent(tmp_path, output_tokens):
+    calls: list[dict[str, Any]] = []
+
+    def transport(payload):
+        calls.append(payload)
+        return _card_answer_usage(output_tokens, input_tokens=9415)
+
+    worker, queue, ledger, _clock = _queue_worker(tmp_path, transport)
+    worker.enqueue_from_source_record(_source("src-1"))
+    result = worker.run_pending()
+    assert result.created == 1
+    assert calls[0]["max_output_tokens"] == 3072
+    card_events = [e for e in ledger.events("src-1") if e["outcome"] == "card"]
+    assert card_events[0]["usage"] == {"input_tokens": 9415, "output_tokens": output_tokens}
+    assert not [e for e in ledger.events("src-1") if "budget_breach" in e["detail"]]
+
+
+def test_interactive_turn_keeps_its_limits_and_states_none(fake_monotonic):
+    transport = _Slow(fake_monotonic, 0.0)
+    client = SemanticExtractionClient(transport_fn=lambda p: (transport.payloads.append(p), {
+        "output": {"structured_data": {"is_abstained": True, "abstention_reason": "insufficient_evidence"},
+                   "usage": {"input_tokens": 100, "output_tokens": 1500}}})[1])
+    request = SemanticExtractionRequest(
+        source_id="s", text="Buy 2330 on revenue momentum.", task_type=ExtractionTaskType.INTENT,
+    )
+    result = client.extract(request)
+    assert "max_output_tokens" not in transport.payloads[0]
+    assert result.failure_code == "budget_breach"
+
+
+def test_card_input_limit_is_checked_on_the_prompt_before_any_call(tmp_path):
+    calls: list[dict[str, Any]] = []
+    worker, queue, ledger, _clock = _queue_worker(
+        tmp_path, lambda p: (calls.append(p), _card_answer_usage(1500))[1],
+        client_kw={"hypothesis_token_limits": {"max_input_tokens": 100, "max_output_tokens": 3072}},
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+    worker.run_pending()
+    assert calls == []
+    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "failed"]
+    assert "no model call made" in event["detail"] and "usage" not in event
+
+
+def test_paid_card_answer_is_not_discarded_for_an_unstated_input_limit(tmp_path):
+    worker, queue, ledger, _clock = _queue_worker(
+        tmp_path, lambda p: _card_answer_usage(1500, input_tokens=60_000),
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+    assert worker.run_pending().created == 1
+
+
+def test_http_adapter_body_carries_the_output_limit(monkeypatch):
+    from services.source_ingestion import semantic_extraction_client as mod
+
+    seen: list[dict[str, Any]] = []
+
+    def fake_http(endpoint, *, body_bytes, headers, deadline_at, **_):
+        seen.append(json.loads(body_bytes))
+        return 200, json.dumps({"data": _answer()}).encode(), {}
+
+    monkeypatch.setattr(mod, "_perform_http_request", fake_http)
+    client = SemanticExtractionClient(adapter_url="http://adapter.test")
+    client.extract(SemanticExtractionRequest(
+        source_id="src-1", text="x", task_type=ExtractionTaskType.HYPOTHESIS_CARD,
+        source_type="news", license_scope="collector_public_web"))
+    client.extract(SemanticExtractionRequest(
+        source_id="s", text="Buy 2330 on revenue momentum.", task_type=ExtractionTaskType.INTENT))
+    assert seen[0]["max_output_tokens"] == 3072
+    assert "max_output_tokens" not in seen[1]
+
+
+def test_real_adapter_response_shape_reports_prompt_sized_input(tmp_path, monkeypatch):
+    """The real adapter provider over the pinned Gateway's usage shape
+    (`toUsage`: input = uncached only, total includes cacheRead/cacheWrite):
+    the ledger shows the prompt's size, not 3."""
+    import sys
+    from unittest.mock import patch
+
+    monkeypatch.syspath_prepend(str(_ADAPTER_DIR))
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1")
+    sys.modules.pop("assistant_openclaw_provider", None)
+    import assistant_openclaw_provider as provider_mod  # noqa: PLC0415
+
+    provider = provider_mod.AssistantOpenClawProvider(
+        gateway_url="ws://openclaw-gateway:18789", agent_id="main", token="t",
+        _which_func=lambda _: None, _run_func=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no CLI")),
+    )
+    sent: list[dict[str, Any]] = []
+
+    class _SSE:
+        def __init__(self, events):
+            self._lines = [("data: " + json.dumps(e) + "\n").encode() for e in events] + [b"data: [DONE]\n"]
+
+        def __iter__(self):
+            return iter(self._lines)
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        body = json.loads(req.data.decode("utf-8"))
+        sent.append(body)
+        answer = {"is_abstained": False, "abstention_reason": None, "hypothesis_card": _card()}
+        # Prompt cached on a previous call: 3 uncached input tokens, the rest
+        # cacheRead; total_tokens = input + output + cacheRead + cacheWrite.
+        cache_read = semantic_extraction.estimate_prompt_tokens(body["input"])
+        usage = {"input_tokens": 3, "output_tokens": 1820, "total_tokens": 3 + 1820 + cache_read}
+        return _SSE([
+            {"type": "response.output_text.done", "text": json.dumps(answer)},
+            {"type": "response.completed", "response": {"id": "r", "object": "response",
+             "status": "completed", "model": "openclaw/structured-extraction", "output": [], "usage": usage}},
+        ])
+
+    def adapter_transport(payload):
+        # What the /structured route returns as `data` (result.to_dict()).
+        with patch.object(provider_mod, "_urlopen_with_deadline", fake_urlopen):
+            return provider.invoke_structured(
+                payload["prompt"], extraction_schema=payload["extraction_schema"],
+                operator_id="system", max_output_tokens=payload.get("max_output_tokens"),
+            ).to_dict()
+
+    worker, queue, ledger, _clock = _queue_worker(tmp_path, adapter_transport)
+    worker.enqueue_from_source_record(_source("src-1"))
+    assert worker.run_pending().created == 1
+    assert sent[0]["max_output_tokens"] == 3072
+    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "card"]
+    prompt_estimate = semantic_extraction.estimate_prompt_tokens(sent[0]["input"])
+    assert event["usage"]["output_tokens"] == 1820
+    assert event["usage"]["input_tokens"] == prompt_estimate + 3
+    assert event["usage"]["input_tokens"] > 1000  # the prompt's order of magnitude, not 3
+
+
+# --- DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126 -----------------------------
+
+ANYOF_SKIP_REASON = (
+    'hypothesis_extraction_failed: invalid_schema: '
+    '{"error_code":"OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",'
+    '"message":"Tool args validation failed: unsupported schema keyword(s) [\'anyOf\']"}'
+)
+BUDGET_BREACH_SKIP_REASON = (
+    "hypothesis_extraction_failed: budget_breach: "
+    "Usage exceeded limits: input 3 > 8000 or output 1820 > 1000"
+)
+ABSTENTION_MAXLEN_SKIP_REASON = (
+    "hypothesis_extraction_failed: invalid_schema: "
+    "Model structured data violated schema: abstention_reason is too long (maxLength 200)"
+)
+
+
+def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
+    from services.source_ingestion.hypothesis_card import (
+        FIXED_DEFECT_REATTEMPT_OUTCOMES,
+        HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG,
+        HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS,
+        HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS,
+        fixed_defect_for_skip_reason,
+    )
+
+    assert len(FIXED_DEFECT_REATTEMPT_OUTCOMES) >= 2
+    codes = {item.code: item for item in FIXED_DEFECT_REATTEMPT_OUTCOMES}
+    assert "adapter_anyof_schema_mismatch" in codes
+    assert "#7896" in codes["adapter_anyof_schema_mismatch"].fix
+    assert "client_interactive_token_budget_breach" in codes
+    assert "#7908" in codes["client_interactive_token_budget_breach"].fix
+
+    assert fixed_defect_for_skip_reason(ANYOF_SKIP_REASON) == codes["adapter_anyof_schema_mismatch"]
+    assert fixed_defect_for_skip_reason(BUDGET_BREACH_SKIP_REASON) == codes["client_interactive_token_budget_breach"]
+    assert fixed_defect_for_skip_reason(ABSTENTION_MAXLEN_SKIP_REASON) == codes["prompt_unstated_abstention_max_length"]
+
+    for non_eligible in (
+        None,
+        "",
+        "l2_irrelevant: no_finance_signal",
+        "l2_irrelevant: paper_not_finance",
+        'l2_admission_denied: {"code":"REDACTION_VIOLATION"}',
+        "no_hypothesis: model_abstained",
+        "no_hypothesis: insufficient_evidence",
+        "no_hypothesis: not_testable",
+        "no_hypothesis: no_text",
+        "hypothesis_rejected: citation_unverifiable: span 0 offsets out of range",
+        "hypothesis_extraction_failed: invalid_schema: Additional properties are not allowed ('route' was unexpected)",
+        "hypothesis_extraction_failed: invalid_schema: OPENCLAW_TOOL_ARGS_INVALID_JSON",
+        "hypothesis_extraction_failed: budget_breach: Prompt estimate 50000 tokens exceeds input limit 40000; no model call made",
+        "hypothesis_extraction_failed: budget_breach: Usage exceeded limits: input 9000 > 40000 or output 4096 > 3072",
+        "l2_extraction_disabled",
+        "l2_extraction_attempts_exhausted: 6 calls; last: timeout",
+        MARKET_SOURCE_SKIP_REASON,
+    ):
+        assert fixed_defect_for_skip_reason(non_eligible) is None, non_eligible
+
+    # Hosted backlog: 130 sources need 130 calls (one re-attempt each), 1 day under 400/day cap.
+    assert HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG == 130
+    assert HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS == 130
+    assert HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS == 1
+    assert HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS <= DEFAULT_DAILY_CALL_CAP
+
+
+def test_defect_closed_newest_versions_reattempted_once_behind_fresh_work_within_caps(
+    tmp_path, monkeypatch
+):
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    called_ids: list[str] = []
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        # Extract the source_record_id from the prompt line.
+        prompt = payload["prompt"]
+        for sid in (
+            "fresh-rel",
+            "defect-anyof",
+            "defect-budget",
+            "defect-old-superseded",
+            "irrel-closed",
+            "redacted-closed",
+            "abstained-closed",
+        ):
+            if f"source_record_id={sid!r}" in prompt:
+                called_ids.append(sid)
+                if sid == "defect-budget":
+                    return {
+                        "output": {
+                            "structured_data": {
+                                "is_abstained": True,
+                                "abstention_reason": "no_testable_mechanism",
+                                "hypothesis_card": None,
+                            },
+                            "usage": {"input_tokens": 1200, "output_tokens": 90},
+                        }
+                    }
+                return {
+                    "output": {
+                        "structured_data": {
+                            "is_abstained": False,
+                            "abstention_reason": None,
+                            "hypothesis_card": _card(sid=sid),
+                        },
+                        "usage": {"input_tokens": 1500, "output_tokens": 1600},
+                    }
+                }
+        raise AssertionError(f"unexpected prompt: {prompt[:200]}")
+
+    # Day 1 daily cap = 2: 1 call for fresh-rel, 1 call left for the first defect-closed record;
+    # the second defect-closed record must wait for Day 2.
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport, cap=2, clock=clock)
+
+    def seed_closed(sid: str, skip_reason: str, *, title: str | None = None, enqueued_at: float = 100.0):
+        src = _source(sid, body=LOTTERY if sid.startswith("irrel") else BODY)
+        if title is not None:
+            src = dataclasses.replace(src, title=title)
+        job = queue.enqueue_source_record(src, enqueued_at=enqueued_at)
+        claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=enqueued_at, job_ids=[job.job_id])[0]
+        started = queue.begin_job(claimed, lease_seconds=30, now=enqueued_at)
+        queue.mark_skipped(started.job_id, reason=skip_reason, processed_at=enqueued_at, claim_token=started.lease_token)
+        return job
+
+    import dataclasses
+
+    seed_closed("defect-anyof", ANYOF_SKIP_REASON, enqueued_at=100.0)
+    seed_closed("defect-budget", BUDGET_BREACH_SKIP_REASON, enqueued_at=110.0)
+    # Superseded older version was closed by anyOf, but newest version is model-abstained.
+    seed_closed("defect-old-superseded", ANYOF_SKIP_REASON, title="v1", enqueued_at=120.0)
+    seed_closed("defect-old-superseded", "no_hypothesis: model_abstained", title="v2", enqueued_at=130.0)
+    # Irrelevant, admission-denied and model-abstained records must never be re-attempted.
+    seed_closed("irrel-closed", "l2_irrelevant: no_finance_signal", enqueued_at=140.0)
+    seed_closed("redacted-closed", 'l2_admission_denied: {"code":"REDACTION_VIOLATION"}', enqueued_at=150.0)
+    seed_closed("abstained-closed", "no_hypothesis: model_abstained", enqueued_at=160.0)
+
+    # Fresh irrelevant + fresh relevant arrive after the historical rows.
+    worker.enqueue_from_source_record(_source("fresh-irrel", body=LOTTERY))
+    worker.enqueue_from_source_record(_source("fresh-rel", body=BODY))
+
+    day1 = worker.run_pending()
+    # Fresh work ran first (fresh-irrel skipped with 0 calls, fresh-rel created a card),
+    # then 1 defect-closed record (defect-anyof) used the remaining call of the 2-call cap.
+    assert called_ids == ["fresh-rel", "defect-anyof"]
+    assert day1.created == 2 and day1.skipped == 1 and day1.defect_reattempted == 1
+    assert ledger.calls_today() == 2
+    assert queue.get("defect-anyof").status == "done"
+    assert queue.get("defect-budget").status == "skipped"  # still waiting for Day 2 cap
+
+    # A second run on Day 1 makes 0 calls (cap is full).
+    assert worker.run_pending().processed == 0
+    assert len(called_ids) == 2
+
+    # Day 2: defect-budget is re-attempted once and records model abstention.
+    clock[0] += 86400
+    day2 = worker.run_pending()
+    assert called_ids == ["fresh-rel", "defect-anyof", "defect-budget"]
+    assert day2.defect_reattempted == 1 and day2.skipped == 1
+    assert queue.get("defect-budget").status == "skipped"
+    assert queue.get("defect-budget").skip_reason == "no_hypothesis: no_testable_mechanism"
+
+    # Never re-attempted a second time, and non-eligible records were never called.
+    assert worker.run_pending().processed == 0
+    assert called_ids == ["fresh-rel", "defect-anyof", "defect-budget"]
+    assert queue.get("irrel-closed").skip_reason == "l2_irrelevant: no_finance_signal"
+    assert queue.get("redacted-closed").skip_reason.startswith("l2_admission_denied")
+    assert queue.get("abstained-closed").skip_reason == "no_hypothesis: model_abstained"
+
+
+def test_defect_closed_record_failing_with_defect_again_is_not_reattempted_twice(tmp_path):
+    calls: list[str] = []
+
+    def always_bad_budget(payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append(payload["prompt"])
+        # Return output_tokens > 1000 under a client configured with the old 1000 limit
+        # so the re-attempt closes with budget_breach again.
+        return _card_answer_usage(1820, input_tokens=500)
+
+    worker, queue, ledger, _ = _queue_worker(
+        tmp_path,
+        always_bad_budget,
+        client_kw={"hypothesis_token_limits": {"max_input_tokens": 8000, "max_output_tokens": 1000}},
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+    first = worker.run_pending()
+    assert len(calls) == 1 and first.skipped == 1
+    assert queue.get("src-1").skip_reason.startswith("hypothesis_extraction_failed: budget_breach")
+
+    # Wait: the first run's Phase 1 closed it with budget_breach, and Phase 2 re-attempted it once
+    # in the same pass or next pass, so total calls across any number of passes is at most 2
+    # (1 initial attempt + 1 fixed-defect re-attempt).
+    worker.run_pending()
+    worker.run_pending()
+    assert len(calls) == 2
+    assert queue.reattempt_fixed_defect_records(requested_by="test") == []
+
+
+def test_extraction_unavailable_dead_letter_redriven_when_answering_and_held_when_still_failing(
+    tmp_path, monkeypatch
+):
+    import dataclasses
+    import sqlite3
+
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    state = {"fail": True, "calls": 0}
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        state["calls"] += 1
+        if state["fail"]:
+            raise TimeoutError("HTTP request timed out")
+        return {
+            "output": {
+                "structured_data": {
+                    "is_abstained": False,
+                    "abstention_reason": None,
+                    "hypothesis_card": _card(sid="dl-newest"),
+                },
+                "usage": {"input_tokens": 1200, "output_tokens": 1500},
+            }
+        }
+
+    queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
+    store = StrategySpecSeedStore(tmp_path / "s.jsonl")
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=400)
+
+    def force_timeout_dl(job):
+        reason = "hypothesis_extraction_unavailable: timeout: HTTP request timed out"
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE distillation_outbox SET status='dead_letter', attempts=3, last_error=?, processed_at=1 WHERE job_id=?",
+                (reason, job.job_id),
+            )
+            conn.execute(
+                "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+                " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (job.job_id, event_id, job.source_id, job.source_digest, "{}", 3, reason, 1.0),
+            )
+
+    # 1. Superseded dead letter: older version timed out, newer version is terminal skipped.
+    old_v1 = queue.enqueue_source_record(_source("dl-superseded"), enqueued_at=100.0)
+    force_timeout_dl(old_v1)
+    new_v2 = queue.enqueue_source_record(
+        dataclasses.replace(_source("dl-superseded"), title="revised v2"), enqueued_at=200.0
+    )
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute(
+            "UPDATE distillation_outbox SET status='skipped', skip_reason='l2_irrelevant: no_finance_signal',"
+            " processed_at=200.0 WHERE job_id=?",
+            (new_v2.job_id,),
+        )
+
+    # 2. Newest-version extraction-unavailable dead letter.
+    newest_dl = queue.enqueue_source_record(_source("dl-newest"), enqueued_at=150.0)
+    force_timeout_dl(newest_dl)
+    assert queue.dead_letter_count() == 2
+
+    # Extractor disabled (None): superseded dead letter is resolved, newest-version dead letter stays dead_letter.
+    disabled_worker = DistillationWorker(queue, store, hypothesis_extractor=None)
+    res_disabled = disabled_worker.run_pending()
+    assert res_disabled.superseded_dead_letters_resolved == 1
+    assert queue.dead_letter_count() == 1
+    assert state["calls"] == 0
+
+    # Extractor configured but still failing: tried up to MAX_RECORD_ATTEMPTS_PER_DAY (3) today,
+    # stays in dead_letter after each failed redrive.
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+    worker = DistillationWorker(queue, store, hypothesis_extractor=extractor, retry_base_seconds=5.0)
+    for expected_calls in (1, 2, 3, 3):
+        worker.run_pending()
+        assert state["calls"] == expected_calls
+        assert queue.dead_letter_count() == 1
+        assert queue.get("dl-newest").status == "dead_letter"
+
+    # Next UTC day: extractor answers -> redriven, card created, dead letter resolved.
+    clock[0] += 86400
+    state["fail"] = False
+    recovered = worker.run_pending()
+    assert state["calls"] == 4
+    assert recovered.created == 1
+    assert recovered.extraction_dead_letters_redriven == 1
+    assert queue.dead_letter_count() == 0
+    assert queue.get("dl-newest").status == "done"
+    resolved_rows = {row["source_id"]: row for row in queue.list_dead_letters(include_resolved=True)}
+    assert resolved_rows["dl-superseded"]["resolved_at"] is not None
+    assert f"superseded by newer version {new_v2.job_id} (skipped)" == resolved_rows["dl-superseded"]["last_redrive_note"]
+    assert resolved_rows["dl-newest"]["resolved_at"] is not None
+    assert resolved_rows["dl-newest"]["redrive_count"] == 4
+
