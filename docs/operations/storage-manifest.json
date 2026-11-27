@@ -3083,6 +3083,24 @@
    "task": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125"
   },
   {
+   "bound_proof": {
+    "contains": "LIMIT -1 OFFSET ?",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "one row per (source, extraction input digest) with a paid terminal answer; at most PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP (default 400) new rows per UTC day and rows untouched for 30 days (RECORD_ATTEMPT_RETENTION_DAYS) are deleted on every put_input_answer write; because touch_input_answer keeps reused rows alive past 30 days, the bound is the hard MAX_INPUT_ANSWER_ROWS = 12,000 enforced on every put_input_answer write (least recently used rows evicted first), not the 400 x 30 product",
+   "cleanup": "DELETE FROM input_answers WHERE day < today - 30 days, then evict least recently used rows beyond MAX_INPUT_ANSWER_ROWS (12,000), on each put_input_answer write; touch_input_answer keeps a reused answer alive",
+   "growth_driver": "one row per paid terminal L2 answer (card, no_hypothesis, rejected) keyed by source and extraction input digest so later versions with the same input reuse it without a call",
+   "growth_per_day": "at most 400 rows (detail <= 500 B, card JSON only for cards), observed about 211 answered calls per day; well under 1.5 MB/day",
+   "kind": "table",
+   "name": "input_answers",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
