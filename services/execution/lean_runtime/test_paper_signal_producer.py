@@ -3842,3 +3842,256 @@ class TestPaperSignalProducerDynamicRuntimeManagerBearer(unittest.TestCase):
                 self.assertEqual(seen_actors, ["producer-file-v1", "producer-file-v2"])
 
 
+class TestTraderServantPaperBookIntentOnlyAndPersonaSettlement(unittest.TestCase):
+    """PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 (AC3 & AC4):
+    - AC3: paper-signal-producer produces no strategy decision and no strategy signal for a
+      trader servant paper book binding (metadata.book_kind == 'trader_servant_paper_book');
+      only signals from the T8 consumer (source_worker == 'paper-signal-producer.agora-intent')
+      exist on that binding's queue, even when its projected StrategyArtifact would emit a decision.
+    - AC4: the three trading personas' bindings and their signal production are unchanged,
+      including pending_settlement parking and settle_pending_intraday release on the D+1 open.
+    """
+
+    def test_executable_trader_servant_paper_book_binding_emits_zero_strategy_decisions_and_signals(
+        self,
+    ) -> None:
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+            _is_trader_servant_paper_book_binding,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import (
+            _artifact,
+            _binding,
+        )
+
+        # Build an executable binding with a close_to_close_momentum StrategyArtifact
+        # and rising closes [100.0, 110.0] that otherwise emits a BUY decision.
+        artifact = _artifact()
+        artifact["parameters"]["symbols"] = ["2330.TW"]
+        regular_binding = _binding(
+            artifact,
+            binding_id="rb-regular-persona-check",
+        )
+        regular_binding["symbol"] = "2330.TW"
+        regular_binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [100.0, 110.0],
+            "source_ref": "source-ingest:tw_price_daily",
+            "event_time": "2026-11-13T05:30:00Z",
+            "observed_at": "2026-11-13T06:00:00Z",
+        }
+        regular_binding["metadata"] = {"symbol": "2330.TW"}
+
+        # Sanity check: without book_kind == 'trader_servant_paper_book', CurrentArtifactStrategy
+        # emits a BUY decision and PaperSignalProducer parks/releases 1 strategy signal.
+        self.assertFalse(_is_trader_servant_paper_book_binding(regular_binding))
+        regular_store = InMemoryPendingSignalStore()
+        regular_producer = PaperSignalProducer(
+            store_for=lambda _b: regular_store,
+            strategy=CurrentArtifactStrategy(expression_layer=False),
+        )
+        self.assertEqual(
+            regular_producer.produce(regular_binding, "2026-11-13T10:00:00Z"),
+            1,
+        )
+        self.assertEqual(regular_store.queue_depth(), 1)
+
+        # Now mark the exact same executable binding as a trader servant paper book
+        # (rb-77d962be4e324032808324109f2c154e, metadata.book_kind == 'trader_servant_paper_book').
+        import copy
+
+        trader_book_binding = copy.deepcopy(regular_binding)
+        trader_book_binding["binding_id"] = "rb-77d962be4e324032808324109f2c154e"
+        trader_book_binding["runtime_id"] = "rt-persona-paper-3ca8da543bef6ede0a07"
+        trader_book_binding["capital_pool_id"] = "pool-persona-paper-3ca8da543bef6ede0a07"
+        trader_book_binding["persona_capital_binding_id"] = (
+            "pcb-persona-paper-3ca8da543bef6ede0a07"
+        )
+        trader_book_binding["metadata"]["book_kind"] = "trader_servant_paper_book"
+        trader_book_binding["metadata"]["persona_id"] = (
+            "agora-servant-799a3ce8c021b91cbb54"
+        )
+        self.assertTrue(_is_trader_servant_paper_book_binding(trader_book_binding))
+
+        trader_store = InMemoryPendingSignalStore()
+        strategy_calls: list[str] = []
+        base_strategy = CurrentArtifactStrategy(expression_layer=False)
+
+        def _spy_strategy(binding: Any, now_iso: str) -> Any:
+            strategy_calls.append(str(binding.get("binding_id")))
+            return base_strategy(binding, now_iso)
+
+        real_producer = _RealPaperSignalProducer(
+            store_for=lambda _b: trader_store,
+            strategy=_spy_strategy,
+        )
+        enqueued = real_producer.produce(trader_book_binding, "2026-11-13T10:00:00Z")
+        self.assertEqual(enqueued, 0)
+        self.assertEqual(strategy_calls, [])
+        self.assertEqual(trader_store.queue_depth(), 0)
+        self.assertEqual(trader_store._decision_records, {})
+        self.assertEqual(real_producer.degraded_bindings, {})
+
+        # Enqueue a trader-confirmed paper intent signal (T8 consumer) and verify a subsequent
+        # producer tick emits 0 strategy signals and leaves the T8 signal as the sole signal.
+        agora_intent_signal = build_smoke_signal(
+            BindingRef(
+                binding_id="rb-77d962be4e324032808324109f2c154e",
+                runtime_id="rt-persona-paper-3ca8da543bef6ede0a07",
+                strategy_id="agora-paper-intent-v1",
+                symbol="2330.TW",
+            ),
+            "2026-11-13T10:05:00Z",
+        )
+        agora_intent_signal["capital_pool_id"] = "pool-persona-paper-3ca8da543bef6ede0a07"
+        agora_intent_signal["metadata"]["source_worker"] = (
+            "paper-signal-producer.agora-intent"
+        )
+        agora_intent_signal["metadata"]["book_kind"] = "trader_servant_paper_book"
+        trader_store.enqueue(agora_intent_signal)
+
+        self.assertEqual(
+            real_producer.produce(trader_book_binding, "2026-11-16T10:00:00Z"),
+            0,
+        )
+        pending_signals = trader_store.get_pending()
+        self.assertEqual(len(pending_signals), 1)
+        self.assertEqual(
+            pending_signals[0]["metadata"]["source_worker"],
+            "paper-signal-producer.agora-intent",
+        )
+
+    def test_three_trading_personas_park_pending_settlement_and_settle_pending_intraday_on_next_open_unchanged(
+        self,
+    ) -> None:
+        from services.execution.lean_runtime.intraday_settlement import (
+            PENDING_RECORD_SUFFIX,
+            SETTLEMENT_RECORD_SUFFIX,
+            STATUS_SETTLED,
+            index_slot_id,
+        )
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import (
+            _artifact,
+            _binding,
+        )
+
+        personas = [
+            ("persona-tw-qinghe-2026", "rb-qinghe", "2330.TW", 1040.0),
+            ("persona-tw-hengyue-2026", "rb-hengyue", "2303.TW", 54.5),
+            ("persona-tw-chengchuan-2026", "rb-chengchuan", "2317.TW", 212.0),
+        ]
+        official_opens_d1 = {sym: d1_open for _, _, sym, d1_open in personas}
+        stores: dict[str, InMemoryPendingSignalStore] = {}
+        persona_bindings: list[dict[str, Any]] = []
+
+        for persona_id, rb_id, symbol, _d1_open in personas:
+            art = _artifact()
+            art["artifact_id"] = f"art-{persona_id}"
+            art["strategy_id"] = f"strat-{persona_id}"
+            art["parameters"]["symbols"] = [symbol]
+            b = _binding(art, binding_id=rb_id)
+            b["symbol"] = symbol
+            b["market_input"] = {
+                "symbol": symbol,
+                "closes": [100.0, 110.0],
+                "source_ref": "source-ingest:tw_price_daily",
+                "event_time": "2026-11-13T05:30:00Z",
+                "observed_at": "2026-11-13T06:00:00Z",
+            }
+            b["metadata"] = {"symbol": symbol, "persona_id": persona_id}
+            stores[rb_id] = InMemoryPendingSignalStore()
+            persona_bindings.append(b)
+
+        # Also include the trader servant paper book binding in the same tick.
+        trader_art = _artifact()
+        trader_art["parameters"]["symbols"] = ["2330.TW"]
+        trader_binding = _binding(
+            trader_art,
+            binding_id="rb-77d962be4e324032808324109f2c154e",
+        )
+        trader_binding["symbol"] = "2330.TW"
+        trader_binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [100.0, 110.0],
+            "source_ref": "source-ingest:tw_price_daily",
+            "event_time": "2026-11-13T05:30:00Z",
+            "observed_at": "2026-11-13T06:00:00Z",
+        }
+        trader_binding["metadata"] = {
+            "symbol": "2330.TW",
+            "book_kind": "trader_servant_paper_book",
+        }
+        stores[trader_binding["binding_id"]] = InMemoryPendingSignalStore()
+
+        d1_ready = [False]
+
+        def _daily_reader(symbol: str, session_date: str, _now: datetime) -> list[dict[str, Any]]:
+            if not d1_ready[0] or session_date != "2026-11-16" or symbol not in official_opens_d1:
+                return []
+            return [
+                {
+                    "symbol": symbol,
+                    "bar_start": "2026-11-16T09:00:00+08:00",
+                    "bar_frequency": "1d",
+                    "bar_availability_ts": "2026-11-16T16:00:00+08:00",
+                    "open": official_opens_d1[symbol],
+                }
+            ]
+
+        producer = _RealPaperSignalProducer(
+            store_for=lambda b: stores[b["binding_id"]],
+            strategy=CurrentArtifactStrategy(expression_layer=False),
+            daily_bar_reader=_daily_reader,
+        )
+
+        # Session D (2026-11-13): each trading persona decision parks as pending_settlement
+        # (0 immediately enqueued), while the trader servant paper book binding produces nothing.
+        for b in [*persona_bindings, trader_binding]:
+            self.assertEqual(producer.produce(b, "2026-11-13T10:00:00Z"), 0)
+
+        self.assertEqual(stores[trader_binding["binding_id"]]._decision_records, {})
+        self.assertEqual(stores[trader_binding["binding_id"]].queue_depth(), 0)
+
+        for _persona_id, rb_id, _symbol, _d1_open in personas:
+            store = stores[rb_id]
+            self.assertEqual(store.queue_depth(), 0)
+            slot = store.get_decision_record(index_slot_id(rb_id, "2026-11-13", 0))
+            self.assertIsNotNone(slot)
+            decision_id = slot["decision_id"]
+            pending_rec = store.get_decision_record(decision_id + PENDING_RECORD_SUFFIX)
+            self.assertIsNotNone(pending_rec)
+            self.assertEqual(pending_rec["status"], "pending_settlement")
+
+        # Session D+1 (2026-11-16): official D+1 opens become available; settle_pending_intraday
+        # releases all three trading personas' parked decisions at their D+1 official opens.
+        d1_ready[0] = True
+        for (_persona_id, rb_id, symbol, d1_open), b in zip(personas, persona_bindings):
+            released = producer.settle_pending_intraday(b, "2026-11-16T10:00:00Z")
+            self.assertEqual(released, 1)
+            store = stores[rb_id]
+            self.assertEqual(store.queue_depth(), 1)
+            [sig] = store.get_pending()
+            self.assertEqual(sig["symbol"], symbol)
+            self.assertEqual(float(sig["metadata"]["market_price"]), d1_open)
+            self.assertEqual(
+                float(sig["metadata"]["market_data"]["price"]), d1_open
+            )
+            slot = store.get_decision_record(index_slot_id(rb_id, "2026-11-13", 0))
+            settled = store.get_decision_record(
+                slot["decision_id"] + SETTLEMENT_RECORD_SUFFIX
+            )
+            self.assertIsNotNone(settled)
+            self.assertEqual(settled["status"], STATUS_SETTLED)
+
+        # Trader servant paper book binding still releases 0 signals.
+        self.assertEqual(
+            producer.settle_pending_intraday(trader_binding, "2026-11-16T10:00:00Z"),
+            0,
+        )
+        self.assertEqual(stores[trader_binding["binding_id"]].queue_depth(), 0)
+
+
+

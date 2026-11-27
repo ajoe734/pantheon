@@ -705,3 +705,233 @@ def test_v1_14_contract_bundle_records_servant_paper_book_routes() -> None:
     manifest_paths = {(entry["method"], entry["path"]) for entry in cap["routes"]}
     assert ("GET", "/bff/agora/servant/paper-book") in manifest_paths
     assert ("POST", "/bff/agora/servant/paper-book/ensure") in manifest_paths
+
+
+def _load_fleet_desired_state_builder() -> Any:
+    module_path = ROOT / "services" / "runtime-manager" / "fleet_desired_state.py"
+    spec = importlib.util.spec_from_file_location(
+        "pantheon_fleet_desired_state_test", module_path
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod.build_fleet_desired_state
+
+
+def test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings(
+    owner_stack: Dict[str, Any],
+) -> None:
+    """AC1 (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127):
+    A trader servant paper book RuntimeBinding (metadata.book_kind == 'trader_servant_paper_book')
+    carries the StagePlanner.build_execution_projection artifact projection and is listed in
+    runtime-manager desired-state bindings (not in excluded).
+    """
+    from services.execution.artifact_loader import ArtifactLoader
+
+    client: TestClient = owner_stack["client"]
+    rm_service: RuntimeManagerService = owner_stack["rm_service"]
+    build_fleet_desired_state = _load_fleet_desired_state_builder()
+
+    headers = {
+        "Authorization": _mint_bearer(sub="trader-desired-state", tenant_id=TENANT_ID),
+        "Idempotency-Key": "idem-desired-state-1",
+        "X-Request-Id": "req-desired-state-1",
+        "X-Tenant-Id": TENANT_ID,
+    }
+    res = client.post("/bff/agora/servant/paper-book/ensure", headers=headers, json={})
+    assert res.status_code == 200, res.text
+    book = res.json()["data"]
+    rb_id = book["runtime_binding_id"]
+
+    stored_binding = rm_service.get_binding(rb_id)
+    assert stored_binding is not None
+    assert stored_binding.metadata["book_kind"] == "trader_servant_paper_book"
+    assert stored_binding.metadata["symbol"] == "2330.TW"
+    assert isinstance(stored_binding.metadata.get("object_store"), dict)
+    assert isinstance(stored_binding.metadata.get("market_data_policy"), dict)
+    assert stored_binding.metadata["market_data_policy"]["owner"] == "source-ingest"
+
+    loaded = ArtifactLoader(stored_binding.metadata["object_store"]).load_exact(
+        registry_id=book["strategy_artifact_id"],
+        strategy_id=book["strategy_id"],
+        version=book["strategy_artifact_version"],
+        execution_mode="paper",
+        expected_checksum=stored_binding.metadata["artifact_checksum"],
+    )
+    assert loaded.metadata["registry_id"] == book["strategy_artifact_id"]
+
+    desired = build_fleet_desired_state(
+        [b.to_dict() for b in rm_service.list_all()], stage_filter="paper"
+    )
+    assert desired.active_count == 1
+    assert desired.excluded_count == 0
+    assert [b.binding_id for b in desired.bindings] == [rb_id]
+    assert desired.excluded == []
+
+
+def test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2 (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127):
+    The existing hosted book (servant agora-servant-799a3ce8c021b91cbb54,
+    pool-persona-paper-3ca8da543bef6ede0a07, pcb-persona-paper-3ca8da543bef6ede0a07,
+    rb-77d962be4e324032808324109f2c154e, rt-persona-paper-3ca8da543bef6ede0a07) is repaired in
+    place: ensure_trader_paper_book on an existing book whose binding lacks the projection fills
+    it on the same RuntimeBinding id and creates no second pool, capital binding, or RuntimeBinding.
+    """
+    from services.control_plane.bff.personas.trader_paper_book import (
+        trader_paper_book_ids,
+        trader_paper_runtime_id,
+    )
+    from services.execution.artifact_loader import ArtifactLoader
+    from services.runtime_manager.runtime_binding import (
+        DeploymentMode,
+        RuntimeBinding,
+        RuntimeBindingStatus,
+    )
+
+    hosted_tenant = "tenant-dev"
+    hosted_persona = "agora-servant-799a3ce8c021b91cbb54"
+    hosted_binding_id = "rb-77d962be4e324032808324109f2c154e"
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", hosted_tenant)
+
+    capital_dir: Path = owner_stack["capital_dir"]
+    rm_service: RuntimeManagerService = owner_stack["rm_service"]
+    rm_client: Any = owner_stack["rm_client"]
+    coordinator_for_tenant = owner_stack["coordinator_for_tenant"]
+    build_fleet_desired_state = _load_fleet_desired_state_builder()
+
+    ids = trader_paper_book_ids(hosted_tenant, hosted_persona)
+    assert ids.capital_pool_id == "pool-persona-paper-3ca8da543bef6ede0a07"
+    assert ids.persona_capital_binding_id == "pcb-persona-paper-3ca8da543bef6ede0a07"
+    assert trader_paper_runtime_id(ids) == "rt-persona-paper-3ca8da543bef6ede0a07"
+
+    coordinator = coordinator_for_tenant(hosted_tenant)
+    coordinator.ensure_chain_paper_capital(
+        tenant_id=hosted_tenant,
+        persona_id=hosted_persona,
+        capital_pool_id=ids.capital_pool_id,
+        binding_id=ids.persona_capital_binding_id,
+        requested_by="agora-trader-1",
+        currency="TWD",
+        name=f"{hosted_persona} trader paper pool",
+        budget=10_000_000.0,
+        mandate="user_private_agora_servant_paper_book",
+        labels={"task_id": "PAPER-TRADER-BOOK-PROVISION-20261127", "paper_only": True},
+    )
+
+    # Seed the exact pre-fix hosted RuntimeBinding (active, lacking object_store/symbol/market_data_policy).
+    legacy_hosted_binding = RuntimeBinding(
+        binding_id=hosted_binding_id,
+        runtime_id=trader_paper_runtime_id(ids),
+        capital_pool_id=ids.capital_pool_id,
+        plan_id=ids.deployment_plan_id,
+        artifact_id=ids.strategy_artifact_id,
+        artifact_version=ids.version,
+        deployment_mode=DeploymentMode.PAPER.value,
+        status=RuntimeBindingStatus.ACTIVE.value,
+        effective_at="2026-11-27T09:42:01Z",
+        persona_capital_binding_id=ids.persona_capital_binding_id,
+        execution_mode="paper",
+        metadata={
+            "tenant_id": hosted_tenant,
+            "persona_id": hosted_persona,
+            "sponsor_persona_id": hosted_persona,
+            "strategy_id": ids.strategy_id,
+            "execution_context": "paper",
+            "paper_only": True,
+            "book_kind": "trader_servant_paper_book",
+            "requested_by": "agora-trader-1",
+        },
+    )
+    rm_service._store.create(legacy_hosted_binding)
+
+    # Before repair: excluded from desired-state with non_executable_missing_artifact_store.
+    before_desired = build_fleet_desired_state(
+        [b.to_dict() for b in rm_service.list_all()], stage_filter="paper"
+    )
+    assert before_desired.active_count == 0
+    assert before_desired.excluded_count == 1
+    assert before_desired.excluded[0].binding_id == hosted_binding_id
+    assert (
+        before_desired.excluded[0].exclusion_reason
+        == "non_executable_missing_artifact_store"
+    )
+
+    # Call ensure_trader_paper_book to repair the existing book in place.
+    repaired = ensure_trader_paper_book(
+        hosted_tenant,
+        hosted_persona,
+        requested_by="agora-trader-1",
+        agora_user_id="agora-trader-1",
+        coordinator=coordinator,
+        runtime_client=rm_client,
+    )
+    assert repaired["capital_pool_id"] == "pool-persona-paper-3ca8da543bef6ede0a07"
+    assert (
+        repaired["persona_capital_binding_id"]
+        == "pcb-persona-paper-3ca8da543bef6ede0a07"
+    )
+    assert repaired["runtime_binding_id"] == hosted_binding_id
+    assert repaired["runtime_id"] == "rt-persona-paper-3ca8da543bef6ede0a07"
+    assert repaired["created_capital_pool"] is False
+    assert repaired["created_runtime_binding"] is False
+    assert repaired["idempotent_replay"] is True
+    assert repaired["runtime_binding"]["created"] is False
+
+    # No second pool, capital binding, or RuntimeBinding was created.
+    assert list(_reload_capital_pools(capital_dir).keys()) == [
+        "pool-persona-paper-3ca8da543bef6ede0a07"
+    ]
+    assert list(_reload_capital_bindings(capital_dir).keys()) == [
+        "pcb-persona-paper-3ca8da543bef6ede0a07"
+    ]
+    pool_rm_bindings = rm_service.find_bindings_for_pool(
+        "pool-persona-paper-3ca8da543bef6ede0a07"
+    )
+    assert len(pool_rm_bindings) == 1
+    assert pool_rm_bindings[0].binding_id == hosted_binding_id
+    assert pool_rm_bindings[0].status == "active"
+    assert pool_rm_bindings[0].metadata["symbol"] == "2330.TW"
+
+    # After repair: rb-77d962be4e324032808324109f2c154e is in desired-state bindings and not excluded.
+    after_desired = build_fleet_desired_state(
+        [b.to_dict() for b in rm_service.list_all()], stage_filter="paper"
+    )
+    assert after_desired.active_count == 1
+    assert after_desired.excluded_count == 0
+    assert [b.binding_id for b in after_desired.bindings] == [hosted_binding_id]
+    assert after_desired.excluded == []
+
+    loaded = ArtifactLoader(pool_rm_bindings[0].metadata["object_store"]).load_exact(
+        registry_id=ids.strategy_artifact_id,
+        strategy_id=ids.strategy_id,
+        version=ids.version,
+        execution_mode="paper",
+        expected_checksum=pool_rm_bindings[0].metadata["artifact_checksum"],
+    )
+    assert loaded.metadata["registry_id"] == ids.strategy_artifact_id
+
+    # Subsequent ensure_trader_paper_book call makes zero transitions and zero owner writes.
+    transition_calls: List[str] = []
+    orig_transition = rm_client.transition
+
+    def _spy_transition(binding_id: str, new_status: str, **kwargs: Any) -> Any:
+        transition_calls.append(f"{binding_id}:{new_status}")
+        return orig_transition(binding_id, new_status, **kwargs)
+
+    monkeypatch.setattr(rm_client, "transition", _spy_transition)
+    replay = ensure_trader_paper_book(
+        hosted_tenant,
+        hosted_persona,
+        requested_by="agora-trader-1",
+        agora_user_id="agora-trader-1",
+        coordinator=coordinator,
+        runtime_client=rm_client,
+    )
+    assert replay["runtime_binding_id"] == hosted_binding_id
+    assert replay["idempotent_replay"] is True
+    assert transition_calls == []
+

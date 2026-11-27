@@ -264,17 +264,21 @@ def trader_paper_book_provisioning_record(
     clean_tenant = str(tenant_id or "").strip()
     clean_persona = str(persona_id or "").strip()
     clean_requester = str(requested_by or "").strip() or "control-plane-bff"
+    currency = str(
+        starting_capital.get("currency") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY
+    )
     payload = {
         "name": f"{clean_persona} trader paper book",
         "mandate": "user_private_agora_servant_paper_book",
         "persona_class": "agora_servant",
         "book_kind": "trader_servant_paper_book",
         "risk": "low",
-        "currency": str(starting_capital.get("currency") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY),
+        "currency": currency,
         "budget": float(starting_capital.get("amount") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL),
         "requested_by": clean_requester,
         "execution_context": "paper",
         "environment_ceiling": "paper",
+        **({"symbols": ["2330.TW"]} if currency.strip().upper() == "TWD" else {}),
     }
     request_hash = hashlib.sha256(
         json.dumps(
@@ -411,6 +415,7 @@ def _validate_runtime_binding_readback(
     persona_id: str,
     capital_pool_id: str,
     persona_capital_binding_id: str,
+    require_active: bool = True,
 ) -> Dict[str, Any]:
     binding_id = str(
         binding.get("binding_id")
@@ -444,7 +449,7 @@ def _validate_runtime_binding_readback(
                 reason_code="non_paper_runtime_binding",
             )
     status = str(binding.get("status") or binding.get("state") or "").strip().lower()
-    if status != "active":
+    if require_active and status != "active":
         raise PersonaProvisioningCoordinationError(
             f"RuntimeBinding {binding_id} status is {status!r}, expected 'active'",
             reason_code="runtime_binding_not_active",
@@ -755,6 +760,224 @@ def _effective_starting_capital(
     return result
 
 
+def _binding_has_executable_projection(
+    binding: Mapping[str, Any],
+    *,
+    ids: ProvisioningIds,
+    expected_currency: str,
+) -> bool:
+    """True when ``binding`` already carries the approved artifact projection required by desired-state."""
+    from services.control_plane.governance.deployment_plan import StagePlanner
+
+    metadata = binding.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    if str(metadata.get("book_kind") or "").strip() != "trader_servant_paper_book":
+        return False
+    strategy_id = str(
+        binding.get("strategy_id") or metadata.get("strategy_id") or ""
+    ).strip()
+    if not strategy_id or strategy_id != ids.strategy_id:
+        return False
+    object_store = binding.get("object_store") or metadata.get("object_store")
+    if not isinstance(object_store, Mapping):
+        return False
+    artifact_version = str(binding.get("artifact_version") or ids.version).strip()
+    metadata_key, artifact_key = StagePlanner.build_object_store_keys(
+        strategy_id=strategy_id,
+        version=artifact_version,
+    )
+    projected_metadata = object_store.get(metadata_key)
+    if isinstance(projected_metadata, str):
+        try:
+            projected_metadata = json.loads(projected_metadata)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(projected_metadata, Mapping):
+        return False
+    if not str(projected_metadata.get("checksum") or "").strip():
+        return False
+    projected_artifact = object_store.get(artifact_key)
+    if not (
+        (isinstance(projected_artifact, str) and projected_artifact.strip())
+        or isinstance(projected_artifact, Mapping)
+    ):
+        return False
+    symbol = str(binding.get("symbol") or metadata.get("symbol") or "").strip()
+    if not symbol:
+        return False
+    if str(expected_currency or "").strip().upper() == "TWD" and symbol.upper() == "SPY":
+        return False
+    market_data_policy = (
+        binding.get("market_data_policy") or metadata.get("market_data_policy")
+    )
+    if not isinstance(market_data_policy, Mapping):
+        return False
+    if str(market_data_policy.get("owner") or "").strip() != "source-ingest":
+        return False
+    min_closes = market_data_policy.get("minimum_closes")
+    max_age = market_data_policy.get("max_age_seconds")
+    if (
+        isinstance(min_closes, bool)
+        or not isinstance(min_closes, int)
+        or min_closes < 2
+        or isinstance(max_age, bool)
+        or not isinstance(max_age, int)
+        or max_age < 1
+    ):
+        return False
+    return True
+
+
+def _resolve_paper_book_execution_projection(
+    coordinator: PersonaProvisioningCoordinator,
+    record: ProvisioningRecord,
+    ids: ProvisioningIds,
+    *,
+    expected_currency: str,
+    coordinate_authorities: bool = True,
+    env: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
+    """Resolve the approved artifact projection via StagePlanner.build_execution_projection."""
+    plan_receipt: Optional[Mapping[str, Any]] = None
+    reg_receipt: Optional[Mapping[str, Any]] = None
+    if _transport_supports_deploy_authorities(coordinator, env=env):
+        plan_receipt = coordinator._owner_get(
+            "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
+        )
+        reg_receipt = coordinator._owner_get(
+            "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+        )
+        reg_entry = (
+            reg_receipt.get("entry")
+            if isinstance(reg_receipt, Mapping) and isinstance(reg_receipt.get("entry"), Mapping)
+            else reg_receipt
+        )
+        authorities_ready = (
+            isinstance(plan_receipt, Mapping)
+            and plan_receipt.get("plan_id") == ids.deployment_plan_id
+            and plan_receipt.get("status") in {"approved", "executing", "executed"}
+            and isinstance(reg_entry, Mapping)
+            and reg_entry.get("registry_id") == ids.strategy_artifact_id
+            and reg_entry.get("artifact_state") == "approved"
+        )
+        if not authorities_ready and coordinate_authorities:
+            leased = _coordinate_paper_book_deploy_authorities(coordinator, record, ids)
+            plan_ref = leased.references.get("deployment_plan")
+            reg_ref = leased.references.get("strategy_artifact_approved")
+            if isinstance(plan_ref, Mapping):
+                plan_receipt = plan_ref
+            else:
+                plan_receipt = coordinator._owner_get(
+                    "deployment", f"/api/deployment/plans/{ids.deployment_plan_id}"
+                )
+            if isinstance(reg_ref, Mapping):
+                reg_receipt = reg_ref
+            else:
+                reg_receipt = coordinator._owner_get(
+                    "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+                )
+    projection = coordinator.build_paper_execution_projection_metadata(
+        record,
+        ids,
+        deployment_plan_receipt=plan_receipt if isinstance(plan_receipt, Mapping) else None,
+        registry_receipt=reg_receipt if isinstance(reg_receipt, Mapping) else None,
+    )
+    if (
+        str(expected_currency or "").strip().upper() == "TWD"
+        and str(projection.get("symbol") or "").strip().upper() == "SPY"
+    ):
+        projection["symbol"] = "2330.TW"
+    return projection
+
+
+def _repair_runtime_binding_execution_projection_in_place(
+    runtime_client: Any,
+    binding: Mapping[str, Any],
+    *,
+    projection_metadata: Mapping[str, Any],
+    tenant_id: str,
+    persona_id: str,
+    capital_pool_id: str,
+    persona_capital_binding_id: str,
+    requested_by: str,
+    starting_capital: Mapping[str, Any],
+    agora_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Repair an existing RuntimeBinding in place on the same binding_id via status transitions."""
+    transitioner = getattr(runtime_client, "transition", None)
+    if not callable(transitioner):
+        raise PersonaProvisioningCoordinationError(
+            "Runtime-Manager client does not support transition for in-place projection repair",
+            reason_code="runtime_manager_unavailable",
+        )
+    binding_id = str(
+        binding.get("binding_id")
+        or binding.get("runtime_binding_id")
+        or binding.get("id")
+        or ""
+    ).strip()
+    existing_meta = (
+        dict(binding.get("metadata") or {})
+        if isinstance(binding.get("metadata"), Mapping)
+        else {}
+    )
+    metadata_patch: Dict[str, Any] = {
+        **existing_meta,
+        "tenant_id": tenant_id,
+        "persona_id": persona_id,
+        "sponsor_persona_id": persona_id,
+        "execution_context": "paper",
+        "paper_only": True,
+        "book_kind": "trader_servant_paper_book",
+        "requested_by": str(existing_meta.get("requested_by") or requested_by),
+        "starting_capital": deepcopy(
+            dict(existing_meta.get("starting_capital") or starting_capital)
+        ),
+        **deepcopy(dict(projection_metadata)),
+    }
+    if agora_user_id and str(agora_user_id).strip() and not metadata_patch.get("agora_user_id"):
+        metadata_patch["agora_user_id"] = str(agora_user_id).strip()
+
+    status = str(binding.get("status") or binding.get("state") or "").strip().lower()
+    if status == "active":
+        transitioner(binding_id, "pending_pause", metadata_patch=metadata_patch)
+        transitioner(binding_id, "paused")
+        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
+    elif status == "pending_pause":
+        transitioner(binding_id, "paused")
+        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
+    elif status == "paused":
+        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
+    else:
+        raise PersonaProvisioningCoordinationError(
+            f"RuntimeBinding {binding_id} status is {status!r}; cannot repair projection in place",
+            reason_code="runtime_binding_not_active",
+        )
+
+    readback: Optional[Mapping[str, Any]] = None
+    getter = getattr(runtime_client, "get", None)
+    if callable(getter):
+        fetched = getter(binding_id)
+        if isinstance(fetched, Mapping):
+            readback = fetched
+    if readback is None and isinstance(updated, Mapping):
+        readback = updated
+    if not isinstance(readback, Mapping):
+        raise PersonaProvisioningCoordinationError(
+            f"Runtime-Manager did not return a readable RuntimeBinding {binding_id} after projection repair",
+            reason_code="runtime_binding_readback_missing",
+        )
+    return _validate_runtime_binding_readback(
+        readback,
+        tenant_id=tenant_id,
+        persona_id=persona_id,
+        capital_pool_id=capital_pool_id,
+        persona_capital_binding_id=persona_capital_binding_id,
+        require_active=True,
+    )
+
+
 def ensure_trader_paper_book(
     tenant_id: str,
     persona_id: str,
@@ -900,6 +1123,7 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=False,
         )
     if len(non_terminal) > 1:
         raise PersonaProvisioningCoordinationError(
@@ -911,7 +1135,14 @@ def ensure_trader_paper_book(
     effective_starting = _effective_starting_capital(starting_capital, capital_pool)
     runtime_binding_existed = len(non_terminal) == 1
     if runtime_binding_existed:
-        runtime_binding = non_terminal[0]
+        runtime_binding = _validate_runtime_binding_readback(
+            non_terminal[0],
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=False,
+        )
         getter = getattr(active_runtime_client, "get", None)
         if callable(getter):
             latest = getter(runtime_binding["binding_id"])
@@ -922,10 +1153,51 @@ def ensure_trader_paper_book(
                     persona_id=clean_persona,
                     capital_pool_id=ids.capital_pool_id,
                     persona_capital_binding_id=ids.persona_capital_binding_id,
+                    require_active=False,
                 )
+        if not _binding_has_executable_projection(
+            runtime_binding,
+            ids=ids,
+            expected_currency=effective_starting["currency"],
+        ):
+            projection_metadata = _resolve_paper_book_execution_projection(
+                active_coordinator,
+                record,
+                ids,
+                expected_currency=effective_starting["currency"],
+                coordinate_authorities=True,
+                env=env,
+            )
+            runtime_binding = _repair_runtime_binding_execution_projection_in_place(
+                active_runtime_client,
+                runtime_binding,
+                projection_metadata=projection_metadata,
+                tenant_id=clean_tenant,
+                persona_id=clean_persona,
+                capital_pool_id=ids.capital_pool_id,
+                persona_capital_binding_id=ids.persona_capital_binding_id,
+                requested_by=clean_requester,
+                starting_capital=effective_starting,
+                agora_user_id=agora_user_id,
+            )
+        else:
+            runtime_binding = _validate_runtime_binding_readback(
+                runtime_binding,
+                tenant_id=clean_tenant,
+                persona_id=clean_persona,
+                capital_pool_id=ids.capital_pool_id,
+                persona_capital_binding_id=ids.persona_capital_binding_id,
+                require_active=True,
+            )
     else:
-        if _transport_supports_deploy_authorities(active_coordinator, env=env):
-            _coordinate_paper_book_deploy_authorities(active_coordinator, record, ids)
+        projection_metadata = _resolve_paper_book_execution_projection(
+            active_coordinator,
+            record,
+            ids,
+            expected_currency=effective_starting["currency"],
+            coordinate_authorities=True,
+            env=env,
+        )
 
         deploy_request: Dict[str, Any] = {
             "plan_id": ids.deployment_plan_id,
@@ -953,6 +1225,7 @@ def ensure_trader_paper_book(
                 "book_kind": "trader_servant_paper_book",
                 "requested_by": clean_requester,
                 "starting_capital": deepcopy(effective_starting),
+                **deepcopy(dict(projection_metadata)),
                 **(
                     {"agora_user_id": str(agora_user_id).strip()}
                     if agora_user_id and str(agora_user_id).strip()
@@ -1023,7 +1296,34 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=False,
         )
+        if not _binding_has_executable_projection(
+            runtime_binding,
+            ids=ids,
+            expected_currency=effective_starting["currency"],
+        ):
+            runtime_binding = _repair_runtime_binding_execution_projection_in_place(
+                active_runtime_client,
+                runtime_binding,
+                projection_metadata=projection_metadata,
+                tenant_id=clean_tenant,
+                persona_id=clean_persona,
+                capital_pool_id=ids.capital_pool_id,
+                persona_capital_binding_id=ids.persona_capital_binding_id,
+                requested_by=clean_requester,
+                starting_capital=effective_starting,
+                agora_user_id=agora_user_id,
+            )
+        else:
+            runtime_binding = _validate_runtime_binding_readback(
+                runtime_binding,
+                tenant_id=clean_tenant,
+                persona_id=clean_persona,
+                capital_pool_id=ids.capital_pool_id,
+                persona_capital_binding_id=ids.persona_capital_binding_id,
+                require_active=True,
+            )
 
     runtime_binding = dict(runtime_binding)
     runtime_binding.setdefault("allowed_deployment_scope", "paper")
@@ -1184,20 +1484,75 @@ def read_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=False,
         )
     if len(pool_bindings) > 1:
         raise PersonaProvisioningCoordinationError(
             f"CapitalPool {ids.capital_pool_id} has {len(pool_bindings)} non-terminal RuntimeBindings",
             reason_code="multiple_runtime_bindings",
         )
-    runtime_binding = dict(pool_bindings[0])
+    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
+    runtime_binding = _validate_runtime_binding_readback(
+        pool_bindings[0],
+        tenant_id=clean_tenant,
+        persona_id=clean_persona,
+        capital_pool_id=ids.capital_pool_id,
+        persona_capital_binding_id=ids.persona_capital_binding_id,
+        require_active=False,
+    )
+    if not _binding_has_executable_projection(
+        runtime_binding,
+        ids=ids,
+        expected_currency=effective_starting["currency"],
+    ) and callable(getattr(active_runtime_client, "transition", None)):
+        record = trader_paper_book_provisioning_record(
+            clean_tenant,
+            clean_persona,
+            requested_by=str(
+                (runtime_binding.get("metadata") or {}).get("requested_by")
+                or active_coordinator.actor_id
+            ),
+            starting_capital=effective_starting,
+        )
+        projection_metadata = _resolve_paper_book_execution_projection(
+            active_coordinator,
+            record,
+            ids,
+            expected_currency=effective_starting["currency"],
+            coordinate_authorities=False,
+            env=env,
+        )
+        runtime_binding = _repair_runtime_binding_execution_projection_in_place(
+            active_runtime_client,
+            runtime_binding,
+            projection_metadata=projection_metadata,
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            requested_by=str(
+                (runtime_binding.get("metadata") or {}).get("requested_by")
+                or active_coordinator.actor_id
+            ),
+            starting_capital=effective_starting,
+            agora_user_id=agora_user_id,
+        )
+    else:
+        runtime_binding = _validate_runtime_binding_readback(
+            runtime_binding,
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=True,
+        )
+    runtime_binding = dict(runtime_binding)
     runtime_binding.setdefault("allowed_deployment_scope", "paper")
     runtime_binding.setdefault(
         "execution_mode",
         str(runtime_binding.get("deployment_mode") or "paper"),
     )
     runtime_binding["created"] = False
-    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
     resolved_user_id = str(
         agora_user_id
         or ((persona_record or {}).get("metadata") or {}).get("agora_user_id")

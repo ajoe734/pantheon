@@ -1,0 +1,134 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127",
+  "title": "Trader paper book has no paper worker; it must run trader intents only",
+  "status": "ready_for_review",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "review_independence": {
+    "owner_family": "antigravity",
+    "reviewer_family": "codex",
+    "cross_family_verified": true
+  },
+  "problem_register_ref": {
+    "file": "docs/operations/problem-register.md",
+    "section": "RC4. Nobody looks at the whole design",
+    "row": "Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T7/T8 follow-up)"
+  },
+  "root_cause": {
+    "desired_state_exclusion": "services/control-plane/bff/personas/trader_paper_book.py::ensure_trader_paper_book coordinated Registry/Governance/Deployment authorities when configured but deployed the RuntimeBinding to Runtime-Manager without attaching the approved artifact execution projection (object_store, artifact_checksum, symbol, market_data_policy) produced by StagePlanner.build_execution_projection. As a result, services/runtime-manager/fleet_desired_state.py::_execution_projection_exclusion_reason excluded rb-77d962be4e324032808324109f2c154e with exclusion_reason='non_executable_missing_artifact_store' and paper-fleet-reconciler spawned no paper_runtime.py worker for rt-persona-paper-3ca8da543bef6ede0a07.",
+    "strategy_signal_isolation": "Once a trader servant paper book RuntimeBinding carries the approved artifact execution projection so desired-state admits it and paper-fleet-reconciler runs its worker subprocess, paper-signal-producer must not evaluate the bootstrap close_to_close_momentum StrategyArtifact on that binding; a trader servant paper book executes only trader-confirmed paper intents enqueued by the T8 consumer (source_worker == 'paper-signal-producer.agora-intent')."
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "summary": "Added PersonaProvisioningCoordinator.build_paper_execution_projection_metadata(record, ids, deployment_plan_receipt=..., registry_receipt=...) reusing StagePlanner().build_execution_projection(plan_obj, entry), validate_strategy_artifact, strategy_artifact_checksum, and strategy_artifact_minimum_closes (the exact projection path used by DeploymentService.create_plan)."
+    },
+    {
+      "path": "services/control-plane/bff/personas/trader_paper_book.py",
+      "summary": "Updated ensure_trader_paper_book and read_trader_paper_book to attach the StagePlanner.build_execution_projection metadata (object_store, strategy_id, artifact_checksum, symbol='2330.TW' for TWD books, market_data_policy) on new RuntimeBinding creation and to repair existing bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding."
+    },
+    {
+      "path": "services/execution/lean_runtime/paper_signal_producer.py",
+      "summary": "Added TRADER_SERVANT_PAPER_BOOK_KIND = 'trader_servant_paper_book' and _is_trader_servant_paper_book_binding(binding), called once per binding at the start of PaperSignalProducer._produce_current so paper-signal-producer produces zero strategy decisions and zero strategy signals for trader servant paper book bindings while leaving settle_pending_intraday and the three trading personas' signal production untouched."
+    },
+    {
+      "path": "services/runtime-manager/fleet_desired_state.py",
+      "summary": "Unchanged (zero exemption list added); trader servant paper book bindings pass _execution_projection_exclusion_reason via the standard StagePlanner.build_execution_projection metadata."
+    },
+    {
+      "path": "services/runtime-manager/test_fleet_desired_state.py",
+      "summary": "Added test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings proving AC1."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py",
+      "summary": "Added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1) and test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2)."
+    },
+    {
+      "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
+      "summary": "Added TestTraderServantPaperBookIntentOnlyAndPersonaSettlement covering AC3 (zero strategy decisions and zero strategy signals on an executable trader book binding while preserving T8 paper-signal-producer.agora-intent signals) and AC4 (the three trading personas' pending_settlement parking and settle_pending_intraday D+1 open release unchanged)."
+    },
+    {
+      "path": "docs/operations/problem-register.md",
+      "summary": "Recorded PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 (owner Antigravity, cross-family reviewer Codex) in the RC4 Agora servant row."
+    }
+  ],
+  "acceptance_criteria": {
+    "AC1_desired_state_lists_trader_book_via_standard_projection": {
+      "status": "verified_by_unit_and_integration_tests",
+      "tests": [
+        "services/runtime-manager/test_fleet_desired_state.py::TestStability::test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings"
+      ],
+      "no_exemption_in_fleet_desired_state": true
+    },
+    "AC2_existing_hosted_book_repaired_in_place_on_same_binding_id": {
+      "status": "verified_by_integration_test",
+      "hosted_identities": {
+        "persona_id": "agora-servant-799a3ce8c021b91cbb54",
+        "capital_pool_id": "pool-persona-paper-3ca8da543bef6ede0a07",
+        "persona_capital_binding_id": "pcb-persona-paper-3ca8da543bef6ede0a07",
+        "runtime_binding_id": "rb-77d962be4e324032808324109f2c154e",
+        "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07"
+      },
+      "tests": [
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id"
+      ]
+    },
+    "AC3_zero_strategy_decisions_or_signals_for_trader_servant_paper_book": {
+      "status": "verified_by_unit_test",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestTraderServantPaperBookIntentOnlyAndPersonaSettlement::test_executable_trader_servant_paper_book_binding_emits_zero_strategy_decisions_and_signals"
+      ]
+    },
+    "AC4_three_trading_personas_and_settle_pending_intraday_unchanged": {
+      "status": "verified_by_unit_test",
+      "tests": [
+        "services/execution/lean_runtime/test_paper_signal_producer.py::TestTraderServantPaperBookIntentOnlyAndPersonaSettlement::test_three_trading_personas_park_pending_settlement_and_settle_pending_intraday_on_next_open_unchanged"
+      ]
+    },
+    "AC5_runtime_budget": {
+      "paper_worker_subprocess_memory": {
+        "added_workers_at_hosted_scale": 1,
+        "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07",
+        "binding_id": "rb-77d962be4e324032808324109f2c154e",
+        "per_worker_peak_rss_mb": "70-95 MB (Python 3.12 paper_runtime.py subprocess)",
+        "current_four_workers_plus_reconciler_rss_mb": "1061-1125 MB across paper-fleet-reconciler parent + 4 active paper workers (rt-49c1c3d1 + 3 trading personas qinghe, hengyue, chengchuan)",
+        "five_workers_projected_total_rss_mb": "1135-1215 MB within the unchanged 1280 MiB container memory cap (DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m in docker-compose.yml:2981), leaving >65-145 MiB headroom",
+        "cleanup": "PaperFleetReconciler terminates worker subprocesses on binding pause/retire/exclusion (_terminate_worker SIGTERM -> SIGKILL after RECONCILER_DRAIN_TIMEOUT_SECONDS=10s)"
+      },
+      "telemetry_heartbeat_and_summary_rows_per_day": {
+        "heartbeat_cadence_seconds": 15,
+        "raw_heartbeat_rows_per_day_for_one_more_runtime": 5760,
+        "raw_heartbeat_bytes_per_day": "~2.0-2.8 MB/day (~350-500 B/row in public.telemetry_events)",
+        "runtime_state_snapshot_rows_per_day_for_one_more_runtime": "<= 100 rows/day (startup + structural changes + STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0/hour)",
+        "hourly_summary_rows_per_day_for_one_more_runtime": "24 rows/day in public.telemetry_heartbeat_hourly_summaries (~400 B/row = ~9.6 KB/day)",
+        "retention_and_cap": "HeartbeatRetentionJob (services/telemetry/heartbeat_retention.py, runs every 300s, <=20 batches x 5000 rows) summarizes and deletes raw heartbeat rows older than PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS=3 days, deletes runtime_state_snapshot rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS=3 days (preserving newest/oldest per runtime and unknown-valuation anchors), and deletes unreferenced non-permanent telemetry_events older than PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 days, keeping public.telemetry_events within its 5 GB (<=0.5 GB steady-state) storage-manifest cap."
+      },
+      "per_binding_performance_ledger_file": {
+        "path_pattern": "${PANTHEON_PERFORMANCE_STATE_ROOT}/rb-77d962be4e324032808324109f2c154e-d0f6a0c41d34.json (plus sibling .lifecycle-outbox.json)",
+        "write_cadence": "Atomic in-place snapshot rewrite via atomic_write_text + sweep_stale_temp_siblings on fill, mark valuation, or performance pair stage/ack (0 writes/day when idle with no trader intents)",
+        "steady_state_size_per_day": "~1.5-8 KB in-place snapshot (0 B/day growth when idle; ~200-400 B per distinct open symbol position)",
+        "cap": "<= 64 KB in-place JSON snapshot per binding (at most 1 deterministic .tmp sibling during write, 0 leaked temp files per PAPER-RUNTIME-STATE-FILES-BOUND-20261117 and JSON-STORE-STALE-TEMP-SWEEP-20261125; lifecycle outbox prunes chains after _chain_retention_seconds = 7 days)",
+        "cleanup": "PaperFleetReconciler._cleanup_retired_state_files unlinks per-binding ledger and outbox files when a binding reaches a terminal retired status"
+      }
+    },
+    "AC6_hosted_proof_after_deploy": {
+      "status": "pending_post_merge_dev_deploy",
+      "coordinator": "70b5f70f",
+      "read_only_checks": [
+        "GET /api/runtime-fleet/desired-state?stage=paper lists rb-77d962be4e324032808324109f2c154e in bindings and not in excluded",
+        "paper-fleet-reconciler runs exactly one worker subprocess for rb-77d962be4e324032808324109f2c154e (rt-persona-paper-3ca8da543bef6ede0a07)",
+        "GET /api/v1/telemetry/rt-persona-paper-3ca8da543bef6ede0a07/summary returns HTTP 200",
+        "Over one trading session paper-signal-producer emits zero strategy signals for rb-77d962be4e324032808324109f2c154e",
+        "GET /bff/agora/servant/paper-book returns pool-persona-paper-3ca8da543bef6ede0a07, pcb-persona-paper-3ca8da543bef6ede0a07, rb-77d962be4e324032808324109f2c154e, rt-persona-paper-3ca8da543bef6ede0a07"
+      ]
+    },
+    "AC7_problem_register_and_review_independence": {
+      "status": "verified",
+      "problem_register_updated": true,
+      "owner": "Antigravity",
+      "reviewer": "Codex"
+    }
+  },
+  "residual_findings": []
+}

@@ -2029,6 +2029,20 @@ def _binding_dict_from_obj(binding: Any) -> dict[str, Any]:
     }
 
 
+TRADER_SERVANT_PAPER_BOOK_KIND = "trader_servant_paper_book"
+
+
+def _is_trader_servant_paper_book_binding(binding: Any) -> bool:
+    """True when the binding is a trader servant paper book (executes trader intents only)."""
+    b_dict = _binding_dict_from_obj(binding)
+    metadata = b_dict.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    return (
+        str(metadata.get("book_kind") or "").strip() == TRADER_SERVANT_PAPER_BOOK_KIND
+    )
+
+
 def _paper_signal_identity(
     signal: dict[str, Any],
     binding: Mapping[str, Any],
@@ -2647,6 +2661,9 @@ class PaperSignalProducer:
         return released + self._produce_current(binding, binding_id, now_iso)
 
     def _produce_current(self, binding: Any, binding_id: str, now_iso: str) -> int:
+        if _is_trader_servant_paper_book_binding(binding):
+            self._degraded_by_binding.pop(binding_id, None)
+            return 0
 
         # Generate strategy output
         try:

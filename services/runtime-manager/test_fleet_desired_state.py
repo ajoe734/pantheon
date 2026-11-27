@@ -517,6 +517,135 @@ class TestStability(unittest.TestCase):
         self.assertEqual(state.excluded_count, 0)
         self.assertEqual(state.bindings[0].binding_id, "rb-approved-1")
 
+    def test_trader_servant_paper_book_binding_with_execution_projection_is_listed_in_desired_state_bindings(
+        self,
+    ):
+        """AC1 (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127):
+        A trader servant paper book RuntimeBinding (metadata.book_kind == 'trader_servant_paper_book')
+        uses the standard StagePlanner.build_execution_projection artifact projection path and is
+        listed in desired-state bindings (not excluded) with zero exemption list in fleet_desired_state.py.
+        """
+        from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+        from services.control_plane.bff.persona_provisioning_coordinator import (
+            PersonaProvisioningCoordinator,
+        )
+        from services.control_plane.bff.personas.trader_paper_book import (
+            resolve_trader_paper_starting_capital,
+            trader_paper_book_ids,
+            trader_paper_book_provisioning_record,
+            trader_paper_runtime_id,
+        )
+        from services.execution.artifact_loader import ArtifactLoader
+        from services.runtime_manager.runtime_binding import (
+            DeploymentMode,
+            RuntimeBinding,
+            RuntimeBindingStatus,
+        )
+
+        tenant_id = "tenant-dev"
+        persona_id = "agora-servant-799a3ce8c021b91cbb54"
+        starting_capital = resolve_trader_paper_starting_capital(
+            as_of="2026-11-27T09:42:00Z"
+        )
+        record = trader_paper_book_provisioning_record(
+            tenant_id,
+            persona_id,
+            requested_by="agora-trader-1",
+            starting_capital=starting_capital,
+            created_at="2026-11-27T09:42:00Z",
+        )
+        ids = trader_paper_book_ids(tenant_id, persona_id)
+        self.assertEqual(ids.capital_pool_id, "pool-persona-paper-3ca8da543bef6ede0a07")
+        self.assertEqual(
+            ids.persona_capital_binding_id, "pcb-persona-paper-3ca8da543bef6ede0a07"
+        )
+        self.assertEqual(
+            trader_paper_runtime_id(ids), "rt-persona-paper-3ca8da543bef6ede0a07"
+        )
+
+        # Without the execution projection, a trader servant paper book binding is excluded
+        # by _execution_projection_exclusion_reason (proving no exemption list exists).
+        unprojected = RuntimeBinding(
+            binding_id="rb-77d962be4e324032808324109f2c154e",
+            runtime_id=trader_paper_runtime_id(ids),
+            capital_pool_id=ids.capital_pool_id,
+            plan_id=ids.deployment_plan_id,
+            artifact_id=ids.strategy_artifact_id,
+            artifact_version=ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.ACTIVE.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                "tenant_id": tenant_id,
+                "persona_id": persona_id,
+                "sponsor_persona_id": persona_id,
+                "strategy_id": ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+            },
+        )
+        before_state = build_fleet_desired_state(
+            [unprojected.to_dict()], stage_filter="paper"
+        )
+        self.assertEqual(before_state.active_count, 0)
+        self.assertEqual(before_state.excluded_count, 1)
+        self.assertEqual(
+            before_state.excluded[0].exclusion_reason,
+            "non_executable_missing_artifact_store",
+        )
+
+        # With the StagePlanner.build_execution_projection metadata attached, the binding
+        # is listed in desired-state bindings and not in excluded, and its artifact is loadable.
+        coordinator = PersonaProvisioningCoordinator(
+            store=MemoryPersonaProvisioningStore(),
+            transport=None,  # type: ignore[arg-type]
+            schedule_registrar=lambda *_a, **_kw: {},
+            lease_owner="test-fleet-desired-state",
+        )
+        projection = coordinator.build_paper_execution_projection_metadata(record, ids)
+        projected = RuntimeBinding(
+            binding_id="rb-77d962be4e324032808324109f2c154e",
+            runtime_id=trader_paper_runtime_id(ids),
+            capital_pool_id=ids.capital_pool_id,
+            plan_id=ids.deployment_plan_id,
+            artifact_id=ids.strategy_artifact_id,
+            artifact_version=ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.ACTIVE.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                **unprojected.metadata,
+                **projection,
+            },
+        )
+        after_state = build_fleet_desired_state(
+            [projected.to_dict()], stage_filter="paper"
+        )
+        self.assertEqual(after_state.active_count, 1)
+        self.assertEqual(after_state.excluded_count, 0)
+        self.assertEqual(
+            [b.binding_id for b in after_state.bindings],
+            ["rb-77d962be4e324032808324109f2c154e"],
+        )
+        self.assertEqual(
+            after_state.bindings[0].metadata["book_kind"],
+            "trader_servant_paper_book",
+        )
+        self.assertEqual(after_state.bindings[0].metadata["symbol"], "2330.TW")
+        loaded = ArtifactLoader(projected.metadata["object_store"]).load_exact(
+            registry_id=ids.strategy_artifact_id,
+            strategy_id=ids.strategy_id,
+            version=ids.version,
+            execution_mode="paper",
+            expected_checksum=projected.metadata["artifact_checksum"],
+        )
+        self.assertEqual(loaded.metadata["registry_id"], ids.strategy_artifact_id)
+
 
 if __name__ == "__main__":
     unittest.main()
