@@ -8,8 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("pyarrow")
-
 from services.source_ingestion.connectors import SourceConnector, SourceRecord
 from services.source_ingestion.daily_bars_store import (
     KEYED_DATASETS,
@@ -45,7 +43,8 @@ def _sample(dataset: str, i: int, value: float = 1.0) -> dict:
         "tw_index_daily": {"index_code": f"IDX{i:02d}"}, "tw_index_ohlc_daily": {"index_code": f"IDX{i:02d}"},
         "tw_market_breadth_daily": {"market": f"M{i}"},
         "tw_institutional_flow": {"symbol": f"{1000 + i // 3}", "investor_class": ("foreign", "trust", "dealer")[i % 3]},
-        "tw_margin_short_balance": {"symbol": f"{1000 + i}"}, "tw_broker_top": {"symbol": f"{1000 + i // 15}", "rank": i % 15 + 1},
+        "tw_margin_short_balance": {"symbol": f"{1000 + i}"},
+        "tw_broker_top": {"symbol": f"{1000 + i // 30}", "side": ("buy", "sell")[i % 2], "rank": (i // 2) % 15 + 1},
         "tw_broker_branch_detail": {"symbol": f"{1000 + i // 45}", "broker_id": f"B{i // 3}", "branch_id": f"BR{i % 3}"},
         "taifex_ssf_contracts": {"contract_id": f"ssf:C{i}:202611"}, "taifex_tx_daily": {"contract_id": f"TX{i}"},
         "tw_macro_series": {"series_code": f"M{i:03d}", "date": "2026-10"},
@@ -223,7 +222,7 @@ def test_previous_reader_reads_run_files_unchanged_after_dual_write_and_keyed_tr
 # -- growth budget, measured on hosted-shaped volume, enforced on bytes ----------------------------
 HOSTED_ROWS = {  # section 6A row counts
     "tw_index_daily": 40, "tw_index_ohlc_daily": 40, "tw_market_breadth_daily": 2, "tw_institutional_flow": 1_900 * 3,
-    "tw_margin_short_balance": 1_900, "tw_broker_top": 200 * 15, "tw_broker_branch_detail": 200 * 15 * 3,
+    "tw_margin_short_balance": 1_900, "tw_broker_top": 200 * 2 * 15, "tw_broker_branch_detail": 200 * 15 * 3,
     "taifex_ssf_contracts": 600, "taifex_tx_daily": 4, "tw_macro_series": 100, "tw_community_daily": 2_000 * 2,
     "collector_news": 45, "collector_social_posts": 30,
 }
@@ -322,3 +321,127 @@ def test_every_keyed_dataset_reader_routes_through_the_named_reader_setting(tmp_
     for dataset in KEYED_DATASETS:
         assert normalized_dataset_base(tmp_path, dataset) == tmp_path / "normalized" / dataset
         assert normalized_dataset_base(tmp_path, dataset, env={"PANTHEON_KEYED_DATASET_READER": "keyed"}) == keyed_dataset_dir(tmp_path, dataset)
+
+
+# --- SOURCE-BROKER-TOP-KEYED-SIDE-20261127: tw_broker_top key includes side, 20 buy + 20 sell kept, idempotent -----
+def _finmind_broker_session_payload(symbol: str = "2330", trade_date: str = "2026-11-26", per_side: int = 20) -> dict:
+    rows = []
+    for idx in range(1, per_side + 1):
+        rows.append({
+            "stock_id": symbol,
+            "date": trade_date,
+            "securities_trader_id": f"B{idx:03d}",
+            "securities_trader": f"BuyBroker-{idx:02d}",
+            "price": 1000.0 + idx,
+            "buy": 50_000 + (per_side - idx + 1) * 1_000,
+            "sell": 10_000,
+        })
+        rows.append({
+            "stock_id": symbol,
+            "date": trade_date,
+            "securities_trader_id": f"S{idx:03d}",
+            "securities_trader": f"SellBroker-{idx:02d}",
+            "price": 1000.0 + idx,
+            "buy": 10_000,
+            "sell": 50_000 + (per_side - idx + 1) * 1_000,
+        })
+    return {"data": rows}
+
+
+def test_tw_broker_top_key_includes_side_and_keeps_20_buy_and_20_sell_rows(tmp_path):
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+
+    decl = KEYED_DATASETS["tw_broker_top"]
+    assert decl.key_fields == ("symbol", "trade_date", "side", "rank")
+    adapter = FinMindTaiwanBrokerDailyReportAdapter(max_rank=20)
+    records = adapter.records_from_daily_report_payload(
+        _finmind_broker_session_payload("2330", "2026-11-26", 20),
+        symbol="2330",
+        trade_date="2026-11-26",
+        available_time="2026-11-26T10:30:00Z",
+    )
+    assert len(records) == 40
+    writer = MarketDataStorageWriter(tmp_path)
+    writer.write_run(result=_result(records, "run-broker-1"), connector=adapter.connector())
+
+    store = KeyedDatasetStore(tmp_path, decl)
+    assert store.partitions() == ["2026-11-26"]
+    stored = store.records("2026-11-26")
+    assert len(stored) == 40
+    buy_rows = [r for r in stored if r["metadata"]["side"] == "buy"]
+    sell_rows = [r for r in stored if r["metadata"]["side"] == "sell"]
+    assert len(buy_rows) == 20 and len(sell_rows) == 20
+    assert sorted(int(r["metadata"]["rank"]) for r in buy_rows) == list(range(1, 21))
+    assert sorted(int(r["metadata"]["rank"]) for r in sell_rows) == list(range(1, 21))
+    verified = store.verify_partition("2026-11-26")
+    assert verified["verified"] is True and verified["row_count"] == 40
+
+
+def test_tw_broker_top_rewriting_same_session_is_idempotent(tmp_path):
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+
+    adapter = FinMindTaiwanBrokerDailyReportAdapter(max_rank=20)
+    payload = _finmind_broker_session_payload("2330", "2026-11-26", 20)
+    recs_run1 = adapter.records_from_daily_report_payload(
+        payload,
+        symbol="2330",
+        trade_date="2026-11-26",
+        available_time="2026-11-26T10:30:00Z",
+    )
+    writer = MarketDataStorageWriter(tmp_path)
+    writer.write_run(result=_result(recs_run1, "run-1"), connector=adapter.connector())
+
+    store = KeyedDatasetStore(tmp_path, KEYED_DATASETS["tw_broker_top"])
+    manifest_before = store.read_manifest("2026-11-26")
+    assert manifest_before is not None and manifest_before["generation"] == 1 and manifest_before["row_count"] == 40
+    files_before = _keyed_files(tmp_path, "tw_broker_top")
+    mtimes_before = {f: (tmp_path / f).stat().st_mtime_ns for f in files_before}
+
+    # Rewrite the exact same session with a new run id and newer available_time
+    recs_run2 = adapter.records_from_daily_report_payload(
+        payload,
+        symbol="2330",
+        trade_date="2026-11-26",
+        available_time="2026-11-26T11:45:00Z",
+    )
+    writer.write_run(result=_result(recs_run2, "run-2"), connector=adapter.connector())
+    assert writer.keyed_counters["partitions_unchanged"] == 1
+    assert _keyed_files(tmp_path, "tw_broker_top") == files_before
+    assert {f: (tmp_path / f).stat().st_mtime_ns for f in files_before} == mtimes_before
+    manifest_after = store.read_manifest("2026-11-26")
+    assert manifest_after == manifest_before
+    stored = store.records("2026-11-26")
+    assert len(stored) == 40
+    assert sum(1 for r in stored if r["metadata"]["side"] == "buy") == 20
+    assert sum(1 for r in stored if r["metadata"]["side"] == "sell") == 20
+
+
+def test_taiwan_reference_reader_returns_both_buy_and_sell_sides(tmp_path):
+    import importlib.util
+
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+
+    adapter = FinMindTaiwanBrokerDailyReportAdapter(max_rank=20)
+    records = adapter.records_from_daily_report_payload(
+        _finmind_broker_session_payload("2330", "2026-11-26", 20),
+        symbol="2330",
+        trade_date="2026-11-26",
+        available_time="2026-11-26T10:30:00Z",
+    )
+    MarketDataStorageWriter(tmp_path).write_run(result=_result(records, "run-1"), connector=adapter.connector())
+
+    ref_path = Path(__file__).resolve().parents[2] / "data-plane" / "taiwan_reference.py"
+    spec = importlib.util.spec_from_file_location("taiwan_reference", ref_path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    rows = mod.read_tw_broker_top_rows(tmp_path, trade_date="2026-11-26", symbol="2330")
+    assert len(rows) == 40
+    buy_rows = [r for r in rows if r["side"] == "buy"]
+    sell_rows = [r for r in rows if r["side"] == "sell"]
+    assert len(buy_rows) == 20 and len(sell_rows) == 20
+    assert [r["rank"] for r in buy_rows] == list(range(1, 21))
+    assert [r["rank"] for r in sell_rows] == list(range(1, 21))
+    assert len(mod.read_tw_broker_top_rows(tmp_path, side="buy")) == 20
+    assert len(mod.read_tw_broker_top_rows(tmp_path, side="sell")) == 20
