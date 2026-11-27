@@ -29,6 +29,7 @@ ENABLED_ENV = "PANTHEON_L2_EXTRACTION_ENABLED"
 BUDGET_PATH_ENV = "PANTHEON_L2_EXTRACTION_LEDGER_PATH"
 # Roughly 8 000 input tokens (existing client limit) with headroom for the prompt.
 MAX_PROMPT_TEXT_CHARS = 20_000
+MAX_UNSENT_EVENTS = 10_080  # ~7 days at the existing 60-second controller tick
 
 # The model's abstention reason is stored as-is, so an over-long answer stays a
 # refusal (adapter + client schema), never a silent truncation. The limit is
@@ -505,7 +506,8 @@ class ExtractionLedger:
 
     Every model call is counted against the daily cap, including a retry of the
     same record on the same day (a failing provider must not spend past the
-    cap). A source is called at most 3 times a UTC day and 6 times in total,
+    cap). Proven unsent calls refund the reservation and keep a separate daily
+    counter and bounded reason events. A source is called at most 3 times a UTC day and 6 times in total,
     summed over all its versions; the ledger also counts calls that ended in a
     timeout or a billing-only provider failure. ``input_answers`` keeps the
     terminal answer of each (source, extraction input digest) so an unchanged
@@ -546,6 +548,7 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
             )
+            c.execute("CREATE INDEX IF NOT EXISTS events_unsent_id ON events(id) WHERE outcome='unsent'")
             if "usage" not in {row[1] for row in c.execute("PRAGMA table_info(events)")}:
                 # Provider token usage of the call behind this outcome (JSON);
                 # NULL when no call was made, null fields when not reported.
@@ -724,14 +727,14 @@ class ExtractionLedger:
             )
             c.execute(
                 "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,'unsent',?)",
-                (datetime.now(timezone.utc).isoformat(), source_id, f"{reason}: {detail}"[:500]),
+                (datetime.now(timezone.utc).isoformat(), source_id[:256], f"{reason}: {detail}"[:500]),
             )
             # Existing events lack retention. Bound this new event kind separately
             # to 10,080 entries (~7 days at one unavailable tick/minute).
-            c.execute("CREATE INDEX IF NOT EXISTS events_unsent_id ON events(id) WHERE outcome='unsent'")
             c.execute(
                 "DELETE FROM events WHERE outcome='unsent' AND id < COALESCE("
-                "(SELECT id FROM events WHERE outcome='unsent' ORDER BY id DESC LIMIT 1 OFFSET 10079), 0)"
+                "(SELECT id FROM events WHERE outcome='unsent' ORDER BY id DESC LIMIT 1 OFFSET ?), 0)",
+                (MAX_UNSENT_EVENTS - 1,),
             )
 
     def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:

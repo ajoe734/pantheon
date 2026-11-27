@@ -933,3 +933,14 @@ def test_both_routes_the_probe_reads_are_get_routes_of_the_real_bff_application(
     registered = {e.raw_path for e in scan_fastapi_routes(bff_main.app) if e.method == "GET"}
     assert dpd.ALPHA_FACTORY.split("?")[0] in registered
     assert dpd.DISTILLATION_HEALTH.rsplit("/", 1)[0] + "/{loop_id}" in registered
+
+
+def test_probe_reports_unsent_separately_from_spend():
+    board = good_board()
+    board["data"]["discovery_summary"]["llm_calls"]["unsent_calls"] = 96
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["calls_today"] == 40
+    assert values["unsent_calls_today"] == 96
+    assert values["cap"] == 400
+    del board["data"]["discovery_summary"]["llm_calls"]["unsent_calls"]
+    assert stage(run(board), "hypothesis_cards")["values"]["unsent_calls_today"] is None
