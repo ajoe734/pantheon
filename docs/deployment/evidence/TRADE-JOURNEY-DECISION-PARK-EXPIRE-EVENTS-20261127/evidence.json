@@ -134,5 +134,19 @@
     "request": "Claude2 reopen of a586a9436: evidence adds 1140 lines over the 400-line cap.",
     "change": "Move both verbatim hosted records to a fixture constant in the already-scoped producer test; retain source and per-record digests in this summary. No production or settlement changes.",
     "verification": "338 tests and 15 subtests passed in checkout-scoped interpreter; fixture bytes/digests, storage manifest, diff budget and git diff --check passed. Re-review required on new head; no merged, deployed or accepted claim."
+  },
+  "ci_repair": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46035160872/job/140635789098",
+    "failed_head": "105366ee4d4666895c0d017aef76b60c8fa8e3ea",
+    "root_cause": "The futures mark-once fixture deep-copied a released signal into a different decision but retained the original immutable parked_decision_event. Runtime correctly rejected the mismatched signal_id.",
+    "change": "Repair only the synthetic later-signal fixture: remove the inherited park payload and mint a distinct envelope/journey with the canonical helper. Existing assertions, production validation and settlement behavior are unchanged.",
+    "supporting_test": "services/execution/lean_runtime/test_futures_session_inputs.py",
+    "reproduction": "Original failing test reproduced locally: 1 failed, AssertionError 2 != 3, invalid upstream park event.",
+    "focused_validation": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py",
+      "exit_code": 0,
+      "result": "13 passed, 10 subtests passed, 1 deprecation warning in 7.85s"
+    },
+    "review": "Prior approval invalidated; new exact-head review by Claude2 required."
   }
 }
