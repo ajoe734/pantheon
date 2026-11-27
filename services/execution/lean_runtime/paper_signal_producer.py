@@ -23,6 +23,8 @@ import logging
 import math
 import os
 import sys
+import uuid
+from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
@@ -50,6 +52,7 @@ from services.execution.lean_runtime.intraday_settlement import (
 
     SETTLEMENT_RECORD_SUFFIX,
     STATUS_SETTLED,
+    STATUS_EXPIRED,
     PENDING_RECORD_SUFFIX,
     advance_decision,
     PENDING_DISCOVERY_DAYS,
@@ -85,6 +88,22 @@ log = logging.getLogger(__name__)
 
 SIGNAL_SCHEMA_VERSION = "1.0"
 _WORKER_NAME = "paper-signal-producer"
+DECISION_JOURNEY_SUFFIX = "#journey"
+DECISION_SENT_SUFFIX = "#lifecycle-sent:"
+
+
+def _decision_telemetry(binding: Mapping[str, Any]) -> Any:
+    """Use the runtime's schema and transport with the discovered binding snapshot."""
+    from services.execution.lean_runtime.paper_runtime import RuntimeTelemetryEmitter
+    from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+
+    return RuntimeTelemetryEmitter(
+        RuntimeIdentity.from_env({
+            "PANTHEON_RUNTIME_ROLE": _WORKER_NAME,
+            "PANTHEON_TELEMETRY_URL": os.getenv("PANTHEON_TELEMETRY_URL", ""),
+        }),
+        SimpleNamespace(resolve=lambda: dict(binding)),
+    )
 
 
 @dataclass(frozen=True)
@@ -2479,6 +2498,7 @@ class PaperSignalProducer:
         strategy: Any,
         intraday_bar_reader: Callable[[str, str, str, datetime], Sequence[Any]] | None = None,
         daily_bar_reader: Callable[[str, str, datetime], Sequence[Any]] | None = None,
+        telemetry_for: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         self._store_for = store_for
         self._strategy = strategy
@@ -2487,6 +2507,96 @@ class PaperSignalProducer:
         self._intraday_bar_reader = intraday_bar_reader or reconciled_intraday_bar_reader
         # (symbol, session_date, now) -> the official daily bar of that session (with its open).
         self._daily_bar_reader = daily_bar_reader or official_daily_open_reader
+        self._telemetry_for = telemetry_for or _decision_telemetry
+
+    def _decision_journey(
+        self, store: Any, binding: Mapping[str, Any], pending: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """First writer owns identity and exact park payload; pending stays immutable."""
+        decision_id = str(pending["decision_id"])
+        existing = store.get_decision_record(decision_id + DECISION_JOURNEY_SUFFIX)
+        if isinstance(existing, Mapping):
+            return existing
+        out = pending["decision_out"]
+        metadata = dict(out.get("metadata") or {})
+        plan = pending["plan"]
+        parked_at = plan.get("decision_time") or metadata.get("decision_time") or metadata["market_input_event_time"]
+        signal = json.loads(json.dumps(out))
+        # Deterministic fallback also preserves identity if the identity write fails.
+        seed = str(uuid.uuid5(uuid.NAMESPACE_URL, "paper-decision:" + decision_id))
+        envelope = mint_trade_envelope(
+            {"tenant_id": out.get("tenant_id") or binding.get("tenant_id") or "default",
+             "environment": "paper", **dict(out.get("correlation_envelope") or {})},
+            producer="execution.paper-signal-producer", now=str(parked_at),
+            event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":origin")),
+            journey_id=out.get("journey_id") or "tj_" + seed,
+            id_factory=lambda: seed,
+        )
+        signal["correlation_envelope"] = envelope
+        signal["journey_id"] = envelope["journey_id"]
+        _paper_signal_identity(signal, binding, str(parked_at))
+        metadata.update({key: signal[key] for key in (
+            "signal_id", "run_id", "journey_id", "correlation_envelope",
+        )})
+        metadata.update({
+            "decision_id": decision_id, "strategy_id": out["strategy_id"],
+            "symbol": pending["symbol"], "decision_status": STATUS_PENDING,
+            "reason_code": STATUS_PENDING,
+            "reason_detail": {key: plan[key] for key in ("decision_day", "target_day", "expires_at")},
+            **{key: plan[key] for key in ("decision_day", "target_day", "expires_at", "execution_target_bar_start")},
+            "sequence_no": 1, "causal_parent_id": envelope["event_id"],
+        })
+        record = {"journey_id": envelope["journey_id"], "correlation_envelope": envelope,
+                  "parked_at": parked_at, "binding": dict(binding), "metadata": metadata}
+        # Payload construction is independent of delivery availability.
+        try:
+            record["park_event"] = self._telemetry_for(binding).build_event(
+                "trade_decision", {"action": "trade_decision_recorded"}, metadata=metadata,
+                event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":" + STATUS_PENDING)),
+                created_at=str(parked_at),
+            )
+        except Exception as exc:  # telemetry never governs settlement
+            self._degraded_by_binding[str(binding["binding_id"])] = f"decision_lifecycle_unavailable: {exc}"
+        try:
+            return store.put_decision_record(decision_id + DECISION_JOURNEY_SUFFIX, record)
+        except Exception as exc:
+            self._degraded_by_binding[str(binding["binding_id"])] = f"decision_journey_write_failed: {exc}"
+            return record
+
+    def _emit_decision_state(
+        self, store: Any, decision_id: str, journey: Mapping[str, Any],
+        settled: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Retry exact events on every index pass; mark only remote acceptance."""
+        binding_id = str(journey["binding"]["binding_id"])
+        state = STATUS_EXPIRED if settled is not None else STATUS_PENDING
+        marker = decision_id + DECISION_SENT_SUFFIX + state
+        try:
+            if store.get_decision_record(marker) is not None:
+                return
+            emitter = self._telemetry_for(journey["binding"])
+            payload = journey.get("park_event")
+            if not isinstance(payload, Mapping):
+                raise ValueError("park lifecycle payload unavailable")
+            if settled is not None:
+                metadata = dict(journey["metadata"])
+                metadata.update({
+                    "decision_status": STATUS_EXPIRED,
+                    "reason_code": "target_session_not_reconciled_by_expiry",
+                    "reason_detail": {**metadata["reason_detail"], "expired_at": settled["expired_at"]},
+                    "sequence_no": 2, "causal_parent_id": payload["event_id"],
+                    "correlation_envelope": payload["correlation_envelope"],
+                })
+                payload = emitter.build_event(
+                    "trade_decision", {"action": "trade_decision_recorded"}, metadata=metadata,
+                    event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":" + state)),
+                    created_at=str(settled["expired_at"]),
+                )
+            if payload is None or not emitter.emit_payload(payload):
+                raise ValueError("telemetry did not accept " + state)
+            store.put_decision_record(marker, {"event_id": payload["event_id"]})
+        except Exception as exc:
+            self._degraded_by_binding[binding_id] = f"decision_lifecycle_unavailable: {exc}"
 
     @property
     def degraded_bindings(self) -> dict[str, str]:
@@ -2502,6 +2612,7 @@ class PaperSignalProducer:
         pending: Mapping[str, Any],
         out: Mapping[str, Any],
         grading_marks: Sequence[tuple[str, Mapping[str, Any]]] = (),
+        lifecycle_binding: Mapping[str, Any] | None = None,
     ) -> int:
         putter = getattr(store, "put_decision_record", None)
         getter = getattr(store, "get_decision_record", None)
@@ -2525,6 +2636,10 @@ class PaperSignalProducer:
         # pending record.  Both steps are idempotent so a restart/retry completes them, and a
         # retry after the submission cutoff (which never reaches here) cannot strand a record.
         existing_pending = getter(decision_id + PENDING_RECORD_SUFFIX)
+        journey = self._decision_journey(
+            store, lifecycle_binding or {**dict(out), "binding_id": binding_id},
+            existing_pending if isinstance(existing_pending, Mapping) else record,
+        )
         day = str((existing_pending if isinstance(existing_pending, Mapping) else pending)["plan"]["decision_day"])
         slot = 0
         while True:
@@ -2542,6 +2657,7 @@ class PaperSignalProducer:
                 if bar_day is not None:
                     putter(_grading_carry_id(graded_id, bar_day), {"carrier_decision_id": decision_id})
             putter(decision_id + PENDING_RECORD_SUFFIX, record)
+        self._emit_decision_state(store, decision_id, journey)
         log.info("intraday decision %s parked as pending_settlement for %s", decision_id, binding_id)
         return 0
 
@@ -2581,6 +2697,11 @@ class PaperSignalProducer:
                 if entry is None:
                     break
                 decision_id = str(entry["decision_id"])
+                pending = getter(decision_id + PENDING_RECORD_SUFFIX)
+                journey = None
+                if isinstance(pending, Mapping) and isinstance(pending.get("decision_out"), Mapping):
+                    journey = self._decision_journey(store, b_dict, pending)
+                    self._emit_decision_state(store, decision_id, journey)
                 already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
                 try:
                     advance_decision(store, decision_id, reader, now=now)
@@ -2591,6 +2712,8 @@ class PaperSignalProducer:
                     # Order already admitted; advance_decision above still graded it (deferred grading).
                     continue
                 settled = getter(decision_id + SETTLEMENT_RECORD_SUFFIX)
+                if isinstance(settled, Mapping) and settled.get("status") == STATUS_EXPIRED and journey:
+                    self._emit_decision_state(store, decision_id, journey, settled)
                 if not isinstance(settled, Mapping) or settled.get("status") != STATUS_SETTLED:
                     continue
                 pending = getter(decision_id + PENDING_RECORD_SUFFIX) or {}
@@ -2598,6 +2721,12 @@ class PaperSignalProducer:
                 if not isinstance(decision_out, Mapping):
                     continue
                 release_out = json.loads(json.dumps(decision_out))
+                if journey:
+                    release_out["journey_id"] = journey["journey_id"]
+                    release_out["correlation_envelope"] = journey["correlation_envelope"]
+                    release_out.setdefault("metadata", {})["journey_id"] = journey["journey_id"]
+                    if journey.get("park_event"):
+                        release_out["metadata"]["parked_decision_event"] = journey["park_event"]
                 self._drop_already_graded_rows(store, release_out)
                 count = self._enqueue_output(
                     binding, now_iso, release_out, settled_fill=settled["fill"]
@@ -2779,7 +2908,8 @@ class PaperSignalProducer:
                 # is reconciled and the delayed settlement fills it (see
                 # ``settle_pending_intraday``).
                 return self._park_pending_intraday(
-                    store, binding_id, str(out.get("decision_id") or ""), intraday_pending, out
+                    store, binding_id, str(out.get("decision_id") or ""), intraday_pending, out,
+                    lifecycle_binding=b_dict,
                 )
 
             expression = out.pop("expression", None)
@@ -2899,6 +3029,7 @@ class PaperSignalProducer:
                 return self._park_pending_intraday(
                     store, binding_id, str(out.get("decision_id") or ""), daily_pending, out,
                     grading_marks=grading_to_mark,
+                    lifecycle_binding=b_dict,
                 )
 
             if isinstance(out.get("metadata"), dict):

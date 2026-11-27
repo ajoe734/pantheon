@@ -289,7 +289,7 @@ class TradeJourneyProjectionStore:
             elif attention == "risk_reject":
                 clauses.append(f"(status='failed' AND NOT COALESCE({broker_failed}, false))")
             elif attention == "attention":
-                clauses.append(f"((status IN ('failed', 'partially_filled')) OR (status='completed_with_variance' AND NOT {deferred}))")
+                clauses.append(f"((status IN ('failed', 'partially_filled', 'expired')) OR (status='completed_with_variance' AND NOT {deferred}))")
             else:
                 raise ValueError("unsupported attention filter")
         if "waiting_human" in filters:
