@@ -254,8 +254,8 @@ def prepare_dataset(dataset_ref: Mapping[str, Any] | str | Path) -> PreparedBCDa
 
     if not observations or observation_dim is None:
         raise BCTrainerError("No governed BC transitions remain after filtering")
-    if len(action_labels) < 2:
-        raise BCTrainerError("BC baseline requires at least two observed action labels")
+    if len(action_labels) < 1:
+        raise BCTrainerError("BC baseline requires at least one observed action label")
 
     action_to_id = {label: idx for idx, label in enumerate(action_labels)}
     action_ids = tuple(action_to_id[action] for action in raw_action_labels)

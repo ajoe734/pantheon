@@ -61,6 +61,20 @@ _EVENT_KIND_TO_ACTION = {
     "review": "hold",
 }
 
+DECISION_EVIDENCE_KINDS = (
+    "decision",
+    "rejection",
+    "deferral",
+    "intervention",
+)
+
+VERDICT_TO_EVIDENCE_KIND = {
+    "approve": "decision",
+    "reject": "rejection",
+    "defer": "deferral",
+    "modify": "intervention",
+}
+
 
 class DecisionLockExistsError(ValueError):
     """A lock already exists for this decision; locks are immutable."""
@@ -97,6 +111,94 @@ def a4_decision(body_decision: str, event_kind: str) -> str:
     if body_decision == "defer":
         return "defer"
     raise DecisionLockInvalidError(f"unsupported_decision:{body_decision}")
+
+
+def decision_evidence_kind(
+    body_decision: str,
+    modifications: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Map a Trading Room verdict and modifications to one of the four learning evidence kinds."""
+    if body_decision == "modify" or (body_decision == "approve" and bool(modifications)):
+        return "intervention"
+    if body_decision == "reject":
+        return "rejection"
+    if body_decision == "defer":
+        return "deferral"
+    if body_decision == "approve":
+        return "decision"
+    raise DecisionLockInvalidError(f"unsupported_decision:{body_decision}")
+
+
+def build_decision_time_snapshot(
+    event: Dict[str, Any],
+    *,
+    decision_time: str,
+    data_cutoff: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Capture the deterministic decision-time market and signal snapshot from a decision event."""
+    subject = event.get("subject") if isinstance(event.get("subject"), dict) else {}
+    raw_snap = (
+        event.get("decision_time_snapshot")
+        if isinstance(event.get("decision_time_snapshot"), dict)
+        else (
+            event.get("market_snapshot")
+            if isinstance(event.get("market_snapshot"), dict)
+            else (event.get("snapshot") if isinstance(event.get("snapshot"), dict) else {})
+        )
+    )
+    cutoff = (
+        _clean(data_cutoff)
+        or _clean(event.get("data_cutoff"))
+        or _clean(raw_snap.get("available_data_cutoff"))
+        or None
+    )
+    symbol = (
+        _clean(subject.get("symbol"))
+        or _clean(event.get("target_instrument"))
+        or _clean(raw_snap.get("symbol"))
+        or None
+    )
+    snapshot: Dict[str, Any] = {
+        **json.loads(json.dumps(raw_snap, default=str)),
+        "decision_time": decision_time,
+        "available_data_cutoff": cutoff,
+        "triggered_at": _clean(event.get("triggered_at")) or raw_snap.get("triggered_at"),
+        "symbol": symbol,
+        "subject": json.loads(json.dumps(subject, default=str)) if subject else raw_snap.get("subject", {}),
+        "strategy_id": _clean(event.get("strategy_id")) or raw_snap.get("strategy_id"),
+        "strategy_version_id": (
+            _clean(event.get("strategy_version_id") or event.get("strategy_version"))
+            or raw_snap.get("strategy_version_id")
+        ),
+        "strategy_spec_registry_id": (
+            _clean(event.get("strategy_spec_registry_id"))
+            or raw_snap.get("strategy_spec_registry_id")
+        ),
+        "event_kind": _clean(event.get("event_kind")) or raw_snap.get("event_kind"),
+        "origin": _clean(event.get("origin")) or raw_snap.get("origin"),
+        "suggested_action": _clean(event.get("suggested_action")) or raw_snap.get("suggested_action"),
+        "suggested_size": (
+            event.get("suggested_size")
+            if event.get("suggested_size") is not None
+            else raw_snap.get("suggested_size")
+        ),
+        "confidence": (
+            json.loads(json.dumps(event["confidence"], default=str))
+            if isinstance(event.get("confidence"), dict)
+            else event.get("confidence", raw_snap.get("confidence"))
+        ),
+        "probability": (
+            json.loads(json.dumps(event["probability"], default=str))
+            if isinstance(event.get("probability"), dict)
+            else event.get("probability", raw_snap.get("probability"))
+        ),
+        "expected_value": (
+            json.loads(json.dumps(event["expected_value"], default=str))
+            if isinstance(event.get("expected_value"), dict)
+            else event.get("expected_value", raw_snap.get("expected_value"))
+        ),
+    }
+    return snapshot
 
 
 def resolve_observation_kind(body_decision: str, declared: Optional[str]) -> str:
@@ -198,6 +300,12 @@ def build_decision_lock(
         "data_cutoff_unavailable_reason": None if cutoff else "event_has_no_data_cutoff",
         "decision": a4_decision(body_decision, event_kind),
         "trading_room_verdict": body_decision,
+        "evidence_kind": decision_evidence_kind(body_decision, modifications),
+        "decision_time_snapshot": build_decision_time_snapshot(
+            event,
+            decision_time=decision_time,
+            data_cutoff=cutoff or None,
+        ),
         "target_instrument": _clean(subject.get("symbol")) or None,
         "event_kind": event_kind or None,
         "raw_rationale": rationale,
@@ -235,6 +343,7 @@ def verify_checksum(lock: Dict[str, Any]) -> bool:
 
 __all__ = [
     "ACTUAL_FILL_KINDS",
+    "DECISION_EVIDENCE_KINDS",
     "DISPLAY_LABELS",
     "DecisionLockExistsError",
     "DecisionLockInvalidError",
@@ -242,9 +351,12 @@ __all__ = [
     "LOCK_RESOURCE",
     "LOCK_SCHEMA",
     "TRADER_DECLARABLE_KINDS",
+    "VERDICT_TO_EVIDENCE_KIND",
     "a4_decision",
     "build_decision_lock",
+    "build_decision_time_snapshot",
     "canonical_checksum",
+    "decision_evidence_kind",
     "unavailable",
     "verify_checksum",
 ]

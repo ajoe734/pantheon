@@ -21,6 +21,10 @@ class AgoraEvidenceWriteService:
         "note": ("AgoraNote", "create", "note"),
         "insight": ("AgoraInsight", "create", "insight"),
         "training_example": ("AgoraTrainingExample", "create", "training_example"),
+        "decision": ("AgoraDecisionLock", "create", "decision"),
+        "rejection": ("AgoraDecisionLock", "create", "rejection"),
+        "deferral": ("AgoraDecisionLock", "create", "deferral"),
+        "intervention": ("AgoraDecisionLock", "create", "intervention"),
     }
 
     def __init__(self, store: AgoraEvidenceStore) -> None:
@@ -90,8 +94,11 @@ class AgoraWriteService:
         *,
         dsn: Optional[str] = None,
         schema: str = "agora",
+        dataset_store: Optional[Any] = None,
     ) -> None:
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
+        self.dataset_store = dataset_store
+        self._explicit_dataset_store = dataset_store is not None
 
     def create_session(
         self,
@@ -505,13 +512,125 @@ class AgoraWriteService:
     # -------------------------------------------------------------------------
     # Shadow-mode decision locks (design A4). Insert-only; reads are scoped.
     # -------------------------------------------------------------------------
+    def _resolve_dataset_store(self) -> Optional[Any]:
+        if self.dataset_store is not None:
+            return self.dataset_store
+        try:
+            from services.control_plane.bff.agora.dataset_extraction.router import _default_store
+
+            self.dataset_store = _default_store()
+            return self.dataset_store
+        except Exception:
+            return None
+
+    def _emit_decision_lock_evidence(self, lock: Dict[str, Any]) -> Optional[Any]:
+        ds_store = self._resolve_dataset_store()
+        if ds_store is None:
+            return None
+        trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), dict) else {}
+        tenant_id = str(lock.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
+        user_id = str(
+            lock.get("user_id")
+            or lock.get("agora_user_id")
+            or trader_identity.get("user_id")
+            or trader_identity.get("agora_user_id")
+            or ""
+        ).strip()
+        lock_id = str(
+            lock.get("human_decision_id")
+            or lock.get("decision_id")
+            or lock.get("record_id")
+            or lock.get("decision_event_id")
+            or ""
+        ).strip()
+        if not tenant_id or not user_id or not lock_id:
+            return None
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            IdempotencyConflictError,
+            extract_decision_lock_evidence,
+        )
+
+        try:
+            record, _ = extract_decision_lock_evidence(lock, store=ds_store)
+            return record
+        except IdempotencyConflictError:
+            if not self._explicit_dataset_store and getattr(ds_store, "backend", None) == "memory":
+                evidence_id = str(lock.get("evidence_id") or f"ev-lock-{lock_id}")
+                scope_key = (tenant_id, user_id, evidence_id)
+                with ds_store._lock:
+                    old_rec = ds_store._records.pop(scope_key, None)
+                    ds_store._inbox.pop(scope_key, None)
+                    if old_rec is not None:
+                        for h_key in list(ds_store._handoffs):
+                            if ds_store._handoffs[h_key].get("dataset_version_id") == old_rec.dataset_version_id:
+                                ds_store._handoffs.pop(h_key, None)
+                record, _ = extract_decision_lock_evidence(lock, store=ds_store)
+                return record
+            raise
+
     def create_decision_lock(
         self,
         lock: Dict[str, Any],
         actor_roles: Union[Sequence[str], str],
     ) -> DictRecord:
         assert_authorized("AgoraDecisionLock", "create", actor_roles)
-        return self.store.create_decision_lock(lock)
+        created = self.store.create_decision_lock(lock)
+        self._emit_decision_lock_evidence(created)
+        return created
+
+    def extract_decision_lock_evidence(
+        self,
+        lock: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+        *,
+        persona_id: Optional[str] = None,
+        retention_days: int = 30,
+        extracted_at: Optional[str] = None,
+    ) -> Any:
+        assert_authorized("AgoraDecisionLock", "create", actor_roles)
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            extract_decision_lock_evidence,
+        )
+
+        ds_store = self._resolve_dataset_store()
+        if ds_store is None:
+            raise RuntimeError("Agora dataset store is not configured")
+        return extract_decision_lock_evidence(
+            lock,
+            store=ds_store,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
+
+    def extract_journal_entry_evidence(
+        self,
+        entry: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+        *,
+        decision_lock: Optional[Dict[str, Any]] = None,
+        snapshot: Optional[Dict[str, Any]] = None,
+        persona_id: Optional[str] = None,
+        retention_days: int = 30,
+        extracted_at: Optional[str] = None,
+    ) -> Any:
+        assert_authorized("DecisionJournalEntry", "create", actor_roles)
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            extract_journal_entry_evidence,
+        )
+
+        ds_store = self._resolve_dataset_store()
+        if ds_store is None:
+            raise RuntimeError("Agora dataset store is not configured")
+        return extract_journal_entry_evidence(
+            entry,
+            store=ds_store,
+            decision_lock=decision_lock,
+            snapshot=snapshot,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
 
     def _lock_readable(
         self, lock: Optional[DictRecord], tenant_id: str, user_id: str, roles: Union[Sequence[str], str]
@@ -556,10 +675,11 @@ def build_agora_write_service(
     dsn: Optional[str] = None,
     schema: str = "agora",
     bootstrap: bool = True,
+    dataset_store: Optional[Any] = None,
 ) -> AgoraWriteService:
     """Factory creating an AgoraWriteService backed by durable Postgres storage."""
     store = build_agora_store(dsn=dsn, schema=schema, bootstrap=bootstrap)
-    return AgoraWriteService(store=store)
+    return AgoraWriteService(store=store, dataset_store=dataset_store)
 
 
 __all__ = ["AgoraWriteService", "build_agora_write_service"]

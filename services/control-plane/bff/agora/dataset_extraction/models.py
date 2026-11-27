@@ -5,7 +5,8 @@ no RuntimeBinding mutation, no capital binding, no order routing.
 
 Interaction kinds route to two dataset buckets:
   observe — passive capture: ask, journal, note, insight
-  learn   — supervised signal: feedback, training_example
+  learn   — supervised signal: feedback, training_example, decision,
+            rejection, deferral, intervention
 """
 from __future__ import annotations
 
@@ -22,11 +23,49 @@ class InteractionKind(str, Enum):
     NOTE = "note"
     INSIGHT = "insight"
     TRAINING_EXAMPLE = "training_example"
+    DECISION = "decision"
+    REJECTION = "rejection"
+    DEFERRAL = "deferral"
+    INTERVENTION = "intervention"
 
 
 class DatasetKind(str, Enum):
     OBSERVE = "observe"
     LEARN = "learn"
+
+
+DECISION_EVIDENCE_KINDS: frozenset[str] = frozenset(
+    {
+        InteractionKind.DECISION.value,
+        InteractionKind.REJECTION.value,
+        InteractionKind.DEFERRAL.value,
+        InteractionKind.INTERVENTION.value,
+    }
+)
+
+# Retention and daily per-trader growth budget (SD §7.3, §8.3, T4):
+# - One evidence item is emitted per Agora decision lock or decision journal entry.
+# - Retention follows the existing 30-day dataset retention (bounded 1..365 days).
+# - At ~2 KB per evidence item and up to 50 trader decisions/journal entries per day,
+#   growth is ~20 KB/day typical (10 items/day) and capped at ~100 KB/day (50 items/day),
+#   or <= 3 MB per trader across the 30-day retention window.
+DEFAULT_DATASET_RETENTION_DAYS: int = 30
+ESTIMATED_DECISION_EVIDENCE_BYTES: int = 2048
+MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY: int = 50
+MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY: int = (
+    MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY * ESTIMATED_DECISION_EVIDENCE_BYTES
+)
+DECISION_EVIDENCE_RETENTION_BUDGET: Dict[str, Any] = {
+    "cadence": "event_driven_on_lock_or_journal_write",
+    "items_per_lock_or_journal_entry": 1,
+    "estimated_item_bytes": ESTIMATED_DECISION_EVIDENCE_BYTES,
+    "typical_items_per_trader_per_day": 10,
+    "typical_growth_bytes_per_trader_per_day": 10 * ESTIMATED_DECISION_EVIDENCE_BYTES,
+    "max_items_per_trader_per_day": MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY,
+    "max_growth_bytes_per_trader_per_day": MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY,
+    "retention_days": DEFAULT_DATASET_RETENTION_DAYS,
+    "max_retention_days": 365,
+}
 
 
 _KIND_TO_DATASET: dict[str, DatasetKind] = {
@@ -36,6 +75,10 @@ _KIND_TO_DATASET: dict[str, DatasetKind] = {
     InteractionKind.INSIGHT.value: DatasetKind.OBSERVE,
     InteractionKind.FEEDBACK.value: DatasetKind.LEARN,
     InteractionKind.TRAINING_EXAMPLE.value: DatasetKind.LEARN,
+    InteractionKind.DECISION.value: DatasetKind.LEARN,
+    InteractionKind.REJECTION.value: DatasetKind.LEARN,
+    InteractionKind.DEFERRAL.value: DatasetKind.LEARN,
+    InteractionKind.INTERVENTION.value: DatasetKind.LEARN,
 }
 
 
@@ -175,10 +218,16 @@ class HandoffAcknowledgementRequest(BaseModel):
 
 __all__ = [
     "AgoraInteractionEvidenceRequest",
+    "DECISION_EVIDENCE_KINDS",
+    "DECISION_EVIDENCE_RETENTION_BUDGET",
+    "DEFAULT_DATASET_RETENTION_DAYS",
     "DatasetAdmissionReceipt",
     "DatasetKind",
     "DatasetRecord",
+    "ESTIMATED_DECISION_EVIDENCE_BYTES",
     "HandoffAcknowledgementRequest",
     "InteractionKind",
+    "MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY",
+    "MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY",
     "route_to_dataset",
 ]
