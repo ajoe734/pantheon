@@ -4,14 +4,14 @@
   "reviewer": "Antigravity2",
   "review_independence": "Codex versus Antigravity model families; assigned canonical reviewer, no self-approval.",
   "root_cause_class": "RC2 / WP2.3: explicit advisory persona selected as an institutional trading persona after T7 paper book provisioning",
-  "implementation_status": "source_validated_handoff_blocked_by_artifact_contract",
+  "implementation_status": "source_validated_ready_for_independent_review",
   "source_base": "50a65493c596eb00567e5ae34e5fe804559e77ad",
   "anchors": [
     "8bb212957",
     "79bf07588"
   ],
   "policy": "services/control-plane/persona/persona_policy_resolver.py:non_trading_identity_source; no new class list, id prefix or name heuristic",
-  "scope_note": "The Management PM-12 response is implemented in agora/performance/service.py despite its historical module placement; only the Management response changes there. The canonical artifact list names Management attribution behavior in acceptance but omits this implementation path; explicitly disclosed for review. Frozen review evidence is under the declared task evidence path.",
+  "scope_note": "The Management PM-12 response is implemented in agora/performance/service.py despite its historical module placement; only the Management response changes there. Human/Ops admitted this implementation path to the canonical artifact contract on 2026-11-27 at 17:40:18Z and reopened this existing task for exact-head handoff at 17:40:28Z. Review evidence is under the declared task evidence path.",
   "management_read_surface_inventory": [
     {
       "file": "services/control-plane/bff/strategies/routes/common.py",
@@ -432,6 +432,10 @@
     "required_actor": "Human/Ops",
     "required_correction": "Revise the existing task artifact contract to include pantheon:services/control-plane/bff/agora/performance/service.py under the governed pre-dispatch lifecycle, retaining Codex2/Antigravity2, then redispatch the existing task for exact-head handoff. The task acceptance already requires repairing Management attribution implemented there. Do not create a replacement task or bypass admission.",
     "task_contract_changed_by_worker": false,
+    "status": "resolved_by_operator_contract_revision",
+    "resolved_by": "Human/Ops",
+    "resolved_at": "2026-11-27T17:40:18Z",
+    "resolution": "Canonical governed show confirms pantheon:services/control-plane/bff/agora/performance/service.py is admitted; owner/reviewer and acceptance unchanged. Operator reopened the existing task for a fresh exact-head handoff. No governance guard was modified or bypassed.",
     "review_admitted": false
   }
 }
