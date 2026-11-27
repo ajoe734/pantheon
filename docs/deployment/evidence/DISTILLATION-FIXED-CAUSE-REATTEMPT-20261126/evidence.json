@@ -2,7 +2,7 @@
   "task_id": "DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126",
   "class": "RC2",
   "owner": "Antigravity2",
-  "reviewer": "Codex",
+  "reviewer": "Claude",
   "hosted_input": {
     "source": "task source document: /data/source-ingest/distill_job_queue.jsonl SQLite on 2026-11-26 15:05Z (backend b0eb2c259, read-only)",
     "unresolved_dead_letters_total": 60,
