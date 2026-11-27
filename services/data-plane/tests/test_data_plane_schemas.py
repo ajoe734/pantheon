@@ -954,6 +954,55 @@ class TestTaiwanReferenceHelpers(unittest.TestCase):
         self.assertTrue(valid, errors)
         self.assertIn("top_broker_concentration", features.metadata_json["features"])
 
+    def test_read_tw_broker_top_rows_returns_both_buy_and_sell_sides(self):
+        import tempfile
+        from services.source_ingestion.daily_bars_store import KEYED_DATASETS, KeyedDatasetStore
+
+        read_tw_broker_top_rows = taiwan_reference_mod.read_tw_broker_top_rows
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KeyedDatasetStore(tmp, KEYED_DATASETS["tw_broker_top"])
+            records = []
+            for side in ("buy", "sell"):
+                for rank in range(1, 21):
+                    buy_qty = (30 - rank) * 1000 if side == "buy" else 1000
+                    sell_qty = 1000 if side == "buy" else (30 - rank) * 1000
+                    records.append({
+                        "source_id": f"finmind-broker-top:2330:2026-11-26:{side}:{rank}",
+                        "connector_id": "tw-finmind-broker-daily-report",
+                        "dataset": "tw_broker_top",
+                        "metadata": {
+                            "dataset": "tw_broker_top",
+                            "provider": "FinMind",
+                            "source_dataset": "TaiwanStockTradingDailyReport",
+                            "symbol": "2330",
+                            "trade_date": "2026-11-26",
+                            "side": side,
+                            "rank": rank,
+                            "broker": f"{side.title()}-Broker-{rank:02d}",
+                            "broker_id": f"{side[0].upper()}{rank:03d}",
+                            "buy_qty": buy_qty,
+                            "sell_qty": sell_qty,
+                            "net_qty": buy_qty - sell_qty,
+                            "available_time": "2026-11-26T10:30:00Z",
+                            "source_url": "https://api.finmindtrade.com/api/v4/data",
+                        },
+                    })
+            res = store.write_records(records, ingest_run_id="run-1")
+            self.assertEqual(res["rows"], 40)
+
+            rows = read_tw_broker_top_rows(tmp, trade_date="2026-11-26", symbol="2330")
+            self.assertEqual(len(rows), 40)
+            buy_rows = [r for r in rows if r["side"] == "buy"]
+            sell_rows = [r for r in rows if r["side"] == "sell"]
+            self.assertEqual(len(buy_rows), 20)
+            self.assertEqual(len(sell_rows), 20)
+            self.assertEqual([r["rank"] for r in buy_rows], list(range(1, 21)))
+            self.assertEqual([r["rank"] for r in sell_rows], list(range(1, 21)))
+            for r in rows:
+                self.assertEqual(_validate_schema("tw_broker_top", r), [])
+            self.assertEqual(len(read_tw_broker_top_rows(tmp, side="buy")), 20)
+            self.assertEqual(len(read_tw_broker_top_rows(tmp, side="sell")), 20)
+
     def test_join_tw_quote_with_reference(self):
         rows = join_tw_quote_with_reference(
             quote_snapshots=[

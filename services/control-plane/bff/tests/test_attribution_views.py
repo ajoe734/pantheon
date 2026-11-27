@@ -498,6 +498,34 @@ def test_composed_bff_shares_single_agora_decision_lock_owner_between_trading_ro
     # Cross-tenant trader and cross-tenant operator are denied (404) on both paths.
     assert client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=trader_alice_b).status_code == 404
     assert client.get("/bff/management/attribution/shadow/dec-1", headers=trader_alice_b).status_code == 404
+
+    # AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127: the Agora owner-scoped route reads the SAME
+    # composed owner and asks attribution by the lock's human_decision_id (the owner's key).
+    agora_url = "/bff/agora/trading-room/decision-events/dec-1/shadow-comparison"
+    state["shadow_by_tenant"][("tenant-a", lock["human_decision_id"])] = {
+        "decision_id": lock["human_decision_id"],
+        "arms": [
+            {"arm": arm, "settlement_source": "pantheon_paper_proxy", "outcome": {"pnl": 0.0},
+             "settled_at": "2026-11-12T00:00:00Z", "unavailable_reason": None}
+            for arm in ("human_actual", "private_servant", "base_strategy", "committee_variant")
+        ],
+    }
+    ag_alice = client.get(agora_url, headers=trader_alice_a)
+    assert ag_alice.status_code == 200, ag_alice.text
+    ag_body = ag_alice.json()
+    assert ag_body["data"]["comparison_state"] == "settled"
+    assert [a["arm"] for a in ag_body["data"]["arms"]] == [
+        "human_actual", "private_servant", "base_strategy", "committee_variant",
+    ]
+    assert ag_body["data"]["arms"][0]["decision_detail"]["decision"] == "enter"
+    assert "trader_identity" not in ag_body["data"]
+    # Owner-only: other trader, cross-tenant trader and even an operator answer 404 here;
+    # the operator audience stays on the Management route.
+    for foreign in (trader_bob_a, trader_alice_b, op_a):
+        resp = client.get(agora_url, headers=foreign)
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["error"]["details"]["reason"] == "decision_not_found"
+    assert len(owner_builds) == 1
     assert client.get("/bff/agora/trading-room/decision-events/dec-1/decision-lock", headers=op_b).status_code == 404
     assert client.get("/bff/management/attribution/shadow/dec-1", headers=op_b).status_code == 404
 

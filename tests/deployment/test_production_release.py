@@ -290,11 +290,13 @@ case "$tool" in
       exit 0
     fi
     if [[ "$args" == "cp "*":/data/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
       dst="${@: -1}"
       [[ -d "$FAKE_STATE/incumbent_caddy_data" ]] && cp -a "$FAKE_STATE/incumbent_caddy_data/." "$dst/"
       exit 0
     fi
     if [[ "$args" == "cp "*":/config/."* ]]; then
+      echo "$args" >> "$FAKE_STATE/caddy_cp.log"
       dst="${@: -1}"
       [[ -d "$FAKE_STATE/incumbent_caddy_config" ]] && cp -a "$FAKE_STATE/incumbent_caddy_config/." "$dst/"
       exit 0
@@ -470,6 +472,8 @@ PY
       printf '200 -\n'; exit 0
     fi
     if [[ "$args" == "inspect -f {{if .State.Health}}"* ]]; then printf '%s' "${FAKE_WORKER_HEALTH:-healthy}"; exit 0; fi
+    if [[ "$args" == "inspect -f {{range .Mounts}}"* ]]; then [[ -f "$FAKE_STATE/caddy_mounts" ]] && cat "$FAKE_STATE/caddy_mounts"; exit 0; fi
+    if [[ "$args" == "logs "* ]]; then [[ -f "$FAKE_STATE/caddy_logs" ]] && cat "$FAKE_STATE/caddy_logs"; exit 0; fi
     if [[ "$args" == "inspect -f {{range .Config.Env}}"* ]]; then cat "$FAKE_STATE/container_env"; exit 0; fi
     if [[ "$args" == "inspect -f {{.Config.Image}}"* ]]; then
       cid="${@: -1}"
@@ -492,6 +496,35 @@ PY
   curl)
     url="${@: -1}"; all="$*"; port="$(sed -n 's#.*127\.0\.0\.1:\([0-9]*\)/.*#\1#p' <<<"$url")"
     out=""; prev=""; for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+    if [[ -z "${IN_FAKE_GCLOUD_SSH:-}" && ( "$url" == "https://${PROD_FE_HOST:-}"* || "$url" == "https://${PROD_BFF_HOST:-}"* ) ]]; then
+      [[ -n "${FAKE_STATE:-}" && -d "${FAKE_STATE}" ]] && echo "$url" >> "$FAKE_STATE/external_https_probes.log"
+      if [[ "${FAKE_REPLACE_FAIL:-}" == "external_https_verify" ]]; then
+        echo "curl: (28) Connection timed out after 10001 milliseconds" >&2
+        exit 28
+      fi
+    fi
+    if [[ "${FAKE_GCE_NO_HAIRPIN_NAT:-}" == "true" && ( "$url" == "https://${PROD_FE_HOST:-}"* || "$url" == "https://${PROD_BFF_HOST:-}"* ) ]]; then
+      hosts_f="${PROD_HOSTS_PATH:-${FAKE_STATE:+${FAKE_STATE}/etc/hosts}}"
+      if ! python3 - "$hosts_f" "${PROD_FE_HOST:-}" "${PROD_BFF_HOST:-}" <<'PY' >/dev/null 2>&1; then
+import sys
+from pathlib import Path
+hp, fe, bff = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if not hp.is_file() or not fe or not bff:
+    raise SystemExit(1)
+mapped = {
+    tok
+    for line in hp.read_text(encoding="utf-8").splitlines()
+    for parts in [line.split("#", 1)[0].split()]
+    if len(parts) >= 2 and parts[0] == "127.0.0.1"
+    for tok in parts[1:]
+}
+if fe not in mapped or bff not in mapped:
+    raise SystemExit(1)
+PY
+        echo "curl: (28) Connection timed out after 10001 milliseconds" >&2
+        exit 28
+      fi
+    fi
     if [[ "$url" == *computeMetadata/v1/instance/service-accounts* ]]; then
       [[ "${FAKE_METADATA_FAIL:-}" == "true" ]] && exit 22
       printf '{"access_token":"ya29.fake-prod-runtime-token"}'
@@ -4350,6 +4383,9 @@ PY
     tpl="$(arg_val --source-instance-template "$@")"
     mt="$(arg_val --machine-type "$@")"
     ip="$(arg_val --address "$@")"
+    net="$(arg_val --network "$@")"
+    sub="$(arg_val --subnet "$@")"
+    create_disk="$(arg_val --create-disk "$@")"
     meta="$(arg_val --metadata "$@")"
     bsize="$(arg_val --boot-disk-size "$@")"
     bsize="${bsize%GB}"
@@ -4367,15 +4403,38 @@ PY
         mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
       fi
       new_id="${FAKE_NEW_INSTANCE_ID:-2222222222222222222}"
-      new_boot="${FAKE_NEW_BOOT_DISK:-${vm}-boot-fresh-e2s8}"
+      cd_size=""
+      if [[ -n "$create_disk" ]]; then
+        cd_name="$(sed -n 's/.*name=\([^,]*\).*/\1/p' <<<"$create_disk")"
+        cd_size="$(sed -n 's/.*size=\([0-9]*\)GB.*/\1/p' <<<"$create_disk")"
+        if [[ "$create_disk" != *"image-family="* && "$create_disk" != *"image="* ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - Required field [disk.initializeParams.sourceImage] not specified" >&2
+          exit 1
+        fi
+        if [[ -z "$cd_name" || -e "$S/disks/$cd_name" ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - The resource 'zones/asia-east1-b/disks/${cd_name}' already exists" >&2
+          exit 1
+        fi
+        new_boot="$cd_name"
+      else
+        if [[ -e "$S/disks/$vm" ]]; then
+          echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - The resource 'zones/asia-east1-b/disks/${vm}' already exists" >&2
+          exit 1
+        fi
+        new_boot="${FAKE_NEW_BOOT_DISK:-${vm}-boot-fresh-e2s8}"
+      fi
       touch "$S/disks/$new_boot"
       rm -rf "${PROD_ROOT:-}"
+      hosts_target="${PROD_HOSTS_PATH:-$S/etc/hosts}"
+      mkdir -p "$(dirname "$hosts_target")"
+      printf '127.0.0.1 localhost\n' > "$hosts_target"
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
-      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "$ip" "$S/templates/${tpl}.json" "$has_cli_disk" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-}" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "$ip" "$S/templates/${tpl}.json" "$has_cli_disk" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-${cd_size}}" "$net" "$sub" "${FAKE_NEW_VM_NETWORK:-}" "${FAKE_NEW_VM_SUBNETWORK:-}" > "$S/vm.json" <<'PY'
 import json, sys
-vm, new_id, mt, boot_disk, ip, tpl_path, has_cli_disk, override_bsize = sys.argv[1:9]
+(vm, new_id, mt, boot_disk, ip, tpl_path, has_cli_disk,
+ override_bsize, cli_net, cli_sub, force_net, force_sub) = sys.argv[1:13]
 tpl = json.load(open(tpl_path))
 props = tpl.get("properties") or {}
 meta_obj = props.get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
@@ -4389,6 +4448,24 @@ elif has_cli_disk == "true":
     boot_size_gb = "10"
 else:
     boot_size_gb = tpl_bsize or "150"
+tpl_nics = props.get("networkInterfaces") or [{}]
+tpl_nic = tpl_nics[0] if tpl_nics and isinstance(tpl_nics[0], dict) else {}
+if force_net:
+    net_name = force_net.rsplit("/", 1)[-1]
+elif cli_net:
+    net_name = cli_net.rsplit("/", 1)[-1]
+elif ip:
+    net_name = "default"
+else:
+    net_name = str(tpl_nic.get("network") or "pantheon-prod-net").rsplit("/", 1)[-1]
+if force_sub:
+    sub_name = force_sub.rsplit("/", 1)[-1]
+elif cli_sub:
+    sub_name = cli_sub.rsplit("/", 1)[-1]
+elif ip and not cli_net:
+    sub_name = "default"
+else:
+    sub_name = str(tpl_nic.get("subnetwork") or "pantheon-prod-subnet").rsplit("/", 1)[-1]
 print(json.dumps({
     "id": new_id,
     "name": vm,
@@ -4398,8 +4475,8 @@ print(json.dumps({
         {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": boot_size_gb},
     ],
     "networkInterfaces": [{
-        "network": "global/networks/pantheon-prod-net",
-        "subnetwork": "regions/asia-east1/subnetworks/pantheon-prod-subnet",
+        "network": f"global/networks/{net_name}",
+        "subnetwork": f"regions/asia-east1/subnetworks/{sub_name}",
         "accessConfigs": [{"name": "External NAT", "natIP": ip, "type": "ONE_TO_ONE_NAT"}],
     }],
     "serviceAccounts": [{"email": "pantheon-prod-runtime@acme-trading-prod-01.iam.gserviceaccount.com", "scopes": ["https://www.googleapis.com/auth/cloud-platform"]}],
@@ -4507,7 +4584,7 @@ PY
         exit 255
       fi
     fi
-    bash -c "$cmd"
+    IN_FAKE_GCLOUD_SSH=1 bash -c "$cmd"
     exit $? ;;
   *)
     echo "unexpected fake gcloud call: $all" >&2
@@ -5283,6 +5360,161 @@ class ReplaceVmHarness(RealControllerBase):
         nvme_grow_log = (self.state / "root_grow.log").read_text()
         self.assertIn("growpart /dev/nvme0n1 1", nvme_grow_log)
         self.assertIn("resize2fs /dev/nvme0n1p1", nvme_grow_log)
+
+    def test_replace_vm_populates_idempotent_hosts_loopback_and_succeeds_under_gce_no_hairpin_nat(self):
+        hosts_file = self.tmp / "custom-etc-hosts"
+        hosts_file.write_text(f"127.0.0.1 localhost {PROD_ENV['PROD_FE_HOST']}\n", encoding="utf-8")
+
+        # 1. Without PROD_BFF_HOST (or PROD_FE_HOST) mapped to 127.0.0.1, restore_active_release fails under
+        #    FAKE_GCE_NO_HAIRPIN_NAT=true with RUNTIME_CONFIG_FETCH / curl exit 28 timeout (run 45938984639 symptom).
+        no_loopback = self.tmp / "no-loopback-hosts"
+        no_loopback.write_text("127.0.0.1 localhost\n", encoding="utf-8")
+        r_no_loop = subprocess.run(
+            [str(OPS), "restore_active_release", self.active_release_id],
+            env=self.env(
+                FAKE_GCE_NO_HAIRPIN_NAT="true",
+                PROD_HOSTS_PATH=str(no_loopback),
+                PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertNotEqual(r_no_loop.returncode, 0)
+        self.assertIn("RUNTIME_CONFIG_FETCH", r_no_loop.stderr)
+
+        # 2. bootstrap.sh idempotently populates 127.0.0.1 loopback entries for PROD_FE_HOST and PROD_BFF_HOST in
+        #    HOSTS_FILE (mode 0644, never duplicating existing 127.0.0.1 tokens across repeated runs).
+        for _ in range(2):
+            b_res = subprocess.run(
+                [str(BOOTSTRAP)],
+                env=self.env(
+                    PROD_HOSTS_PATH=str(hosts_file),
+                    PROD_SECRETS_ENV_FILE=str(self.data_mount / "secrets" / "prod.secrets.env"),
+                    PROD_POSTGRES_PASSWORD_FILE=str(self.data_mount / "secrets" / "postgres_password"),
+                    PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                    RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+                ),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(b_res.returncode, 0, b_res.stderr)
+        self.assertEqual(hosts_file.stat().st_mode & 0o777, 0o644)
+        toks = [
+            tok
+            for ln in hosts_file.read_text(encoding="utf-8").splitlines()
+            for parts in [ln.split("#", 1)[0].split()]
+            if len(parts) >= 2 and parts[0] == "127.0.0.1"
+            for tok in parts[1:]
+        ]
+        self.assertEqual(toks.count(PROD_ENV["PROD_FE_HOST"]), 1)
+        self.assertEqual(toks.count(PROD_ENV["PROD_BFF_HOST"]), 1)
+
+        # 3. End-to-end prod_replace_vm.sh succeeds under FAKE_GCE_NO_HAIRPIN_NAT=true: online_ssh skips docker cp
+        #    when /data and /config are already bind-mounted from PROD_DATA_MOUNT/proxy/caddy-data and caddy-config,
+        #    and RESTORE_OUT on the fresh Debian 12 boot disk re-populates HOSTS_FILE and restores Caddyfile + release.
+        (self.state / "caddy_mounts").write_text(
+            f"/data={self.data_mount}/proxy/caddy-data\n/config={self.data_mount}/proxy/caddy-config\n",
+            encoding="utf-8",
+        )
+        (self.data_mount / "proxy" / "Caddyfile").unlink(missing_ok=True)
+        r = self._run_replace_vm(
+            FAKE_GCE_NO_HAIRPIN_NAT="true",
+            PROD_HOSTS_PATH=str(hosts_file),
+            GITHUB_RUN_ID="45938984639",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertFalse((self.state / "caddy_cp.log").exists())
+        self.assertTrue((self.data_mount / "proxy" / "Caddyfile").is_file())
+        self.assertIn(PROD_ENV["PROD_FE_HOST"], hosts_file.read_text(encoding="utf-8"))
+        self.assertIn(PROD_ENV["PROD_BFF_HOST"], hosts_file.read_text(encoding="utf-8"))
+
+    def test_replace_vm_restores_prod_network_from_default_avoids_boot_disk_name_collision_and_verifies_external_https(self):
+        # Seed incumbent VM matching run 45948784751 state: accidentally attached to 'global/networks/default' and
+        # 'regions/asia-east1/subnetworks/default' with boot disk named 'pantheon-prod-control' (== PROD_VM_NAME).
+        def seed_default_net_same_name_boot():
+            self.setUp()
+            (self.state / "disks" / self.old_boot_disk).unlink(missing_ok=True)
+            self.old_boot_disk = "pantheon-prod-control"
+            (self.state / "disks" / "pantheon-prod-control").write_text("disk", encoding="utf-8")
+            vm_doc = json.loads((self.state / "vm.json").read_text(encoding="utf-8"))
+            vm_doc["id"] = "9190220965460877841"
+            vm_doc["machineType"] = "zones/asia-east1-b/machineTypes/e2-standard-8"
+            vm_doc["disks"][0]["deviceName"] = "pantheon-prod-control"
+            vm_doc["disks"][0]["source"] = "zones/asia-east1-b/disks/pantheon-prod-control"
+            vm_doc["disks"][0]["diskSizeGb"] = "150"
+            vm_doc["networkInterfaces"][0]["network"] = "global/networks/default"
+            vm_doc["networkInterfaces"][0]["subnetwork"] = "regions/asia-east1/subnetworks/default"
+            (self.state / "vm.json").write_text(json.dumps(vm_doc), encoding="utf-8")
+
+        # 1. Happy path: INSPECT_VARS prioritizes PROD_NETWORK/PROD_SUBNETWORK over incumbent's 'default' NIC,
+        #    Step 6 passes --network/--subnet alongside --address plus --create-disk with a fresh
+        #    'pantheon-prod-control-os-*' boot disk name (avoiding collision with retained 'pantheon-prod-control'),
+        #    and runner-side external HTTPS reachability is verified against /deployment.json and /bff/readyz.
+        seed_default_net_same_name_boot()
+        r = self._run_replace_vm(
+            FAKE_GCE_NO_HAIRPIN_NAT="true",
+            GITHUB_RUN_ID="45948784751",
+            GITHUB_RUN_ATTEMPT="2",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["old_boot_disk"], "pantheon-prod-control")
+        self.assertTrue(out["old_boot_disk_preserved"])
+        self.assertRegex(out["new_boot_disk"], r"^pantheon-prod-control-os-[0-9]{8}t[0-9]{6}z$")
+        self.assertNotEqual(out["new_boot_disk"], "pantheon-prod-control")
+        self.assertTrue((self.state / "disks" / "pantheon-prod-control").exists())
+        self.assertTrue((self.state / "disks" / out["new_boot_disk"]).exists())
+
+        create_cmd = (self.state / "instance_creates.log").read_text(encoding="utf-8").strip()
+        self.assertIn(f"--network {PROD_ENV['PROD_NETWORK']}", create_cmd)
+        self.assertIn("--subnet pantheon-prod-subnet", create_cmd)
+        self.assertIn(
+            f"--create-disk name={out['new_boot_disk']},image-family=debian-12,image-project=debian-cloud,size=150GB,type=pd-standard,boot=yes,mode=rw,auto-delete=yes",
+            create_cmd,
+        )
+        vm_now = json.loads((self.state / "vm.json").read_text(encoding="utf-8"))
+        self.assertEqual(vm_now["networkInterfaces"][0]["network"], f"global/networks/{PROD_ENV['PROD_NETWORK']}")
+        self.assertEqual(vm_now["networkInterfaces"][0]["subnetwork"], "regions/asia-east1/subnetworks/pantheon-prod-subnet")
+        self.assertEqual(vm_now["disks"][0]["SizeGb" if "SizeGb" in vm_now["disks"][0] else "diskSizeGb"], "150")
+
+        ext_probes = (self.state / "external_https_probes.log").read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"https://{PROD_ENV['PROD_FE_HOST']}/deployment.json", ext_probes)
+        self.assertIn(f"https://{PROD_ENV['PROD_BFF_HOST']}/bff/readyz", ext_probes)
+
+        # 2. If runner-side external HTTPS verification fails (e.g. firewall/network block), prod_replace_vm.sh
+        #    rolls back via rollback_to_old_boot_disk 'external_https_verify' and cleans up the orphaned new boot disk.
+        seed_default_net_same_name_boot()
+        r_ext_fail = self._run_replace_vm(
+            FAKE_REPLACE_FAIL="external_https_verify",
+            PROD_EXTERNAL_HTTPS_TRIES="2",
+        )
+        self.assertEqual(r_ext_fail.returncode, 3, f"stdout={r_ext_fail.stdout}\nstderr={r_ext_fail.stderr}")
+        fail_out = json.loads(r_ext_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(fail_out["status"], "replace_vm_rolled_back", fail_out)
+        self.assertEqual(fail_out["failed_stage"], "external_https_verify")
+        self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
+        self.assertEqual(fail_out["old_boot_disk"], "pantheon-prod-control")
+        self.assertRegex(fail_out["orphaned_new_boot_disk"] or "", r"^pantheon-prod-control-os-[0-9]{8}t[0-9]{6}z$")
+        self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
+        self.assertTrue((self.state / "disks" / "pantheon-prod-control").exists())
+        self.assertFalse((self.state / "disks" / fail_out["orphaned_new_boot_disk"]).exists())
+
+        # 3. If NEW_VM_VARS detects a network mismatch on the created VM, it fails closed at verify_new_vm_identity and rolls back.
+        seed_default_net_same_name_boot()
+        r_net_fail = self._run_replace_vm(FAKE_NEW_VM_NETWORK="default")
+        self.assertEqual(r_net_fail.returncode, 3, f"stdout={r_net_fail.stdout}\nstderr={r_net_fail.stderr}")
+        net_out = json.loads(r_net_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(net_out["status"], "replace_vm_rolled_back", net_out)
+        self.assertEqual(net_out["failed_stage"], "verify_new_vm_identity")
+        self.assertIn("NETWORK_MISMATCH", net_out["message"])
+        self.assertTrue(net_out["rolled_back_to_old_boot_disk"])
 
 
 if __name__ == "__main__":

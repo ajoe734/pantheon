@@ -5502,8 +5502,15 @@ class PersonaProvisioningCoordinator:
     # ------------------------------------------------------------------
     # Pool envelope publication (R6): same owner paths, paper scope only.
     # ------------------------------------------------------------------
-    def publish_pool_envelope(self, publication: Mapping[str, Any]) -> dict[str, Any]:
+    def publish_pool_envelope(
+        self, publication: Mapping[str, Any], *, binding_snapshot: list[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Admit one immutable pool-envelope artifact and move the binding.
+
+        ``binding_snapshot`` is the publisher's just-read owner state, supplied
+        internally to share one pre-dispatch read in a daily cycle. It is never
+        accepted in a public request; all binding identity/stage checks below
+        and the Deployment owner's replacement guards still run.
 
         Every owner write is GET-first with authoritative readback, so a
         retry after response loss, or a duplicate publish, replays instead of
@@ -5552,10 +5559,10 @@ class PersonaProvisioningCoordinator:
             )
         bindings = [
             b
-            for b in self.runtime_binding_reader(
+            for b in (binding_snapshot if binding_snapshot is not None else self.runtime_binding_reader(
                 str(previous.get("plan_id") or ids.deployment_plan_id),
                 ids.capital_pool_id,
-            )
+            ))
             if str(b.get("status") or "") not in TERMINAL_RUNTIME_BINDING_STATUSES
         ]
         current = [

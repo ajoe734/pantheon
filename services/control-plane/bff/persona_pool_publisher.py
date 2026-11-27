@@ -296,6 +296,7 @@ class PersonaPoolPublisher:
         requested_by: str,
         pool_version: int | None = None,
         stage: str = "paper",
+        defer_confirmation: bool = False,
     ) -> dict[str, Any]:
         if stage != "paper":
             raise PoolPublishRefused(
@@ -356,6 +357,11 @@ class PersonaPoolPublisher:
                     status_code=409, step="binding",
                 )
             live_binding = live[0]
+            # Confirm the already accepted dispatch before rebuilding it or entering any
+            # approval/dispatch path. Legacy receipts did not persist runtime_id: the
+            # exact artifact/version, paper pool and persona capital binding identify it.
+            if pending is not None and self._binding_moved(ids, pending, bindings=bindings):
+                return self._confirm_dispatched(tenant_id, persona_id, pending)
             existing = self._guarded(
                 tenant_id, persona_id, number, lambda: self._registry_view(artifact_id), pending
             )
@@ -413,7 +419,7 @@ class PersonaPoolPublisher:
         )
         dispatch_note = None
         try:
-            receipt = self.coordinator.publish_pool_envelope(
+            publication = (
                 {
                     "tenant_id": tenant_id,
                     "persona_id": persona_id,
@@ -427,6 +433,8 @@ class PersonaPoolPublisher:
                     "market": envelope["parameters"].get("market"),
                 }
             )
+            receipt = (self.coordinator.publish_pool_envelope(publication, binding_snapshot=bindings)
+                       if defer_confirmation else self.coordinator.publish_pool_envelope(publication))
         except PoolDispatchUncertain as exc:
             # Dispatch may have been admitted and still be queued. Refuse only
             # with authoritative terminal rejection evidence plus readback that
@@ -434,7 +442,7 @@ class PersonaPoolPublisher:
             # receipt regardless of the binding being active right now.
             receipt = exc.receipt
             try:
-                kept = exc.terminal_rejection and self._previous_still_live(
+                kept = not defer_confirmation and exc.terminal_rejection and self._previous_still_live(
                     ids, receipt, previous
                 )
             except Exception:
@@ -477,7 +485,9 @@ class PersonaPoolPublisher:
                 )
 
         try:
-            moved = self._binding_moved(ids, receipt)
+            # The daily cycle spends one binding snapshot per tick. Dispatch truth
+            # is confirmed on the next tick; synchronous callers keep their readback.
+            moved = False if defer_confirmation else self._binding_moved(ids, receipt)
         except Exception:  # readback failed after dispatch: report truthfully as unconfirmed
             moved = False
         entry = {
@@ -567,16 +577,40 @@ class PersonaPoolPublisher:
             and live[0].get("status") == "active"
         )
 
-    def _binding_moved(self, ids, receipt) -> bool:
-        reader = self.coordinator.runtime_binding_reader
-        bindings = reader(receipt["deployment_plan_id"], ids.capital_pool_id) if reader else []
-        live = [b for b in bindings if b.get("status") == "active"
+    def _confirm_dispatched(self, tenant_id, persona_id, pending):
+        number = int(pending["pool_version"])
+        confirmed = {k: v for k, v in pending.items() if k != "note"}
+        confirmed["status"] = "published"
+
+        def mutate(record):
+            # Never overwrite a concurrent replacement of the receipt, or move the
+            # current pointer backwards when another publication has already won.
+            if record["published"].get(str(number)) != pending:
+                raise PoolPublishRefused("dispatch record changed during confirmation", step="record")
+            record["published"][str(number)] = confirmed
+            if int((record.get("current_envelope") or {}).get("pool_version") or 0) <= number:
+                record["current_envelope"] = {
+                    "artifact_id": pending["envelope_artifact_id"], "version": pending["envelope_version"],
+                    "plan_id": pending["deployment_plan_id"], "pool_version": number,
+                }
+
+        self._save(tenant_id, persona_id, mutate)
+        return {**confirmed, "idempotent_replay": True}
+
+    def _binding_moved(self, ids, receipt, *, bindings=None) -> bool:
+        if bindings is None:
+            reader = self.coordinator.runtime_binding_reader
+            bindings = reader(receipt["deployment_plan_id"], ids.capital_pool_id) if reader else []
+        live = [b for b in bindings if b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
                 and b.get("capital_pool_id") == ids.capital_pool_id]
         return bool(
             len(live) == 1
+            and live[0].get("status") == "active"
+            and live[0].get("deployment_mode") == "paper"
             and live[0].get("artifact_id") == receipt["envelope_artifact_id"]
             and live[0].get("artifact_version") == receipt["envelope_version"]
-            and live[0].get("runtime_id") == receipt.get("runtime_id")
+            and live[0].get("runtime_id")
+            and (not receipt.get("runtime_id") or live[0].get("runtime_id") == receipt["runtime_id"])
             and live[0].get("persona_capital_binding_id") == ids.persona_capital_binding_id
         )
 

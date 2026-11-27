@@ -1,0 +1,28 @@
+{
+  "task": "PAPER-RISK-PROBE-SESSION-PAUSED-BINDING-20261127",
+  "root_cause_class": "RC2",
+  "rc1_instance": "WP1.2",
+  "defect": "On Root 45935529622, probe:paper-risk-policy-binding (and probe:paper-risk-journey through it) failed all three personas with active_tenant_binding_missing_or_ambiguous. At the 05:30Z close the paper fleet reconciler (services/paper_fleet_reconciler/paper_fleet_reconciler.py stale_patch) moves every paper binding active -> pending_pause -> paused with metadata.session_admission.reason_code=market_input_stale and resumed_at=null until the post-close refresh stores day D; the probe only accepted status=active, so any verdict between 05:30Z and the resume failed on a scheduled session state rather than a risk defect.",
+  "fix": [
+    "acceptance/probes/paper-risk-policy-binding: select_binding() picks the single binding for (persona_id, tenant_id) whose status is active, or paused with metadata.session_admission.reason_code == market_input_stale and resumed_at null (session_pause()); >1 eligible -> active_tenant_binding_ambiguous; none eligible but a paused binding exists -> binding_paused:<reason_code or unknown>; otherwise active_tenant_binding_missing (missing tenant included); retired, failed and other statuses are never selected. An operator-paused binding next to a single active binding does not make selection ambiguous (same as before).",
+    "acceptance/probes/paper-risk-policy-binding: each checked persona row records binding_status and, when session-paused, session_admission {reason_code, observed_at, source_event_time}. Pool identity/status, policy id/version/digest, approval selection/expiry and outer bounds checks are unchanged and run identically for the session-paused binding.",
+    "acceptance/probes/paper-risk-journey: policy readbacks use the same selection via binding.run (unchanged call); decision and journey requirements are unchanged. A persona whose binding selection already failed is skipped for journey inspection; previously owner['tenant_id'] raised KeyError there, aborting the probe with a traceback instead of reporting the named finding.",
+    "acceptance/test_paper_risk_policy_binding.py: tests using the hosted reconciler session_admission shape: active -> checked with binding_status=active; paused market_input_stale -> checked with pause reported; session-paused still fails pool status, expired approval and missing gross limit; paused operator_requested_pause / market_input_missing / no reason / stale-but-resumed -> binding_paused:<reason>; paused without session_admission -> binding_paused:unknown; active + session-paused -> ambiguous; active + operator-paused -> active selected; only retired/failed/none -> missing; duplicate active -> ambiguous; foreign tenant -> missing.",
+    "acceptance/test_paper_risk_journey.py: session-paused binding passes readbacks with unchanged fresh-sample requirements (pass, and pending when no fresh rows); operator-paused binding fails journey with binding_paused:operator_requested_pause (exit 1); active + session-paused -> ambiguous.",
+    "docs/operations/problem-register.md: registered the Root 45935529622 instance on the RC2 paper risk rows after the overlapping-renewal row."
+  ],
+  "tests": [
+    "acceptance/test_paper_risk_policy_binding.py + acceptance/test_paper_risk_journey.py: 118 passed (.venv-pantheon/bin/python3 -m pytest -q)",
+    "scripts/test_dev_acceptance_stage.py + scripts/test_paper_risk_journey_daily_workflow.py: 53 passed"
+  ],
+  "fails_on_previous_head": [
+    "18 of the new tests fail with the probes from dev 388cf4d0f (session-paused not selected; combined missing_or_ambiguous code; no binding_status; journey KeyError on failed selection)"
+  ],
+  "runtime_budget": {
+    "new_writer_job_or_emitter": "none",
+    "owner_reads": "unchanged; selection is an in-memory filter over the already-fetched /api/v1/runtime-bindings?deployment_mode=paper list",
+    "journey_requests": "unchanged or fewer (personas with failed selection no longer read journey pages)"
+  },
+  "hosted_acceptance": "pending after deploy: the first Root verdict after deploy must show probe:paper-risk-policy-binding and probe:paper-risk-journey with checked 3/3 (journey may still be pending 77 on no-fresh-sample findings) or name a different failure, and state whether that verdict ran inside or outside 05:30Z-resume",
+  "residual_findings": []
+}

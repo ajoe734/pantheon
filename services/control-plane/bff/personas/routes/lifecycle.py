@@ -49,8 +49,8 @@ log = logging.getLogger(__name__)
 
 _POOL_PUBLISH_RECORDS: Any = None
 
-# Host-issued least-privilege role for the persona daily pool cycle. It is accepted by the strategy-pool
-# publish route ONLY: no shared role set (read/write helpers) includes it, so every other route refuses it.
+# Host-issued least-privilege role for the persona daily pool cycle. Only the strategy-pool
+# publish and history routes accept it; shared read/write role sets exclude it.
 POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
 
 
@@ -500,13 +500,16 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
             _require_operator_role(identity)
-        unknown = set(payload) - {"pool_version", "stage"}
+        unknown = set(payload) - {"pool_version", "stage", "defer_confirmation"}
         if unknown:
             raise _bff_error(
                 422, ErrorCode.VALIDATION_FAILED, "Unsupported publish fields",
                 f"Unexpected fields: {sorted(unknown)}",
             )
         pool_version = payload.get("pool_version")
+        if not isinstance(payload.get("defer_confirmation", False), bool):
+            raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid defer_confirmation",
+                             "defer_confirmation must be a boolean")
         if pool_version is not None and (
             isinstance(pool_version, bool) or not isinstance(pool_version, int) or pool_version < 1
         ):
@@ -525,6 +528,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
                 requested_by=str(identity.operator_id),
                 pool_version=pool_version,
                 stage=str(payload.get("stage") or "paper"),
+                defer_confirmation=payload.get("defer_confirmation", False),
             )
         except PoolPublishRefused as exc:
             raise _bff_error(
@@ -550,7 +554,14 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         authorization = _pool_owner_authorization(identity, authorization, tenant_id)
         await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
-        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher"}}
+        from ...auth.policy import bff_auth_mode, bff_auth_stub_enabled
+
+        # Evolution validates the forwarded publication credential here rather
+        # than trusting actor fields supplied with a withdrawal. No binding read.
+        return {"data": history, "meta": {"snapshot_at": utc_now(), "source": "pool_envelope_publisher",
+                "publication_authority": {"subject": identity.operator_id, "roles": list(identity.roles),
+                    "tenant_id": tenant_id, "persona_id": persona_id,
+                    "strict_auth": bff_auth_mode() == "strict" and not bff_auth_stub_enabled()}}}
 
     @router.get("/api/v1/personas/{persona_id}/strategy-matches")
     @router.get("/bff/personas/{persona_id}/strategy-matches")

@@ -228,3 +228,46 @@ def test_overlapping_renewed_and_previous_approvals_pass_in_journey_probe():
     report = run(state)
     assert report["passed"] and report["verdict"] == "passed" and report["exit_code"] == 0, report["failed"]
     assert report["policy_readbacks"]["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
+
+
+def _session_pause_all(state, reason="market_input_stale"):
+    """Pause the single binding in place (same binding_id) with the hosted reconciler shape."""
+    from test_paper_risk_policy_binding import session_paused
+    bindings = state[0]["/api/v1/runtime-bindings?deployment_mode=paper"]["data"]
+    bindings[:] = [session_paused(bindings[0], reason=reason, binding_id="active-binding")]
+
+
+def test_session_paused_binding_passes_policy_readbacks_and_keeps_journey_requirements():
+    state = fixture()
+    _session_pause_all(state)
+    report = run(state)
+    assert report["passed"] and report["verdict"] == "passed", report["failed"]
+    row = report["policy_readbacks"]["personas"]["fixture-persona"]
+    assert row["binding_status"] == "paused" and row["session_admission"]["reason_code"] == "market_input_stale"
+    assert len(report["fresh_rejections"]) == len(report["fresh_reconciled_fills"]) == 1
+
+
+def test_session_paused_binding_does_not_relax_fresh_sample_requirements():
+    state = fixture()
+    _session_pause_all(state)
+    state[3].clear()
+    report = run(state)
+    assert report["failed"] == NO_SAMPLE and report["verdict"] == "pending"
+
+
+def test_binding_paused_for_another_reason_fails_journey():
+    state = fixture()
+    _session_pause_all(state, reason="operator_requested_pause")
+    report = run(state)
+    assert "fixture-persona:binding_paused:operator_requested_pause" in report["failed"]
+    assert report["verdict"] == "failed" and report["exit_code"] == 1
+
+
+def test_active_plus_session_paused_is_ambiguous_in_journey():
+    from test_paper_risk_policy_binding import session_paused
+    state = fixture()
+    bindings = state[0]["/api/v1/runtime-bindings?deployment_mode=paper"]["data"]
+    bindings.append(session_paused(bindings[0]))
+    report = run(state)
+    assert "fixture-persona:active_tenant_binding_ambiguous" in report["failed"]
+    assert report["verdict"] == "failed"
