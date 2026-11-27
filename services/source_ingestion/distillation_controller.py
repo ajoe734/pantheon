@@ -109,6 +109,7 @@ _PRUNED_BYTES: dict[str, int] = {}
 COMPACT_AFTER_PRUNED_BYTES = 64 * 1024 * 1024
 # Max auth (401/403) dead letters redriven per tick; bounds recovery Registry load.
 AUTH_REDRIVE_PER_TICK = 100
+SUPERSEDED_RESOLVE_PER_TICK = 100
 SOURCE_BATCH_LIMIT = 100
 
 
@@ -791,6 +792,7 @@ def run_controller_tick(
             registry_reachable = False
             auth_recovery: dict[str, list[str]] = {"redriven": [], "superseded": []}
             lineage_recovery: dict[str, list[str]] = {"replayed": [], "closed": []}
+            superseded_dead_letters: list[str] = []
             if queue.dead_letter_count():
                 try:
                     _get_registry_entry(config.registry_url, "distillation-redrive-probe")
@@ -817,6 +819,13 @@ def run_controller_tick(
                     requested_by="strategy-distillation-controller",
                     limit=LINEAGE_SETTLE_PER_TICK,
                     tenant_id=state.tenant_id,
+                )
+            if queue.dead_letter_count():
+                superseded_dead_letters = queue.resolve_superseded_dead_letters(
+                    requested_by="strategy-distillation-controller",
+                    limit=SUPERSEDED_RESOLVE_PER_TICK,
+                    tenant_id=state.tenant_id,
+                    include_auth=registry_reachable,
                 )
             retired_closure: dict[str, Any] = {"closed": [], "refused": {}}
             if config.retired_tenant_ids and config.retired_window_to > 0:
@@ -871,6 +880,11 @@ def run_controller_tick(
                 "lease_lost": len(run_result.lease_lost),
                 "auth_redriven": len(auth_recovery["redriven"]),
                 "auth_superseded": len(auth_recovery["superseded"]),
+                "superseded_dead_letters_resolved": (
+                    len(superseded_dead_letters) + run_result.superseded_dead_letters_resolved
+                ),
+                "extraction_dead_letters_redriven": run_result.extraction_dead_letters_redriven,
+                "defect_reattempted": run_result.defect_reattempted,
             }
         except Exception as exc:
             raise DistillationControllerError("reconcile_worker", f"Failed to run distillation catch-up: {exc}")

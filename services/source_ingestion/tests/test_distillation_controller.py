@@ -1981,3 +1981,210 @@ def test_extraction_provider_failure_is_not_registry_sync_failure(
             "SELECT last_error FROM distillation_outbox WHERE status = 'retry_wait'"
         ).fetchone()
     assert last_error.startswith(EXTRACTION_UNAVAILABLE_MARKER)
+
+
+def test_controller_and_discovery_probe_report_only_actionable_dead_letters_and_reattempt_defect_backlog(
+    tmp_path, monkeypatch
+) -> None:
+    """DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126: 59 superseded dead letters
+    are resolved on tick 1 so the controller and discovery probe report only
+    the 1 still-actionable extraction-unavailable dead letter while the
+    extractor is failing, then 0 once the extractor answers and consumes the
+    defect-closed backlog behind fresh work."""
+    import sqlite3
+    import time
+    from acceptance.discovery_pipeline_day import stage_distillation_dead_letters
+    from services.source_ingestion import distillation_controller as ctl
+    from services.source_ingestion.hypothesis_card import (
+        ExtractionLedger,
+        ExtractionOutcome,
+    )
+    from services.source_ingestion.distillation_worker import RegistrySyncResult
+
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    evidence_path.write_text("", encoding="utf-8")
+    state_path = tmp_path / "controller_state.json"
+    config = DistillationControllerConfig(
+        database_url="postgresql://test:test@localhost:5432/test",
+        registry_url="http://mock-registry:8087",
+        interval_seconds=60,
+        max_ticks=1,
+        state_path=state_path,
+        alive_path=tmp_path / "alive",
+        job_queue_path=tmp_path / "job_queue.sqlite3",
+        seed_store_path=tmp_path / "seeds.jsonl",
+        evidence_store_path=evidence_path,
+        source_dirs=[tmp_path],
+        max_attempts=3,
+    )
+    ctl._NORMAL_WORK_SEEN.clear()
+    queue = DistillationJobQueue(config.job_queue_path)
+
+    anyof_reason = (
+        'hypothesis_extraction_failed: invalid_schema: '
+        '{"error_code":"OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",'
+        '"message":"unsupported schema keyword(s) [\'anyOf\']"}'
+    )
+    budget_reason = (
+        "hypothesis_extraction_failed: budget_breach: "
+        "Usage exceeded limits: input 3 > 8000 or output 1820 > 1000"
+    )
+    timeout_reason = "hypothesis_extraction_unavailable: timeout: OPENCLAW_RESPONSES_TIMEOUT"
+    lease_reason = "lease_expired_repeatedly: 5 lease expiries"
+
+    base_ts = time.time() - 3600.0
+
+    def force_dl(job, reason: str):
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE distillation_outbox SET status='dead_letter', attempts=3, last_error=?, processed_at=? WHERE job_id=?",
+                (reason, base_ts + 100.0, job.job_id),
+            )
+            conn.execute(
+                "INSERT INTO distillation_dead_letters (job_id, event_id, source_id, source_digest, payload_json,"
+                " attempts, reason, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (job.job_id, event_id, job.source_id, job.source_digest, "{}", 3, reason, base_ts + 100.0),
+            )
+
+    def add_pair(prefix: str, count: int, dl_reason: str, newer_status: str, newer_skip: str | None = None):
+        for idx in range(count):
+            sid = f"{prefix}-{idx}"
+            old_job = queue.enqueue_source_record(
+                _normalized_source(sid, title="v1", source_type="news", tenant_id="test"), enqueued_at=base_ts + 100.0
+            )
+            force_dl(old_job, dl_reason)
+            new_job = queue.enqueue_source_record(
+                _normalized_source(sid, title="v2", source_type="news", tenant_id="test"), enqueued_at=base_ts + 200.0
+            )
+            with sqlite3.connect(queue.path) as conn:
+                conn.execute(
+                    "UPDATE distillation_outbox SET status=?, skip_reason=?, processed_at=? WHERE job_id=?",
+                    (newer_status, newer_skip, base_ts + 200.0, new_job.job_id),
+                )
+
+    add_pair("timeout-anyof", 44, timeout_reason, "skipped", anyof_reason)
+    add_pair("timeout-disabled", 8, timeout_reason, "skipped", "l2_extraction_disabled")
+    add_pair("lease-done", 6, lease_reason, "done", None)
+    add_pair("lease-irrel", 1, lease_reason, "skipped", "l2_irrelevant: no_finance_signal")
+    newest_dl = queue.enqueue_source_record(
+        _normalized_source("timeout-newest", title="v1", source_type="news", tenant_id="test"), enqueued_at=base_ts + 300.0
+    )
+    force_dl(newest_dl, timeout_reason)
+    budget_job = queue.enqueue_source_record(
+        _normalized_source("budget-closed", title="v1", source_type="news", tenant_id="test"), enqueued_at=base_ts + 250.0
+    )
+    with sqlite3.connect(queue.path) as conn:
+        conn.execute(
+            "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=? WHERE job_id=?",
+            (budget_reason, base_ts + 250.0, budget_job.job_id),
+        )
+    assert queue.dead_letter_count() == 60
+
+    ledger = ExtractionLedger(tmp_path / "l2_ledger.sqlite", daily_cap=400)
+    extractor_state = {"fail": True, "order": []}
+
+    class _ControllableExtractor:
+        call_deadline_seconds = 1.0
+
+        def __init__(self, ldg: ExtractionLedger) -> None:
+            self.ledger = ldg
+
+        def extract(self, source, *, digest=""):
+            assert self.ledger.reserve_attempt(source.source_id, digest) == "reserved"
+            extractor_state["order"].append(source.source_id)
+            if extractor_state["fail"]:
+                self.ledger.note_call_failure(source.source_id, digest, "timeout", "timeout")
+                return ExtractionOutcome("unavailable", detail="timeout: OPENCLAW_RESPONSES_TIMEOUT")
+            if source.source_id == "budget-closed":
+                self.ledger.record(source.source_id, "no_hypothesis", "model_abstained")
+                return ExtractionOutcome("no_hypothesis", detail="model_abstained")
+            card = {
+                "claim": f"Hypothesis for {source.source_id}",
+                "mechanism": "Revenue momentum",
+                "signal_inputs": ["monthly_revenue_yoy"],
+                "rule_sketch": "rank by monthly_revenue_yoy",
+                "horizon": "1m",
+                "universe": "TWSE",
+                "direction": "long",
+                "conditions": [],
+                "cited_spans": [{"source_record_id": source.source_id, "start": 0, "end": 4, "exact_text": "test"}],
+                "testability": "testable",
+                "origin": "news",
+            }
+            self.ledger.record(source.source_id, "card", "testable")
+            return ExtractionOutcome("card", card=card)
+
+    original_make = ctl.make_distillation_worker
+
+    def make_worker(**kwargs):
+        kwargs["hypothesis_extractor"] = _ControllableExtractor(ledger)
+        kwargs["registry_sync"] = lambda req: RegistrySyncResult(
+            registry_id=f"reg-{req.source.source_id}", status="synced"
+        )
+        return original_make(**kwargs)
+
+    monkeypatch.setattr(ctl, "make_distillation_worker", make_worker)
+    state = ControllerState(
+        controller_id="c", controller_name="n", environment="test", tenant_id="test",
+        deployment={"git_sha": "x"},
+    )
+    store = ControllerStateStore(state_path)
+    store.save(state)
+    writer = DummyLoopWriter()
+
+    def probe_verdict() -> dict[str, Any]:
+        last = writer.successes[-1]
+        now_dt = datetime.fromisoformat(last["downstream_actual_state"]["checked_at"].replace("Z", "+00:00"))
+        health = {
+            "data": {
+                "downstream_actual_state": {**last["downstream_actual_state"], "authoritative": True},
+                "last_success": {"observed_at": last["downstream_actual_state"]["checked_at"]},
+            }
+        }
+        return stage_distillation_dead_letters(health, now_dt)
+
+    # Tick 1: extractor still failing. The 59 superseded dead letters resolve;
+    # only the 1 newest-version extraction-unavailable dead letter remains actionable.
+    tick1 = run_controller_tick(config=config, state=state, store=store, writer=writer, queue=queue)
+    assert tick1["status"] == "success"
+    assert tick1["controller_status"] == "working_with_unresolved_dead_letters"
+    assert tick1["reconcile"]["superseded_dead_letters_resolved"] == 59
+    assert tick1["actual"]["pending_dead_letter_count"] == 1
+    assert queue.dead_letter_count() == 1
+    assert len(queue.list_dead_letters(include_payload=False, include_resolved=True)) == 60
+    verdict1 = probe_verdict()
+    assert verdict1["status"] == "failed"
+    assert verdict1["reason"] == "unresolved_dead_letters"
+    assert verdict1["values"]["unresolved"] == 1
+
+    # Tick 2: extractor answers, and a fresh relevant record arrives.
+    # Fresh record runs first, then the 1 actionable dead letter, then the 45 defect-closed records.
+    extractor_state["fail"] = False
+    extractor_state["order"].clear()
+    queue.enqueue_source_record(
+        _normalized_source("fresh-news-1", title="fresh", source_type="news", tenant_id="test"),
+        enqueued_at=base_ts + 400.0,
+    )
+    tick2 = run_controller_tick(config=config, state=state, store=store, writer=writer, queue=queue)
+    assert tick2["status"] == "success"
+    assert tick2["controller_status"] == "working"
+    assert tick2["actual"]["pending_dead_letter_count"] == 0
+    assert queue.dead_letter_count() == 0
+    assert extractor_state["order"][0] == "fresh-news-1"
+    assert "timeout-newest" in extractor_state["order"]
+    assert "budget-closed" in extractor_state["order"]
+    assert len(extractor_state["order"]) == 1 + 1 + 44 + 1  # fresh + 1 dl + 44 anyOf + 1 budget_breach
+    verdict2 = probe_verdict()
+    assert verdict2["status"] == "passed"
+    assert verdict2["reason"] == "no_unresolved_dead_letters"
+    assert verdict2["values"]["unresolved"] == 0
+
+    # Tick 3: nothing re-attempted a second time.
+    extractor_state["order"].clear()
+    tick3 = run_controller_tick(config=config, state=state, store=store, writer=writer, queue=queue)
+    assert tick3["status"] == "success"
+    assert extractor_state["order"] == []
+
