@@ -33,6 +33,11 @@
       "method": "POST",
       "path": "/bff/agora/memory/{memory_id}/actions/quarantine",
       "owner": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
+      "owner": "agora-decision-lock"
     }
   ],
   "owner_contracts": {
@@ -45,11 +50,15 @@
       "/api/memory/retrieve",
       "/api/memory/trade-lessons",
       "/api/memory/trade-lessons/{candidate_id}/decide"
+    ],
+    "agora-decision-lock": [
+      "/api/attribution/shadow/{decision_id}"
     ]
   },
   "limitations": [
     "No BFF-owned committee or memory store",
     "No frontend delivery or hosted acceptance claimed",
-    "Entry quarantine unavailable until the memory owner supplies an entry mutation API"
+    "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
+    "Shadow comparison route is read-only; hosted proof is recorded separately (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127)"
   ]
 }

@@ -1,0 +1,54 @@
+{
+  "task_id": "AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127",
+  "title": "Agora serves the trader's shadow comparison on an owner-scoped Agora route",
+  "owner": "Claude2",
+  "reviewer": "Antigravity2",
+  "branch": "task/AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127",
+  "review_status": "pending_independent_review",
+  "route": "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
+  "scoped_artifacts": [
+    "services/control-plane/bff/agora/trading_room/routes/decisions.py",
+    "services/control-plane/bff/agora/trading_room/routes/common.py",
+    "services/control-plane/bff/agora/trading_room/service.py",
+    "services/control-plane/bff/attribution/client.py",
+    "services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py",
+    "services/control-plane/bff/tests/test_attribution_views.py",
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "docs/bff/contract_snapshots/route-diff-baseline.json",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127/evidence.json"
+  ],
+  "design": {
+    "owner": "TradingRoomService.decision_lock_owner, the one instance composed in create_agora_router and shared with the Management shadow route (BFF-ATTRIBUTION-SHADOW-OWNER-WIRING-20261122, #7743); no second owner or default substitute (unconfigured owner answers 503 decision_lock_owner_unavailable)",
+    "ownership": "lock tenant_id and user_id must equal the caller's canonical Agora scope; read_all roles (operator) are not widened here",
+    "non_enumeration": "foreign lock, other tenant, operator and unknown id all answer 404 reason decision_not_found; attribution owner is not called",
+    "empty_state": "caller's own event with no lock answers 200 status empty, comparison_state no_decision_recorded",
+    "settlement_key": "lock.human_decision_id (the key services/evaluation settles under)",
+    "arms": ["human_actual", "private_servant", "base_strategy", "committee_variant"],
+    "management_route": "unchanged; shape_shadow defaults keep trader/institutional_view naming and operator audience",
+    "runtime_budget": "reads only: one lock read, one attribution GET; no writes, no new store"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/control-plane/bff/tests/test_attribution_views.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/agora/trading_room/test_trading_room.py",
+      "scripts/bff_route_manifest_backend.py (regenerated snapshot: 41 previously unlisted routes added, 0 removed, including this route)",
+      "scripts/bff_route_diff.py --write-baseline, then pytest scripts/test_bff_route_diff.py scripts/test_agora_compat_manifest.py (pass)"
+    ],
+    "tests_cover": ["owner reads four arms with settlement", "pending settlement", "attribution outage degrades without fabrication", "other trader 404", "operator 404", "unknown id same 404", "own undecided event typed empty", "unconfigured owner 503", "GET only", "composed app shares one owner and Management route unchanged"]
+  },
+  "hosted_proof": {
+    "status": "pending_deploy",
+    "required": [
+      "foreign decision id answers 404 decision_not_found",
+      "trader without decisions answers typed empty state / 404 for any id (bodies recorded here)"
+    ],
+    "bodies": null
+  },
+  "known_residuals": [
+    "Management GET /bff/management/attribution/shadow/{id} forwards the decision-event id to the attribution owner, which keys by human_decision_id; not changed here (contract preserved)",
+    "frontend ShadowComparisonPanel still calls the Management route; switch to this route in execute-plans (no task yet)"
+  ]
+}
