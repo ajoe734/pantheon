@@ -49,7 +49,7 @@ def good_board():
             "counts": {
                 "collected_text_records": {"value": 120, "status": "ok"},
                 "hypothesis_cards_today": {"value": 3, "status": "ok"},
-                "llm_calls_today": {"value": 40, "status": "ok", "cap": 400},
+                "llm_calls_today": {"value": 40, "status": "ok", "cap": 400, "distinct_sources": 36},
                 "templates_registered": {"value": 182, "status": "ok"},
                 "templates_evaluated": {"value": 171, "status": "ok"},
                 "passes": {"value": 0, "status": "ok"},
@@ -135,6 +135,27 @@ def test_cards_over_cap_fails():
     board = good_board()
     board["data"]["counts"]["llm_calls_today"]["value"] = 401
     assert stage(run(board), "hypothesis_cards")["reason"] == "llm_calls_over_cap"
+
+
+def test_calls_per_distinct_source_is_reported_and_fails_above_1_5():
+    board = good_board()
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["distinct_sources"] == 36 and values["calls_per_source"] == round(40 / 36, 3)
+    # Hosted 2026-11-27: 211 answered calls for 78 distinct news sources.
+    board["data"]["counts"]["llm_calls_today"].update(value=211, distinct_sources=78)
+    over = stage(run(board), "hypothesis_cards")
+    assert over["status"] == "failed" and over["reason"] == "llm_calls_per_source_over_limit"
+    assert over["values"]["calls_per_source"] == round(211 / 78, 3) and over["values"]["limit"] == 1.5
+    board["data"]["counts"]["llm_calls_today"].update(value=60, distinct_sources=40)
+    assert stage(run(board), "hypothesis_cards")["status"] == "passed"
+
+
+def test_calls_without_a_distinct_source_count_are_reported_as_not_measurable():
+    board = good_board()
+    del board["data"]["counts"]["llm_calls_today"]["distinct_sources"]
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["calls_per_source"] is None
+    assert values["calls_per_source_status"] == "distinct_sources_not_reported"
 
 
 def test_no_verified_card_names_disabled_extraction():
