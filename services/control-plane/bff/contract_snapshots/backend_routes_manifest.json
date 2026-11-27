@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 685,
+    "total_routes": 686,
     "status_values": [
       "implemented",
       "alias",
@@ -453,6 +453,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/decision-events/{param}/decision-lock",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{param}/shadow-comparison",
       "family": "agora-core",
       "status": "implemented"
     },

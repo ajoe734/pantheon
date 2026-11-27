@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import uuid
 
 from fastapi import HTTPException
@@ -127,9 +127,11 @@ class TradingRoomService:
         bff_error: Optional[Callable[..., HTTPException]] = None,
         decision_lock_owner: Optional[Any] = None,
         institutional_knowledge_reader: Optional[Any] = None,
+        attribution_client_factory: Optional[Callable[[str, str], Any]] = None,
     ):
         global _active_service
         self.decision_lock_owner = decision_lock_owner
+        self.attribution_client_factory = attribution_client_factory
         self.institutional_knowledge_reader = institutional_knowledge_reader
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
@@ -613,6 +615,114 @@ class TradingRoomService:
         if lock is None:
             raise self.bff_error(404, "NOT_FOUND", "Decision lock not found", "decision_lock_not_found")
         return dict(lock)
+
+    def get_shadow_comparison(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
+        """Owner-scoped four-arm shadow comparison for the caller's own decision.
+
+        Reads only. The decision lock comes from the one composed Agora
+        decision-lock owner and must belong to the caller (no read_all widening,
+        even for operator roles: Management keeps that audience). Settlement is
+        forwarded from the attribution owner keyed by the lock's
+        ``human_decision_id``. A decision the caller does not own and an unknown
+        id answer the same 404; the caller's own undecided event answers a
+        typed empty state.
+        """
+        from ...attribution.client import (
+            CANONICAL_ARM_ALIASES,
+            CANONICAL_SHADOW_ARMS,
+            AttributionOwnerClient,
+            AttributionOwnerNotFoundError,
+            AttributionOwnerUnavailableError,
+            AttributionOwnerValidationError,
+            shape_shadow,
+        )
+
+        owner = self.decision_lock_owner
+        if owner is None or not hasattr(owner, "get_decision_lock_for_event"):
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        scope = _workspace_scope(identity)
+        try:
+            lock = owner.get_decision_lock_for_event(
+                decision_event_id,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                actor_roles=self._identity_roles(identity),
+            )
+        except Exception as exc:
+            raise self.bff_error(
+                503, "SERVICE_UNAVAILABLE", "Agora decision-lock owner read failed",
+                "decision_lock_owner_unavailable",
+            ) from exc
+        if lock is not None and not (
+            str(lock.get("tenant_id") or "") == scope["tenant_id"]
+            and str(lock.get("user_id") or "") == scope["user_id"]
+        ):
+            lock = None
+        snap = self.utc_now()
+        shape_kwargs = dict(
+            is_operator=False,
+            snapshot_at=snap,
+            arm_names=CANONICAL_SHADOW_ARMS,
+            arm_aliases=CANONICAL_ARM_ALIASES,
+        )
+
+        if lock is None:
+            event = self.store.get_decision_event(decision_event_id)
+            if event is None or not _record_visible_to_scope(event, scope):
+                raise self.bff_error(
+                    404, "NOT_FOUND", f"Decision {decision_event_id!r} was not found", "decision_not_found"
+                )
+            shaped = shape_shadow(
+                decision_event_id,
+                attribution=None,
+                attribution_unavailable_reason="no_decision_recorded",
+                lock=None,
+                lock_unavailable_reason="no_decision_recorded",
+                **shape_kwargs,
+            )
+            shaped.update({"status": "empty", "empty": True, "owner": "agora"})
+            shaped["data"].update(
+                {"decision_event_id": decision_event_id, "comparison_state": "no_decision_recorded"}
+            )
+            return shaped
+
+        attribution_id = str(lock.get("human_decision_id") or lock.get("decision_id") or "").strip()
+        attribution: Optional[Dict[str, Any]] = None
+        attr_reason: Optional[str] = None
+        state = "settled"
+        if not attribution_id:
+            attr_reason, state = "decision_lock_missing_human_decision_id", "unavailable"
+        else:
+            try:
+                factory = self.attribution_client_factory or (lambda t, a: AttributionOwnerClient(t, a))
+                payload = factory(scope["tenant_id"], scope["user_id"]).get_shadow(attribution_id)
+                if isinstance(payload, Mapping):
+                    attribution = dict(payload)
+                else:
+                    attr_reason, state = "attribution_owner_invalid_payload", "unavailable"
+            except AttributionOwnerNotFoundError:
+                attr_reason, state = "shadow_not_settled_or_unknown", "pending_settlement"
+            except (AttributionOwnerUnavailableError, AttributionOwnerValidationError) as exc:
+                attr_reason, state = exc.reason, "unavailable"
+            except Exception:
+                attr_reason, state = "attribution_owner_unavailable", "unavailable"
+        shaped = shape_shadow(
+            attribution_id or decision_event_id,
+            attribution=attribution,
+            attribution_unavailable_reason=attr_reason,
+            lock=lock,
+            lock_unavailable_reason=None,
+            **shape_kwargs,
+        )
+        shaped["empty"] = False
+        shaped["data"].update({"decision_event_id": decision_event_id, "comparison_state": state})
+        if attribution is not None:
+            for key in ("data_cutoff", "cost_model", "observation_window", "settled_at"):
+                shaped["data"][key] = attribution.get(key)
+        return shaped
 
     # -----------------------------------------------------------------------
     # Institutional knowledge & system suggestions (Design §12.7)

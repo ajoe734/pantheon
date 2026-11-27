@@ -1723,6 +1723,7 @@ class TradingRoomRouteContext:
                 utc_now=utc_now,
                 bff_error=bff_error,
                 decision_lock_owner=kwargs.get("decision_lock_owner"),
+                attribution_client_factory=kwargs.get("attribution_client_factory"),
             )
 
     def _check_write_auth(self, identity: Any) -> None:

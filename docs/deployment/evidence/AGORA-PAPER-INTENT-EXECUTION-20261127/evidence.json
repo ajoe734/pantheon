@@ -88,7 +88,7 @@
     "services/control-plane/openapi/agora_v1_14.openapi.yaml: POST /bff/agora/trading-intents/{intent_id}/handoffs (GovernedIntentHandoffV114, receipt)",
     "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json: route and paper_execution owner contracts",
     "services/control-plane/specs/agora/bundle_index.v1_14.json: new schema file, new digests, route family agora.trading.paper-execution.v1",
-    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json and docs/bff/contract_snapshots/route-diff-baseline.json: two service-only routes under /internal/agora/paper-execution (683 -> 685 routes)"
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json and docs/bff/contract_snapshots/route-diff-baseline.json: two service-only routes under /internal/agora/paper-execution (+2 routes)"
   ],
   "scope_notes": [
     "Files outside the declared artifacts that the change needs: services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json (the v4 file is digest-frozen by bundle v1.3), docker-compose.yml and .env.example (service credentials and URLs for the new boundary), services/control-plane/bff/tests/test_bff_test_architecture.py (route file count 26 -> 27), services/execution/lean_runtime/agora_paper_intent_consumer.py and its test (inside the declared services/execution/lean_runtime/ directory)."
