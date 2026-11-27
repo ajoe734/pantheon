@@ -60,6 +60,22 @@ from candidate_experiment_handoff import (
     CandidateHandoffError,
     handoff_candidate_to_experiment_authority,
 )
+from trader_imitation import (
+    MAX_CANDIDATES_PER_TRADER_STRATEGY,
+    MIN_TRADER_DECISIONS_FOR_IMITATION,
+    TRADER_BEHAVIOUR_CANDIDATE_KIND,
+    TRADER_IMITATION_EVAL_TYPE,
+    collect_decision_evidence_groups,
+    extract_strategy_id,
+    get_trader_training_approval,
+    is_decision_evidence_record,
+    list_trader_behaviour_candidates,
+    predict_trader_imitation,
+    record_trader_training_approval,
+    run_trader_imitation_training_cycle,
+    trader_group_candidate_id,
+    train_or_evaluate_trader_strategy,
+)
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -860,6 +876,17 @@ def run_worker_cycle(
     for record in settled:
         key = str(record.get("status") or "unknown")
         counts[key] = counts.get(key, 0) + 1
+
+    trader_imitation = run_trader_imitation_training_cycle(
+        store=store,
+        authority=dataset_authority(),
+        tenant_id=tenant_id or configured_tenant_id(),
+        timestamp=utc_now(),
+    )
+    trained_ids = list(trader_imitation.get("trained_candidate_ids") or [])
+    if trained_ids:
+        counts[STATUS_PROCESSED] = counts.get(STATUS_PROCESSED, 0) + len(trained_ids)
+
     return {
         "worker_id": worker_id,
         "claimed_count": len(claims),
@@ -868,7 +895,8 @@ def run_worker_cycle(
         "failed_count": counts.get(STATUS_FAILED, 0),
         "lease_lost_count": counts.get("lease_lost", 0),
         "status_counts": counts,
-        "candidate_ids": [str(record.get("candidate_id") or "") for record in settled],
+        "candidate_ids": [str(record.get("candidate_id") or "") for record in settled] + trained_ids,
+        "trader_imitation": trader_imitation,
     }
 
 
@@ -1061,6 +1089,74 @@ def agora_dataset_handoff(
     eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
     dedupe_key = candidate_dedupe_key(tenant_id, tick_id, dataset_version_id)
     candidate_id = candidate_id_for(tenant_id, tick_id, dataset_version_id)
+
+    if is_decision_evidence_record(record or bound_ref):
+        if record:
+            store.record_decision_evidence_version(dict(record, tenant_id=tenant_id))
+        resolved_user = str(
+            (record or {}).get("user_id")
+            or bound_ref.get("user_id")
+            or body.user_id
+            or user_id
+            or ""
+        ).strip()
+        resolved_strategy = extract_strategy_id(record or bound_ref)
+        groups = collect_decision_evidence_groups(
+            dataset_authority(),
+            store,
+            tenant_id=tenant_id,
+            user_id=resolved_user,
+            strategy_id=resolved_strategy,
+        )
+        group_versions = groups.get((resolved_user, resolved_strategy), [])
+        decision_count = len(group_versions)
+        existing_cands = list_trader_behaviour_candidates(
+            store,
+            tenant_id=tenant_id,
+            user_id=resolved_user,
+            strategy_id=resolved_strategy,
+        )
+        approval = get_trader_training_approval(
+            store,
+            tenant_id=tenant_id,
+            user_id=resolved_user,
+            strategy_id=resolved_strategy,
+        )
+        if decision_count < MIN_TRADER_DECISIONS_FOR_IMITATION:
+            group_status = "not_enough_decisions"
+        elif approval is None:
+            group_status = "awaiting_training_approval"
+        elif existing_cands:
+            group_status = str(existing_cands[0].get("status") or STATUS_PROCESSED)
+        else:
+            group_status = STATUS_PROPOSED
+        group_cid = (
+            str(existing_cands[0].get("candidate_id"))
+            if existing_cands
+            else trader_group_candidate_id(tenant_id, resolved_user, resolved_strategy)
+        )
+        return {
+            "status": "acknowledged",
+            "handoff_id": body.handoff_id or group_cid,
+            "candidate_id": group_cid,
+            "dedupe_key": candidate_dedupe_key(tenant_id, tick_id, dataset_version_id),
+            "dataset_version_id": dataset_version_id,
+            "tenant_id": tenant_id,
+            "user_id": resolved_user,
+            "strategy_id": resolved_strategy,
+            "decision_count": decision_count,
+            "minimum_decisions_required": MIN_TRADER_DECISIONS_FOR_IMITATION,
+            "training_approved": approval is not None,
+            "created": True,
+            "candidate_status": group_status,
+            "metrics": (existing_cands[0].get("metrics", {}) if existing_cands else {}),
+            "evaluation_summary": (existing_cands[0].get("evaluation_summary", {}) if existing_cands else {}),
+            "dataset_lineage": (existing_cands[0].get("dataset_lineage", {}) if existing_cands else {}),
+            "seed_fallback_used": False,
+            "authoritative": True,
+            "production_training": "fail_closed",
+            "acknowledged_at": timestamp,
+        }
 
     candidate = {
         "id": candidate_id,
@@ -1427,3 +1523,183 @@ def readback_candidate_target(
     trained policy weights, so it is tenant-bound like every other route here.
     """
     return _tenant_candidate(candidate_id, authority)
+
+
+class TraderTrainingApprovalBody(BaseModel):
+    user_id: str
+    strategy_id: str = "*"
+    approved_by: Optional[str] = None
+    approval_id: Optional[str] = None
+    approved_at: Optional[str] = None
+    notes: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class TraderImitationTrainBody(BaseModel):
+    user_id: str
+    strategy_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+
+
+class TraderImitationPredictBody(BaseModel):
+    user_id: str
+    strategy_id: Optional[str] = None
+    decision_time_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    event: Dict[str, Any] = Field(default_factory=dict)
+    tenant_id: Optional[str] = None
+
+
+@app.post("/api/policy-learning/trader-imitation/approvals", status_code=201)
+def approve_trader_imitation_training(
+    body: TraderTrainingApprovalBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Grant training approval for a trader and strategy inside the authenticated tenant."""
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    try:
+        approval = record_trader_training_approval(
+            store,
+            tenant_id=tenant_id,
+            user_id=body.user_id,
+            strategy_id=body.strategy_id,
+            approved_by=authority.actor_id,
+            approval_id=body.approval_id,
+            approved_at=body.approved_at,
+            notes=body.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "approved", "tenant_id": tenant_id, "approval": approval}
+
+
+@app.get("/api/policy-learning/trader-imitation/candidates")
+def get_trader_imitation_candidates(
+    user_id: str = Query(..., description="Trader user_id"),
+    strategy_id: Optional[str] = Query(default=None, description="Optional strategy_id filter"),
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Return the trader's kept behaviour candidates (at most 3 per strategy) and decision-count eligibility."""
+    tenant_id = authority.tenant_id
+    clean_user = str(user_id or "").strip()
+    clean_strat = str(strategy_id or "").strip()
+
+    groups = collect_decision_evidence_groups(
+        dataset_authority(),
+        store,
+        tenant_id=tenant_id,
+        user_id=clean_user,
+        strategy_id=clean_strat,
+    )
+    candidates = list_trader_behaviour_candidates(
+        store,
+        tenant_id=tenant_id,
+        user_id=clean_user,
+        strategy_id=clean_strat,
+    )[:MAX_CANDIDATES_PER_TRADER_STRATEGY]
+
+    if clean_strat:
+        versions = groups.get((clean_user, clean_strat), [])
+        decision_count = len(versions)
+        approval = get_trader_training_approval(
+            store,
+            tenant_id=tenant_id,
+            user_id=clean_user,
+            strategy_id=clean_strat,
+        )
+    else:
+        decision_count = sum(len(v) for v in groups.values())
+        approval = get_trader_training_approval(
+            store,
+            tenant_id=tenant_id,
+            user_id=clean_user,
+            strategy_id="*",
+        )
+        if approval is None and candidates:
+            approval = candidates[0].get("training_approval")
+
+    if candidates:
+        decision_count = max(decision_count, int(candidates[0].get("decision_count") or 0))
+
+    if decision_count < MIN_TRADER_DECISIONS_FOR_IMITATION and not candidates:
+        state = "not_enough_decisions"
+    elif not candidates and approval is None:
+        state = "awaiting_training_approval"
+    elif candidates:
+        state = "ready"
+    else:
+        state = "pending_scheduler_tick"
+
+    return {
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "user_id": clean_user,
+        "strategy_id": clean_strat or None,
+        "state": state,
+        "decision_count": decision_count,
+        "minimum_decisions_required": MIN_TRADER_DECISIONS_FOR_IMITATION,
+        "remaining_decisions_needed": max(0, MIN_TRADER_DECISIONS_FOR_IMITATION - decision_count),
+        "training_approved": approval is not None or bool(candidates),
+        "max_candidates_kept": MAX_CANDIDATES_PER_TRADER_STRATEGY,
+        "candidate_count": len(candidates),
+        "active_candidate": candidates[0] if candidates else None,
+        "candidates": candidates,
+    }
+
+
+@app.post("/api/policy-learning/trader-imitation/train")
+def train_trader_imitation_endpoint(
+    body: TraderImitationTrainBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Run the trader behaviour candidate training cycle for one trader (and optional strategy)."""
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    result = run_trader_imitation_training_cycle(
+        store=store,
+        authority=dataset_authority(),
+        tenant_id=tenant_id,
+        user_id=body.user_id,
+        strategy_id=body.strategy_id or "",
+        timestamp=utc_now(),
+    )
+    return {"status": "ok", **result}
+
+
+@app.post("/api/policy-learning/trader-imitation/predict")
+def predict_trader_imitation_endpoint(
+    body: TraderImitationPredictBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Predict the trader_imitation shadow arm action on decision-time inputs."""
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    candidates = list_trader_behaviour_candidates(
+        store,
+        tenant_id=tenant_id,
+        user_id=body.user_id,
+        strategy_id=body.strategy_id or "",
+    )
+    if not candidates:
+        groups = collect_decision_evidence_groups(
+            dataset_authority(),
+            store,
+            tenant_id=tenant_id,
+            user_id=body.user_id,
+            strategy_id=body.strategy_id or "",
+        )
+        decision_count = sum(len(v) for v in groups.values())
+        reason = (
+            "not_enough_decisions"
+            if decision_count < MIN_TRADER_DECISIONS_FOR_IMITATION
+            else "no_trader_imitation_candidate_trained"
+        )
+        return {
+            "available": False,
+            "arm": "trader_imitation",
+            "unavailable_reason": reason,
+            "decision_count": decision_count,
+            "minimum_decisions_required": MIN_TRADER_DECISIONS_FOR_IMITATION,
+        }
+    return predict_trader_imitation(
+        candidates[0],
+        snapshot=body.decision_time_snapshot,
+        event=body.event,
+    )
