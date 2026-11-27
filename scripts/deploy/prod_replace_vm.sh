@@ -51,10 +51,13 @@ PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"
 PROD_SSH_WAIT_INTERVAL="${PROD_SSH_WAIT_INTERVAL:-5}"
 if [[ -n "${FAKE_STATE:-}" ]]; then
   PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-0}"
+  PROD_EXTERNAL_HTTPS_INTERVAL="${PROD_EXTERNAL_HTTPS_INTERVAL:-0}"
 fi
 PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-5}"
 PROD_UPLOAD_BUNDLE_TRIES="${PROD_UPLOAD_BUNDLE_TRIES:-6}"
 PROD_UPLOAD_BUNDLE_INTERVAL="${PROD_UPLOAD_BUNDLE_INTERVAL:-5}"
+PROD_EXTERNAL_HTTPS_TRIES="${PROD_EXTERNAL_HTTPS_TRIES:-12}"
+PROD_EXTERNAL_HTTPS_INTERVAL="${PROD_EXTERNAL_HTTPS_INTERVAL:-5}"
 REMOTE_TMP_BASE="${PROD_REMOTE_TMP_BASE:-/tmp}"
 REMOTE_STAGE_DIR="${REMOTE_TMP_BASE}/pantheon-replace-vm-${RELEASE_ID}"
 FSTAB_PATH="${PROD_FSTAB_PATH:-/etc/fstab}"
@@ -116,7 +119,7 @@ if not data_device_name:
 
 nics = inst.get("networkInterfaces") or []
 nic = nics[0] if nics and isinstance(nics[0], dict) else {}
-net = base(nic.get("network")) or default_net
+net = default_net.strip() or base(nic.get("network"))
 subnet = override_subnet.strip() or base(nic.get("subnetwork"))
 ac = (nic.get("accessConfigs") or [{}])[0]
 static_ip = str((ac if isinstance(ac, dict) else {}).get("natIP") or "").strip()
@@ -843,8 +846,19 @@ for retained_disk in "$OLD_BOOT_DISK" "$PROD_DATA_DISK"; do
     || rollback_to_old_boot_disk "verify_kept_disks" "retained disk ${retained_disk} missing after --keep-disks=all delete"
 done
 
-# 6. Create new PROD_VM_NAME from >= e2-standard-8 template (without disk flags so GCE inherits template's 150GB boot disk), then attach PROD_DATA_DISK.
-create_err="$("$GCLOUD" compute instances create "$PROD_VM_NAME" --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --source-instance-template "$TARGET_TEMPLATE" --machine-type "$PROD_TARGET_MACHINE_TYPE" --address "$STATIC_IP" 2>&1 >/dev/null)" || rollback_to_old_boot_disk "create_new_vm" "failed to create replacement VM from template ${TARGET_TEMPLATE}: $(tr '\n\r"' '   ' <<<"$create_err")"
+# 6. Create new PROD_VM_NAME from >= e2-standard-8 template (always passing --network/--subnet alongside --address so
+#    gcloud CreateNetworkInterfaceMessage never falls back to 'default', and passing --create-disk with a fresh boot disk
+#    name when OLD_BOOT_DISK == PROD_VM_NAME to avoid colliding with the retained boot disk), then attach PROD_DATA_DISK.
+SUBNET_CREATE_ARGS=()
+if [[ -n "$VM_SUBNETWORK" ]]; then
+  SUBNET_CREATE_ARGS=(--subnet "$VM_SUBNETWORK")
+fi
+CREATE_DISK_ARGS=()
+if [[ "$OLD_BOOT_DISK" == "$PROD_VM_NAME" ]]; then
+  FRESH_BOOT_DISK="$(printf '%s-os-%s' "$PROD_VM_NAME" "$(date -u +%Y%m%dt%H%M%Sz)" | tr '[:upper:]' '[:lower:]' | cut -c1-62)"
+  CREATE_DISK_ARGS=(--create-disk "name=${FRESH_BOOT_DISK},image-family=debian-12,image-project=debian-cloud,size=${TARGET_BOOT_SIZE_GB}GB,type=${PROD_BOOT_DISK_TYPE},boot=yes,mode=rw,auto-delete=yes")
+fi
+create_err="$("$GCLOUD" compute instances create "$PROD_VM_NAME" --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --source-instance-template "$TARGET_TEMPLATE" --machine-type "$PROD_TARGET_MACHINE_TYPE" --network "$VM_NETWORK" "${SUBNET_CREATE_ARGS[@]}" --address "$STATIC_IP" "${CREATE_DISK_ARGS[@]}" 2>&1 >/dev/null)" || rollback_to_old_boot_disk "create_new_vm" "failed to create replacement VM from template ${TARGET_TEMPLATE}: $(tr '\n\r"' '   ' <<<"$create_err")"
 
 attach_err="$("$GCLOUD" compute instances attach-disk "$PROD_VM_NAME" --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --disk "$PROD_DATA_DISK" --device-name "$DATA_DEVICE_NAME" --mode=rw 2>&1 >/dev/null)" || rollback_to_old_boot_disk "attach_data_disk_new_vm" "failed to attach ${PROD_DATA_DISK} to replacement VM: $(tr '\n\r"' '   ' <<<"$attach_err")"
 
@@ -858,12 +872,12 @@ NEW_VM_JSON="${WORK_DIR}/new_vm.json"
   --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --format=json > "$NEW_VM_JSON" 2>/dev/null \
   || rollback_to_old_boot_disk "describe_new_vm" "cannot describe replacement VM ${PROD_VM_NAME}"
 
-NEW_VM_VARS="$(python3 -I - "$NEW_VM_JSON" "$OLD_INSTANCE_ID" "$OLD_BOOT_DISK" "$PROD_DATA_DISK" "$STATIC_IP" <<'PY'
+NEW_VM_VARS="$(python3 -I - "$NEW_VM_JSON" "$OLD_INSTANCE_ID" "$OLD_BOOT_DISK" "$PROD_DATA_DISK" "$STATIC_IP" "$VM_NETWORK" "$VM_SUBNETWORK" <<'PY'
 import json, shlex, sys
 from pathlib import Path
 
 inst = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-old_id, old_boot, data_disk, want_ip = sys.argv[2:6]
+old_id, old_boot, data_disk, want_ip, want_net, want_subnet = sys.argv[2:8]
 
 def base(val: str) -> str:
     return str(val or "").strip().rstrip("/").rsplit("/", 1)[-1]
@@ -885,6 +899,8 @@ for d in inst.get("disks") or []:
 
 nics = inst.get("networkInterfaces") or []
 nic = nics[0] if nics and isinstance(nics[0], dict) else {}
+got_net = base(nic.get("network"))
+got_subnet = base(nic.get("subnetwork"))
 ac = (nic.get("accessConfigs") or [{}])[0]
 got_ip = str((ac if isinstance(ac, dict) else {}).get("natIP") or "").strip()
 
@@ -897,6 +913,10 @@ elif not data_attached:
     err = "DATA_DISK_NOT_ATTACHED_ON_NEW_VM"
 elif got_ip != want_ip:
     err = f"STATIC_IP_MISMATCH:{got_ip}!={want_ip}"
+elif got_net != want_net:
+    err = f"NETWORK_MISMATCH:{got_net}!={want_net}"
+elif want_subnet and got_subnet != want_subnet:
+    err = f"SUBNETWORK_MISMATCH:{got_subnet}!={want_subnet}"
 
 print(f"NEW_INSTANCE_ID={shlex.quote(new_id)}")
 print(f"NEW_MACHINE_TYPE={shlex.quote(new_mt)}")
@@ -1098,6 +1118,21 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
 " 2>&1)" || rollback_to_old_boot_disk "restore_active_release" "fresh-boot bootstrap or restore_active_release failed: $(tr '\n"' '  ' <<<"$RESTORE_OUT")"
 
 RESTORED_IDENTITY_JSON="$(printf '%s\n' "$RESTORE_OUT" | tail -n1)"
+
+EXT_FE_URL="${PROD_FE_BASE_URL:-https://${PROD_FE_HOST}}/deployment.json"
+EXT_BFF_URL="${PROD_BFF_BASE_URL:-https://${PROD_BFF_HOST}}/bff/readyz"
+EXT_HTTPS_OK=false
+for _ext_try in $(seq 1 "$PROD_EXTERNAL_HTTPS_TRIES"); do
+  if "${CURL_BIN:-curl}" -fsS -m 10 -o /dev/null "$EXT_FE_URL" >/dev/null 2>&1 \
+      && "${CURL_BIN:-curl}" -fsS -m 10 -o /dev/null "$EXT_BFF_URL" >/dev/null 2>&1; then
+    EXT_HTTPS_OK=true
+    break
+  fi
+  (( _ext_try < PROD_EXTERNAL_HTTPS_TRIES )) && sleep "$PROD_EXTERNAL_HTTPS_INTERVAL"
+done
+[[ "$EXT_HTTPS_OK" == "true" ]] \
+  || rollback_to_old_boot_disk "external_https_verify" "external runner HTTPS verification failed against ${EXT_FE_URL} or ${EXT_BFF_URL}"
+
 SNAP_SCHED_JSON="$(GCLOUD_BIN="$GCLOUD" bash "${SCRIPT_DIR}/prod_ops.sh" snapshot_schedule check "$RELEASE_ID" 2>&1)" \
   || rollback_to_old_boot_disk "snapshot_schedule_check" "data disk snapshot schedule check failed after VM replacement"
 
