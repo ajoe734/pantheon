@@ -297,7 +297,7 @@ def test_over_budget_session_publishes_nothing(tmp_path: Path, monkeypatch) -> N
 def test_declared_day_budget_holds_a_hosted_shaped_whole_market_session(tmp_path: Path) -> None:
     """2,600 symbols x 20 buy + 20 sell through the real writer stays inside the declared 6 MB budget."""
     decl = dbs.KEYED_DATASETS["tw_broker_top"]
-    assert decl.day_budget_bytes == 6_000_000 and decl.retention_days == 750
+    assert decl.day_budget_bytes == 6_000_000 and decl.retention_sessions == 750 and decl.retention_days is None
     assert decl.key_fields == ("symbol", "trade_date", "side", "rank")
     adapter = FinMindTaiwanBrokerDailyReportAdapter()
     rows = [{"symbol": f"{1000 + i // 40}", "date": DAY, "side": ("buy", "sell")[i % 2], "rank": (i // 2) % 20 + 1,
