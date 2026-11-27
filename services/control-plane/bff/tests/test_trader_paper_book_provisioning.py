@@ -935,3 +935,270 @@ def test_existing_hosted_trader_paper_book_without_execution_projection_is_repai
     assert replay["idempotent_replay"] is True
     assert transition_calls == []
 
+
+def test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 P1):
+    GET /bff/agora/servant/paper-book and read_trader_paper_book must perform
+    zero Runtime-Manager transitions and zero owner writes on a legacy active
+    binding lacking the execution projection; repair occurs only on the
+    authorized ensure path.
+    """
+    from services.control_plane.bff.agora.servant.router import _stable_servant_persona_id
+    from services.control_plane.bff.personas.trader_paper_book import (
+        trader_paper_book_ids,
+        trader_paper_runtime_id,
+    )
+    from services.runtime_manager.runtime_binding import (
+        DeploymentMode,
+        RuntimeBinding,
+        RuntimeBindingStatus,
+    )
+
+    client: TestClient = owner_stack["client"]
+    rm_service: RuntimeManagerService = owner_stack["rm_service"]
+    rm_client: Any = owner_stack["rm_client"]
+    capital_calls: List[Tuple[str, str, Optional[Dict[str, Any]], int]] = owner_stack["capital_calls"]
+    coordinator_for_tenant = owner_stack["coordinator_for_tenant"]
+
+    user_id = "trader-legacy-readonly"
+    persona_id = _stable_servant_persona_id(tenant_id=TENANT_ID, agora_user_id=user_id)
+    legacy_binding_id = "rb-legacy-active-readonly-001"
+    ids = trader_paper_book_ids(TENANT_ID, persona_id)
+
+    coordinator = coordinator_for_tenant(TENANT_ID)
+    coordinator.ensure_chain_paper_capital(
+        tenant_id=TENANT_ID,
+        persona_id=persona_id,
+        capital_pool_id=ids.capital_pool_id,
+        binding_id=ids.persona_capital_binding_id,
+        requested_by=user_id,
+        currency="TWD",
+        name=f"{persona_id} trader paper pool",
+        budget=10_000_000.0,
+        mandate="user_private_agora_servant_paper_book",
+        labels={"task_id": "PAPER-TRADER-BOOK-PROVISION-20261127", "paper_only": True},
+    )
+    rm_service._store.create(
+        RuntimeBinding(
+            binding_id=legacy_binding_id,
+            runtime_id=trader_paper_runtime_id(ids),
+            capital_pool_id=ids.capital_pool_id,
+            plan_id=ids.deployment_plan_id,
+            artifact_id=ids.strategy_artifact_id,
+            artifact_version=ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.ACTIVE.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                "tenant_id": TENANT_ID,
+                "persona_id": persona_id,
+                "sponsor_persona_id": persona_id,
+                "strategy_id": ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+                "requested_by": user_id,
+            },
+        )
+    )
+
+    transition_calls: List[str] = []
+    deploy_calls: List[str] = []
+    orig_transition = rm_client.transition
+    orig_deploy = rm_client.deploy
+
+    def _spy_transition(binding_id: str, new_status: str, **kwargs: Any) -> Any:
+        transition_calls.append(f"{binding_id}:{new_status}")
+        return orig_transition(binding_id, new_status, **kwargs)
+
+    def _spy_deploy(request: Dict[str, Any]) -> Any:
+        deploy_calls.append(str(request.get("plan_id") or ""))
+        return orig_deploy(request)
+
+    monkeypatch.setattr(rm_client, "transition", _spy_transition)
+    monkeypatch.setattr(rm_client, "deploy", _spy_deploy)
+
+    capital_calls.clear()
+    direct_read = read_trader_paper_book(
+        TENANT_ID,
+        persona_id,
+        agora_user_id=user_id,
+        coordinator=coordinator,
+        runtime_client=rm_client,
+    )
+    assert direct_read is not None
+    assert direct_read["runtime_binding_id"] == legacy_binding_id
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert not any(method != "GET" for method, _url, _payload, _status in capital_calls)
+    assert "object_store" not in (rm_service.get_binding(legacy_binding_id).metadata or {})
+
+    headers = {
+        "Authorization": _mint_bearer(sub=user_id, tenant_id=TENANT_ID),
+        "Idempotency-Key": "idem-legacy-readonly-1",
+        "X-Request-Id": "req-legacy-readonly-1",
+        "X-Tenant-Id": TENANT_ID,
+    }
+    capital_calls.clear()
+    get_res = client.get("/bff/agora/servant/paper-book", headers=headers)
+    assert get_res.status_code == 200, get_res.text
+    assert get_res.json()["data"]["runtime_binding_id"] == legacy_binding_id
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert not any(method != "GET" for method, _url, _payload, _status in capital_calls)
+    assert "object_store" not in (rm_service.get_binding(legacy_binding_id).metadata or {})
+
+    # Authorized ensure path performs the in-place repair on the same binding_id.
+    ensure_res = client.post("/bff/agora/servant/paper-book/ensure", headers=headers, json={})
+    assert ensure_res.status_code == 200, ensure_res.text
+    assert ensure_res.json()["data"]["runtime_binding_id"] == legacy_binding_id
+    assert transition_calls == [
+        f"{legacy_binding_id}:pending_pause",
+        f"{legacy_binding_id}:paused",
+        f"{legacy_binding_id}:active",
+    ]
+    assert deploy_calls == []
+    assert isinstance(rm_service.get_binding(legacy_binding_id).metadata.get("object_store"), dict)
+
+
+def test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 P1):
+    A deliberately paused legacy RuntimeBinding must never be transitioned or
+    resumed to active by GET /bff/agora/servant/paper-book, read_trader_paper_book,
+    POST /bff/agora/servant/paper-book/ensure, or ensure_trader_paper_book.
+    """
+    from services.control_plane.bff.agora.servant.router import _stable_servant_persona_id
+    from services.control_plane.bff.personas.trader_paper_book import (
+        trader_paper_book_ids,
+        trader_paper_runtime_id,
+    )
+    from services.runtime_manager.runtime_binding import (
+        DeploymentMode,
+        RuntimeBinding,
+        RuntimeBindingStatus,
+    )
+
+    client: TestClient = owner_stack["client"]
+    rm_service: RuntimeManagerService = owner_stack["rm_service"]
+    rm_client: Any = owner_stack["rm_client"]
+    capital_calls: List[Tuple[str, str, Optional[Dict[str, Any]], int]] = owner_stack["capital_calls"]
+    coordinator_for_tenant = owner_stack["coordinator_for_tenant"]
+
+    user_id = "trader-legacy-paused"
+    persona_id = _stable_servant_persona_id(tenant_id=TENANT_ID, agora_user_id=user_id)
+    paused_binding_id = "rb-legacy-paused-001"
+    ids = trader_paper_book_ids(TENANT_ID, persona_id)
+
+    coordinator = coordinator_for_tenant(TENANT_ID)
+    coordinator.ensure_chain_paper_capital(
+        tenant_id=TENANT_ID,
+        persona_id=persona_id,
+        capital_pool_id=ids.capital_pool_id,
+        binding_id=ids.persona_capital_binding_id,
+        requested_by=user_id,
+        currency="TWD",
+        name=f"{persona_id} trader paper pool",
+        budget=10_000_000.0,
+        mandate="user_private_agora_servant_paper_book",
+        labels={"task_id": "PAPER-TRADER-BOOK-PROVISION-20261127", "paper_only": True},
+    )
+    rm_service._store.create(
+        RuntimeBinding(
+            binding_id=paused_binding_id,
+            runtime_id=trader_paper_runtime_id(ids),
+            capital_pool_id=ids.capital_pool_id,
+            plan_id=ids.deployment_plan_id,
+            artifact_id=ids.strategy_artifact_id,
+            artifact_version=ids.version,
+            deployment_mode=DeploymentMode.PAPER.value,
+            status=RuntimeBindingStatus.PAUSED.value,
+            effective_at="2026-11-27T09:42:01Z",
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+            execution_mode="paper",
+            metadata={
+                "tenant_id": TENANT_ID,
+                "persona_id": persona_id,
+                "sponsor_persona_id": persona_id,
+                "strategy_id": ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+                "requested_by": user_id,
+            },
+        )
+    )
+
+    transition_calls: List[str] = []
+    deploy_calls: List[str] = []
+    orig_transition = rm_client.transition
+    orig_deploy = rm_client.deploy
+
+    def _spy_transition(binding_id: str, new_status: str, **kwargs: Any) -> Any:
+        transition_calls.append(f"{binding_id}:{new_status}")
+        return orig_transition(binding_id, new_status, **kwargs)
+
+    def _spy_deploy(request: Dict[str, Any]) -> Any:
+        deploy_calls.append(str(request.get("plan_id") or ""))
+        return orig_deploy(request)
+
+    monkeypatch.setattr(rm_client, "transition", _spy_transition)
+    monkeypatch.setattr(rm_client, "deploy", _spy_deploy)
+
+    capital_calls.clear()
+    with pytest.raises(PersonaProvisioningCoordinationError) as read_exc:
+        read_trader_paper_book(
+            TENANT_ID,
+            persona_id,
+            agora_user_id=user_id,
+            coordinator=coordinator,
+            runtime_client=rm_client,
+        )
+    assert read_exc.value.reason_code == "runtime_binding_not_active"
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert not any(method != "GET" for method, _url, _payload, _status in capital_calls)
+    assert rm_service.get_binding(paused_binding_id).status == "paused"
+
+    headers = {
+        "Authorization": _mint_bearer(sub=user_id, tenant_id=TENANT_ID),
+        "Idempotency-Key": "idem-legacy-paused-1",
+        "X-Request-Id": "req-legacy-paused-1",
+        "X-Tenant-Id": TENANT_ID,
+    }
+    capital_calls.clear()
+    get_res = client.get("/bff/agora/servant/paper-book", headers=headers)
+    assert get_res.status_code == 409, get_res.text
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert not any(method != "GET" for method, _url, _payload, _status in capital_calls)
+    assert rm_service.get_binding(paused_binding_id).status == "paused"
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as ensure_exc:
+        ensure_trader_paper_book(
+            TENANT_ID,
+            persona_id,
+            requested_by=user_id,
+            agora_user_id=user_id,
+            coordinator=coordinator,
+            runtime_client=rm_client,
+        )
+    assert ensure_exc.value.reason_code == "runtime_binding_not_active"
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert rm_service.get_binding(paused_binding_id).status == "paused"
+
+    ensure_res = client.post("/bff/agora/servant/paper-book/ensure", headers=headers, json={})
+    assert ensure_res.status_code == 409, ensure_res.text
+    assert transition_calls == []
+    assert deploy_calls == []
+    assert rm_service.get_binding(paused_binding_id).status == "paused"
+
+

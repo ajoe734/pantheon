@@ -25,7 +25,7 @@
     },
     {
       "path": "services/control-plane/bff/personas/trader_paper_book.py",
-      "summary": "Updated ensure_trader_paper_book and read_trader_paper_book to attach the StagePlanner.build_execution_projection metadata (object_store, strategy_id, artifact_checksum, symbol='2330.TW' for TWD books, market_data_policy) on new RuntimeBinding creation and to repair existing bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding."
+      "summary": "Updated ensure_trader_paper_book to attach the StagePlanner.build_execution_projection metadata (object_store, strategy_id, artifact_checksum, symbol='2330.TW' for TWD books, market_data_policy) on new RuntimeBinding creation and to repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
     },
     {
       "path": "services/execution/lean_runtime/paper_signal_producer.py",
@@ -41,7 +41,7 @@
     },
     {
       "path": "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py",
-      "summary": "Added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1) and test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2)."
+      "summary": "Added test_provisioned_trader_paper_book_is_listed_in_runtime_fleet_desired_state_bindings (AC1), test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id (AC2), test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding (P1 regression), and test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions (P1 regression)."
     },
     {
       "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
@@ -71,7 +71,9 @@
         "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07"
       },
       "tests": [
-        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id"
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions"
       ]
     },
     "AC3_zero_strategy_decisions_or_signals_for_trader_servant_paper_book": {
@@ -91,25 +93,121 @@
         "added_workers_at_hosted_scale": 1,
         "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07",
         "binding_id": "rb-77d962be4e324032808324109f2c154e",
-        "per_worker_peak_rss_mb": "70-95 MB (Python 3.12 paper_runtime.py subprocess)",
-        "current_four_workers_plus_reconciler_rss_mb": "1061-1125 MB across paper-fleet-reconciler parent + 4 active paper workers (rt-49c1c3d1 + 3 trading personas qinghe, hengyue, chengchuan)",
-        "five_workers_projected_total_rss_mb": "1135-1215 MB within the unchanged 1280 MiB container memory cap (DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m in docker-compose.yml:2981), leaving >65-145 MiB headroom",
-        "cleanup": "PaperFleetReconciler terminates worker subprocesses on binding pause/retire/exclusion (_terminate_worker SIGTERM -> SIGKILL after RECONCILER_DRAIN_TIMEOUT_SECONDS=10s)"
+        "measurement_method": "Spawned PaperFleetReconciler parent process plus 4 real PaperRuntimeService subprocesses (rt-49c1c3d1 + 3 trading personas qinghe, hengyue, chengchuan) and then added the 5th subprocess for rb-77d962be4e324032808324109f2c154e (rt-persona-paper-3ca8da543bef6ede0a07), reading VmHWM (peak RSS) and VmRSS from /proc/<pid>/status after draining heartbeat/fill cycles and persisting ledger + outbox state.",
+        "measured_at_utc": "2026-11-27T18:35:04Z",
+        "measurement_command": ".venv-pantheon/bin/python3 -c '<spawn PaperFleetReconciler + 4 baseline PaperRuntimeService worker subprocesses + 5th trader paper book worker subprocess rb-77d962be4e324032808324109f2c154e; read /proc/<pid>/status VmHWM/VmRSS and stat ledger/outbox files>'",
+        "raw_observation": {
+          "measured_at_utc": "2026-11-27T18:35:04Z",
+          "reconciler_parent_process": {
+            "pid": 1003,
+            "vm_hwm_kib": 54036,
+            "vm_hwm_mib": 52.77,
+            "vm_rss_kib": 54036,
+            "vm_rss_mib": 52.77
+          },
+          "four_baseline_workers": [
+            {
+              "binding_id": "rb-49c1c3d1000000000000000000000000",
+              "runtime_id": "rt-49c1c3d1",
+              "pid": 1004,
+              "vm_hwm_kib": 54912,
+              "vm_hwm_mib": 53.62,
+              "vm_rss_kib": 54912,
+              "vm_rss_mib": 53.62
+            },
+            {
+              "binding_id": "rb-persona-paper-qinghe-001",
+              "runtime_id": "rt-persona-paper-qinghe",
+              "pid": 1005,
+              "vm_hwm_kib": 55304,
+              "vm_hwm_mib": 54.01,
+              "vm_rss_kib": 55304,
+              "vm_rss_mib": 54.01
+            },
+            {
+              "binding_id": "rb-persona-paper-hengyue-001",
+              "runtime_id": "rt-persona-paper-hengyue",
+              "pid": 1006,
+              "vm_hwm_kib": 55204,
+              "vm_hwm_mib": 53.91,
+              "vm_rss_kib": 55204,
+              "vm_rss_mib": 53.91
+            },
+            {
+              "binding_id": "rb-persona-paper-chengchuan-001",
+              "runtime_id": "rt-persona-paper-chengchuan",
+              "pid": 1007,
+              "vm_hwm_kib": 54840,
+              "vm_hwm_mib": 53.55,
+              "vm_rss_kib": 54840,
+              "vm_rss_mib": 53.55
+            }
+          ],
+          "fifth_trader_book_worker": {
+            "binding_id": "rb-77d962be4e324032808324109f2c154e",
+            "runtime_id": "rt-persona-paper-3ca8da543bef6ede0a07",
+            "pid": 1008,
+            "vm_hwm_kib": 55068,
+            "vm_hwm_mib": 53.78,
+            "vm_rss_kib": 55068,
+            "vm_rss_mib": 53.78
+          },
+          "totals": {
+            "four_workers_plus_reconciler_vm_hwm_kib": 274292,
+            "four_workers_plus_reconciler_vm_hwm_mib": 267.86,
+            "four_workers_plus_reconciler_vm_rss_kib": 274292,
+            "four_workers_plus_reconciler_vm_rss_mib": 267.86,
+            "five_workers_plus_reconciler_vm_hwm_kib": 329364,
+            "five_workers_plus_reconciler_vm_hwm_mib": 321.64,
+            "five_workers_plus_reconciler_vm_rss_kib": 329364,
+            "five_workers_plus_reconciler_vm_rss_mib": 321.64,
+            "added_fifth_worker_vm_hwm_kib": 55068,
+            "added_fifth_worker_vm_hwm_mib": 53.78,
+            "added_fifth_worker_vm_rss_kib": 55068,
+            "added_fifth_worker_vm_rss_mib": 53.78
+          }
+        },
+        "comparison_with_hosted_cgroup_limit": "Measured 4-worker + reconciler process VmHWM sum is 267.86 MiB (hosted cgroup baseline in docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117/evidence.json:14 is 253 MiB anon + 382 MiB page cache = 640 MiB cgroup peak). Adding the 5th worker adds 53.78 MiB VmHWM (321.64 MiB total process VmHWM; ~694 MiB projected cgroup peak including the 382 MiB page cache), leaving ~586 MiB headroom below the 1280 MiB container memory cap (DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m in docker-compose.yml:2981).",
+        "cleanup": "PaperFleetReconciler._terminate_worker (services/paper_fleet_reconciler/paper_fleet_reconciler.py:1218-1277) terminates the worker subprocess on binding pause, retirement, or desired-state exclusion (SIGTERM followed by SIGKILL after RECONCILER_DRAIN_TIMEOUT_SECONDS=10s)."
       },
       "telemetry_heartbeat_and_summary_rows_per_day": {
         "heartbeat_cadence_seconds": 15,
+        "code_references": [
+          "services/execution/lean_runtime/paper_runtime.py:210 (STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0)",
+          "services/execution/lean_runtime/paper_runtime.py:7780-7790 (poll_interval_seconds / heartbeat emission)",
+          "services/telemetry/heartbeat_retention.py:39-48 (DEFAULT_RAW_RETENTION_DAYS = 3, DEFAULT_STATE_SNAPSHOT_RETENTION_DAYS = 3, DEFAULT_INFRA_HEALTH_RETENTION_DAYS = 7, DEFAULT_TELEMETRY_EVENTS_RETENTION_DAYS = 14, DEFAULT_INTERVAL_SECONDS = 300.0, DEFAULT_BATCH_SIZE = 5000, DEFAULT_MAX_BATCHES_PER_RUN = 20)",
+          "scripts/measure_hosted_storage.py:44-45 (BUDGETS['public.telemetry_events'] = {'max_bytes': 5 GB, 'max_growth_per_day': 100 MB})"
+        ],
         "raw_heartbeat_rows_per_day_for_one_more_runtime": 5760,
-        "raw_heartbeat_bytes_per_day": "~2.0-2.8 MB/day (~350-500 B/row in public.telemetry_events)",
-        "runtime_state_snapshot_rows_per_day_for_one_more_runtime": "<= 100 rows/day (startup + structural changes + STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0/hour)",
+        "raw_heartbeat_bytes_per_day": "~2.0-2.8 MB/day (~350-500 B/row in public.telemetry_events before 3-day rollup/deletion)",
+        "runtime_state_snapshot_rows_per_day_for_one_more_runtime": "<= 100 rows/day (startup + structural changes + STATE_SNAPSHOT_MTM_MAX_PER_HOUR_DEFAULT = 4.0/hour = <= 96 MTM snapshots/day)",
         "hourly_summary_rows_per_day_for_one_more_runtime": "24 rows/day in public.telemetry_heartbeat_hourly_summaries (~400 B/row = ~9.6 KB/day)",
-        "retention_and_cap": "HeartbeatRetentionJob (services/telemetry/heartbeat_retention.py, runs every 300s, <=20 batches x 5000 rows) summarizes and deletes raw heartbeat rows older than PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS=3 days, deletes runtime_state_snapshot rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS=3 days (preserving newest/oldest per runtime and unknown-valuation anchors), and deletes unreferenced non-permanent telemetry_events older than PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 days, keeping public.telemetry_events within its 5 GB (<=0.5 GB steady-state) storage-manifest cap."
+        "retention_and_cap": "HeartbeatRetentionJob (services/telemetry/heartbeat_retention.py, running every 300s in services/telemetry/main.py with <=20 batches x 5000 rows per event class) rolls up and deletes raw heartbeat rows older than PANTHEON_TELEMETRY_HEARTBEAT_RAW_RETENTION_DAYS=3 days (capping steady-state raw heartbeat rows for one runtime at 3 x 5760 = 17,280 rows), deletes runtime_state_snapshot rows older than PANTHEON_TELEMETRY_STATE_SNAPSHOT_RETENTION_DAYS=3 days (preserving newest/oldest per runtime and unknown-valuation anchors), and deletes unreferenced non-permanent telemetry_events older than PANTHEON_TELEMETRY_EVENTS_RETENTION_DAYS=14 days, keeping public.telemetry_events within its 5 GB / <=100 MB/day cap in scripts/measure_hosted_storage.py."
       },
       "per_binding_performance_ledger_file": {
-        "path_pattern": "${PANTHEON_PERFORMANCE_STATE_ROOT}/rb-77d962be4e324032808324109f2c154e-d0f6a0c41d34.json (plus sibling .lifecycle-outbox.json)",
-        "write_cadence": "Atomic in-place snapshot rewrite via atomic_write_text + sweep_stale_temp_siblings on fill, mark valuation, or performance pair stage/ack (0 writes/day when idle with no trader intents)",
-        "steady_state_size_per_day": "~1.5-8 KB in-place snapshot (0 B/day growth when idle; ~200-400 B per distinct open symbol position)",
-        "cap": "<= 64 KB in-place JSON snapshot per binding (at most 1 deterministic .tmp sibling during write, 0 leaked temp files per PAPER-RUNTIME-STATE-FILES-BOUND-20261117 and JSON-STORE-STALE-TEMP-SWEEP-20261125; lifecycle outbox prunes chains after _chain_retention_seconds = 7 days)",
-        "cleanup": "PaperFleetReconciler._cleanup_retired_state_files unlinks per-binding ledger and outbox files when a binding reaches a terminal retired status"
+        "path_pattern": "${PANTHEON_PERFORMANCE_STATE_ROOT}/rb-77d962be4e324032808324109f2c154e-5e5f919861b9.json (plus sibling rb-77d962be4e324032808324109f2c154e-5e5f919861b9.json.lifecycle-outbox.json)",
+        "code_references": [
+          "services/paper_fleet_reconciler/paper_fleet_reconciler.py:463-482 (_binding_state_filename)",
+          "services/execution/lean_runtime/paper_runtime.py:130 (_LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS = 35 * 24 * 3600.0)",
+          "services/execution/lean_runtime/paper_runtime.py:6178 (self._ledger_fill_history = self._ledger_fill_history[-256:], RAM-only, not persisted in ledger JSON)",
+          "services/execution/lean_runtime/paper_runtime.py:6506-6575 (PaperExecutionAlgorithm._persist_state)",
+          "services/execution/lean_runtime/paper_runtime.py:6697-6714 (ack_fill_publication drains pending_fill_publications)",
+          "services/execution/lean_runtime/paper_runtime.py:6781-6795 (ack_performance_pair clears pending_performance_pair)",
+          "services/execution/lean_runtime/paper_runtime.py:7313-7360 (LifecycleTelemetryOutbox._chain_retention_seconds and _prune_expired_chains)",
+          "services/foundation/reliable_delivery.py:29-72 (atomic_write_text and sweep_stale_temp_siblings)",
+          "services/paper_fleet_reconciler/paper_fleet_reconciler.py:1299-1425 (PaperFleetReconciler._cleanup_retired_state_files)"
+        ],
+        "write_cadence": "Atomic in-place snapshot rewrite via atomic_write_text (single deterministic <path>.tmp sibling; sweep_stale_temp_siblings on startup) on fill commit, mark valuation update, or performance pair stage/ack (0 writes/day when idle with no trader intents).",
+        "measured_file_sizes_bytes": {
+          "idle_ledger_bytes": 674,
+          "fill_ledger_bytes_with_pending_publication": 1331,
+          "acked_ledger_bytes_with_open_2330_position": 1331,
+          "idle_outbox_bytes": 110,
+          "outbox_35d_35_chains_bytes": 26953,
+          "pruned_chains_older_than_35d": 5
+        },
+        "steady_state_size_and_structural_bound": "PaperExecutionAlgorithm._persist_state (paper_runtime.py:6506-6575) has no hardcoded byte-size limit; it is structurally bounded because every write replaces the file in place with scalar account fields plus maps keyed only by currently non-zero holdings (paper_runtime.py:6528-6532), active open_episodes (6533-6545), tracked execution_prices (6546-6550), instrument_positions (6551-6557), settled_futures_contracts (6565), at most one pending_performance_pair (cleared on ack_performance_pair at 6781-6795), and in-flight pending_fill_publications (drained to [] on ack_fill_publication at 6697-6714; _ledger_fill_history is RAM-only and not persisted). Measured ledger size is 674 B idle and 1,331 B with an open 2330.TW position (0 B/day net growth when idle or after positions close and publications are acked). The sibling LifecycleTelemetryOutbox file is pruned on load, admit, admit_many, and acknowledge_many by _prune_expired_chains (paper_runtime.py:7322-7348), which removes any journey with no pending events whose last correlation_envelope.event_time is older than _chain_retention_seconds() (default _LIFECYCLE_CHAIN_RETENTION_DEFAULT_SECONDS = 35 days = 3,024,000s at paper_runtime.py:130, configurable via PANTHEON_LIFECYCLE_CHAIN_RETENTION_SECONDS, chosen to outlive the 30-day signal store decision TTL); measured outbox size is 110 B idle and 26,953 B (~26.3 KiB) with 35 retained journey checkpoints across the 35-day window (~767 B per journey checkpoint).",
+        "cleanup": "PaperFleetReconciler._cleanup_retired_state_files (services/paper_fleet_reconciler/paper_fleet_reconciler.py:1299-1425) unlinks the per-binding ledger file, .lifecycle-outbox.json, .member-books.json, .lock, and any .tmp siblings once the binding is retired in Runtime-Manager, not in desired-state, has no live worker, and its pending fill publications, pending performance pair, and outbox pending list are empty."
       }
     },
     "AC6_hosted_proof_after_deploy": {

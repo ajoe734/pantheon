@@ -415,7 +415,6 @@ def _validate_runtime_binding_readback(
     persona_id: str,
     capital_pool_id: str,
     persona_capital_binding_id: str,
-    require_active: bool = True,
 ) -> Dict[str, Any]:
     binding_id = str(
         binding.get("binding_id")
@@ -449,7 +448,7 @@ def _validate_runtime_binding_readback(
                 reason_code="non_paper_runtime_binding",
             )
     status = str(binding.get("status") or binding.get("state") or "").strip().lower()
-    if require_active and status != "active":
+    if status != "active":
         raise PersonaProvisioningCoordinationError(
             f"RuntimeBinding {binding_id} status is {status!r}, expected 'active'",
             reason_code="runtime_binding_not_active",
@@ -940,20 +939,14 @@ def _repair_runtime_binding_execution_projection_in_place(
         metadata_patch["agora_user_id"] = str(agora_user_id).strip()
 
     status = str(binding.get("status") or binding.get("state") or "").strip().lower()
-    if status == "active":
-        transitioner(binding_id, "pending_pause", metadata_patch=metadata_patch)
-        transitioner(binding_id, "paused")
-        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
-    elif status == "pending_pause":
-        transitioner(binding_id, "paused")
-        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
-    elif status == "paused":
-        updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
-    else:
+    if status != "active":
         raise PersonaProvisioningCoordinationError(
             f"RuntimeBinding {binding_id} status is {status!r}; cannot repair projection in place",
             reason_code="runtime_binding_not_active",
         )
+    transitioner(binding_id, "pending_pause", metadata_patch=metadata_patch)
+    transitioner(binding_id, "paused")
+    updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
 
     readback: Optional[Mapping[str, Any]] = None
     getter = getattr(runtime_client, "get", None)
@@ -974,7 +967,6 @@ def _repair_runtime_binding_execution_projection_in_place(
         persona_id=persona_id,
         capital_pool_id=capital_pool_id,
         persona_capital_binding_id=persona_capital_binding_id,
-        require_active=True,
     )
 
 
@@ -1123,7 +1115,6 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
-            require_active=False,
         )
     if len(non_terminal) > 1:
         raise PersonaProvisioningCoordinationError(
@@ -1141,7 +1132,6 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
-            require_active=False,
         )
         getter = getattr(active_runtime_client, "get", None)
         if callable(getter):
@@ -1153,7 +1143,6 @@ def ensure_trader_paper_book(
                     persona_id=clean_persona,
                     capital_pool_id=ids.capital_pool_id,
                     persona_capital_binding_id=ids.persona_capital_binding_id,
-                    require_active=False,
                 )
         if not _binding_has_executable_projection(
             runtime_binding,
@@ -1179,15 +1168,6 @@ def ensure_trader_paper_book(
                 requested_by=clean_requester,
                 starting_capital=effective_starting,
                 agora_user_id=agora_user_id,
-            )
-        else:
-            runtime_binding = _validate_runtime_binding_readback(
-                runtime_binding,
-                tenant_id=clean_tenant,
-                persona_id=clean_persona,
-                capital_pool_id=ids.capital_pool_id,
-                persona_capital_binding_id=ids.persona_capital_binding_id,
-                require_active=True,
             )
     else:
         projection_metadata = _resolve_paper_book_execution_projection(
@@ -1296,7 +1276,6 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
-            require_active=False,
         )
         if not _binding_has_executable_projection(
             runtime_binding,
@@ -1314,15 +1293,6 @@ def ensure_trader_paper_book(
                 requested_by=clean_requester,
                 starting_capital=effective_starting,
                 agora_user_id=agora_user_id,
-            )
-        else:
-            runtime_binding = _validate_runtime_binding_readback(
-                runtime_binding,
-                tenant_id=clean_tenant,
-                persona_id=clean_persona,
-                capital_pool_id=ids.capital_pool_id,
-                persona_capital_binding_id=ids.persona_capital_binding_id,
-                require_active=True,
             )
 
     runtime_binding = dict(runtime_binding)
@@ -1484,75 +1454,20 @@ def read_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
-            require_active=False,
         )
     if len(pool_bindings) > 1:
         raise PersonaProvisioningCoordinationError(
             f"CapitalPool {ids.capital_pool_id} has {len(pool_bindings)} non-terminal RuntimeBindings",
             reason_code="multiple_runtime_bindings",
         )
-    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
-    runtime_binding = _validate_runtime_binding_readback(
-        pool_bindings[0],
-        tenant_id=clean_tenant,
-        persona_id=clean_persona,
-        capital_pool_id=ids.capital_pool_id,
-        persona_capital_binding_id=ids.persona_capital_binding_id,
-        require_active=False,
-    )
-    if not _binding_has_executable_projection(
-        runtime_binding,
-        ids=ids,
-        expected_currency=effective_starting["currency"],
-    ) and callable(getattr(active_runtime_client, "transition", None)):
-        record = trader_paper_book_provisioning_record(
-            clean_tenant,
-            clean_persona,
-            requested_by=str(
-                (runtime_binding.get("metadata") or {}).get("requested_by")
-                or active_coordinator.actor_id
-            ),
-            starting_capital=effective_starting,
-        )
-        projection_metadata = _resolve_paper_book_execution_projection(
-            active_coordinator,
-            record,
-            ids,
-            expected_currency=effective_starting["currency"],
-            coordinate_authorities=False,
-            env=env,
-        )
-        runtime_binding = _repair_runtime_binding_execution_projection_in_place(
-            active_runtime_client,
-            runtime_binding,
-            projection_metadata=projection_metadata,
-            tenant_id=clean_tenant,
-            persona_id=clean_persona,
-            capital_pool_id=ids.capital_pool_id,
-            persona_capital_binding_id=ids.persona_capital_binding_id,
-            requested_by=str(
-                (runtime_binding.get("metadata") or {}).get("requested_by")
-                or active_coordinator.actor_id
-            ),
-            starting_capital=effective_starting,
-            agora_user_id=agora_user_id,
-        )
-    else:
-        runtime_binding = _validate_runtime_binding_readback(
-            runtime_binding,
-            tenant_id=clean_tenant,
-            persona_id=clean_persona,
-            capital_pool_id=ids.capital_pool_id,
-            persona_capital_binding_id=ids.persona_capital_binding_id,
-            require_active=True,
-        )
-    runtime_binding = dict(runtime_binding)
+    runtime_binding = dict(pool_bindings[0])
     runtime_binding.setdefault("allowed_deployment_scope", "paper")
     runtime_binding.setdefault(
         "execution_mode",
         str(runtime_binding.get("deployment_mode") or "paper"),
     )
     runtime_binding["created"] = False
+    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
     resolved_user_id = str(
         agora_user_id
         or ((persona_record or {}).get("metadata") or {}).get("agora_user_id")
