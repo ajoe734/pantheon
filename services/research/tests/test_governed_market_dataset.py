@@ -205,3 +205,134 @@ def test_refuses_to_run_on_an_event_loop(tmp_path):
     with pytest.raises(gmd.GovernedMarketDatasetError) as exc:
         asyncio.run(call())
     assert exc.value.code == "governed_dataset_must_run_in_worker"
+
+
+def test_symbol_session_slice_reads_only_requested_symbols_and_sessions(tmp_path, monkeypatch):
+    from services.source_ingestion.daily_bars_reader import DailyBarsReader
+
+    ds = build_store(tmp_path, symbols=("2330.TW", "2317.TW", "0050.TW"))
+    boundary = gmd.build_market_boundary(tmp_path, policy=SMALL, now=NOW)
+    sessions = [d for d in ds if "2026-11-09" <= d <= "2026-11-18"]
+    warmup = [d for d in ds if d < sessions[0]][-2:]
+    read_calls: list[tuple[tuple[str, ...], str, str]] = []
+    orig_read_range = DailyBarsReader.read_range
+
+    def spy_list_symbols(self, *args, **kwargs):
+        raise AssertionError("targeted symbol/session fill must not call list_symbols")
+
+    def spy_read_range(self, symbols, start, end, **kwargs):
+        asked = ( symbols,) if isinstance(symbols, str) else tuple(symbols)
+        read_calls.append((asked, start, end))
+        return orig_read_range(self, symbols, start, end, **kwargs)
+
+    monkeypatch.setattr(DailyBarsReader, "list_symbols", spy_list_symbols)
+    monkeypatch.setattr(DailyBarsReader, "read_range", spy_read_range)
+
+    dataset = gmd.resolve_governed_dataset(
+        symbols=["2330"], sessions=sessions, warmup_days=2, min_instruments=1,
+        root=tmp_path, now=NOW, policy=SMALL,
+    )
+    assert dataset["dataset_id"] == boundary.snapshot_id
+    assert "companion_symbols" not in dataset
+    assert {r["instrument"] for r in dataset["records"]} == {"2330.TW"}
+    assert [r["date"] for r in dataset["records"]] == warmup + sessions
+    assert [c[0] for c in read_calls] == [("2330",)] * len(warmup + sessions)
+    assert [c[1] for c in read_calls] == warmup + sessions
+    assert [c[2] for c in read_calls] == warmup + sessions
+
+
+def test_reconciler_lock_carries_pyarrow_and_reads_governed_daily_bars_with_only_lock_packages(tmp_path):
+    import re
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[3]
+    req_text = (repo_root / "services/paper_fleet_reconciler/requirements.txt").read_text(encoding="utf-8")
+    lock_text = (repo_root / "dependencies/locks/services-paper_fleet_reconciler.txt").read_text(encoding="utf-8")
+    persona_lock = (repo_root / "dependencies/locks/services-control-plane-persona.txt").read_text(encoding="utf-8")
+    assert re.search(r"^pyarrow>=15,<30\b", req_text, re.M)
+    pinned = re.search(r"^pyarrow==(\S+)$", persona_lock, re.M).group(1)
+    assert re.search(rf"^pyarrow=={re.escape(pinned)}$", lock_text, re.M)
+
+    build_store(tmp_path, symbols=("2330.TW", "2317.TW", "0050.TW"))
+    script = """
+import importlib.abc, importlib.machinery, json, pathlib, re, sys
+from datetime import datetime, timezone
+import pytest
+
+repo_root = pathlib.Path(sys.argv[1])
+store_root = pathlib.Path(sys.argv[2])
+lock_text = (repo_root / "dependencies/locks/services-paper_fleet_reconciler.txt").read_text(encoding="utf-8")
+locked = {m.group(1).lower().replace("-", "_") for m in re.finditer(r"^([A-Za-z0-9_.-]+)==", lock_text, re.M)}
+locked |= {"attr", "rpds"}
+stdlib = set(sys.stdlib_module_names)
+
+class ReconcilerLockOnlyFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        top = fullname.split(".")[0]
+        if top in stdlib or top.lower() in locked or top.startswith("_"):
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec and spec.origin and str(spec.origin).startswith(str(repo_root)) and ".venv" not in str(spec.origin):
+            return None
+        if spec and spec.submodule_search_locations:
+            if any(str(loc).startswith(str(repo_root)) and ".venv" not in str(loc) for loc in spec.submodule_search_locations):
+                return None
+        raise ModuleNotFoundError(f"blocked import outside reconciler lock: {fullname}")
+
+sys.meta_path.insert(0, ReconcilerLockOnlyFinder())
+
+for forbidden in ("pandas", "numpy", "scipy", "vectorbt"):
+    try:
+        __import__(forbidden)
+    except ModuleNotFoundError:
+        pass
+    else:
+        raise AssertionError(f"{forbidden} must not be importable under reconciler lock guard")
+
+from services.research import governed_market_dataset as gmd
+from services.execution.lean_runtime.member_virtual_book import MemberVirtualBooks, governed_admission_replay_source
+from services.registry.strategy_artifact import strategy_artifact_checksum
+from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
+
+now = datetime(2026, 11, 25, 6, 0, tzinfo=timezone.utc)
+policy = gmd.MarketPolicy(window_days=30, min_history_days=10, liquidity_days=5,
+                          min_liquidity_observations=3, min_median_traded_value=1_000_000.0)
+artifact = build_canonical_tw_strategy_artifact(
+    strategy_id="strat-hosted-2330", symbols=("2330.TW",), lookback_bars=3, momentum_threshold=0.0
+)
+checksum = strategy_artifact_checksum(artifact)
+aid = artifact["artifact_id"]
+entry = {"registry_id": aid, "checksum": checksum, "metadata": {"strategy_artifact": artifact}}
+env = {gmd.STORE_ROOT_ENV: str(store_root)}
+
+source = governed_admission_replay_source(
+    entry_reader=lambda ref, tenant: entry, tenant_id="tenant-dev", env=env, now=now
+)
+book_path = store_root / "member-books" / "persona.json"
+books = MemberVirtualBooks(book_path, history_source=source)
+member_meta = {"artifact_id": aid, "version": "1.0.0", "checksum": checksum, "risk_weight": 1.0,
+               "virtual_only": False, "underlying_count": 1, "view": {"direction": "LONG", "strength": 1}}
+for i, day in enumerate(("2026-11-20", "2026-11-23", "2026-11-24")):
+    books.observe(
+        binding_id="rb-eb74118dd3ca4b169496b1c239087512", envelope_checksum="sha256:env1", symbol="2330.TW",
+        event_time=f"{day}T05:30:00Z", price=120.0 + i, open_price=119.5 + i,
+        source_ref=f"recorded:{day}", bar_frequency="1d", members={aid: member_meta},
+    )
+[summary] = books.observe(
+    binding_id="rb-new", envelope_checksum="sha256:env2", symbol="2330.TW",
+    event_time="2026-11-25T05:30:00Z", price=124.0, open_price=123.5,
+    source_ref="recorded:2026-11-25", bar_frequency="1d",
+    members={aid: {**member_meta, "joined_at": "2026-11-08T18:10:02Z"}},
+)
+assert summary["admitted_at"] == "2026-11-08T18:10:02Z"
+assert summary["since_inception"] is True
+assert summary["since_inception_reason"] is None
+print("LOCK_ONLY_OK", len(summary["dates"]))
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(repo_root), str(tmp_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "LOCK_ONLY_OK" in proc.stdout

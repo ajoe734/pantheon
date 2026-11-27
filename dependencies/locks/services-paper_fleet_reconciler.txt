@@ -20,6 +20,8 @@ jsonschema-specifications==2025.9.1
     # via
     #   -c dependencies/constraints-core.txt
     #   jsonschema
+pyarrow==26.0.1
+    # via -r services/paper_fleet_reconciler/requirements.txt
 pydantic==2.13.5
     # via
     #   -c dependencies/constraints-core.txt
