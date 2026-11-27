@@ -216,6 +216,8 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
                 "missing_data": list(tool_turn.get("missing_data") or []),
                 "tool_rounds": int(tool_turn.get("tool_rounds") or 0),
                 "answer_mode": tool_turn.get("answer_mode"),
+                # AGORA-TRADER-HABIT-PROFILE-20261127: the habit facts the answer used.
+                "habit_profile": tool_turn.get("habit_profile") or None,
             },
         }
     return {
@@ -929,6 +931,7 @@ def create_servant_router(
     servant_session_owner: Any = _UNSET_SERVANT_OWNER,
     ensure_paper_book: Optional[Callable[..., Mapping[str, Any]]] = None,
     read_paper_book: Optional[Callable[..., Optional[Mapping[str, Any]]]] = None,
+    habit_service: Any = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
     knowledge_reader = institutional_knowledge_reader or InstitutionalKnowledgeReader()
@@ -2010,5 +2013,37 @@ def create_servant_router(
             decision_event_id, identity, servant_persona_id=servant_persona_id, authorization=eff_auth,
         )
         return _knowledge_envelope(data, scope=scope, capability="agora.trading.v1", proof="agora_decision_support_only")
+
+    # AGORA-TRADER-HABIT-PROFILE-20261127: GET/PATCH /bff/agora/servant/habits (owner-scoped).
+    from .habits import build_default_habit_service, create_servant_habits_router
+
+    habit_cache: Dict[str, Any] = {}
+
+    def _habit_service() -> Optional[Any]:
+        if habit_service is not None:
+            return habit_service() if callable(habit_service) else habit_service
+        cached = habit_cache.get("service")
+        if cached is None:
+            owner = _resolve_session_owner()
+            if owner is None:
+                return None  # the habits route then answers 503 (fail closed)
+            from ..dataset_extraction.router import _default_store
+
+            cached = build_default_habit_service(
+                owner, journal_reader=get_read_store(), dataset_store=_default_store()
+            )
+            if cached is not None:
+                habit_cache["service"] = cached
+        return cached
+
+    router.include_router(create_servant_habits_router(
+        extract_identity=extract_identity,
+        require_read_role=require_read_role,
+        require_write_role=require_write_role,
+        bff_error=bff_error,
+        utc_now=utc_now,
+        get_read_store=get_read_store,
+        habit_service=_habit_service,
+    ))
 
     return router

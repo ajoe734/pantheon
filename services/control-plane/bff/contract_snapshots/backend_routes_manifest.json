@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 686,
+    "total_routes": 688,
     "status_values": [
       "implemented",
       "alias",
@@ -380,6 +380,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/servant/habits",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/servant/institutional-knowledge",
       "family": "agora-core",
       "status": "implemented"
@@ -585,6 +591,12 @@
     {
       "method": "PATCH",
       "path": "/bff/agora/journal/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/servant/habits",
       "family": "agora-core",
       "status": "implemented"
     },

@@ -1,0 +1,118 @@
+{
+  "task_id": "AGORA-TRADER-HABIT-PROFILE-20261127",
+  "title": "Trader habit profile with private interpretations that the trader can read and correct",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (§6, §11; T5 in §12)",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T5)",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "base": "d7c8c594e (origin/dev, after AGORA-DECISION-EVIDENCE-KINDS-20261127 #7945 and AGORA-SERVANT-SESSION-DURABLE-20261127)",
+  "delivery_state": "source_and_tests_verified_hosted_proof_pending_deploy",
+  "design_choices": [
+    "Facts and interpretations have different owners. Facts (services/agora/habit_profile.py, stored in agora.habit_profiles) are derived by fixed rules from the trader's own decision locks, journal entries and servant widget context; no language model computes a feature. Interpretations are the servant's reading of those facts and exist only in the servant persona's private memory.",
+    "Interpretation statements are rule-based text with no digits; the numbers stay in the cited habit facts, so a statement cannot disagree with the profile it reads and the 11/16 'no model computes a number' rule holds.",
+    "Event-driven recompute without a schedule: a decision lock write flags the trader's profile rows stale; the next read (GET /bff/agora/servant/habits or a servant turn) recomputes and writes a new version only when the input digest changed. The derivation is a pure function of its inputs (computed_at is not an input).",
+    "The memory owner has no supersede route, so a replacement entry lists what it supersedes in content.structured_payload.supersedes and readers hide those entries; the in-process adapter also calls PersonaMemoryStore.supersede. Nothing is deleted.",
+    "A trader correction (reject, replace, add) is admitted as training_example evidence through AgoraEvidenceWriteService (the existing dataset pipeline, T4/SD §7) and then supersedes the interpretation in memory. A feature the trader corrected is not re-derived over the trader's own words.",
+    "The servant turn carries the profile as habit facts h1..hN (separate from the 30 tool-fact budget). The model cites them with {{hN}}; the BFF renders values. A propose_research proposal carries habit_refs naming every habit fact carried and those facts are cited with it."
+  ],
+  "acceptance_criteria": {
+    "ac1_sd_section_6_features_deterministic_with_sample_size": {
+      "status": "verified_local",
+      "implementation": [
+        "services/agora/habit_profile.py::derive_habit_profile — holding_period, entry_timing, rule_discipline, position_size, rejected_candidates (liquidity, sector, price), data_order (servant widget context), intervention (rate and direction); every feature has sample_size and min_sample=10; shown only from 10 samples",
+        "services/agora/service.py::AgoraWriteService.refresh_habit_profile / get_habit_profile (owner-scoped reads)"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_trader_habit_profile.py::test_sd_section_6_features_are_deterministic_and_carry_sample_size",
+        "services/control-plane/bff/tests/test_agora_trader_habit_profile.py::test_a_feature_is_hidden_below_ten_samples",
+        "services/control-plane/bff/tests/test_agora_trader_habit_profile.py::test_data_order_comes_from_widget_context_of_servant_sessions",
+        "services/control-plane/bff/tests/test_agora_trader_habit_profile.py::test_widget_context_of_servant_messages_feeds_data_order"
+      ]
+    },
+    "ac2_get_patch_owner_scoped_correction_is_training_example": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/habits.py::create_servant_habits_router — GET and PATCH /bff/agora/servant/habits; trader_id/profile_key of another trader and another trader's interpretation_id answer 404; PATCH needs Idempotency-Key and a write role",
+        "HabitService.correct stores the correction through AgoraEvidenceWriteService.submit('training_example') and supersedes the interpretation"
+      ],
+      "tests": [
+        "test_get_habits_is_owner_scoped_and_404_for_another_trader",
+        "test_patch_correction_is_training_example_evidence_and_supersedes_not_deleted",
+        "test_patch_is_owner_scoped_and_validated",
+        "test_habits_fail_closed_when_private_memory_is_unavailable"
+      ]
+    },
+    "ac3_interpretations_private_to_the_servant_persona": {
+      "status": "verified_local",
+      "implementation": [
+        "interpretations are written with relevance_scope persona_private and memory_type preference under the servant persona_id and are never tagged scope:committee",
+        "carry_interpretation_in_minutes is the only path out: a persona_and_committee copy for the meeting the trader convened"
+      ],
+      "tests": [
+        "test_interpretations_are_private_to_the_servant_and_cross_only_in_minutes (another persona: store retrieval empty and governance authz persona_scope_mismatch; meeting (consultation_session): committee-scope retrieval empty and authz consultation_scope_denied for persona_private; after the minutes copy the meeting reads exactly that entry while the private entries stay persona_private)"
+      ]
+    },
+    "ac4_servant_turn_and_proposals_cite_habit_facts": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/turn_worker.py::ServantTurnWorker._habit_context and tool_turn.run_tool_turn(habit=...) carry the profile and live interpretations into every turn; the answer's citations and metadata.tool_turn.habit_profile name the habit facts used; the SSE completed event carries habit_profile",
+        "a propose_research fact carries habit_refs and is cited with those habit facts"
+      ],
+      "tests": [
+        "test_turn_carries_the_profile_cites_habit_facts_and_a_correction_changes_the_next_answer",
+        "test_a_proposal_names_the_habit_facts_it_was_made_against",
+        "test_a_habit_failure_never_blocks_the_answer"
+      ]
+    },
+    "ac5_runtime_budget_cap_cleanup_storage_manifest": {
+      "status": "verified_local",
+      "implementation": [
+        "docs/operations/storage-manifest.json entry agora.habit_profiles (scripts/check_storage_manifest.py passes: 379 entries, no failures)",
+        "AgoraStore.put_habit_profile keeps the latest profile plus HABIT_PROFILE_HISTORY_VERSIONS = 12 superseded versions and deletes older ones on write; an unchanged input digest writes nothing"
+      ],
+      "tests": [
+        "test_profile_row_is_scoped_event_driven_and_capped (22 versions written, row keeps current + 12 history; a lock write marks stale and one read recomputes one version; profile <= 8 KB)"
+      ]
+    },
+    "ac6_hosted_proof": {
+      "status": "pending_post_merge_dev_deploy",
+      "blocking_condition": "This worker cannot deploy to Dev and holds no hosted operator credential. The hosted proof needs the merged source deployed (BFF and agora-interaction-worker), at least one decision lock for the dev trader (hosted decision-events were empty on 2026-11-26, SD §3) and a memory-owner token whose role set admits the servant worker's persona_session/memory-writer write (HttpHabitMemory mints a short service JWT from PANTHEON_RUNTIME_JWT_SECRET; the memory owner's strict identity checks are not exercised by the local tests, which use the in-process store).",
+      "procedure_after_deploy": [
+        "GET /bff/agora/servant/habits as the dev trader: record the profile (each feature with sample_size) and interpretations_status",
+        "POST a servant message and read /stream: record metadata habit_profile.cited_fact_ids",
+        "PATCH /bff/agora/servant/habits {action: replace, interpretation_id, statement} with an Idempotency-Key: record the training_example evidence_id",
+        "POST a second servant message and record that the answer now reflects the corrected statement and not the superseded one"
+      ],
+      "recorded": null
+    }
+  },
+  "contracts": {
+    "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml (GET/PATCH /bff/agora/servant/habits; ServantHabitsData, ServantHabitProfile, ServantHabitFeature, ServantHabitInterpretation, ServantHabitCorrectionRequest, ServantHabitFact, ServantTurnHabitRef; citations may be ServantHabitFact)",
+    "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json (route family agora.servant.habits.v1; openapi and capability-manifest hashes refreshed)",
+    "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json (two routes; owner_contracts agora.habit_profiles and /api/memory/persona-entries)",
+    "backend_routes_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json regenerated (686 routes; scripts/bff_route_manifest_backend.py --check)",
+    "route_diff_baseline": "docs/bff/contract_snapshots/route-diff-baseline.json rewritten (two grandfathered backend-only routes until FE-AGORA-SERVANT-CORE-20261127; scripts/bff_route_diff.py --check-baseline matches)"
+  },
+  "runtime_budget": {
+    "new_persistent_stores_or_tables": "agora.habit_profiles (one row per trader and strategy)",
+    "new_recurring_jobs_or_timers": "none (event-driven: lock write marks stale, next read recomputes)",
+    "size": "about 4 KB per profile (hard cap 8 KB, source refs trimmed first); row holds the latest plus 12 superseded versions",
+    "growth_and_cap": "at most 13 profiles per trader and strategy; a profile write happens only when the input digest changed; private memory holds at most 24 live interpretation entries per servant persona (MAX_ACTIVE_INTERPRETATIONS)",
+    "cleanup": "older profile versions deleted on write; derived interpretation entries expire after 180 days and trader corrections after 365 days (expires_at, archived by the memory owner); superseded entries are kept until expiry",
+    "storage_manifest": "docs/operations/storage-manifest.json agora.habit_profiles"
+  },
+  "verification": {
+    "commands": [
+      "pytest services/control-plane/bff/tests/test_agora_trader_habit_profile.py (15 passed)",
+      "pytest test_agora_servant_data_tools.py test_agora_servant_sessions.py test_agora_shadow_mode.py test_agora_committee_memory_owners.py services/control-plane/bff/agora/servant (81 passed)",
+      "pytest scripts/test_bff_route_diff.py scripts/test_check_storage_manifest.py test_trader_paper_book_provisioning.py test_agora_trader_habit_profile.py (55 passed)",
+      "pytest test_agora_route_ownership, test_agora_router, test_agora_write_authority, test_agora_interaction_worker_runtime_wiring, test_agora_human_evidence, test_agora_dataset_handoff_integration, test_agora_identity_scope (78 passed, 1 skipped; see residual 1 for test_agora_servant_production_write_owner)",
+      "python3 scripts/check_storage_manifest.py (passed); scripts/bff_route_manifest_backend.py --check; scripts/bff_route_diff.py --check-baseline"
+    ]
+  },
+  "residual_findings": [
+    "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py::test_http_owner_restart_preserves_fleet_to_detail_read_symmetry and ::test_servant_production_http_owner_included_in_interaction_eligibility_e2e fail in this worker environment with 'Evolution decisions reader failed: Domain backend is unconfigured: set PANTHEON_EVOLUTION_API_URL' from the persona fleet filter. The path does not touch habits; the failure was not compared against a base checkout because this sandbox cannot create a worktree.",
+    "Journal entries enter the profile only through the injected journal reader (the BFF read store) and only feed holding_period; the Agora owner built without a reader sees locks and widget context only.",
+    "data_order is derived from the widget_id, quick_task and page of servant message command_context; clarification choices (T3) are not an input yet."
+  ]
+}

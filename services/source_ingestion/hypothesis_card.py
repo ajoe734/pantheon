@@ -20,9 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Optional
-
-import jsonschema
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 HYPOTHESIS_CARD_SCHEMA_VERSION = "hypothesis_card.v1"
 DEFAULT_DAILY_CALL_CAP = 400  # O-7
@@ -272,6 +270,8 @@ def finalize_card(
     prediction_rejections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a contract-valid card or raise :class:`CardRejected`."""
+    import jsonschema
+
     raw = structured.get("hypothesis_card")
     if not isinstance(raw, Mapping):
         raise CardRejected("no_card", "model returned no card")
@@ -398,6 +398,107 @@ DAILY_CAP_REACHED = "daily_cap"
 RECORD_DAILY_LIMIT = "record_daily_limit"
 RECORD_TOTAL_LIMIT = "record_total_limit"
 
+RELEASE_SWITCH_TABLE = "release_switch"
+INVALID_DEPLOYMENT_SHAS = frozenset({"", "unknown", "unresolved", "local-dev"})
+DEPLOYMENT_SHA_ENVS = ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT")
+RELEASE_SWITCHED_AT_ENVS = ("PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT")
+
+
+def valid_deployment_sha(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text or text.lower() in INVALID_DEPLOYMENT_SHAS:
+        return None
+    return text
+
+
+def active_deployment_sha(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    effective_env = env if env is not None else os.environ
+    for key in DEPLOYMENT_SHA_ENVS:
+        sha = valid_deployment_sha(effective_env.get(key))
+        if sha is not None:
+            return sha
+    return None
+
+
+def _switch_iso(value: Any) -> Optional[str]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        if val != val or val <= 0:
+            return None
+        return datetime.fromtimestamp(val, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def sync_release_switch_row(
+    connection: sqlite3.Connection,
+    *,
+    now_epoch: float,
+    deployment_sha: Optional[str] = None,
+    switched_at: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Optional[dict[str, str]]:
+    """Record the initial switch timestamp of a deployed release identity once per release SHA.
+
+    A same-release restart preserves the existing ``switched_at`` recorded when
+    ``deployment_sha`` first activated. When neither a valid deployment SHA nor an
+    explicit switch timestamp is present, nothing is written or guessed.
+    """
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS {RELEASE_SWITCH_TABLE} (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            deployment_sha TEXT NOT NULL,
+            switched_at TEXT NOT NULL
+        )"""
+    )
+    effective_env = env if env is not None else os.environ
+    effective_sha = valid_deployment_sha(deployment_sha) or active_deployment_sha(effective_env)
+    explicit_iso: Optional[str] = None
+    if switched_at is not None:
+        explicit_iso = _switch_iso(switched_at)
+        if explicit_iso is None:
+            raise ValueError("release_switch_time_invalid")
+    else:
+        for key in RELEASE_SWITCHED_AT_ENVS:
+            if key in effective_env:
+                raw = str(effective_env.get(key) or "").strip()
+                if raw:
+                    explicit_iso = _switch_iso(raw)
+                break
+    existing = connection.execute(
+        f"SELECT deployment_sha, switched_at FROM {RELEASE_SWITCH_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    if effective_sha is None and explicit_iso is None:
+        if existing is None:
+            return None
+        return {"deployment_sha": str(existing[0]), "switched_at": str(existing[1])}
+    if existing is not None:
+        existing_sha = str(existing[0] or "").strip()
+        existing_switched = str(existing[1] or "").strip()
+        if effective_sha is not None and existing_sha == effective_sha and explicit_iso is None:
+            return {"deployment_sha": existing_sha, "switched_at": existing_switched}
+    new_sha = effective_sha or (str(existing[0]).strip() if existing and str(existing[0]).strip() else "explicit-switch")
+    new_switched = explicit_iso or _switch_iso(now_epoch) or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connection.execute(
+        f"INSERT OR REPLACE INTO {RELEASE_SWITCH_TABLE}(singleton, deployment_sha, switched_at) VALUES (1, ?, ?)",
+        (new_sha, new_switched),
+    )
+    return {"deployment_sha": new_sha, "switched_at": new_switched}
+
 
 class ExtractionLedger:
     """SQLite-backed daily call counter, per-record attempts and outcome record.
@@ -411,9 +512,16 @@ class ExtractionLedger:
     version reuses it instead of paying again.
     """
 
-    def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        daily_cap: int | None = None,
+        now: Callable[[], Any] | None = None,
+    ) -> None:
         self._path = str(path) if path else ":memory:"
         self._daily_cap = DEFAULT_DAILY_CALL_CAP if daily_cap is None else max(0, int(daily_cap))
+        self._now = now
         self._lock = threading.Lock()
         self._keeper: Optional[sqlite3.Connection] = None
         if self._path == ":memory:":
@@ -463,6 +571,35 @@ class ExtractionLedger:
                 " day TEXT NOT NULL, PRIMARY KEY(source_id, input_digest))"
             )
             c.execute("CREATE INDEX IF NOT EXISTS input_answers_day_idx ON input_answers(day)")
+            sync_release_switch_row(c, now_epoch=self._now_epoch())
+
+    def _now_epoch(self) -> float:
+        if callable(self._now):
+            val = self._now()
+            if isinstance(val, datetime):
+                return (val if val.tzinfo else val.replace(tzinfo=timezone.utc)).timestamp()
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return float(val)
+            iso = _switch_iso(val)
+            if iso is not None:
+                return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+        return datetime.now(timezone.utc).timestamp()
+
+    def record_release_switch(
+        self,
+        *,
+        deployment_sha: Optional[str] = None,
+        switched_at: Any = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> Optional[dict[str, str]]:
+        with self._lock, self._conn() as c:
+            return sync_release_switch_row(
+                c,
+                now_epoch=self._now_epoch(),
+                deployment_sha=deployment_sha,
+                switched_at=switched_at,
+                env=env,
+            )
 
     @property
     def daily_cap(self) -> int:
@@ -604,21 +741,47 @@ class ExtractionLedger:
             "card": json.loads(row[3]) if row[3] else None,
         }
 
+    def retire_input_answer(self, source_id: str, input_digest: str) -> bool:
+        """Remove a cached input answer when it is retired (e.g. a fixed-defect answer)."""
+        if not source_id or not input_digest:
+            return False
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            )
+            return (cur.rowcount or 0) > 0
+
     def put_input_answer(
         self, source_id: str, input_digest: str, *, outcome: str, detail: str,
         event_id: Optional[int], card: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """Keep the first terminal answer per (source, input); prune answers unused for 30 days."""
+        """Keep the first non-defective terminal answer per (source, input); prune answers unused for 30 days."""
         if not source_id or not input_digest or outcome not in REUSABLE_ANSWER_STATUSES:
             return
         day = _today()
+        trimmed_detail = detail[:500]
+        card_json = json.dumps(dict(card), sort_keys=True) if card is not None else None
         with self._lock, self._conn() as c:
-            c.execute(
-                "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
-                " VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id, input_digest) DO NOTHING",
-                (source_id, input_digest, outcome, detail[:500], event_id,
-                 json.dumps(dict(card), sort_keys=True) if card is not None else None, day),
-            )
+            existing = c.execute(
+                "SELECT outcome, detail, card FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            ).fetchone()
+            if existing is None:
+                c.execute(
+                    "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (source_id, input_digest, outcome, trimmed_detail, event_id, card_json, day),
+                )
+            elif not is_fixed_defect_input_answer(outcome, trimmed_detail) and (
+                is_fixed_defect_input_answer(str(existing[0] or ""), str(existing[1] or ""))
+                or (str(existing[0] or "") == "card" and not existing[2])
+            ):
+                c.execute(
+                    "UPDATE input_answers SET outcome=?, detail=?, event_id=?, card=?, day=?"
+                    " WHERE source_id=? AND input_digest=?",
+                    (outcome, trimmed_detail, event_id, card_json, day, source_id, input_digest),
+                )
             cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
             c.execute("DELETE FROM input_answers WHERE day < ?", (cutoff,))
             c.execute(
@@ -710,6 +873,82 @@ class ExtractionLedger:
 UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
 
 
+# Checked-in first-run ritual markers (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
+# Matched case-insensitively (after normalizing curly apostrophes ’/‘/ʼ to ') against
+# no_hypothesis abstention reasons and L2 ledger event details so the 60 sources
+# (126 ritual rows out of 157 no_hypothesis:% outbox rows measured 2026-11-27 06:45Z)
+# closed by OpenClaw's stock BOOTSTRAP.md ritual since 2026-11-26 12:51Z are
+# re-attempted once while genuine abstentions stay closed.
+FIRST_RUN_RITUAL_MARKERS: tuple[str, ...] = (
+    "bootstrap.md",
+    "identity.md",
+    "soul.md",
+    "identity.md and user.md",
+    "user.md and identity.md",
+    "update user.md",
+    "fill in user.md",
+    "complete user.md",
+    "user.md - about your human",
+    "first-run setup",
+    "first run setup",
+    "first-run ritual",
+    "first run ritual",
+    "first-run bootstrap",
+    "first run bootstrap",
+    "first-run workspace",
+    "first run workspace",
+    "first-time setup",
+    "first time setup",
+    "workspace setup is still open",
+    "workspace setup is still pending",
+    "workspace setup is pending",
+    "workspace setup is open",
+    "setup is still open",
+    "setup is still pending",
+    "setup is pending",
+    "bootstrap is still pending",
+    "bootstrap is pending",
+    "bootstrap pending",
+    "bootstrap setup",
+    "bootstrap ritual",
+    "bootstrap workflow",
+    "fresh workspace",
+    "what should i call you",
+    "what to call you",
+    "what should we call each other",
+    "call each other",
+    "you can call me",
+    "how should i address you",
+    "how to address you",
+    "who am i? who are you?",
+    "figure out who i am",
+    "who i am and who you are",
+    "just came online",
+    "just woke up",
+    "i'd go by",
+    "怎麼稱呼",
+    "如何稱呼",
+    "稱呼你",
+    "稱呼您",
+    "初次啟動",
+    "初次設定",
+    "首次啟動",
+    "首次設定",
+)
+
+
+def _normalize_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'").replace("\u02bc", "'")
+
+
+def has_first_run_ritual_marker(text: str | None) -> bool:
+    """True when ``text`` carries any OpenClaw stock first-run ritual marker."""
+    haystack = _normalize_apostrophes(str(text or "")).strip().lower()
+    if not haystack:
+        return False
+    return any(marker in haystack for marker in FIRST_RUN_RITUAL_MARKERS)
+
+
 @dataclass(frozen=True)
 class FixedDefectOutcome:
     """A terminal extraction failure caused by our own defect that a deployed fix removed.
@@ -723,34 +962,63 @@ class FixedDefectOutcome:
     code: str
     fix: str
     description: str
-    required_substrings: tuple[str, ...]
+    required_substrings: tuple[str, ...] = ()
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
     prefix: str = "hypothesis_extraction_failed:"
+    skip_reason_prefix: str = "hypothesis_extraction_failed:"
+    skip_reason_prefixes: tuple[str, ...] = ()
+    case_insensitive: bool = False
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        if not text.startswith(self.prefix):
+        if self.skip_reason_prefixes:
+            prefixes = self.skip_reason_prefixes
+        elif self.prefix != "hypothesis_extraction_failed:":
+            prefixes = (self.prefix,)
+        else:
+            prefixes = (self.skip_reason_prefix,)
+        if not any(text.startswith(prefix) for prefix in prefixes):
             return False
-        if not all(needle in text for needle in self.required_substrings):
+        normalized = _normalize_apostrophes(text) if self.case_insensitive else text
+        haystack = normalized.lower() if self.case_insensitive else normalized
+        req = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.required_substrings)
+            if self.case_insensitive
+            else self.required_substrings
+        )
+        any_s = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.any_substrings)
+            if self.case_insensitive
+            else self.any_substrings
+        )
+        excl = (
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.excluded_substrings)
+            if self.case_insensitive
+            else self.excluded_substrings
+        )
+        if not all(needle in haystack for needle in req):
             return False
-        if self.any_substrings and not any(needle in text for needle in self.any_substrings):
+        if any_s and not any(needle in haystack for needle in any_s):
             return False
-        if any(needle in text for needle in self.excluded_substrings):
+        if any(needle in haystack for needle in excl):
             return False
         return True
 
 
-# Hosted backlog (2026-11-26 15:05Z, backend b0eb2c259): 130 sources have a
-# defect-closed row as their newest outbox version (from 302 anyOf rows across
-# 141 sources, 31 budget_breach rows across 25 sources, and 4 abstention_reason
-# maxLength rows). One re-attempt per newest version needs 130 model calls
-# (32.5% of the 400-call daily cap), draining in 1 day alongside up to 270
-# fresh relevant records (or 1-2 days if fresh relevant volume exceeds 270
-# calls on day 1, or up to 390 calls on day 1 / 650 calls over 2 days if
-# transient provider timeouts trigger per-record retries up to 3/day, 6/total).
-HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 130
-HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 130
+# Hosted backlog: 130 sources from DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126
+# (2026-11-26 15:05Z, backend b0eb2c259: 302 anyOf rows across 141 sources,
+# 31 budget_breach rows across 25 sources, and 4 abstention_reason maxLength rows)
+# plus 60 distinct sources (126 ritual rows out of 157 no_hypothesis:% rows
+# measured 2026-11-27 06:45Z) closed no_hypothesis with first-run ritual text
+# since 2026-11-26 12:51Z (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127)
+# = 190 cumulative defect-closed sources across FIXED_DEFECT_REATTEMPT_OUTCOMES.
+# One re-attempt per newest version needs at most 190 model calls (47.5% of the
+# 400-call daily cap; 60 calls for the current ritual backlog alone), draining
+# in 1 day alongside up to 210 fresh relevant records (or 1-2 days if fresh
+# volume or transient retries exceed the day-1 remainder).
+HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 190
+HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 190
 HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS = 1
 
 FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
@@ -798,6 +1066,21 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         ),
         required_substrings=("proposer_failed",),
         prefix="hypothesis_compiler_failed:",
+        skip_reason_prefix="hypothesis_compiler_failed:",
+    ),
+    FixedDefectOutcome(
+        code="openclaw_workspace_first_run_ritual",
+        fix="OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+        description=(
+            "OpenClaw stock first-run ritual (BOOTSTRAP.md plus stock IDENTITY/USER/SOUL) "
+            "was injected into workspace-structured-extraction before skipBootstrap and "
+            "workspace retirement, closing 60 sources as no_hypothesis with ritual text"
+        ),
+        prefix="no_hypothesis:",
+        skip_reason_prefix="no_hypothesis:",
+        skip_reason_prefixes=("no_hypothesis:", "hypothesis_extraction_failed:"),
+        any_substrings=FIRST_RUN_RITUAL_MARKERS,
+        case_insensitive=True,
     ),
 )
 
@@ -806,13 +1089,28 @@ def fixed_defect_for_skip_reason(skip_reason: str | None) -> Optional[FixedDefec
     """Return the FixedDefectOutcome that matches ``skip_reason``, or None.
 
     Irrelevant (``l2_irrelevant``), admission-denied (``l2_admission_denied``),
-    model-abstained (``no_hypothesis``), citation-rejected (``hypothesis_rejected``)
-    and unfixed schema/JSON failures never match.
+    genuine model-abstained (``no_hypothesis`` without first-run ritual markers),
+    citation-rejected (``hypothesis_rejected``) and unfixed schema/JSON failures
+    never match.
     """
     for outcome in FIXED_DEFECT_REATTEMPT_OUTCOMES:
         if outcome.matches(skip_reason):
             return outcome
     return None
+
+
+def is_fixed_defect_input_answer(outcome: str | None, detail: str | None) -> bool:
+    """True when a cached ``input_answers`` row carries a fixed defect (e.g. first-run ritual)."""
+    status = str(outcome or "").strip()
+    if not status or status == "card":
+        return False
+    prefix = {
+        "rejected": "hypothesis_rejected",
+        "failed": "hypothesis_extraction_failed",
+    }.get(status, status)
+    text = str(detail or "").strip()
+    skip_reason = f"{prefix}: {text}" if text else prefix
+    return fixed_defect_for_skip_reason(skip_reason) is not None
 
 
 def call_usage(result: Any) -> Optional[dict[str, Optional[int]]]:
@@ -916,7 +1214,11 @@ class HypothesisExtractor:
         prior = self._ledger.input_answer(sid, input_digest)
         if prior is None or prior["outcome"] not in REUSABLE_ANSWER_STATUSES:
             return None
+        if is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+            self._ledger.retire_input_answer(sid, input_digest)
+            return None
         if prior["outcome"] == "card" and not isinstance(prior["card"], dict):
+            self._ledger.retire_input_answer(sid, input_digest)
             return None
         event_id = prior["event_id"]
         # No ledger event per reuse: ``events`` has no retention and an unchanged
@@ -1002,6 +1304,10 @@ class HypothesisExtractor:
             reused = self._reuse_answer(sid, input_digest)
             if reused is not None:
                 return reused
+        else:
+            prior = self._ledger.input_answer(sid, input_digest)
+            if prior is not None and is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+                self._ledger.retire_input_answer(sid, input_digest)
         reservation = self._ledger.reserve_attempt(sid, digest)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
@@ -1030,8 +1336,16 @@ class HypothesisExtractor:
                 return self._done(sid, "unavailable", detail, usage=usage)
             return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
+            reason = result.abstention_reason or "model_abstained"
+            if has_first_run_ritual_marker(reason):
+                return self._done(
+                    sid,
+                    "failed",
+                    f"openclaw_workspace_first_run_ritual: {reason}",
+                    usage=usage,
+                )
             return self._answered(
-                sid, input_digest, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage,
+                sid, input_digest, "no_hypothesis", reason, usage=usage,
             )
         try:
             prediction_rejections: list[dict[str, Any]] = []
@@ -1095,6 +1409,7 @@ __all__ = [
     "EXTRACTION_INPUT_DIGEST_VERSION",
     "ExtractionLedger",
     "ExtractionOutcome",
+    "FIRST_RUN_RITUAL_MARKERS",
     "FIXED_DEFECT_REATTEMPT_OUTCOMES",
     "FixedDefectOutcome",
     "HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG",
@@ -1105,14 +1420,20 @@ __all__ = [
     "MAX_RECORD_ATTEMPTS_TOTAL",
     "RECORD_DAILY_LIMIT",
     "RECORD_TOTAL_LIMIT",
+    "RELEASE_SWITCH_TABLE",
     "RESERVED",
     "REUSABLE_ANSWER_STATUSES",
+    "active_deployment_sha",
     "card_to_strategy_seed_metadata",
     "extraction_input_digest",
     "extractor_from_env",
     "finalize_card",
     "fixed_defect_for_skip_reason",
+    "has_first_run_ritual_marker",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
+    "is_fixed_defect_input_answer",
+    "sync_release_switch_row",
+    "valid_deployment_sha",
     "verify_cited_spans",
 ]
