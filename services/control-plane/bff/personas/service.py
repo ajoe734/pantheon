@@ -1448,6 +1448,22 @@ def repair_paper_pool_risk_policy(tenant_id: str, persona_id: str, **kwargs: Any
     )
 
 
+from .trader_paper_book import (
+    DEFAULT_TRADER_PAPER_STARTING_CAPITAL,
+    DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY,
+    TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV_KEYS,
+    TRADER_PAPER_STARTING_CAPITAL_ENV_KEYS,
+    ensure_trader_paper_book,
+    read_trader_paper_book,
+    resolve_trader_paper_starting_capital,
+    trader_paper_book_ids,
+    trader_paper_book_provisioning_record,
+    validate_paper_only_stage,
+    validate_servant_persona_paper_ceiling,
+)
+
+
+
 # --- retire_persona_provisioning_case ---
 def retire_persona_provisioning_case(
     tenant_id: str,
