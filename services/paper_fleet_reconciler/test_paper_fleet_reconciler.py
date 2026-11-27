@@ -14,6 +14,9 @@ import threading
 import time
 import unittest
 import uuid
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import urlopen
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -3076,6 +3079,185 @@ class TestPaperFleetPoolAdmissionCoversEverySymbol(TestPaperFleetSourceSnapshotR
         self.assertEqual(store.get("b-pool-missing").status, "paused")
 
 
+class TestPublishedFleetSnapshot(unittest.TestCase):
+    def test_http_reads_finish_while_another_thread_holds_cycle_lock(self) -> None:
+        from paper_fleet_reconciler import _Handler
+
+        wrapper = _InstrumentedReconciler()
+        recon = wrapper.recon
+        wrapper.set_bindings([_make_binding()])
+        recon.reconcile_once()
+        locked = threading.Event()
+        release = threading.Event()
+
+        def hold_cycle_lock() -> None:
+            with recon._lock:
+                # An unfinished update must stay invisible until publication.
+                recon._last_error = "unpublished cycle update"
+                recon._workers.clear()
+                locked.set()
+                release.wait(timeout=10)
+
+        holder = threading.Thread(target=hold_cycle_lock)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        serving = threading.Thread(target=server.serve_forever)
+        expected = recon.snapshot()
+        with patch("paper_fleet_reconciler.get_reconciler", return_value=recon):
+            holder.start()
+            serving.start()
+            try:
+                self.assertTrue(locked.wait(timeout=2))
+                for path in ("/api/fleet/state", "/healthz", "/readyz", "/", "/livez"):
+                    with self.subTest(path=path):
+                        with urlopen(f"http://127.0.0.1:{server.server_port}{path}", timeout=2) as response:
+                            self.assertEqual(response.status, 200)
+                            payload = json.load(response)
+                        self.assertTrue(holder.is_alive())
+                        self.assertFalse(release.is_set())
+                        if path == "/api/fleet/state":
+                            self.assertEqual(payload, expected)
+                        elif path != "/livez":
+                            self.assertEqual(payload["workers"], expected["workers"])
+                            self.assertIsNone(payload["last_error"])
+                            self.assertTrue(payload["ready"])
+            finally:
+                release.set()
+                holder.join(timeout=2)
+                server.shutdown()
+                serving.join(timeout=2)
+                server.server_close()
+        self.assertFalse(holder.is_alive())
+        self.assertFalse(serving.is_alive())
+
+    def test_slow_spawn_publishes_session_before_cycle_finishes(self) -> None:
+        from paper_fleet_reconciler import _Handler
+
+        wrapper = _InstrumentedReconciler()
+        recon = wrapper.recon
+        wrapper.set_bindings([_make_binding()])
+        spawning = threading.Event()
+        release = threading.Event()
+        result: Dict[str, Any] = {}
+
+        def slow_spawn(*args: Any) -> _FakeProcess:
+            spawning.set()
+            release.wait(timeout=10)
+            return _FakeProcess()
+
+        def run_cycle() -> None:
+            try:
+                result["snapshot"] = recon.reconcile_once()
+            except Exception as exc:
+                result["error"] = exc
+
+        cycle = threading.Thread(target=run_cycle)
+        with patch.object(recon, "_spawn", side_effect=slow_spawn):
+            cycle.start()
+            try:
+                self.assertTrue(spawning.wait(timeout=2))
+                snap = recon.snapshot()
+                self.assertEqual(snap["active_monitoring_session_count"], 1)
+                self.assertEqual(snap["worker_count"], 0)
+                handler = _Handler.__new__(_Handler)
+                handler.path = "/readyz"
+                handler._write_json = MagicMock()
+                with patch("paper_fleet_reconciler.get_reconciler", return_value=recon):
+                    handler.do_GET()
+                code, body = handler._write_json.call_args.args
+                self.assertEqual(code, 503)
+                self.assertFalse(body["ready"])
+                self.assertTrue(body["live"])
+                self.assertTrue(cycle.is_alive())
+            finally:
+                release.set()
+                cycle.join(timeout=2)
+        self.assertFalse(cycle.is_alive())
+        self.assertNotIn("error", result)
+        self.assertEqual(recon.snapshot(), result["snapshot"])
+        self.assertEqual(recon.snapshot()["running_count"], 1)
+        self.assertTrue(recon.is_ready())
+
+    def test_published_and_returned_snapshots_do_not_alias_mutable_state(self) -> None:
+        wrapper = _InstrumentedReconciler()
+        recon = wrapper.recon
+        wrapper.set_bindings([_make_binding()])
+        recon.reconcile_once()
+        sid = next(iter(recon._monitoring_sessions))
+        with recon._lock:
+            recon._monitoring_sessions[sid]["staleness"] = {"detail": {"value": "published"}}
+            recon._publish_snapshot()
+            self.assertEqual(recon.snapshot(), recon._snapshot())
+            self.assertEqual(
+                recon.snapshot(include_ended_monitoring_sessions=False),
+                recon._snapshot(include_ended_monitoring_sessions=False),
+            )
+            recon._monitoring_sessions[sid]["staleness"]["detail"]["value"] = "in progress"
+        snap = recon.snapshot()
+        self.assertEqual(snap["monitoring_sessions"][0]["staleness"]["detail"]["value"], "published")
+        snap["monitoring_sessions"][0]["staleness"]["detail"]["value"] = "reader mutation"
+        snap["workers"].clear()
+        self.assertEqual(recon.snapshot()["worker_count"], 1)
+        self.assertEqual(recon.snapshot()["monitoring_sessions"][0]["staleness"]["detail"]["value"], "published")
+
+    def test_error_and_stop_are_published_and_health_stays_fail_closed(self) -> None:
+        from paper_fleet_reconciler import _Handler
+
+        wrapper = _InstrumentedReconciler()
+        recon = wrapper.recon
+        recon.reconcile_once()
+        with patch.object(recon, "_fetch_fleet_state", side_effect=RuntimeError("owner failed")):
+            with self.assertLogs("paper_fleet_reconciler", level="ERROR"):
+                with patch.object(recon._shutdown, "wait", side_effect=lambda _: recon._shutdown.set()):
+                    recon._run_loop()
+        self.assertIn("owner failed", recon.snapshot()["last_error"])
+        self.assertTrue(recon.is_ready())
+        handler = _Handler.__new__(_Handler)
+        handler._write_json = MagicMock()
+        with patch("paper_fleet_reconciler.get_reconciler", return_value=recon):
+            for path in ("/healthz", "/readyz", "/"):
+                handler.path = path
+                handler.do_GET()
+                code, body = handler._write_json.call_args.args
+                self.assertEqual(code, 503)
+                self.assertFalse(body["ready"])
+                self.assertTrue(body["live"])
+        recon.stop()
+        self.assertFalse(recon.snapshot()["is_leader"])
+
+    def test_cycle_exception_still_publishes_latest_state(self) -> None:
+        wrapper = _InstrumentedReconciler()
+        recon = wrapper.recon
+
+        def failed_fetch() -> None:
+            recon._last_error = "fetch failed before cycle lock"
+            raise RuntimeError("owner failed")
+
+        with patch.object(recon, "_fetch_fleet_state", side_effect=failed_fetch):
+            with self.assertRaisesRegex(RuntimeError, "owner failed"):
+                recon.reconcile_once()
+        self.assertEqual(recon.snapshot()["last_error"], "fetch failed before cycle lock")
+
+    def test_disconnected_reply_logs_once_without_traceback(self) -> None:
+        from paper_fleet_reconciler import _Handler
+
+        for phase in ("end_headers", "write"):
+            for error in (BrokenPipeError, ConnectionResetError):
+                with self.subTest(phase=phase, error=error):
+                    handler = _Handler.__new__(_Handler)
+                    handler.path = "/api/fleet/state"
+                    handler.send_response = MagicMock()
+                    handler.send_header = MagicMock()
+                    handler.end_headers = MagicMock()
+                    handler.wfile = MagicMock()
+                    target = handler.end_headers if phase == "end_headers" else handler.wfile.write
+                    target.side_effect = error("client disconnected")
+                    with self.assertLogs("paper_fleet_reconciler", level="DEBUG") as logs:
+                        handler._write_json(200, {"worker_count": 0})
+                    self.assertEqual(len(logs.records), 1)
+                    self.assertEqual(logs.records[0].levelname, "DEBUG")
+                    self.assertIsNone(logs.records[0].exc_info)
+
+
 class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):
     def test_readyz_filters_ended_sessions_and_reports_running_only(self) -> None:
         from paper_fleet_reconciler import PaperFleetReconciler, _Handler
@@ -3113,6 +3295,7 @@ class TestPaperFleetReadyzAndMonitoringSessionBounds(unittest.TestCase):
                 }
             recon._monitoring_sessions = sessions
             recon._cycle_count = 1
+            recon._publish_snapshot()
 
             # Full internal snapshot includes all 86
             full_snap = recon.snapshot(include_ended_monitoring_sessions=True)

@@ -1,0 +1,199 @@
+{
+  "task_id": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+  "title": "Retire stock OpenClaw first-run BOOTSTRAP.md and service-agent persona templates; enable skipBootstrap and re-attempt ritual-closed L2 sources",
+  "class": "RC2",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "recorded_at_utc": "2026-11-27T19:39:00Z",
+  "ac1_skip_bootstrap_and_gateway_source_citations": {
+    "config_entry": {
+      "path": "agents.defaults.skipBootstrap",
+      "value": true,
+      "enforced_in": [
+        "scripts/openclaw-configure-shared-model-pool.sh",
+        "scripts/openclaw_isolated_model_bootstrap.py"
+      ],
+      "readback_command": "openclaw config get agents.defaults.skipBootstrap --json | jq -e '. == true'"
+    },
+    "gateway_image": "ghcr.io/openclaw/openclaw:2026.7.1",
+    "bootstrap_injection_gating": {
+      "bootstrap_pending_system_prompt_section": {
+        "gating_type": "workspace_state_then_file_present",
+        "source_locations": [
+          "/app/dist/workspace-DkQ7irPD.js:571-580 (resolveWorkspaceBootstrapStatus / isWorkspaceBootstrapPending in #region src/agents/workspace.ts)",
+          "/app/dist/bootstrap-mode-DiBGJeJJ.js:6-12 (resolveBootstrapMode in #region src/agents/bootstrap-mode.ts)",
+          "/app/dist/system-prompt-config-BeuaroSf.js:218-246 (buildAgentBootstrapSystemContext in #region src/agents/pi-embedded-runner/run/attempt.system-prompt-config.ts)"
+        ],
+        "behavior": "resolveWorkspaceBootstrapStatus(dir) returns 'complete' if openclaw-workspace-state.json has a non-empty setupCompletedAt string OR if BOOTSTRAP.md does not exist on disk (!await pathExists(path.join(resolvedDir, 'BOOTSTRAP.md'))); otherwise it returns 'pending'. When 'pending', buildAgentBootstrapSystemContext appends '## Bootstrap Pending' in either 'full' mode (canonical interactive workspace session: complete BOOTSTRAP.md ritual before normal task work) or 'limited' mode (non-canonical / subagent / cron / restricted-tool run: 'Bootstrap is still pending for this workspace, but this run cannot safely complete the full BOOTSTRAP.md workflow here'). Removing BOOTSTRAP.md from disk immediately sets bootstrapMode='none'."
+      },
+      "project_context_bootstrap_file_injection": {
+        "gating_type": "file_present_unless_setupCompletedAt_filters_BOOTSTRAP_md",
+        "source_locations": [
+          "/app/dist/workspace-DkQ7irPD.js:567-570 (isWorkspaceSetupCompleted)",
+          "/app/dist/workspace-DkQ7irPD.js:743-799 (loadWorkspaceBootstrapFiles)",
+          "/app/dist/bootstrap-files-DYOYF1PC.js:163-196 (filterCompletedWorkspaceBootstrapFile / resolveBootstrapFilesForRun)",
+          "/app/dist/embedded-agent-helpers-Umilw3Yn.js:260-295 (buildBootstrapContextFiles)"
+        ],
+        "behavior": "loadWorkspaceBootstrapFiles reads AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, BOOTSTRAP.md, and MEMORY.md from the workspace root. filterCompletedWorkspaceBootstrapFile drops BOOTSTRAP.md only if openclaw-workspace-state.json has setupCompletedAt; buildBootstrapContextFiles injects every remaining file that exists on disk (!file.missing) into Project Context."
+      },
+      "why_stock_files_persisted_on_hosted_dev": {
+        "source_locations": [
+          "/app/dist/workspace-DkQ7irPD.js:353-398 (reconcileWorkspaceBootstrapCompletionState / workspaceProfileLooksConfigured)",
+          "/app/dist/workspace-DkQ7irPD.js:618-742 (ensureAgentWorkspace)",
+          "/app/dist/get-reply-CknL88Yv.js:5201",
+          "/app/dist/isolated-agent-wBFsap3y.js:519",
+          "/app/dist/agents.commands.add-CoKX8wjH.js:126,288",
+          "/app/dist/agents-Dxvvdqpv.js:384,458",
+          "/app/dist/server-cron-DlkxL-F-.js:3486"
+        ],
+        "behavior": "Every workspace initialization path passes ensureBootstrapFiles: !agentCfg?.skipBootstrap to ensureAgentWorkspace, which seeds the 7 stock templates when missing. reconcileWorkspaceBootstrapCompletionState auto-deletes BOOTSTRAP.md only when SOUL.md, IDENTITY.md, or USER.md differs from the stock template or memory/ exists. Service agents (structured-extraction, memory-index) and consult-* panels never had custom SOUL.md/IDENTITY.md/USER.md, and agora-servant-* had not run a turn after their SOUL.md was installed, leaving stock BOOTSTRAP.md on disk."
+      }
+    }
+  },
+  "ac2_and_ac3_stock_file_retirement_and_service_agent_workspaces": {
+    "archive_root_relative_to_state_dir": "retired-stock-bootstrap",
+    "receipt_log_relative_to_state_dir": "retired-stock-bootstrap/receipts.jsonl",
+    "stock_templates_matched_by_content_hash_or_heading": {
+      "BOOTSTRAP.md": {
+        "heading": "# BOOTSTRAP.md - Hello, World",
+        "sha256_stripped_1669b": "204b441f369bb8ae932deefc13835f639a1eae2eb5e6a4facebfe784893b09de",
+        "sha256_raw_docs": "1c85f2aad8c4ace090e714a0ec2dec3c928e54c8d2d20d58175f0ae3963d99b3"
+      },
+      "IDENTITY.md": {
+        "heading": "# IDENTITY.md - Who Am I?",
+        "sha256_stripped_1278b": "2f6da67d69bd362f7aaa13c1214dcbba9f0f7cb51ff42ec5313e24d6bf6f9e55",
+        "sha256_raw_docs": "1c447d4ce2d33b4836d3c95c2bc70cc783ea3ccd450e61e2db7e04d5465e9820"
+      },
+      "USER.md": {
+        "heading": "# USER.md - About Your Human",
+        "sha256_stripped_537b": "e418ca9a680553b3ad8f54aecb0d403330810bb77826ab5251cc1dc13368fe16",
+        "sha256_raw_docs": "599bd4d663c852bca679a341d53605c1a48b7cd7601bd7d102ee5407828dbacb"
+      },
+      "SOUL.md": {
+        "heading": "# SOUL.md - Who You Are",
+        "sha256_stripped_1518b": "29c66a31acce424ed6cf9b1c9e77dcdc5ae79d5fe2a035765c302a34b9025e0e",
+        "sha256_raw_docs": "79c61aaee618c787c164c5d767053a83c6e218191b3b6ebb66fd07320b071ce8"
+      },
+      "HEARTBEAT.md": {
+        "heading": "# HEARTBEAT.md",
+        "sha256_src_template_244b": "ecce558615751a35aa173731e892ff3993f44bb4f5a1219c0a02994790c85528",
+        "sha256_stripped_1136b": "3aa50f4d5fe97e4e7bb3bec1512de79ce79d0e6c27dfca167e6ff0b6a3a7b2ba",
+        "sha256_raw_docs": "1605f546995e0bdcb11f9bf905173b14aca25cfad664fe2c7644d18c2b4142e2"
+      },
+      "AGENTS.md": {
+        "heading": "# AGENTS.md - Your Workspace",
+        "sha256_stripped_7196b": "c9a664b73200ae5d6b0da0908de3256cdb4dda8ba6fe99f5e6c5115c3983604c",
+        "sha256_raw_docs": "7d340e13e845b8bf7c69c60f5dbcc7b5b0e03b1401496d2a091af7223499bbfc"
+      }
+    },
+    "service_agent_workspace_texts": {
+      "structured-extraction": {
+        "repo_path": "integrations/openclaw/service_agents/structured-extraction/AGENTS.md",
+        "bytes": 675
+      },
+      "memory-index": {
+        "repo_path": "integrations/openclaw/service_agents/memory-index/AGENTS.md",
+        "bytes": 608
+      }
+    },
+    "token_measurement": {
+      "ledger_table": "/data/source-ingest/l2_extraction_ledger.sqlite :: events.usage",
+      "before_retirement": {
+        "workspace_injected_chars": 13290,
+        "workspace_injected_bytes": 13318,
+        "measured_input_tokens_per_extraction_call_range": [
+          11907,
+          14500
+        ],
+        "notes": "Measured on hosted dev after the 2026-11-27 04:22Z switch with all 7 stock templates and ## Bootstrap Pending injected."
+      },
+      "after_retirement": {
+        "workspace_injected_chars_structured_extraction": 1534,
+        "workspace_injected_bytes_structured_extraction_agents_md": 675,
+        "workspace_context_reduction_bytes": 12643,
+        "estimated_input_tokens_saved_per_call": 3160,
+        "expected_input_tokens_per_extraction_call_range": [
+          8700,
+          11300
+        ],
+        "notes": "Verified inside ghcr.io/openclaw/openclaw:2026.7.1 via resolveBootstrapContextForRun; post-switch hosted ledger usage readback runs on deployment acceptance."
+      }
+    }
+  },
+  "ac4_fixed_defect_reattempt": {
+    "outcome": "openclaw_workspace_first_run_ritual",
+    "fix_task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+    "skip_reason_prefix": "no_hypothesis:",
+    "skip_reason_prefixes": [
+      "no_hypothesis:",
+      "hypothesis_extraction_failed:"
+    ],
+    "case_insensitive": true,
+    "apostrophe_normalization": "U+2019 (’) / U+2018 (‘) / U+02BC (ʼ) normalized to ASCII ' before matching",
+    "hosted_ritual_closed_source_backlog": 60,
+    "hosted_ritual_outbox_rows_matched": "126 of 126 ritual rows out of 157 total no_hypothesis:% outbox rows measured read-only on hosted at 2026-11-27T06:45Z (0 false positives on 31 genuine abstentions)",
+    "hosted_defect_closed_source_backlog_cumulative": 190,
+    "hosted_defect_reattempt_expected_calls": 190,
+    "hosted_defect_reattempt_expected_days": 1,
+    "markers_sample": [
+      "bootstrap.md",
+      "identity.md",
+      "soul.md",
+      "identity.md and user.md",
+      "first-run setup",
+      "first-time setup",
+      "workspace setup is still open",
+      "workspace setup is still pending",
+      "setup is still open",
+      "what should we call each other",
+      "call each other",
+      "you can call me",
+      "who am i? who are you?",
+      "figure out who i am",
+      "just came online",
+      "i'd go by"
+    ],
+    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%' OR skip_reason LIKE 'hypothesis_compiler_failed:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual), and is_fixed_defect_input_answer / ExtractionLedger.retire_input_answer / put_input_answer / HypothesisExtractor._reuse_answer retire and replace any historical fixed-defect ritual no_hypothesis in input_answers so a repaired outcome (card or genuine abstention) is cached and reused by subsequent unchanged refetches without replaying ritual text or making another paid call while preserving genuine abstentions."
+  },
+  "ac5_discovery_pipeline_release_probe": {
+    "probe_file": "acceptance/discovery_pipeline_day.py",
+    "owner_summary_file": "services/source_ingestion/discovery_summary.py",
+    "field": "hypothesis_cards.ritual_events_since_switch",
+    "stdlib_only_execution": "services/source_ingestion/hypothesis_card.py has only stdlib top-level imports (jsonschema is imported lazily inside finalize_card when validating a model-extracted card), and acceptance/discovery_pipeline_day.py includes a direct spec_from_file_location fallback so acceptance/probes/discovery-pipeline runs cleanly under python3 -S with no provisioned third-party Python dependencies (exiting 77 when ACCEPTANCE_* variables are absent, 0 on a passing world, and 1 when post-switch ritual events exist).",
+    "judge_invariant": "read_discovery_summary._read_ledger reads events newest-first (bounded by LEDGER_EVENT_SCAN_CAP = 5000 and the 2.0 s read time budget) using an authoritative release switch input (explicit parameter/env or the deployment-SHA-bound release_switch singleton row recorded once per deployed GIT_SHA in the distillation queue and extraction ledger and preserved across same-release restarts, never substituting controller started_at, process import time, or now - 24h, and returning unavailable when missing or mismatched) and publishes service-wide anonymous aggregates release_switched_at, release_deployment_sha, ritual_events_status, ritual_events_since_switch, events_examined_since_switch, ritual_events_truncated, ritual_events_scan_hit_cap, ritual_events_oldest_scanned_at, and ritual_event_timestamps in summary.llm_calls (forwarded by GET /bff/alpha-factory in data.discovery_summary.llm_calls), never projecting raw source_id, outcome, or free-text detail from the shared events ledger into tenant-visible output. stage_hypothesis_cards in acceptance/discovery_pipeline_day.py requires a valid release switch timestamp, proven scan coverage back to the requested cutoff (including earlier switch overrides), and an ok non-truncated observation with ritual_events_since_switch == 0; missing, unreadable, or truncated observations or missing/invalid switch times fail closed and never default to 0."
+  },
+  "ac6_runtime_budget_and_residual_findings": {
+    "runtime_budget": {
+      "storage_manifest_registration": "docs/operations/storage-manifest.json :: runtime_budgets (OpenClaw retired stock first-run workspace archive and receipts) and entries (services/source_ingestion/hypothesis_card.py::{RELEASE_SWITCH_TABLE}, singleton 1-row table, ~100 B, 0 B/day)",
+      "writer": "<stateDir>/retired-stock-bootstrap/<workspace>/<file> and <stateDir>/retired-stock-bootstrap/receipts.jsonl (scripts/openclaw-configure-shared-model-pool.sh)",
+      "cadence": "One-time migration during openclaw-configure-shared-model-pool.sh; idempotent no-op on subsequent runs",
+      "hosted_scale_count_and_size": "At most ~60 files across existing workspaces, <= 8 KB each, total <= 480 KB archive plus <= ~60 lines in receipts.jsonl (<= 16 KB) on existing openclaw-data volume",
+      "growth_per_day": "0 B/day after initial retirement because agents.defaults.skipBootstrap=true stops future stock seeding",
+      "cap_and_cleanup": "Bounded by one-time stock file set (<= 480 KB archive + <= 16 KB receipts.jsonl); retained on openclaw-data volume for auditability",
+      "readers": [
+        "scripts/openclaw-configure-shared-model-pool.sh",
+        "scripts/test_openclaw_shared_model_pool_contract.py"
+      ]
+    },
+    "residual_findings": [
+      {
+        "finding": "Consult panel workspaces (workspaces/consult-*) still run on the stock '# SOUL.md - Who You Are' template after stock BOOTSTRAP.md is retired; Pantheon-authored consult panel SOUL.md / AGENTS.md templates belong to the persona-loop domain.",
+        "owning_domain": "Persona loop / OpenClaw consultation",
+        "register_class": "RC2"
+      }
+    ]
+  },
+  "verification": {
+    "commands": [
+      "timeout 15 python3 -S acceptance/probes/discovery-pipeline (exit 77 missing ACCEPTANCE_* credentials)",
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_discovery_summary.py scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py acceptance/test_discovery_pipeline_day.py",
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      ".venv-pantheon/bin/python3 scripts/git/diff_budget.py --base origin/dev"
+    ],
+    "results": {
+      "clean_interpreter_probe": "exit 77 (skipped: missing ACCEPTANCE_BFF_URL, ACCEPTANCE_VIEWER_CLIENT_ID, ACCEPTANCE_VIEWER_CLIENT_SECRET)",
+      "focused_suite": "289 passed",
+      "storage_manifest_check": "passed: true, failures: []"
+    }
+  }
+}

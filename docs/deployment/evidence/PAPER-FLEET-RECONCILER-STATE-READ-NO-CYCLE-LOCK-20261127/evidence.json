@@ -16,12 +16,12 @@
     "root_cause": "PaperFleetReconciler.snapshot() (used by /readyz, /healthz, / and /api/fleet/state) acquired self._lock, the same lock reconcile_once() held across its entire admission/transition/worker block (_fetch_source_snapshot HTTP calls to source-ingest at 5 s timeout per symbol, _transition_binding HTTP calls to runtime-manager at 10 s timeout, _start_worker/_terminate_worker subprocess waits up to drain_timeout, and _publish_loop_truth writes)."
   },
   "design_choice_and_rationale": {
-    "mechanism": "execute_network_and_process_waits_outside_state_lock_with_dedicated_cycle_lock",
-    "explanation": "We perform all network I/O and subprocess waits outside self._lock and apply their resulting state updates atomically under self._lock, while serializing reconcile_once() and stop() worker teardown with a dedicated self._cycle_lock.",
+    "mechanism": "execute_network_and_process_waits_outside_state_lock_with_dedicated_cycle_lock_and_published_snapshot",
+    "explanation": "We perform all network I/O and subprocess waits outside self._lock and apply their resulting state updates atomically under self._lock (publishing self._published_snapshot on every state transition), while serializing reconcile_once() and stop() worker teardown with a dedicated self._cycle_lock.",
     "why_chosen": [
-      "Existing callers and unit tests directly mutate or inspect in-memory reconciler fields (_monitoring_sessions, _cycle_count, try_acquire_lease(), _fetch_fleet_state() acquiring self._lock to record _last_error) outside reconcile_once(); reading live state under the short state lock self._lock guarantees immediate consistency after any in-cycle or out-of-cycle mutation without risking a stale pre-rendered snapshot.",
+      "Composes cleanly with PAPER-RECONCILER-STATE-READ-WITHOUT-CYCLE-LOCK-20261127 (#7987): writers serialize reconcile cycles and stop() teardown on self._cycle_lock, execute all network and subprocess waits outside self._lock, and update in-memory state plus self._published_snapshot atomically under self._lock, while snapshot() and is_ready() read from self._published_snapshot without acquiring either lock.",
       "self._lock is never held across _fetch_fleet_state, _fetch_runtime_summaries, _fetch_source_snapshot, _transition_binding, _publish_loop_truth, leader-store acquire_or_renew/validate/release, _spawn, or process.wait() in _start_worker and _terminate_worker.",
-      "Every worker and monitoring-session lifecycle transition is applied in a single with self._lock: critical section after the network call or process wait completes: _start_worker opens the monitoring session and registers the WorkerEntry together under self._lock after _spawn and fence validation finish; _terminate_worker (including stale-heartbeat reap) terminates and waits on the subprocess outside self._lock, then ends the monitoring session and removes the WorkerEntry together under self._lock. Readers therefore never observe a torn worker/monitoring-session view, and /readyz computes ready from the same snapshot dict acquired under self._lock.",
+      "Every worker and monitoring-session lifecycle transition is applied in a single with self._lock: critical section and published via self._publish_snapshot(): _start_worker allocates the port and opens the monitoring session under self._lock before _spawn, then registers the WorkerEntry (or records spawn_failed / spawn_fence_lost and ends the session) under self._lock after _spawn and fence validation finish; _terminate_worker (including stale-heartbeat reap) terminates and waits on the subprocess outside self._lock, then ends the monitoring session and removes the WorkerEntry together under self._lock. Readers therefore never observe a running worker with an ended or missing monitoring session, and /readyz computes ready from the same atomic snapshot dict.",
       "self._cycle_lock serializes reconcile_once() and stop() worker teardown so two concurrent reconcile cycles cannot concurrently mutate worker state."
     ],
     "unchanged": [
@@ -43,7 +43,7 @@
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/paper_fleet_reconciler/test_paper_fleet_reconciler_state_read.py",
       "exit_code": 0,
-      "result": "111 passed, 2 skipped, 4 subtests passed; all 107 existing reconciler assertions and 4 new deterministic concurrency/state-read tests pass."
+      "result": "117 passed, 2 skipped, 13 subtests passed; all 113 existing reconciler assertions (including TestPublishedFleetSnapshot from #7987) and 4 deterministic concurrency/state-read tests pass."
     },
     {
       "command": "git diff --check",

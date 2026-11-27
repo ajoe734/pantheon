@@ -563,10 +563,10 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
                 exited_event=spawn_exited,
                 reader_fn=_read_during_spawn,
             )
-            # Reader sees 0 workers and 0 active monitoring sessions (no torn session opened early).
+            # Reader sees 0 workers and 1 opened monitoring session while _spawn is blocked.
             snap_during_spawn = spawn_reads["snapshot"]
             self.assertEqual(snap_during_spawn["worker_count"], 0)
-            self.assertEqual(snap_during_spawn["active_monitoring_session_count"], 0)
+            self.assertEqual(snap_during_spawn["active_monitoring_session_count"], 1)
             self._assert_consistent_worker_session_view(snap_during_spawn)
             code_spawn, body_spawn = spawn_reads["fleet_state"]
             self.assertEqual(code_spawn, 200)

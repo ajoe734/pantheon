@@ -32,6 +32,7 @@ from .data_tools import (
 )
 
 TURN_SCHEMA_VERSION = "agora.servant.tool_turn.v1"
+MAX_HABIT_FACTS_CITED = 12  # habit facts kept in one answer's citations (on top of 30 tool facts)
 PACKET_MARKER = "SERVANT_TURN_PACKET_JSON:"
 HISTORY_CONTENT_MAX_CHARS = 1000
 ANSWER_MAX_CHARS = 3000
@@ -87,11 +88,13 @@ INSTRUCTIONS = (
     "3. 沒有工具能提供的資料，寫進 missing_data，並在回答中說明缺什麼；不得用你的記憶當作資料回答。\n"
     "4. cited_fact_ids 列出回答用到的 fact id。\n"
     "5. 不要諮詢任何 persona，也不要開會。用繁體中文回答。\n"
+    "6. habit_profile.facts 是交易員的習慣事實（id 為 h1、h2…，附樣本數）與你對這些習慣的解讀。"
+    "回答與提案若依據某個習慣，請用 {{hN}} 引用它並在 cited_fact_ids 列出；不要自己寫數字，也不要把解讀當成事實。\n"
 )
 
-_FACT_REF = re.compile(r"\{\{\s*(f\d{1,3})\s*\}\}")
+_FACT_REF = re.compile(r"\{\{\s*([fh]\d{1,3})\s*\}\}")
 _NUMBER = re.compile(r"\d+(?:[.,:/\-]\d+)*%?")
-_UNIT_LABELS = {"shares": "股", "TWD": "元", "symbols": "檔", "score": "分"}
+_UNIT_LABELS = {"shares": "股", "TWD": "元", "symbols": "檔", "score": "分", "percent": "%", "days": "天", "minutes": "分鐘"}
 
 
 @dataclass
@@ -106,9 +109,11 @@ class TurnOutcome:
     number_guard: Dict[str, Any] = field(default_factory=dict)
     answer_mode: str = "model"
     error: Optional[Dict[str, Any]] = None
+    habit: Dict[str, Any] = field(default_factory=dict)
 
     def metadata(self) -> Dict[str, Any]:
         return {
+            **({"habit_profile": self.habit} if self.habit else {}),
             "schema_version": TURN_SCHEMA_VERSION,
             "tool_rounds": self.tool_rounds,
             "provider_calls": self.provider_calls,
@@ -223,6 +228,8 @@ def _packet(
     trace: Sequence[Mapping[str, Any]],
     rounds_used: int,
     must_answer_now: bool,
+    habit_facts: Sequence[Mapping[str, Any]] = (),
+    habit_ref: Optional[Mapping[str, Any]] = None,
 ) -> str:
     packet = {
         "trader_message": trader_text,
@@ -237,6 +244,14 @@ def _packet(
             {k: f.get(k) for k in ("id", "label", "value", "unit", "as_of", "freshness", "symbol")}
             for f in facts
         ],
+        "habit_profile": {
+            "ref": dict(habit_ref or {}),
+            "facts": [
+                {k: f.get(k) for k in ("id", "label", "value", "unit", "sample_size", "habit_kind", "origin")
+                 if f.get(k) is not None}
+                for f in habit_facts
+            ],
+        },
         "tool_results": list(trace),
         "tool_rounds_used": rounds_used,
         "tool_rounds_left": max(0, MAX_TOOL_ROUNDS - rounds_used),
@@ -251,6 +266,7 @@ def run_tool_turn(
     ctx: ToolContext,
     history: Sequence[Mapping[str, Any]],
     invoke: Callable[[str], Mapping[str, Any]],
+    habit: Any = None,
 ) -> TurnOutcome:
     """Run the tool rounds and the answer of one turn.
 
@@ -263,6 +279,11 @@ def run_tool_turn(
     missing: List[str] = []
     rounds = 0
     provider_calls = 0
+    # SD §6: every turn carries the trader's habit profile (h-facts); they are context, not a
+    # tool round, and do not count against the 30-fact citation budget of tool facts.
+    habit_facts: List[Dict[str, Any]] = [dict(f) for f in (getattr(habit, "facts", None) or [])]
+    habit_ref: Dict[str, Any] = dict(getattr(habit, "ref", None) or {})
+    shown_habit_ids = [f["id"] for f in habit_facts]
 
     def execute(calls: Sequence[Mapping[str, Any]]) -> None:
         for call in list(calls)[:MAX_CALLS_PER_ROUND]:
@@ -271,6 +292,9 @@ def run_tool_turn(
                 if len(facts) >= MAX_FACTS_PER_ANSWER:
                     break
                 fact["id"] = f"f{len(facts) + 1}"
+                if result.tool == "propose_research" and shown_habit_ids:
+                    # A proposal names the habit facts it was made against (V6 §13.2).
+                    fact["habit_refs"] = list(shown_habit_ids)
                 facts.append(fact)
             trace.append(result.summary())
             if result.missing:
@@ -288,6 +312,7 @@ def run_tool_turn(
         prompt = _packet(
             trader_text=trader_text, history=history, ctx=ctx, catalog=tools.catalog(), facts=facts,
             trace=trace, rounds_used=rounds, must_answer_now=must_answer,
+            habit_facts=habit_facts, habit_ref=habit_ref,
         )
         provider_calls += 1
         try:
@@ -309,11 +334,16 @@ def run_tool_turn(
     missing = list(dict.fromkeys(missing))
 
     facts_by_id = {f["id"]: f for f in facts}
+    facts_by_id.update({f["id"]: f for f in habit_facts})
     raw_answer = str((plan or {}).get("answer_text") or "").strip()
     if plan is not None and raw_answer:
         allowed = _allowed_number_tokens(facts, trader_text, ctx.command_context.get("selected_symbols") or [])
         answer, used, guard = render_answer(raw_answer, facts_by_id, allowed_tokens=allowed)
         cited = set(used) | {str(i) for i in (plan.get("cited_fact_ids") or []) if str(i) in facts_by_id}
+        # A proposal made in this turn is part of the answer, and it is cited together with
+        # the habit facts it names (SD §6: proposals cite the habits they relied on).
+        cited |= {f["id"] for f in facts if f.get("tool") == "propose_research" and f.get("habit_refs")}
+        cited |= {h for f in facts if f["id"] in cited for h in f.get("habit_refs") or []}
         if missing and "缺少的資料" not in answer:
             answer = f"{answer}\n\n{missing_data_sentence(missing)}"
         mode = "model"
@@ -329,10 +359,22 @@ def run_tool_turn(
         status = "degraded" if error else "completed"
     for fact in facts:
         fact["cited"] = fact["id"] in cited
+    habit_cited = [f for f in habit_facts if f["id"] in cited][:MAX_HABIT_FACTS_CITED]
+    for fact in habit_cited:
+        fact["cited"] = True
+    habit_meta: Dict[str, Any] = {}
+    if habit_ref or habit_facts:
+        habit_meta = {
+            **habit_ref,
+            "carried_fact_ids": shown_habit_ids,
+            "cited_fact_ids": [f["id"] for f in habit_cited],
+            "cited_features": sorted({str(f.get("feature_key")) for f in habit_cited}),
+        }
     return TurnOutcome(
         answer=answer,
         provider_status=status,
-        facts=facts,
+        facts=facts + habit_cited,
+        habit=habit_meta,
         tool_trace=trace,
         missing_data=missing,
         tool_rounds=rounds,

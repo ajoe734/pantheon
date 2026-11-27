@@ -46,6 +46,7 @@ Environment variables consumed by the reconciler:
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import hashlib
 import importlib
 import json
@@ -846,6 +847,7 @@ class PaperFleetReconciler:
         self._last_resolve_unavailable = False
         self._monitoring_last_error: Optional[str] = None
         self._load_monitoring_sessions()
+        self._publish_snapshot()
 
     @property
     def reconciler_id(self) -> str:
@@ -865,6 +867,7 @@ class PaperFleetReconciler:
             if store is None:
                 self._is_leader = False
                 self._last_error = "durable fenced leader store is not configured"
+                self._publish_snapshot()
                 return False
             current_token = self._fence_token
         try:
@@ -877,12 +880,14 @@ class PaperFleetReconciler:
             with self._lock:
                 self._is_leader = False
                 self._last_error = f"leader lease unavailable: {type(exc).__name__}: {exc}"
+                self._publish_snapshot()
             return False
         with self._lock:
             self._is_leader = bool(lease.acquired)
             if self._is_leader:
                 self._fence_token = int(lease.token)
                 self._lease_expires_at_ms = int(lease.expires_at_ms)
+            self._publish_snapshot()
             return self._is_leader
 
     def _has_current_fence(self) -> bool:
@@ -911,6 +916,7 @@ class PaperFleetReconciler:
                 reason="reconciler lost fenced leader lease",
                 enforce_fence=False,
             )
+        self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Loop 9 controller truth (leader only)
@@ -1028,6 +1034,7 @@ class PaperFleetReconciler:
                 store = self._leader_store
                 fence_token = self._fence_token
                 self._is_leader = False
+                self._publish_snapshot()
             if store is not None and fence_token > 0:
                 try:
                     store.release(
@@ -1043,6 +1050,12 @@ class PaperFleetReconciler:
 
     def reconcile_once(self, leader_store: Any | None = None) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
+        try:
+            return self._reconcile_once(leader_store)
+        finally:
+            self._publish_snapshot()
+
+    def _reconcile_once(self, leader_store: Any | None = None) -> Dict[str, Any]:
         with self._cycle_lock:
             if not self.try_acquire_lease(leader_store):
                 log.info("reconciler %s is follower; skipping worker spawn cycle", self._reconciler_id)
@@ -1082,6 +1095,7 @@ class PaperFleetReconciler:
                         # Free the port so the restart can allocate a clean one
                         self._free_port(entry.port)
                         entry.port = 0
+                        self._publish_snapshot()
                         self._end_monitoring_session(
                             entry.monitoring_session_id,
                             reason="worker_exit",
@@ -1095,6 +1109,7 @@ class PaperFleetReconciler:
                 if bindings is None:
                     self._cycle_count += 1
                     self._last_reconcile_at = _iso_now()
+                    self._publish_snapshot()
                     return self._snapshot()
 
             unadmitted_grace_binding_ids: set[str] = set()
@@ -1337,11 +1352,13 @@ class PaperFleetReconciler:
             )
             with self._lock:
                 self._last_error = None
+                self._publish_snapshot()
             self._publish_loop_truth(desired)
 
             with self._lock:
                 self._cycle_count += 1
                 self._last_reconcile_at = _iso_now()
+                self._publish_snapshot()
                 return self._snapshot()
 
     @staticmethod
@@ -1412,6 +1429,7 @@ class PaperFleetReconciler:
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
                     self._last_error = f"{type(exc).__name__}: {exc}"
+                    self._publish_snapshot()
                 log.exception("fleet reconciler cycle failed")
             self._shutdown.wait(self._poll_interval)
 
@@ -1528,7 +1546,11 @@ class PaperFleetReconciler:
         with self._lock:
             port = self._allocate_port()
             env = self._build_worker_env(binding)
-        env["PORT"] = str(port)
+            env["PORT"] = str(port)
+            monitoring_session_id = self._open_monitoring_session(
+                binding,
+                restart_count=restart_count,
+            )
 
         try:
             process = self._spawn(binding_id, port, env)
@@ -1536,10 +1558,6 @@ class PaperFleetReconciler:
             fence_ok = self._has_current_fence()
             with self._lock:
                 self._free_port(port)
-                monitoring_session_id = self._open_monitoring_session(
-                    binding,
-                    restart_count=restart_count,
-                )
                 self._end_monitoring_session(
                     monitoring_session_id,
                     reason="spawn_failed",
@@ -1559,6 +1577,7 @@ class PaperFleetReconciler:
                     status="dead",
                     fence_token=self._fence_token,
                 )
+                self._publish_snapshot()
             return fence_ok
 
         # Spawning is outside the leader store transaction and can block past
@@ -1578,10 +1597,6 @@ class PaperFleetReconciler:
                     pass
             with self._lock:
                 self._free_port(port)
-                monitoring_session_id = self._open_monitoring_session(
-                    binding,
-                    restart_count=restart_count,
-                )
                 self._end_monitoring_session(
                     monitoring_session_id,
                     reason="spawn_fence_lost",
@@ -1591,14 +1606,11 @@ class PaperFleetReconciler:
                 self._last_error = (
                     f"leader fence expired while spawning worker for binding {binding_id}"
                 )
+                self._publish_snapshot()
                 log.error(self._last_error)
             return False
 
         with self._lock:
-            monitoring_session_id = self._open_monitoring_session(
-                binding,
-                restart_count=restart_count,
-            )
             entry = WorkerEntry(
                 binding_id=binding_id,
                 runtime_id=str(binding.get("runtime_id") or ""),
@@ -1612,6 +1624,7 @@ class PaperFleetReconciler:
                 fence_token=self._fence_token,
             )
             self._workers[binding_id] = entry
+            self._publish_snapshot()
         log.info(
             "started worker for binding %s runtime=%s port=%d restarts=%d",
             binding_id,
@@ -1681,6 +1694,7 @@ class PaperFleetReconciler:
             entry.status = "stopped"
             self._free_port(entry.port)
             self._workers.pop(binding_id, None)
+            self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Monitoring sessions
@@ -1810,6 +1824,7 @@ class PaperFleetReconciler:
         }
         self._monitoring_sessions[session_id] = session
         self._persist_monitoring_sessions()
+        self._publish_snapshot()
         return session_id
 
     def _end_monitoring_session(
@@ -1840,6 +1855,7 @@ class PaperFleetReconciler:
         if error:
             session["last_error"] = error
         self._persist_monitoring_sessions()
+        self._publish_snapshot()
 
     def _monitoring_staleness(
         self,
@@ -1939,6 +1955,7 @@ class PaperFleetReconciler:
                     changed = False
             if changed:
                 self._persist_monitoring_sessions()
+                self._publish_snapshot()
 
         for binding_id, session_id, staleness_reason, staleness_marker, force_end in stale_worker_sessions:
             with self._lock:
@@ -1990,10 +2007,12 @@ class PaperFleetReconciler:
             }
             with self._lock:
                 self._monitoring_last_error = None
+                self._publish_snapshot()
             return normalized
         except Exception as exc:  # noqa: BLE001
             with self._lock:
                 self._monitoring_last_error = f"runtime summary fetch failed: {type(exc).__name__}: {exc}"
+                self._publish_snapshot()
             log.warning("could not fetch runtime summaries from telemetry: %s", exc)
             return None
 
@@ -2131,6 +2150,7 @@ class PaperFleetReconciler:
                 self._last_error = (
                     f"fleet desired state fetch failed: {type(exc).__name__}: {exc}"
                 )
+                self._publish_snapshot()
             log.warning(
                 "could not fetch fleet desired state from runtime-manager: %s", exc
             )
@@ -2206,6 +2226,7 @@ class PaperFleetReconciler:
                     self._source_unavailable_counts[symbol] = count
                     has_cache = symbol in self._source_snapshot_cache
                     self._source_unavailable_errors[symbol] = type(exc.cause).__name__
+                    self._publish_snapshot()
                 log.warning(
                     "market input unavailable for %s (%s, consecutive=%d, cached_snapshot=%s)",
                     symbol,
@@ -2219,6 +2240,7 @@ class PaperFleetReconciler:
                 self._source_unavailable_errors.pop(symbol, None)
                 if isinstance(snap, dict):
                     self._source_snapshot_cache[symbol] = snap
+                self._publish_snapshot()
             return snap, False
         return None, False
 
@@ -2375,10 +2397,22 @@ class PaperFleetReconciler:
     # ------------------------------------------------------------------
 
     def snapshot(self, *, include_ended_monitoring_sessions: bool = True) -> Dict[str, Any]:
+        # Capture one published generation. Never acquire the cycle lock here:
+        # it may be held across worker spawn/drain and owner-service HTTP calls.
+        snap = deepcopy(self._published_snapshot)
+        if not include_ended_monitoring_sessions:
+            snap["monitoring_sessions"] = [
+                session for session in snap["monitoring_sessions"] if session["active"]
+            ]
+            snap["monitoring_session_count"] = len(snap["monitoring_sessions"])
+        return snap
+
+    def _publish_snapshot(self) -> None:
+        """Replace the reader view atomically; only writers take the cycle lock."""
         with self._lock:
-            return self._snapshot(
-                include_ended_monitoring_sessions=include_ended_monitoring_sessions
-            )
+            # Sessions contain nested staleness metadata. Detach it as well as
+            # the outer lists/dicts so later writer changes cannot leak through.
+            self._published_snapshot = deepcopy(self._snapshot())
 
     def _unavailable_summary(self) -> Optional[str]:
         if not self._source_unavailable_counts:
@@ -2462,8 +2496,7 @@ class PaperFleetReconciler:
         }
 
     def is_ready(self) -> bool:
-        with self._lock:
-            return self._cycle_count > 0
+        return self._published_snapshot["cycle_count"] > 0
 
 
 # ---------------------------------------------------------------------------
@@ -2516,11 +2549,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _write_json(self, status_code: int, body: Dict[str, Any]) -> None:
         payload = json.dumps(body).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            log.debug("client disconnected before fleet reply completed: %s", self.path)
 
     def do_GET(self) -> None:  # noqa: N802
         recon = get_reconciler()
