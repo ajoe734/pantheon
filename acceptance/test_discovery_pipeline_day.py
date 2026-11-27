@@ -799,6 +799,80 @@ def test_probe_skips_naming_missing_variables():
     assert done.returncode == 77 and "ACCEPTANCE_BFF_URL" in done.stdout
 
 
+def test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages(server):
+    from datetime import timedelta
+
+    clean_env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("ACCEPTANCE_") and k not in ("PYTHONPATH", "PYTHONHOME")
+    }
+    skip_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=clean_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert skip_done.returncode == 77, skip_done.stdout + skip_done.stderr
+    assert "ACCEPTANCE_BFF_URL" in skip_done.stdout
+    assert "ModuleNotFoundError" not in (skip_done.stdout + skip_done.stderr)
+
+    now_utc = datetime.now(timezone.utc)
+    iso = lambda dt: dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    today_str = now_utc.strftime("%Y-%m-%d")
+    switch_iso = iso(now_utc - timedelta(hours=3))
+    recent_iso = iso(now_utc - timedelta(hours=1))
+
+    live_board = good_board()
+    live_board["data"]["discovered"][0]["since"] = recent_iso
+    live_board["data"]["discovered"][1]["since"] = iso(now_utc - timedelta(days=5))
+    live_board["data"]["scaffolded"][0]["latest_at"] = recent_iso
+    live_board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = today_str
+    live_board["data"]["discovery_summary"]["llm_calls"].update(
+        utc_day=today_str,
+        release_switched_at=switch_iso,
+        ritual_events_oldest_scanned_at=iso(now_utc - timedelta(hours=4)),
+    )
+    live_health = good_health()
+    live_health["data"]["last_success"]["at"] = recent_iso
+    live_health["data"]["downstream_actual_state"]["checked_at"] = recent_iso
+
+    Handler.board = live_board
+    Handler.health = live_health
+    run_env = {
+        **clean_env,
+        "ACCEPTANCE_BFF_URL": server,
+        "ACCEPTANCE_VIEWER_CLIENT_ID": "viewer",
+        "ACCEPTANCE_VIEWER_CLIENT_SECRET": "client-SECRET-VALUE",
+    }
+    pass_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert pass_done.returncode == 0, pass_done.stdout + pass_done.stderr
+    assert "VERDICT passed" in pass_done.stdout
+    assert '"ritual_events_since_switch": 0' in pass_done.stdout
+
+    ritual_board = copy.deepcopy(live_board)
+    ritual_board["data"]["discovery_summary"]["llm_calls"]["ritual_events_since_switch"] = 1
+    ritual_board["data"]["discovery_summary"]["llm_calls"]["ritual_event_timestamps"] = [recent_iso]
+    Handler.board = ritual_board
+    fail_done = subprocess.run(
+        [sys.executable, "-S", str(PROBE)],
+        env=run_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert fail_done.returncode == 1, fail_done.stdout + fail_done.stderr
+    assert "VERDICT failed failed=hypothesis_cards" in fail_done.stdout
+    assert "reason=ritual_marked_events_since_switch:1" in fail_done.stdout
+
+
 def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
     done = exec_probe(server)  # the synthetic world is from 2026-11-28; the wall clock is later
     out = done.stdout + done.stderr

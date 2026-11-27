@@ -1787,3 +1787,33 @@ def test_hosted_5_testable_cards_failed_under_old_15s_deadline_compile_after_dep
     assert stage["status"] == "passed"
     assert stage["values"]["verified_last_24h"] == 1
     assert stage["values"]["ritual_events_since_switch"] == 0
+
+
+def test_hypothesis_card_ritual_markers_and_reattempt_match_under_clean_stdlib_interpreter():
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[3]
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    code = (
+        "import sys; "
+        f"sys.path.insert(0, {str(repo_root)!r}); "
+        "from services.source_ingestion.hypothesis_card import ("
+        "FIRST_RUN_RITUAL_MARKERS, fixed_defect_for_skip_reason, has_first_run_ritual_marker"
+        "); "
+        "assert 'jsonschema' not in sys.modules; "
+        "assert has_first_run_ritual_marker('請問該怎麼稱呼你？'); "
+        "assert not has_first_run_ritual_marker('Quarterly revenue report with no testable mechanism.'); "
+        "m = fixed_defect_for_skip_reason('no_hypothesis: First-run setup is pending; what should I call you?'); "
+        "assert m is not None and m.code == 'openclaw_workspace_first_run_ritual'; "
+        "assert len(FIRST_RUN_RITUAL_MARKERS) > 10"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-S", "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr

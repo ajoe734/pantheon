@@ -21,8 +21,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional
 
-import jsonschema
-
 HYPOTHESIS_CARD_SCHEMA_VERSION = "hypothesis_card.v1"
 DEFAULT_DAILY_CALL_CAP = 400  # O-7
 DAILY_CAP_ENV = "PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP"
@@ -245,6 +243,8 @@ def finalize_card(
     prediction_rejections: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a contract-valid card or raise :class:`CardRejected`."""
+    import jsonschema
+
     raw = structured.get("hypothesis_card")
     if not isinstance(raw, Mapping):
         raise CardRejected("no_card", "model returned no card")

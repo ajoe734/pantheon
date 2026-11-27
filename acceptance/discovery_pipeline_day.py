@@ -34,10 +34,24 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
-from services.source_ingestion.hypothesis_card import (
-    FIRST_RUN_RITUAL_MARKERS,
-    has_first_run_ritual_marker,
-)
+try:
+    from services.source_ingestion.hypothesis_card import (
+        FIRST_RUN_RITUAL_MARKERS,
+        has_first_run_ritual_marker,
+    )
+except ModuleNotFoundError:  # pragma: no cover - stdlib-only direct load if package __init__ lacks optional deps
+    import importlib.util
+    from pathlib import Path
+
+    _HC_PATH = Path(__file__).resolve().parents[1] / "services" / "source_ingestion" / "hypothesis_card.py"
+    _HC_SPEC = importlib.util.spec_from_file_location("_pantheon_hypothesis_card_stdlib", _HC_PATH)
+    if _HC_SPEC is None or _HC_SPEC.loader is None:
+        raise
+    _hc_mod = importlib.util.module_from_spec(_HC_SPEC)
+    sys.modules[_HC_SPEC.name] = _hc_mod
+    _HC_SPEC.loader.exec_module(_hc_mod)
+    FIRST_RUN_RITUAL_MARKERS = _hc_mod.FIRST_RUN_RITUAL_MARKERS
+    has_first_run_ritual_marker = _hc_mod.has_first_run_ritual_marker
 
 OWNER = "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125"
 REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
