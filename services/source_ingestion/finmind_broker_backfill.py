@@ -11,9 +11,14 @@ branch rows, and writes governed ``tw_broker_top`` and
 * FinMind data is licence ``vendor_research`` and not redistributable. Nothing
   here writes to ``normalized/tw_price_daily``.
 
+Daily whole-market run (SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127): ``run_whole_market_session`` uses the
+same storage_objects request and parquet decode for one published session and writes compact top-20 buy and
+sell rows for every symbol into ``keyed/tw_broker_top`` plus one run receipt.
+
 Usage::
 
     python -m services.source_ingestion.finmind_broker_backfill --output-dir DIR
+    python -m services.source_ingestion.finmind_broker_backfill daily --market-data-root ROOT --trade-date D
 """
 
 from __future__ import annotations

@@ -1,0 +1,168 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task": "SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "register_class": [
+    "RC2",
+    "RC3 WP3.1"
+  ],
+  "delivery_state": "source + focused tests; hosted proof (acceptance 7) pending deploy",
+  "acceptance": {
+    "1_whole_market_from_whole_day_file": {
+      "status": "verified_in_source",
+      "path": "scripts/deploy_nonprod_vm.sh run_finmind_broker_whole_market -> services/source_ingestion/finmind_broker_backfill.py run_whole_market_session (docker exec in the running source-ingest container, its market_data_store)",
+      "behaviour": "one FinMind SponsorPro storage_objects request (TaiwanStockTradingDailyReport whole-day parquet) per published session (latest_published_broker_session, 18:00 Asia/Taipei, governed TWSE calendar); aggregated per (date, symbol, branch) inside pyarrow; top 20 buy (net_qty > 0) and top 20 sell (net_qty < 0) by net quantity for EVERY symbol in the file; no per-symbol request and no RuntimeBinding symbol limit on this path",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_one_request_stores_top20_both_sides_for_every_symbol_compactly",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_ranking_matches_net_quantity_summed_over_price_levels",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_the_keyed_reader_answers_any_symbol_with_both_sides",
+        "scripts/test_deploy_nonprod_vm.py::test_entrypoint_whole_market_complete_skips_per_symbol_path_and_refusal_falls_back",
+        "scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist"
+      ]
+    },
+    "2_compact_rows": {
+      "status": "verified_in_source",
+      "row_shape": "{source_id, connector_id, dataset, metadata:{normalized_row:{symbol, trade_date, side, rank, broker, broker_id, buy_qty, sell_qty, net_qty, price_levels}, available_time, source, source_dataset, source_profile, license_scope, redistribution_allowed, schema_hash, ingest_run_id}} (FinMindTaiwanBrokerDailyReportAdapter.compact_keyed_records); about 640 B uncompressed, 25-27 B gzip per row",
+      "per_symbol_path": "records_from_daily_report_payload no longer embeds raw_rows in metadata or body; keeps price_levels (count)",
+      "branch_detail_decision": "tw_broker_branch_detail is NOT written by the daily run: every branch x symbol pair is roughly 5-10x the top-20 rows per session with no declared reader; the two-year backfill command keeps its own output directory and is not changed by this task",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_per_symbol_records_no_longer_embed_raw_price_level_rows"
+      ]
+    },
+    "3_runtime_budget": {
+      "status": "verified_on_hosted_shaped_rows",
+      "cadence": "one run per published session; afternoon crons 10:30Z and 12:30Z, the second makes 0 requests once the session receipt is complete and its keyed partition verifies",
+      "rows_per_session": "about 80,000-104,000 (2,000-2,600 symbols x 20 buy + 20 sell)",
+      "bytes_per_session": {
+        "measured_2000_symbols": {
+          "rows": 80000,
+          "gzip_bytes": 2145998,
+          "uncompressed_bytes": 51288998,
+          "runtime_seconds_local": 11.4
+        },
+        "measured_2600_symbols_budget_checker": {
+          "rows": 104000,
+          "gzip_bytes": 2623088
+        }
+      },
+      "growth_per_day": "about 2.2-2.7 MB gzip per session plus one ~1 KB receipt",
+      "cap": "6 MB per session partition (KEYED_DATASETS tw_broker_top day_budget_bytes; write refused above it, nothing published); 750 sessions -> at most 4.5 GB, expected 1.6-2.0 GB",
+      "retention": "keyed retention 750 sessions; removed by the existing retention sweeper (services/source_ingestion/retention.py reads KEYED_DATASETS retention_days); receipts pruned to the newest 750 by the writer",
+      "source_evidence_store": "receives nothing per broker row; one receipt per session at <market_data_store>/receipts/tw_broker_whole_market/date=<session>.json",
+      "updated": [
+        "services/source_ingestion/daily_bars_store.py KEYED_DATASETS tw_broker_top budget 0.2 MB -> 6 MB",
+        "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md section 6A tw_broker_top row (key with side, whole market, <= 6 MB)",
+        "scripts/check_market_data_budget.py tw_broker_top measured with the real compact record at 2,600 symbols in one write",
+        "docs/operations/storage-manifest.json keyed growth text + runtime_budgets entry"
+      ],
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_declared_day_budget_holds_a_hosted_shaped_whole_market_session",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_over_budget_session_publishes_nothing",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_receipts_are_pruned_past_the_retention",
+        "scripts/test_check_market_data_budget.py"
+      ]
+    },
+    "4_requests_quota_token_fallback": {
+      "status": "verified_in_source",
+      "requests": "requests_made recorded in the receipt (1 per run, 0 for a complete rerun); plan_hourly_cap 6000 recorded",
+      "token": "passed to the container by name only (docker exec -e FINMIND_API_TOKEN), never printed; provider messages have the token value replaced before they are stored",
+      "refusal": "credential_unavailable / dependency_unavailable / provider_refused (credential_or_plan_rejected, quota_exhausted, provider_error with the provider message) / no_data -> fallback_required=true: the outcome file carries broker_whole_market and coordinator_notice, a COORDINATOR NOTICE log line is written, the existing per-symbol path runs for the active symbols, and the run summary row 'tw_broker_top whole market' fails so the coordinator sees it",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_provider_refusal_requires_fallback_and_records_reason",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_plan_refusal_json_body_keeps_provider_message_without_token",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_credential_makes_no_request",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_rerun_of_a_complete_session_makes_no_request",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_func_passes_token_by_name_and_restricts_egress",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_func_without_receipt_requires_fallback",
+        "scripts/test_deploy_nonprod_vm.py::test_whole_market_in_container_python_runs_and_reports_missing_credential",
+        "scripts/test_dev_tw_market_refresh_workflow.py::test_summary_whole_market_partial_or_refused_fails_the_run"
+      ]
+    },
+    "5_coverage_gate": {
+      "status": "verified_in_source",
+      "expected_set": "daily_bars rows of the session with volume > 0 and a 4-digit share code (TWSE and TPEx ordinary shares; daily_bars stores only governed-listing symbols); ETFs, warrants and other codes are stored when present but are not in the expected set",
+      "tolerance": "complete only when <= 2 % of the expected symbols are missing AND >= 1000 symbols are stored; otherwise partial (fresh=false); no daily_bars day -> partial coverage_unverified; a partial receipt is refetched by the next run",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_outside_tolerance_is_partial_and_never_fresh",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_within_tolerance_and_minimum_symbols",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_expected_symbols_come_from_daily_bars_traded_shares",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_daily_bars_means_coverage_unverified_partial"
+      ]
+    },
+    "6_licence_and_no_price_daily": {
+      "status": "verified_in_source",
+      "detail": "every stored row and the receipt carry license_scope=vendor_research and redistribution_allowed=false; the run writes only keyed/tw_broker_top and receipts/ (test asserts no tw_price_daily, normalized or tw_broker_branch_detail file)"
+    },
+    "7_hosted_proof": {
+      "status": "pending_deploy",
+      "check": "read-only after deploy: keyed/tw_broker_top/_manifest/date=<latest session>.json row_count / bytes and the receipt receipts/tw_broker_whole_market/date=<session>.json on volume pantheon_source-ingest-data; expect >= 1000 symbols with both sides and bytes <= 6 MB (expected 2.2-2.7 MB)"
+    },
+    "8_problem_register": {
+      "status": "done",
+      "rows": [
+        "docs/operations/problem-register.md RC2 'Taiwan broker branches' row",
+        "docs/operations/problem-register.md RC3 'WP3.1 / WP3.3 tw_broker_top grows ... whole market' row"
+      ]
+    }
+  },
+  "scope_boundaries": {
+    "changed": [
+      "services/source_ingestion/finmind_broker_backfill.py",
+      "services/source_ingestion/connectors/finmind_taiwan.py",
+      "services/source_ingestion/daily_bars_store.py (tw_broker_top budget only)",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/tw_refresh_outcome_summary.py",
+      "scripts/check_market_data_budget.py",
+      "docs/04/.../SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (6A tw_broker_top row; the budget checker reads limits from it)",
+      "docs/operations/storage-manifest.json",
+      "docs/operations/problem-register.md",
+      "tests"
+    ],
+    "not_changed": [
+      "services/data-plane/taiwan_reference.py (keyed reader already reads both sides)",
+      "retention sweeper",
+      "per-symbol service path other than dropping embedded raw rows",
+      "two-year backfill run (not executed by this task)",
+      "workflow .github/workflows/dev-tw-market-refresh.yml (the broker step already calls the deploy entrypoint)"
+    ]
+  },
+  "residual_findings": [
+    "taiwan_reference.read_tw_broker_top_rows reads the whole session partition (~80k rows) per query and filters by symbol; acceptable for the servant's per-question read but a per-symbol index would make it faster",
+    "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
+    "the two-year SponsorPro backfill still has not been run on hosted"
+  ],
+  "verification": {
+    "environment": "task worktree .venv-pantheon (python 3.12) + pyarrow 26.0.1 (the locked source-ingest version) on PYTHONPATH",
+    "commands": [
+      {
+        "cmd": "pytest services/source_ingestion/tests/test_finmind_broker_whole_market.py test_finmind_broker_backfill.py test_finmind_taiwan_connectors.py test_finmind_broker_readback_provenance.py test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist",
+        "result": "182 passed"
+      },
+      {
+        "cmd": "pytest scripts/test_deploy_nonprod_vm.py (3 shards of the collected ids)",
+        "result": "81 passed 2 skipped; 82 passed; 75 passed"
+      },
+      {
+        "cmd": "pytest scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py",
+        "result": "159 passed, 1 skipped"
+      },
+      {
+        "cmd": "pytest scripts/test_check_market_data_budget.py",
+        "result": "19 passed"
+      },
+      {
+        "cmd": "python scripts/check_market_data_budget.py --only tw_broker_top",
+        "result": "ok: day_bytes 2,623,088 <= 6,000,000; declared_budget_bytes 6,000,000 <= design row"
+      },
+      {
+        "cmd": "python scripts/check_storage_manifest.py",
+        "result": "exit 0"
+      },
+      {
+        "cmd": "bash -n scripts/deploy_nonprod_vm.sh",
+        "result": "ok"
+      }
+    ]
+  }
+}

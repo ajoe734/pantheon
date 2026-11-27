@@ -4408,7 +4408,9 @@ OUTCOME_PY
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && "${BROKER_WHOLE_MARKET_DISABLED:-false}" != "true" ]]; then
     # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market first, from one whole-day file. Only a
     # provider refusal (or a run that produced no receipt) falls back to the per-symbol path below.
-    run_finmind_broker_whole_market
+    BROKER_WHOLE_MARKET_JSON=""
+    run_finmind_broker_whole_market || true
+    [[ -n "${BROKER_WHOLE_MARKET_JSON:-}" ]] || BROKER_WHOLE_MARKET_JSON='{"status": "failed", "reason": "whole_market_run_no_receipt", "fallback_required": true, "requests_made": 0}'
     export BROKER_WHOLE_MARKET_JSON
     local wm_status wm_fallback
     wm_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "failed")' "${BROKER_WHOLE_MARKET_JSON}")"
