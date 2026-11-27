@@ -7,6 +7,7 @@ Pantheon's PostgresJsonOwnerStore).
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .store import AgoraEvidenceStore, AgoraStore, DictRecord, build_agora_store
@@ -15,6 +16,8 @@ from .write_authority import WRITE_AUTHORITY_MATRIX, assert_authorized, is_autho
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "enqueue"), ["operator", "admin", "trader"])
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "process"), ["system", "persona"])
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantSession", "purge"), ["system"])
+
+_logger = logging.getLogger(__name__)
 
 
 class AgoraEvidenceWriteService:
@@ -25,6 +28,10 @@ class AgoraEvidenceWriteService:
         "note": ("AgoraNote", "create", "note"),
         "insight": ("AgoraInsight", "create", "insight"),
         "training_example": ("AgoraTrainingExample", "create", "training_example"),
+        "decision": ("AgoraDecisionLock", "create", "decision"),
+        "rejection": ("AgoraDecisionLock", "create", "rejection"),
+        "deferral": ("AgoraDecisionLock", "create", "deferral"),
+        "intervention": ("AgoraDecisionLock", "create", "intervention"),
     }
 
     def __init__(self, store: AgoraEvidenceStore) -> None:
@@ -94,8 +101,18 @@ class AgoraWriteService:
         *,
         dsn: Optional[str] = None,
         schema: str = "agora",
+        dataset_store: Optional[Any] = None,
     ) -> None:
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
+        self.dataset_store = dataset_store
+        try:
+            from services.control_plane.bff.agora.dataset_extraction.extractor import (
+                ensure_journal_evidence_emission_wired,
+            )
+
+            ensure_journal_evidence_emission_wired()
+        except Exception as exc:
+            _logger.warning("Failed to wire Agora journal evidence emission: %s", exc)
 
     def create_session(
         self,
@@ -601,13 +618,116 @@ class AgoraWriteService:
     # -------------------------------------------------------------------------
     # Shadow-mode decision locks (design A4). Insert-only; reads are scoped.
     # -------------------------------------------------------------------------
+    def _resolve_dataset_store(self) -> Optional[Any]:
+        if self.dataset_store is not None:
+            return self.dataset_store
+        try:
+            from services.control_plane.bff.agora.dataset_extraction.router import _default_store
+
+            return _default_store()
+        except Exception:
+            return None
+
+    def _emit_decision_lock_evidence(self, lock: Dict[str, Any]) -> Optional[Any]:
+        lock_id = str(
+            lock.get("human_decision_id")
+            or lock.get("decision_id")
+            or lock.get("record_id")
+            or lock.get("decision_event_id")
+            or ""
+        ).strip()
+        try:
+            ds_store = self._resolve_dataset_store()
+            if ds_store is None:
+                return None
+            trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), dict) else {}
+            tenant_id = str(lock.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
+            user_id = str(
+                lock.get("user_id")
+                or lock.get("agora_user_id")
+                or trader_identity.get("user_id")
+                or trader_identity.get("agora_user_id")
+                or ""
+            ).strip()
+            if not tenant_id or not user_id or not lock_id:
+                return None
+            from services.control_plane.bff.agora.dataset_extraction.extractor import (
+                extract_decision_lock_evidence,
+            )
+
+            record, _ = extract_decision_lock_evidence(lock, store=ds_store)
+            return record
+        except Exception as exc:
+            _logger.warning(
+                "Best-effort decision-lock learning evidence extraction failed for lock_id=%s: %s",
+                lock_id,
+                exc,
+            )
+            return None
+
     def create_decision_lock(
         self,
         lock: Dict[str, Any],
         actor_roles: Union[Sequence[str], str],
     ) -> DictRecord:
         assert_authorized("AgoraDecisionLock", "create", actor_roles)
-        return self.store.create_decision_lock(lock)
+        created = self.store.create_decision_lock(lock)
+        self._emit_decision_lock_evidence(created)
+        return created
+
+    def extract_decision_lock_evidence(
+        self,
+        lock: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+        *,
+        persona_id: Optional[str] = None,
+        retention_days: int = 30,
+        extracted_at: Optional[str] = None,
+    ) -> Any:
+        assert_authorized("AgoraDecisionLock", "create", actor_roles)
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            extract_decision_lock_evidence,
+        )
+
+        ds_store = self._resolve_dataset_store()
+        if ds_store is None:
+            raise RuntimeError("Agora dataset store is not configured")
+        return extract_decision_lock_evidence(
+            lock,
+            store=ds_store,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
+
+    def extract_journal_entry_evidence(
+        self,
+        entry: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str],
+        *,
+        decision_lock: Optional[Dict[str, Any]] = None,
+        snapshot: Optional[Dict[str, Any]] = None,
+        persona_id: Optional[str] = None,
+        retention_days: int = 30,
+        extracted_at: Optional[str] = None,
+    ) -> Any:
+        assert_authorized("DecisionJournalEntry", "create", actor_roles)
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            extract_journal_entry_evidence,
+        )
+
+        ds_store = self._resolve_dataset_store()
+        if ds_store is None:
+            raise RuntimeError("Agora dataset store is not configured")
+        return extract_journal_entry_evidence(
+            entry,
+            store=ds_store,
+            decision_lock=decision_lock,
+            snapshot=snapshot,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
 
     def _lock_readable(
         self, lock: Optional[DictRecord], tenant_id: str, user_id: str, roles: Union[Sequence[str], str]
@@ -652,10 +772,11 @@ def build_agora_write_service(
     dsn: Optional[str] = None,
     schema: str = "agora",
     bootstrap: bool = True,
+    dataset_store: Optional[Any] = None,
 ) -> AgoraWriteService:
     """Factory creating an AgoraWriteService backed by durable Postgres storage."""
     store = build_agora_store(dsn=dsn, schema=schema, bootstrap=bootstrap)
-    return AgoraWriteService(store=store)
+    return AgoraWriteService(store=store, dataset_store=dataset_store)
 
 
 __all__ = ["AgoraWriteService", "build_agora_write_service"]

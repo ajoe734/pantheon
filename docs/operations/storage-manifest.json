@@ -742,21 +742,6 @@
    "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "jsonl",
-   "name": "records.jsonl",
-   "owner": "source_ingestion",
-   "readers": [
-    "services/source_ingestion/finmind_broker_backfill.py"
-   ],
-   "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
-  },
-  {
-   "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "append-only JSONL log or journal (inferred from the .jsonl name)",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
-   "kind": "jsonl",
    "name": "replication_admissions.jsonl",
    "owner": "research",
    "readers": [
@@ -6374,6 +6359,31 @@
    "bound_proof": {
     "file": "services/source_ingestion/finmind_broker_backfill.py",
     "contains": "RECEIPT_RETENTION_SESSIONS = 750"
+   }
+  },
+  {
+   "name": "FinMind two-year broker top-20 backfill (keyed/tw_broker_top partitions + backfill_state.json)",
+   "owner": "source_ingestion (market-data)",
+   "writer": "services/source_ingestion/finmind_broker_backfill.py run_backfill, invoked by scripts/deploy_nonprod_vm.sh run_finmind_broker_backfill inside the source-ingest container from .github/workflows/dev-finmind-broker-backfill.yml under the dev environment lease",
+   "task": "SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127",
+   "register_class": "RC2",
+   "cadence": "operator-dispatched resumable backfill (workflow_dispatch only, no recurring cron); throttled at >=1.5s per request (<=2,400 requests/hour vs FinMind SponsorYear 6,000/hour cap); default bounded window of at most 180 requests and 2,100s wall time per dispatch inside the 45-minute dev environment lease limit; completed dates and daily-refresh-completed dates make 0 requests on resume",
+   "count_at_hosted_scale": "two-year window (~480-500 trading sessions, ~522 weekdays) x ~2,000-2,600 symbols x 40 rows (20 buy + 20 sell) = ~39,200,000-52,000,000 compact rows across stored two-year partitions, plus 1 backfill_state.json file (~60 KB at 522 dates)",
+   "size": "measured on hosted-shaped compact rows: ~2.15 MB gzip (80,000 rows) to ~2.62 MB gzip (104,000 rows) per trading session => ~1.05-1.31 GB gzip across ~490-500 two-year trading sessions; backfill_state.json <= 128 KB",
+   "size_per_day": "0 B/day steady-state once the two-year window is backfilled (daily sessions are written by SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127 into the same keyed/tw_broker_top store)",
+   "growth_per_day": "0 B/day steady-state outside daily refresh; one-time two-year backfill adds ~1.05-1.31 GB gzip (capped at <=3.0 GB for the two-year backfill and <=4.5 GB across 750 retained sessions)",
+   "growth": "one-time backfill of ~480-500 sessions into keyed/tw_broker_top (~1.05-1.31 GB gzip), bounded by BACKFILL_MAX_TOTAL_BYTES = 3,000,000,000 (3.0 GB) and KEYED_DATASETS['tw_broker_top'].retention_sessions = 750 (<=4.5 GB steady-state)",
+   "cap": "per-session cap 6,000,000 bytes compressed (BACKFILL_MAX_SESSION_BYTES / KEYED_DATASETS tw_broker_top day_budget_bytes) and 120,000 rows (BACKFILL_MAX_SESSION_ROWS); two-year backfill total cap 3,000,000,000 bytes (BACKFILL_MAX_TOTAL_BYTES, 3.0 GB) and 60,000,000 rows (BACKFILL_MAX_TOTAL_ROWS); hourly request cap 6,000/h (FINMIND_PLAN_HOURLY_CAP, self-limited to <=2,400/h); run_backfill deletes any over-cap partition and stops immediately with status=cap_exceeded if any cap would be exceeded; no side directory or tw_broker_branch_detail written",
+   "cleanup": "keyed/tw_broker_top partitions outside the newest 750 valid stored session dates through today are pruned by the existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py, retention_sessions=750); superseded partition generations are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately via delete_partition before state commit; backfill_state.json is atomically replaced in place via .tmp rename",
+   "readers": [
+    "services/data-plane/taiwan_reference.py",
+    "services/source_ingestion/routers/ingest_operations.py",
+    "services/source_ingestion/finmind_broker_backfill.py",
+    "scripts/deploy_nonprod_vm.sh"
+   ],
+   "bound_proof": {
+    "file": "services/source_ingestion/finmind_broker_backfill.py",
+    "contains": "BACKFILL_MAX_TOTAL_BYTES = 3_000_000_000"
    }
   },
   {

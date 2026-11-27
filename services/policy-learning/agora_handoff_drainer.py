@@ -204,15 +204,21 @@ def post_handoff_to_policy_learning(
         "tenant_id": tenant_id,
         "process_immediately": True,
     }
+    if handoff.get("user_id"):
+        body["user_id"] = str(handoff["user_id"])
     if dataset_version:
         body["dataset_version"] = dataset_version
     elif dataset_ref:
         body["dataset_ref"] = dataset_ref
     elif handoff.get("dataset_version_id"):
-        body["dataset_ref"] = {
+        ref_payload: dict[str, Any] = {
             "dataset_version_id": handoff["dataset_version_id"],
             "tenant_id": tenant_id,
         }
+        for key in ("user_id", "dataset_kind", "interaction_kind", "evidence_ids"):
+            if handoff.get(key) is not None:
+                ref_payload[key] = handoff[key]
+        body["dataset_ref"] = ref_payload
 
     return _http_request(url, method="POST", body=body, headers=headers, timeout_seconds=timeout_seconds)
 
