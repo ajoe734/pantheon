@@ -698,6 +698,31 @@ metrics, `sources[]`, and `diagnostics[]` so management console pages share the
 same `formal`/`partial`/`fallback`/`degraded`/`unavailable` source-confidence
 semantics instead of synthesizing local fallback rules.
 
+#### Trading Pulse trading persona scope
+
+`GET /bff/management/trading-pulse` and
+`GET /bff/management/trading-pulse/rankings` expose
+`data.summary.operator_scope`. Only same-tenant, non-retired, non-failed
+bindings in `paper`, `canary`, `live`, or `broker_sandbox` enter the scope.
+The Persona owner directory must resolve their identity. Neither
+`is_probe_or_test_persona` (BFF enrollment) nor `non_trading_identity_source`
+(`services/control-plane/persona/persona_policy_resolver.py`) may flag an
+identity admitted to the scope. Explicit non-trading identities, including
+Agora servants with active paper books, are excluded before telemetry fanout.
+
+`persona_count`, `runtime_count`, `verified_runtime_count`, and `by_stage`
+count only admitted trading bindings (persona counts are distinct).
+`excluded_non_trading_runtime_count` is an additive integer counting eligible,
+same-tenant bindings excluded by the shared non-trading identity rule; it is
+zero when none are excluded. It counts bindings, including identities also
+marked as probes, rather than distinct personas. When the scope is unavailable
+before identity selection, this count is omitted; it is not evidence of zero
+excluded bindings. Existing unresolved-identity status and null denominators
+remain unchanged. The independent `trading-pulse-operator` release probe uses
+the same two classifiers and never queries excluded bindings' telemetry.
+These are read projections; the servant book, binding, and runtime persist
+under their owners and remain available to Agora.
+
 ### 10.2 Consistency Model
 
 Composed views support the `snapshot` query parameter:
