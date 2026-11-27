@@ -488,6 +488,46 @@
         "x-business-owner": "capital+runtime_manager",
         "description": "PAPER-TRADER-BOOK-PROVISION-20261127: On first paper use, ensures the caller's servant persona gets exactly one paper CapitalPool, one active paper PersonaCapitalBinding, and one active paper RuntimeBinding through the existing Capital and Runtime-Manager owners. Repeated calls are GET-first and idempotent. Rejects any canary or live stage before any owner write."
       }
+    },
+    "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped shadow comparison",
+        "operationId": "get_shadow_comparison_bff_agora_trading_room_decision_events__decision_event_id__shadow_comparison_get",
+        "parameters": [
+          {
+            "name": "decision_event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Decision Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Four-party comparison (human_actual, private_servant, base_strategy, committee_variant), each with locked decision detail and settlement state. status ok|degraded for a decided event; status empty with comparison_state no_decision_recorded for the caller's own undecided event.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown decision or a decision the caller does not own; identical non-enumerating answer (reason decision_not_found). Operator roles are not widened here; the Management route keeps that audience."
+          },
+          "503": {
+            "description": "The composed Agora decision-lock owner is unavailable; no substitute is created (reason decision_lock_owner_unavailable)."
+          }
+        },
+        "x-business-owner": "agora-decision-lock+attribution",
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+      }
     }
   },
   "components": {

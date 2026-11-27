@@ -101,7 +101,7 @@
     "8_problem_register": {
       "status": "done",
       "rows": [
-        "docs/operations/problem-register.md RC2 'Taiwan broker branches' row",
+        "docs/operations/problem-register.md RC2 'Broker-branch data on hosted covers only 0050, 2317 and 2330' row (task and state cells)",
         "docs/operations/problem-register.md RC3 'WP3.1 / WP3.3 tw_broker_top grows ... whole market' row"
       ]
     }
