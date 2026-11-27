@@ -123,7 +123,18 @@
     "environment_failures_not_caused_by_this_change": [
       "scripts/test_bff_package_boundary_prerequisite.py (5 tests): the tests run python -I in a subprocess, and this worker interpreter has no installed repo path, so the subprocess raises ModuleNotFoundError: No module named 'services'; the same file was in the T7 verification run (151 passed) on a worker with an installed venv",
       "services/control-plane/tests/agora/test_cross_user_isolation.py: collection needs a Postgres DSN (ValueError: Postgres DSN is required)"
-    ]
+    ],
+    "dev_sync_revalidation": {
+      "merged_dev": "2c72f5e28",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127 instance and this task's T8 instance and status",
+      "incoming_dev_files_overlap_task_code": false,
+      "results": [
+        "pytest paper-intent execution + consumer + trading_room + lean_runtime producer/signal suites: 351 passed, 3 skipped (test_paper_signal_producer.py rerun in a venv with PyYAML: 134 passed)",
+        "pytest services/control-plane/tests/agora (excluding Postgres-only test_cross_user_isolation.py) + architecture/provisioning/router/bundle/compat/route-diff/storage/compose tests: 373 passed",
+        "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
+        "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
+    }
   },
   "residuals": [
     "Legacy fixture tests (services/control-plane/tests/agora/test_winner_branch_e2e_v13.py, test_winner_branch_trading_room_e2e.py, test_agora_isolation_matrix.py) still describe paper -> management_governance; they validate hand-built fixtures against the frozen v4 schema and do not exercise the service.",
