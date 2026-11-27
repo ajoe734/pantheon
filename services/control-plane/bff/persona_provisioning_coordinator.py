@@ -5401,6 +5401,223 @@ class PersonaProvisioningCoordinator:
             receipt=receipt,
         )
 
+    def build_paper_execution_projection_metadata(
+        self,
+        record: ProvisioningRecord,
+        ids: ProvisioningIds,
+        *,
+        deployment_plan_receipt: Mapping[str, Any] | None = None,
+        registry_receipt: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build the paper RuntimeBinding execution projection via StagePlanner.build_execution_projection.
+
+        Reuses the approved-artifact projection contract used by
+        ``services.deployment.service.DeploymentService.create_plan`` for inline
+        paper artifacts (``object_store``, ``strategy_id``, ``artifact_checksum``,
+        ``symbol``/``symbols``, ``market_data_policy``). Requires real validated
+        Registry and Deployment owner receipts and fails closed when either receipt
+        is absent, incomplete, or not approved.
+        """
+        from services.control_plane.governance.deployment_plan import (
+            DeploymentPlan,
+            DeploymentPlanError,
+            StagePlanner,
+        )
+        from services.registry.strategy_artifact import (
+            strategy_artifact_minimum_closes,
+            validate_strategy_artifact,
+        )
+
+        if not isinstance(registry_receipt, Mapping) or not registry_receipt:
+            raise PersonaProvisioningCoordinationError(
+                "Approved StrategyArtifact RegistryEntry receipt is required to build paper execution projection",
+                reason_code="registry_receipt_missing",
+            )
+        if not isinstance(deployment_plan_receipt, Mapping) or not deployment_plan_receipt:
+            raise PersonaProvisioningCoordinationError(
+                "Approved DeploymentPlan receipt is required to build paper execution projection",
+                reason_code="deployment_plan_receipt_missing",
+            )
+
+        symbols, _, _ = self._paper_universe(record)
+        explicit_market = self._explicit_market(record, symbols)
+        self._validate_registry(
+            registry_receipt,
+            ids,
+            state="approved",
+            registry_id=ids.strategy_artifact_id,
+            version=ids.version,
+            approval_decision_id=ids.strategy_artifact_approval_decision_id,
+            artifact_type="execution_bundle",
+            expected_market=explicit_market,
+        )
+        entry = deepcopy(dict(_registry_entry(registry_receipt)))
+        if (
+            entry.get("approval_decision_id") != ids.strategy_artifact_approval_decision_id
+            or not isinstance(entry.get("approved_at"), str)
+            or not str(entry.get("approved_at") or "").strip()
+        ):
+            raise PersonaProvisioningCoordinationError(
+                "Approved StrategyArtifact RegistryEntry is missing approval_decision_id or approved_at",
+                reason_code="registry_entry_unapproved",
+            )
+        entry_meta = (
+            dict(entry.get("metadata") or {})
+            if isinstance(entry.get("metadata"), Mapping)
+            else {}
+        )
+        raw_artifact = entry_meta.get("strategy_artifact")
+        if not isinstance(raw_artifact, Mapping):
+            raise PersonaProvisioningCoordinationError(
+                "StrategyArtifact RegistryEntry is missing metadata.strategy_artifact"
+            )
+        artifact = deepcopy(dict(raw_artifact))
+
+        try:
+            validate_strategy_artifact(artifact)
+        except StrategyArtifactValidationError as exc:
+            raise PersonaProvisioningCoordinationError(str(exc)) from exc
+
+        checksum = _artifact_checksum(artifact)
+        for artifact_field, registry_field in (
+            ("artifact_id", "registry_id"),
+            ("strategy_id", "strategy_id"),
+            ("version", "version"),
+        ):
+            if artifact.get(artifact_field) != entry.get(registry_field):
+                raise PersonaProvisioningCoordinationError(
+                    f"StrategyArtifact {artifact_field} does not match Registry"
+                )
+        if entry.get("checksum") != checksum:
+            raise PersonaProvisioningCoordinationError(
+                "StrategyArtifact checksum does not match approved Registry entry"
+            )
+
+        raw_plan_meta = deployment_plan_receipt.get("metadata")
+        plan_meta: dict[str, Any] = (
+            deepcopy(dict(raw_plan_meta))
+            if isinstance(raw_plan_meta, Mapping)
+            else {}
+        )
+        raw_rollback = deployment_plan_receipt.get("rollback")
+        rollback_map = raw_rollback if isinstance(raw_rollback, Mapping) else {}
+        if (
+            deployment_plan_receipt.get("plan_id") != ids.deployment_plan_id
+            or deployment_plan_receipt.get("approval_decision_id")
+            != ids.strategy_artifact_approval_decision_id
+            or deployment_plan_receipt.get("artifact_id") != ids.strategy_artifact_id
+            or deployment_plan_receipt.get("artifact_version") != ids.version
+            or deployment_plan_receipt.get("artifact_type") != "execution_bundle"
+            or deployment_plan_receipt.get("strategy_id") != ids.strategy_id
+            or deployment_plan_receipt.get("capital_pool_id") != ids.capital_pool_id
+            or deployment_plan_receipt.get("target_stage") != "paper"
+            or deployment_plan_receipt.get("status")
+            not in {"approved", "executing", "executed"}
+            or not isinstance(deployment_plan_receipt.get("created_at"), str)
+            or not str(deployment_plan_receipt.get("created_at") or "").strip()
+            or deployment_plan_receipt.get("binding_id") == ids.persona_capital_binding_id
+            or plan_meta.get("persona_capital_binding_id")
+            != ids.persona_capital_binding_id
+            or plan_meta.get("strategy_artifact_id") != ids.strategy_artifact_id
+            or rollback_map.get("target_artifact_id")
+            != ids.baseline_strategy_artifact_id
+            or rollback_map.get("target_version") != ids.baseline_version
+            or (
+                explicit_market is not None
+                and plan_meta.get("market") != explicit_market
+            )
+        ):
+            raise PersonaProvisioningCoordinationError(
+                "DeploymentPlan readback does not match approved paper admission",
+                reason_code="deployment_plan_invalid",
+            )
+        try:
+            plan_obj = DeploymentPlan.from_dict(deployment_plan_receipt)
+        except (KeyError, TypeError, ValueError, DeploymentPlanError) as exc:
+            raise PersonaProvisioningCoordinationError(
+                f"DeploymentPlan readback is incomplete or invalid: {exc}",
+                reason_code="deployment_plan_invalid",
+            ) from exc
+        plan_errors = plan_obj.validate()
+        if plan_errors:
+            raise PersonaProvisioningCoordinationError(
+                "DeploymentPlan readback validation failed: " + "; ".join(plan_errors),
+                reason_code="deployment_plan_invalid",
+            )
+
+        try:
+            projection = StagePlanner().build_execution_projection(plan_obj, entry)
+        except DeploymentPlanError as exc:
+            raise PersonaProvisioningCoordinationError(str(exc)) from exc
+
+        artifact_text = json.dumps(
+            artifact,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        object_store = (
+            deepcopy(dict(plan_meta.get("object_store")))
+            if isinstance(plan_meta.get("object_store"), Mapping)
+            else {}
+        )
+        object_store[projection.metadata_key] = projection.metadata
+        object_store[projection.artifact_key] = artifact_text
+
+        result: dict[str, Any] = {
+            "object_store": object_store,
+            "strategy_id": str(artifact["strategy_id"]),
+            "artifact_checksum": checksum,
+        }
+        parameters = (
+            artifact.get("parameters")
+            if isinstance(artifact.get("parameters"), Mapping)
+            else {}
+        )
+        symbol = str(plan_meta.get("symbol") or "").strip()
+        if symbol:
+            result["symbol"] = symbol
+        else:
+            symbols = parameters.get("symbols")
+            cleaned = (
+                [x.strip() for x in symbols if isinstance(x, str) and x.strip()]
+                if isinstance(symbols, list)
+                else []
+            )
+            if (
+                not isinstance(symbols, list)
+                or not cleaned
+                or len(cleaned) != len(symbols)
+                or len(set(cleaned)) != len(cleaned)
+            ):
+                raise PersonaProvisioningCoordinationError(
+                    "paper_plan_symbols_invalid: inline paper artifact requires an explicit symbol "
+                    "or a non-empty list of distinct approved symbols"
+                )
+            if len(cleaned) == 1:
+                result["symbol"] = cleaned[0]
+            else:
+                result["symbols"] = list(cleaned)
+
+        existing_policy = plan_meta.get("market_data_policy")
+        if isinstance(existing_policy, Mapping):
+            result["market_data_policy"] = deepcopy(dict(existing_policy))
+        else:
+            try:
+                minimum_closes = strategy_artifact_minimum_closes(artifact)
+            except (StrategyArtifactValidationError, KeyError, TypeError, ValueError) as exc:
+                raise PersonaProvisioningCoordinationError(
+                    f"minimum_closes cannot be derived: {exc}"
+                ) from exc
+            result["market_data_policy"] = {
+                "owner": "source-ingest",
+                "contract": "latest_stored_normalized",
+                "minimum_closes": minimum_closes,
+                "max_age_seconds": 86400,
+            }
+        return result
+
     def _coordinate_deployment_dispatch(
         self,
         record: ProvisioningRecord,
