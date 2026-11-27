@@ -5,6 +5,12 @@
   "root_cause_class": "WP2.3 daily persona-day probe / selection",
   "implementation_status": "blocked_pending_artifact_contract_revision",
   "source_base": "d8dd4db14",
+  "resumed_scope": {
+    "authorized_addition": "acceptance/test_pool_risk_snapshot_day.py",
+    "result": "Added a synthetic 2026-11-27 three-trader/one-servant regression for both personaPurpose and persona_purpose BFF field spellings. Three trading runtime summaries return risk rows with retained counts 3, 3, 8; the servant retains its paper binding and its telemetry route returns http_404.",
+    "reproduction": "Without the servant the verdict is pending; adding the servant changes it to failed with telemetry_summary_unreadable:http_404. Both parameter cases fail as expected on the unfixed selection. No runtime fix or hosted acceptance is claimed.",
+    "remaining_contract_gap": "The 2026-11-27 contract revision added the pool-risk test only. The three shared-rule implementation paths in required_contract_additions are still absent from the canonical contract."
+  },
   "findings": [
     "The controller is_daily_cycle_persona checks lifecycle and status only. reconcile_once passes the unfiltered owner list to PersonaCronRegistrar.reconcile_daily_cycles, which independently selects paper_owner, paper_running and consultable records. Changing only is_daily_cycle_persona cannot prevent registration or consumption of the servant's daily run.",
     "The existing persona_policy_resolver.evaluate_participant_action_capability contains every required advisory exclusion, plus origin=agora_advisor and consult_policy_id=consult-panel.non-trading. Its enrollment predicate must be reused without making cycle enrollment depend on capability snapshots, harness readiness, or policy resolution.",
@@ -31,13 +37,19 @@
     "next_action": "Add the three required paths through the existing governed artifact-contract command while blocked, then reopen and redispatch the same task. Do not create a replacement task."
   },
   "validation": {
-    "focused_suites": "not run; no runtime implementation retained",
+    "focused_suites": "Existing focused suites running; no runtime implementation retained. New regression reproduces the unfixed incident and is intentionally not reported as passed.",
+    "pool_risk_regression": {
+      "command": "timeout 120s uv run --no-project --with pytest python -m pytest -q acceptance/test_pool_risk_snapshot_day.py -k hosted_1127",
+      "exit_status": 1,
+      "result": "2 failed, 17 deselected; both fail at the expected pending verdict assertion after adding the advisory persona; the three-trader control returns pending",
+      "classification": "reproduced defect, not passing acceptance"
+    },
     "planned_command": "python3 -m pytest -q services/persona/test_persona_cycle_controller.py acceptance/test_persona_day.py services/control-plane/bff/personas/test_fleet_classification.py",
     "hosted_proof": "pending implementation, independent review, merge and deployment; persona-loop owner must record the next weekday cycle without a new servant packet and a three-trader persona-day verdict with the servant excluded"
   },
   "runtime_budget": {
     "new_writer": false,
-    "current_change": "one static task-scoped evidence file; no runtime code changed",
+    "current_change": "one static task-scoped evidence file and two parameter cases in the existing pool-risk test; no runtime code changed, new recurring job, emitter or persistent runtime writer",
     "planned_cadence": "existing daily-cycle poll and weekday 10:00Z cycle unchanged",
     "planned_size_and_count_at_hosted_scale": "three trading personas retained; one erroneous failed packet per advisory persona per weekday removed; pool and binding counts unchanged",
     "planned_growth_per_day": "no added runtime bytes or records; removes one failed cycle packet per advisory persona per weekday",
