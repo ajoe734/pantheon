@@ -1001,8 +1001,16 @@ def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
     assert fixed_defect_for_skip_reason(ANYOF_SKIP_REASON) == codes["adapter_anyof_schema_mismatch"]
     assert fixed_defect_for_skip_reason(BUDGET_BREACH_SKIP_REASON) == codes["client_interactive_token_budget_breach"]
     assert fixed_defect_for_skip_reason(ABSTENTION_MAXLEN_SKIP_REASON) == codes["prompt_unstated_abstention_max_length"]
+    for generic in ("first run", "first-run", "who are you", "who am i", "user.md"):
+        assert generic not in FIRST_RUN_RITUAL_MARKERS, generic
     for ritual_reason in (
         FIRST_RUN_RITUAL_SKIP_REASON,
+        "no_hypothesis: Workspace setup is still open — what should we call each other?",
+        "no_hypothesis: Workspace setup is still pending; before we begin, how should we call each other?",
+        "no_hypothesis: Setup is still open. You can call me Wren.",
+        "no_hypothesis: Setup is still open for this workspace, so I have not extracted the article yet.",
+        "no_hypothesis: First-time setup is not complete yet; you can call me Slate.",
+        "no_hypothesis: I\u2019d go by Finch, a calm, direct AI assistant \U0001f426. Does that work for you?",
         "no_hypothesis: 本次工作階段無法安全完成 BOOTSTRAP.md",
         "no_hypothesis: 請問該怎麼稱呼你？",
         "no_hypothesis: Hey. I just came online. Who am I? Who are you?",
@@ -1022,6 +1030,10 @@ def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
         "no_hypothesis: not_testable",
         "no_hypothesis: no_text",
         "no_hypothesis: The article reports quarterly earnings without stating a testable market mechanism.",
+        "no_hypothesis: The article describes cybersecurity requirements but does not link them to a testable market outcome.",
+        "no_hypothesis: The paper reports the experiment's first run without a testable market hypothesis.",
+        "no_hypothesis: The commentary asks 'who are you to time the market' and 'who am I to judge rates' with no testable mechanism.",
+        "no_hypothesis: The release note only updates docs/user.md and states no testable market outcome.",
         "no_hypothesis: 純粹法說會日期與股利公告，未提出可檢驗的市場假說或因果機制。",
         "hypothesis_rejected: citation_unverifiable: span 0 offsets out of range",
         "hypothesis_extraction_failed: invalid_schema: Additional properties are not allowed ('route' was unexpected)",
@@ -1032,11 +1044,12 @@ def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
         "l2_extraction_attempts_exhausted: 6 calls; last: timeout",
         MARKET_SOURCE_SKIP_REASON,
     ):
+        assert not has_first_run_ritual_marker(str(non_eligible or "")), non_eligible
         assert fixed_defect_for_skip_reason(non_eligible) is None, non_eligible
 
-    # Hosted backlog: 130 sources need 130 calls (one re-attempt each), 1 day under 400/day cap.
-    assert HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG == 130
-    assert HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS == 130
+    # Hosted backlog: 130 (#7939) + 60 (ritual no_hypothesis) = 190 sources (190 calls), 1 day under 400/day cap.
+    assert HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG == 190
+    assert HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS == 190
     assert HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS == 1
     assert HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS <= DEFAULT_DAILY_CALL_CAP
 
@@ -1205,23 +1218,26 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
     worker, queue, ledger, _ = _queue_worker(tmp_path, transport, cap=10, clock=clock)
 
     seed_closed_en = (
-        "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
-        "First-run setup is pending, so I haven't extracted the document yet. what should I call you?"
+        "no_hypothesis: Workspace setup is still open — I\u2019d go by Finch. "
+        "What should we call each other?"
     )
     seed_closed_zh = (
-        "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
-        "請問該怎麼稱呼你？尚未萃取文章。"
+        "no_hypothesis: 請問該怎麼稱呼你？尚未萃取文章。"
+    )
+    genuine_skip = (
+        "no_hypothesis: The article describes cybersecurity requirements "
+        "but does not link them to a testable market outcome."
     )
     for sid, skip_reason, ts in (
         ("ritual-en", seed_closed_en, 100.0),
         ("ritual-zh", seed_closed_zh, 110.0),
-        (
-            "genuine-abstained",
-            "no_hypothesis: The article reports quarterly revenue without stating a testable mechanism.",
-            120.0,
-        ),
+        ("genuine-abstained", genuine_skip, 120.0),
     ):
         job = queue.enqueue_source_record(_source(sid, body=BODY), enqueued_at=ts)
+        # Seed the historical ledger attempt and no_hypothesis outcome as written on 2026-11-26.
+        assert ledger.reserve_attempt(sid, job.source_digest) == hypothesis_card.RESERVED
+        ledger.record(sid, "no_hypothesis", skip_reason.removeprefix("no_hypothesis: "))
+        assert ledger.can_attempt(sid, job.source_digest) == hypothesis_card.RESERVED
         claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=ts, job_ids=[job.job_id])[0]
         started = queue.begin_job(claimed, lease_seconds=30, now=ts)
         queue.mark_skipped(started.job_id, reason=skip_reason, processed_at=ts, claim_token=started.lease_token)
@@ -1233,11 +1249,36 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
     assert queue.get("ritual-en").status == "done"
     assert queue.get("ritual-zh").status == "done"
     assert queue.get("genuine-abstained").status == "skipped"
-    assert "without stating a testable mechanism" in (queue.get("genuine-abstained").skip_reason or "")
+    assert queue.get("genuine-abstained").skip_reason == genuine_skip
 
     # Second run_pending never re-attempts again.
     assert worker.run_pending().processed == 0
     assert called_ids == ["ritual-en", "ritual-zh"]
+
+    # Genuine abstention mentioning "first run", "who are you", "who am I", or "user.md"
+    # is recorded as no_hypothesis by HypothesisExtractor, never misclassified as failed.
+    genuine_reason = (
+        "The paper reports the experiment's first run, asks 'who are you' and 'who am I' "
+        "rhetorically, and cites docs/user.md without a testable market mechanism."
+    )
+    extractor = HypothesisExtractor(
+        SemanticExtractionClient(
+            transport_fn=lambda _: {
+                "output": {
+                    "structured_data": {
+                        "is_abstained": True,
+                        "abstention_reason": genuine_reason,
+                        "hypothesis_card": None,
+                    },
+                    "usage": {"input_tokens": 900, "output_tokens": 45},
+                }
+            }
+        ),
+        ExtractionLedger(daily_cap=10),
+    )
+    outcome = extractor.extract(_source("genuine-first-run-exp", body=BODY), digest="d1")
+    assert outcome.status == "no_hypothesis"
+    assert outcome.detail == genuine_reason
 
 
 def test_defect_closed_record_failing_with_defect_again_is_not_reattempted_twice(tmp_path):

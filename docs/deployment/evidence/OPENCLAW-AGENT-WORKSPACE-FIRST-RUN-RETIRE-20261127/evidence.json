@@ -4,7 +4,7 @@
   "class": "RC2",
   "owner": "Antigravity2",
   "reviewer": "Claude",
-  "recorded_at_utc": "2026-11-27T06:19:00Z",
+  "recorded_at_utc": "2026-11-27T07:16:00Z",
   "ac1_skip_bootstrap_and_gateway_source_citations": {
     "config_entry": {
       "path": "agents.defaults.skipBootstrap",
@@ -129,16 +129,31 @@
       "hypothesis_extraction_failed:"
     ],
     "case_insensitive": true,
-    "markers": [
+    "apostrophe_normalization": "U+2019 (’) / U+2018 (‘) / U+02BC (ʼ) normalized to ASCII ' before matching",
+    "hosted_ritual_closed_source_backlog": 60,
+    "hosted_ritual_outbox_rows_matched": "126 of 126 ritual rows out of 157 total no_hypothesis:% outbox rows measured read-only on hosted at 2026-11-27T06:45Z (0 false positives on 31 genuine abstentions)",
+    "hosted_defect_closed_source_backlog_cumulative": 190,
+    "hosted_defect_reattempt_expected_calls": 190,
+    "hosted_defect_reattempt_expected_days": 1,
+    "markers_sample": [
       "bootstrap.md",
       "identity.md",
-      "user.md",
-      "fresh workspace",
-      "just came online",
+      "soul.md",
+      "identity.md and user.md",
+      "first-run setup",
+      "first-time setup",
+      "workspace setup is still open",
+      "workspace setup is still pending",
+      "setup is still open",
+      "what should we call each other",
+      "call each other",
+      "you can call me",
       "who am i? who are you?",
-      "figure out who i am"
+      "figure out who i am",
+      "just came online",
+      "i'd go by"
     ],
-    "extractor_and_matcher_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason while rejecting genuine abstentions, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
+    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
   },
   "ac5_discovery_pipeline_release_probe": {
     "probe_file": "acceptance/discovery_pipeline_day.py",
@@ -158,22 +173,15 @@
         "finding": "Consult panel workspaces (workspaces/consult-*) still run on the stock '# SOUL.md - Who You Are' template after stock BOOTSTRAP.md is retired; Pantheon-authored consult panel SOUL.md / AGENTS.md templates belong to the persona-loop domain.",
         "owning_domain": "Persona loop / OpenClaw consultation",
         "register_class": "RC2"
-      },
-      {
-        "finding": "DistillationJobQueue.reattempt_fixed_defect_records in services/source_ingestion/distillation_worker.py:2770 (outside this task's declared artifacts contract) pre-filters distillation_outbox in SQL with AND skip_reason LIKE 'hypothesis_extraction_failed:%' before calling fixed_defect_for_skip_reason(row['skip_reason']); widening that SQL predicate with OR skip_reason LIKE 'no_hypothesis:%' is needed for the SQL scan to reach the 52 historical no_hypothesis rows from 2026-11-26 12:51Z..2026-11-27 05:30Z.",
-        "owning_domain": "L2 / source ingestion",
-        "register_class": "RC2"
       }
     ]
   },
   "verification": {
     "commands": [
-      ".venv-pantheon/bin/pytest -q scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py acceptance/test_discovery_pipeline_day.py services/source_ingestion/tests/test_hypothesis_extraction.py -k 'not test_both_routes_the_probe_reads_are_get_routes_of_the_real_bff_application'",
-      ".venv-pantheon/bin/pytest -q services/source_ingestion/tests/test_distillation_worker.py"
+      ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_distillation_worker.py scripts/test_openclaw_shared_model_pool_contract.py scripts/test_openclaw_isolated_model_bootstrap.py acceptance/test_discovery_pipeline_day.py -k 'not test_both_routes_the_probe_reads_are_get_routes_of_the_real_bff_application'"
     ],
     "results": {
-      "batch_1": "173 passed",
-      "batch_2": "76 passed"
+      "focused_suite": "249 passed, 1 deselected"
     }
   }
 }

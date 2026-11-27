@@ -852,6 +852,11 @@ class DistillationJobQueue:
                 "ALTER TABLE distillation_outbox ADD COLUMN defect_reattempted INTEGER NOT NULL DEFAULT 0"
             )
         self._migrate_terminal_counts(connection)
+        defect_idx = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'distillation_outbox_defect_reattempt_idx'"
+        ).fetchone()
+        if defect_idx is not None and "no_hypothesis:%" not in str(defect_idx["sql"] or ""):
+            connection.execute("DROP INDEX IF EXISTS distillation_outbox_defect_reattempt_idx")
         # Indexes support the bounded claim, lease recovery, pruning and the
         # per-tick readbacks; none of them may require a sort or a scan that
         # grows with total history.
@@ -871,7 +876,8 @@ class DistillationJobQueue:
             """CREATE INDEX IF NOT EXISTS distillation_outbox_defect_reattempt_idx
                ON distillation_outbox(enqueued_at)
                WHERE status = 'skipped' AND defect_reattempted = 0
-                 AND skip_reason LIKE 'hypothesis_extraction_failed:%'""",
+                 AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
+                      OR skip_reason LIKE 'no_hypothesis:%')""",
             # Exact (source_id, source_digest) readbacks (get/claim/due_tenants)
             # would otherwise scan the whole outbox for every lookup.
             """CREATE INDEX IF NOT EXISTS distillation_outbox_source_version_idx
@@ -2726,7 +2732,7 @@ class DistillationJobQueue:
         Only ``skipped`` rows with ``defect_reattempted = 0`` that are still the
         newest outbox version of their source and whose ``skip_reason`` matches
         ``FIXED_DEFECT_REATTEMPT_OUTCOMES`` are eligible. Irrelevant,
-        admission-denied (redaction) and model-abstained records never match.
+        admission-denied (redaction) and genuine model-abstained records never match.
         Stamped with ``defect_reattempted = 1`` so ``claim_due`` orders them
         after fresh records and they are never re-opened a second time.
         """
@@ -2767,7 +2773,8 @@ class DistillationJobQueue:
                      WHERE status = 'skipped'
                        AND defect_reattempted = 0
                        AND pruned_at IS NULL
-                       AND skip_reason LIKE 'hypothesis_extraction_failed:%'
+                       AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
+                            OR skip_reason LIKE 'no_hypothesis:%')
                        {tenant_clause}
                        AND NOT EXISTS (
                            SELECT 1

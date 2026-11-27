@@ -1628,57 +1628,93 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
     def test_reattempt_fixed_defect_records_reopens_ritual_defect_once_and_keeps_genuine_abstentions_closed(
         self, tmp_path: Path
     ) -> None:
-        from services.source_ingestion.hypothesis_card import fixed_defect_for_skip_reason
+        from services.source_ingestion.hypothesis_card import (
+            RESERVED,
+            ExtractionLedger,
+            fixed_defect_for_skip_reason,
+        )
 
         queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        ledger = ExtractionLedger(tmp_path / "ledger.sqlite3", daily_cap=400)
         ritual_no_hyp_reason = (
-            "no_hypothesis: First-run setup is pending, so I haven't extracted the document yet. "
-            "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+            "no_hypothesis: Workspace setup is still open — I\u2019d go by Finch, "
+            "a calm, direct AI assistant \U0001f426. What should we call each other?"
         )
         ritual_failed_reason = (
             "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
-            "First-run setup is pending, so I haven't extracted the document yet. "
-            "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+            "First-time setup is pending, so I haven't extracted the document yet. "
+            "You can call me Finch; what should I call you?"
         )
-        genuine_reason = "no_hypothesis: The document summarizes earnings dates with no testable hypothesis."
+        genuine_reason = (
+            "no_hypothesis: The article describes cybersecurity requirements "
+            "but does not link them to a testable market outcome."
+        )
+        genuine_first_run_reason = (
+            "no_hypothesis: The paper reports the experiment's first run without a testable market hypothesis."
+        )
         assert fixed_defect_for_skip_reason(ritual_no_hyp_reason) is not None
         assert fixed_defect_for_skip_reason(ritual_no_hyp_reason).code == "openclaw_workspace_first_run_ritual"
         assert fixed_defect_for_skip_reason(ritual_failed_reason) is not None
         assert fixed_defect_for_skip_reason(ritual_failed_reason).code == "openclaw_workspace_first_run_ritual"
         assert fixed_defect_for_skip_reason(genuine_reason) is None
+        assert fixed_defect_for_skip_reason(genuine_first_run_reason) is None
 
-        ritual_job = queue.enqueue_source_record(
-            _normalized_source("src-ritual-closed", tenant_id="default"), enqueued_at=100.0
+        ritual_no_hyp_job = queue.enqueue_source_record(
+            _normalized_source("src-ritual-no-hyp", tenant_id="default"), enqueued_at=100.0
+        )
+        ritual_failed_job = queue.enqueue_source_record(
+            _normalized_source("src-ritual-failed", tenant_id="default"), enqueued_at=105.0
         )
         genuine_job = queue.enqueue_source_record(
             _normalized_source("src-genuine-closed", tenant_id="default"), enqueued_at=110.0
         )
+        genuine_first_run_job = queue.enqueue_source_record(
+            _normalized_source("src-genuine-first-run", tenant_id="default"), enqueued_at=115.0
+        )
+        # Seed historical ledger outcome = no_hypothesis after 1 attempt, and confirm can_attempt == RESERVED.
+        assert ledger.reserve_attempt("src-ritual-no-hyp", ritual_no_hyp_job.source_digest) == RESERVED
+        ledger.record("src-ritual-no-hyp", "no_hypothesis", ritual_no_hyp_reason.removeprefix("no_hypothesis: "))
+        assert ledger.can_attempt("src-ritual-no-hyp", ritual_no_hyp_job.source_digest) == RESERVED
+
         with sqlite3.connect(queue.path) as conn:
-            conn.execute(
-                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=100.0 WHERE job_id=?",
-                (ritual_failed_reason, ritual_job.job_id),
-            )
-            conn.execute(
-                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=110.0 WHERE job_id=?",
-                (genuine_reason, genuine_job.job_id),
-            )
+            idx_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='distillation_outbox_defect_reattempt_idx'"
+            ).fetchone()[0]
+            assert "no_hypothesis:%" in idx_sql
+            for job, reason, ts in (
+                (ritual_no_hyp_job, ritual_no_hyp_reason, 100.0),
+                (ritual_failed_job, ritual_failed_reason, 105.0),
+                (genuine_job, genuine_reason, 110.0),
+                (genuine_first_run_job, genuine_first_run_reason, 115.0),
+            ):
+                conn.execute(
+                    "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=? WHERE job_id=?",
+                    (reason, ts, job.job_id),
+                )
 
         reopened = queue.reattempt_fixed_defect_records(
-            requested_by="ctl", tenant_id="default", now=200.0
+            requested_by="ctl", tenant_id="default", now=200.0, ledger=ledger
         )
-        assert reopened == [ritual_job.job_id]
-        assert queue.get("src-ritual-closed").status == DistillationJobStatus.PENDING
+        assert reopened == [ritual_no_hyp_job.job_id, ritual_failed_job.job_id]
+        assert queue.get("src-ritual-no-hyp").status == DistillationJobStatus.PENDING
+        assert queue.get("src-ritual-failed").status == DistillationJobStatus.PENDING
         assert queue.get("src-genuine-closed").status == DistillationJobStatus.SKIPPED
         assert queue.get("src-genuine-closed").skip_reason == genuine_reason
+        assert queue.get("src-genuine-first-run").status == DistillationJobStatus.SKIPPED
+        assert queue.get("src-genuine-first-run").skip_reason == genuine_first_run_reason
 
         # Even if closed again with ritual text, defect_reattempted=1 prevents a second re-open.
         with sqlite3.connect(queue.path) as conn:
             conn.execute(
                 "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
-                (ritual_failed_reason, ritual_job.job_id),
+                (ritual_no_hyp_reason, ritual_no_hyp_job.job_id),
+            )
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
+                (ritual_failed_reason, ritual_failed_job.job_id),
             )
         assert queue.reattempt_fixed_defect_records(
-            requested_by="ctl", tenant_id="default", now=300.0
+            requested_by="ctl", tenant_id="default", now=300.0, ledger=ledger
         ) == []
 
 

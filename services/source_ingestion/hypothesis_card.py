@@ -597,27 +597,55 @@ UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_b
 
 
 # Checked-in first-run ritual markers (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
-# Matched case-insensitively against no_hypothesis abstention reasons and L2 ledger
-# event details so the 52 sources closed by OpenClaw's stock BOOTSTRAP.md ritual
-# since 2026-11-26 12:51Z are re-attempted once while genuine abstentions stay closed.
+# Matched case-insensitively (after normalizing curly apostrophes ’/‘/ʼ to ') against
+# no_hypothesis abstention reasons and L2 ledger event details so the 60 sources
+# (126 ritual rows out of 157 no_hypothesis:% outbox rows measured 2026-11-27 06:45Z)
+# closed by OpenClaw's stock BOOTSTRAP.md ritual since 2026-11-26 12:51Z are
+# re-attempted once while genuine abstentions stay closed.
 FIRST_RUN_RITUAL_MARKERS: tuple[str, ...] = (
     "bootstrap.md",
     "identity.md",
-    "user.md",
     "soul.md",
-    "first-run",
-    "first run",
+    "identity.md and user.md",
+    "user.md and identity.md",
+    "update user.md",
+    "fill in user.md",
+    "complete user.md",
+    "user.md - about your human",
+    "first-run setup",
+    "first run setup",
+    "first-run ritual",
+    "first run ritual",
+    "first-run bootstrap",
+    "first run bootstrap",
+    "first-run workspace",
+    "first run workspace",
+    "first-time setup",
+    "first time setup",
+    "workspace setup is still open",
+    "workspace setup is still pending",
+    "workspace setup is pending",
+    "workspace setup is open",
+    "setup is still open",
+    "setup is still pending",
+    "setup is pending",
     "bootstrap is still pending",
     "bootstrap is pending",
     "bootstrap pending",
     "bootstrap setup",
     "bootstrap ritual",
+    "bootstrap workflow",
+    "fresh workspace",
     "what should i call you",
     "what to call you",
+    "what should we call each other",
+    "call each other",
+    "you can call me",
     "how should i address you",
     "how to address you",
-    "who am i",
-    "who are you",
+    "who am i? who are you?",
+    "figure out who i am",
+    "who i am and who you are",
     "just came online",
     "just woke up",
     "i'd go by",
@@ -632,9 +660,13 @@ FIRST_RUN_RITUAL_MARKERS: tuple[str, ...] = (
 )
 
 
+def _normalize_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'").replace("\u02bc", "'")
+
+
 def has_first_run_ritual_marker(text: str | None) -> bool:
     """True when ``text`` carries any OpenClaw stock first-run ritual marker."""
-    haystack = str(text or "").strip().lower()
+    haystack = _normalize_apostrophes(str(text or "")).strip().lower()
     if not haystack:
         return False
     return any(marker in haystack for marker in FIRST_RUN_RITUAL_MARKERS)
@@ -665,19 +697,20 @@ class FixedDefectOutcome:
         prefixes = self.skip_reason_prefixes or (self.skip_reason_prefix,)
         if not any(text.startswith(prefix) for prefix in prefixes):
             return False
-        haystack = text.lower() if self.case_insensitive else text
+        normalized = _normalize_apostrophes(text) if self.case_insensitive else text
+        haystack = normalized.lower() if self.case_insensitive else normalized
         req = (
-            tuple(needle.lower() for needle in self.required_substrings)
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.required_substrings)
             if self.case_insensitive
             else self.required_substrings
         )
         any_s = (
-            tuple(needle.lower() for needle in self.any_substrings)
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.any_substrings)
             if self.case_insensitive
             else self.any_substrings
         )
         excl = (
-            tuple(needle.lower() for needle in self.excluded_substrings)
+            tuple(_normalize_apostrophes(needle).lower() for needle in self.excluded_substrings)
             if self.case_insensitive
             else self.excluded_substrings
         )
@@ -690,18 +723,19 @@ class FixedDefectOutcome:
         return True
 
 
-# Hosted backlog (2026-11-26 15:05Z, backend b0eb2c259): 130 sources have a
-# defect-closed row as their newest outbox version (from 302 anyOf rows across
-# 141 sources, 31 budget_breach rows across 25 sources, and 4 abstention_reason
-# maxLength rows). One re-attempt per newest version needs 130 model calls
-# (32.5% of the 400-call daily cap), draining in 1 day alongside up to 270
-# fresh relevant records (or 1-2 days if fresh relevant volume exceeds 270
-# calls on day 1, or up to 390 calls on day 1 / 650 calls over 2 days if
-# transient provider timeouts trigger per-record retries up to 3/day, 6/total).
-# Plus 52 distinct sources closed no_hypothesis with first-run ritual text
-# between 2026-11-26 12:51Z and 2026-11-27 05:30Z (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
-HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 130
-HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 130
+# Hosted backlog: 130 sources from DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126
+# (2026-11-26 15:05Z, backend b0eb2c259: 302 anyOf rows across 141 sources,
+# 31 budget_breach rows across 25 sources, and 4 abstention_reason maxLength rows)
+# plus 60 distinct sources (126 ritual rows out of 157 no_hypothesis:% rows
+# measured 2026-11-27 06:45Z) closed no_hypothesis with first-run ritual text
+# since 2026-11-26 12:51Z (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127)
+# = 190 cumulative defect-closed sources across FIXED_DEFECT_REATTEMPT_OUTCOMES.
+# One re-attempt per newest version needs at most 190 model calls (47.5% of the
+# 400-call daily cap; 60 calls for the current ritual backlog alone), draining
+# in 1 day alongside up to 210 fresh relevant records (or 1-2 days if fresh
+# volume or transient retries exceed the day-1 remainder).
+HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 190
+HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 190
 HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS = 1
 
 FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
@@ -745,7 +779,7 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         description=(
             "OpenClaw stock first-run ritual (BOOTSTRAP.md plus stock IDENTITY/USER/SOUL) "
             "was injected into workspace-structured-extraction before skipBootstrap and "
-            "workspace retirement, closing 52 sources as no_hypothesis with ritual text"
+            "workspace retirement, closing 60 sources as no_hypothesis with ritual text"
         ),
         skip_reason_prefix="no_hypothesis:",
         skip_reason_prefixes=("no_hypothesis:", "hypothesis_extraction_failed:"),
