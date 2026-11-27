@@ -629,6 +629,7 @@ def train_or_evaluate_trader_strategy(
         "version": semver,
         "decision_count": decision_count,
         "minimum_decisions_required": MIN_TRADER_DECISIONS_FOR_IMITATION,
+        "evidence_kinds": sorted({v.interaction_kind for v in usable if v.interaction_kind}),
         "dataset_version_id": usable[-1].dataset_version_id,
         "dataset_ref": {
             "id": dataset_id,

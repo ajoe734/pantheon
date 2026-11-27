@@ -1,0 +1,132 @@
+{
+  "task_id": "IMITATION-TRADER-SHADOW-COMPARISON-20261127",
+  "title": "The servant imitates the trader in shadow and the trader sees how close it is",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "recorded_at": "2026-11-27T20:07:30Z",
+  "delivery_state": "merged",
+  "root_cause_class": "RC4 (Agora: the trading servant does not serve the human trader — SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §8, §12 T10)",
+  "declared_dependencies": {
+    "AGORA-DECISION-EVIDENCE-KINDS-20261127": {
+      "status": "done",
+      "pr": 7945,
+      "merge_commit": "9c085f273"
+    },
+    "AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127": {
+      "status": "done",
+      "pr": 7969,
+      "merge_commit": "50a65493c"
+    }
+  },
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_persistent_writers": 0,
+    "existing_scheduler_reused": "policy-learning-shadow-eval-scheduler (hourly tick calling POST /api/policy-learning/worker/process -> run_worker_cycle)",
+    "existing_writer_registered": "policy_learning.candidates in docs/operations/storage-manifest.json",
+    "cadence": "hourly (inside existing policy-learning-shadow-eval-scheduler cycle)",
+    "size_per_candidate_bytes": 4096,
+    "cap_per_trader_strategy": 3,
+    "count_at_hosted_scale": "at most 3 candidates per (trader, strategy), <= 90 candidates (~360 KB) at 10 traders x 3 strategies",
+    "growth_per_day": "0 B/day at cap (older candidate versions beyond 3 per (trader, strategy) are deleted in place by store.prune_trader_behaviour_candidates)",
+    "cleanup": "store.prune_trader_behaviour_candidates(tenant_id, user_id, strategy_id, max_keep=3) deletes older versions beyond the 3 most recent per (trader, strategy) on every training cycle"
+  },
+  "acceptance": {
+    "ac1_one_behaviour_candidate_per_trader_and_strategy_after_approval_and_30_decisions": {
+      "status": "verified",
+      "module": "services/policy-learning/trader_imitation.py",
+      "evidence_kinds_consumed": [
+        "decision",
+        "rejection",
+        "deferral",
+        "intervention"
+      ],
+      "minimum_decisions_required": 30,
+      "below_threshold_state": "not_enough_decisions",
+      "approval_gate": "awaiting_training_approval until approved via POST /api/policy-learning/trader-imitation/approvals or approved policy-learning job",
+      "trainer": "services/learning/imitation/bc_trainer.py (train_bc, attach_step_probabilities) + services/learning/imitation/offline_evaluator.py (evaluate_policy)"
+    },
+    "ac2_trader_imitation_arm_added_to_new_decision_locks_and_settled_with_others": {
+      "status": "verified",
+      "decision_lock_builder": "services/agora/shadow_mode.py (build_decision_lock writes arms.trader_imitation and optional_alt_versions.trader_imitation)",
+      "agora_owner_enrichment": "services/agora/service.py (AgoraWriteService._attach_trader_imitation_arm)",
+      "evaluation_settlement": "services/evaluation/attribution/settlement.py (TRADER_IMITATION_ARM='trader_imitation', settle_decision_lock settles trader_imitation with the same data_cutoff, cost_model, and observation_window as human_actual, private_servant, base_strategy, committee_variant)"
+    },
+    "ac3_agreement_and_gap_carry_1000_resample_bootstrap_intervals_and_zero_interval_labelled_luck": {
+      "status": "verified",
+      "module": "services/evaluation/attribution/decomposition.py (bootstrap_luck_interval, compare_trader_imitation)",
+      "resamples": 1000,
+      "zero_inside_label": "luck",
+      "zero_inside_label_zh": "可能是運氣",
+      "finding_stated_when_zero_inside": false,
+      "computation_mode": "deterministic_python_math_only"
+    },
+    "ac4_runs_in_existing_hourly_shadow_eval_scheduler_and_keeps_at_most_3_candidates": {
+      "status": "verified",
+      "scheduler": "policy-learning-shadow-eval-scheduler -> POST /api/policy-learning/worker/process -> run_worker_cycle -> run_trader_imitation_training_cycle",
+      "max_candidates_per_trader_strategy": 3,
+      "pruning_method": "store.prune_trader_behaviour_candidates(tenant_id, user_id, strategy_id, max_keep=3)"
+    },
+    "ac5_dead_learning_imitation_service_and_cloudbuild_entry_removed_or_documented_as_not_run": {
+      "status": "verified",
+      "cloudbuild_yaml": "Removed DOCKERFILES[imitation-worker]='services/learning/imitation/Dockerfile' from cloudbuild.yaml and documented that services/learning/imitation/ is not built or deployed as a service",
+      "service_documentation": "services/learning/imitation/README.md and services/learning/imitation/worker.py document that services/learning/imitation/ is an offline LP-002 smoke harness and is not run as a runtime worker (idle sleep loop removed)"
+    },
+    "ac6_owner_scoped_agora_read_returns_comparison_for_trader": {
+      "status": "verified",
+      "routes": [
+        "GET /bff/agora/trading-room/imitation-comparison",
+        "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison"
+      ],
+      "owner_scoping": "Strictly scoped to caller (tenant_id, user_id) in TradingRoomService.get_trader_imitation_comparison; foreign traders and operators cannot read another trader's imitation comparison on this route",
+      "openapi_spec": "services/control-plane/openapi/agora_v1_14.openapi.yaml"
+    },
+    "ac7_hosted_proof": {
+      "status": "pending_deploy",
+      "expected_hosted_dev_state": "not_enough_decisions (when dev trader has < 30 decisions) or ready (when >= 30 decisions and trained candidate exists)",
+      "note": "Delivery state is 'merged', not 'deployed' or 'accepted'. Hosted dev currently serves an older BFF commit prior to this PR's merge; after merge and dev deploy, GET /bff/agora/trading-room/imitation-comparison for the dev trader returns comparison_state='not_enough_decisions' (with minimum_decisions_required=30) or 'ready' (with 1,000-resample bootstrap intervals and luck labels). Verified end-to-end in-process via test_trader_imitation_comparison_not_enough_decisions_under_30 and test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolation."
+    }
+  },
+  "artifacts_changed": [
+    "cloudbuild.yaml",
+    "services/learning/imitation/README.md",
+    "services/learning/imitation/worker.py",
+    "services/policy-learning/trader_imitation.py",
+    "services/policy-learning/store.py",
+    "services/policy-learning/main.py",
+    "services/policy-learning/tests/test_trader_imitation_candidates.py",
+    "services/agora/shadow_mode.py",
+    "services/agora/service.py",
+    "services/evaluation/attribution/__init__.py",
+    "services/evaluation/attribution/settlement.py",
+    "services/evaluation/attribution/decomposition.py",
+    "services/evaluation/tests/test_shadow_settlement.py",
+    "services/control-plane/bff/agora/trading_room/service.py",
+    "services/control-plane/bff/agora/trading_room/routes/decisions.py",
+    "services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py",
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "docs/bff/contract_snapshots/route-diff-baseline.json",
+    "docs/operations/storage-manifest.json",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/IMITATION-TRADER-SHADOW-COMPARISON-20261127/evidence.json"
+  ],
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/policy-learning/tests/test_trader_imitation_candidates.py services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py services/policy-learning/tests/test_agora_handoff_drainer.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/evaluation/tests/",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/control-plane/bff/tests/test_agora_shadow_mode.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_bff_route_diff.py scripts/test_agora_bundle_digests.py scripts/test_agora_compat_manifest.py"
+    ],
+    "results": {
+      "storage_manifest_check": "passed: true (378 entries, 0 failures)",
+      "policy_learning_tests": "32 passed",
+      "evaluation_tests": "60 passed",
+      "bff_shadow_comparison_tests": "27 passed",
+      "contract_and_bundle_digest_tests": "42 passed (7 in test_bff_route_diff.py + 35 in test_agora_bundle_digests.py and test_agora_compat_manifest.py)"
+    }
+  },
+  "residual_findings": []
+}
