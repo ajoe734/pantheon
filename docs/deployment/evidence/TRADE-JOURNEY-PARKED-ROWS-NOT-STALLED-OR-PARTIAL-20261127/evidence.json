@@ -1,0 +1,968 @@
+{
+  "task_id": "TRADE-JOURNEY-PARKED-ROWS-NOT-STALLED-OR-PARTIAL-20261127",
+  "source": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/trade-journey-readable-20261120/parked-expired-20261127/hosted_trade_journey_bodies_20261127T2350Z.json",
+  "source_sha256": "0104c6dbe7186780ec17c24e56f248682bac91f29689e67f303d7c9f0d1f39e0",
+  "recorded_hosted_bodies": {
+    "captured_from": "https://api.dev.mvl-cap.tw (hosted dev serving 2c72f5e28)",
+    "details": {
+      "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a": {
+        "data": {
+          "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+          "broker_order_id": null,
+          "candidate_id": null,
+          "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+          "client_order_id": null,
+          "completeness": {
+            "complete": false,
+            "missing_stages": [
+              "research_rationale",
+              "strategy_candidate",
+              "candidate_evaluation",
+              "promotion_decision",
+              "capital_binding",
+              "deployment_runtime",
+              "signal_generation"
+            ]
+          },
+          "created_at": "2026-11-25T07:00:55.000000Z",
+          "current_stage": "trade_decision",
+          "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f",
+          "diagnostics": [
+            {
+              "code": "clock_drift",
+              "event_ids": [
+                "86048c57-6e1f-54e3-b73e-229faddd890d:trade_decision",
+                "9c1e5e4b-8f60-5a4c-9e23-f84a94871a81:trade_decision"
+              ],
+              "max_abs_seconds": 232189.361142,
+              "threshold_seconds": 5.0
+            },
+            {
+              "code": "missing_stages",
+              "stages": [
+                "signal_generation"
+              ]
+            },
+            {
+              "attention": false,
+              "code": "upstream_lineage_unlinked",
+              "stages": [
+                "research_rationale",
+                "strategy_candidate",
+                "candidate_evaluation",
+                "promotion_decision",
+                "capital_binding",
+                "deployment_runtime"
+              ]
+            }
+          ],
+          "environment": "paper",
+          "event_count": 1,
+          "filled_quantity": null,
+          "flags": {
+            "blocked": false,
+            "mismatch": false,
+            "orphan": false,
+            "rejected": false,
+            "stalled": false,
+            "waiting_human": false
+          },
+          "graph_edges": [],
+          "identifiers": {
+            "artifact_id": [
+              "artifact-persona-pool-a81b4fd15944698341aa-v2"
+            ],
+            "artifact_version": [
+              "1.2.0"
+            ],
+            "binding_id": [
+              "rb-2b0df30559154a93902c209b0318d95c"
+            ],
+            "capital_pool_id": [
+              "pool-persona-paper-a81b4fd15944698341aa"
+            ],
+            "decision_id": [
+              "dec-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f"
+            ],
+            "persona_capital_binding_id": [
+              "pcb-persona-paper-a81b4fd15944698341aa"
+            ],
+            "persona_id": [
+              "persona-ee7112a829d38b9135ac"
+            ],
+            "plan_id": [
+              "plan-persona-pool-a81b4fd15944698341aa-v2"
+            ],
+            "runtime_id": [
+              "rt-3b65a843"
+            ],
+            "signal_id": [
+              "sig-0474db5c8d22d121c7d6ed0fc7f628b4"
+            ],
+            "strategy_id": [
+              "strategy-persona-a81b4fd15944698341aa"
+            ]
+          },
+          "journey_id": "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a",
+          "next_step": {
+            "action_needed": "review_market_data_refresh",
+            "href": "/data-sources"
+          },
+          "order_id": null,
+          "outcome": {
+            "kind": "expired",
+            "reason_code": "target_session_not_reconciled_by_expiry",
+            "reason_detail": {
+              "decision_day": "2026-11-25",
+              "expired_at": "2026-11-27T08:55:21+08:00",
+              "expires_at": "2026-11-27T08:55:00+08:00",
+              "target_day": "2026-11-26"
+            }
+          },
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "persona_is_probe": false,
+          "persona_name": "衡岳｜0050 台股 Paper 學習 R2",
+          "price": null,
+          "quantity": 1,
+          "read_state": "partial",
+          "revision": 2811958,
+          "runtime_id": "rt-3b65a843",
+          "severity": "info",
+          "side": "hold",
+          "stage_elapsed_seconds": 81816.0,
+          "stage_events": {
+            "trade_decision": {
+              "accepted_live": true,
+              "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+              "artifact_version": "1.2.0",
+              "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+              "canonical_event_id": "9c1e5e4b-8f60-5a4c-9e23-f84a94871a81",
+              "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+              "causal_parent_id": "86048c57-6e1f-54e3-b73e-229faddd890d",
+              "correlation_envelope": {
+                "causation_event_id": "86048c57-6e1f-54e3-b73e-229faddd890d",
+                "correlation_id": "45cb6e82-3496-552e-af74-3ccafe0e4e3a",
+                "environment": "paper",
+                "event_id": "9c1e5e4b-8f60-5a4c-9e23-f84a94871a81",
+                "event_time": "2026-11-27T08:55:21+08:00",
+                "journey_id": "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a",
+                "producer": "execution.paper_runtime",
+                "producer_revision": 1,
+                "received_at": "2026-11-27T08:55:21+08:00",
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-dev",
+                "trace_id": "45cb6e82-3496-552e-af74-3ccafe0e4e3a"
+              },
+              "decision_day": "2026-11-25",
+              "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f",
+              "decision_status": "expired_no_price",
+              "environment": "paper",
+              "event_id": "9c1e5e4b-8f60-5a4c-9e23-f84a94871a81",
+              "event_sequence": 2,
+              "event_type": "trade_decision",
+              "evidence_refs": [],
+              "execution_target_bar_start": "2026-11-26T09:00:00+08:00",
+              "expires_at": "2026-11-27T08:55:00+08:00",
+              "journey_id": "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a",
+              "loop_run_id": "lr-run-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f",
+              "occurred_at": "2026-11-27T00:55:21.000000Z",
+              "persona_capital_binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+              "persona_id": "persona-ee7112a829d38b9135ac",
+              "plan_id": "plan-persona-pool-a81b4fd15944698341aa-v2",
+              "quantity": 1,
+              "reason_detail": {
+                "decision_day": "2026-11-25",
+                "expired_at": "2026-11-27T08:55:21+08:00",
+                "expires_at": "2026-11-27T08:55:00+08:00",
+                "target_day": "2026-11-26"
+              },
+              "recorded_at": "2026-11-27T23:30:45.909917Z",
+              "run_id": "run-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f",
+              "runtime_id": "rt-3b65a843",
+              "sequence": 201,
+              "sequence_no": 201,
+              "side": "hold",
+              "signal_id": "sig-0474db5c8d22d121c7d6ed0fc7f628b4",
+              "source": "canonical_telemetry_live",
+              "source_event_id": "9c1e5e4b-8f60-5a4c-9e23-f84a94871a81",
+              "source_mode": "live",
+              "source_offset": 14121865,
+              "source_sequence_no": 2,
+              "stage": "trade_decision",
+              "stage_status": "expired",
+              "status": "expired",
+              "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+              "symbol": "0050.TWSE",
+              "target_day": "2026-11-26",
+              "tenant_id": "tenant-dev",
+              "trace_id": "45cb6e82-3496-552e-af74-3ccafe0e4e3a"
+            }
+          },
+          "stages": {
+            "trade_decision": {
+              "revision": 2,
+              "status": "expired",
+              "updated_at": "2026-11-27T00:55:21.000000Z"
+            }
+          },
+          "status": "expired",
+          "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+          "strategy_version": null,
+          "symbol": "0050.TWSE",
+          "tenant_id": "tenant-dev",
+          "terminal_at": "2026-11-27T00:55:21.000000Z",
+          "total_elapsed_seconds": 232682.0,
+          "updated_at": "2026-11-27T00:55:21.000000Z"
+        },
+        "meta": {
+          "freshness": {
+            "accepted_live": true,
+            "controller": {
+              "accepted_live": true,
+              "backlog": 0,
+              "checkpoint": 14122082,
+              "controller_id": "canonical-lifecycle-projector",
+              "deployment_sha": "2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3",
+              "generation": 2811958,
+              "last_error": null,
+              "last_live_success_at": "2026-11-27T23:38:56.782136Z",
+              "last_poll_at": "2026-11-27T23:38:56.782136Z",
+              "last_successful_publish_at": "2026-11-27T23:38:56.782136Z",
+              "mode": "live",
+              "quarantine_count": 0,
+              "source_high_watermark": 14122082,
+              "status": "ready"
+            },
+            "generation": 2811958,
+            "materializer_revision": 2811958,
+            "projection_mode": "live",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "projector_owned": true,
+            "rebuild_status": "postgres_projection_reader",
+            "source_watermarks": {
+              "postgres": "14122082"
+            },
+            "truth_level": "canonical_live"
+          },
+          "read_state": "partial",
+          "snapshot_at": "2026-11-27T23:38:57Z"
+        }
+      },
+      "tj_9eeb8979-9010-5624-bccc-e16631ebacbe": {
+        "data": {
+          "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+          "broker_order_id": null,
+          "candidate_id": null,
+          "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+          "client_order_id": null,
+          "completeness": {
+            "complete": false,
+            "missing_stages": [
+              "research_rationale",
+              "strategy_candidate",
+              "candidate_evaluation",
+              "promotion_decision",
+              "capital_binding",
+              "deployment_runtime",
+              "signal_generation"
+            ]
+          },
+          "created_at": "2026-11-27T07:06:52.000000Z",
+          "current_stage": "trade_decision",
+          "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea",
+          "diagnostics": [
+            {
+              "code": "clock_drift",
+              "event_ids": [
+                "4eddb26f-f58f-58e8-b77b-86ac58a02ca8:trade_decision"
+              ],
+              "max_abs_seconds": 59031.216083,
+              "threshold_seconds": 5.0
+            },
+            {
+              "code": "missing_stages",
+              "stages": [
+                "signal_generation"
+              ]
+            },
+            {
+              "attention": false,
+              "code": "upstream_lineage_unlinked",
+              "stages": [
+                "research_rationale",
+                "strategy_candidate",
+                "candidate_evaluation",
+                "promotion_decision",
+                "capital_binding",
+                "deployment_runtime"
+              ]
+            }
+          ],
+          "environment": "paper",
+          "event_count": 1,
+          "filled_quantity": null,
+          "flags": {
+            "blocked": false,
+            "mismatch": false,
+            "orphan": false,
+            "rejected": false,
+            "stalled": true,
+            "waiting_human": false
+          },
+          "graph_edges": [],
+          "identifiers": {
+            "artifact_id": [
+              "artifact-persona-pool-a81b4fd15944698341aa-v2"
+            ],
+            "artifact_version": [
+              "1.2.0"
+            ],
+            "binding_id": [
+              "rb-2b0df30559154a93902c209b0318d95c"
+            ],
+            "capital_pool_id": [
+              "pool-persona-paper-a81b4fd15944698341aa"
+            ],
+            "decision_id": [
+              "dec-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea"
+            ],
+            "persona_capital_binding_id": [
+              "pcb-persona-paper-a81b4fd15944698341aa"
+            ],
+            "persona_id": [
+              "persona-ee7112a829d38b9135ac"
+            ],
+            "plan_id": [
+              "plan-persona-pool-a81b4fd15944698341aa-v2"
+            ],
+            "runtime_id": [
+              "rt-3b65a843"
+            ],
+            "signal_id": [
+              "sig-2fd7c96255607a86eaf806eaf1de8c1f"
+            ],
+            "strategy_id": [
+              "strategy-persona-a81b4fd15944698341aa"
+            ]
+          },
+          "journey_id": "tj_9eeb8979-9010-5624-bccc-e16631ebacbe",
+          "next_step": null,
+          "order_id": null,
+          "outcome": {
+            "kind": "open",
+            "reason_code": "pending_settlement",
+            "reason_detail": {
+              "decision_day": "2026-11-27",
+              "expires_at": "2026-12-01T08:55:00+08:00",
+              "target_day": "2026-11-30"
+            }
+          },
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "persona_is_probe": false,
+          "persona_name": "衡岳｜0050 台股 Paper 學習 R2",
+          "price": null,
+          "quantity": 1,
+          "read_state": "partial",
+          "revision": 2811957,
+          "runtime_id": "rt-3b65a843",
+          "severity": "info",
+          "side": "hold",
+          "stage_elapsed_seconds": 59525.0,
+          "stage_events": {
+            "trade_decision": {
+              "accepted_live": true,
+              "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+              "artifact_version": "1.2.0",
+              "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+              "canonical_event_id": "4eddb26f-f58f-58e8-b77b-86ac58a02ca8",
+              "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+              "causal_parent_id": "90a4a824-154f-577b-b0c7-5ed7faa71112",
+              "correlation_envelope": {
+                "causation_event_id": "90a4a824-154f-577b-b0c7-5ed7faa71112",
+                "correlation_id": "9eeb8979-9010-5624-bccc-e16631ebacbe",
+                "environment": "paper",
+                "event_id": "4eddb26f-f58f-58e8-b77b-86ac58a02ca8",
+                "event_time": "2026-11-27T15:06:52+08:00",
+                "journey_id": "tj_9eeb8979-9010-5624-bccc-e16631ebacbe",
+                "producer": "execution.paper_runtime",
+                "producer_revision": 1,
+                "received_at": "2026-11-27T15:06:52+08:00",
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-dev",
+                "trace_id": "9eeb8979-9010-5624-bccc-e16631ebacbe"
+              },
+              "decision_day": "2026-11-27",
+              "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea",
+              "decision_status": "pending_settlement",
+              "environment": "paper",
+              "event_id": "4eddb26f-f58f-58e8-b77b-86ac58a02ca8",
+              "event_sequence": 1,
+              "event_type": "trade_decision",
+              "evidence_refs": [],
+              "execution_target_bar_start": "2026-11-30T09:00:00+08:00",
+              "expires_at": "2026-12-01T08:55:00+08:00",
+              "journey_id": "tj_9eeb8979-9010-5624-bccc-e16631ebacbe",
+              "loop_run_id": "lr-run-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea",
+              "occurred_at": "2026-11-27T07:06:52.000000Z",
+              "persona_capital_binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+              "persona_id": "persona-ee7112a829d38b9135ac",
+              "plan_id": "plan-persona-pool-a81b4fd15944698341aa-v2",
+              "quantity": 1,
+              "reason_detail": {
+                "decision_day": "2026-11-27",
+                "expires_at": "2026-12-01T08:55:00+08:00",
+                "target_day": "2026-11-30"
+              },
+              "recorded_at": "2026-11-27T23:30:44.651264Z",
+              "run_id": "run-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea",
+              "runtime_id": "rt-3b65a843",
+              "sequence": 101,
+              "sequence_no": 101,
+              "side": "hold",
+              "signal_id": "sig-2fd7c96255607a86eaf806eaf1de8c1f",
+              "source": "canonical_telemetry_live",
+              "source_event_id": "4eddb26f-f58f-58e8-b77b-86ac58a02ca8",
+              "source_mode": "live",
+              "source_offset": 14121861,
+              "source_sequence_no": 1,
+              "stage": "trade_decision",
+              "stage_status": "pending_settlement",
+              "status": "pending_settlement",
+              "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+              "symbol": "0050.TWSE",
+              "target_day": "2026-11-30",
+              "tenant_id": "tenant-dev",
+              "trace_id": "9eeb8979-9010-5624-bccc-e16631ebacbe"
+            }
+          },
+          "stages": {
+            "trade_decision": {
+              "revision": 1,
+              "status": "pending_settlement",
+              "updated_at": "2026-11-27T07:06:52.000000Z"
+            }
+          },
+          "status": "open",
+          "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+          "strategy_version": null,
+          "symbol": "0050.TWSE",
+          "tenant_id": "tenant-dev",
+          "terminal_at": null,
+          "total_elapsed_seconds": 59525.0,
+          "updated_at": "2026-11-27T07:06:52.000000Z"
+        },
+        "meta": {
+          "freshness": {
+            "accepted_live": true,
+            "controller": {
+              "accepted_live": true,
+              "backlog": 0,
+              "checkpoint": 14122082,
+              "controller_id": "canonical-lifecycle-projector",
+              "deployment_sha": "2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3",
+              "generation": 2811958,
+              "last_error": null,
+              "last_live_success_at": "2026-11-27T23:38:56.782136Z",
+              "last_poll_at": "2026-11-27T23:38:56.782136Z",
+              "last_successful_publish_at": "2026-11-27T23:38:56.782136Z",
+              "mode": "live",
+              "quarantine_count": 0,
+              "source_high_watermark": 14122082,
+              "status": "ready"
+            },
+            "generation": 2811958,
+            "materializer_revision": 2811958,
+            "projection_mode": "live",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "projector_owned": true,
+            "rebuild_status": "postgres_projection_reader",
+            "source_watermarks": {
+              "postgres": "14122082"
+            },
+            "truth_level": "canonical_live"
+          },
+          "read_state": "partial",
+          "snapshot_at": "2026-11-27T23:38:57Z"
+        }
+      },
+      "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2": {
+        "data": {
+          "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+          "broker_order_id": null,
+          "candidate_id": null,
+          "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+          "client_order_id": null,
+          "completeness": {
+            "complete": false,
+            "missing_stages": [
+              "research_rationale",
+              "strategy_candidate",
+              "candidate_evaluation",
+              "promotion_decision",
+              "capital_binding",
+              "deployment_runtime",
+              "signal_generation"
+            ]
+          },
+          "created_at": "2026-11-26T06:44:38.000000Z",
+          "current_stage": "trade_decision",
+          "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+          "diagnostics": [
+            {
+              "code": "clock_drift",
+              "event_ids": [
+                "eeceb064-677a-5c82-bef8-ab8dee1dfe0d:trade_decision"
+              ],
+              "max_abs_seconds": 146764.122258,
+              "threshold_seconds": 5.0
+            },
+            {
+              "code": "missing_stages",
+              "stages": [
+                "signal_generation"
+              ]
+            },
+            {
+              "attention": false,
+              "code": "upstream_lineage_unlinked",
+              "stages": [
+                "research_rationale",
+                "strategy_candidate",
+                "candidate_evaluation",
+                "promotion_decision",
+                "capital_binding",
+                "deployment_runtime"
+              ]
+            }
+          ],
+          "environment": "paper",
+          "event_count": 1,
+          "filled_quantity": null,
+          "flags": {
+            "blocked": false,
+            "mismatch": false,
+            "orphan": false,
+            "rejected": false,
+            "stalled": true,
+            "waiting_human": false
+          },
+          "graph_edges": [],
+          "identifiers": {
+            "artifact_id": [
+              "artifact-persona-pool-039ad01f8bcd2b4aa466-v2"
+            ],
+            "artifact_version": [
+              "1.2.0"
+            ],
+            "binding_id": [
+              "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4"
+            ],
+            "capital_pool_id": [
+              "pool-persona-paper-039ad01f8bcd2b4aa466"
+            ],
+            "decision_id": [
+              "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15"
+            ],
+            "persona_capital_binding_id": [
+              "pcb-persona-paper-039ad01f8bcd2b4aa466"
+            ],
+            "persona_id": [
+              "persona-6507750312870d03a241"
+            ],
+            "plan_id": [
+              "plan-persona-pool-039ad01f8bcd2b4aa466-v2"
+            ],
+            "runtime_id": [
+              "rt-3252fa75"
+            ],
+            "signal_id": [
+              "sig-0279d62d7b1d7abc9ec9dc15fc0d5a68"
+            ],
+            "strategy_id": [
+              "strategy-persona-039ad01f8bcd2b4aa466"
+            ]
+          },
+          "journey_id": "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2",
+          "next_step": null,
+          "order_id": null,
+          "outcome": {
+            "kind": "open",
+            "reason_code": "pending_settlement",
+            "reason_detail": {
+              "decision_day": "2026-11-26",
+              "expires_at": "2026-11-30T08:55:00+08:00",
+              "target_day": "2026-11-27"
+            }
+          },
+          "persona_id": "persona-6507750312870d03a241",
+          "persona_is_probe": false,
+          "persona_name": "澄川｜2317 台股 Paper 學習 R2",
+          "price": null,
+          "quantity": 46,
+          "read_state": "partial",
+          "revision": 2811956,
+          "runtime_id": "rt-3252fa75",
+          "severity": "info",
+          "side": "buy",
+          "stage_elapsed_seconds": 147259.0,
+          "stage_events": {
+            "trade_decision": {
+              "accepted_live": true,
+              "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+              "artifact_version": "1.2.0",
+              "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+              "canonical_event_id": "eeceb064-677a-5c82-bef8-ab8dee1dfe0d",
+              "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+              "causal_parent_id": "59ed02fa-b5bc-53d3-b50e-882bcc7a3883",
+              "correlation_envelope": {
+                "causation_event_id": "59ed02fa-b5bc-53d3-b50e-882bcc7a3883",
+                "correlation_id": "e6eb7d82-395e-5d0d-95af-6c3b11db53b2",
+                "environment": "paper",
+                "event_id": "eeceb064-677a-5c82-bef8-ab8dee1dfe0d",
+                "event_time": "2026-11-26T14:44:38+08:00",
+                "journey_id": "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2",
+                "producer": "execution.paper_runtime",
+                "producer_revision": 1,
+                "received_at": "2026-11-26T14:44:38+08:00",
+                "schema_version": "trade-journey-envelope/1",
+                "tenant_id": "tenant-dev",
+                "trace_id": "e6eb7d82-395e-5d0d-95af-6c3b11db53b2"
+              },
+              "decision_day": "2026-11-26",
+              "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+              "decision_status": "pending_settlement",
+              "environment": "paper",
+              "event_id": "eeceb064-677a-5c82-bef8-ab8dee1dfe0d",
+              "event_sequence": 1,
+              "event_type": "trade_decision",
+              "evidence_refs": [],
+              "execution_target_bar_start": "2026-11-27T09:00:00+08:00",
+              "expires_at": "2026-11-30T08:55:00+08:00",
+              "journey_id": "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2",
+              "loop_run_id": "lr-run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+              "occurred_at": "2026-11-26T06:44:38.000000Z",
+              "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+              "persona_id": "persona-6507750312870d03a241",
+              "plan_id": "plan-persona-pool-039ad01f8bcd2b4aa466-v2",
+              "quantity": 46,
+              "reason_detail": {
+                "decision_day": "2026-11-26",
+                "expires_at": "2026-11-30T08:55:00+08:00",
+                "target_day": "2026-11-27"
+              },
+              "recorded_at": "2026-11-27T23:30:43.150202Z",
+              "run_id": "run-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+              "runtime_id": "rt-3252fa75",
+              "sequence": 101,
+              "sequence_no": 101,
+              "side": "buy",
+              "signal_id": "sig-0279d62d7b1d7abc9ec9dc15fc0d5a68",
+              "source": "canonical_telemetry_live",
+              "source_event_id": "eeceb064-677a-5c82-bef8-ab8dee1dfe0d",
+              "source_mode": "live",
+              "source_offset": 14121850,
+              "source_sequence_no": 1,
+              "stage": "trade_decision",
+              "stage_status": "pending_settlement",
+              "status": "pending_settlement",
+              "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+              "symbol": "2317.TWSE",
+              "target_day": "2026-11-27",
+              "tenant_id": "tenant-dev",
+              "trace_id": "e6eb7d82-395e-5d0d-95af-6c3b11db53b2"
+            }
+          },
+          "stages": {
+            "trade_decision": {
+              "revision": 1,
+              "status": "pending_settlement",
+              "updated_at": "2026-11-26T06:44:38.000000Z"
+            }
+          },
+          "status": "open",
+          "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+          "strategy_version": null,
+          "symbol": "2317.TWSE",
+          "tenant_id": "tenant-dev",
+          "terminal_at": null,
+          "total_elapsed_seconds": 147259.0,
+          "updated_at": "2026-11-26T06:44:38.000000Z"
+        },
+        "meta": {
+          "freshness": {
+            "accepted_live": true,
+            "controller": {
+              "accepted_live": true,
+              "backlog": 0,
+              "checkpoint": 14122082,
+              "controller_id": "canonical-lifecycle-projector",
+              "deployment_sha": "2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3",
+              "generation": 2811958,
+              "last_error": null,
+              "last_live_success_at": "2026-11-27T23:38:56.782136Z",
+              "last_poll_at": "2026-11-27T23:38:56.782136Z",
+              "last_successful_publish_at": "2026-11-27T23:38:56.782136Z",
+              "mode": "live",
+              "quarantine_count": 0,
+              "source_high_watermark": 14122082,
+              "status": "ready"
+            },
+            "generation": 2811958,
+            "materializer_revision": 2811958,
+            "projection_mode": "live",
+            "projection_schema_version": "pantheon.trade-journey-projection.v1",
+            "projector_owned": true,
+            "rebuild_status": "postgres_projection_reader",
+            "source_watermarks": {
+              "postgres": "14122082"
+            },
+            "truth_level": "canonical_live"
+          },
+          "read_state": "partial",
+          "snapshot_at": "2026-11-27T23:38:57Z"
+        }
+      }
+    },
+    "list_rows": {
+      "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a": {
+        "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+        "broker_order_id": null,
+        "candidate_id": null,
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "client_order_id": null,
+        "completeness": {
+          "complete": false,
+          "missing_stages": [
+            "research_rationale",
+            "strategy_candidate",
+            "candidate_evaluation",
+            "promotion_decision",
+            "capital_binding",
+            "deployment_runtime",
+            "signal_generation"
+          ]
+        },
+        "created_at": "2026-11-25T07:00:55.000000Z",
+        "current_stage": "trade_decision",
+        "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-0474db5c8d22d121c7d6ed0f",
+        "environment": "paper",
+        "filled_quantity": null,
+        "flags": {
+          "blocked": false,
+          "mismatch": false,
+          "orphan": false,
+          "rejected": false,
+          "stalled": false,
+          "waiting_human": false
+        },
+        "journey_id": "tj_45cb6e82-3496-552e-af74-3ccafe0e4e3a",
+        "next_step": {
+          "action_needed": "review_market_data_refresh",
+          "href": "/data-sources"
+        },
+        "order_id": null,
+        "outcome": {
+          "kind": "expired",
+          "reason_code": "target_session_not_reconciled_by_expiry",
+          "reason_detail": {
+            "decision_day": "2026-11-25",
+            "expired_at": "2026-11-27T08:55:21+08:00",
+            "expires_at": "2026-11-27T08:55:00+08:00",
+            "target_day": "2026-11-26"
+          }
+        },
+        "persona_id": "persona-ee7112a829d38b9135ac",
+        "persona_is_probe": false,
+        "persona_name": "衡岳｜0050 台股 Paper 學習 R2",
+        "price": null,
+        "quantity": 1,
+        "read_state": "partial",
+        "revision": 2811958,
+        "runtime_id": "rt-3b65a843",
+        "severity": "info",
+        "side": "hold",
+        "stage_elapsed_seconds": 81814.0,
+        "status": "expired",
+        "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+        "strategy_version": null,
+        "symbol": "0050.TWSE",
+        "tenant_id": "tenant-dev",
+        "terminal_at": "2026-11-27T00:55:21.000000Z",
+        "total_elapsed_seconds": 232680.0,
+        "updated_at": "2026-11-27T00:55:21.000000Z"
+      },
+      "tj_9eeb8979-9010-5624-bccc-e16631ebacbe": {
+        "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+        "broker_order_id": null,
+        "candidate_id": null,
+        "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+        "client_order_id": null,
+        "completeness": {
+          "complete": false,
+          "missing_stages": [
+            "research_rationale",
+            "strategy_candidate",
+            "candidate_evaluation",
+            "promotion_decision",
+            "capital_binding",
+            "deployment_runtime",
+            "signal_generation"
+          ]
+        },
+        "created_at": "2026-11-27T07:06:52.000000Z",
+        "current_stage": "trade_decision",
+        "decision_id": "dec-rb-2b0df30559154a93902c209b0318d95c-2fd7c96255607a86eaf806ea",
+        "environment": "paper",
+        "filled_quantity": null,
+        "flags": {
+          "blocked": false,
+          "mismatch": false,
+          "orphan": false,
+          "rejected": false,
+          "stalled": true,
+          "waiting_human": false
+        },
+        "journey_id": "tj_9eeb8979-9010-5624-bccc-e16631ebacbe",
+        "next_step": null,
+        "order_id": null,
+        "outcome": {
+          "kind": "open",
+          "reason_code": "pending_settlement",
+          "reason_detail": {
+            "decision_day": "2026-11-27",
+            "expires_at": "2026-12-01T08:55:00+08:00",
+            "target_day": "2026-11-30"
+          }
+        },
+        "persona_id": "persona-ee7112a829d38b9135ac",
+        "persona_is_probe": false,
+        "persona_name": "衡岳｜0050 台股 Paper 學習 R2",
+        "price": null,
+        "quantity": 1,
+        "read_state": "partial",
+        "revision": 2811957,
+        "runtime_id": "rt-3b65a843",
+        "severity": "info",
+        "side": "hold",
+        "stage_elapsed_seconds": 59523.0,
+        "status": "open",
+        "strategy_id": "strategy-persona-a81b4fd15944698341aa",
+        "strategy_version": null,
+        "symbol": "0050.TWSE",
+        "tenant_id": "tenant-dev",
+        "terminal_at": null,
+        "total_elapsed_seconds": 59523.0,
+        "updated_at": "2026-11-27T07:06:52.000000Z"
+      },
+      "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2": {
+        "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+        "broker_order_id": null,
+        "candidate_id": null,
+        "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+        "client_order_id": null,
+        "completeness": {
+          "complete": false,
+          "missing_stages": [
+            "research_rationale",
+            "strategy_candidate",
+            "candidate_evaluation",
+            "promotion_decision",
+            "capital_binding",
+            "deployment_runtime",
+            "signal_generation"
+          ]
+        },
+        "created_at": "2026-11-26T06:44:38.000000Z",
+        "current_stage": "trade_decision",
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+        "environment": "paper",
+        "filled_quantity": null,
+        "flags": {
+          "blocked": false,
+          "mismatch": false,
+          "orphan": false,
+          "rejected": false,
+          "stalled": true,
+          "waiting_human": false
+        },
+        "journey_id": "tj_e6eb7d82-395e-5d0d-95af-6c3b11db53b2",
+        "next_step": null,
+        "order_id": null,
+        "outcome": {
+          "kind": "open",
+          "reason_code": "pending_settlement",
+          "reason_detail": {
+            "decision_day": "2026-11-26",
+            "expires_at": "2026-11-30T08:55:00+08:00",
+            "target_day": "2026-11-27"
+          }
+        },
+        "persona_id": "persona-6507750312870d03a241",
+        "persona_is_probe": false,
+        "persona_name": "澄川｜2317 台股 Paper 學習 R2",
+        "price": null,
+        "quantity": 46,
+        "read_state": "partial",
+        "revision": 2811956,
+        "runtime_id": "rt-3252fa75",
+        "severity": "info",
+        "side": "buy",
+        "stage_elapsed_seconds": 147257.0,
+        "status": "open",
+        "strategy_id": "strategy-persona-039ad01f8bcd2b4aa466",
+        "strategy_version": null,
+        "symbol": "2317.TWSE",
+        "tenant_id": "tenant-dev",
+        "terminal_at": null,
+        "total_elapsed_seconds": 147257.0,
+        "updated_at": "2026-11-26T06:44:38.000000Z"
+      }
+    }
+  },
+  "delivery_state": "source implementation awaiting independent review and hosted deployment",
+  "runtime_budget": {
+    "cadence": "read requests only",
+    "new_jobs": 0,
+    "new_writers": 0,
+    "new_persisted_state": 0,
+    "growth_per_day": 0,
+    "cap": "probe: two scans of at most 20 list pages (200 rows/page), up to 5 timeline pages per new journey, detail GET per inspected row; no scheduled execution added",
+    "cleanup": "no runtime state created; release probe stdout follows existing CI retention"
+  },
+  "residual_findings": [],
+  "implementation": {
+    "owned_layer": "BFF read normalization, projection-reader SQL filters and aggregate metrics, read-only release probe",
+    "unchanged_layers": [
+      "paper_signal_producer",
+      "intraday settlement",
+      "lifecycle projector",
+      "execute-plans frontend"
+    ],
+    "additional_required_artifact": "services/control-plane/bff/trade_journey_projection_store.py: required by AC1/AC4; SQL filters before pagination and metrics aggregation own hosted read truth",
+    "acceptance_coverage": {
+      "1": "expiry-aware list/detail flags, true/false SQL filters, scoped aggregate stalled_count; direct exact +900s/+901s boundary and real PostgreSQL route test",
+      "2": "remove only signal_generation for decision-only pending/expired; preserve clock_drift/upstream diagnostics; released missing signal stays partial",
+      "3": "normalize recorded side hold to null in list/detail",
+      "4": "expired HOLD retains reason and decision_action=hold with null next_step and no attention membership; BUY/SELL remain attention",
+      "5": "three captured list rows and complete detail envelopes copied unchanged as JSON values from source, hash retained; database timing variants use a deep copy",
+      "6": "focused list/detail/attention/metrics/readable/park-expire regression suite",
+      "7": "read-only probe separately scans existing non-probe open decisions, including predeployment rows; injected stalled/partial list/detail each fail",
+      "8": "no new hosted writer, job or persisted state"
+    }
+  },
+  "changed_existing_assertions": [
+    {
+      "test": "test_park_then_expire_list_and_detail_report_terminal_reason_and_next_step",
+      "acceptance_item": 4,
+      "before": "recorded expired_2330_D20261125 HOLD expected review_market_data_refresh",
+      "after": "next_step null; side null; decision_action hold"
+    }
+  ],
+  "validation": [
+    {
+      "result": "98 passed, 2 skipped; 21.95s; exit 0",
+      "scope": "parked-expired, readable, readable residuals, metrics scope, identity, shared identity, read API, contract, correlation",
+      "note": "two optional TEST_DATABASE_URL integration cases will run against isolated PostgreSQL in final batch"
+    }
+  ]
+}

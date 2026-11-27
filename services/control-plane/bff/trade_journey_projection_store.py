@@ -219,13 +219,13 @@ class TradeJourneyProjectionStore:
 
     def _decision_fields_sql(self) -> str:
         return (
-            f"(SELECT decision.contract_fields FROM {self.schema}.journey_stages decision "
+            f"(SELECT DISTINCT ON (decision.journey_id) decision.contract_fields FROM {self.schema}.journey_stages decision "
             f"WHERE decision.tenant_id={self.schema}.journeys.tenant_id "
             f"AND decision.environment={self.schema}.journeys.environment "
             f"AND decision.journey_id={self.schema}.journeys.journey_id "
             "AND decision.stage_name='trade_decision' "
-            "ORDER BY decision.stage_ordinal DESC, decision.event_sequence DESC, "
-            "decision.source_ingested_seq DESC, decision.source_event_id DESC LIMIT 1)"
+            "ORDER BY decision.journey_id, decision.stage_ordinal DESC, decision.event_sequence DESC, "
+            "decision.source_ingested_seq DESC, decision.source_event_id DESC)"
         )
 
     def _stalled_sql(self) -> str:
