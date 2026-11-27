@@ -1739,6 +1739,13 @@
               "question": {
                 "type": "string"
               },
+              "response_kind": {
+                "type": "string",
+                "enum": [
+                  "option",
+                  "freeform"
+                ]
+              },
               "option_id": {
                 "type": "string"
               },

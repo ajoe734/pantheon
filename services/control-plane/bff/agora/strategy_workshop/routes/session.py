@@ -808,35 +808,38 @@ def build_session_router(
             or session.get("trace_id")
             or f"trace-{uuid.uuid4().hex[:12]}"
         )
+        private_answer_text = resolved.get("private_response_text") or resolved["option_label"]
+        response_kind = str(resolved.get("response_kind") or "option")
         decision_plaintext = (
             f"[策略決策] decision_id={resolved['decision_id']} "
             f"option_id={resolved['option_id']} "
+            f"kind={response_kind} "
             f"resolves={','.join(resolved['resolves'])}\n"
             f"問題：{resolved['question']}\n"
-            f"交易員裁示選項 ({resolved['option_id']})：{resolved['option_label']}"
+            f"交易員裁示選項 ({resolved['option_id']})：{private_answer_text}"
         )
-        private_ref: Optional[str] = None
+        private = _private_put(
+            tenant_id=scope.tenant_id,
+            owner_user_id=scope.user_id,
+            workshop_id=workshop_id,
+            event_id=event_id,
+            content_type="text/plain",
+            plaintext=decision_plaintext.encode("utf-8"),
+            retention_class="workshop_default",
+            idempotency_key=idempotency_key,
+        )
+        private_ref = private.private_content_ref
         redacted_summary = f"Workshop decision {resolved['decision_id']}: {resolved['option_id']}"
-        if private_content_store is not None:
-            private = _private_put(
-                tenant_id=scope.tenant_id,
-                owner_user_id=scope.user_id,
-                workshop_id=workshop_id,
-                event_id=event_id,
-                content_type="text/plain",
-                plaintext=decision_plaintext.encode("utf-8"),
-                retention_class="workshop_default",
-                idempotency_key=idempotency_key,
-            )
-            private_ref = private.private_content_ref
-        else:
-            redacted_summary = decision_plaintext
 
+        kind_tag = (
+            "kind:workshop_decision_freeform"
+            if resolved.get("is_freeform")
+            else "kind:workshop_decision"
+        )
         payload_refs = [
-            "kind:workshop_decision",
+            kind_tag,
             f"decision_id:{resolved['decision_id']}",
             f"option_id:{resolved['option_id']}",
-            f"option_label:{resolved['option_label']}",
             *[f"resolves:{target}" for target in resolved["resolves"]],
         ]
         event, _new_version = store.append_event_cas(workshop_id, expected_version, {
@@ -852,12 +855,11 @@ def build_session_router(
         })
         if event is None:
             from services.control_plane.bff.models import ErrorCode
-            if private_content_store is not None and private_ref is not None:
-                private_content_store.discard_failed_write(
-                    private_content_ref=private_ref,
-                    tenant_id=scope.tenant_id,
-                    owner_user_id=scope.user_id,
-                )
+            private_content_store.discard_failed_write(
+                private_content_ref=private_ref,
+                tenant_id=scope.tenant_id,
+                owner_user_id=scope.user_id,
+            )
             current_lock_version = _new_version if _new_version is not None else 1
             current_etag = f'W/"workshop:{workshop_id}:v{current_lock_version}"'
             raise bff_error(
@@ -880,6 +882,7 @@ def build_session_router(
                 "sequence_no": event["sequence_no"],
                 "decision_id": resolved["decision_id"],
                 "option_id": resolved["option_id"],
+                "response_kind": response_kind,
                 "trace_id": event.get("trace_id", trace_id),
             },
             utc_now_fn=utc_now,
@@ -891,6 +894,7 @@ def build_session_router(
                 "decision_id": resolved["decision_id"],
                 "question_id": resolved["question_id"],
                 "question": resolved["question"],
+                "response_kind": response_kind,
                 "option_id": resolved["option_id"],
                 "option_label": resolved["option_label"],
                 "used_servant_default": resolved["used_servant_default"],

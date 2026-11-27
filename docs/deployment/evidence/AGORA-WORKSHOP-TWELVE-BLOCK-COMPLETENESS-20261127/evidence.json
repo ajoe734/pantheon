@@ -64,9 +64,9 @@
     },
     "ac3_next_decision_and_writeback_route": {
       "route": "POST /bff/agora/workshops/{workshop_id}/decisions",
-      "admission": "Uses _scope(write=True), mandatory If-Match (428 missing, 409 mismatch), mandatory Idempotency-Key (400 missing, 409 duplicate), cross-user 403, unknown workshop 404, invalid option 422.",
-      "persistence": "Records one encrypted private-content workshop message event via store.append_event_cas with payload_refs_json tagging kind:workshop_decision, decision_id, option_id, option_label, and resolves targets.",
-      "reconstruction_integration": "reconstruct_strategy_from_events reads answered decision events, marks resolved strategy_map blocks confirmed with the trader choice summary and message citation, updates reconstruction_id, and advances next_decision to the next unresolved block."
+      "admission": "Uses _scope(write=True), mandatory If-Match (428 missing, 409 mismatch), mandatory Idempotency-Key (400 missing, 409 duplicate), cross-user 403, unknown workshop 404, invalid option_id (alone or with option_label) or unmatched option_label 422.",
+      "persistence": "Records one encrypted private-content workshop message event via store.append_event_cas; payload_refs_json carries only IDs (kind:workshop_decision or kind:workshop_decision_freeform, decision_id, option_id, and resolves targets) and never stores option_label or trader free text in stored events or SSE replay.",
+      "reconstruction_integration": "reconstruct_strategy_from_events reads answered decision events and decrypted private messages_content, marks resolved strategy_map blocks confirmed with the trader choice summary and message citation, updates reconstruction_id, and advances next_decision to the next unresolved block."
     },
     "ac4_contract_artifacts": {
       "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
@@ -161,7 +161,7 @@
         "strategy_map_key": "signal_definition",
         "previous_state": "missing",
         "new_state": "confirmed",
-        "new_note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+        "new_note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
         "source_citation": {
           "ref_type": "workshop_decision",
           "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",

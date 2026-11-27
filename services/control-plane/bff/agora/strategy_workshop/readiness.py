@@ -354,12 +354,63 @@ def _raw_state_dict(snapshot: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     return dict(raw) if isinstance(raw, Mapping) else {}
 
 
+def _lookup_template_option_label(
+    resolves: Sequence[str],
+    decision_id: str,
+    option_id: str,
+    *,
+    is_branch_strategy: Optional[bool] = None,
+) -> str:
+    """Resolve the canonical static template label for a known option_id without
+    storing option labels in event payload_refs_json.
+    """
+    oid = str(option_id or "").strip().lower()
+    if not oid or oid in {"freeform", "opt_freeform"}:
+        return "自訂裁示"
+    spec: Optional[V10BlockSpec] = None
+    for target in resolves or []:
+        spec = _spec_for_target(target)
+        if spec is not None:
+            break
+    if spec is None and decision_id:
+        cleaned_id = decision_id.removeprefix("decision_")
+        spec = _spec_for_target(cleaned_id)
+    if spec is None:
+        return ""
+    template = _DECISION_TEMPLATES.get(spec.order)
+    if not isinstance(template, Mapping):
+        return ""
+    if is_branch_strategy is not None:
+        branch_modes = [bool(is_branch_strategy)]
+    elif any(str(r) in _BRANCH_ONLY_KEYS for r in resolves or []) or any(
+        k in str(decision_id) for k in _BRANCH_ONLY_KEYS
+    ):
+        branch_modes = [True, False]
+    elif any(
+        str(r) in {"data_requirements", "hypothesis_scoring", "regime_invalidation"}
+        for r in resolves or []
+    ):
+        branch_modes = [False, True]
+    else:
+        branch_modes = [True, False]
+    for bmode in branch_modes:
+        tuples_key = "options_branch" if bmode else "options_generic"
+        for opt_tuple_id, label, _desc in template.get(tuples_key) or []:
+            if str(opt_tuple_id).strip().lower() == oid:
+                return str(label)
+    return ""
+
+
 def extract_workshop_decisions(
     events: Optional[Sequence[Mapping[str, Any]]] = None,
     messages_content: Optional[Sequence[str]] = None,
+    *,
+    is_branch_strategy: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
     """Extract answered trader decisions from workshop events and message texts."""
     decisions: List[Dict[str, Any]] = []
+    by_msg_no: Dict[int, Dict[str, Any]] = {}
+    by_id_pair: Dict[Tuple[str, str], Dict[str, Any]] = {}
     seen_keys: set[Tuple[str, str, int]] = set()
     msg_index = 0
     for event in events or []:
@@ -373,6 +424,7 @@ def extract_workshop_decisions(
         option_id = ""
         option_label = ""
         question = ""
+        response_kind = "option"
         resolves: List[str] = []
         is_decision = ev_type == "decision"
         if isinstance(refs, list):
@@ -380,11 +432,16 @@ def extract_workshop_decisions(
                 text = str(item or "").strip()
                 if text == "kind:workshop_decision":
                     is_decision = True
+                elif text == "kind:workshop_decision_freeform":
+                    is_decision = True
+                    response_kind = "freeform"
                 elif text.startswith("decision_id:") or text.startswith("decision:"):
                     is_decision = True
                     decision_id = text.split(":", 1)[1].strip()
                 elif text.startswith("option_id:") or text.startswith("option:"):
                     option_id = text.split(":", 1)[1].strip()
+                    if option_id.lower() in {"freeform", "opt_freeform"}:
+                        response_kind = "freeform"
                 elif text.startswith("option_label:"):
                     option_label = text.split(":", 1)[1].strip()
                 elif text.startswith("question:"):
@@ -398,6 +455,8 @@ def extract_workshop_decisions(
                 is_decision = True
                 decision_id = str(refs.get("decision_id") or "")
                 option_id = str(refs.get("option_id") or "")
+                if option_id.lower() in {"freeform", "opt_freeform"}:
+                    response_kind = "freeform"
                 option_label = str(refs.get("option_label") or "")
                 question = str(refs.get("question") or "")
                 raw_res = refs.get("resolves") or []
@@ -409,20 +468,26 @@ def extract_workshop_decisions(
         if is_decision and (decision_id or option_id or option_label):
             seq_no = int(event.get("sequence_no") or msg_index or (len(decisions) + 1))
             eff_msg_no = msg_index if msg_index > 0 else seq_no
-            dedup = (decision_id, option_id, eff_msg_no)
+            eff_decision_id = decision_id or f"decision-{seq_no}"
+            eff_option_id = option_id or "selected"
+            dedup = (eff_decision_id, eff_option_id, eff_msg_no)
             if dedup not in seen_keys:
                 seen_keys.add(dedup)
-                decisions.append({
+                entry: Dict[str, Any] = {
                     "event_id": str(event.get("event_id") or f"seq-{seq_no}"),
                     "sequence_no": seq_no,
                     "message_number": eff_msg_no,
-                    "decision_id": decision_id or f"decision-{seq_no}",
-                    "option_id": option_id or "selected",
-                    "option_label": option_label or summary_text or option_id or "已確認選項",
+                    "decision_id": eff_decision_id,
+                    "option_id": eff_option_id,
+                    "option_label": option_label,
+                    "response_kind": response_kind,
                     "question": question,
                     "resolves": resolves,
                     "created_at": event.get("created_at"),
-                })
+                }
+                decisions.append(entry)
+                by_msg_no[eff_msg_no] = entry
+                by_id_pair[(eff_decision_id, eff_option_id)] = entry
 
     for idx, raw_msg in enumerate(messages_content or [], start=1):
         text = str(raw_msg or "").strip()
@@ -432,12 +497,19 @@ def extract_workshop_decisions(
         header = lines[0]
         decision_id = ""
         option_id = ""
+        response_kind = "option"
         resolves = []
         for token in header.split():
             if token.startswith("decision_id="):
                 decision_id = token.split("=", 1)[1].strip()
             elif token.startswith("option_id="):
                 option_id = token.split("=", 1)[1].strip()
+                if option_id.lower() in {"freeform", "opt_freeform"}:
+                    response_kind = "freeform"
+            elif token.startswith("kind="):
+                kval = token.split("=", 1)[1].strip().lower()
+                if kval == "freeform":
+                    response_kind = "freeform"
             elif token.startswith("resolves="):
                 resolves = [p.strip() for p in token.split("=", 1)[1].split(",") if p.strip()]
         option_label = ""
@@ -445,22 +517,55 @@ def extract_workshop_decisions(
         for line in lines[1:]:
             if line.startswith("問題：") or line.startswith("Question:"):
                 question = line.split("：", 1)[-1].split(":", 1)[-1].strip()
-            elif "）：" in line or "):" in line:
-                option_label = line.split("）：", 1)[-1].split("):", 1)[-1].strip()
-        dedup = (decision_id, option_id, idx)
+            elif ")：" in line:
+                option_label = line.split(")：", 1)[1].strip()
+            elif "）：" in line:
+                option_label = line.split("）：", 1)[1].strip()
+            elif "):" in line:
+                option_label = line.split("):", 1)[1].strip()
+        eff_decision_id = decision_id or f"decision-{idx}"
+        eff_option_id = option_id or "selected"
+        existing = by_msg_no.get(idx) or by_id_pair.get((eff_decision_id, eff_option_id))
+        if existing is not None:
+            if option_label:
+                existing["option_label"] = option_label
+            if question:
+                existing["question"] = question
+            if resolves and not existing.get("resolves"):
+                existing["resolves"] = resolves
+            if response_kind == "freeform":
+                existing["response_kind"] = "freeform"
+            continue
+        dedup = (eff_decision_id, eff_option_id, idx)
         if dedup not in seen_keys and (decision_id or option_id):
             seen_keys.add(dedup)
             decisions.append({
                 "event_id": f"seq-{idx}",
                 "sequence_no": idx,
                 "message_number": idx,
-                "decision_id": decision_id or f"decision-{idx}",
-                "option_id": option_id or "selected",
-                "option_label": option_label or option_id or "已確認選項",
+                "decision_id": eff_decision_id,
+                "option_id": eff_option_id,
+                "option_label": option_label,
+                "response_kind": response_kind,
                 "question": question,
                 "resolves": resolves,
                 "created_at": None,
             })
+
+    for entry in decisions:
+        if not entry.get("option_label"):
+            resolved_lbl = _lookup_template_option_label(
+                entry.get("resolves") or [],
+                str(entry.get("decision_id") or ""),
+                str(entry.get("option_id") or ""),
+                is_branch_strategy=is_branch_strategy,
+            )
+            if resolved_lbl:
+                entry["option_label"] = resolved_lbl
+            elif entry.get("response_kind") == "freeform" or str(entry.get("option_id") or "").lower() in {"freeform", "opt_freeform"}:
+                entry["option_label"] = "自訂裁示"
+            else:
+                entry["option_label"] = str(entry.get("option_id") or "已確認選項")
     return decisions
 
 
@@ -676,6 +781,8 @@ def detect_branch_strategy(
                 for item in val.get("missing_definitions") or []:
                     fragments.append(str(item))
     if isinstance(reconstruction, Mapping):
+        if reconstruction.get("is_branch_strategy") is True or reconstruction.get("strategy_family") == "winner_branch":
+            return True
         smap = reconstruction.get("strategy_map")
         if isinstance(smap, Mapping):
             for block in smap.values():
@@ -892,7 +999,7 @@ def build_twelve_strategy_blocks(
         for item in ((reconstruction or {}).get("contradictions") or [])
         if _one_line(item)
     ]
-    decisions = extract_workshop_decisions(events)
+    decisions = extract_workshop_decisions(events, is_branch_strategy=branch_mode)
     decisions_by_order: Dict[int, Dict[str, Any]] = {}
     for dec in decisions:
         for target in dec.get("resolves") or []:
@@ -996,7 +1103,15 @@ def build_twelve_strategy_blocks(
             decision_note = _one_line(
                 f"已裁示（{matched_decision['option_id']}）：{matched_decision['option_label']}"
             )
-            summary_text = f"{summary_text}；{decision_note}" if summary_text and decision_note not in summary_text else decision_note
+            already_has_decision = (
+                f"交易員裁示（{matched_decision['option_id']}）" in summary_text
+                or f"已裁示（{matched_decision['option_id']}）" in summary_text
+                or decision_note in summary_text
+            )
+            if not summary_text:
+                summary_text = decision_note
+            elif not already_has_decision:
+                summary_text = f"{summary_text}；{decision_note}"
             missing_defs = []
         else:
             state = normalize_v10_block_state(
@@ -1560,20 +1675,39 @@ def resolve_decision_choice(
     )
     options = list(next_decision.get("options") or [])
     requested_option_id = _one_line(option_id or selected_option_id)
-    requested_label = _one_line(option_label or custom_response)
+    requested_option_label = _one_line(option_label)
+    requested_custom = _one_line(custom_response)
 
     chosen_option: Optional[Dict[str, Any]] = None
     used_default = False
+    is_freeform = False
+    response_kind = "option"
+    private_response_text = ""
 
-    if use_servant_default and not requested_option_id and not requested_label:
-        used_default = True
-        def_id = _one_line(next_decision.get("default_option_id"))
-        chosen_option = next(
-            (dict(opt) for opt in options if str(opt.get("option_id")) == def_id or opt.get("is_default")),
-            dict(options[-1]) if options else None,
-        )
+    if requested_custom:
+        if requested_option_id and requested_option_id.lower() not in {"freeform", "opt_freeform"}:
+            raise ValueError(
+                f"Cannot combine option_id {requested_option_id!r} with custom_response for decision {eff_decision_id!r}"
+            )
+        if requested_option_label:
+            raise ValueError(
+                f"Cannot combine option_label with custom_response for decision {eff_decision_id!r}"
+            )
+        if not bool(next_decision.get("freeform_allowed", True)):
+            raise ValueError(
+                f"Freeform custom_response is not allowed for decision {eff_decision_id!r}"
+            )
+        is_freeform = True
+        response_kind = "freeform"
+        final_option_id = "freeform"
+        final_option_label = "自訂裁示（已加密儲存）"
+        private_response_text = requested_custom
     elif requested_option_id:
         req_lower = requested_option_id.lower()
+        if req_lower in {"freeform", "opt_freeform"}:
+            raise ValueError(
+                f"Freeform option_id requires custom_response for decision {eff_decision_id!r}"
+            )
         for opt in options:
             oid = str(opt.get("option_id") or opt.get("id") or "").strip()
             lbl = str(opt.get("label") or opt.get("text") or "").strip()
@@ -1585,24 +1719,58 @@ def resolve_decision_choice(
             ):
                 chosen_option = dict(opt)
                 break
-        if chosen_option is None and not requested_label and options:
+        if chosen_option is None:
             raise ValueError(f"Unknown option_id {requested_option_id!r} for decision {eff_decision_id!r}")
-    elif requested_label:
-        req_lbl_lower = requested_label.lower()
-        for opt in options:
-            lbl = str(opt.get("label") or opt.get("text") or "").strip()
-            if lbl.lower() == req_lbl_lower:
-                chosen_option = dict(opt)
-                break
-
-    if chosen_option is not None:
+        canonical_label = _one_line(
+            chosen_option.get("label") or chosen_option.get("text"),
+            str(chosen_option.get("option_id") or chosen_option.get("id") or "opt_selected"),
+        )
+        if requested_option_label and requested_option_label.lower() != canonical_label.lower():
+            raise ValueError(
+                f"option_label {requested_option_label!r} does not match option_id {requested_option_id!r} for decision {eff_decision_id!r}"
+            )
         final_option_id = str(chosen_option.get("option_id") or chosen_option.get("id") or "opt_selected")
-        final_option_label = requested_label or str(chosen_option.get("label") or chosen_option.get("text") or final_option_id)
+        final_option_label = canonical_label
+        private_response_text = canonical_label
         if chosen_option.get("is_default"):
             used_default = True
-    elif requested_option_id or requested_label:
-        final_option_id = requested_option_id or "opt_custom"
-        final_option_label = requested_label or requested_option_id
+    elif requested_option_label:
+        req_lbl_lower = requested_option_label.lower()
+        for opt in options:
+            oid = str(opt.get("option_id") or opt.get("id") or "").strip()
+            lbl = str(opt.get("label") or opt.get("text") or "").strip()
+            if (
+                lbl.lower() == req_lbl_lower
+                or oid.lower() == req_lbl_lower
+                or (len(req_lbl_lower) == 1 and lbl.lower().startswith(f"{req_lbl_lower}."))
+            ):
+                chosen_option = dict(opt)
+                break
+        if chosen_option is None:
+            raise ValueError(f"Unknown option_label {requested_option_label!r} for decision {eff_decision_id!r}")
+        final_option_id = str(chosen_option.get("option_id") or chosen_option.get("id") or "opt_selected")
+        final_option_label = _one_line(
+            chosen_option.get("label") or chosen_option.get("text"),
+            final_option_id,
+        )
+        private_response_text = final_option_label
+        if chosen_option.get("is_default"):
+            used_default = True
+    elif use_servant_default:
+        used_default = True
+        def_id = _one_line(next_decision.get("default_option_id"))
+        chosen_option = next(
+            (dict(opt) for opt in options if str(opt.get("option_id")) == def_id or opt.get("is_default")),
+            dict(options[-1]) if options else None,
+        )
+        if chosen_option is None:
+            raise ValueError(f"No servant default option available for decision {eff_decision_id!r}")
+        final_option_id = str(chosen_option.get("option_id") or chosen_option.get("id") or "opt_d")
+        final_option_label = _one_line(
+            chosen_option.get("label") or chosen_option.get("text"),
+            final_option_id,
+        )
+        private_response_text = final_option_label
     else:
         raise ValueError("One of option_id, selected_option_id, option_label, custom_response, or use_servant_default=true is required")
 
@@ -1624,8 +1792,11 @@ def resolve_decision_choice(
         "decision_id": eff_decision_id,
         "question_id": eff_decision_id,
         "question": _one_line(next_decision.get("question") or next_decision.get("text"), "策略高價值決策"),
+        "response_kind": response_kind,
+        "is_freeform": is_freeform,
         "option_id": final_option_id,
         "option_label": final_option_label,
+        "private_response_text": private_response_text,
         "used_servant_default": used_default,
         "resolves": eff_resolves,
         "target_blocks": [

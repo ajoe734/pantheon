@@ -1,6 +1,7 @@
 """Unit and contract tests for Strategy Reconstruction engine & worker."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 import pytest
@@ -541,13 +542,34 @@ def test_answering_next_decision_records_event_and_updates_next_reconstruction(m
     )
     assert no_idem.status_code == 400
 
-    # Unknown option_id -> 422 without burning idempotency key
+    # Unknown option_id (alone or combined with option_label) and unknown option_label -> 422 without burning idempotency key
     bad_opt = client.post(
         f"/bff/agora/workshops/{workshop_id}/decisions",
         headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
         json={"decision_id": next_decision["decision_id"], "option_id": "nonexistent_option_999"},
     )
     assert bad_opt.status_code == 422
+
+    bad_opt_with_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": "nonexistent_zzz", "option_label": "x"},
+    )
+    assert bad_opt_with_label.status_code == 422
+
+    bad_unmatched_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_label": "UNMATCHED_FREE_TEXT_LABEL"},
+    )
+    assert bad_unmatched_label.status_code == 422
+
+    bad_mismatched_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"], "option_label": "wrong label"},
+    )
+    assert bad_mismatched_label.status_code == 422
 
     # Valid decision write -> 201 and records 1 workshop event
     dec_resp = client.post(
@@ -558,9 +580,21 @@ def test_answering_next_decision_records_event_and_updates_next_reconstruction(m
     assert dec_resp.status_code == 201, dec_resp.text
     dec_data = dec_resp.json()["data"]
     assert dec_data["decision_id"] == "q1"
+    assert dec_data["response_kind"] == "option"
     assert dec_data["option_id"] == chosen_opt["option_id"]
     assert dec_data["option_label"] == chosen_opt["label"]
     assert dec_data["sequence_no"] == 2
+
+    # Stored event payload_refs_json carries only IDs (never option_label or free text)
+    events_after_opt = client.get(
+        f"/bff/agora/workshops/{workshop_id}/events",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert events_after_opt.status_code == 200
+    opt_event = next(e for e in events_after_opt.json()["data"] if e["event_id"] == dec_data["event_id"])
+    assert opt_event["private_content_ref"]
+    assert not any(str(r).startswith("option_label:") for r in (opt_event["payload_refs_json"] or []))
+    assert chosen_opt["label"] not in json.dumps(opt_event, ensure_ascii=False)
 
     # Duplicate Idempotency-Key with fresh ETag -> 409 IDEMPOTENCY_CONFLICT
     fresh_etag = dec_resp.headers["etag"]
@@ -593,4 +627,48 @@ def test_answering_next_decision_records_event_and_updates_next_reconstruction(m
     assert any(c.get("ref_id") == dec_data["event_id"] for c in signal_block_after["source_citations"])
     # Next high-value decision advanced past the answered question
     assert comp_after["next_decision"]["decision_id"] != "q1"
+
+    # Freeform custom_response routes as explicit freeform kind stored ONLY in encrypted private content
+    from services.control_plane.bff.agora.strategy_workshop.events import _workshop_sse_buffers, ws_replay_after
+
+    second_decision = comp_after["next_decision"]
+    secret_freeform = "SECRET_PRIVATE_THESIS buy 2330 only when unified cluster net flow > 5000 lots"
+    freeform_resp = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": fresh_etag, "Idempotency-Key": "dec-freeform-2"},
+        json={"decision_id": second_decision["decision_id"], "custom_response": secret_freeform},
+    )
+    assert freeform_resp.status_code == 201, freeform_resp.text
+    assert secret_freeform not in freeform_resp.text
+    freeform_data = freeform_resp.json()["data"]
+    assert freeform_data["response_kind"] == "freeform"
+    assert freeform_data["option_id"] == "freeform"
+
+    events_after_freeform = client.get(
+        f"/bff/agora/workshops/{workshop_id}/events",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert events_after_freeform.status_code == 200
+    assert "SECRET_PRIVATE_THESIS" not in events_after_freeform.text
+    ff_event = next(e for e in events_after_freeform.json()["data"] if e["event_id"] == freeform_data["event_id"])
+    assert "kind:workshop_decision_freeform" in ff_event["payload_refs_json"]
+    assert "option_id:freeform" in ff_event["payload_refs_json"]
+    assert not any(str(r).startswith("option_label:") for r in ff_event["payload_refs_json"])
+
+    # Force DB fallback SSE replay and verify free text never leaks into replayed events
+    _workshop_sse_buffers.pop(workshop_id, None)
+    first_event_id = events_after_freeform.json()["data"][0]["event_id"]
+    replayed = ws_replay_after(workshop_id, first_event_id, store=client.app_instance.workshop_store)
+    assert replayed
+    assert "SECRET_PRIVATE_THESIS" not in json.dumps(replayed, ensure_ascii=False)
+
+    # Next reconstruction decrypts the freeform decision from private content and folds it into strategy_map
+    third_recon = client.post(
+        f"/bff/agora/workshops/{workshop_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert third_recon.status_code == 200, third_recon.text
+    third_recon_data = third_recon.json()["data"]
+    assert third_recon_data["based_on_sequence_no"] == 3
+    assert any("SECRET_PRIVATE_THESIS" in fact for fact in third_recon_data["explicit_facts"])
 
