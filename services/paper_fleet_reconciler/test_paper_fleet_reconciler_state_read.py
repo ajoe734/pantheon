@@ -815,6 +815,314 @@ class TestPaperFleetReconcilerStateReadNoCycleLock(unittest.TestCase):
         self.assertEqual(final_snap["running_count"], 1)
         self._assert_consistent_worker_session_view(final_snap)
 
+    def test_terminate_worker_defers_session_end_publication_until_worker_removed(self) -> None:
+        store = RuntimeBindingStore()
+        store.create(
+            _make_binding_record("b-term-pub-001", runtime_id="rt-term-pub-001"),
+            single_runtime_enforced=False,
+        )
+
+        end_session_entered = threading.Event()
+        release_end_session = threading.Event()
+        end_session_exited = threading.Event()
+        block_on_session_end = False
+        boundary_state: Dict[str, Any] = {}
+        published_generations: List[Dict[str, Any]] = []
+
+        class _Reconciler(PaperFleetReconciler):
+            def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _EventProcess:
+                return _EventProcess(pid=601)
+
+            def _fetch_source_snapshot(inner_self, symbol: str) -> Optional[Dict[str, Any]]:
+                return _fresh_snapshot(symbol=symbol)
+
+            def _publish_snapshot(inner_self) -> None:
+                super()._publish_snapshot()
+                if getattr(inner_self, "_defer_snapshot_publish_depth", 0) == 0:
+                    published_generations.append(inner_self.snapshot())
+
+            def _end_monitoring_session(
+                inner_self,
+                session_id: Optional[str],
+                **kwargs: Any,
+            ) -> None:
+                super()._end_monitoring_session(session_id, **kwargs)
+                if block_on_session_end and session_id:
+                    entry = inner_self._workers.get("b-term-pub-001")
+                    session = inner_self._monitoring_sessions.get(session_id, {})
+                    boundary_state["worker_still_present"] = entry is not None
+                    boundary_state["worker_private_status"] = (
+                        entry.status if entry is not None else None
+                    )
+                    boundary_state["session_private_status"] = session.get("status")
+                    end_session_entered.set()
+                    try:
+                        release_end_session.wait()
+                    finally:
+                        end_session_exited.set()
+
+        recon = _Reconciler(
+            store=store,
+            source_ingest_url="http://source-ingest:8097",
+            leader_store=InMemoryFencedLeaderStore(),
+            poll_interval_seconds=999,
+            worker_base_port=9500,
+            market_input_bootstrap_grace_seconds=0.0,
+        )
+
+        first = recon.reconcile_once()
+        self.assertEqual(first["cycle_count"], 1)
+        self.assertEqual(first["worker_count"], 1)
+        self.assertEqual(first["running_count"], 1)
+        self.assertEqual(first["active_monitoring_session_count"], 1)
+        self._assert_consistent_worker_session_view(first)
+
+        # Retire the binding and pause inside _terminate_worker immediately after
+        # _end_monitoring_session mutates the session and before worker removal.
+        store.transition_status("b-term-pub-001", "retired")
+        block_on_session_end = True
+        read_results: Dict[str, Any] = {}
+        cycle_errors: List[BaseException] = []
+        cycle_thread = _start_capturing_thread(recon.reconcile_once, cycle_errors)
+        try:
+            def _reader() -> None:
+                read_results["snapshot"] = recon.snapshot()
+                read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
+                read_results["readyz"] = self._http_get_json(recon, "/readyz")
+                read_results["healthz"] = self._http_get_json(recon, "/healthz")
+                read_results["before_release"] = (
+                    not release_end_session.is_set() and not end_session_exited.is_set()
+                )
+
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=cycle_thread,
+                entered_event=end_session_entered,
+                release_event=release_end_session,
+                exited_event=end_session_exited,
+                reader_fn=_reader,
+            )
+            self.assertTrue(read_results.get("before_release"))
+            self.assertTrue(boundary_state.get("worker_still_present"))
+            self.assertEqual(boundary_state.get("worker_private_status"), "running")
+            self.assertEqual(boundary_state.get("session_private_status"), "ended")
+
+            snap_during = read_results["snapshot"]
+            self.assertEqual(snap_during["worker_count"], 1)
+            self.assertEqual(snap_during["running_count"], 1)
+            self.assertEqual(snap_during["active_monitoring_session_count"], 1)
+            self.assertEqual(snap_during["ended_monitoring_session_count"], 0)
+            self._assert_consistent_worker_session_view(snap_during)
+
+            code_during, body_during = read_results["fleet_state"]
+            self.assertEqual(code_during, 200)
+            self.assertEqual(body_during["worker_count"], 1)
+            self.assertEqual(body_during["running_count"], 1)
+            self.assertEqual(body_during["active_monitoring_session_count"], 1)
+            self._assert_consistent_worker_session_view(body_during)
+
+            ready_code, ready_body = read_results["readyz"]
+            self.assertEqual(ready_code, 200)
+            self.assertTrue(ready_body["ready"])
+            health_code, health_body = read_results["healthz"]
+            self.assertEqual(health_code, 200)
+            self.assertTrue(health_body["ready"])
+        finally:
+            release_end_session.set()
+            cycle_thread.join(timeout=5)
+
+        self.assertFalse(cycle_thread.is_alive())
+        if cycle_errors:
+            raise cycle_errors[0]
+
+        snap_after = recon.snapshot()
+        self.assertEqual(snap_after["cycle_count"], 2)
+        self.assertEqual(snap_after["worker_count"], 0)
+        self.assertEqual(snap_after["running_count"], 0)
+        self.assertEqual(snap_after["active_monitoring_session_count"], 0)
+        self.assertEqual(snap_after["ended_monitoring_session_count"], 1)
+        self._assert_consistent_worker_session_view(snap_after)
+
+        code_after, body_after = self._http_get_json(recon, "/api/fleet/state")
+        self.assertEqual(code_after, 200)
+        self.assertEqual(body_after["worker_count"], 0)
+        self.assertEqual(body_after["running_count"], 0)
+        self.assertEqual(body_after["active_monitoring_session_count"], 0)
+        self.assertEqual(body_after["ended_monitoring_session_count"], 1)
+        self._assert_consistent_worker_session_view(body_after)
+
+        for gen in published_generations:
+            self._assert_consistent_worker_session_view(gen)
+
+    def test_stale_session_closure_defers_publication_until_worker_removed(self) -> None:
+        store = RuntimeBindingStore()
+        store.create(
+            _make_binding_record("b-stale-pub-001", runtime_id="rt-stale-pub-001"),
+            single_runtime_enforced=False,
+        )
+
+        stale_end_entered = threading.Event()
+        release_stale_end = threading.Event()
+        stale_end_exited = threading.Event()
+        block_on_stale_end = False
+        heartbeat_iso = [
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        ]
+        boundary_state: Dict[str, Any] = {}
+        published_generations: List[Dict[str, Any]] = []
+        spawn_count = 0
+
+        class _Reconciler(PaperFleetReconciler):
+            def _spawn(inner_self, binding_id: str, port: int, env: Any) -> _EventProcess:
+                nonlocal spawn_count
+                spawn_count += 1
+                return _EventProcess(pid=700 + spawn_count)
+
+            def _fetch_source_snapshot(inner_self, symbol: str) -> Optional[Dict[str, Any]]:
+                return _fresh_snapshot(symbol=symbol)
+
+            def _fetch_runtime_summaries(inner_self) -> Optional[Dict[str, Dict[str, Any]]]:
+                return {
+                    "rt-stale-pub-001": {
+                        "runtime_id": "rt-stale-pub-001",
+                        "last_heartbeat_at": heartbeat_iso[0],
+                        "state": "active",
+                    }
+                }
+
+            def _publish_snapshot(inner_self) -> None:
+                super()._publish_snapshot()
+                if getattr(inner_self, "_defer_snapshot_publish_depth", 0) == 0:
+                    published_generations.append(inner_self.snapshot())
+
+            def _end_monitoring_session(
+                inner_self,
+                session_id: Optional[str],
+                **kwargs: Any,
+            ) -> None:
+                super()._end_monitoring_session(session_id, **kwargs)
+                if (
+                    block_on_stale_end
+                    and session_id
+                    and kwargs.get("staleness") is not None
+                    and not stale_end_entered.is_set()
+                ):
+                    entry = inner_self._workers.get("b-stale-pub-001")
+                    session = inner_self._monitoring_sessions.get(session_id, {})
+                    boundary_state["worker_still_present"] = entry is not None
+                    boundary_state["worker_private_status"] = (
+                        entry.status if entry is not None else None
+                    )
+                    boundary_state["session_private_status"] = session.get("status")
+                    boundary_state["session_staleness_reason"] = (
+                        (session.get("staleness") or {}).get("reason")
+                    )
+                    stale_end_entered.set()
+                    try:
+                        release_stale_end.wait()
+                    finally:
+                        stale_end_exited.set()
+
+        recon = _Reconciler(
+            store=store,
+            source_ingest_url="http://source-ingest:8097",
+            telemetry_api_url="http://telemetry:8095",
+            monitoring_heartbeat_stale_after_seconds=30,
+            leader_store=InMemoryFencedLeaderStore(),
+            poll_interval_seconds=999,
+            worker_base_port=9600,
+            market_input_bootstrap_grace_seconds=0.0,
+        )
+
+        first = recon.reconcile_once()
+        self.assertEqual(first["cycle_count"], 1)
+        self.assertEqual(first["worker_count"], 1)
+        self.assertEqual(first["running_count"], 1)
+        self.assertEqual(first["active_monitoring_session_count"], 1)
+        first_session_id = first["workers"][0]["monitoring_session_id"]
+        self._assert_consistent_worker_session_view(first)
+
+        # Report a stale heartbeat in cycle 2 so _reap_stale_monitoring_sessions
+        # queues a pending stale-session closure and calls _terminate_worker.
+        heartbeat_iso[0] = (
+            (datetime.now(timezone.utc) - timedelta(seconds=300))
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        block_on_stale_end = True
+        read_results: Dict[str, Any] = {}
+        cycle_errors: List[BaseException] = []
+        cycle_thread = _start_capturing_thread(recon.reconcile_once, cycle_errors)
+        try:
+            def _reader() -> None:
+                read_results["snapshot"] = recon.snapshot()
+                read_results["fleet_state"] = self._http_get_json(recon, "/api/fleet/state")
+                read_results["readyz"] = self._http_get_json(recon, "/readyz")
+                read_results["before_release"] = (
+                    not release_stale_end.is_set() and not stale_end_exited.is_set()
+                )
+
+            self._run_bounded_reader_while_writer_blocked(
+                cycle_thread=cycle_thread,
+                entered_event=stale_end_entered,
+                release_event=release_stale_end,
+                exited_event=stale_end_exited,
+                reader_fn=_reader,
+            )
+            self.assertTrue(read_results.get("before_release"))
+            self.assertTrue(boundary_state.get("worker_still_present"))
+            self.assertEqual(boundary_state.get("worker_private_status"), "running")
+            self.assertEqual(boundary_state.get("session_private_status"), "ended")
+            self.assertEqual(boundary_state.get("session_staleness_reason"), "stale_heartbeat")
+
+            snap_during = read_results["snapshot"]
+            self.assertEqual(snap_during["worker_count"], 1)
+            self.assertEqual(snap_during["running_count"], 1)
+            self.assertEqual(snap_during["active_monitoring_session_count"], 1)
+            self._assert_consistent_worker_session_view(snap_during)
+
+            code_during, body_during = read_results["fleet_state"]
+            self.assertEqual(code_during, 200)
+            self.assertEqual(body_during["worker_count"], 1)
+            self.assertEqual(body_during["running_count"], 1)
+            self.assertEqual(body_during["active_monitoring_session_count"], 1)
+            self._assert_consistent_worker_session_view(body_during)
+
+            ready_code, ready_body = read_results["readyz"]
+            self.assertEqual(ready_code, 200)
+            self.assertTrue(ready_body["ready"])
+        finally:
+            release_stale_end.set()
+            cycle_thread.join(timeout=5)
+
+        self.assertFalse(cycle_thread.is_alive())
+        if cycle_errors:
+            raise cycle_errors[0]
+
+        snap_after = recon.snapshot()
+        self.assertEqual(snap_after["cycle_count"], 2)
+        self.assertEqual(snap_after["worker_count"], 1)
+        self.assertEqual(snap_after["running_count"], 1)
+        self.assertEqual(snap_after["active_monitoring_session_count"], 1)
+        self.assertEqual(snap_after["ended_monitoring_session_count"], 1)
+        self._assert_consistent_worker_session_view(snap_after)
+
+        sessions_by_id = {s["session_id"]: s for s in snap_after["monitoring_sessions"]}
+        self.assertIn(first_session_id, sessions_by_id)
+        self.assertFalse(sessions_by_id[first_session_id]["active"])
+        self.assertEqual(sessions_by_id[first_session_id]["ended_reason"], "stale_heartbeat")
+        self.assertEqual(
+            sessions_by_id[first_session_id]["staleness"]["reason"],
+            "stale_heartbeat",
+        )
+
+        code_after, body_after = self._http_get_json(recon, "/api/fleet/state")
+        self.assertEqual(code_after, 200)
+        self._assert_consistent_worker_session_view(body_after)
+
+        for gen in published_generations:
+            self._assert_consistent_worker_session_view(gen)
+
 
 if __name__ == "__main__":
     unittest.main()

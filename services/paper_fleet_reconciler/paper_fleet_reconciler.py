@@ -46,6 +46,7 @@ Environment variables consumed by the reconciler:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from copy import deepcopy
 import hashlib
 import importlib
@@ -826,6 +827,8 @@ class PaperFleetReconciler:
         # Dedicated cycle lock serializing reconcile_once() and stop() worker teardown
         # so concurrent reconcile cycles cannot concurrently mutate worker state.
         self._cycle_lock = threading.RLock()
+        self._defer_snapshot_publish_depth = 0
+        self._snapshot_publish_deferred = False
         self._pending_stale_session_closures: Dict[
             str, List[Tuple[str, str, Dict[str, Any], bool]]
         ] = {}
@@ -1082,7 +1085,7 @@ class PaperFleetReconciler:
                 self._demote_and_stop_workers()
                 return self.snapshot()
 
-            with self._lock:
+            with self._atomic_snapshot_transition(publish_on_exit=False):
                 # Poll live processes for exit — always run, even on fetch failure
                 for binding_id, entry in list(self._workers.items()):
                     if entry.process is None or entry.status in ("stopped", "dead"):
@@ -1095,7 +1098,6 @@ class PaperFleetReconciler:
                         # Free the port so the restart can allocate a clean one
                         self._free_port(entry.port)
                         entry.port = 0
-                        self._publish_snapshot()
                         self._end_monitoring_session(
                             entry.monitoring_session_id,
                             reason="worker_exit",
@@ -1543,7 +1545,7 @@ class PaperFleetReconciler:
             return True
 
         binding_id = binding["binding_id"]
-        with self._lock:
+        with self._atomic_snapshot_transition():
             port = self._allocate_port()
             env = self._build_worker_env(binding)
             env["PORT"] = str(port)
@@ -1556,7 +1558,7 @@ class PaperFleetReconciler:
             process = self._spawn(binding_id, port, env)
         except Exception as exc:  # noqa: BLE001
             fence_ok = self._has_current_fence()
-            with self._lock:
+            with self._atomic_snapshot_transition():
                 self._free_port(port)
                 self._end_monitoring_session(
                     monitoring_session_id,
@@ -1577,7 +1579,6 @@ class PaperFleetReconciler:
                     status="dead",
                     fence_token=self._fence_token,
                 )
-                self._publish_snapshot()
             return fence_ok
 
         # Spawning is outside the leader store transaction and can block past
@@ -1595,7 +1596,7 @@ class PaperFleetReconciler:
                         process.wait(timeout=5)
                 except OSError:
                     pass
-            with self._lock:
+            with self._atomic_snapshot_transition():
                 self._free_port(port)
                 self._end_monitoring_session(
                     monitoring_session_id,
@@ -1606,11 +1607,10 @@ class PaperFleetReconciler:
                 self._last_error = (
                     f"leader fence expired while spawning worker for binding {binding_id}"
                 )
-                self._publish_snapshot()
                 log.error(self._last_error)
             return False
 
-        with self._lock:
+        with self._atomic_snapshot_transition():
             entry = WorkerEntry(
                 binding_id=binding_id,
                 runtime_id=str(binding.get("runtime_id") or ""),
@@ -1624,7 +1624,6 @@ class PaperFleetReconciler:
                 fence_token=self._fence_token,
             )
             self._workers[binding_id] = entry
-            self._publish_snapshot()
         log.info(
             "started worker for binding %s runtime=%s port=%d restarts=%d",
             binding_id,
@@ -1674,7 +1673,7 @@ class PaperFleetReconciler:
             except OSError:
                 pass
             exit_code = proc.returncode
-        with self._lock:
+        with self._atomic_snapshot_transition():
             if exit_code is not None:
                 entry.last_exit_code = exit_code
             pending_closures = getattr(self, "_pending_stale_session_closures", {}).pop(
@@ -1694,7 +1693,6 @@ class PaperFleetReconciler:
             entry.status = "stopped"
             self._free_port(entry.port)
             self._workers.pop(binding_id, None)
-            self._publish_snapshot()
 
     # ------------------------------------------------------------------
     # Monitoring sessions
@@ -1783,49 +1781,52 @@ class PaperFleetReconciler:
         binding: Dict[str, Any],
         *,
         restart_count: int,
+        publish: bool = True,
     ) -> str:
         binding_id = str(binding.get("binding_id") or "")
         now = _iso_now()
-        for session_id, session in list(self._monitoring_sessions.items()):
-            if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
-                continue
-            staleness = self._monitoring_session_staleness_marker(session)
-            if staleness is not None and session.get("ended_at") in (None, ""):
-                self._end_monitoring_session(
-                    session_id,
-                    reason=str(staleness.get("reason") or "stale_monitoring_session"),
-                    ended_at=now,
-                    staleness=staleness,
-                    force=True,
-                )
-            elif self._monitoring_session_open(session):
-                self._end_monitoring_session(
-                    session_id,
-                    reason="superseded_by_restart",
-                    ended_at=now,
-                )
-        session_id = f"prmon-{binding_id}-{uuid.uuid4().hex[:8]}"
-        session = {
-            "id": session_id,
-            "session_id": session_id,
-            "session_type": "paper_runtime_monitoring",
-            "binding_id": binding_id,
-            "runtime_binding_id": binding_id,
-            "runtime_id": str(binding.get("runtime_id") or ""),
-            "capital_pool_id": str(binding.get("capital_pool_id") or ""),
-            "deployment_stage": "paper",
-            "status": "running",
-            "started_at": now,
-            "ended_at": None,
-            "restart_count": restart_count,
-            "stale_after_seconds": self._monitoring_heartbeat_stale_after,
-            "last_heartbeat_at": None,
-            "ended_reason": None,
-        }
-        self._monitoring_sessions[session_id] = session
-        self._persist_monitoring_sessions()
-        self._publish_snapshot()
-        return session_id
+        with self._atomic_snapshot_transition(publish_on_exit=publish):
+            for session_id, session in list(self._monitoring_sessions.items()):
+                if str(session.get("binding_id") or session.get("runtime_binding_id") or "") != binding_id:
+                    continue
+                staleness = self._monitoring_session_staleness_marker(session)
+                if staleness is not None and session.get("ended_at") in (None, ""):
+                    self._end_monitoring_session(
+                        session_id,
+                        reason=str(staleness.get("reason") or "stale_monitoring_session"),
+                        ended_at=now,
+                        staleness=staleness,
+                        force=True,
+                    )
+                elif self._monitoring_session_open(session):
+                    self._end_monitoring_session(
+                        session_id,
+                        reason="superseded_by_restart",
+                        ended_at=now,
+                    )
+            session_id = f"prmon-{binding_id}-{uuid.uuid4().hex[:8]}"
+            session = {
+                "id": session_id,
+                "session_id": session_id,
+                "session_type": "paper_runtime_monitoring",
+                "binding_id": binding_id,
+                "runtime_binding_id": binding_id,
+                "runtime_id": str(binding.get("runtime_id") or ""),
+                "capital_pool_id": str(binding.get("capital_pool_id") or ""),
+                "deployment_stage": "paper",
+                "status": "running",
+                "started_at": now,
+                "ended_at": None,
+                "restart_count": restart_count,
+                "stale_after_seconds": self._monitoring_heartbeat_stale_after,
+                "last_heartbeat_at": None,
+                "ended_reason": None,
+            }
+            self._monitoring_sessions[session_id] = session
+            self._persist_monitoring_sessions()
+            if publish:
+                self._publish_snapshot()
+            return session_id
 
     def _end_monitoring_session(
         self,
@@ -1836,26 +1837,29 @@ class PaperFleetReconciler:
         staleness: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
         force: bool = False,
+        publish: bool = True,
     ) -> None:
         if not session_id:
             return
-        session = self._monitoring_sessions.get(session_id)
-        if not session:
-            return
-        if session.get("ended_at") not in (None, ""):
-            return
-        if not force and not self._monitoring_session_open(session):
-            return
-        session["ended_at"] = ended_at or _iso_now()
-        session["status"] = "ended"
-        session["ended_reason"] = reason
-        session["terminal_reason"] = reason
-        if staleness is not None:
-            session["staleness"] = dict(staleness)
-        if error:
-            session["last_error"] = error
-        self._persist_monitoring_sessions()
-        self._publish_snapshot()
+        with self._lock:
+            session = self._monitoring_sessions.get(session_id)
+            if not session:
+                return
+            if session.get("ended_at") not in (None, ""):
+                return
+            if not force and not self._monitoring_session_open(session):
+                return
+            session["ended_at"] = ended_at or _iso_now()
+            session["status"] = "ended"
+            session["ended_reason"] = reason
+            session["terminal_reason"] = reason
+            if staleness is not None:
+                session["staleness"] = dict(staleness)
+            if error:
+                session["last_error"] = error
+            self._persist_monitoring_sessions()
+            if publish:
+                self._publish_snapshot()
 
     def _monitoring_staleness(
         self,
@@ -1903,7 +1907,8 @@ class PaperFleetReconciler:
         summaries = summaries or {}
         now = datetime.now(timezone.utc)
         stale_worker_sessions: List[Tuple[str, str, str, Dict[str, Any], bool]] = []
-        with self._lock:
+        stale_bindings: List[str] = []
+        with self._atomic_snapshot_transition(publish_on_exit=False):
             changed = False
             for session_id, session in list(self._monitoring_sessions.items()):
                 existing_staleness = self._monitoring_session_staleness_marker(session)
@@ -1921,7 +1926,6 @@ class PaperFleetReconciler:
                             staleness=existing_staleness,
                             force=True,
                         )
-                        changed = False
                     continue
                 if not self._monitoring_session_open(session):
                     continue
@@ -1952,23 +1956,25 @@ class PaperFleetReconciler:
                         reason=staleness["reason"],
                         staleness=staleness,
                     )
-                    changed = False
             if changed:
                 self._persist_monitoring_sessions()
                 self._publish_snapshot()
-
-        for binding_id, session_id, staleness_reason, staleness_marker, force_end in stale_worker_sessions:
-            with self._lock:
+            for binding_id, session_id, staleness_reason, staleness_marker, force_end in stale_worker_sessions:
+                if binding_id not in self._pending_stale_session_closures:
+                    stale_bindings.append(binding_id)
                 self._pending_stale_session_closures.setdefault(binding_id, []).append(
                     (session_id, staleness_reason, staleness_marker, force_end)
                 )
+
+        for binding_id in stale_bindings:
+            with self._lock:
                 has_worker = binding_id in self._workers
             if has_worker:
                 self._terminate_worker(
                     binding_id,
                     reason="monitoring heartbeat stale",
                 )
-            with self._lock:
+            with self._atomic_snapshot_transition(publish_on_exit=False):
                 leftover = self._pending_stale_session_closures.pop(binding_id, [])
                 for sid, s_reason, s_marker, s_force in leftover:
                     self._end_monitoring_session(
@@ -2407,9 +2413,35 @@ class PaperFleetReconciler:
             snap["monitoring_session_count"] = len(snap["monitoring_sessions"])
         return snap
 
+    @contextlib.contextmanager
+    def _atomic_snapshot_transition(self, *, publish_on_exit: bool = True):
+        """Defer nested helper publications until a compound state transition completes."""
+        with self._lock:
+            self._defer_snapshot_publish_depth = (
+                getattr(self, "_defer_snapshot_publish_depth", 0) + 1
+            )
+            if publish_on_exit:
+                self._snapshot_publish_deferred = True
+            try:
+                yield
+            finally:
+                self._defer_snapshot_publish_depth = max(
+                    getattr(self, "_defer_snapshot_publish_depth", 1) - 1,
+                    0,
+                )
+                if (
+                    self._defer_snapshot_publish_depth == 0
+                    and getattr(self, "_snapshot_publish_deferred", False)
+                ):
+                    self._publish_snapshot()
+
     def _publish_snapshot(self) -> None:
         """Replace the reader view atomically; only writers take the cycle lock."""
         with self._lock:
+            if getattr(self, "_defer_snapshot_publish_depth", 0) > 0:
+                self._snapshot_publish_deferred = True
+                return
+            self._snapshot_publish_deferred = False
             # Sessions contain nested staleness metadata. Detach it as well as
             # the outer lists/dicts so later writer changes cannot leak through.
             self._published_snapshot = deepcopy(self._snapshot())
