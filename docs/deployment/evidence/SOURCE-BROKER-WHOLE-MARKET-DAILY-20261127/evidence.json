@@ -153,118 +153,32 @@
   ],
   "verification": {
     "previous_owner_commands": [
-      {
-        "cmd": "pytest services/source_ingestion/tests/test_finmind_broker_whole_market.py test_finmind_broker_backfill.py test_finmind_taiwan_connectors.py test_finmind_broker_readback_provenance.py test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist",
-        "result": "182 passed"
-      },
-      {
-        "cmd": "pytest scripts/test_deploy_nonprod_vm.py (3 shards of the collected ids)",
-        "result": "81 passed 2 skipped; 82 passed; 75 passed"
-      },
-      {
-        "cmd": "pytest scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py",
-        "result": "159 passed, 1 skipped"
-      },
-      {
-        "cmd": "pytest scripts/test_check_market_data_budget.py",
-        "result": "19 passed"
-      },
-      {
-        "cmd": "python scripts/check_market_data_budget.py --only tw_broker_top",
-        "result": "ok: day_bytes 2,623,088 <= 6,000,000; declared_budget_bytes 6,000,000 <= design row"
-      },
-      {
-        "cmd": "python scripts/check_storage_manifest.py",
-        "result": "exit 0"
-      },
-      {
-        "cmd": "bash -n scripts/deploy_nonprod_vm.sh",
-        "result": "ok"
-      }
+      {"cmd": "pytest services/source_ingestion/tests/test_finmind_broker_whole_market.py test_finmind_broker_backfill.py test_finmind_taiwan_connectors.py test_finmind_broker_readback_provenance.py test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist", "result": "182 passed"},
+      {"cmd": "pytest scripts/test_deploy_nonprod_vm.py (3 shards of the collected ids)", "result": "81 passed 2 skipped; 82 passed; 75 passed"},
+      {"cmd": "pytest scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py", "result": "159 passed, 1 skipped"},
+      {"cmd": "pytest scripts/test_check_market_data_budget.py", "result": "19 passed"},
+      {"cmd": "python scripts/check_market_data_budget.py --only tw_broker_top", "result": "ok: day_bytes 2,623,088 <= 6,000,000; declared_budget_bytes 6,000,000 <= design row"},
+      {"cmd": "python scripts/check_storage_manifest.py", "result": "exit 0"},
+      {"cmd": "bash -n scripts/deploy_nonprod_vm.sh", "result": "ok"}
     ],
     "previous_owner_environment": "task worktree .venv-pantheon (python 3.12) + pyarrow 26.0.1 (the locked source-ingest version) on PYTHONPATH",
     "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py; Python 3.12, pyarrow 26.0.1, no PYTHONPATH override.",
     "commands": [
-      {
-        "cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides (before fix)",
-        "result": "1 failed as expected: compact 2454 buy/sell rows omitted",
-        "exit_status": 1,
-        "purpose": "defect reproduction"
-      },
-      {
-        "cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py",
-        "result": "6 passed",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
-        "result": "123 passed, 1 existing Starlette/httpx deprecation warning in 74.39s",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py -k whole_market",
-        "result": "4 passed, 236 deselected in 7.96s",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top",
-        "result": "2 checks passed: measured gzip day_bytes=2623088 <= 6000000; declared limit matches design 6A",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && bash -n scripts/deploy_nonprod_vm.sh && git diff --check",
-        "result": "manifest check passed with zero failures; shell syntax and diff checks passed",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py",
-        "result": "TIMEOUT; not counted as passed. All 242 collected IDs were retried in four round-robin 180-second shards, which also timed out and are not counted as passed.",
-        "exit_status": 124
-      },
-      {
-        "cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py",
-        "result": "Local synthetic fixture only: 1000 symbols with both sides; 2000 compact rows, 15873 gzip bytes, 1325000 uncompressed bytes; probe passed. Missing-store and partial-receipt probes failed as expected. File SHA-256 and mtime snapshots unchanged; missing root not created. No hosted proof claimed.",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k 'finmind or whole_market'",
-        "result": "16 passed, 165 deselected in 9.43s",
-        "exit_status": 0
-      }
+      {"cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides (before fix)", "result": "1 failed as expected: compact 2454 buy/sell rows omitted", "exit_status": 1, "purpose": "defect reproduction"},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "6 passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "123 passed, 1 existing Starlette/httpx deprecation warning in 74.39s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py -k whole_market", "result": "4 passed, 236 deselected in 7.96s", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top", "result": "2 checks passed: measured gzip day_bytes=2623088 <= 6000000; declared limit matches design 6A", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && bash -n scripts/deploy_nonprod_vm.sh && git diff --check", "result": "manifest check passed with zero failures; shell syntax and diff checks passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py", "result": "TIMEOUT; not counted as passed. All 242 collected IDs were retried in four round-robin 180-second shards, which also timed out and are not counted as passed.", "exit_status": 124},
+      {"cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py", "result": "Local synthetic fixture only: 1000 symbols with both sides; 2000 compact rows, 15873 gzip bytes, 1325000 uncompressed bytes; probe passed. Missing-store and partial-receipt probes failed as expected. File SHA-256 and mtime snapshots unchanged; missing root not created. No hosted proof claimed.", "exit_status": 0},
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k 'finmind or whole_market'", "result": "16 passed, 165 deselected in 9.43s", "exit_status": 0}
     ],
     "script_shard_attempts": [
-      {
-        "shard": 0,
-        "timeout_seconds": 180,
-        "exit_status": 124,
-        "result": "timeout; no pass claim",
-        "collected_test_count": 61,
-        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
-      },
-      {
-        "shard": 1,
-        "timeout_seconds": 180,
-        "exit_status": 124,
-        "result": "timeout; no pass claim",
-        "collected_test_count": 61,
-        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
-      },
-      {
-        "shard": 2,
-        "timeout_seconds": 180,
-        "exit_status": 124,
-        "result": "timeout; no pass claim",
-        "collected_test_count": 60,
-        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
-      },
-      {
-        "shard": 3,
-        "timeout_seconds": 180,
-        "exit_status": 124,
-        "result": "timeout; no pass claim",
-        "collected_test_count": 60,
-        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
-      }
+      {"shard": 0, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 61, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 1, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 61, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 2, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 60, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"},
+      {"shard": 3, "timeout_seconds": 180, "exit_status": 124, "result": "timeout; no pass claim", "collected_test_count": 60, "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"}
     ],
     "passed_focused_unique_tests": 143
   },
@@ -273,16 +187,8 @@
     "p1_source_anchor": "42679f9a7",
     "p1_change": "Completion and zero-request reruns require persisted two-sided coverage and current expected-set readback, not the union of generated symbols. A missing side on even one stored symbol stays partial and retryable. No new job or writer; the existing once-per-session run and 750-receipt count cap are unchanged. One extra readback of the bounded <=6 MB session partition after a write; complete reruns already performed a partition readback.",
     "validation": [
-      {
-        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py",
-        "result": "22 passed in 12.42s",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
-        "result": "128 passed, 1 existing Starlette/httpx deprecation warning in 51.02s",
-        "exit_status": 0
-      }
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py", "result": "22 passed in 12.42s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "128 passed, 1 existing Starlette/httpx deprecation warning in 51.02s", "exit_status": 0}
     ],
     "prior_p2_scope_hold": {
       "required_actor": "Human/Ops",
@@ -313,36 +219,12 @@
     "runtime_budget": "6 MB per session partition x 750 stored sessions <=4.5 GB after successful delete-mode sweep, plus evidence-pinned partitions outside the window (<=6 MB each, separately reported). Receipts retain 750 session files (~0.75 MB). Dry-run, unresolved pins or the 20% delete-share refusal do not enforce this steady-state cap.",
     "cadence_and_writers": "Existing sweeper at most once per trading day; one replaced <=64 KiB report, no new writer or per-row evidence. Existing one partition + one ~1 KB receipt per published session.",
     "validation": [
-      {
-        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_datasets_keyed_write.py",
-        "result": "52 passed in 31.03s",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
-        "result": "85 passed in 30.27s; one existing Starlette/httpx deprecation warning",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && git diff --check",
-        "result": "2 byte-budget checks passed (2,623,088 compressed bytes <=6,000,000), storage manifest passed (378 entries, zero failures), diff check passed",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py",
-        "exit_status": 124,
-        "result": "Timed out after 180 seconds without a terminal pytest summary; not counted as passed. Session/keyed tests and focused existing keyed-retention regression are recorded separately."
-      },
-      {
-        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
-        "result": "1 passed in 30.58s",
-        "exit_status": 0
-      },
-      {
-        "cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py",
-        "result": "Local synthetic fixture only: read-only probe passed with keyed_retention_sessions=750, 1000 symbols / both sides, 2000 compact rows, 15873 gzip bytes; missing-store and partial receipts rejected. File bytes/mtimes unchanged and missing root not created. No hosted proof claimed.",
-        "exit_status": 0
-      }
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_datasets_keyed_write.py", "result": "52 passed in 31.03s", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_broker_branch_flow_route.py", "result": "85 passed in 30.27s; one existing Starlette/httpx deprecation warning", "exit_status": 0},
+      {"cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && git diff --check", "result": "2 byte-budget checks passed (2,623,088 compressed bytes <=6,000,000), storage manifest passed (378 entries, zero failures), diff check passed", "exit_status": 0},
+      {"cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py", "exit_status": 124, "result": "Timed out after 180 seconds without a terminal pytest summary; not counted as passed. Session/keyed tests and focused existing keyed-retention regression are recorded separately."},
+      {"cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never", "result": "1 passed in 30.58s", "exit_status": 0},
+      {"cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py", "result": "Local synthetic fixture only: read-only probe passed with keyed_retention_sessions=750, 1000 symbols / both sides, 2000 compact rows, 15873 gzip bytes; missing-store and partial receipts rejected. File bytes/mtimes unchanged and missing root not created. No hosted proof claimed.", "exit_status": 0}
     ],
     "hosted": "pending deploy and the committed read-only probe; no hosted claim",
     "passed_focused_unique_tests": 138
@@ -360,70 +242,19 @@
     "last_command_started_at": "2026-11-27T14:23:15.925Z",
     "last_command_cancelled_at": "2026-11-27T14:23:53.187Z",
     "terminal_ci_results": [
-      {
-        "command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300",
-        "collected": 3071,
-        "passed": 3064,
-        "skipped": 7,
-        "exit_status": 0,
-        "seconds": 801,
-        "finished_at": "2026-11-27T14:03:08.971Z"
-      },
-      {
-        "command": "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
-        "passed": 238,
-        "skipped": 2,
-        "exit_status": 0,
-        "seconds": 263.58,
-        "finished_at": "2026-11-27T14:23:15.812Z"
-      },
-      {
-        "step": "Run tooling smoke gate",
-        "passed": 375,
-        "skipped": 1,
-        "seconds": 125.18,
-        "exit_status": 0
-      },
-      {
-        "step": "Run tooling integration-authority gate",
-        "passed": 660,
-        "seconds": 39.75,
-        "exit_status": 0
-      },
-      {
-        "step": "Run delivery diagnostics and exit-status regressions",
-        "passed": 1120,
-        "skipped": 2,
-        "seconds": 317.87,
-        "exit_status": 0
-      }
+      {"command": "python3 scripts/ci_source_ingestion_test_shards.py --shards 4 --max-test-seconds 300", "collected": 3071, "passed": 3064, "skipped": 7, "exit_status": 0, "seconds": 801, "finished_at": "2026-11-27T14:03:08.971Z"},
+      {"command": "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py", "passed": 238, "skipped": 2, "exit_status": 0, "seconds": 263.58, "finished_at": "2026-11-27T14:23:15.812Z"},
+      {"step": "Run tooling smoke gate", "passed": 375, "skipped": 1, "seconds": 125.18, "exit_status": 0},
+      {"step": "Run tooling integration-authority gate", "passed": 660, "seconds": 39.75, "exit_status": 0},
+      {"step": "Run delivery diagnostics and exit-status regressions", "passed": 1120, "skipped": 2, "seconds": 317.87, "exit_status": 0}
     ],
     "local_validation": [
-      {
-        "command": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_deploy_nonprod_vm.py -k 'session or whole_market'",
-        "result": "49 passed, 222 deselected in 49.96s",
-        "exit_status": 0
-      },
-      {
-        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -vv -s scripts/test_dev_tw_market_refresh.py",
-        "exit_status": 124,
-        "result": "The 132-item suite was still progressing at the 180-second foreground bound; no terminal pytest summary, so this is not a pass. Final running case: test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure[fail_token_exec-failed to read controller_token from running source-ingest container cid-source-ingest-recreated]. No failed assertion was emitted before timeout; earlier PASSED lines are not counted as a successful batch."
-      },
-      {
-        "command": "git diff --check && python3 -m json.tool docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json > /dev/null",
-        "exit_status": 0,
-        "result": "Whitespace and JSON syntax checks passed; evidence/register changes only."
-      }
+      {"command": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_deploy_nonprod_vm.py -k 'session or whole_market'", "result": "49 passed, 222 deselected in 49.96s", "exit_status": 0},
+      {"command": "timeout 180 .venv-pantheon/bin/python -m pytest -vv -s scripts/test_dev_tw_market_refresh.py", "exit_status": 124, "result": "The 132-item suite was still progressing at the 180-second foreground bound; no terminal pytest summary, so this is not a pass. Final running case: test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure[fail_token_exec-failed to read controller_token from running source-ingest container cid-source-ingest-recreated]. No failed assertion was emitted before timeout; earlier PASSED lines are not counted as a successful batch."},
+      {"command": "git diff --check && python3 -m json.tool docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json > /dev/null", "exit_status": 0, "result": "Whitespace and JSON syntax checks passed; evidence/register changes only."}
     ],
     "residual_findings": [
-      {
-        "class": "RC1 required-check pipeline / WP1.4",
-        "finding": "Serial mixed Smoke acceptance exhausts its global 40-minute job budget after source and deployment tests passed; the final refresh suite received only about 37 seconds. This run contains no failing source test assertion.",
-        "owning_domain": "Remediation mechanisms / release CI pipeline (problem-register domain owners f4c32790 and 4d1476a3)",
-        "existing_chain": "RC1 required check that fails under CI load / WP1.4, recorded in problem-register. Governed show confirmed prior SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125 are archived done; those terminal tasks are not new dependencies. The domain coordinator must reconcile the surviving aggregate-budget obligation.",
-        "required_correction": "Human/Ops extended this same task artifact contract at 2026-11-27T14:36:59Z and reopened at 14:37:08Z. Timeout repaired in 2051aae54 (40 -> 55 minutes), preserving every gate command and assertion; fresh exact-head CI and review still required. No stage0 matrix or runner change.",
-        "disposition": "Source correction now included in this same RC1 incident and task; fresh CI and Antigravity2 review pending, not a dependency on the completed keyed-side task."
-      }
+      {"class": "RC1 required-check pipeline / WP1.4", "finding": "Serial mixed Smoke acceptance exhausts its global 40-minute job budget after source and deployment tests passed; the final refresh suite received only about 37 seconds. This run contains no failing source test assertion.", "owning_domain": "Remediation mechanisms / release CI pipeline (problem-register domain owners f4c32790 and 4d1476a3)", "existing_chain": "RC1 required check that fails under CI load / WP1.4, recorded in problem-register. Governed show confirmed prior SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125 are archived done; those terminal tasks are not new dependencies. The domain coordinator must reconcile the surviving aggregate-budget obligation.", "required_correction": "Human/Ops extended this same task artifact contract at 2026-11-27T14:36:59Z and reopened at 14:37:08Z. Timeout repaired in 2051aae54 (40 -> 55 minutes), preserving every gate command and assertion; fresh exact-head CI and review still required. No stage0 matrix or runner change.", "disposition": "Source correction now included in this same RC1 incident and task; fresh CI and Antigravity2 review pending, not a dependency on the completed keyed-side task."}
     ],
     "runtime_budget_change": "None: this continuation records diagnostic evidence only; no recurring job, runtime writer, cadence, count, storage cap or cleanup behaviour changes."
   },
@@ -434,26 +265,10 @@
     "change": "Smoke acceptance timeout-minutes 40 -> 55. All gate commands, assertions, per-step bounds, test counts and failure handling retained; continue-on-error remains absent. Workflow contract updated to require the 55-minute aggregate bound.",
     "runtime_budget": "CI only: at most 15 additional runner minutes per applicable Smoke acceptance job; unchanged push/PR event cadence, no recurring product job or new persistent writer. Existing daily compact broker partition, receipt, 6 MB day cap, 750-session retention and sweeper cleanup remain unchanged.",
     "validation": [
-      {
-        "command": "timeout 90 .venv-pantheon/bin/python -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision",
-        "result": "27 tests passed in 1.006s",
-        "exit_status": 0
-      },
-      {
-        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_branch_ci_gate_selection.py scripts/test_dev_tw_market_refresh_workflow.py && git diff --check",
-        "result": "96 passed, 3 subtests passed in 93.18s; diff check passed",
-        "exit_status": 0
-      },
-      {
-        "command": "timeout 90 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py",
-        "result": "2 byte-budget checks passed (2,623,088 compressed bytes <= 6,000,000); storage manifest passed, 378 entries, zero failures",
-        "exit_status": 0
-      },
-      {
-        "command": "timeout 600 .venv-pantheon/bin/python -m pytest -q --durations=15 scripts/test_dev_tw_market_refresh.py",
-        "result": "132 passed in 313.63s (0:05:13); terminal exit collected, no failures or skips",
-        "exit_status": 0
-      }
+      {"command": "timeout 90 .venv-pantheon/bin/python -m unittest scripts.test_branch_ci_gate_selection scripts.test_ci_worker_sandbox_provision", "result": "27 tests passed in 1.006s", "exit_status": 0},
+      {"command": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_branch_ci_gate_selection.py scripts/test_dev_tw_market_refresh_workflow.py && git diff --check", "result": "96 passed, 3 subtests passed in 93.18s; diff check passed", "exit_status": 0},
+      {"command": "timeout 90 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py", "result": "2 byte-budget checks passed (2,623,088 compressed bytes <= 6,000,000); storage manifest passed, 378 entries, zero failures", "exit_status": 0},
+      {"command": "timeout 600 .venv-pantheon/bin/python -m pytest -q --durations=15 scripts/test_dev_tw_market_refresh.py", "result": "132 passed in 313.63s (0:05:13); terminal exit collected, no failures or skips", "exit_status": 0}
     ],
     "required_ci": "Fresh exact-head PR #7954 checks must finish; no CI success claimed by this pre-review manifest.",
     "hosted": "Pending exact-version deploy and the committed read-only probe; no hosted acceptance claimed.",
