@@ -824,6 +824,218 @@ def strategy_spec_summary_row(entry: RegistryEntry) -> dict:
     return row
 
 
+class _CompiledIndexRow(dict):
+    """Candidate-index row dict with pre-parsed Phase 1 summary projection fields.
+
+    Behaves identically to a plain ``dict`` for equality, key iteration, and JSON
+    serialization while avoiding repeated dict traversal, timestamp/semver parsing,
+    and string normalization on every Phase 1 summary-page projection.
+    """
+
+    __slots__ = ("_compiled", "_owner_tenant")
+
+    def __init__(
+        self,
+        data: Mapping[str, Any],
+        *,
+        owner_tenant: Optional[str] = None,
+        compiled: Optional[tuple[Any, ...]] = None,
+    ) -> None:
+        super().__init__(data)
+        self._owner_tenant = owner_tenant
+        self._compiled = compiled
+
+
+class _CompiledIndexRowList(list):
+    """List of candidate-index rows carrying a stamp-scoped winning-version cache."""
+
+    __slots__ = ("_winners_cache",)
+
+    def __init__(self, iterable=()) -> None:
+        super().__init__(iterable)
+        self._winners_cache: dict[Optional[str], tuple[dict[str, dict], dict[str, int]]] = {}
+
+
+def _compile_strategy_summary_index_row(row: Mapping[str, Any]) -> Optional[tuple[Any, ...]]:
+    if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
+        return None
+    art_state = row.get("artifact_state")
+    sid_raw = row.get("strategy_id")
+    reg_raw = row.get("registry_id")
+    ver_raw = row.get("version")
+    created_at = row.get("created_at")
+    if not (sid_raw and reg_raw and ver_raw and created_at):
+        meta = _binding_dict(row.get("metadata"))
+        inner = _binding_dict(meta.get("strategy_spec"))
+        sid_raw = sid_raw or inner.get("strategy_id")
+        reg_raw = reg_raw or meta.get("spec_version_id")
+        ver_raw = ver_raw or inner.get("spec_version") or meta.get("spec_version") or meta.get("version")
+        if not created_at:
+            prov = (
+                inner["provenance"]
+                if isinstance(inner.get("provenance"), dict)
+                else _binding_dict(meta.get("provenance"))
+            )
+            created_at = prov.get("created_at")
+    sid = str(sid_raw or "").strip()
+    reg_id = str(reg_raw or "").strip()
+    semver = str(ver_raw or "").strip()
+    if not sid or not reg_id or not semver:
+        return None
+    key = (_parse_semver_key(semver), _binding_utc(created_at), reg_id)
+    current_state = _extract_strategy_summary_raw_lifecycle(row)
+    raw_clean = str(current_state or "").strip().lower()
+    is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
+    dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+    is_true_draft = (not raw_clean) or (raw_clean == "draft")
+    title = _extract_strategy_summary_title(sid, row)
+    title_lower = title.lower()
+    sid_lower = sid.lower()
+    persona_list = _extract_strategy_summary_persona_ids(row)
+    persona_frozenset = frozenset(persona_list) if persona_list else frozenset()
+    data_scope = _extract_strategy_summary_data_scope(row)
+    scope_clean = str(data_scope or "").strip().lower()
+    fixed_stub_reason = strategy_stub_reason_for_fields(
+        strategy_id=sid,
+        title=title,
+        persona_ids=persona_list,
+        data_scope=data_scope,
+        test_persona_ids=(),
+    )
+    check_test_personas = bool(persona_frozenset and scope_clean not in _STRATEGY_TEST_DATA_SCOPES)
+    last_mod = _strategy_summary_last_modified_at(row)
+    last_mod_dt = _binding_utc(last_mod)
+    return (
+        art_state,
+        sid,
+        reg_id,
+        key,
+        current_state,
+        raw_clean,
+        is_known_state,
+        dto_state,
+        is_true_draft,
+        title,
+        title_lower,
+        sid_lower,
+        persona_list,
+        persona_frozenset,
+        data_scope,
+        fixed_stub_reason,
+        check_test_personas,
+        last_mod,
+        last_mod_dt,
+    )
+
+
+def build_strategy_summary_index_payload(payload: Any) -> Optional[dict[str, Any]]:
+    """Build the stored ``summary_index`` JSONB document for a ``strategy_spec`` payload.
+
+    Returns ``None`` for non-object or non-``strategy_spec`` payloads. Mirrors the
+    PostgreSQL ``pantheon_registry_summary_index_build(jsonb)`` function.
+    """
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return None
+    if not isinstance(payload, Mapping) or payload.get("artifact_type") != "strategy_spec":
+        return None
+    row: dict[str, Any] = {
+        k: payload[k]
+        for k in STRATEGY_SUMMARY_INDEX_ROW_KEYS
+        if k in payload and (payload[k] is not None or k in ("created_at", "updated_at"))
+    }
+    if payload.get("owner_tenant") is not None:
+        row["owner_tenant"] = payload["owner_tenant"]
+    meta = payload.get("metadata")
+    if isinstance(meta, Mapping):
+        meta_keys = (
+            STRATEGY_SUMMARY_INDEX_META_KEYS
+            + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+            + STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
+        )
+        light_meta: dict[str, Any] = {
+            k: meta[k] for k in meta_keys if k in meta and meta[k] is not None
+        }
+        meta_prov = meta.get("provenance")
+        if isinstance(meta_prov, Mapping):
+            light_meta["provenance"] = {
+                k: meta_prov[k]
+                for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS
+                if k in meta_prov and meta_prov[k] is not None
+            }
+        inner = meta.get("strategy_spec")
+        if isinstance(inner, Mapping):
+            spec_keys = STRATEGY_SUMMARY_INDEX_SPEC_KEYS + STRATEGY_SUMMARY_INDEX_TITLE_KEYS
+            light_inner: dict[str, Any] = {
+                k: inner[k] for k in spec_keys if k in inner and inner[k] is not None
+            }
+            inner_prov = inner.get("provenance")
+            if isinstance(inner_prov, Mapping):
+                light_inner["provenance"] = {
+                    k: inner_prov[k]
+                    for k in STRATEGY_SUMMARY_INDEX_PROV_KEYS
+                    if k in inner_prov and inner_prov[k] is not None
+                }
+            inner_meta = inner.get("metadata")
+            if isinstance(inner_meta, Mapping):
+                inner_meta_keys = (
+                    STRATEGY_SUMMARY_INDEX_INNER_META_KEYS
+                    + STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
+                )
+                light_inner["metadata"] = {
+                    k: inner_meta[k]
+                    for k in inner_meta_keys
+                    if k in inner_meta and inner_meta[k] is not None
+                }
+            light_meta["strategy_spec"] = light_inner
+        row["metadata"] = light_meta
+    else:
+        row["metadata"] = {}
+    return row
+
+
+def project_cached_summary_index_row(
+    row: _CompiledIndexRow,
+    *,
+    include_title: bool = False,
+    include_scope: bool = False,
+) -> _CompiledIndexRow:
+    """Return a view of a stored full summary-index row matching ``include_title``/``include_scope``."""
+    if include_title and include_scope:
+        return row
+    meta = row.get("metadata")
+    if not isinstance(meta, Mapping):
+        projected = _CompiledIndexRow(row, owner_tenant=row._owner_tenant)
+        projected._compiled = _compile_strategy_summary_index_row(projected)
+        return projected
+    drop_meta_keys: set[str] = set()
+    if not include_title:
+        drop_meta_keys.update(STRATEGY_SUMMARY_INDEX_TITLE_KEYS)
+    if not include_scope:
+        drop_meta_keys.update(STRATEGY_SUMMARY_INDEX_SCOPE_KEYS)
+    new_meta: dict[str, Any] = {k: v for k, v in meta.items() if k not in drop_meta_keys}
+    inner = meta.get("strategy_spec")
+    if isinstance(inner, Mapping):
+        new_inner: dict[str, Any] = (
+            {k: v for k, v in inner.items() if k not in STRATEGY_SUMMARY_INDEX_TITLE_KEYS}
+            if not include_title
+            else dict(inner)
+        )
+        inner_meta = inner.get("metadata")
+        if not include_scope and isinstance(inner_meta, Mapping):
+            new_inner["metadata"] = {
+                k: v for k, v in inner_meta.items() if k not in STRATEGY_SUMMARY_INDEX_SCOPE_KEYS
+            }
+        new_meta["strategy_spec"] = new_inner
+    new_row_dict = dict(row)
+    new_row_dict["metadata"] = new_meta
+    projected = _CompiledIndexRow(new_row_dict, owner_tenant=row._owner_tenant)
+    projected._compiled = _compile_strategy_summary_index_row(projected)
+    return projected
+
+
 def strategy_spec_summary_index_row(
     entry: RegistryEntry,
     *,
@@ -1284,43 +1496,65 @@ def project_strategy_spec_summary_page(
     )
 
     wanted_artifact_state = str(artifact_state).strip() if artifact_state else None
-    winning_key: dict[str, tuple[tuple[int, ...], datetime, str]] = {}
-    winning_row: dict[str, dict] = {}
-    version_counts: dict[str, int] = {}
+    winners_cache = getattr(rows, "_winners_cache", None)
+    cached_winners = (
+        winners_cache.get(wanted_artifact_state)
+        if isinstance(winners_cache, dict)
+        else None
+    )
+    if cached_winners is not None:
+        winning_row, version_counts = cached_winners
+    else:
+        winning_key: dict[str, tuple[tuple[int, ...], datetime, str]] = {}
+        winning_row = {}
+        version_counts = {}
 
-    for row in rows:
-        if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
-            raise ValueError("Invalid strategy registry entry")
-        if wanted_artifact_state is not None and row.get("artifact_state") != wanted_artifact_state:
-            continue
-        sid_raw = row.get("strategy_id")
-        reg_raw = row.get("registry_id")
-        ver_raw = row.get("version")
-        created_at = row.get("created_at")
-        if not (sid_raw and reg_raw and ver_raw and created_at):
-            meta = _binding_dict(row.get("metadata"))
-            inner = _binding_dict(meta.get("strategy_spec"))
-            sid_raw = sid_raw or inner.get("strategy_id")
-            reg_raw = reg_raw or meta.get("spec_version_id")
-            ver_raw = ver_raw or inner.get("spec_version") or meta.get("spec_version") or meta.get("version")
-            if not created_at:
-                prov = (
-                    inner["provenance"]
-                    if isinstance(inner.get("provenance"), dict)
-                    else _binding_dict(meta.get("provenance"))
-                )
-                created_at = prov.get("created_at")
-        sid = str(sid_raw or "").strip()
-        reg_id = str(reg_raw or "").strip()
-        semver = str(ver_raw or "").strip()
-        if not sid or not reg_id or not semver:
-            raise ValueError("Invalid strategy registry entry")
-        key = (_parse_semver_key(semver), _binding_utc(created_at), reg_id)
-        version_counts[sid] = version_counts.get(sid, 0) + 1
-        prev_key = winning_key.get(sid)
-        if prev_key is None or key > prev_key:
-            winning_key[sid] = key
-            winning_row[sid] = row
+        for row in rows:
+            compiled = getattr(row, "_compiled", None)
+            if compiled is not None:
+                art_state, sid, _reg_id, key = compiled[0], compiled[1], compiled[2], compiled[3]
+                if wanted_artifact_state is not None and art_state != wanted_artifact_state:
+                    continue
+                version_counts[sid] = version_counts.get(sid, 0) + 1
+                prev_key = winning_key.get(sid)
+                if prev_key is None or key > prev_key:
+                    winning_key[sid] = key
+                    winning_row[sid] = row
+                continue
+            if not isinstance(row, dict) or row.get("artifact_type") not in (None, "strategy_spec"):
+                raise ValueError("Invalid strategy registry entry")
+            if wanted_artifact_state is not None and row.get("artifact_state") != wanted_artifact_state:
+                continue
+            sid_raw = row.get("strategy_id")
+            reg_raw = row.get("registry_id")
+            ver_raw = row.get("version")
+            created_at = row.get("created_at")
+            if not (sid_raw and reg_raw and ver_raw and created_at):
+                meta = _binding_dict(row.get("metadata"))
+                inner = _binding_dict(meta.get("strategy_spec"))
+                sid_raw = sid_raw or inner.get("strategy_id")
+                reg_raw = reg_raw or meta.get("spec_version_id")
+                ver_raw = ver_raw or inner.get("spec_version") or meta.get("spec_version") or meta.get("version")
+                if not created_at:
+                    prov = (
+                        inner["provenance"]
+                        if isinstance(inner.get("provenance"), dict)
+                        else _binding_dict(meta.get("provenance"))
+                    )
+                    created_at = prov.get("created_at")
+            sid = str(sid_raw or "").strip()
+            reg_id = str(reg_raw or "").strip()
+            semver = str(ver_raw or "").strip()
+            if not sid or not reg_id or not semver:
+                raise ValueError("Invalid strategy registry entry")
+            key = (_parse_semver_key(semver), _binding_utc(created_at), reg_id)
+            version_counts[sid] = version_counts.get(sid, 0) + 1
+            prev_key = winning_key.get(sid)
+            if prev_key is None or key > prev_key:
+                winning_key[sid] = key
+                winning_row[sid] = row
+        if isinstance(winners_cache, dict):
+            winners_cache[wanted_artifact_state] = (winning_row, version_counts)
 
     state_counts: dict[str, int] = {k: 0 for k in STRATEGY_SUMMARY_DEFAULT_STATE_COUNT_KEYS}
 
@@ -1354,23 +1588,62 @@ def project_strategy_spec_summary_page(
 
     matched: list[tuple[datetime, str, dict, int, str, list[str], Optional[str]]] = []
     for sid, row in winning_row.items():
-        current_state = _extract_strategy_summary_raw_lifecycle(row)
-        raw_clean = str(current_state or "").strip().lower()
-        is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
-        dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
-        state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
-        stub_reason: Optional[str] = None
-        if hide_stubs:
-            stub_reason = strategy_stub_reason_for_fields(
-                strategy_id=sid,
-                title=_extract_strategy_summary_title(sid, row),
-                persona_ids=_extract_strategy_summary_persona_ids(row),
-                data_scope=_extract_strategy_summary_data_scope(row),
-                test_persona_ids=hide_ids,
-            )
-            if stub_reason is None:
-                visible_state_counts[dto_state] = visible_state_counts.get(dto_state, 0) + 1
-        is_true_draft = (not raw_clean) or (raw_clean == "draft")
+        compiled = getattr(row, "_compiled", None)
+        if compiled is not None:
+            (
+                _art_state,
+                _sid,
+                _reg_id,
+                _key,
+                current_state,
+                raw_clean,
+                is_known_state,
+                dto_state,
+                is_true_draft,
+                _title,
+                title_lower,
+                sid_lower,
+                persona_list,
+                persona_frozenset,
+                _data_scope,
+                fixed_stub_reason,
+                check_test_personas,
+                last_mod,
+                last_mod_dt,
+            ) = compiled
+            state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+            stub_reason: Optional[str] = None
+            if hide_stubs:
+                if check_test_personas and hide_ids and persona_frozenset.issubset(hide_ids):
+                    stub_reason = STRATEGY_STUB_TEST_PERSONA_PROBE
+                else:
+                    stub_reason = fixed_stub_reason
+                if stub_reason is None:
+                    visible_state_counts[dto_state] = visible_state_counts.get(dto_state, 0) + 1
+        else:
+            current_state = _extract_strategy_summary_raw_lifecycle(row)
+            raw_clean = str(current_state or "").strip().lower()
+            is_known_state = (not raw_clean) or (raw_clean in _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP)
+            dto_state = _STRATEGY_SUMMARY_DTO_LIFECYCLE_MAP.get(raw_clean, "draft")
+            state_counts[dto_state] = state_counts.get(dto_state, 0) + 1
+            stub_reason = None
+            if hide_stubs:
+                stub_reason = strategy_stub_reason_for_fields(
+                    strategy_id=sid,
+                    title=_extract_strategy_summary_title(sid, row),
+                    persona_ids=_extract_strategy_summary_persona_ids(row),
+                    data_scope=_extract_strategy_summary_data_scope(row),
+                    test_persona_ids=hide_ids,
+                )
+                if stub_reason is None:
+                    visible_state_counts[dto_state] = visible_state_counts.get(dto_state, 0) + 1
+            is_true_draft = (not raw_clean) or (raw_clean == "draft")
+            persona_list = _extract_strategy_summary_persona_ids(row)
+            persona_frozenset = frozenset(persona_list) if persona_list else frozenset()
+            title_lower = _extract_strategy_summary_title(sid, row).lower() if wanted_query is not None else ""
+            sid_lower = sid.lower() if wanted_query is not None else ""
+            last_mod = None
+            last_mod_dt = datetime.min
 
         if has_state_filter and wanted_dto_state == "retired":
             if not ((is_known_state and dto_state == "retired") or raw_clean == raw_state_filter):
@@ -1391,21 +1664,19 @@ def project_strategy_spec_summary_page(
                 elif (is_known_state and dto_state == excluded_dto_state) or raw_clean == raw_exclude_filter:
                     continue
 
-        persona_list = _extract_strategy_summary_persona_ids(row)
-        if wanted_persona is not None and wanted_persona not in persona_list:
+        if wanted_persona is not None and wanted_persona not in persona_frozenset:
             continue
         if wanted_query is not None:
-            if (
-                wanted_query not in sid.lower()
-                and wanted_query not in _extract_strategy_summary_title(sid, row).lower()
-            ):
+            if wanted_query not in sid_lower and wanted_query not in title_lower:
                 continue
         if stub_reason is not None:
             hidden_by_reason[stub_reason] += 1
             continue
-        last_mod = _strategy_summary_last_modified_at(row)
+        if compiled is None:
+            last_mod = _strategy_summary_last_modified_at(row)
+            last_mod_dt = _binding_utc(last_mod)
         matched.append(
-            (_binding_utc(last_mod), sid, row, version_counts[sid], current_state, persona_list, last_mod)
+            (last_mod_dt, sid, row, version_counts[sid], current_state, persona_list, last_mod)
         )
 
     matched.sort(key=lambda item: (item[0], item[1]), reverse=True)

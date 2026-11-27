@@ -1,0 +1,290 @@
+{
+  "task_id": "REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "register_class": "RC6",
+  "delivery_state": "merged_pending_review",
+  "evidence_posture": "functional_evidence_only_no_vm_or_ssh_access",
+  "design_choice_and_rationale": {
+    "chosen_mechanism": "Stored candidate-index columns (summary_index JSONB, summary_rev BIGINT) on registry.entries maintained synchronously on every write path via BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_build + pantheon_registry_summary_rev_seq) and idempotently backfilled in bounded 1,000-row batches at store bootstrap, paired with a single-flight in-process Phase 1 candidate-index cache validated on every read by one cheap aggregate query (SELECT count(*), coalesce(max(summary_rev), 0)::bigint, coalesce(sum(summary_rev), 0)::bigint FROM registry.entries WHERE summary_index IS NOT NULL) and updated incrementally after writes via partial index entries_strategy_summary_idx (WHERE summary_index IS NOT NULL AND summary_rev > %s).",
+    "why_both_stored_columns_and_stamp_validated_cache": [
+      "1. Eliminates payload detoasting and 42 JSON path evaluations in PostgreSQL: storing the pre-projected ~948-byte summary_index JSONB and 8-byte summary_rev BIGINT on registry.entries drops Postgres Phase 1 buffer reads on 9,416 strategy_spec rows (+ 524 other rows) from 123,774 shared buffers / 1,532.74 ms (legacy payload || '{}' scan) down to 1,366 shared buffers / 78.49 ms on a cold stored-column scan and 6 shared buffers / 0.167 ms on a post-write delta scan.",
+      "2. Eliminates 8x concurrent Python JSON decode and candidate-dict allocation amplification: even with a 78.5 ms stored-column SQL read, 8 concurrent cold reads decoding 9,416 JSON objects in Python without a shared Phase 1 cache still take 4,092.05 ms wall time and 368.16 MiB peak RSS (+340.55 MiB delta). Adding the single-flight, stamp-validated in-process Phase 1 cache (validated on every read by one 3.03 ms aggregate query over summary_rev and updated incrementally by summary_rev > max_rev) collapses 8 concurrent cold reads on a fresh Registry process to 1 SQL full load + 7 stamp-validated cache hits: wall time drops from 5,529.41 ms to 965.63 ms (5.7x faster) and peak RSS (VmHWM) drops from 375.40 MiB (+347.03 MiB delta) to 120.64 MiB (+93.21 MiB delta, 67.9% lower peak RSS, well within DEV_MEM_LIMIT_REGISTRY=768m).",
+      "3. Immediate write visibility across processes and workers: because the BEFORE INSERT OR UPDATE OF payload trigger assigns a strictly increasing summary_rev from pantheon_registry_summary_rev_seq on every write path (whether via create_if_absent, put, _cas_entry, create_with_receipt, register_strategy_spec_revision, or another worker/service sharing the database) and every read checks (count(*), max(summary_rev), sum(summary_rev)) against the database before serving cached rows, any insert, update, state advance, persona binding change, data_scope change, or delete is guaranteed visible on the very next read."
+    ]
+  },
+  "acceptance_criteria_verification": {
+    "ac1_no_payload_rescan_on_phase1": {
+      "status": "passed",
+      "sql_phase1_reads": {
+        "stamp_query": "SELECT count(*), coalesce(max(summary_rev), 0)::bigint, coalesce(sum(summary_rev), 0)::bigint FROM registry.entries WHERE summary_index IS NOT NULL",
+        "full_load_query": "SELECT record_id, summary_rev, summary_index FROM registry.entries WHERE summary_index IS NOT NULL ORDER BY updated_at ASC, record_id ASC",
+        "delta_load_query": "SELECT record_id, summary_rev, summary_index FROM registry.entries WHERE summary_index IS NOT NULL AND summary_rev > %s ORDER BY updated_at ASC, record_id ASC"
+      },
+      "payload_referenced_in_phase1_read_sql": false,
+      "write_paths_keeping_summary_index_current": [
+        "PostgreSQL BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg -> pantheon_registry_summary_index_tg_fn() -> pantheon_registry_summary_index_build(NEW.payload) + nextval('pantheon_registry_summary_rev_seq')",
+        "PostgresRegistryStore.create_if_absent (+ invalidate_strategy_summary_index_cache(full=False))",
+        "PostgresRegistryStore.put (+ invalidate_strategy_summary_index_cache(full=False))",
+        "PostgresRegistryStore._cas_entry (advance/promote/rollback/deprecate + invalidate_strategy_summary_index_cache(full=False))",
+        "PostgresRegistryStore.create_with_receipt (+ invalidate_strategy_summary_index_cache(full=False))",
+        "PostgresRegistryStore.register_strategy_spec_revision (+ invalidate_strategy_summary_index_cache(full=False))",
+        "PostgresRegistryStore.backfill_strategy_summary_index (idempotent bounded bootstrap backfill for pre-existing rows with summary_index IS NULL)"
+      ]
+    },
+    "ac2_identical_answers_and_immediate_write_visibility": {
+      "status": "passed",
+      "test_strategy_summary_page_bounded_vectors": "31 passed unchanged in services/registry/test_strategy_summary_page_bounded.py",
+      "test_strategy_summary_page_index_vectors": "7 passed in services/registry/test_strategy_summary_page_index.py (including real-Postgres parity across all 17 STUB_RULE_VECTORS and all filter combinations: unfiltered, hide_stubs=true, exclude_state=draft, state=draft, state=retired, persona_id)",
+      "tested_write_transitions_visible_on_next_read": [
+        "new_version: registering v1.1.0 via create_if_absent immediately updates current semver winner from v1.0.0 to v1.1.0 and reflects delta_loaded=1",
+        "state_change: advancing v1.1.0 from draft -> candidate (review) -> approved via store.advance immediately updates state_counts, visible_state_counts, and exclude_state=draft items on the next read",
+        "persona_binding_change: updating metadata.strategy_spec.raw_spec.persona_binding.primary_persona_id from persona_alpha to persona_test_hidden immediately reclassifies the family under hide_stubs=true + hide_persona_ids=persona_test_hidden (hidden.by_reason.test_persona_probe=1) and updates persona_id filtering on the next read",
+        "data_scope_change: updating metadata.data_scope to 'test' (with clean persona) immediately hides the family as simulation_fixture on the next read, and clearing metadata.data_scope back to 'live' immediately restores visibility on the next read",
+        "retire: advancing v1.1.0 from approved -> retired immediately moves the family to state_counts.retired=1, excludes it from default and exclude_state=draft pages, and returns it under state=retired on the next read"
+      ]
+    },
+    "ac3_local_postgres_9416_rows_measurements": {
+      "status": "passed",
+      "environment": {
+        "postgres_version": "PostgreSQL 16.15 (127.0.0.1:41525)",
+        "python_version": "Python 3.12 (.venv-pantheon)",
+        "dataset_shape": {
+          "total_registry_entries_rows": 9940,
+          "strategy_spec_rows": 9416,
+          "draft_strategy_spec_rows": 7521,
+          "non_draft_strategy_spec_rows": 1895,
+          "hidden_persona_ids_count": 52,
+          "other_artifact_rows": 524,
+          "avg_compressed_payload_bytes_per_row": 2936.7,
+          "uncompressed_payload_json_bytes_per_row_approx": 6700
+        }
+      },
+      "single_call_timings_ms": {
+        "exclude_state_draft_hide_stubs_true_52_hidden_personas_page_size_200": {
+          "before_ms": 1902.78,
+          "after_first_cold_stored_column_load_ms": 759.57,
+          "after_stamp_validated_cache_hit_ms": 116.69,
+          "total_visible_matched": 171,
+          "items_returned": 171,
+          "hidden_total": 0,
+          "parity_verified": true
+        },
+        "unfiltered_default_hide_stubs_true_52_hidden_personas_page_size_200": {
+          "before_ms": 2204.4,
+          "after_first_cold_stored_column_load_ms": 394.81,
+          "after_stamp_validated_cache_hit_ms": 368.36,
+          "total_visible_matched": 4376,
+          "items_returned": 200,
+          "hidden_total": 3216,
+          "hidden_by_reason": {
+            "test_persona_probe": 1616,
+            "raw_market_seed_without_rules": 1500,
+            "simulation_fixture": 100
+          },
+          "parity_verified": true
+        },
+        "state_draft_hide_stubs_true_52_hidden_personas_page_size_200": {
+          "before_ms": 1934.59,
+          "after_first_cold_stored_column_load_ms": 815.14,
+          "after_stamp_validated_cache_hit_ms": 136.58,
+          "total_visible_matched": 4205,
+          "items_returned": 200,
+          "hidden_total": 3216,
+          "parity_verified": true
+        }
+      },
+      "concurrent_8_cold_reads_fresh_process": {
+        "exclude_state_draft_hide_stubs_true_52_hidden_personas_page_size_200": {
+          "before": {
+            "wall_ms": 5529.41,
+            "p50_ms": 5169.3,
+            "p95_ms": 5504.95,
+            "min_ms": 3002.75,
+            "max_ms": 5504.95,
+            "latencies_ms": [3002.75, 3463.69, 4526.9, 5169.3, 5361.09, 5403.99, 5439.36, 5504.95],
+            "idle_rss_mib": 28.37,
+            "after_rss_mib": 260.76,
+            "peak_hwm_mib": 375.4,
+            "delta_hwm_mib": 347.03,
+            "tracemalloc_peak_delta_mib": 227.29
+          },
+          "after_stored_column_and_single_flight_stamp_cache": {
+            "wall_ms": 965.63,
+            "p50_ms": 808.72,
+            "p95_ms": 957.97,
+            "min_ms": 578.75,
+            "max_ms": 957.97,
+            "latencies_ms": [578.75, 609.41, 767.91, 808.72, 838.67, 871.49, 914.75, 957.97],
+            "idle_rss_mib": 27.39,
+            "after_rss_mib": 119.22,
+            "peak_hwm_mib": 120.64,
+            "delta_hwm_mib": 93.21,
+            "tracemalloc_peak_delta_mib": 55.34,
+            "phase1_index_sql_reads": 1,
+            "phase1_index_cache_hits": 7
+          },
+          "after_stored_column_without_in_process_cache_comparison": {
+            "wall_ms": 4092.05,
+            "p50_ms": 3246.01,
+            "p95_ms": 4082.02,
+            "min_ms": 754.5,
+            "max_ms": 4082.02,
+            "idle_rss_mib": 27.55,
+            "after_rss_mib": 312.85,
+            "peak_hwm_mib": 368.16,
+            "delta_hwm_mib": 340.55,
+            "tracemalloc_peak_delta_mib": 201.2,
+            "phase1_index_sql_reads": 8,
+            "phase1_index_cache_hits": 0
+          }
+        },
+        "unfiltered_default_hide_stubs_true_52_hidden_personas_page_size_200": {
+          "before": {
+            "wall_ms": 5702.27,
+            "p50_ms": 5318.74,
+            "p95_ms": 5669.45,
+            "min_ms": 2985.06,
+            "max_ms": 5669.45,
+            "idle_rss_mib": 27.89,
+            "after_rss_mib": 220.97,
+            "peak_hwm_mib": 381.24,
+            "delta_hwm_mib": 353.35
+          },
+          "after_stored_column_and_single_flight_stamp_cache": {
+            "wall_ms": 1120.35,
+            "p50_ms": 891.19,
+            "p95_ms": 1114.08,
+            "min_ms": 662.66,
+            "max_ms": 1114.08,
+            "idle_rss_mib": 28.33,
+            "after_rss_mib": 124.87,
+            "peak_hwm_mib": 124.87,
+            "delta_hwm_mib": 96.54,
+            "phase1_index_sql_reads": 1,
+            "phase1_index_cache_hits": 7
+          }
+        }
+      },
+      "explain_analyze_buffers": {
+        "before_legacy_payload_scan": [
+          "Sort  (cost=2158.84..2158.85 rows=1 width=1384) (actual time=1525.379..1528.620 rows=9416 loops=1)",
+          "  Sort Key: r4.updated_at",
+          "  Sort Method: external merge  Disk: 4600kB",
+          "  Buffers: shared hit=123774, temp read=575 written=576",
+          "  ->  Subquery Scan on r4  (cost=0.00..2158.83 rows=1 width=1384) (actual time=0.292..1502.454 rows=9416 loops=1)",
+          "        Buffers: shared hit=123774",
+          "        ->  Subquery Scan on r3  (cost=0.00..2158.82 rows=1 width=1384) (actual time=0.290..1499.411 rows=9416 loops=1)",
+          "              Buffers: shared hit=123774",
+          "              ->  Subquery Scan on r2  (cost=0.00..2158.52 rows=1 width=200) (actual time=0.230..1194.451 rows=9416 loops=1)",
+          "                    Buffers: shared hit=123774",
+          "                    ->  Subquery Scan on r1  (cost=0.00..2158.51 rows=1 width=104) (actual time=0.227..1189.341 rows=9416 loops=1)",
+          "                          Filter: (((r1.payload ->> 'owner_tenant'::text) = ANY ('{__builtin__,tenant-dev}'::text[])) AND (jsonb_typeof(r1.payload) = 'object'::text) AND ((r1.payload ->> 'artifact_type'::text) = 'strategy_spec'::text))",
+          "                          Buffers: shared hit=123774",
+          "                          ->  Subquery Scan on raw  (cost=0.00..1911.23 rows=9891 width=40) (actual time=0.188..1038.788 rows=9416 loops=1)",
+          "                                Buffers: shared hit=123774",
+          "                                ->  Seq Scan on entries  (cost=0.00..1639.23 rows=9891 width=79) (actual time=0.187..1035.155 rows=9416 loops=1)",
+          "                                      Filter: ((jsonb_typeof(payload) <> 'object'::text) OR (((payload ->> 'artifact_type'::text) = 'strategy_spec'::text) AND ((payload ->> 'owner_tenant'::text) = ANY ('{__builtin__,tenant-dev}'::text[]))))",
+          "                                      Rows Removed by Filter: 524",
+          "                                      Buffers: shared hit=123774",
+          "Planning Time: 0.764 ms",
+          "Execution Time: 1532.744 ms"
+        ],
+        "after_cold_stored_summary_index_scan": [
+          "Sort  (cost=2133.98..2157.52 rows=9416 width=70) (actual time=71.670..76.062 rows=9416 loops=1)",
+          "  Sort Key: updated_at, record_id",
+          "  Sort Method: external merge  Disk: 8720kB",
+          "  Buffers: shared hit=1366, temp read=1090 written=1092",
+          "  ->  Seq Scan on entries  (cost=0.00..1512.48 rows=9416 width=70) (actual time=0.032..46.384 rows=9416 loops=1)",
+          "        Filter: (summary_index IS NOT NULL)",
+          "        Rows Removed by Filter: 524",
+          "        Buffers: shared hit=1366",
+          "Planning Time: 0.208 ms",
+          "Execution Time: 78.490 ms"
+        ],
+        "after_warm_stamp_query": [
+          "Aggregate  (cost=1536.02..1536.04 rows=1 width=24) (actual time=3.000..3.001 rows=1 loops=1)",
+          "  Buffers: shared hit=1366",
+          "  ->  Seq Scan on entries  (cost=0.00..1465.40 rows=9416 width=8) (actual time=0.012..2.121 rows=9416 loops=1)",
+          "        Filter: (summary_index IS NOT NULL)",
+          "        Rows Removed by Filter: 524",
+          "        Buffers: shared hit=1366",
+          "Planning Time: 0.403 ms",
+          "Execution Time: 3.029 ms"
+        ],
+        "after_write_delta_index_scan": [
+          "Sort  (cost=8.32..8.32 rows=1 width=70) (actual time=0.133..0.134 rows=1 loops=1)",
+          "  Sort Key: updated_at, record_id",
+          "  Sort Method: quicksort  Memory: 25kB",
+          "  Buffers: shared hit=6",
+          "  ->  Index Scan using entries_strategy_summary_idx on entries  (cost=0.29..8.31 rows=1 width=70) (actual time=0.111..0.112 rows=1 loops=1)",
+          "        Index Cond: (summary_rev > '9415'::smallint)",
+          "        Buffers: shared hit=6",
+          "Planning Time: 0.246 ms",
+          "Execution Time: 0.167 ms"
+        ]
+      }
+    },
+    "ac4_runtime_budget_backfill_contract_and_test_integrity": {
+      "status": "passed",
+      "runtime_budget": {
+        "registered_in_storage_manifest": true,
+        "manifest_entry_name": "registry.entries stored summary_index / summary_rev columns, partial index entries_strategy_summary_idx, and stamp-validated Phase 1 index cache",
+        "bound_proof": {
+          "file": "services/registry/pg_store.py",
+          "contains": "SUMMARY_INDEX_MAX_TENANT_VIEWS = 16"
+        },
+        "cadence": "DDL and idempotent batched backfill run once at store bootstrap; trigger entries_strategy_summary_index_tg runs once per registry.entries INSERT or UPDATE OF payload (~300 strategy_spec writes/day on hosted); stamp validation query runs once per strategy_summary_page read (3.0 ms); delta index query runs only for rows with summary_rev > cached_max_rev",
+        "size_at_hosted_scale_9416_rows": {
+          "summary_index_column_total_bytes": 8922928,
+          "summary_index_avg_bytes_per_row": 947.6,
+          "summary_index_max_bytes_per_row": 996,
+          "summary_rev_column_total_bytes": 75328,
+          "entries_strategy_summary_idx_bytes": 229376,
+          "non_strategy_spec_rows_overhead_bytes": 0
+        },
+        "growth_per_day": "about 300 new strategy_spec rows/day x (947.6 B summary_index + 8 B summary_rev + ~24 B partial index tuple) = ~294 KB/day (~107 MB/year); 0 B net logical growth on in-place updates after VACUUM; 0 B/day net in-process cache growth beyond the strategy_spec row set and SUMMARY_INDEX_MAX_TENANT_VIEWS = 16 cap",
+        "cap": "1 summary_index JSONB (~948 B) and 1 summary_rev BIGINT (8 B) per strategy_spec row (NULL for non-strategy_spec rows); bootstrap backfill bounded by SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000 and SUMMARY_INDEX_BACKFILL_MAX_BATCHES = 50; in-process Phase 1 cache bounded to SUMMARY_INDEX_MAX_TENANT_VIEWS = 16 tenant views and 4 winner sub-cache entries per stamp",
+        "cleanup": "stored columns and partial index tuples follow registry.entries row lifecycle with PostgreSQL VACUUM; non-strategy_spec rows set summary_index = NULL and summary_rev = NULL via trigger; in-process cache evicts oldest tenant view beyond SUMMARY_INDEX_MAX_TENANT_VIEWS = 16, clears stale _winners_cache when DB stamp changes, and supports full eviction via invalidate_strategy_summary_index_cache(full=True)"
+      },
+      "backfill_measurement_on_9416_rows": {
+        "idempotent": true,
+        "bounded": true,
+        "batch_size": 1000,
+        "max_batches": 50,
+        "locking_clause": "FOR UPDATE SKIP LOCKED",
+        "preserves_updated_at": true,
+        "first_run": {
+          "batches_executed": 10,
+          "rows_updated": 9416,
+          "batch_elapsed_ms": [965.925, 909.005, 876.996, 948.715, 851.21, 803.446, 777.499, 743.263, 747.229, 318.969],
+          "max_single_batch_lock_ms": 965.925,
+          "total_elapsed_ms": 7942.425
+        },
+        "second_run_idempotent": {
+          "batches_executed": 1,
+          "rows_updated": 0,
+          "batch_elapsed_ms": [19.795],
+          "max_single_batch_lock_ms": 19.795,
+          "total_elapsed_ms": 19.812
+        }
+      },
+      "contract_documented": "services/registry/contract.md line 334 (GET /api/registry/strategy-specs table row)",
+      "existing_tests_weakened_or_deleted": false,
+      "changed_assertions_justified": []
+    }
+  },
+  "verification_runs": [
+    {
+      "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:41525/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/registry/test_strategy_summary_page_index.py services/registry/test_strategy_summary_page_bounded.py services/registry/test_pg_store_artifact_type_index.py services/registry/test_service.py",
+      "exit_code": 0,
+      "summary": "all passed (38 summary-page bounded + index tests + artifact_type_index + registry service tests)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "summary": "passed: true, all findings resolved"
+    }
+  ],
+  "residual_findings": []
+}
