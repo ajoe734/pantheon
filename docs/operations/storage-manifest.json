@@ -4896,6 +4896,27 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "SERVANT_MESSAGE_CAP = 500",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "about 2 KB per message (SERVANT_MESSAGE_MAX_CHARS = 4000) and a cap of 500 messages per session (SERVANT_MESSAGE_CAP = 500 in agora.sessions mode=servant, at most 250 user turns per session and ~1 KB per queued turn row in agora.servant_turns; each turn carries at most the last 20 messages via SERVANT_HISTORY_MESSAGES = 20)",
+   "cleanup": "purge_expired_servant_sessions in services/agora/store.py (invoked hourly via ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py) deletes servant sessions untouched for 180 days (SERVANT_SESSION_RETENTION_DAYS = 180) together with their agora.servant_turns rows",
+   "growth_driver": "event-driven on trader POST /bff/agora/servant/sessions/{id}/messages: 1 queued turn row (~1 KB) per user message in agora.servant_turns and 2 embedded messages (~2 KB each: user message + servant answer) in agora.sessions via append_session_message, idempotent on Idempotency-Key",
+   "growth_per_day": "event-driven per trader message (~2 KB per message in agora.sessions + ~1 KB turn row in agora.servant_turns; bounded by 500 messages / 250 turns per session and 180-day retention)",
+   "kind": "schema_table",
+   "name": "agora.servant_turns",
+   "owner": "schema:agora",
+   "readers": [
+    "services/agora/store.py",
+    "services/control-plane/bff/agora/servant/router.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-SERVANT-SESSION-DURABLE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
