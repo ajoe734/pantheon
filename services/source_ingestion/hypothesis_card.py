@@ -384,7 +384,6 @@ MAX_RECORD_ATTEMPTS_TOTAL = 6
 # before any call from title and metadata as well as the text; it costs nothing
 # to decide again and is never reused across versions.
 REUSABLE_ANSWER_STATUSES = ("card", "no_hypothesis", "rejected")
-INPUT_REUSED_EVENT = "input_reused"
 # Attempt rows of records untouched this long are pruned (the record has long
 # been closed or carded by then: 6 attempts at 3 a day take 2 days).
 RECORD_ATTEMPT_RETENTION_DAYS = 30
@@ -898,12 +897,10 @@ class HypothesisExtractor:
         if prior["outcome"] == "card" and not isinstance(prior["card"], dict):
             return None
         event_id = prior["event_id"]
+        # No ledger event per reuse: ``events`` has no retention and an unchanged
+        # article is refetched hourly. The reusing outbox row records the earlier
+        # event id in its skip reason (outbox rows are pruned after 7 days).
         self._ledger.touch_input_answer(sid, input_digest)
-        self._ledger.record(
-            sid, INPUT_REUSED_EVENT,
-            json.dumps({"reused_event_id": event_id, "outcome": prior["outcome"], "input_digest": input_digest},
-                       sort_keys=True),
-        )
         detail = f"reused L2 event {event_id}, extraction input unchanged"
         if prior["detail"]:
             detail += f"; {prior['detail']}"
@@ -1082,7 +1079,6 @@ __all__ = [
     "HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS",
     "HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS",
     "HypothesisExtractor",
-    "INPUT_REUSED_EVENT",
     "MAX_RECORD_ATTEMPTS_PER_DAY",
     "MAX_RECORD_ATTEMPTS_TOTAL",
     "RECORD_DAILY_LIMIT",

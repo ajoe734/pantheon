@@ -1,0 +1,78 @@
+{
+ "task_id": "DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127",
+ "class": "RC2",
+ "rc3_note": "queue volume of unchanged-article versions",
+ "owner": "Claude2",
+ "reviewer": "Antigravity",
+ "hosted_input": {
+  "source": "task source document, read-only, 2026-11-27 05:00-05:45Z, backend d55c5eea4",
+  "outbox_last_24h": {
+   "rows": 1677,
+   "distinct_sources": 352,
+   "versions_per_article": 4.8,
+   "skipped": 830,
+   "retry_wait": 424,
+   "pending": 423,
+   "sources_with_7_to_14_waiting_versions": 55
+  },
+  "ledger_2026_11_27_to_05_45Z": {
+   "answered_events": 211,
+   "distinct_sources": 78,
+   "sources_attempted_3_or_more_times": 54,
+   "calls_by_05_00Z": "296 of 400"
+  },
+  "cause": "record_attempts keyed (source_id, digest): every new version digest reset the 3/day and 6/total limits; poller stores whole item XML as raw_bytes and the bundle hashes it, so a new hourly fetch is a new version"
+ },
+ "acceptance_1_hosted_measurement": {
+  "status": "not_taken_by_this_worker",
+  "why": "The auto worker environment has no hosted SSH credentials (no DEV_DEPLOY_SSH_* variables, no key or known_hosts) and gcloud does not start, so no hosted read was possible. Nothing in this file is a hosted measurement.",
+  "how_to_take_it": "python3 scripts/measure_refetch_version_diff.py /data/source-ingest/distill_job_queue.jsonl --prefix collector:collector-news-rss: --min-versions 3 --min-sources 20 (opens the SQLite mode=ro with query_only, prints counts and key names only, no article text, exit 1 when fewer than 20 sources qualify). Run through scripts/dev_vm_ssh.sh exec on a copy or read-only mount.",
+  "reports": [
+   "sources_measured",
+   "consecutive_pairs",
+   "pairs_extraction_text_changed",
+   "pairs_input_digest_changed",
+   "differing_field_counts (top:* and metadata:* keys)",
+   "sources_with_any_input_change"
+  ],
+  "tested_on": "synthetic queue of 21 sources x 3 versions (scripts/test_measure_refetch_version_diff.py): collector-only fields differing leaves extraction input digest unchanged; one body revision changes it"
+ },
+ "acceptance_4_residual_finding": {
+  "owner": "market data and source storage owner (cb4f6795)",
+  "status": "conditional, open until the hosted measurement above is recorded",
+  "finding": "The collector republishes each RSS item as a new version every run (deploy/collector/collector_stack/pollers.py RssHubNewsPoller.collect stores ET.tostring(item_el) as raw_bytes; bundle.py hashes raw bytes as content_sha256; pipeline admits one job per source version). This task does not change the bundle hash. If the measurement shows pairs_input_digest_changed is near 0 (differences only outside the stored text), the collector should stop republishing unchanged items: hash only the fields that define the item (guid, title, description, pubDate) or skip an item whose normalized text equals the previous run's. If it shows text changes (for example description markup), the collector should normalize that markup before hashing. Either way L2 spend is already bounded here by one call per source and unchanged input."
+ },
+ "decisions": {
+  "acceptance_2_input_digest": "hypothesis_card.extraction_input_digest hashes the rendered prompt (build_hypothesis_prompt of the truncated text, source_record_id, origin), the model schema and HYPOTHESIS_CARD_SCHEMA_VERSION plus EXTRACTION_INPUT_DIGEST_VERSION. Fetch time, run id, bundle hash and raw path never reach the model and are not in it. The ledger keeps one terminal answer per (source, input digest) in input_answers for card, no_hypothesis and rejected (the worker's hypothesis_rejected). A later version with the same digest reuses it with no call and no ledger event; its outbox skip reason names the earlier L2 event id ('no_hypothesis: reused L2 event N' or 'hypothesis_card_reused: L2 event N; card delivered by <job>'). A reused card whose earlier version was not delivered (no done version) is delivered by the new version, so a card is never lost. A changed input has a new digest and is extracted.",
+  "acceptance_2_l2_irrelevant": "l2_irrelevant is decided before any call from title and metadata as well as the text, at no cost, so it is decided again per version and never stored as a reusable answer. failed and unavailable are never reused.",
+  "acceptance_2_limits_per_source": "record_attempts rows are summed per source (reads sum every row of the source; new calls write the digest '' row). Existing per-digest rows keep counting until the 30-day prune. Limits stay 3 a day and 6 in total, now per source. ExtractionLedger.reserve_attempt/can_attempt/record_attempts keep their signatures; digest is ignored.",
+  "acceptance_2_defect_reattempt": "A row stamped defect_reattempted=1 is extracted with reuse_answers=False, so its one call is made even when an answer for the same input exists; it still counts against the per-source limits and daily cap.",
+  "acceptance_3_supersede": "On admission of a new version (inside the insert transaction) older versions of the source in pending or retry_wait are closed skipped 'superseded_by_newer_version: <newer job id>' and never called. Backlog admitted before the switch is closed the same way by claim_due. A version leased by another worker is closed by begin_job (before the attempt is counted and before any call) with DistillationSupersededError; a version already started finishes and its answer is reused by the newer one. The newest version is the only eligible one.",
+  "acceptance_5_probe": "The ledger calls row gains a sources column (distinct sources with a first call today); discovery_summary.llm_calls and the BFF alpha_factory llm_calls_today carry distinct_sources; acceptance/discovery_pipeline_day.py hypothesis_cards stage reports calls_per_source and fails above 1.5 (llm_calls_per_source_over_limit), and fails closed when calls exist but distinct_sources is not reported."
+ },
+ "runtime_budget": {
+  "scale_source": "hosted 24 h figures above",
+  "superseded_rows": "No new row kinds: the 1,677 outbox, inbox and source-version rows per day (one per collector run per item) are still written; about 1,325 of them (versions beyond the first of each of 352 sources) are now closed superseded or reused instead of waiting and being paid for. Terminal rows and their payloads are removed by DistillationJobQueue.prune after DISTILLATION_QUEUE_TERMINAL_RETENTION_SECONDS (default 7 days).",
+  "state_rows_per_day": {
+   "input_answers": "at most one row per (source, input digest) with a paid terminal answer: at most the 211 answered calls seen today (about 78 sources) and bounded above by 352 sources per day, each detail <= 500 B plus a card JSON for cards only (a few KB, tens a day): well under 1.5 MB/day upper bound. Pruned at 30 days by put_input_answer (RECORD_ATTEMPT_RETENTION_DAYS) and kept alive by touch while versions keep arriving.",
+   "record_attempts": "one row per source (digest ''), at most 352 per day; legacy per-digest rows stay until the same 30-day prune. Reads sum a primary-key prefix range.",
+   "calls": "one row per UTC day (adds one integer column).",
+   "events": "unchanged: no event is written for a reuse (events has no retention, so reuse would have added about 1,300 unpruned rows a day). Paid calls drop from 211 per 5 h 45 min to about one per source."
+  }
+ },
+ "expected_effect": "Hosted day of 11/27: 78 sources took 211 paid answers (2.7 per source) and 55 sources queue 7-14 versions. After the change each source costs one call per distinct extraction input; waiting versions per source are at most one.",
+ "tests": {
+  "focused": "services/source_ingestion/tests/test_hypothesis_extraction.py (unchanged input, changed input, failed never reused, digest tracks text/prompt/schema, per-source limits incl. legacy rows, defect re-attempt, reuse flag, newest version only), test_distillation_worker.py TestNewerVersionSupersedesOlder (ordering, retry_wait, concurrent lease, started version, pre-switch backlog), test_discovery_summary.py, test_bff_alpha_factory_contract.py, acceptance/test_discovery_pipeline_day.py, scripts/test_measure_refetch_version_diff.py",
+  "result": "295 passed (source_ingestion distillation worker/extraction/controller/discovery summary, measurement script, discovery probe) plus 45 passed (BFF alpha factory contract and discovery summary)"
+ },
+ "hosted_proof_pending": [
+  "24 h after deploy, read-only: answered L2 events per distinct news source <= 1.2 (ledger events table, news sources), and at most one pending or retry_wait version per source (outbox)",
+  "discovery-pipeline release probe reports calls_per_source and does not fail above 1.5; on the switch day the ledger sources column undercounts sources that were already called before the switch, so judge the first full UTC day after deploy",
+  "hosted acceptance 1 measurement with scripts/measure_refetch_version_diff.py"
+ ],
+ "residual_findings": [
+  "Hosted measurement (acceptance 1) and the cb4f6795 collector decision (acceptance 4) are open: no hosted credentials in the worker environment.",
+  "Scope extension: discovery_summary.py and the BFF alpha_factory.py llm_calls_today gained one additive key (distinct_sources) because the probe reads the BFF board; neither is in the declared artifact list.",
+  "pipeline.py and the collector bundle hash are unchanged by design."
+ ]
+}

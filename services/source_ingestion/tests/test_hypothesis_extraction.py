@@ -1283,10 +1283,9 @@ def test_unchanged_extraction_input_reuses_the_answer_without_a_call(tmp_path):
     assert len(transport.calls) == 1 and ledger.calls_today() == 1
     answered = [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
     assert len(answered) == 1
-    reused = [e for e in ledger.events("src-1") if e["outcome"] == hypothesis_card.INPUT_REUSED_EVENT]
-    assert len(reused) == 2
-    first_event_id = json.loads(reused[0]["detail"])["reused_event_id"]
-    assert isinstance(first_event_id, int)
+    with ledger._conn() as c:
+        (first_event_id,) = c.execute("SELECT id FROM events WHERE outcome='no_hypothesis'").fetchone()
+    assert len(ledger.events("src-1")) == 1  # a reuse writes no ledger event
     for job in (second, third):
         assert job.status == "skipped"
         assert job.skip_reason.startswith(f"no_hypothesis: reused L2 event {first_event_id}")
@@ -1374,7 +1373,6 @@ def test_fixed_defect_reattempt_gets_its_call_despite_an_earlier_answer(tmp_path
     assert result.defect_reattempted == 1
     assert len(transport.calls) == 2
     assert queue.get("src-1", job.source_digest).skip_reason == "no_hypothesis: no_testable_mechanism"
-    assert not [e for e in ledger.events("src-1") if e["outcome"] == hypothesis_card.INPUT_REUSED_EVENT]
 
 
 def test_extractor_reuse_flag_off_always_calls(tmp_path):
