@@ -1,0 +1,120 @@
+{
+  "acceptance_criteria_verification": {
+    "ac1_dry_run_recorded_before_cancel": {
+      "already_canceled_count_from_20261112_tenant_dev_batch": 444,
+      "counts_by_tenant_and_state_before_apply": {
+        "pantheon-default": {
+          "proposed": 205
+        },
+        "tenant-dev": {
+          "canceled": 444
+        }
+      },
+      "cutoff_before": "2026-11-10T03:43:51.369000+00:00",
+      "pre_outside_digest": "sha256:54ac0f2e8bdbffe3dde8fb992e868667c36a6fbf0fc47bac139f74f4e34c6ba9",
+      "raw_dry_run_plan_sha256": "sha256:9c01d96fad8b40611bb1fb9fa0e4f7121396dd529adad4fe93f39979c45bae01",
+      "recorded_at_utc": "2026-11-26T21:45:00Z",
+      "scanned_count": 706,
+      "selected_count": 649,
+      "selection_digest": "sha256:1e45b71c1419031bd2e14dec47cbaec791f2680081010489da0ec6dc3f788b42",
+      "status": "PASS",
+      "to_cancel_count_before_apply": 205
+    },
+    "ac2_cancelled_via_cancel_proposal_with_task_citation": {
+      "all_649_responses_recorded": true,
+      "cli_entrypoint": "python -m services.evolution.legacy_proposal_cancel apply --digest sha256:1e45b71c1419031bd2e14dec47cbaec791f2680081010489da0ec6dc3f788b42",
+      "note_format": "Cancelled legacy proposed decision per EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110",
+      "pantheon_default_newly_canceled_count": 205,
+      "raw_apply_batch2_sha256": "sha256:6220397799b50961efa1e298d0f6353c031570f3104a56f4ed0453605a7983da",
+      "raw_idempotent_recheck_sha256": "sha256:a8da3c3350761b79d485190a103f0072fa3d5e9830e439a00fe72060a4549d26",
+      "route_handler": "services.evolution.main.cancel_proposal",
+      "status": "PASS",
+      "tenant_dev_previously_canceled_count": 444,
+      "total_canceled_with_task_citation_count": 649
+    },
+    "ac3_zero_legacy_proposed_and_zero_outside_state_changes": {
+      "live_container_store_counts": {
+        "pantheon-default:canceled": 205,
+        "tenant-dev:approved": 1,
+        "tenant-dev:canceled": 445,
+        "tenant-dev:executed": 2,
+        "tenant-dev:proposed": 53
+      },
+      "outside_count": 57,
+      "outside_counts_by_tenant_and_state": {
+        "tenant-dev": {
+          "approved": 1,
+          "canceled": 1,
+          "executed": 2,
+          "proposed": 53
+        }
+      },
+      "outside_digest_unchanged": true,
+      "post_counts_by_tenant_and_state": {
+        "pantheon-default": {
+          "canceled": 205
+        },
+        "tenant-dev": {
+          "canceled": 444
+        }
+      },
+      "post_outside_digest": "sha256:54ac0f2e8bdbffe3dde8fb992e868667c36a6fbf0fc47bac139f74f4e34c6ba9",
+      "pre_outside_digest": "sha256:54ac0f2e8bdbffe3dde8fb992e868667c36a6fbf0fc47bac139f74f4e34c6ba9",
+      "remaining_legacy_proposed_count": 0,
+      "selection_digest_unchanged": true,
+      "status": "PASS"
+    }
+  },
+  "committed_ledger_files": [
+    {
+      "line_count": 205,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/dry-run-pantheon-default-205.jsonl",
+      "row_count": 205,
+      "sha256": "sha256:3da225c2edba1711371d78907479edf2cc6d9a96d5b9536f2f14106807f802a0"
+    },
+    {
+      "line_count": 222,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/dry-run-tenant-dev-part1.jsonl",
+      "row_count": 222,
+      "sha256": "sha256:b8d783b668d568b7a57020fd893c8297111d29202f59c46117e6c0762675c236"
+    },
+    {
+      "line_count": 222,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/dry-run-tenant-dev-part2.jsonl",
+      "row_count": 222,
+      "sha256": "sha256:def77e0cb3775627dc6f9cbf48655a90696e7734cf87520dbcbd78d910ae9496"
+    },
+    {
+      "line_count": 205,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/cancel-receipts-pantheon-default-205.jsonl",
+      "row_count": 205,
+      "sha256": "sha256:5a2e326d6d2ddade8d952dd3e83e6ab424d0a3f7a1af65c4d00c753101215e78"
+    },
+    {
+      "line_count": 222,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/cancel-receipts-tenant-dev-part1.jsonl",
+      "row_count": 222,
+      "sha256": "sha256:9101c8a230d6a6da62532acf43f81d65574a8618bd8f50d3e82d09500e499304"
+    },
+    {
+      "line_count": 222,
+      "path": "docs/deployment/evidence/EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110/cancel-receipts-tenant-dev-part2.jsonl",
+      "row_count": 222,
+      "sha256": "sha256:0a1db118de9aa822c71cf417f5a7cbc2165e7158ff5e4d68b3bf59fb7c2c6dd5"
+    }
+  ],
+  "executed_at_utc": "2026-11-26T21:56:21Z",
+  "hosted_environment": {
+    "bff_image_digest": "sha256:37466e101c702da243bfb1cc9bd066caebb085a19b48118060eea2d984c659bc",
+    "bff_source_commit_sha": "5d907398a1cf308ed19c5a7fbc7fd7cd053b7bcc",
+    "deploy_workflow_run_id": "45893198262",
+    "environment": "dev",
+    "maintenance_cli_merge_commit": "006757ce71c6b10b3a9d32f2642524d00433151a",
+    "maintenance_cli_source_pr": "https://github.com/ajoe734/pantheon/pull/7912",
+    "owner_service": "pantheon-evolution-1",
+    "vm_host": "35.194.154.62"
+  },
+  "residual_findings": [],
+  "schema": "pantheon.task-evidence.v1",
+  "task_id": "EVOLUTION-LEGACY-PROPOSALS-CANCEL-20261110"
+}

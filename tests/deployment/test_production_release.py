@@ -137,7 +137,7 @@ case "$tool" in
     if [[ "$preserve_env" == true ]]; then exec "$@"; fi
     if [[ "${FAKE_SUDO_RESET_ENV:-}" == "true" ]]; then
       # Real sudo resets the environment unless -E: keep only harness plumbing, drop exported release/image vars.
-      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" FAKE_IN_SUDO=1 HOME="${HOME:-/}" "$@"
+      exec env -i PATH="$PATH" BIN_LOG="$BIN_LOG" FAKE_STATE="$FAKE_STATE" FAKE_COMPOSE_REQUIRED="${FAKE_COMPOSE_REQUIRED:-}" FAKE_IN_SUDO=1 HOME="${HOME:-/}" "$@"
     fi
     exec "$@"
     ;;
@@ -216,7 +216,20 @@ case "$tool" in
       [[ "$(cat "$FAKE_STATE/mounted_state")" == "yes" ]]; exit $?
     fi
     [[ "${FAKE_MOUNTED:-yes}" == "yes" ]]; exit $? ;;
-  findmnt|blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  findmnt)
+    if [[ "$*" == *"-o SOURCE /"* ]]; then
+      if [[ -f "$FAKE_STATE/fake_root_source" ]]; then
+        cat "$FAKE_STATE/fake_root_source"
+      else
+        printf '%s\n' "${FAKE_ROOT_SOURCE:-/dev/sda1}"
+      fi
+      exit 0
+    fi
+    printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  blkid|lsblk) printf '%s\n' "${FAKE_DATA_UUID:-d4a7a000-1111-2222-3333-444455556666}"; exit 0 ;;
+  growpart|resize2fs)
+    echo "$tool $*" >> "$FAKE_STATE/root_grow.log"
+    exit 0 ;;
   mount)
     echo "mount $*" >> "$FAKE_STATE/mount.log"
     if [[ "$*" == *"pantheon-old-boot-ro"* ]]; then
@@ -299,6 +312,10 @@ case "$tool" in
     if [[ "$args" == *"compose"*"up -d"*operator-bff-* && "${FAKE_REPLACE_FAIL:-}" == "restore_active_release" && "$(cat "$FAKE_STATE/vm_generation" 2>/dev/null)" == "new" ]]; then
       exit 1
     fi
+    if [[ "$args" == *"compose"*"up -d"*operator-bff-* && "${FAKE_ROLLBACK_RESTORE_FAIL:-}" == "true" && "$(cat "$FAKE_STATE/vm_generation" 2>/dev/null)" == "rolled_back" ]]; then
+      echo "simulated rollback restore failure on old boot disk" >&2
+      exit 1
+    fi
     if [[ "$args" == "login "* ]]; then
       [[ "${FAKE_DOCKER_FAIL:-}" == *"login"* ]] && exit 1
       cat >/dev/null
@@ -310,11 +327,28 @@ case "$tool" in
       exit 0
     fi
     if [[ "$args" == "pull "* ]]; then
-      [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]] && exit 1
-      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
-        [[ -f "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login" ]] || exit 1
-      fi
       img="${2:-}"
+      attempt=$(( $(cat "$FAKE_STATE/pull_attempts_total" 2>/dev/null || echo 0) + 1 ))
+      printf '%s' "$attempt" > "$FAKE_STATE/pull_attempts_total"
+      echo "$img" >> "$FAKE_STATE/pull_attempts"
+      if [[ -n "${FAKE_DOCKER_PULL_FAIL_COUNT:-}" ]]; then
+        fail_n="${FAKE_DOCKER_PULL_FAIL_COUNT}"
+        if [[ -z "${FAKE_DOCKER_PULL_FAIL_IMAGE:-}" || "$img" == "${FAKE_DOCKER_PULL_FAIL_IMAGE}" ]]; then
+          cur_fail=$(( $(cat "$FAKE_STATE/pull_fail_counter" 2>/dev/null || echo 0) + 1 ))
+          printf '%s' "$cur_fail" > "$FAKE_STATE/pull_fail_counter"
+          if (( cur_fail <= fail_n )); then
+            echo "${FAKE_DOCKER_PULL_ERR:-error pulling image layer: unexpected EOF}" >&2
+            exit 1
+          fi
+        fi
+      fi
+      if [[ "${FAKE_DOCKER_FAIL:-}" == *"pull"* ]]; then
+        echo "${FAKE_DOCKER_PULL_ERR:-failed to register layer: no space left on device}" >&2
+        exit 1
+      fi
+      if [[ "${FAKE_DOCKER_REQUIRE_AUTH:-}" == true ]]; then
+        [[ -f "${DOCKER_CONFIG:-$HOME/.docker}/fake-registry-login" ]] || { echo "unauthorized: authentication required" >&2; exit 1; }
+      fi
       echo "$img" >> "$FAKE_STATE/pulled_images"
       exit 0
     fi
@@ -599,6 +633,7 @@ class OpsHarness(unittest.TestCase):
         for tool in (
             "docker", "curl", "mountpoint", "sudo", "findmnt", "blkid", "mount", "umount",
             "systemctl", "mkfs", "mkfs.ext4", "apt-get", "gpg", "dpkg", "install", "chmod", "tee",
+            "growpart", "resize2fs",
         ):
             (self.bin / tool).write_text(FAKE_BIN)
             (self.bin / tool).chmod(0o755)
@@ -1557,6 +1592,41 @@ class BootstrapTests(OpsHarness):
                 )
                 self.assertNotEqual(r_fail.returncode, 0)
                 self.assertIn(expected_code, r_fail.stderr)
+
+    def test_bootstrap_retries_transient_docker_pull_failures_and_reports_disk_diagnostics(self):
+        # 1. Transient pull failures (< PROD_IMAGE_PULL_TRIES) re-authenticate with docker_registry_login and succeed.
+        target_img = self.manifest["backend"]["images"]["operator_bff"]
+        r_retry = self._run(
+            PROD_REGISTRY_AUTH="true",
+            PROD_IMAGE_PULL_TRIES="3",
+            PROD_IMAGE_PULL_RETRY_DELAY="0",
+            FAKE_DOCKER_PULL_FAIL_COUNT="2",
+            FAKE_DOCKER_PULL_FAIL_IMAGE=target_img,
+            FAKE_DOCKER_PULL_ERR="error pulling image layer: unexpected EOF",
+        )
+        self.assertEqual(r_retry.returncode, 0, f"stdout={r_retry.stdout}\nstderr={r_retry.stderr}")
+        self.assertEqual((self.state / "pull_fail_counter").read_text(), "3")
+        logins = (self.state / "docker_logins").read_text().splitlines()
+        self.assertEqual(len(logins), 3)
+        pulled = (self.state / "pulled_images").read_text().splitlines()
+        self.assertIn(target_img, pulled)
+
+        # 2. Persistent pull failure across all PROD_IMAGE_PULL_TRIES attempts fails closed with sanitized error + free_mb.
+        self.setUp()
+        r_fail = self._run(
+            PROD_REGISTRY_AUTH="true",
+            PROD_IMAGE_PULL_TRIES="3",
+            PROD_IMAGE_PULL_RETRY_DELAY="0",
+            FAKE_DOCKER_PULL_FAIL_COUNT="3",
+            FAKE_DOCKER_PULL_FAIL_IMAGE=target_img,
+            FAKE_DOCKER_PULL_ERR="failed to register layer: no space left on device",
+        )
+        self.assertNotEqual(r_fail.returncode, 0)
+        self.assertIn("IMAGE_PULL_FAILED", r_fail.stderr)
+        self.assertIn("after 3 attempts", r_fail.stderr)
+        self.assertIn("total_mb=", r_fail.stderr)
+        self.assertIn("free_mb=", r_fail.stderr)
+        self.assertIn("failed to register layer: no space left on device", r_fail.stderr)
 
 
 PROD_ENV = {
@@ -4154,10 +4224,13 @@ case "$all" in
     sa="$(arg_val --service-account "$@")"
     tags="$(arg_val --tags "$@")"
     meta="$(arg_val --metadata "$@")"
+    bsize="$(arg_val --boot-disk-size "$@")"
+    bsize="${bsize%GB}"
+    btype="$(arg_val --boot-disk-type "$@")"
     echo "$all" >> "$S/template_creates.log"
-    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" "$meta" > "$S/templates/${tpl}.json" <<'PY'
+    python3 -I - "$tpl" "$mt" "$net" "$sub" "$sa" "$tags" "$meta" "${bsize:-120}" "${btype:-pd-standard}" > "$S/templates/${tpl}.json" <<'PY'
 import json, sys
-tpl, mt, net, sub, sa, tags, meta = sys.argv[1:8]
+tpl, mt, net, sub, sa, tags, meta, bsize, btype = sys.argv[1:10]
 meta_items = []
 for pair in (meta or "serial-port-enable=FALSE").split(","):
     if "=" in pair:
@@ -4180,8 +4253,8 @@ print(json.dumps({
             "mode": "READ_WRITE",
             "type": "PERSISTENT",
             "initializeParams": {
-                "diskSizeGb": "50",
-                "diskType": "pd-balanced",
+                "diskSizeGb": bsize or "120",
+                "diskType": btype or "pd-standard",
                 "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
             },
         }],
@@ -4198,13 +4271,31 @@ PY
     echo "$4 $disk no-auto-delete" >> "$S/auto_delete.log"
     exit 0 ;;
   "compute instances attach-disk "*)
-    [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
     disk="$(arg_val --disk "$@")"
     dev="$(arg_val --device-name "$@")"
     mode="$(arg_val --mode "$@")"
+    if [[ "$mode" == "ro" ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
+    else
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_data_disk_new_vm" ]] && exit 1
+    fi
     [[ -n "$disk" && -e "$S/disks/$disk" ]] || exit 1
     echo "attach-disk $4 disk=$disk device-name=$dev mode=$mode" >> "$S/disk_attach.log"
-    printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    if [[ "$mode" == "ro" ]]; then
+      printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    elif [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$dev" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+disk, dev = sys.argv[2:4]
+disks = [d for d in (doc.get("disks") or []) if str(d.get("source") or "").rsplit("/", 1)[-1] != disk]
+disks.append({"boot": False, "autoDelete": False, "deviceName": dev or disk, "source": f"zones/asia-east1-b/disks/{disk}", "diskSizeGb": "200"})
+doc["disks"] = disks
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
     exit 0 ;;
   "compute instances detach-disk "*)
     [[ "${FAKE_REPLACE_FAIL:-}" == "detach_old_boot_disk_ro" ]] && exit 1
@@ -4216,6 +4307,25 @@ PY
     disk="$4"
     rm -f "$S/disks/$disk"
     echo "deleted_disk $disk" >> "$S/disks_deleted.log"
+    exit 0 ;;
+  "compute disks resize "*)
+    [[ "${FAKE_REPLACE_FAIL:-}" == "resize_new_boot_disk" ]] && exit 1
+    disk="$4"
+    rsize="$(arg_val --size "$@")"
+    rsize="${rsize%GB}"
+    echo "resize_disk $disk size=${rsize}GB" >> "$S/disk_resize.log"
+    if [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$rsize" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+for d in doc.get("disks") or []:
+    if isinstance(d, dict) and str(d.get("source") or "").rsplit("/", 1)[-1] == sys.argv[2]:
+        d["diskSizeGb"] = str(sys.argv[3])
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
     exit 0 ;;
   "compute instances stop "*)
     echo "stopped $4" >> "$S/vm_lifecycle.log"
@@ -4241,9 +4351,18 @@ PY
     mt="$(arg_val --machine-type "$@")"
     ip="$(arg_val --address "$@")"
     meta="$(arg_val --metadata "$@")"
+    bsize="$(arg_val --boot-disk-size "$@")"
+    bsize="${bsize%GB}"
     if [[ -n "$tpl" ]]; then
       [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
       [[ -f "$S/templates/${tpl}.json" ]] || exit 1
+      echo "$all" >> "$S/instance_creates.log"
+      if [[ -n "$bsize" ]]; then
+        echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - Required field [disk.initializeParams.sourceImage] not specified" >&2
+        exit 1
+      fi
+      has_cli_disk="false"
+      [[ "$all" == *" --disk "* ]] && has_cli_disk="true"
       if [[ -z "$mt" ]]; then
         mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
       fi
@@ -4254,19 +4373,29 @@ PY
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
-      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" "$S/templates/${tpl}.json" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "$ip" "$S/templates/${tpl}.json" "$has_cli_disk" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-}" > "$S/vm.json" <<'PY'
 import json, sys
-vm, new_id, mt, boot_disk, data_disk, ip, tpl_path = sys.argv[1:8]
+vm, new_id, mt, boot_disk, ip, tpl_path, has_cli_disk, override_bsize = sys.argv[1:9]
 tpl = json.load(open(tpl_path))
-meta_obj = (tpl.get("properties") or {}).get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+props = tpl.get("properties") or {}
+meta_obj = props.get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
+tpl_disks = props.get("disks") or []
+tpl_bsize = ""
+if tpl_disks and isinstance(tpl_disks[0], dict):
+    tpl_bsize = str((tpl_disks[0].get("initializeParams") or {}).get("diskSizeGb") or "").strip()
+if override_bsize:
+    boot_size_gb = str(override_bsize)
+elif has_cli_disk == "true":
+    boot_size_gb = "10"
+else:
+    boot_size_gb = tpl_bsize or "150"
 print(json.dumps({
     "id": new_id,
     "name": vm,
     "machineType": f"zones/asia-east1-b/machineTypes/{mt}",
     "status": "RUNNING",
     "disks": [
-        {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": "50"},
-        {"boot": False, "autoDelete": False, "deviceName": "pantheon-prod-data", "source": f"zones/asia-east1-b/disks/{data_disk}", "diskSizeGb": "200"},
+        {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": boot_size_gb},
     ],
     "networkInterfaces": [{
         "network": "global/networks/pantheon-prod-net",
@@ -4344,6 +4473,14 @@ PY
         exit 255
       fi
     fi
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
+      scp_att="$(( $(cat "$S/new_vm_scp_attempts" 2>/dev/null || echo 0) + 1 ))"
+      echo "$scp_att" > "$S/new_vm_scp_attempts"
+      if (( ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} > 0 && scp_att <= ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} )); then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     src="${@: -2:1}"
     dst_spec="${@: -1}"
     dst="${dst_spec#*:}"
@@ -4362,6 +4499,14 @@ PY
       exit 255
     fi
     cmd="$(arg_val --command "$@")"
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" && "$cmd" == "true" ]]; then
+      true_calls="$(( $(cat "$S/new_vm_ssh_true_calls" 2>/dev/null || echo 0) + 1 ))"
+      echo "$true_calls" > "$S/new_vm_ssh_true_calls"
+      if [[ "${FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE:-}" == "true" && "$true_calls" == "2" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     bash -c "$cmd"
     exit $? ;;
   *)
@@ -4504,6 +4649,7 @@ class ReplaceVmHarness(RealControllerBase):
             "PROD_SSH_WAIT_TRIES": "2",
             "PROD_SSH_WAIT_INTERVAL": "0",
             "PROD_INCUMBENT_SSH_INTERVAL": "0",
+            "PROD_UPLOAD_BUNDLE_INTERVAL": "0",
             "CLOUDSDK_CORE_PROJECT": PROD_ENV["PROD_GCP_PROJECT_ID"],
         }
         defaults.update(extra)
@@ -4576,7 +4722,7 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(out["migration_mode"], "online_ssh")
         self.assertEqual(out["machine_type"], "e2-standard-8")
         self.assertEqual(out["vcpus"], 8)
-        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v2")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
         self.assertEqual(out["old_boot_disk"], self.old_boot_disk)
         self.assertTrue(out["old_boot_disk_preserved"])
         self.assertNotEqual(out["new_boot_disk"], self.old_boot_disk)
@@ -4767,7 +4913,7 @@ class ReplaceVmHarness(RealControllerBase):
                 self.assertEqual(out["status"], "prod_vm_replaced")
                 self.assertEqual(out["migration_mode"], "offline_boot_disk")
                 self.assertEqual(out["old_vm_status"], vm_status)
-                self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v2")
+                self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
                 self.assertEqual(out["machine_type"], "e2-standard-8")
                 self.assertEqual(out["vcpus"], 8)
                 self.assertEqual(out["caddy_image"], self.caddy_image)
@@ -4776,7 +4922,7 @@ class ReplaceVmHarness(RealControllerBase):
                 self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
 
                 # Verify template metadata preserved incumbent keys without forcing enable-oslogin/block-project-ssh-keys.
-                created_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v2.json").read_text())
+                created_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
                 tpl_meta_keys = {i["key"]: i["value"] for i in created_tpl["properties"]["metadata"]["items"]}
                 self.assertEqual(tpl_meta_keys, {"serial-port-enable": "FALSE"})
                 self.assertNotIn("enable-oslogin", tpl_meta_keys)
@@ -4874,6 +5020,269 @@ class ReplaceVmHarness(RealControllerBase):
                 self.assertFalse((self.state / "disks" / "pantheon-prod-control-boot-fresh-e2s8").exists())
                 self.assertTrue((self.state / "disks" / self.old_boot_disk).exists())
                 self.assertIn("meta=serial-port-enable=FALSE", (self.state / "vm_lifecycle.log").read_text())
+
+    def test_replace_vm_preserves_sudo_compose_env_and_upgrades_50gb_boot_disk_template_to_v3_120gb(self):
+        # Seed a pre-existing pantheon-prod-control-template-e2s8-v2 template with e2-standard-8 and matching
+        # metadata, but an undersized 50GB boot disk (< PROD_MIN_BOOT_DISK_GB=120).
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v2.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v2",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "50",
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v2",
+            PROD_USE_SUDO="true",
+            FAKE_OSLOGIN_NONROOT="true",
+            FAKE_SUDO_RESET_ENV="true",
+            GITHUB_RUN_ID="45897091923",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["migration_mode"], "offline_boot_disk")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        self.assertTrue(out["restored_identity"]["public_fe_deployment_verified"])
+        self.assertTrue(out["restored_identity"]["public_bff_version_verified"])
+
+        # Verify created v3 template has >= 150GB boot disk.
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        self.assertIn("--boot-disk-size=150GB", (self.state / "template_creates.log").read_text())
+        vm_now = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
+
+        # Direct prod_ops.sh restore_active_release and protected rollback also succeed under PROD_USE_SUDO=true + FAKE_SUDO_RESET_ENV=true.
+        direct_restore = subprocess.run(
+            [str(OPS), "restore_active_release", self.active_release_id],
+            env=self.env(
+                PROD_USE_SUDO="true",
+                FAKE_SUDO_RESET_ENV="true",
+                PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+                RELEASE_MANIFEST_PATH=str(self.data_mount / "state" / "active_manifest.json"),
+            ),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(direct_restore.returncode, 0, direct_restore.stdout + direct_restore.stderr)
+        rb = self._rollback_mode(
+            self.active_release_id,
+            PROD_USE_SUDO="true",
+            FAKE_SUDO_RESET_ENV="true",
+            PROD_COMPOSE_ENV_FILE=str(self.data_mount / "config" / "compose.env"),
+        )
+        self.assertEqual(rb.returncode, 0, rb.stdout + rb.stderr)
+        self.assertEqual(json.loads(rb.stdout.strip().splitlines()[-1])["to_release"], self.baseline_release_id)
+
+        # Verify rollback_to_old_boot_disk captures rollback stderr in rollback_error if rollback restoration fails.
+        self.setUp()
+        r_rb_fail = self._run_replace_vm(
+            FAKE_REPLACE_FAIL="restore_active_release",
+            FAKE_ROLLBACK_RESTORE_FAIL="true",
+        )
+        self.assertEqual(r_rb_fail.returncode, 3, f"stdout={r_rb_fail.stdout}\nstderr={r_rb_fail.stderr}")
+        rb_fail_out = json.loads(r_rb_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(rb_fail_out["status"], "replace_vm_rollback_failed")
+        self.assertFalse(rb_fail_out["rolled_back_to_old_boot_disk"])
+        self.assertIn("simulated rollback restore failure", rb_fail_out["rollback_error"] or "")
+
+    def test_replace_vm_retries_transient_first_boot_iap_upload_and_rejects_template_missing_disk_size_gb(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_UPLOAD_BUNDLE_TRIES="${PROD_UPLOAD_BUNDLE_TRIES:-6}"', script_text)
+        self.assertIn('PROD_UPLOAD_BUNDLE_INTERVAL="${PROD_UPLOAD_BUNDLE_INTERVAL:-5}"', script_text)
+        self.assertIn('PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-5}"', script_text)
+
+        # Seed a pre-existing pantheon-prod-control-template-e2s8-v3 template whose boot disk initializeParams
+        # has sourceImage (GCE Debian 12 default 10GB) but omits diskSizeGb -> template_is_compatible must reject,
+        # delete, and recreate it with diskSizeGb=120. Also simulate transient first-boot IAP upload failure
+        # (first SCP attempt fails, second succeeds) and a transient second-probe SSH drop during wait_for_ssh.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            PROD_SSH_WAIT_TRIES="3",
+            PROD_SSH_STABILITY_DELAY="1",
+            FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE="true",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="1",
+            GITHUB_RUN_ID="45908618778",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        # Template missing diskSizeGb was deleted and recreated with 150GB boot disk.
+        self.assertIn(
+            "deleted_template pantheon-prod-control-template-e2s8-v3",
+            (self.state / "template_deletes.log").read_text(),
+        )
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        # wait_for_ssh ran stability re-probe after transient drop (4 total 'true' SSH calls) and SCP retried after 1 transient failure.
+        self.assertEqual(int((self.state / "new_vm_ssh_true_calls").read_text().strip()), 4)
+        self.assertEqual(int((self.state / "new_vm_scp_attempts").read_text().strip()), 2)
+
+        # When all PROD_UPLOAD_BUNDLE_TRIES attempts fail on the new VM, it rolls back to old_boot_disk at upload_bundle_new_vm.
+        self.setUp()
+        r_fail = self._run_replace_vm(
+            PROD_UPLOAD_BUNDLE_TRIES="2",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="3",
+        )
+        self.assertEqual(r_fail.returncode, 3, f"stdout={r_fail.stdout}\nstderr={r_fail.stderr}")
+        fail_out = json.loads(r_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(fail_out["status"], "replace_vm_rolled_back")
+        self.assertEqual(fail_out["failed_stage"], "upload_bundle_new_vm")
+        self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
+        self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
+
+    def test_replace_vm_passes_150gb_boot_disk_size_on_instances_create_resizes_undersized_boot_disk_and_grows_root_fs(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-150}"', script_text)
+        self.assertIn('PROD_BOOT_DISK_TYPE="${PROD_BOOT_DISK_TYPE:-pd-standard}"', script_text)
+
+        r_bad_type = self._run_replace_vm(PROD_BOOT_DISK_TYPE="pd-extreme")
+        self.assertEqual(r_bad_type.returncode, 1)
+        self.assertIn("INVALID_BOOT_DISK_TYPE", r_bad_type.stderr)
+
+        # 1. Seed a pre-existing v3 template with 150GB pd-balanced boot disk (mismatches PROD_BOOT_DISK_TYPE=pd-standard):
+        #    must reject, delete, and recreate v3 with 150GB pd-standard (--boot-disk-type=pd-standard), then create VM
+        #    without disk flags and attach PROD_DATA_DISK via attach-disk, plus run growpart/resize2fs on /dev/sda1.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "150",
+                            "diskType": "zones/asia-east1-b/diskTypes/pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            GITHUB_RUN_ID="45929804773",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertIn(
+            "deleted_template pantheon-prod-control-template-e2s8-v3",
+            (self.state / "template_deletes.log").read_text(),
+        )
+        self.assertIn("--boot-disk-type=pd-standard", (self.state / "template_creates.log").read_text())
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "150")
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskType"], "pd-standard")
+        create_cmd = (self.state / "instance_creates.log").read_text().strip()
+        self.assertIn("--source-instance-template pantheon-prod-control-template-e2s8-v3", create_cmd)
+        self.assertNotIn("--disk", create_cmd)
+        self.assertNotIn("--boot-disk-size", create_cmd)
+        self.assertNotIn("--boot-disk-type", create_cmd)
+        attach_log = (self.state / "disk_attach.log").read_text()
+        self.assertIn(
+            f"attach-disk pantheon-prod-control disk={PROD_ENV['PROD_DATA_DISK']} device-name=pantheon-prod-data mode=rw",
+            attach_log,
+        )
+        vm_now = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
+        grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/sda 1", grow_log)
+        self.assertIn("resize2fs /dev/sda1", grow_log)
+
+        # 2. If GCE returns an undersized boot disk (< PROD_MIN_BOOT_DISK_GB) on the new VM describe, NEW_VM_VARS
+        #    resizes the new boot disk online to TARGET_BOOT_SIZE_GB (150GB) via 'gcloud compute disks resize' and
+        #    grows an nvme root partition (/dev/nvme0n1p1 -> growpart /dev/nvme0n1 1 + resize2fs /dev/nvme0n1p1).
+        #    Also seed v3 template with omitted diskType (GCE default pd-standard) and verify it is reused without deletion.
+        self.setUp()
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskSizeGb": "150",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        (self.state / "fake_root_source").write_text("/dev/nvme0n1p1\n", encoding="utf-8")
+        r_resize = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            FAKE_NEW_BOOT_DISK_SIZE_GB="10",
+            GITHUB_RUN_ID="45929804773",
+            GITHUB_RUN_ATTEMPT="2",
+        )
+        self.assertEqual(r_resize.returncode, 0, f"stdout={r_resize.stdout}\nstderr={r_resize.stderr}")
+        self.assertFalse((self.state / "template_deletes.log").exists())
+        self.assertFalse((self.state / "template_creates.log").exists())
+        self.assertIn(
+            "resize_disk pantheon-prod-control-boot-fresh-e2s8 size=150GB",
+            (self.state / "disk_resize.log").read_text(),
+        )
+        vm_resized = json.loads((self.state / "vm.json").read_text())
+        self.assertEqual(vm_resized["disks"][0]["diskSizeGb"], "150")
+        nvme_grow_log = (self.state / "root_grow.log").read_text()
+        self.assertIn("growpart /dev/nvme0n1 1", nvme_grow_log)
+        self.assertIn("resize2fs /dev/nvme0n1p1", nvme_grow_log)
 
 
 if __name__ == "__main__":

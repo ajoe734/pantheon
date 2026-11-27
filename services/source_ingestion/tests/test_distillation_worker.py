@@ -1517,3 +1517,112 @@ def test_defer_budget_refuses_an_unplanned_reason(tmp_path) -> None:
     queue.begin_job(job, lease_seconds=30)
     with pytest.raises(ValueError, match="unplanned"):
         queue.defer_budget(job, now=4_000_000_000.0, reason="registry_down")
+
+
+class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
+    """DISTILLATION-FIXED-CAUSE-REATTEMPT-20261126: 59 of 60 dead letters have a
+    newer terminal outbox version and are resolved as superseded; the 1 newest
+    extraction-unavailable dead letter stays actionable until redriven."""
+
+    def test_resolve_superseded_dead_letters_hosted_60_breakdown(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        anyof_reason = (
+            'hypothesis_extraction_failed: invalid_schema: '
+            '{"error_code":"OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",'
+            '"message":"unsupported schema keyword(s) [\'anyOf\']"}'
+        )
+        timeout_reason = "hypothesis_extraction_unavailable: timeout: OPENCLAW_RESPONSES_TIMEOUT"
+        lease_reason = "lease_expired_repeatedly: 5 lease expiries"
+
+        def add_superseded_pair(prefix: str, count: int, dl_reason: str, newer_status: str, newer_skip: str | None = None):
+            for idx in range(count):
+                sid = f"{prefix}-{idx}"
+                old_job = queue.enqueue_source_record(
+                    _normalized_source(sid, title="v1", tenant_id="default"), enqueued_at=100.0
+                )
+                _force_dead_letter(queue, old_job, reason=dl_reason)
+                new_job = queue.enqueue_source_record(
+                    _normalized_source(sid, title="v2", tenant_id="default"), enqueued_at=200.0
+                )
+                with sqlite3.connect(queue.path) as conn:
+                    conn.execute(
+                        "UPDATE distillation_outbox SET status=?, skip_reason=?, processed_at=200.0 WHERE job_id=?",
+                        (newer_status, newer_skip, new_job.job_id),
+                    )
+
+        # Hosted 60 dead letters: 44 timeout -> skipped anyOf, 8 timeout -> skipped disabled,
+        # 6 lease_expired -> done, 1 lease_expired -> skipped irrelevant, 1 timeout newest.
+        add_superseded_pair("timeout-anyof", 44, timeout_reason, "skipped", anyof_reason)
+        add_superseded_pair("timeout-disabled", 8, timeout_reason, "skipped", "l2_extraction_disabled")
+        add_superseded_pair("lease-done", 6, lease_reason, "done", None)
+        add_superseded_pair("lease-irrel", 1, lease_reason, "skipped", "l2_irrelevant: no_finance_signal")
+        newest_only = queue.enqueue_source_record(
+            _normalized_source("timeout-newest-only", title="v1", tenant_id="default"), enqueued_at=300.0
+        )
+        _force_dead_letter(queue, newest_only, reason=timeout_reason)
+
+        assert queue.dead_letter_count() == 60
+        resolved = queue.resolve_superseded_dead_letters(
+            requested_by="strategy-distillation-controller", limit=100, tenant_id="default"
+        )
+        assert len(resolved) == 59
+        assert queue.dead_letter_count() == 1
+        assert [row["job_id"] for row in queue.list_dead_letters(include_payload=False)] == [newest_only.job_id]
+        assert queue.metrics()["dead_letter"] == 1
+
+        all_dead_letters = queue.list_dead_letters(include_payload=False, include_resolved=True)
+        assert len(all_dead_letters) == 60
+        resolved_rows = [row for row in all_dead_letters if row["resolved_at"] is not None]
+        assert len(resolved_rows) == 59
+        assert all(row["last_redrive_actor"] == "strategy-distillation-controller" for row in resolved_rows)
+        assert all(str(row["last_redrive_note"]).startswith("superseded by newer version ") for row in resolved_rows)
+
+    def test_redrive_lease_expired_dead_letters_resolves_superseded_version(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        old_job = queue.enqueue_source_record(
+            _normalized_source("src-lease", title="v1", tenant_id="default"), enqueued_at=100.0
+        )
+        _force_dead_letter(queue, old_job, reason="lease_expired_repeatedly: 5 lease expiries")
+        new_job = queue.enqueue_source_record(
+            _normalized_source("src-lease", title="v2", tenant_id="default"), enqueued_at=200.0
+        )
+        _force_status(queue, new_job, "done")
+
+        redriven = queue.redrive_lease_expired_dead_letters(
+            requested_by="strategy-distillation-controller", tenant_id="default"
+        )
+        assert redriven == []
+        assert queue.dead_letter_count() == 0
+        assert queue.metrics()["dead_letter"] == 0
+        row = queue.list_dead_letters(include_payload=False, include_resolved=True)[0]
+        assert row["resolved_at"] is not None
+        assert row["last_redrive_actor"] == "strategy-distillation-controller"
+        assert row["last_redrive_note"] == f"superseded by newer version {new_job.job_id} (done)"
+
+    def test_claim_due_orders_fresh_records_before_defect_reattempts(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        anyof_reason = (
+            'hypothesis_extraction_failed: invalid_schema: '
+            '{"error_code":"OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",'
+            '"message":"unsupported schema keyword(s) [\'anyOf\']"}'
+        )
+        defect_job = queue.enqueue_source_record(
+            _normalized_source("src-defect-old", tenant_id="default"), enqueued_at=100.0
+        )
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=100.0 WHERE job_id=?",
+                (anyof_reason, defect_job.job_id),
+            )
+        reopened = queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert reopened == [defect_job.job_id]
+        fresh_job = queue.enqueue_source_record(
+            _normalized_source("src-fresh-new", tenant_id="default"), enqueued_at=300.0
+        )
+        claimed = queue.claim_due(worker_id="w", lease_seconds=30.0, now=400.0, limit=1, tenant_id="default")
+        assert [j.source_id for j in claimed] == ["src-fresh-new"]
+        assert fresh_job.job_id == claimed[0].job_id
+
+

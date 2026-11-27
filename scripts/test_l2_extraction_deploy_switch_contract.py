@@ -82,3 +82,10 @@ def test_deadline_and_tick_budget_are_compose_settings_inside_the_health_window(
     health = int(re.search(r":-(\d+)\}", env["DISTILLATION_CONTROLLER_HEALTH_MAX_AGE_SECONDS"]).group(1))
     # budget + one call must stay below the alive-marker max age, or a normal tick reads unhealthy.
     assert 120 + 90 < health
+
+
+def test_card_token_limits_are_compose_settings_matching_the_code_defaults() -> None:
+    # L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126: the card turn's own limits reach the worker container.
+    env = COMPOSE["services"]["strategy-distillation-worker"]["environment"]
+    assert env["PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS"] == "${PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS:-3072}"
+    assert env["PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS"] == "${PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS:-40000}"

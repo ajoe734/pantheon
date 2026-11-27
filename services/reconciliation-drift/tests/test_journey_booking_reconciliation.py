@@ -8,16 +8,24 @@ Cash values are synthetic (hosted fill event body was not recorded).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import tempfile
 from unittest import mock
 
 import pytest
 
 from broker_paper_client import BrokerOrderNotFound, BrokerPaperUnavailable
+from services.control_plane.bff import trade_journeys as tj
+from services.telemetry.ingest_svc import TelemetryIngestService
+from services.trade_journey.lifecycle_projector import LifecycleProjector
 from test_reconciliation_drift_scheduler import (
     _hosted_eval,
     _load_service_module,
     _paper_lifecycle_summary,
+)
+
+_TELEMETRY_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[2] / "telemetry" / "telemetry_event.schema.json"
 )
 
 BROKER_ORDER = {
@@ -353,5 +361,446 @@ def test_missing_or_invalid_fee_and_tax_leave_cash_change_unverified_and_preserv
     assert mixed_pos_detail["position_change"]["delta"] == pytest.approx(1.0)
     assert mixed_pos_detail["cash_change"]["status"] == "unverified"
     assert mixed_pos_detail["cash_change"]["missing_evidence"] == ["fee"]
+
+
+RECORDED_POSITION_SNAPSHOT_20261123_2330_SELL = {
+    "aggregate_id": "tj_00ad6034-48d3-59a1-81d8-abe04596778b",
+    "aggregate_type": "trade_journey",
+    "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+    "artifact_version": "1.2.0",
+    "authority_refs": {
+        "authority_source": "runtime_binding",
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "runtime_mode": "paper",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "write_owner": "runtime-manager",
+    },
+    "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+    "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+    "causal_parent_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+    "correlation_envelope": {
+        "causation_event_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+        "correlation_id": "f699c9e5-d7f9-5c2a-8ba2-2bcea17f4bc3",
+        "environment": "paper",
+        "event_id": "51a5c6f6-ac10-5c8b-86e3-da02302cf27a",
+        "event_time": "2026-11-23T23:34:52Z",
+        "journey_id": "tj_00ad6034-48d3-59a1-81d8-abe04596778b",
+        "producer": "execution.paper_runtime",
+        "producer_revision": 1,
+        "received_at": "2026-11-23T23:34:52Z",
+        "schema_version": "trade-journey-envelope/1",
+        "tenant_id": "tenant-dev",
+        "trace_id": "5e0e132c-8ab2-5aea-90c8-965e458e7f79",
+    },
+    "created_at": "2026-11-23T23:34:52Z",
+    "decision_id": "dec-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+    "deployment_stage": "paper",
+    "environment": "paper",
+    "event_id": "51a5c6f6-ac10-5c8b-86e3-da02302cf27a",
+    "event_type": "position_snapshot",
+    "execution_mode": "paper",
+    "fill_id": "paper-fill-50c1c88f-c412-4187-9f5c-6ab57145fd98",
+    "ingested_seq": 14029066,
+    "journey_id": "tj_00ad6034-48d3-59a1-81d8-abe04596778b",
+    "loop_run_id": "lr-run-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+    "metadata": {
+        "adapter": "shioaji",
+        "as_of_trading_day": "2026-11-20",
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "broker": "shioaji_paper",
+        "broker_order_id": "2972acaa5f294de6b52f0d4697b754f9",
+        "broker_submission_status": "filled",
+        "candidates_considered": ["eq:2330", "ssf:CDF:202612", "ssf:QFF:202612"],
+        "capital_scale_pct": 0,
+        "cash_after": 99813.109125,
+        "cash_before": 97831.914875,
+        "causal_parent_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+        "contract_symbol": "2330",
+        "correlation_envelope": {
+            "causation_event_id": "83350fd8-2356-57ef-b4ba-4e830584ac11",
+            "correlation_id": "f699c9e5-d7f9-5c2a-8ba2-2bcea17f4bc3",
+            "environment": "paper",
+            "event_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+            "event_time": "2026-11-23T23:34:52Z",
+            "journey_id": "tj_00ad6034-48d3-59a1-81d8-abe04596778b",
+            "producer": "execution.paper_runtime",
+            "producer_revision": 1,
+            "received_at": "2026-11-23T23:34:52Z",
+            "schema_version": "trade-journey-envelope/1",
+            "tenant_id": "tenant-dev",
+            "trace_id": "5e0e132c-8ab2-5aea-90c8-965e458e7f79",
+        },
+        "currency": "TWD",
+        "decision_id": "dec-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+        "environment": "paper",
+        "exchange": "TSE",
+        "expression_decision": {
+            "candidates_considered": ["eq:2330", "ssf:CDF:202612", "ssf:QFF:202612"],
+            "decision_id": "dec-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+            "instrument_id": "eq:2330",
+            "policy_parameters_digest": "21506025fd1f63344919806d",
+            "policy_version": "1.0",
+            "reason_code": "close_leg",
+            "reason_text": "close open long eq:2330 before reversing to short",
+            "side": "sell",
+            "strength": 1.0,
+            "target_notional": 2000.0,
+            "units": 1,
+        },
+        "fee": 2.83575,
+        "fill_id": "paper-fill-50c1c88f-c412-4187-9f5c-6ab57145fd98",
+        "fill_price": 1990.0,
+        "fill_quantity": 1.0,
+        "instrument_id": "eq:2330",
+        "is_real_capital": False,
+        "is_real_order": False,
+        "journey_id": "tj_00ad6034-48d3-59a1-81d8-abe04596778b",
+        "kind": "cash_share",
+        "ledger_cash": 99813.109125,
+        "ledger_committed": True,
+        "ledger_fill_count": 2,
+        "loop_run_id": "lr-run-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+        "market_price": 1990.0,
+        "market_price_as_of": "2026-11-23T09:00:00+08:00",
+        "market_price_source": "source-ingest://snapshots/mss-e9ef45a959c62a273a2ad1a3",
+        "momentum": -0.047619047619047616,
+        "multiplier": 1.0,
+        "order_id": "2972acaa5f294de6b52f0d4697b754f9",
+        "order_submitted_at": "2026-11-23T23:34:52Z",
+        "order_type": "MARKET",
+        "persona_id": "persona-2448c7053e33ea48da47",
+        "position_id": "rt-ad81501b:2330.TWSE:2",
+        "position_quantity": 0.0,
+        "position_quantity_after": 0.0,
+        "position_quantity_before": 1.0,
+        "price_basis": "stock_close_prev_session",
+        "price_date": "2026-11-20",
+        "quantity_type": "SHARES",
+        "reason_code": "close_leg",
+        "requested_quantity": 1.0,
+        "risk_decision_id": "dec-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+        "risk_gate_status": "succeeded",
+        "risk_policy_digest": "a20e78c2b97cb24e3fd592ca93cd11b6e966d0fa0ae175d6d5ebf15ce9d4740a",
+        "risk_policy_id": "rp-pool-persona-paper-06d4775a9b6a8f63b311",
+        "risk_policy_version": "1.0",
+        "risk_status": "succeeded",
+        "run_id": "run-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+        "runtime_binding_effective_at": "2026-11-18T07:00:00Z",
+        "runtime_package": "paper_execution_runtime",
+        "runtime_role": "pantheon-lean-paper-runtime",
+        "sec_type": "equity",
+        "sequence_no": 7,
+        "shioaji_trade_id": "2972acaa5f294de6b52f0d4697b754f9",
+        "side": "sell",
+        "signal_id": "sig-44122846c72f668961005f4754ee256f",
+        "sim_fill_flag": True,
+        "source_fill_event_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+        "source_mode": "live",
+        "source_worker": "paper-signal-producer",
+        "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+        "strength": 1.0,
+        "submission_sizing_evidence": {
+            "after_trade_concentration": 0.0,
+            "binding_limit": "existing_holding_close_leg",
+            "capital": 99821.914875,
+            "dated_price": 1990.0,
+            "fee_inclusive_required_cash": 0.0,
+            "permitted_units": 1,
+            "remaining_cash": 97831.914875,
+            "requested_units": 1,
+        },
+        "submitted_to_broker": True,
+        "symbol": "2330.TWSE",
+        "tax": 5.97,
+        "tenant_id": "tenant-dev",
+        "trade_date": "2026-11-20",
+        "trade_episode_id": "1ded8982-db16-47fa-904f-80800585ddd2",
+        "units": 1,
+        "venue": "shioaji_paper",
+        "view_direction": "SHORT",
+    },
+    "metrics": {
+        "action": "position_snapshot_committed",
+        "cash": 99813.109125,
+        "position_qty": 0.0,
+        "price": 1990.0,
+    },
+    "order_id": "2972acaa5f294de6b52f0d4697b754f9",
+    "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+    "plan_id": "plan-persona-pool-06d4775a9b6a8f63b311-v2",
+    "position_id": "rt-ad81501b:2330.TWSE:2",
+    "position_qty": 0.0,
+    "price": 1990.0,
+    "risk_decision_id": "dec-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+    "run_id": "run-rb-eb74118dd3ca4b169496b1c239087512-44122846c72f668961005f47",
+    "runtime_id": "rt-ad81501b",
+    "sequence_no": 7,
+    "signal_id": "sig-44122846c72f668961005f4754ee256f",
+    "source_mode": "live",
+    "symbol": "2330.TWSE",
+    "target": {
+        "artifact_type": "execution_bundle",
+        "artifact_version": "1.2.0",
+        "promotion_state": "paper",
+        "registry_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+        "strategy_id": "strategy-persona-06d4775a9b6a8f63b311",
+    },
+    "tenant_id": "tenant-dev",
+    "trace_id": "5e0e132c-8ab2-5aea-90c8-965e458e7f79",
+}
+
+RECORDED_BROKER_ORDER_20261123_2330_SELL = {
+    "order_id": "2972acaa5f294de6b52f0d4697b754f9",
+    "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+    "symbol": "2330",
+    "qty": 1,
+    "side": "sell",
+    "status": "filled",
+    "fill_qty": 1.0,
+    "fill_price": 1990.0,
+    "instrument_id": "eq:2330",
+    "kind": "cash_share",
+    "fee": 0.0,
+    "tax": 0.0,
+}
+
+RECORDED_COMPLETED_REASON_DETAIL_20261123T2340Z = [
+    {
+        "check": "broker_fill_qty",
+        "delta": 0.0,
+        "actual": 1.0,
+        "status": "passed",
+        "expected": 1.0,
+        "difference": 0.0,
+    },
+    {
+        "check": "broker_fill_price",
+        "delta": 0.0,
+        "actual": 1990.0,
+        "status": "passed",
+        "expected": 1990.0,
+        "difference": 0.0,
+    },
+    {
+        "check": "broker_status",
+        "actual": "filled",
+        "status": "passed",
+        "expected": "filled",
+    },
+    {
+        "check": "broker_side",
+        "actual": "sell",
+        "status": "passed",
+        "expected": "sell",
+    },
+    {
+        "check": "broker_instrument_id",
+        "actual": "eq:2330",
+        "status": "passed",
+        "expected": "eq:2330",
+    },
+    {
+        "check": "position_change",
+        "delta": 0.0,
+        "actual": -1.0,
+        "status": "passed",
+        "expected": -1.0,
+        "difference": 0.0,
+    },
+    {
+        "check": "committed_snapshot_position",
+        "delta": 0.0,
+        "actual": 0.0,
+        "status": "passed",
+        "expected": 0.0,
+        "difference": 0.0,
+    },
+    {
+        "check": "cash_change",
+        "delta": 4.547473508864641e-13,
+        "actual": 1981.1942500000005,
+        "status": "passed",
+        "expected": 1981.19425,
+        "difference": 4.547473508864641e-13,
+    },
+    {
+        "check": "committed_snapshot_cash",
+        "delta": 0.0,
+        "actual": 99813.109125,
+        "status": "passed",
+        "expected": 99813.109125,
+        "difference": 0.0,
+    },
+]
+
+RECORDED_FAILED_REASON_DETAIL_20261125T1211Z = [
+    {
+        "check": "runtime_state",
+        "detail": "authoritative runtime state is degraded",
+        "status": "warning",
+        "observed": "degraded",
+        "threshold": None,
+    },
+    {
+        "check": "runtime_health_summary",
+        "detail": "runtime health summary is missing or unhealthy",
+        "status": "warning",
+        "observed": {
+            "bridge": "not_applicable",
+            "broker": "not_applicable",
+            "telemetry": "degraded",
+            "paper_runtime": "degraded",
+        },
+        "threshold": None,
+    },
+]
+
+
+def _recorded_20261123_summary():
+    snapshot = json.loads(json.dumps(RECORDED_POSITION_SNAPSHOT_20261123_2330_SELL))
+    return _paper_lifecycle_summary(
+        tenant_id=snapshot["tenant_id"],
+        binding_id=snapshot["binding_id"],
+        runtime_id=snapshot["runtime_id"],
+        deployment_stage=snapshot["deployment_stage"],
+        deployment_plan_id=snapshot["plan_id"],
+        capital_pool_id=snapshot["capital_pool_id"],
+        persona_capital_binding_id=snapshot["persona_capital_binding_id"],
+        artifact_id=snapshot["artifact_id"],
+        artifact_version=snapshot["artifact_version"],
+        trace_id=snapshot["trace_id"],
+        last_event_id=snapshot["event_id"],
+        last_lifecycle_identity=snapshot,
+        committed_position_snapshot=snapshot,
+    )
+
+
+def test_recorded_20261123_completed_reconciliation_drops_inherited_expression_reason_code() -> None:
+    svc = _load_service_module(tempfile.mkdtemp())
+    summary = _recorded_20261123_summary()
+    evaluation = _hosted_eval("2026-11-16T07:03:47Z", summary)
+    evaluation["evaluation_id"] = (
+        "rdeval-sched-scheduled-tenant-dev-2026-11-23T-rb-eb74118dd3ca4b169496b-a3ffdee025ed51fc"
+    )
+    evaluation["tick_id"] = "scheduled:tenant-dev:2026-11-23T23:40:00Z:PT300S"
+    evaluation["status"] = "ok"
+    evaluation["drift_checks"] = []
+    fetch = mock.Mock(return_value=RECORDED_BROKER_ORDER_20261123_2330_SELL)
+    with mock.patch.dict(
+        "os.environ", {"PANTHEON_PAPER_BROKER_URL": "http://broker:8102"}
+    ), mock.patch.object(svc, "fetch_paper_order", fetch):
+        event, reason = svc._scheduled_lifecycle_event(
+            summary=summary,
+            evaluation=evaluation,
+            timestamp="2026-11-23T23:40:32Z",
+        )
+    assert reason is None
+    assert event is not None
+    assert event["event_id"] == "0e7a2a50-3b57-5057-9ced-5c736d74fc74"
+    assert event["event_type"] == "reconciliation_completed"
+    assert "reason_code" not in event
+    assert "reason_detail" not in event
+    assert "reason_code" not in event["metadata"]
+    assert event["metadata"]["expression_reason_code"] == "close_leg"
+    assert event["metadata"]["reason_detail"] == RECORDED_COMPLETED_REASON_DETAIL_20261123T2340Z
+    fetch.assert_called_once()
+    assert fetch.call_args.args[1] == "2972acaa5f294de6b52f0d4697b754f9"
+    ok, err = TelemetryIngestService(schema_path=str(_TELEMETRY_SCHEMA_PATH))._validate_event(event)
+    assert ok is True, err
+    (projected,) = LifecycleProjector._journey_events(
+        {
+            "event": event,
+            "identity": {
+                "journey_id": event["journey_id"],
+                "tenant_id": event["tenant_id"],
+                "environment": event["environment"],
+                "persona_id": event["metadata"]["persona_id"],
+                "persona_capital_binding_id": event["persona_capital_binding_id"],
+                "artifact_id": event["artifact_id"],
+                "artifact_version": event["artifact_version"],
+                "plan_id": event["plan_id"],
+                "trace_id": event["trace_id"],
+            },
+            "source_mode": "live",
+            "sequence_no": event["sequence_no"],
+        }
+    )
+    assert "reason_code" not in projected
+    assert projected["expression_reason_code"] == "close_leg"
+    timeline_row = tj._timeline_event(projected)
+    assert "reason_code" not in timeline_row
+    assert timeline_row["expression_reason_code"] == "close_leg"
+
+
+def test_recorded_20261125_failed_reconciliation_keeps_runtime_unhealthy_reason_code() -> None:
+    svc = _load_service_module(tempfile.mkdtemp())
+    summary = _recorded_20261123_summary()
+    evaluation = _hosted_eval("2026-11-16T06:58:29Z", summary)
+    evaluation["evaluation_id"] = (
+        "rdeval-sched-scheduled-tenant-dev-2026-11-25T-rb-eb74118dd3ca4b169496b-926c8ece432b55e1"
+    )
+    evaluation["tick_id"] = "scheduled:tenant-dev:2026-11-25T12:10:00Z:PT300S"
+    evaluation["status"] = "warning"
+    evaluation["drift_checks"] = []
+    fetch = mock.Mock()
+    with mock.patch.dict(
+        "os.environ", {"PANTHEON_PAPER_BROKER_URL": "http://broker:8102"}
+    ), mock.patch.object(svc, "fetch_paper_order", fetch):
+        event, reason = svc._scheduled_lifecycle_event(
+            summary=summary,
+            evaluation=evaluation,
+            timestamp="2026-11-25T12:11:10Z",
+        )
+    assert reason is None
+    assert event is not None
+    assert event["event_id"] == "6cf0afc3-4c79-5f5a-bfb1-1184a02999fd"
+    assert event["event_type"] == "reconciliation_failed"
+    assert "reason_code" not in event
+    assert "reason_detail" not in event
+    assert event["metadata"]["reason_code"] == "runtime_unhealthy_at_reconciliation"
+    assert event["metadata"]["expression_reason_code"] == "close_leg"
+    assert event["metadata"]["reason_detail"] == RECORDED_FAILED_REASON_DETAIL_20261125T1211Z
+    fetch.assert_not_called()
+    ok, err = TelemetryIngestService(schema_path=str(_TELEMETRY_SCHEMA_PATH))._validate_event(event)
+    assert ok is True, err
+
+
+@pytest.mark.parametrize(
+    "expression_code",
+    ["long_cash", "long_lever", "short_via_future", "close_leg"],
+)
+def test_reconciliation_events_never_carry_expression_choice_as_reason_code(
+    expression_code: str,
+) -> None:
+    (completed, reason), _ = _run(
+        _summary({"reason_code": expression_code}), order=BROKER_ORDER
+    )
+    assert reason is None
+    assert completed["event_type"] == "reconciliation_completed"
+    assert "reason_code" not in completed
+    assert "reason_code" not in completed["metadata"]
+    assert completed["metadata"]["expression_reason_code"] == expression_code
+
+    (failed, reason), _ = _run(
+        _summary({"reason_code": expression_code}),
+        order={**BROKER_ORDER, "fill_qty": 2},
+    )
+    assert reason is None
+    assert failed["event_type"] == "reconciliation_failed"
+    assert "reason_code" not in failed
+    assert failed["metadata"]["reason_code"] == "broker_fill_mismatch"
+    assert failed["metadata"]["expression_reason_code"] == expression_code
+
+
+def test_completed_reconciliation_never_inherits_non_expression_reason_code() -> None:
+    (completed, reason), _ = _run(
+        _summary({"reason_code": "legacy_fill_reason"}), order=BROKER_ORDER
+    )
+    assert reason is None
+    assert completed["event_type"] == "reconciliation_completed"
+    assert "reason_code" not in completed
+    assert "reason_code" not in completed["metadata"]
+    assert "expression_reason_code" not in completed["metadata"]
+
 
 
