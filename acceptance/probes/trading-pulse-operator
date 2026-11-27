@@ -156,6 +156,7 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
         raise Unverifiable("independent_roster_shape")
     directory = {str(p.get("persona_id") or p.get("id")): p for p in people if p.get("tenant_id") == tenant}
     expected = {}
+    excluded_non_trading = 0
     for b in bindings:
         if str(b.get("status") or "").strip().lower() in {"retired", "failed"} or b.get("retired_at"):
             continue
@@ -171,7 +172,10 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
         pid = str(b.get("persona_id") or "")
         if pid not in directory:
             raise Unverifiable("independent_identity_missing")
-        if is_probe_or_test_persona(directory[pid]) or non_trading_identity_source(directory[pid]):
+        if non_trading_identity_source(directory[pid]):
+            excluded_non_trading += 1
+            continue
+        if is_probe_or_test_persona(directory[pid]):
             continue
         bid = b.get("runtime_binding_id") or b.get("binding_id") or b.get("id")
         expected[(b.get("runtime_id"), bid)] = b
@@ -222,6 +226,8 @@ def check(fetch, tenant, attempts=MAX_READ_ATTEMPTS, clock=time.monotonic, budge
     persona_count = len({b["persona_id"] for b in expected.values()})
     if scope.get("runtime_count") != len(expected) or scope.get("persona_count") != persona_count or summary.get("runtime_count") != len(expected):
         failures.append("operator_denominator_mismatch")
+    if scope.get("excluded_non_trading_runtime_count", 0) != excluded_non_trading:
+        failures.append("excluded_non_trading_denominator_mismatch")
     stages = {}
     for b in expected.values():
         stage = b.get("deployment_stage") or b.get("deployment_mode")
