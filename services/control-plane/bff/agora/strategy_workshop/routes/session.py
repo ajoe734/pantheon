@@ -283,7 +283,9 @@ def build_session_router(
     def post_workshop_message(
         workshop_id: str,
         body: WorkshopMessageRequest,
-        background_tasks: BackgroundTasks,
+        # FastAPI always injects this; direct (non-HTTP) callers may omit it,
+        # leaving the job queued for /reconstruct or the lease takeover.
+        background_tasks: BackgroundTasks = None,  # type: ignore[assignment]
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),

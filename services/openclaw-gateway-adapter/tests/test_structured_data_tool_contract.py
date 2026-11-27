@@ -1504,9 +1504,8 @@ class TestUnsupportedSchemaRefusedBeforeModelCall:
     @pytest.mark.parametrize("schema", [
         {"type": "object", "$defs": {"X": {"type": "string"}},
          "properties": {"x": {"$ref": "#/$defs/X"}}},
-        {"type": "object", "properties": {"x": {"type": "string", "default": "a"}}},
-        {"type": "object", "properties": {"x": {"anyOf": [{"type": "string", "format": "date-time"},
-                                                          {"type": "null"}]}}},
+        {"type": "object", "properties": {"x": {"anyOf": [{"$ref": "#/definitions/X"}, {"type": "null"}]}}},
+        {"type": "object", "definitions": {"X": {"type": "string"}}, "properties": {"x": {"type": "string"}}},
     ])
     def test_unsupported_keyword_is_typed_422_without_gateway_call(self, schema):
         def no_gateway(*_args, **_kwargs):
@@ -1518,7 +1517,14 @@ class TestUnsupportedSchemaRefusedBeforeModelCall:
         assert exc.value.status_code == 422
         assert exc.value.error_code == "OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED"
 
-    def test_supported_schema_still_reaches_the_gateway(self):
+    @pytest.mark.parametrize("schema", [
+        EXTRACTION_SCHEMA,
+        # A non-reference unsupported keyword on a branch the answer never
+        # reaches keeps working as before (e.g. meeting synthesis `uniqueItems`).
+        {**EXTRACTION_SCHEMA, "properties": {**EXTRACTION_SCHEMA["properties"],
+                                             "tags": {"type": "array", "uniqueItems": True}}},
+    ])
+    def test_supported_schema_still_reaches_the_gateway(self, schema):
         calls = []
 
         def fake_urlopen(req, timeout=None, deadline=None):
@@ -1527,7 +1533,7 @@ class TestUnsupportedSchemaRefusedBeforeModelCall:
 
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = _make_provider().invoke_structured(
-                "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1",
+                "extract", extraction_schema=schema, operator_id="op-1",
             )
         assert len(calls) == 1
         assert result.status == "completed"

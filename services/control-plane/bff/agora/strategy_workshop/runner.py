@@ -218,6 +218,9 @@ def _write_job_card(store: Any, card: Dict[str, Any], *, expected_job_id: Option
 def _card_is_for(payload: Dict[str, Any], sequence_no: int, events: List[Dict[str, Any]]) -> bool:
     return (
         payload.get("engine_version") == ENGINE_VERSION
+        # A pre-job card that did not complete (hosted 2026-11-27: failed with
+        # no reason) is not a job of this message; it is re-admitted once.
+        and (payload.get("job_status") == "completed" or bool(payload.get("job_id")))
         and int(payload.get("based_on_sequence_no", -1)) == sequence_no
         and (not any(event.get("private_content_ref") for event in events)
              or payload.get("private_content_reader_version") == 1
@@ -443,11 +446,13 @@ def wait_for_reconstruction_job(
     job_id: Optional[str],
     timeout_seconds: float,
     poll_seconds: float = 0.5,
-    sleep: Callable[[float], None] = time.sleep,
-    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Optional[Callable[[float], None]] = None,
+    monotonic: Optional[Callable[[], float]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Poll the durable card until ``job_id`` is terminal, superseded or the
     deadline passes. Reads only: never calls the provider."""
+    sleep = sleep or time.sleep
+    monotonic = monotonic or time.monotonic
     deadline = monotonic() + max(timeout_seconds, 0.0)
     while True:
         card = _current_card(store, workshop_id)
