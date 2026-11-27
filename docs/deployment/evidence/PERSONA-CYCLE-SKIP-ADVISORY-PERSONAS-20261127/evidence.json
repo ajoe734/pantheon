@@ -1,0 +1,52 @@
+{
+  "task_id": "PERSONA-CYCLE-SKIP-ADVISORY-PERSONAS-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "root_cause_class": "WP2.3 daily persona-day probe / selection",
+  "implementation_status": "blocked_pending_artifact_contract_revision",
+  "source_base": "d8dd4db14",
+  "findings": [
+    "The controller is_daily_cycle_persona checks lifecycle and status only. reconcile_once passes the unfiltered owner list to PersonaCronRegistrar.reconcile_daily_cycles, which independently selects paper_owner, paper_running and consultable records. Changing only is_daily_cycle_persona cannot prevent registration or consumption of the servant's daily run.",
+    "The existing persona_policy_resolver.evaluate_participant_action_capability contains every required advisory exclusion, plus origin=agora_advisor and consult_policy_id=consult-panel.non-trading. Its enrollment predicate must be reused without making cycle enrollment depend on capability snapshots, harness readiness, or policy resolution.",
+    "The existing fleet_classification classifier recognizes consult_panel and agora_servant but does not recognize persona_class=agora_advisor, origin=private_servant/agora_advisor or owner_scope=user_private. Simply reusing it would miss required exclusions.",
+    "The BFF fleet list emits persona_purpose and owner_lifecycle_state but not the raw owner identity metadata. Probe filtering on the current persona_purpose projection would exclude the incident servant, but could still disagree with the controller for the other required metadata variants.",
+    "The persona-day workflow installs no service dependencies and executes python3 -I acceptance/persona_day.py. A shared predicate must remain accessible through a stdlib-only source loader; importing the controller or relying on ambient PYTHONPATH is unsuitable."
+  ],
+  "required_contract_additions": [
+    "services/control-plane/persona/persona_policy_resolver.py",
+    "services/control-plane/bff/personas/fleet_classification.py",
+    "services/control-plane/bff/personas/test_fleet_classification.py"
+  ],
+  "proposed_implementation": [
+    "Extract the existing owner advisory identity predicate into a pure helper in persona_policy_resolver, preserving the capability evaluator's existing lifecycle and status checks and reusing the helper there.",
+    "Reuse that helper in is_daily_cycle_persona, filter advisory identities before registrar reconciliation, report the named enrollment exclusion in the tick summary, and reject direct advisory consume_run calls before any packet claim or ensure_agent call. Keep unrelated consultable behavior unchanged.",
+    "Reuse the owner identity helper in the existing fleet purpose classifier so the BFF purpose projection covers the same exclusions. Preserve metadata-free trading behavior and explicit non-trading precedence over paper execution metadata.",
+    "Have the standalone probe load the pure helper through the trusted file path, check raw fixture metadata when present, and honor the BFF's advisory purpose projection. Retain existing left_out output and named reasons.",
+    "Test all required identity flags in both paper lifecycles, stale daily job cleanup, no ensure/packet side effects, unchanged pool and binding records, metadata-free trading enrollment, and a synthetic 2026-11-27-shaped three-trader/one-servant probe replay."
+  ],
+  "governance_blocker": {
+    "step": "implementation requiring changes outside the dispatched artifact contract",
+    "required_actor": "Human/Ops",
+    "mechanism": "scripts/ai_status.py command_artifact_contract permits only Human/Ops and only pre-dispatch todo/blocked tasks to revise artifacts",
+    "next_action": "Add the three required paths through the existing governed artifact-contract command while blocked, then reopen and redispatch the same task. Do not create a replacement task."
+  },
+  "validation": {
+    "focused_suites": "not run; no runtime implementation retained",
+    "planned_command": "python3 -m pytest -q services/persona/test_persona_cycle_controller.py acceptance/test_persona_day.py services/control-plane/bff/personas/test_fleet_classification.py",
+    "hosted_proof": "pending implementation, independent review, merge and deployment; persona-loop owner must record the next weekday cycle without a new servant packet and a three-trader persona-day verdict with the servant excluded"
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "current_change": "one static task-scoped evidence file; no runtime code changed",
+    "planned_cadence": "existing daily-cycle poll and weekday 10:00Z cycle unchanged",
+    "planned_size_and_count_at_hosted_scale": "three trading personas retained; one erroneous failed packet per advisory persona per weekday removed; pool and binding counts unchanged",
+    "planned_growth_per_day": "no added runtime bytes or records; removes one failed cycle packet per advisory persona per weekday",
+    "planned_cap_and_cleanup": "existing cron reconciliation removes stale daily jobs; existing packet retention and cleanup remain unchanged"
+  },
+  "residual_findings": [
+    {
+      "finding": "The servant's pool publish refusal is appended every ten minutes to bff.persona_pool_publish_records, as reported by the dispatch brief. This session did not probe hosted or verify those writes independently.",
+      "disposition": "Outside this selection repair; coordinator must attach the already-reported persistent-writer incident to its owning register class before chain closure."
+    }
+  ]
+}
