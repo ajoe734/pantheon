@@ -344,6 +344,176 @@ def test_other_tenant_sees_only_its_rows(tmp_path):
     assert [c["source_id"] for c in out["hypothesis_cards"]["newest"]] == ["o2"]
 
 
+def test_two_tenant_ritual_observation_never_leaks_foreign_source_ids_or_details_including_bff_dto(
+    tmp_path, monkeypatch
+):
+    from starlette.middleware import Middleware
+    from services.control_plane.bff.auth import policy as auth_policy
+    from services.control_plane.bff.console_gap.alpha_factory import create_alpha_factory_router
+    from services.control_plane.bff.core.owner_reads import OwnerReadContextMiddleware
+
+    for key in (
+        "GIT_SHA",
+        "PANTHEON_DEPLOYMENT_SHA",
+        "PANTHEON_DEPLOY_SHA",
+        "BFF_COMMIT",
+        "PANTHEON_RELEASE_SWITCHED_AT",
+        "ACCEPTANCE_RELEASE_SWITCHED_AT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    now_epoch = datetime(2026, 11, 26, 18, 0, tzinfo=timezone.utc).timestamp()
+    switch_iso = "2026-11-26T00:00:00Z"
+    queue = DistillationJobQueue(tmp_path / "distill_job_queue.jsonl", now=lambda: now_epoch)
+    ledger_path, ledger = _ledger(tmp_path, {}, calls=1, cap=400)
+
+    # 1. Exact reviewer reproduction: queue contains only tenant-b-private-source owned by tenant-b
+    #    and one synthetic ritual event with private detail in the shared events ledger.
+    job_b = queue.enqueue_source_record(
+        _source("tenant-b-private-source", "news", tenant="tenant-b", title="TENANT_B_PRIVATE_TITLE"),
+        enqueued_at=now_epoch - 3600,
+    )
+    queue.mark_skipped(
+        job_b.job_id,
+        reason="no_hypothesis: First-run setup is pending; what should I call you? SYNTHETIC_PRIVATE_FACT",
+        processed_at=now_epoch - 1800,
+    )
+    ledger.put_card(
+        "tenant-b-private-source",
+        job_b.source_digest,
+        {"claim": "TENANT_B_PRIVATE_CLAIM", "testability": "testable"},
+    )
+    with sqlite3.connect(ledger_path) as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (
+                "2026-11-26T12:00:00Z",
+                "tenant-b-private-source",
+                "no_hypothesis",
+                "First-run setup is pending; what should I call you? SYNTHETIC_PRIVATE_FACT",
+                None,
+            ),
+        )
+
+    out_a_empty = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-a",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at=switch_iso,
+    )
+    assert out_a_empty["tenant_id"] == "tenant-a"
+    assert out_a_empty["hypothesis_cards"]["newest"] == []
+    assert out_a_empty["llm_calls"]["ritual_events_status"] == "ok"
+    assert out_a_empty["llm_calls"]["ritual_events_since_switch"] == 1
+    assert out_a_empty["llm_calls"]["ritual_event_timestamps"] == ["2026-11-26T12:00:00Z"]
+    assert "ritual_events" not in out_a_empty["llm_calls"]
+    raw_a_empty = json.dumps(out_a_empty, ensure_ascii=False)
+    for forbidden_secret in (
+        "tenant-b-private-source",
+        "SYNTHETIC_PRIVATE_FACT",
+        "TENANT_B_PRIVATE_TITLE",
+        "TENANT_B_PRIVATE_CLAIM",
+    ):
+        assert forbidden_secret not in raw_a_empty
+
+    # 2. Add a tenant-a carded source and verify both the management route and the BFF-forwarded
+    #    /bff/alpha-factory DTO for tenant-a expose only tenant-a's card and anonymous service-wide
+    #    aggregates, with zero foreign source IDs or details escaping.
+    job_a = queue.enqueue_source_record(
+        _source("tenant-a-own-source", "news", tenant="tenant-a", title="Tenant A Semiconductor Note"),
+        enqueued_at=now_epoch - 1200,
+    )
+    queue.mark_done(job_a.job_id, seed_id="seed-tenant-a", processed_at=now_epoch - 600)
+    ledger.put_card(
+        "tenant-a-own-source",
+        job_a.source_digest,
+        {"claim": "Tenant A wafer demand hypothesis", "testability": "testable"},
+    )
+
+    monkeypatch.setenv("PANTHEON_RELEASE_SWITCHED_AT", switch_iso)
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", SECRET)
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RESEARCH_ORCHESTRATOR_API_URL", "http://research-orchestrator.local")
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+
+    class _IngestRuntime:
+        DISTILLATION_JOB_QUEUE_PATH = queue.path
+
+    ingest_app = FastAPI()
+    ingest_app.include_router(create_management_router(_IngestRuntime()))
+    ingest_client = TestClient(ingest_app)
+
+    token_a = encode_jwt_hs256(
+        {"sub": "op-a", "roles": ["operator"], "tenant_id": "tenant-a", "exp": int(time.time()) + 600},
+        secret=SECRET,
+    )
+    headers_a = {"Authorization": f"Bearer {token_a}", "X-Tenant-Id": "tenant-a"}
+    mgmt_resp = ingest_client.get(URL, headers=headers_a)
+    assert mgmt_resp.status_code == 200, mgmt_resp.text
+    mgmt_body = mgmt_resp.json()
+    assert mgmt_body["tenant_id"] == "tenant-a"
+    assert [c["source_id"] for c in mgmt_body["hypothesis_cards"]["newest"]] == ["tenant-a-own-source"]
+    assert mgmt_body["llm_calls"]["ritual_events_since_switch"] == 1
+    assert mgmt_body["llm_calls"]["ritual_event_timestamps"] == ["2026-11-26T12:00:00Z"]
+    assert "ritual_events" not in mgmt_body["llm_calls"]
+    for forbidden_secret in (
+        "tenant-b-private-source",
+        "SYNTHETIC_PRIVATE_FACT",
+        "TENANT_B_PRIVATE_TITLE",
+        "TENANT_B_PRIVATE_CLAIM",
+    ):
+        assert forbidden_secret not in mgmt_resp.text
+
+    def bff_http_get(url: str, **kwargs: Any) -> tuple[int, Any]:
+        req_headers: dict[str, str] = {}
+        if kwargs.get("auth_header"):
+            req_headers["Authorization"] = str(kwargs["auth_header"])
+        if kwargs.get("tenant_id"):
+            req_headers["X-Tenant-Id"] = str(kwargs["tenant_id"])
+        if url.endswith(URL):
+            r = ingest_client.get(URL, headers=req_headers)
+            return r.status_code, r.json()
+        if "/alpha-replication/entries" in url:
+            return 200, {"entries": [], "count": 0}
+        if "/strategy-templates" in url:
+            return 200, {"templates": [], "count": 0}
+        if "/persona-demands" in url:
+            return 200, {"demands": [], "count": 0}
+        if "/research-orchestrator/runs" in url:
+            return 200, {"items": [], "next_cursor": None}
+        return 404, None
+
+    bff_app = FastAPI(middleware=[Middleware(OwnerReadContextMiddleware)])
+    bff_app.include_router(
+        create_alpha_factory_router(
+            extract_identity=auth_policy.extract_identity,
+            require_read_role=auth_policy.require_read_role,
+            utc_now=lambda: "2026-11-26T18:00:00Z",
+            http_get=bff_http_get,
+        )
+    )
+    bff_client = TestClient(bff_app)
+    bff_resp = bff_client.get("/bff/alpha-factory?page_size=1", headers=headers_a)
+    assert bff_resp.status_code == 200, bff_resp.text
+    bff_body = bff_resp.json()
+    bff_llm = bff_body["data"]["discovery_summary"]["llm_calls"]
+    assert bff_llm["ritual_events_status"] == "ok"
+    assert bff_llm["ritual_events_since_switch"] == 1
+    assert bff_llm["ritual_event_timestamps"] == ["2026-11-26T12:00:00Z"]
+    assert "ritual_events" not in bff_llm
+    assert [c["source_id"] for c in bff_body["data"]["discovered"]] == ["tenant-a-own-source"]
+    for forbidden_secret in (
+        "tenant-b-private-source",
+        "SYNTHETIC_PRIVATE_FACT",
+        "TENANT_B_PRIVATE_TITLE",
+        "TENANT_B_PRIVATE_CLAIM",
+    ):
+        assert forbidden_secret not in bff_resp.text
+
+
 def test_missing_queue_or_ledger_is_unavailable_never_zero(tmp_path):
     out = ds.read_discovery_summary(queue_path=tmp_path / "absent.sqlite3", tenant_id="tenant-dev", now=NOW)
     for key in ("collected_text_records", "closed_text_records", "hypothesis_cards"):

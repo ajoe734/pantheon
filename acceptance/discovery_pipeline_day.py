@@ -202,6 +202,22 @@ def count_ritual_events_since_switch(
     return matched
 
 
+def _count_ritual_timestamps_since_switch(timestamps: Any, cutoff: datetime) -> int:
+    """Count anonymous ritual event UTC timestamps at or after ``cutoff``."""
+    if timestamps is None or isinstance(timestamps, (str, bytes, Mapping)) or not isinstance(timestamps, Iterable):
+        raise ValueError("ledger_events_invalid")
+    matched = 0
+    for item in timestamps:
+        if not isinstance(item, str):
+            raise ValueError("ledger_event_timestamp_invalid")
+        ts = _parse_time(item)
+        if ts is None:
+            raise ValueError("ledger_event_timestamp_invalid")
+        if ts >= cutoff:
+            matched += 1
+    return matched
+
+
 def _ritual_events_since_switch(
     board: Dict[str, Any],
     *,
@@ -299,6 +315,7 @@ def _ritual_events_since_switch(
     event_lists: List[Tuple[str, Any]] = []
     for label, candidate_list in (
         ("ledger_events", ledger_events),
+        ("llm_calls.ritual_event_timestamps", llm_calls.get("ritual_event_timestamps")),
         ("llm_calls.ritual_events", llm_calls.get("ritual_events")),
         ("llm_calls.events_since_switch", llm_calls.get("events_since_switch")),
         ("llm_calls.events", llm_calls.get("events")),
@@ -331,13 +348,16 @@ def _ritual_events_since_switch(
 
     for label, event_list in event_lists:
         try:
-            c = count_ritual_events_since_switch(event_list, cutoff)
+            if label == "llm_calls.ritual_event_timestamps":
+                c = _count_ritual_timestamps_since_switch(event_list, cutoff)
+            else:
+                c = count_ritual_events_since_switch(event_list, cutoff)
         except ValueError as exc:
             return None, f"unreadable:ritual_events_since_switch:{exc}", cutoff_iso
         if c > 0:
             positive_observed_counts.append(c)
 
-        if label == "llm_calls.ritual_events":
+        if label in ("llm_calls.ritual_event_timestamps", "llm_calls.ritual_events"):
             if llm_calls.get("ritual_events_sample_truncated") is True:
                 ritual_sample_truncated = True
                 continue

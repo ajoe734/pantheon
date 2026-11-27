@@ -57,7 +57,6 @@ NEWEST_CARD_SCAN = 500
 # Newest ledger outcome events examined for post-release-switch ritual checks.
 LEDGER_EVENT_SCAN_CAP = 5_000
 MAX_RITUAL_EVENT_SAMPLES = 50
-MAX_EVENT_DETAIL_CHARS = 200
 # Distinct reason codes listed per family/total; the rest fold into "other".
 MAX_REASONS = 40
 MAX_TITLE_CHARS = 200
@@ -499,13 +498,15 @@ def _read_ledger(
                     "ritual_events_since_switch": None,
                 }
             else:
+                # Events ledger is shared across tenants (scope="service"); never project raw
+                # source_id, outcome, or free-text detail into tenant-visible summary output.
                 event_rows = connection.execute(
-                    "SELECT ts, source_id, outcome, detail FROM events ORDER BY id DESC LIMIT ?",
+                    "SELECT ts, outcome, detail FROM events ORDER BY id DESC LIMIT ?",
                     (LEDGER_EVENT_SCAN_CAP + 1,),
                 ).fetchall()
                 ritual_since_switch = 0
                 examined_since_switch = 0
-                ritual_samples: list[dict[str, Any]] = []
+                ritual_timestamps: list[str] = []
                 total_ritual_scanned = 0
                 invalid_ts = False
                 oldest_scanned_epoch: Optional[float] = None
@@ -530,15 +531,8 @@ def _read_ledger(
                             ritual_since_switch += 1
                     if is_ritual:
                         total_ritual_scanned += 1
-                        if len(ritual_samples) < MAX_RITUAL_EVENT_SAMPLES:
-                            ritual_samples.append(
-                                {
-                                    "ts": str(erow["ts"]),
-                                    "source_id": _clip(erow["source_id"], MAX_ID_CHARS),
-                                    "outcome": _clip(outcome_str, 80),
-                                    "detail": _clip(detail_str, MAX_EVENT_DETAIL_CHARS),
-                                }
-                            )
+                        if len(ritual_timestamps) < MAX_RITUAL_EVENT_SAMPLES:
+                            ritual_timestamps.append(_iso(ev_epoch))
                 scan_hit_cap = len(event_rows) > LEDGER_EVENT_SCAN_CAP
                 oldest_scanned_iso = _iso(oldest_scanned_epoch) if oldest_scanned_epoch is not None else None
                 truncated = bool(
@@ -574,7 +568,7 @@ def _read_ledger(
                         "ritual_events_truncated": False,
                         "ritual_events_scan_hit_cap": bool(scan_hit_cap),
                         "ritual_events_oldest_scanned_at": oldest_scanned_iso,
-                        "ritual_events": ritual_samples,
+                        "ritual_event_timestamps": ritual_timestamps,
                         "ritual_events_sample_truncated": total_ritual_scanned > MAX_RITUAL_EVENT_SAMPLES,
                     }
     except (sqlite3.Error, _ReadBudgetExceeded) as exc:

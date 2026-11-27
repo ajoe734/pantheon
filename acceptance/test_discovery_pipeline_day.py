@@ -74,7 +74,7 @@ def good_board():
                     "ritual_events_truncated": False,
                     "ritual_events_scan_hit_cap": False,
                     "ritual_events_oldest_scanned_at": "2026-11-28T05:00:00Z",
-                    "ritual_events": [],
+                    "ritual_event_timestamps": [],
                     "ritual_events_sample_truncated": False,
                 },
             },
@@ -273,7 +273,16 @@ def test_missing_unreadable_or_incomplete_ritual_observation_or_switch_time_fail
         == "unreadable:ritual_events_since_switch:extraction_ledger_events_missing"
     )
 
-    # Event list with missing/invalid timestamp must fail.
+    # Timestamp list or event list with missing/invalid timestamp must fail.
+    bad_ts_list = good_board()
+    bad_ts_list["data"]["discovery_summary"]["llm_calls"]["ritual_event_timestamps"] = ["bad-ts"]
+    report = run(bad_ts_list)
+    assert report["verdict"] == "failed"
+    assert (
+        stage(report, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:ledger_event_timestamp_invalid"
+    )
+
     bad_event_ts = good_board()
     bad_event_ts["data"]["discovery_summary"]["llm_calls"]["ritual_events"] = [
         {"ts": "bad-ts", "outcome": "no_hypothesis", "detail": "what should I call you?"}
@@ -323,7 +332,8 @@ def test_bounded_scan_earlier_switch_override_requires_proven_coverage(tmp_path,
         release_switched_at="2026-11-28T11:00:00Z",
     )
     llm_bounded = summary_bounded["llm_calls"]
-    assert llm_bounded["ritual_events"] == []
+    assert llm_bounded["ritual_event_timestamps"] == []
+    assert "ritual_events" not in llm_bounded
     assert llm_bounded["ritual_events_truncated"] is False
     assert llm_bounded["ritual_events_scan_hit_cap"] is True
     assert llm_bounded["ritual_events_oldest_scanned_at"] == "2026-11-28T09:00:00Z"
@@ -355,7 +365,7 @@ def test_bounded_scan_earlier_switch_override_requires_proven_coverage(tmp_path,
     )
 
     # With scan cap >= total rows (scan_hit_cap=False), overriding cutoff to 06:00 has proven full-ledger
-    # coverage and catches the 07:00 ritual event.
+    # coverage and catches the 07:00 ritual event without exposing any source_id or detail.
     monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 10)
     summary_full = ds.read_discovery_summary(
         queue_path=queue.path,
@@ -364,6 +374,9 @@ def test_bounded_scan_earlier_switch_override_requires_proven_coverage(tmp_path,
         now=now_epoch,
         release_switched_at="2026-11-28T11:00:00Z",
     )
+    assert summary_full["llm_calls"]["ritual_event_timestamps"] == ["2026-11-28T07:00:00Z"]
+    assert "ritual_events" not in summary_full["llm_calls"]
+    assert "s-bad-07" not in json.dumps(summary_full)
     board_full = good_board()
     board_full["data"]["discovery_summary"]["llm_calls"] = summary_full["llm_calls"]
     rep_full_06 = dpd.judge(board_full, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
