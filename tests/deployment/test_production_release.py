@@ -4270,13 +4270,31 @@ PY
     echo "$4 $disk no-auto-delete" >> "$S/auto_delete.log"
     exit 0 ;;
   "compute instances attach-disk "*)
-    [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
     disk="$(arg_val --disk "$@")"
     dev="$(arg_val --device-name "$@")"
     mode="$(arg_val --mode "$@")"
+    if [[ "$mode" == "ro" ]]; then
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_old_boot_disk_ro" ]] && exit 1
+    else
+      [[ "${FAKE_REPLACE_FAIL:-}" == "attach_data_disk_new_vm" ]] && exit 1
+    fi
     [[ -n "$disk" && -e "$S/disks/$disk" ]] || exit 1
     echo "attach-disk $4 disk=$disk device-name=$dev mode=$mode" >> "$S/disk_attach.log"
-    printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    if [[ "$mode" == "ro" ]]; then
+      printf '%s' "$disk" > "$S/attached_ro_${dev}"
+    elif [[ -f "$S/vm.json" ]]; then
+      python3 -I - "$S/vm.json" "$disk" "$dev" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+doc = json.loads(p.read_text())
+disk, dev = sys.argv[2:4]
+disks = [d for d in (doc.get("disks") or []) if str(d.get("source") or "").rsplit("/", 1)[-1] != disk]
+disks.append({"boot": False, "autoDelete": False, "deviceName": dev or disk, "source": f"zones/asia-east1-b/disks/{disk}", "diskSizeGb": "200"})
+doc["disks"] = disks
+p.write_text(json.dumps(doc, sort_keys=True))
+PY
+    fi
     exit 0 ;;
   "compute instances detach-disk "*)
     [[ "${FAKE_REPLACE_FAIL:-}" == "detach_old_boot_disk_ro" ]] && exit 1
@@ -4338,6 +4356,12 @@ PY
       [[ "${FAKE_REPLACE_FAIL:-}" == "create_new_vm" ]] && exit 1
       [[ -f "$S/templates/${tpl}.json" ]] || exit 1
       echo "$all" >> "$S/instance_creates.log"
+      if [[ -n "$bsize" ]]; then
+        echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource: - Required field [disk.initializeParams.sourceImage] not specified" >&2
+        exit 1
+      fi
+      has_cli_disk="false"
+      [[ "$all" == *" --disk "* ]] && has_cli_disk="true"
       if [[ -z "$mt" ]]; then
         mt="$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["properties"]["machineType"])' "$S/templates/${tpl}.json")"
       fi
@@ -4348,20 +4372,22 @@ PY
       printf 'no' > "$S/mounted_state"
       printf 'active' > "$S/host_systemd_caddy"
       printf 'new' > "$S/vm_generation"
-      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "${PROD_DATA_DISK}" "$ip" "$S/templates/${tpl}.json" "$bsize" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-}" > "$S/vm.json" <<'PY'
+      python3 -I - "$vm" "$new_id" "$mt" "$new_boot" "$ip" "$S/templates/${tpl}.json" "$has_cli_disk" "${FAKE_NEW_BOOT_DISK_SIZE_GB:-}" > "$S/vm.json" <<'PY'
 import json, sys
-vm, new_id, mt, boot_disk, data_disk, ip, tpl_path, cli_bsize, override_bsize = sys.argv[1:10]
+vm, new_id, mt, boot_disk, ip, tpl_path, has_cli_disk, override_bsize = sys.argv[1:9]
 tpl = json.load(open(tpl_path))
 props = tpl.get("properties") or {}
 meta_obj = props.get("metadata") or {"items": [{"key": "serial-port-enable", "value": "FALSE"}]}
-# Real GCE behavior: passing --disk alongside --source-instance-template overrides the template's disks array and
-# synthesizes a 10GB default boot disk unless --boot-disk-size is explicitly passed on 'instances create'.
+tpl_disks = props.get("disks") or []
+tpl_bsize = ""
+if tpl_disks and isinstance(tpl_disks[0], dict):
+    tpl_bsize = str((tpl_disks[0].get("initializeParams") or {}).get("diskSizeGb") or "").strip()
 if override_bsize:
     boot_size_gb = str(override_bsize)
-elif cli_bsize:
-    boot_size_gb = str(cli_bsize)
-else:
+elif has_cli_disk == "true":
     boot_size_gb = "10"
+else:
+    boot_size_gb = tpl_bsize or "150"
 print(json.dumps({
     "id": new_id,
     "name": vm,
@@ -4369,7 +4395,6 @@ print(json.dumps({
     "status": "RUNNING",
     "disks": [
         {"boot": True, "autoDelete": True, "deviceName": boot_disk, "source": f"zones/asia-east1-b/disks/{boot_disk}", "diskSizeGb": boot_size_gb},
-        {"boot": False, "autoDelete": False, "deviceName": "pantheon-prod-data", "source": f"zones/asia-east1-b/disks/{data_disk}", "diskSizeGb": "200"},
     ],
     "networkInterfaces": [{
         "network": "global/networks/pantheon-prod-net",
@@ -5185,9 +5210,14 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(out["status"], "prod_vm_replaced")
         create_cmd = (self.state / "instance_creates.log").read_text().strip()
         self.assertIn("--source-instance-template pantheon-prod-control-template-e2s8-v3", create_cmd)
-        self.assertIn("--boot-disk-size=150GB", create_cmd)
-        self.assertIn("--boot-disk-type=pd-balanced", create_cmd)
-        self.assertIn(f"--disk name={PROD_ENV['PROD_DATA_DISK']},", create_cmd)
+        self.assertNotIn("--disk", create_cmd)
+        self.assertNotIn("--boot-disk-size", create_cmd)
+        self.assertNotIn("--boot-disk-type", create_cmd)
+        attach_log = (self.state / "disk_attach.log").read_text()
+        self.assertIn(
+            f"attach-disk pantheon-prod-control disk={PROD_ENV['PROD_DATA_DISK']} device-name=pantheon-prod-data mode=rw",
+            attach_log,
+        )
         vm_now = json.loads((self.state / "vm.json").read_text())
         self.assertEqual(vm_now["disks"][0]["diskSizeGb"], "150")
         grow_log = (self.state / "root_grow.log").read_text()

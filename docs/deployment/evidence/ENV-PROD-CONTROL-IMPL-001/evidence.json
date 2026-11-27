@@ -778,5 +778,27 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_replace_vm_template_only_create_and_attach_data_disk_repair_20261127": {
+    "task_generation": 85,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45921167481 failed at failed_stage=create_new_vm (and automatically rolled back to /bff/readyz=200) because googlecloudsdk/surface/compute/instances/create.py sets CheckSpecifiedDiskArgs=True whenever ANY disk flag (--disk or --boot-disk-size) is passed alongside --source-instance-template, either synthesizing a 10GB boot disk when only --disk is passed or failing with missing disk.initializeParams.sourceImage under skip_defaults=True when --boot-disk-size is passed",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh step 6 uses the two-step GCE idiom: (1) calls 'gcloud compute instances create \"$PROD_VM_NAME\" --project \"$PROD_GCP_PROJECT_ID\" --zone \"$PROD_GCP_ZONE\" --source-instance-template \"$TARGET_TEMPLATE\" --machine-type \"$PROD_TARGET_MACHINE_TYPE\" --address \"$STATIC_IP\"' WITHOUT --disk, --boot-disk-size, or --boot-disk-type so CheckSpecifiedDiskArgs(..., skip_defaults=True) is False and GCE inherits TARGET_TEMPLATE's 150GB pd-balanced boot disk verbatim (capturing stderr in create_err on rollback), and (2) immediately attaches PROD_DATA_DISK via 'gcloud compute instances attach-disk \"$PROD_VM_NAME\" --project \"$PROD_GCP_PROJECT_ID\" --zone \"$PROD_GCP_ZONE\" --disk \"$PROD_DATA_DISK\" --device-name \"$DATA_DEVICE_NAME\" --mode=rw' (rolling back with failed_stage=attach_data_disk_new_vm on failure) followed by set-disk-auto-delete --no-auto-delete and NEW_VM_JSON verification",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD so 'instances create --source-instance-template' creates only the template's boot disk (and fails if --boot-disk-size is passed alongside --source-instance-template) and 'instances attach-disk --disk PROD_DATA_DISK --mode=rw' attaches the data disk on the fake instance, and asserts that 'instances create --source-instance-template' passes no --disk / --boot-disk-size / --boot-disk-type flags and is followed by 'instances attach-disk --disk PROD_DATA_DISK'"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g84: no new recurring job, emitter, persistent writer, or background daemon"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

@@ -829,16 +829,10 @@ for retained_disk in "$OLD_BOOT_DISK" "$PROD_DATA_DISK"; do
     || rollback_to_old_boot_disk "verify_kept_disks" "retained disk ${retained_disk} missing after --keep-disks=all delete"
 done
 
-# 6. Create new PROD_VM_NAME from >= e2-standard-8 template with brand-new boot disk + existing PROD_DATA_DISK + STATIC_IP.
-"$GCLOUD" compute instances create "$PROD_VM_NAME" \
-  --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" \
-  --source-instance-template "$TARGET_TEMPLATE" \
-  --machine-type "$PROD_TARGET_MACHINE_TYPE" \
-  --address "$STATIC_IP" \
-  --boot-disk-size="${TARGET_BOOT_SIZE_GB}GB" \
-  --boot-disk-type=pd-balanced \
-  --disk "name=${PROD_DATA_DISK},device-name=${DATA_DEVICE_NAME},mode=rw,boot=no,auto-delete=no" >/dev/null 2>&1 \
-  || rollback_to_old_boot_disk "create_new_vm" "failed to create replacement VM from template ${TARGET_TEMPLATE}"
+# 6. Create new PROD_VM_NAME from >= e2-standard-8 template (without disk flags so GCE inherits template's 150GB boot disk), then attach PROD_DATA_DISK.
+create_err="$("$GCLOUD" compute instances create "$PROD_VM_NAME" --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --source-instance-template "$TARGET_TEMPLATE" --machine-type "$PROD_TARGET_MACHINE_TYPE" --address "$STATIC_IP" 2>&1 >/dev/null)" || rollback_to_old_boot_disk "create_new_vm" "failed to create replacement VM from template ${TARGET_TEMPLATE}: $(tr '\n\r"' '   ' <<<"$create_err")"
+
+attach_err="$("$GCLOUD" compute instances attach-disk "$PROD_VM_NAME" --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --disk "$PROD_DATA_DISK" --device-name "$DATA_DEVICE_NAME" --mode=rw 2>&1 >/dev/null)" || rollback_to_old_boot_disk "attach_data_disk_new_vm" "failed to attach ${PROD_DATA_DISK} to replacement VM: $(tr '\n\r"' '   ' <<<"$attach_err")"
 
 "$GCLOUD" compute instances set-disk-auto-delete "$PROD_VM_NAME" \
   --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" \
