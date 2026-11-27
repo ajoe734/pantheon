@@ -800,5 +800,27 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_replace_vm_pd_standard_boot_disk_quota_repair_20261127": {
+    "task_generation": 86,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45929804773 (job 140279868656) inherited the 150GB boot disk from pantheon-prod-control-template-e2s8-v3 via two-step instances create without disk flags, then failed at create_new_vm with GCE Quota SSD_TOTAL_GB exceeded (Limit 250.0 in asia-east1, because pantheon-prod-control-data 200GB pd-balanced + retained rollback pantheon-prod-control-os-20261023 50GB pd-balanced already consume 250/250GB SSD_TOTAL_GB; automatic rollback restored Prod 200 OK)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh adds PROD_BOOT_DISK_TYPE=\"${PROD_BOOT_DISK_TYPE:-pd-standard}\" (validating ^(pd-standard|pd-balanced|pd-ssd)$ else refusing INVALID_BOOT_DISK_TYPE), passes --boot-disk-type=\"${PROD_BOOT_DISK_TYPE}\" in gcloud compute instance-templates create so the 150GB OS/Docker boot disk uses DISKS_TOTAL_GB instead of SSD_TOTAL_GB, and updates template_is_compatible() to require image-backed templates ('sourceImage' in initializeParams) to match PROD_BOOT_DISK_TYPE by initializeParams.diskType basename (default 'pd-standard' when omitted) so existing pd-balanced v3 templates are deleted and recreated as 150GB pd-standard",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD to capture --boot-disk-type into template JSON and updates ReplaceVmHarness to verify INVALID_BOOT_DISK_TYPE refusal, rejection/recreation of a pre-existing 150GB pd-balanced v3 template to 150GB pd-standard, and reuse of an image-backed v3 template with omitted diskType (GCE default pd-standard)"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g85: no new recurring job, emitter, persistent writer, or background daemon; replacement control VM 150GB boot disk defaults to pd-standard (DISKS_TOTAL_GB quota) instead of pd-balanced (SSD_TOTAL_GB quota)"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }
