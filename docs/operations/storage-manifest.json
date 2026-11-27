@@ -4878,6 +4878,27 @@
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
   },
   {
+   "bound_proof": {
+    "contains": "SERVANT_MESSAGE_CAP = 500",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "about 2 KB per message (SERVANT_MESSAGE_MAX_CHARS = 4000) and a cap of 500 messages per session (SERVANT_MESSAGE_CAP = 500 in agora.sessions mode=servant, at most 250 user turns per session and ~1 KB per queued turn row in agora.servant_turns; each turn carries at most the last 20 messages via SERVANT_HISTORY_MESSAGES = 20)",
+   "cleanup": "purge_expired_servant_sessions in services/agora/store.py (invoked hourly via ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py) deletes servant sessions untouched for 180 days (SERVANT_SESSION_RETENTION_DAYS = 180) together with their agora.servant_turns rows",
+   "growth_driver": "event-driven on trader POST /bff/agora/servant/sessions/{id}/messages: 1 queued turn row (~1 KB) per user message in agora.servant_turns and 2 embedded messages (~2 KB each: user message + servant answer) in agora.sessions via append_session_message, idempotent on Idempotency-Key",
+   "growth_per_day": "event-driven per trader message (~2 KB per message in agora.sessions + ~1 KB turn row in agora.servant_turns; bounded by 500 messages / 250 turns per session and 180-day retention)",
+   "kind": "schema_table",
+   "name": "agora.servant_turns",
+   "owner": "schema:agora",
+   "readers": [
+    "services/agora/store.py",
+    "services/control-plane/bff/agora/servant/router.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-SERVANT-SESSION-DURABLE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -6314,6 +6335,29 @@
    "bound_proof": {
     "file": "services/source_ingestion/finmind_broker_backfill.py",
     "contains": "RECEIPT_RETENTION_SESSIONS = 750"
+   }
+  },
+  {
+   "name": "registry.entries stored summary_index / summary_rev columns, partial index entries_strategy_summary_idx, and stamp-validated Phase 1 index cache",
+   "owner": "registry-svc schema and in-process Phase 1 cache (services/registry/pg_store.py PostgresRegistryStore._ensure_strategy_summary_index, backfill_strategy_summary_index, and list_strategy_spec_summary_index_rows)",
+   "writer": "ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE SEQUENCE/FUNCTION/TRIGGER/INDEX IF NOT EXISTS + idempotent bounded batched backfill (SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED) at store bootstrap; BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn -> pantheon_registry_summary_index_build + nextval('pantheon_registry_summary_rev_seq')) on every registry.entries write; in-process cache populated on read and updated incrementally by summary_rev > max_rev delta query after writes",
+   "task": "REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127",
+   "register_class": "RC6",
+   "cadence": "DDL and idempotent batched backfill run once at store bootstrap (10 batches x 1,000 rows = 7.94 s total, max single-batch lock 0.966 s on 9,416 strategy_spec rows; subsequent bootstrap check is 1 batch / 0 rows updated in 19.8 ms); trigger fires once per registry.entries INSERT or UPDATE OF payload (hosted ~300 strategy_spec writes/day); in-process Phase 1 cache checked on every strategy_summary_page read by one cheap aggregate query (count, max(summary_rev), sum(summary_rev) WHERE summary_index IS NOT NULL, 3.0 ms measured) and refreshed via 1-row indexed delta read (0.17 ms / 6 buffers) on write",
+   "count_at_hosted_scale": "9,416 strategy_spec rows out of 9,940 registry.entries rows (524 non-strategy_spec rows store NULL for both columns and are excluded from the partial index); in-process cache holds 1 canonical by-id map of 9,416 compiled candidate rows plus at most SUMMARY_INDEX_MAX_TENANT_VIEWS = 16 tenant-filtered views per registry-svc worker",
+   "size": "measured on Postgres 16 with 9,416 recorded-shape strategy_spec rows (7,521 drafts, 52 hidden personas) + 524 other rows: summary_index column = 8,922,928 B (8.51 MiB, 947.6 B avg/row, 996 B max/row; NULL/0 B on non-strategy_spec rows); summary_rev column = 75,328 B (8 B x 9,416 rows); partial index entries_strategy_summary_idx = 229,376 B (224 KiB); in-process Phase 1 cache + 8 concurrent cold reads peak RSS (VmHWM) = 120.64 MiB (+93.21 MiB delta over 27.44 MiB idle, down from 375.40 MiB / +347.03 MiB before; Python tracemalloc peak delta 55.34 MiB vs 227.29 MiB before)",
+   "size_per_day": "about 300 new strategy_spec rows/day x (947.6 B summary_index + 8 B summary_rev + ~24 B partial index tuple) = about 294 KB/day (~0.29 MB/day); in-place row updates replace summary_index and summary_rev in the existing row (0 net logical growth after vacuum)",
+   "growth_per_day": "about 294 KB/day (~107 MB/year) in Postgres linear with new strategy_spec rows; 0 B/day net in-process cache growth beyond the existing strategy_spec row set and SUMMARY_INDEX_MAX_TENANT_VIEWS = 16 eviction cap",
+   "growth": "about 294 KB/day (~107 MB/year) in Postgres; initial backfill on 9,416 rows took 7,942.4 ms across 10 batches of 1,000 rows (per-batch lock times 319.0-965.9 ms, max single-batch lock 965.9 ms < 1 s) and left updated_at unchanged",
+   "cap": "1 summary_index JSONB (~948 B) and 1 summary_rev BIGINT (8 B) per strategy_spec row in registry.entries (NULL for non-strategy_spec rows); backfill bounded per call by SUMMARY_INDEX_BACKFILL_BATCH_SIZE = 1000 and SUMMARY_INDEX_BACKFILL_MAX_BATCHES = 50; in-process Phase 1 tenant view cache bounded to SUMMARY_INDEX_MAX_TENANT_VIEWS = 16 with FIFO eviction and current-winner sub-cache bounded to 4 entries per stamp",
+   "cleanup": "stored columns and partial index tuples follow registry.entries lifecycle (reclaimed by PostgreSQL VACUUM when rows are updated or deleted; non-strategy_spec rows are set to NULL by trigger); in-process cache evicts oldest tenant view when len(_summary_index_tenant_views) > SUMMARY_INDEX_MAX_TENANT_VIEWS (16), clears stale _winners_cache whenever the DB stamp advances, and supports full eviction via invalidate_strategy_summary_index_cache(full=True)",
+   "readers": [
+    "services/registry/pg_store.py",
+    "services/registry/storage.py"
+   ],
+   "bound_proof": {
+    "file": "services/registry/pg_store.py",
+    "contains": "SUMMARY_INDEX_MAX_TENANT_VIEWS = 16"
    }
   }
  ]
