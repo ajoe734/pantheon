@@ -17,14 +17,11 @@ schema and the only write path.
 """
 from __future__ import annotations
 
-import logging
 import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-
-_logger = logging.getLogger(__name__)
 
 from services.governance.decision_journal import (
     DecisionJournalStores,
@@ -72,66 +69,9 @@ class DecisionJournalOwnerAdapter:
     governance Decision Journal owner without arbitrary dynamic proxying (__getattr__).
     """
 
-    def __init__(
-        self,
-        inner: Optional[Any] = None,
-        stores: Optional[DecisionJournalStores] = None,
-        *,
-        dataset_store: Optional[Any] = None,
-    ) -> None:
+    def __init__(self, inner: Optional[Any] = None, stores: Optional[DecisionJournalStores] = None) -> None:
         self._inner = inner
         self._stores = stores or build_decision_journal_stores(resolve_decision_journal_data_dir())
-        self.dataset_store = dataset_store
-
-    def _resolve_dataset_store(self) -> Optional[Any]:
-        if self.dataset_store is not None:
-            return self.dataset_store
-        try:
-            from services.control_plane.bff.agora.dataset_extraction.router import _default_store
-
-            return _default_store()
-        except Exception:
-            return None
-
-    def _emit_journal_entry_evidence(
-        self,
-        entry: Dict[str, Any],
-        *,
-        dataset_store: Optional[Any] = None,
-    ) -> Optional[Any]:
-        entry_id = str(
-            entry.get("entry_id")
-            or entry.get("id")
-            or entry.get("entryId")
-            or ""
-        ).strip()
-        try:
-            ds_store = dataset_store if dataset_store is not None else self._resolve_dataset_store()
-            if ds_store is None:
-                return None
-            tenant_id = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
-            user_id = str(
-                entry.get("user_id")
-                or entry.get("userId")
-                or entry.get("createdBy")
-                or entry.get("actor_id")
-                or ""
-            ).strip()
-            if not tenant_id or not user_id or not entry_id:
-                return None
-            from services.control_plane.bff.agora.dataset_extraction.extractor import (
-                extract_journal_entry_evidence,
-            )
-
-            record, _ = extract_journal_entry_evidence(entry, store=ds_store)
-            return record
-        except Exception as exc:
-            _logger.warning(
-                "Best-effort decision-journal learning evidence extraction failed for entry_id=%s: %s",
-                entry_id,
-                exc,
-            )
-            return None
 
     @property
     def stores(self) -> DecisionJournalStores:
@@ -235,7 +175,7 @@ class DecisionJournalOwnerAdapter:
         if not resolved_tenant:
             raise ValueError("create_decision_journal_entry requires a trusted tenant_id")
         resolved_user = user_id or payload.get("user_id") or payload.get("userId") or actor_id or ""
-        created = create_entry(
+        return create_entry(
             self._stores,
             entry_id=resolved_entry_id,
             title=title,
@@ -253,17 +193,6 @@ class DecisionJournalOwnerAdapter:
             version=payload.get("version"),
             updated_at=payload.get("updatedAt") or payload.get("updated_at"),
         )
-        self._emit_journal_entry_evidence(
-            {
-                **payload,
-                **created,
-                "entry_id": created.get("id") or resolved_entry_id,
-                "tenant_id": resolved_tenant,
-                "user_id": resolved_user,
-            },
-            dataset_store=_kwargs.get("dataset_store"),
-        )
-        return created
 
     def patch_decision_journal_entry(
         self,
@@ -663,20 +592,17 @@ DecisionJournalWriteOwner = DecisionJournalOwnerAdapter
 
 
 def build_decision_journal_write_owner(
-    *, data_dir: Optional[str] = None, dataset_store: Optional[Any] = None
+    *, data_dir: Optional[str] = None
 ) -> DecisionJournalWriteOwner:
     stores = build_decision_journal_stores(data_dir or resolve_decision_journal_data_dir())
-    return DecisionJournalWriteOwner(None, stores, dataset_store=dataset_store)
+    return DecisionJournalWriteOwner(None, stores)
 
 
 def build_decision_journal_owner_adapter(
-    inner: Optional[Any] = None,
-    *,
-    data_dir: Optional[str] = None,
-    dataset_store: Optional[Any] = None,
+    inner: Optional[Any] = None, *, data_dir: Optional[str] = None
 ) -> DecisionJournalOwnerAdapter:
     stores = build_decision_journal_stores(data_dir or resolve_decision_journal_data_dir())
-    return DecisionJournalOwnerAdapter(inner, stores, dataset_store=dataset_store)
+    return DecisionJournalOwnerAdapter(inner, stores)
 
 
 def wrap_get_read_store_with_decision_journal_owner(

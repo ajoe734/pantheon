@@ -365,9 +365,10 @@ def test_journal_write_path_emits_four_learning_evidence_kinds_and_survives_data
     ds_store = AgoraDatasetStore(backend="memory")
     journal_owner = build_decision_journal_write_owner(
         data_dir=str(tmp_path / "journal"),
-        dataset_store=ds_store,
     )
-    agora_svc = AgoraService(journal_write_owner=journal_owner, dataset_store=ds_store)
+    journal_owner.dataset_store = ds_store
+    agora_svc = AgoraService(journal_write_owner=journal_owner)
+    agora_svc.dataset_store = ds_store
     identity = OperatorIdentity(
         operator_id="user-001",
         roles=["operator"],

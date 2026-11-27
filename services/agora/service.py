@@ -101,6 +101,14 @@ class AgoraWriteService:
     ) -> None:
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
         self.dataset_store = dataset_store
+        try:
+            from services.control_plane.bff.agora.dataset_extraction.extractor import (
+                ensure_journal_evidence_emission_wired,
+            )
+
+            ensure_journal_evidence_emission_wired()
+        except Exception:
+            pass
 
     def create_session(
         self,

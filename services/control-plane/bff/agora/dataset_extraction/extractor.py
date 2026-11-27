@@ -2606,6 +2606,161 @@ def extract_journal_entry_evidence(
     )
 
 
+def _emit_journal_entry_evidence_best_effort(
+    entry: Mapping[str, Any],
+    *,
+    dataset_store: Optional[Any] = None,
+) -> Optional[DatasetRecord]:
+    """Best-effort journal evidence extraction that never blocks journal writes."""
+    entry_id = _clean_str(
+        entry.get("entry_id")
+        or entry.get("id")
+        or entry.get("entryId")
+        or entry.get("record_id")
+    )
+    try:
+        ds_store = dataset_store
+        if ds_store is None:
+            from .router import _default_store
+
+            ds_store = _default_store()
+        if ds_store is None:
+            return None
+        tenant_id = _clean_str(entry.get("tenant_id") or entry.get("tenantId"))
+        user_id = _clean_str(
+            entry.get("user_id")
+            or entry.get("userId")
+            or entry.get("createdBy")
+            or entry.get("actor_id")
+        )
+        if not tenant_id or not user_id or not entry_id:
+            return None
+        record, _ = extract_journal_entry_evidence(entry, store=ds_store)
+        return record
+    except Exception as exc:
+        _logger.warning(
+            "Best-effort decision-journal learning evidence extraction failed for entry_id=%s: %s",
+            entry_id,
+            exc,
+        )
+        return None
+
+
+def ensure_journal_evidence_emission_wired() -> None:
+    """Wire best-effort learning evidence extraction into the production Decision Journal write path."""
+    try:
+        from services.control_plane.bff.governance.decision_journal_write_owner import (
+            DecisionJournalOwnerAdapter,
+        )
+
+        if not getattr(DecisionJournalOwnerAdapter, "_agora_journal_evidence_hook_installed", False):
+            orig_owner_create = DecisionJournalOwnerAdapter.create_decision_journal_entry
+
+            def _wrapped_owner_create(
+                self: Any,
+                *,
+                title: str,
+                body: str,
+                entry_id: Optional[str] = None,
+                actor_id: Optional[str] = None,
+                payload: Optional[Dict[str, Any]] = None,
+                created_at: str,
+                tenant_id: Optional[str] = None,
+                user_id: Optional[str] = None,
+                **kwargs: Any,
+            ) -> Dict[str, Any]:
+                created = orig_owner_create(
+                    self,
+                    title=title,
+                    body=body,
+                    entry_id=entry_id,
+                    actor_id=actor_id,
+                    payload=payload,
+                    created_at=created_at,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
+                raw_payload = payload if isinstance(payload, Mapping) else {}
+                created_map = created if isinstance(created, Mapping) else {}
+                resolved_user = (
+                    user_id
+                    or raw_payload.get("user_id")
+                    or raw_payload.get("userId")
+                    or actor_id
+                    or created_map.get("user_id")
+                    or created_map.get("userId")
+                    or ""
+                )
+                _emit_journal_entry_evidence_best_effort(
+                    {
+                        **raw_payload,
+                        **created_map,
+                        "entry_id": created_map.get("id") or entry_id or raw_payload.get("id") or raw_payload.get("entryId"),
+                        "tenant_id": tenant_id or created_map.get("tenant_id") or created_map.get("tenantId"),
+                        "user_id": resolved_user,
+                        "actor_id": actor_id or resolved_user,
+                    },
+                    dataset_store=kwargs.get("dataset_store") or getattr(self, "dataset_store", None),
+                )
+                return created
+
+            DecisionJournalOwnerAdapter.create_decision_journal_entry = _wrapped_owner_create  # type: ignore[method-assign]
+            DecisionJournalOwnerAdapter._agora_journal_evidence_hook_installed = True  # type: ignore[attr-defined]
+    except Exception as exc:
+        _logger.debug("Deferred DecisionJournalOwnerAdapter evidence hook wiring: %s", exc)
+
+    try:
+        from services.control_plane.bff.agora.service import AgoraService
+
+        if not getattr(AgoraService, "_agora_journal_evidence_hook_installed", False):
+            orig_service_create = AgoraService.create_journal_entry
+
+            def _wrapped_service_create(
+                self: Any,
+                *,
+                payload: Dict[str, Any],
+                identity: Any,
+                idempotency_key: Optional[str],
+                x_dry_run: Optional[str] = None,
+                tenant_id: Optional[str] = None,
+                user_id: Optional[str] = None,
+            ) -> Any:
+                result = orig_service_create(
+                    self,
+                    payload=payload,
+                    identity=identity,
+                    idempotency_key=idempotency_key,
+                    x_dry_run=x_dry_run,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+                dry_run = bool(x_dry_run and str(x_dry_run).strip().lower() in ("true", "1", "yes"))
+                if not dry_run and isinstance(result, Mapping) and isinstance(result.get("data"), Mapping):
+                    created_data = result["data"]
+                    owner = getattr(self, "journal_write_owner", None)
+                    ds_store = getattr(self, "dataset_store", None) or getattr(owner, "dataset_store", None)
+                    _emit_journal_entry_evidence_best_effort(
+                        {
+                            **(payload if isinstance(payload, Mapping) else {}),
+                            **created_data,
+                            "entry_id": created_data.get("id") or created_data.get("entryId"),
+                            "tenant_id": created_data.get("tenant_id") or created_data.get("tenantId") or tenant_id,
+                            "user_id": created_data.get("user_id") or created_data.get("userId") or user_id or getattr(identity, "operator_id", None),
+                        },
+                        dataset_store=ds_store,
+                    )
+                return result
+
+            AgoraService.create_journal_entry = _wrapped_service_create  # type: ignore[method-assign]
+            AgoraService._agora_journal_evidence_hook_installed = True  # type: ignore[attr-defined]
+    except Exception as exc:
+        _logger.debug("Deferred AgoraService journal evidence hook wiring: %s", exc)
+
+
+ensure_journal_evidence_emission_wired()
+
+
 __all__ = [
     "AgoraDatasetStore",
     "ClaimConflictError",
@@ -2625,6 +2780,7 @@ __all__ = [
     "build_decision_time_snapshot",
     "build_journal_entry_evidence_request",
     "classify_decision_evidence_kind",
+    "ensure_journal_evidence_emission_wired",
     "evidence_request_digest",
     "extract_decision_lock_evidence",
     "extract_evidence",

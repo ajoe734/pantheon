@@ -192,12 +192,12 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as journal_dir:
             journal_owner = build_decision_journal_write_owner(
                 data_dir=journal_dir,
-                dataset_store=ds_store,
             )
+            journal_owner.dataset_store = ds_store
             agora_svc = AgoraService(
                 journal_write_owner=journal_owner,
-                dataset_store=ds_store,
             )
+            agora_svc.dataset_store = ds_store
             identity = OperatorIdentity(
                 operator_id="trader-alice",
                 roles=["operator"],
