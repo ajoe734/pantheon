@@ -1674,6 +1674,7 @@ def _evidence(projection: JourneyProjection) -> Dict[str, Any]:
 _TIMELINE_FIELDS = (
     "event_id", "journey_id", "stage", "event_type", "stage_status", "status", "occurred_at", "recorded_at",
     "actor", "summary", "reason_code", "reason_detail", "expression_reason_code",
+    "decision_status", "decision_day", "target_day", "expires_at", "execution_target_bar_start",
     "submitted_to_broker", "order_status", "risk_status", "risk_gate_evaluated",
     "canonical_event_id", "source_event_id", "missing_evidence",
     "input_refs", "output_refs", "evidence_refs", "policy_refs",

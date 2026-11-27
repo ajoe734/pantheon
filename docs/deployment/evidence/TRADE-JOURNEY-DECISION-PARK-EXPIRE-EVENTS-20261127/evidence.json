@@ -1,6 +1,6 @@
 {
   "task_id": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
-  "status": "implementation_in_progress",
+  "status": "ready_for_independent_review",
   "source_records": {
     "path": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/trade-journey-readable-20261120/parked-expired-20261127/signal_store_decision_records_20261127T1453Z.json",
     "sha256": "f1f83fd8bef3398739234fbfa3e6d23c65d18f74c5ad5614d44082f7e44caa86",
@@ -1047,11 +1047,94 @@
       }
     }
   },
-  "validation": [],
-  "residual_findings": [],
+  "validation": [
+    {
+      "command": "python -m pytest services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_intraday_settlement.py services/execution/lean_runtime/test_daily_settlement_integration.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py -q",
+      "exit_code": 0,
+      "result": "338 passed, 15 subtests passed, 42.03 seconds; includes new real PostgreSQL projector -> BFF list/detail/timeline/attention roundtrip and existing telemetry JSON schema validation."
+    },
+    {
+      "command": "python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/trade_journey/test_materializer.py services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_migration.py -q",
+      "exit_code": 0,
+      "result": "375 passed, 35 skipped, 38 subtests passed, 45.53 seconds. Run before the final expiry payload derivation adjustment, covered by the 338-test final batch."
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed; 378 entries, 4 waivers, no failures"
+    },
+    {
+      "command": "python3 acceptance/probes/trade-journey-parked-expired",
+      "exit_code": 77,
+      "result": "missing hosted configuration in worker; no hosted acceptance claimed; probe check() covered for no-sample skip, park pass, expire pass and wrong expiry failure"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "residual_findings": [
+    {
+      "finding": "Target-session opening data may arrive after settlement expiry. This task does not change source refresh ordering.",
+      "disposition": "Existing market-data owner work, composes with TW-REFRESH-OFFICIAL-MARKET-FIRST-20261127; already declared outside this task in its brief.",
+      "register_class": "RC6 trade-journey observability composes with market-data chain."
+    }
+  ],
   "delivery": {
     "merged": false,
     "deployed": false,
     "accepted": false
+  },
+  "implementation": {
+    "owned_layer": "Decision observability and read projections; settlement module, expiry cutoff, prices and enqueue eligibility unchanged.",
+    "identity": "Write-once decision_id#journey written before pending, use put_decision_record winner, deterministic fallback on write error. Never rewrite pending. Existing already-enqueued legacy orders are not given a second journey.",
+    "events": "Existing RuntimeTelemetryEmitter schema/transport; frozen park payload, deterministic per-decision-state event UUID, sent marker after acceptance; expiry derived from frozen park payload, using settlement expired_at.",
+    "runtime_continuity": "Released signal carries exact park payload; runtime admits it via existing lifecycle outbox at sequence 1 and continues at sequence 2, preserving idempotency and retry/requeue rules.",
+    "read_path": "Shared materializer, relational projector, loop terminal status, BFF outcome and attention SQL; stale-open SQL sweep excludes pending settlement. Timeline retains park after release.",
+    "supporting_files_beyond_initial_artifact_list": [
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/trade_journey/materializer.py",
+      "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/projection_migration.py",
+      "services/control-plane/bff/trade_journey_projection_store.py"
+    ],
+    "test_setup_note": "Existing counterfactual replay helper now supplies its fixture capital pool and recorded signal clock; no existing assertions edited."
+  },
+  "validation_environment": "Existing /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python; foreground bounded batches, all outputs and exit statuses collected.",
+  "runtime_budget": {
+    "task": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
+    "owner": "execution.paper-signal-producer",
+    "writers": [
+      "Redis decision_id#journey",
+      "Redis decision_id#lifecycle-sent:pending_settlement",
+      "Redis decision_id#lifecycle-sent:expired_no_price",
+      "existing telemetry_events lifecycle ingest and existing paper lifecycle outbox"
+    ],
+    "cadence": "existing producer tick (60 seconds), no new job; 4-5 hosted bindings, at most one parked decision per binding per session",
+    "growth_per_day": "At most 5 immutable journey records + 10 sent markers + 10 distinct incremental lifecycle events per trading day. Recorded hosted fixtures measured 6359 / 6371 bytes per journey and 3804-3858 bytes per lifecycle event; sent marker <100 bytes. About 32 KB/day Redis journey data + <1 KB/day markers + <39 KB/day incremental telemetry; no market lineage copied into park metadata.",
+    "cap": "at most 15 new Redis keys per trading day, approximately 450 keys / 30 days and about 1 MB; bounded by hosted binding count, not a new fleet-wide admission cap; no marker on failed delivery; repeated sends preserve event identity and ingest deduplicates them",
+    "cleanup": "existing put_decision_record SET NX with 30-day TTL; expiry is never extended by reads/retries; telemetry uses existing lifecycle retention; imported park reuses the runtime lifecycle outbox and existing 35-day chain cleanup, no separate file or queue",
+    "readers": [
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/trade_journey/lifecycle_projector.py"
+    ],
+    "bound_proof": {
+      "file": "services/execution/lean_runtime/paper_signal_producer.py",
+      "contains": "DECISION_SENT_SUFFIX = \"#lifecycle-sent:\""
+    }
+  },
+  "acceptance_probe": {
+    "path": "acceptance/probes/trade-journey-parked-expired",
+    "read_only": "GET only after existing viewer client credentials login",
+    "deployment_cutoff": "Pantheon frontend /deployment.json deployedAt",
+    "configuration": [
+      "ACCEPTANCE_BFF_URL",
+      "ACCEPTANCE_FE_URL",
+      "ACCEPTANCE_VIEWER_CLIENT_ID",
+      "ACCEPTANCE_VIEWER_CLIENT_SECRET"
+    ],
+    "bounds": "At most 20 journey pages and 5 timeline pages per journey, 200 items/page; bound overflow and repeated tokens fail. New journey samples only; no post-deploy parked decision returns 77.",
+    "hosted_status": "pending deployment and fresh decision sample"
   }
 }

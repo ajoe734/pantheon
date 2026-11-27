@@ -81,6 +81,7 @@ from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_mana
 from services.trade_journey.correlation_envelope import (
     CorrelationEnvelopeError,
     mint_trade_envelope,
+    propagate_envelope,
     validate_envelope,
 )
 
@@ -100,7 +101,7 @@ def _decision_telemetry(binding: Mapping[str, Any]) -> Any:
     return RuntimeTelemetryEmitter(
         RuntimeIdentity.from_env({
             "PANTHEON_RUNTIME_ROLE": _WORKER_NAME,
-            "PANTHEON_TELEMETRY_URL": os.getenv("PANTHEON_TELEMETRY_URL", ""),
+            "PANTHEON_TELEMETRY_URL": os.getenv("PANTHEON_TELEMETRY_URL") or os.getenv("PANTHEON_TELEMETRY_API_URL", ""),
         }),
         SimpleNamespace(resolve=lambda: dict(binding)),
     )
@@ -2518,9 +2519,18 @@ class PaperSignalProducer:
         if isinstance(existing, Mapping):
             return existing
         out = pending["decision_out"]
-        metadata = dict(out.get("metadata") or {})
+        out_metadata = out.get("metadata") or {}
+        metadata = {key: out_metadata[key] for key in ("persona_id", "sponsor_persona_id") if key in out_metadata}
         plan = pending["plan"]
-        parked_at = plan.get("decision_time") or metadata.get("decision_time") or metadata["market_input_event_time"]
+        parked_at = plan.get("decision_time") or out_metadata.get("decision_time") or out_metadata["market_input_event_time"]
+        binding_metadata = binding.get("metadata") or {}
+        binding = {key: value for key, value in binding.items() if key in {
+            "binding_id", "runtime_id", "capital_pool_id", "artifact_id", "artifact_version",
+            "plan_id", "deployment_plan_id", "persona_capital_binding_id", "persona_id",
+            "sponsor_persona_id", "deployment_stage", "deployment_mode", "effective_at",
+            "tenant_id", "environment",
+        }}
+        binding["metadata"] = {key: binding_metadata[key] for key in ("persona_id", "sponsor_persona_id") if key in binding_metadata}
         signal = json.loads(json.dumps(out))
         # Deterministic fallback also preserves identity if the identity write fails.
         seed = str(uuid.uuid5(uuid.NAMESPACE_URL, "paper-decision:" + decision_id))
@@ -2540,6 +2550,7 @@ class PaperSignalProducer:
         )})
         metadata.update({
             "decision_id": decision_id, "strategy_id": out["strategy_id"],
+            "quantity": out.get("quantity"), "side": str(out.get("action") or "").lower(),
             "symbol": pending["symbol"], "decision_status": STATUS_PENDING,
             "reason_code": STATUS_PENDING,
             "reason_detail": {key: plan[key] for key in ("decision_day", "target_day", "expires_at")},
@@ -2575,11 +2586,16 @@ class PaperSignalProducer:
             if store.get_decision_record(marker) is not None:
                 return
             emitter = self._telemetry_for(journey["binding"])
-            payload = journey.get("park_event")
+            if getattr(emitter, "enabled", True) is False:
+                return  # optional telemetry is unconfigured; leave no sent marker
+            payload = self._park_event(journey)
             if not isinstance(payload, Mapping):
                 raise ValueError("park lifecycle payload unavailable")
             if settled is not None:
-                metadata = dict(journey["metadata"])
+                # Derive expiry from the frozen park payload so a redeploy cannot
+                # change binding/authority fields on a retry of the same event id.
+                payload = json.loads(json.dumps(payload))
+                metadata = payload["metadata"]
                 metadata.update({
                     "decision_status": STATUS_EXPIRED,
                     "reason_code": "target_session_not_reconciled_by_expiry",
@@ -2587,16 +2603,33 @@ class PaperSignalProducer:
                     "sequence_no": 2, "causal_parent_id": payload["event_id"],
                     "correlation_envelope": payload["correlation_envelope"],
                 })
-                payload = emitter.build_event(
-                    "trade_decision", {"action": "trade_decision_recorded"}, metadata=metadata,
-                    event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":" + state)),
-                    created_at=str(settled["expired_at"]),
-                )
+                event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":" + state))
+                payload.update({
+                    "event_id": event_id, "created_at": str(settled["expired_at"]),
+                    "sequence_no": 2, "causal_parent_id": metadata["causal_parent_id"],
+                    "correlation_envelope": propagate_envelope(
+                        payload["correlation_envelope"], producer="execution.paper_runtime",
+                        event_id=event_id, event_time=str(settled["expired_at"]),
+                    ),
+                })
             if payload is None or not emitter.emit_payload(payload):
                 raise ValueError("telemetry did not accept " + state)
             store.put_decision_record(marker, {"event_id": payload["event_id"]})
         except Exception as exc:
             self._degraded_by_binding[binding_id] = f"decision_lifecycle_unavailable: {exc}"
+
+    def _park_event(self, journey: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        payload = journey.get("park_event")
+        if isinstance(payload, Mapping):
+            return payload
+        # A failed build did not send anything. Retry from the frozen inputs,
+        # never from the current binding or the current settlement clock.
+        decision_id = journey["metadata"]["decision_id"]
+        return self._telemetry_for(journey["binding"]).build_event(
+            "trade_decision", {"action": "trade_decision_recorded"}, metadata=dict(journey["metadata"]),
+            event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, decision_id + ":" + STATUS_PENDING)),
+            created_at=str(journey["parked_at"]),
+        )
 
     @property
     def degraded_bindings(self) -> dict[str, str]:
@@ -2697,12 +2730,15 @@ class PaperSignalProducer:
                 if entry is None:
                     break
                 decision_id = str(entry["decision_id"])
+                already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
                 pending = getter(decision_id + PENDING_RECORD_SUFFIX)
                 journey = None
-                if isinstance(pending, Mapping) and isinstance(pending.get("decision_out"), Mapping):
+                # Legacy already-admitted orders have their own runtime journey.
+                # Do not open another one while revisiting their grading index.
+                should_observe = not already_enqueued or getter(decision_id + DECISION_JOURNEY_SUFFIX) is not None
+                if should_observe and isinstance(pending, Mapping) and isinstance(pending.get("decision_out"), Mapping):
                     journey = self._decision_journey(store, b_dict, pending)
                     self._emit_decision_state(store, decision_id, journey)
-                already_enqueued = getter(decision_id + ENQUEUED_RECORD_SUFFIX) is not None
                 try:
                     advance_decision(store, decision_id, reader, now=now)
                 except Exception as exc:  # noqa: BLE001 - a reader fault leaves the decision pending
@@ -2725,8 +2761,12 @@ class PaperSignalProducer:
                     release_out["journey_id"] = journey["journey_id"]
                     release_out["correlation_envelope"] = journey["correlation_envelope"]
                     release_out.setdefault("metadata", {})["journey_id"] = journey["journey_id"]
-                    if journey.get("park_event"):
-                        release_out["metadata"]["parked_decision_event"] = journey["park_event"]
+                    try:
+                        park_event = self._park_event(journey)
+                        if park_event:
+                            release_out["metadata"]["parked_decision_event"] = park_event
+                    except Exception as exc:
+                        self._degraded_by_binding[binding_id] = f"decision_lifecycle_unavailable: {exc}"
                 self._drop_already_graded_rows(store, release_out)
                 count = self._enqueue_output(
                     binding, now_iso, release_out, settled_fill=settled["fill"]
@@ -2768,6 +2808,7 @@ class PaperSignalProducer:
         """Emit + enqueue signals for one binding; return the count enqueued."""
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        self._degraded_by_binding.pop(binding_id, None)
         try:
             released = self.settle_pending_intraday(binding, now_iso)
         except Exception as exc:  # noqa: BLE001 - a settlement-index fault must not block daily production
@@ -2789,7 +2830,6 @@ class PaperSignalProducer:
             )
             return 0
 
-        self._degraded_by_binding.pop(binding_id, None)
         if isinstance(out, dict) and "portfolio_decisions" in out:
             return sum(self._enqueue_output(binding, now_iso, decision)
                        for decision in out["portfolio_decisions"])

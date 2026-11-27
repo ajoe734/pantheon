@@ -3063,6 +3063,7 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
 
         from services.execution.lean_runtime.paper_runtime import PaperRuntimeService
         from services.execution.lean_runtime.runtime_identity import RuntimeIdentity
+        from services.execution.lean_runtime.test_paper_runtime import TEST_POOL_RECORD
         from services.execution.lean_runtime.test_paper_runtime import (
             _FakeRuntimeManagerClient,
             _FakeTelemetryEmitter,
@@ -3105,9 +3106,12 @@ class TestInstrumentCounterfactualWriter(unittest.TestCase):
                     "RM", (), {"list_all": lambda self: [runtime_binding]}
                 )(),
                 telemetry_emitter=telemetry,
+                capital_pool_reader=lambda _: dict(TEST_POOL_RECORD),
                 poll_interval_seconds=3600,
                 max_batch_size=10,
             )
+            # This replay uses a recorded November bar, not the machine clock.
+            service._algo.Time = datetime.fromisoformat(carrier["timestamp"].replace("Z", "+00:00"))
             service.drain_once()
             service._consumer.flush_rebalance(carrier["run_id"], service._algo)
         return telemetry.events, runtime_binding
@@ -3842,3 +3846,161 @@ class TestPaperSignalProducerDynamicRuntimeManagerBearer(unittest.TestCase):
                 self.assertEqual(seen_actors, ["producer-file-v1", "producer-file-v2"])
 
 
+
+# Recorded Redis documents remain verbatim in the task evidence; only binding
+# context and reconciled bars below are test inputs.
+def recorded_parked_decision(key="pending_2317_long46_D20261126"):
+    import copy
+    evidence = Path(__file__).resolve().parents[3] / "docs/deployment/evidence/TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127/evidence.json"
+    raw = copy.deepcopy(json.loads(evidence.read_text())["hosted_signal_store_records"][key])
+    pending = raw["#intraday-pending"]
+    out = pending["decision_out"]
+    binding = {k: out[k] for k in ("binding_id", "runtime_id", "capital_pool_id", "strategy_id", "tenant_id", "environment")}
+    binding.update({k: out["metadata"][k] for k in ("artifact_id", "artifact_version", "persona_capital_binding_id")})
+    binding.update(plan_id="plan-test-context", persona_id="persona-recorded-test", status="active", deployment_stage="paper")
+    return raw, binding
+
+
+class RecordedDecisionTelemetry:
+    def __init__(self, binding):
+        from services.execution.lean_runtime.paper_signal_producer import _decision_telemetry
+        self.builder = _decision_telemetry(binding)
+        self.events = []
+        self.attempts = []
+        self.fail = False
+
+    def build_event(self, *args, **kwargs):
+        return self.builder.build_event(*args, **kwargs)
+
+    def emit_payload(self, payload):
+        captured = json.loads(json.dumps(payload))
+        self.attempts.append(captured)
+        if self.fail:
+            return False
+        self.events.append(captured)
+        return True
+
+
+def recorded_decision_producer(key="pending_2317_long46_D20261126", *, store=None):
+    from services.execution.lean_runtime.intraday_settlement import index_slot_id
+    raw, binding = recorded_parked_decision(key)
+    pending = raw["#intraday-pending"]
+    store = store or InMemoryPendingSignalStore()
+    did = pending["decision_id"]
+    store.put_decision_record(index_slot_id(binding["binding_id"], pending["plan"]["decision_day"], 0), raw["index_record"])
+    for suffix in ("#intraday-pending", "#intraday-settlement", "#intraday-enqueued"):
+        if raw[suffix] is not None:
+            store.put_decision_record(did + suffix, raw[suffix])
+    emitter = RecordedDecisionTelemetry(binding)
+    producer = _RealPaperSignalProducer(lambda _: store, lambda *_: [], daily_bar_reader=lambda *_: [], telemetry_for=lambda _: emitter)
+    return producer, store, emitter, raw, binding
+
+
+def test_recorded_legacy_pending_retries_original_park_then_releases_one_journey():
+    producer, store, emitter, raw, binding = recorded_decision_producer()
+    pending = raw["#intraday-pending"]
+    did = pending["decision_id"]
+    original = json.dumps(pending, sort_keys=True)
+    emitter.fail = True
+    assert producer.settle_pending_intraday(binding, "2026-11-27T07:00:00+08:00") == 0
+    assert store.get_decision_record(did + "#lifecycle-sent:pending_settlement") is None
+    assert binding["binding_id"] in producer.degraded_bindings
+    emitter.fail = False
+    assert producer.settle_pending_intraday(binding, "2026-11-27T08:00:00+08:00") == 0
+    assert emitter.attempts[0] == emitter.attempts[1]
+    assert emitter.events[0]["created_at"] == pending["plan"]["decision_time"]
+    assert emitter.events[0]["metadata"]["target_day"] == "2026-11-27"
+    producer._daily_bar_reader = lambda *_: [{"symbol": pending["symbol"], "bar_frequency": "1d", "bar_start": "2026-11-27T09:00:00+08:00", "bar_availability_ts": "2026-11-27T16:00:00+08:00", "open": 220.0}]
+    assert producer.settle_pending_intraday(binding, "2026-11-27T16:30:00+08:00") == 1
+    [signal] = store.get_pending()
+    journey = store.get_decision_record(did + "#journey")
+    assert signal["journey_id"] == journey["journey_id"] == emitter.events[0]["journey_id"]
+    assert signal["quantity"] == 46 and signal["metadata"]["market_price"] == 220.0
+    assert signal["metadata"]["parked_decision_event"] == emitter.events[0]
+    assert json.dumps(store.get_decision_record(did + "#intraday-pending"), sort_keys=True) == original
+    assert len(emitter.events) == 1
+    assert producer.settle_pending_intraday(binding, "2026-11-27T17:00:00+08:00") == 0
+    assert len(emitter.events) == 1
+
+
+def test_recorded_expired_decision_repairs_park_and_expire_without_enqueue():
+    producer, store, emitter, raw, binding = recorded_decision_producer("expired_2330_D20261125")
+    did = raw["#intraday-pending"]["decision_id"]
+    emitter.fail = True
+    assert producer.produce(binding, "2026-11-27T10:00:00+08:00") == 0
+    assert binding["binding_id"] in producer.degraded_bindings
+    emitter.fail = False
+    assert producer.produce(binding, "2026-11-27T11:00:00+08:00") == 0
+    assert [e["metadata"]["decision_status"] for e in emitter.events] == ["pending_settlement", "expired_no_price"]
+    park, expire = emitter.events
+    assert park == emitter.attempts[0] and expire == emitter.attempts[1]
+    assert park["journey_id"] == expire["journey_id"] == store.get_decision_record(did + "#journey")["journey_id"]
+    assert expire["created_at"] == raw["#intraday-settlement"]["expired_at"]
+    assert expire["causal_parent_id"] == park["event_id"]
+    assert expire["metadata"]["reason_code"] == "target_session_not_reconciled_by_expiry"
+    assert expire["metadata"]["reason_detail"]["expired_at"] == expire["created_at"]
+    producer.produce(binding, "2026-11-27T12:00:00+08:00")
+    assert len(emitter.events) == 2 and store.queue_depth() == 0
+
+
+def test_park_writes_journey_before_pending_and_uses_first_writer():
+    import copy
+    from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
+    writes = []
+    class RaceStore(InMemoryPendingSignalStore):
+        def put_decision_record(self, key, record):
+            writes.append(key)
+            if key.endswith("#journey"):
+                record = copy.deepcopy(record)
+                # Simulate an already committed winner with another valid id.
+                record["journey_id"] = "tj_winning-writer"
+                record["correlation_envelope"]["journey_id"] = record["journey_id"]
+                record["metadata"]["journey_id"] = record["journey_id"]
+                record["metadata"]["correlation_envelope"]["journey_id"] = record["journey_id"]
+                record["park_event"]["journey_id"] = record["journey_id"]
+                record["park_event"]["aggregate_id"] = record["journey_id"]
+                record["park_event"]["correlation_envelope"]["journey_id"] = record["journey_id"]
+            return super().put_decision_record(key, record)
+    raw, binding = recorded_parked_decision()
+    pending = raw["#intraday-pending"]
+    store = RaceStore()
+    emitter = RecordedDecisionTelemetry(binding)
+    producer = _RealPaperSignalProducer(lambda _: store, lambda *_: [], telemetry_for=lambda _: emitter)
+    producer._park_pending_intraday(store, binding["binding_id"], pending["decision_id"], pending, pending["decision_out"], lifecycle_binding=binding)
+    assert writes.index(pending["decision_id"] + "#journey") < writes.index(pending["decision_id"] + "#intraday-pending")
+    assert emitter.events[0]["journey_id"] == "tj_winning-writer"
+
+
+def test_marker_write_failure_retries_exact_accepted_event_without_changing_settlement():
+    class MarkerFailure(InMemoryPendingSignalStore):
+        fail_marker = True
+        def put_decision_record(self, key, record):
+            if "#lifecycle-sent:" in key and self.fail_marker:
+                raise OSError("marker unavailable")
+            return super().put_decision_record(key, record)
+    store = MarkerFailure()
+    producer, store, emitter, raw, binding = recorded_decision_producer("expired_2330_D20261125", store=store)
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    assert binding["binding_id"] in producer.degraded_bindings
+    store.fail_marker = False
+    producer.settle_pending_intraday(binding, "2026-11-27T11:00:00+08:00")
+    assert emitter.events[:2] == emitter.events[2:]
+    assert store.queue_depth() == 0
+
+
+def test_legacy_already_admitted_order_does_not_open_another_journey():
+    producer, store, emitter, raw, binding = recorded_decision_producer()
+    did = raw["#intraday-pending"]["decision_id"]
+    store.put_decision_record(did + "#intraday-enqueued", {"decision_id": did, "enqueued": 1})
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    assert store.get_decision_record(did + "#journey") is None
+    assert emitter.events == []
+
+
+def test_park_expire_events_use_the_existing_telemetry_schema():
+    from jsonschema import Draft7Validator
+    schema = json.loads((Path(__file__).resolve().parents[2] / "telemetry/telemetry_event.schema.json").read_text())
+    producer, store, emitter, raw, binding = recorded_decision_producer("expired_2330_D20261125")
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    for event in emitter.events:
+        Draft7Validator(schema).validate(event)
