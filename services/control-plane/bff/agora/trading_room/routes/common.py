@@ -1725,6 +1725,7 @@ class TradingRoomRouteContext:
                 bff_error=bff_error,
                 decision_lock_owner=kwargs.get("decision_lock_owner"),
                 attribution_client_factory=kwargs.get("attribution_client_factory"),
+                imitation_candidate_reader=kwargs.get("imitation_candidate_reader"),
             )
 
     def _check_write_auth(self, identity: Any) -> None:

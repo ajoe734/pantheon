@@ -50,6 +50,11 @@
       "owner": "agora-decision-lock"
     },
     {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/imitation-comparison",
+      "owner": "agora-decision-lock+policy-learning+attribution"
+    },
+    {
       "method": "POST",
       "path": "/bff/agora/servant/sessions/{session_id}/messages",
       "owner": "agora+source-ingest"

@@ -145,6 +145,18 @@
         "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
         "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
       ]
+    },
+    "dev_sync_revalidation_3": {
+      "merged_dev": "7a366a60b",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's IMITATION-TRADER-SHADOW-COMPARISON-20261127 (T10) instance and status and this task's T8 instance and status; bundle_index.v1_14.json keeps the v15 handoff schema with recomputed capability manifest and OpenAPI sha256; route-diff baseline regenerated (690 backend routes)",
+      "incoming_dev_overlap": "dev's imitation-comparison route and capability/OpenAPI additions auto-merged into trading_room service, routes, capability manifest, OpenAPI and backend route manifest alongside the paper-execution routes",
+      "results": [
+        "pytest paper-intent execution + servant data tools + habit profile + trader paper book provisioning/enrollment-skip + trading_room: 186 passed",
+        "pytest lean_runtime agora paper intent consumer + paper_signal_producer: 173 passed",
+        "pytest scripts/test_bff_route_diff.py scripts/test_deploy_nonprod_vm.py scripts/test_check_storage_manifest.py: 260 passed, 4 skipped",
+        "pytest services/policy-learning/tests/test_trader_imitation_candidates.py: 4 passed",
+        "agora_schema_bundle.py --verify, check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
     }
   },
   "residuals": [
