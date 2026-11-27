@@ -35,7 +35,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # State machine ----------------------------------------------------------------
 
 # pending          -> create acknowledged locally; upstream call in flight or pending
-# active           -> upstream confirmed the session is live
+# active           -> upstream confirmed the session, or a healthy gateway uses
+#                     Pantheon-owned session metadata without a collection API
 # cancel_requested -> operator asked to cancel; upstream call in flight
 # canceled         -> upstream confirmed cancellation
 # failed           -> upstream rejected the create or cancel with a non-retryable error
@@ -258,12 +259,18 @@ class SessionLifecycleStore:
             return self._read(session_id), False
 
         upstream_id = str(upstream_payload.get("session_id") or upstream_payload.get("id") or "") or None
+        acknowledgement = {"upstream_session_id": upstream_id}
+        if upstream_payload.get("mode") == "pantheon_owned":
+            acknowledgement.update(
+                mode="pantheon_owned",
+                compatibility=upstream_payload.get("compatibility"),
+            )
         self._transition(
             session_id,
             "active",
             actor=operator_id,
             action="create_acknowledged",
-            detail={"upstream_session_id": upstream_id},
+            detail=acknowledgement,
             upstream_payload=upstream_payload,
             upstream_session_id=upstream_id,
         )
