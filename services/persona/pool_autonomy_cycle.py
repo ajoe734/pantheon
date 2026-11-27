@@ -231,13 +231,40 @@ class PoolAutonomyCycle:
             return {"status": "not_attempted", "reason": "publish_port_unconfigured"}
         try:
             from services.control_plane.persona.pool_policy import (
-                admission_only, last_published, load_policy, publication_change)
+                admission_only, last_published, latest_publication, load_policy, publication_change)
 
             pool = ports.current_pool(persona)
-            change = publication_change(last_published(ports.publication_state(persona)), pool, load_policy())
+            history = ports.publication_state(persona)
+            latest = latest_publication(history)
+            if latest is not None and latest["status"] == "dispatched":
+                # This dispatch already passed the publication gate. Confirm/retry that
+                # exact version through the publisher, never request a new consultation.
+                pending = {"status": "publication_dispatch_unconfirmed", "reasons": ["publication_dispatch_unconfirmed"],
+                           "pool_version": latest["pool_version"],
+                           "envelope_artifact_id": latest.get("envelope_artifact_id")}
+                try:
+                    receipt = ports.publish_pool(persona, latest["pool_version"])
+                except Exception as exc:  # owner failure preserves the accepted dispatch
+                    return {**pending, "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
+                if receipt.get("status") != "published":
+                    return {**pending, "note": receipt.get("note")}
+                # Use the publisher-confirmed pins, without another history/binding read.
+                history = {**history, "published": {**history["published"],
+                           str(latest["pool_version"]): {**latest, **receipt, "status": "published"}}}
+            confirmed = last_published(history)
+            change = publication_change(confirmed, pool, load_policy())
         except Exception as exc:  # noqa: BLE001 - unreadable state is reported, retried next cycle
             return {"status": "failed", "step": "compare", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
         base = {"pool_version": pool["pool_version"], "reasons": change["reasons"]}
+        if confirmed is not None and not change["membership_changed"] and hasattr(ports, "supersede_publication_operator_decisions"):
+            try:
+                retired = ports.supersede_publication_operator_decisions(persona, pool, confirmed)
+                if retired:
+                    base["superseded_operator_decisions"] = retired
+            except Exception as exc:
+                # Do not hide a failed retirement behind an unchanged/publication result.
+                return {**base, "status": "failed", "step": "supersede_operator_decisions",
+                        "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
         if not change["changed"]:
             return {**base, "status": "unchanged"}
         try:
