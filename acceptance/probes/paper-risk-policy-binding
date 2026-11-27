@@ -329,6 +329,43 @@ def rows(body):
     return value
 
 
+SESSION_PAUSE_REASON = "market_input_stale"
+
+
+def session_pause(binding):
+    """The session-admission record when the paper fleet reconciler paused this binding for a stale
+    market input and has not resumed it (the 05:30Z close until the post-close refresh), else None."""
+    if binding.get("status") != "paused":
+        return None
+    admission = (binding.get("metadata") or {}).get("session_admission")
+    if (isinstance(admission, dict) and admission.get("reason_code") == SESSION_PAUSE_REASON
+            and admission.get("resumed_at") is None):
+        return admission
+    return None
+
+
+def select_binding(bindings, pid, tenant):
+    """The single paper binding for (persona, tenant) that is active or session-paused for stale input.
+
+    Retired, failed and other statuses are never selected. A binding paused for any other reason is
+    reported as binding_paused:<reason> only when no eligible binding exists.
+    """
+    owned = [b for b in bindings if tenant
+             and (b.get("metadata") or {}).get("persona_id") == pid
+             and (b.get("metadata") or {}).get("tenant_id") == tenant]
+    eligible = [b for b in owned if b.get("status") == "active" or session_pause(b) is not None]
+    if len(eligible) > 1:
+        raise ValueError("active_tenant_binding_ambiguous")
+    if eligible:
+        return eligible[0]
+    paused = [b for b in owned if b.get("status") == "paused"]
+    if paused:
+        admission = (paused[0].get("metadata") or {}).get("session_admission")
+        reason = admission.get("reason_code") if isinstance(admission, dict) else None
+        raise ValueError("binding_paused:" + (str(reason) if reason else "unknown"))
+    raise ValueError("active_tenant_binding_missing")
+
+
 def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=None,
         pool_policy_reader=None):
     now = now or datetime.now(timezone.utc)
@@ -359,12 +396,8 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
                     or str(persona.get("name") or "").startswith(("Pantheon Dev Paper Release", "probe-", "test-"))):
                 raise ValueError("expected_persona_not_trading")
             tenant = persona.get("tenantId")
-            active = [b for b in bindings if b.get("status") == "active"
-                      and (b.get("metadata") or {}).get("persona_id") == pid
-                      and (b.get("metadata") or {}).get("tenant_id") == tenant]
-            if not tenant or len(active) != 1:
-                raise ValueError("active_tenant_binding_missing_or_ambiguous")
-            binding = active[0]
+            binding = select_binding(bindings, pid, tenant)
+            admission = session_pause(binding)
             pool_id = binding.get("capital_pool_id")
             if not isinstance(pool_id, str) or not pool_id:
                 raise ValueError("binding_pool_missing")
@@ -378,8 +411,12 @@ def run(fetch, expected=DEFAULT_PERSONAS, *, now=None, referenced_policy_reader=
                           runtime_id=binding.get("runtime_id"), binding_id=binding.get("binding_id"),
                           pool_id=pool_id, artifact_id=binding.get("artifact_id"),
                           artifact_version=binding.get("artifact_version"), risk_policy_ref=pool.get("risk_policy_ref"),
-                          persona_display_binding_id=persona.get("runtimeBindingId"))
-            owner = data(pool_policy_reader(pool)) if pool_policy_reader else None
+                          persona_display_binding_id=persona.get("runtimeBindingId"),
+                          binding_status=binding.get("status"))
+            if admission is not None:
+                result["session_admission"] = {k: admission.get(k)
+                                               for k in ("reason_code", "observed_at", "source_event_time")}
+            owner =data(pool_policy_reader(pool)) if pool_policy_reader else None
             if owner is not None:
                 if (owner.get("capital_pool_id") != pool_id or owner.get("tenant_id") != tenant
                         or owner.get("stage") != "paper" or owner.get("resolved") is not True):

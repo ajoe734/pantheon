@@ -120,6 +120,9 @@ def check(fetch, manifest_fetch, source_read, *, expected=binding.DEFAULT_PERSON
             failed.append("historical_unavailable_misclassified")
     for pid in expected:
         owner = policies["personas"].get(pid, {})
+        if not owner.get("binding_id") or not owner.get("tenant_id"):
+            # Binding selection already failed with a named finding; nothing can bind a journey to it.
+            continue
         query = "?" + urllib.parse.urlencode({"tenant_id": owner.get("tenant_id", "tenant-dev"),
             "environment": "paper", "persona_id": pid, "page_size": 50})
         page = fetch(BASE + query)
