@@ -208,6 +208,78 @@ def test_bounded_refresh_without_a_trusted_pre_map_keeps_the_strict_rule(
         run_controller_tick(config=config, state=state, store=store, writer=writer)
 
 
+@pytest.mark.parametrize(
+    "corrupt_pre",
+    [
+        pytest.param(lambda a: a.pop("dlq_status_counts_by_connector"), id="missing-map"),
+        pytest.param(lambda a: a.update(dlq_status_counts_by_connector=[]), id="not-a-map"),
+        pytest.param(lambda a: a.update(dlq_status_counts_by_connector={}), id="missing-attribution"),
+        pytest.param(
+            lambda a: a["dlq_status_counts_by_connector"][MARGIN_ID].update(pending=5),
+            id="inflated-pending-masks-new-entry",
+        ),
+        pytest.param(
+            lambda a: a["dlq_status_counts_by_connector"][MARGIN_ID].update(replayed=1),
+            id="resolved-status-sum-mismatch",
+        ),
+        *[
+            pytest.param(
+                lambda a, value=value: a["dlq_status_counts_by_connector"][MARGIN_ID].update(pending=value),
+                id=f"invalid-count-{value!r}",
+            )
+            for value in (-1, True, 4.0, "4", None)
+        ],
+        pytest.param(
+            lambda a: a["dlq_status_counts_by_connector"].update({MARGIN_ID: []}), id="invalid-status-map"
+        ),
+        pytest.param(
+            lambda a: a["dlq_status_counts_by_connector"][MARGIN_ID].pop("replayed"), id="missing-status"
+        ),
+        pytest.param(
+            lambda a: a["dlq_status_counts_by_connector"][MARGIN_ID].update(unknown=0), id="unknown-status"
+        ),
+        *[
+            pytest.param(
+                lambda a, key=key: a["dlq_status_counts_by_connector"].update(
+                    {key: a["dlq_status_counts_by_connector"].pop(MARGIN_ID)}
+                ),
+                id=f"invalid-connector-{key!r}",
+            )
+            for key in ("unknown-connector", "", 1)
+        ],
+        pytest.param(
+            lambda a: next(c for c in a["connectors"] if c["connector_id"] == MARGIN_ID).update(configured=False),
+            id="unconfigured-connector",
+        ),
+    ],
+)
+def test_corrupt_pre_connector_counts_cannot_hide_a_new_dead_letter(
+    margin_owner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt_pre
+) -> None:
+    runtime, reject, _ = margin_owner
+    config, state, writer, store, _ = _run_bounded_tick(
+        runtime, tmp_path, monkeypatch, on_schedule=lambda: reject(MARGIN_ID, reason="new failure")
+    )
+    real_read = controller_worker.read_actual_state
+    calls = 0
+
+    def read_with_corrupt_pre(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        actual = real_read(**kwargs)
+        calls += 1
+        if calls == 1:
+            corrupt_pre(actual)
+        return actual
+
+    monkeypatch.setattr(controller_worker, "read_actual_state", read_with_corrupt_pre)
+    # Terminal truth is five real entries. An invalid baseline must use the strict rule,
+    # including the review reproduction: global pending=4, per-connector pending=5.
+    with pytest.raises(ControllerTickError, match=r"has 5 unresolved dead-letter"):
+        run_controller_tick(config=config, state=state, store=store, writer=writer)
+    assert state.last_failure_stage == "actual_readback"
+    assert _call(writer, "failure")["kwargs"]["dlq_count"] == 5
+
+
 def test_oldest_age_is_none_when_source_readback_lacks_the_timestamp(margin_owner) -> None:
     runtime, _, _ = margin_owner
     actual = runtime._controller_readback_payload()

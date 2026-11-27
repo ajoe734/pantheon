@@ -847,6 +847,35 @@ def scoped_unresolved_dlq_by_connector(
     return result
 
 
+def _trusted_dlq_connector_counts(actual: Mapping[str, Any]) -> bool:
+    """Only consistent, attributed counts may be subtracted from terminal DLQ counts."""
+    if _trusted_unresolved_dlq_count(actual) is None:
+        return False
+    by_connector = actual.get("dlq_status_counts_by_connector")
+    status_counts = actual["dlq_status_counts"]
+    known_connector_ids = {
+        item.get("connector_id")
+        for item in actual.get("connectors") or []
+        if isinstance(item, Mapping) and item.get("configured") is True
+    }
+    return isinstance(by_connector, Mapping) and not (
+        any(
+            not isinstance(connector_id, str)
+            or not connector_id.strip()
+            or connector_id not in known_connector_ids
+            or not isinstance(counts, Mapping)
+            or set(counts) != set(status_counts)
+            or any(type(count) is not int or count < 0 for count in counts.values())
+            or sum(counts.values()) < 1
+            for connector_id, counts in by_connector.items()
+        )
+        or any(
+            sum(counts[status] for counts in by_connector.values()) != status_counts[status]
+            for status in status_counts
+        )
+    )
+
+
 def preexisting_dlq_backlog(
     pre_actual: Mapping[str, Any], connector_ids: Sequence[str]
 ) -> dict[str, Any]:
@@ -1016,28 +1045,7 @@ def _validate_terminal_readback(
                 actual_readback=actual,
             )
         by_connector = actual.get("dlq_status_counts_by_connector")
-        known_connector_ids = {
-            item.get("connector_id")
-            for item in actual.get("connectors") or []
-            if isinstance(item, Mapping) and item.get("configured") is True
-        }
-        if (
-            not isinstance(by_connector, Mapping)
-            or any(
-                not isinstance(connector_id, str)
-                or not connector_id.strip()
-                or connector_id not in known_connector_ids
-                or not isinstance(counts, Mapping)
-                or set(counts) != expected_dlq_statuses
-                or any(type(count) is not int or count < 0 for count in counts.values())
-                or sum(counts.values()) < 1
-                for connector_id, counts in by_connector.items()
-            )
-            or any(
-                sum(counts[status] for counts in by_connector.values()) != dlq_status_counts[status]
-                for status in expected_dlq_statuses
-            )
-        ):
+        if not _trusted_dlq_connector_counts(actual):
             raise ControllerTickError(
                 "actual_readback",
                 "authoritative source readback has missing, unknown or contradictory scoped dead-letter counts",
@@ -2317,12 +2325,13 @@ def run_controller_tick(
         else:
             steady = config.mode == COLLECTOR_STEADY_PULL_MODE
             exclusive_connector_ids = steady_pull_ids if steady else sorted(set(config.exclusive_connector_ids))
-            pre_steady_dlq = scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
             # The pre/post rule needs a pre-tick map that agrees with the pre-tick totals; otherwise
             # every unresolved entry in scope fails the tick, as before.
-            pre_steady_dlq_trusted = isinstance(
-                pre_actual.get("dlq_status_counts_by_connector"), Mapping
-            ) and _trusted_unresolved_dlq_count(pre_actual) is not None
+            pre_steady_dlq_trusted = _trusted_dlq_connector_counts(pre_actual)
+            pre_steady_dlq = (
+                scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
+                if pre_steady_dlq_trusted else {}
+            )
             frontier_recovery = recover_explicit_frontier(
                 api_url=config.api_url,
                 recovery_connector_ids=config.frontier_recovery_connector_ids,
@@ -2390,7 +2399,7 @@ def run_controller_tick(
             }
             accepted_actual["pre_existing_unresolved_dlq_count"] = sum(pre_steady_dlq.values())
             accepted_actual["pre_existing_unresolved_dlq_backlog"] = preexisting_dlq_backlog(
-                pre_actual, exclusive_connector_ids
+                pre_actual if pre_steady_dlq_trusted else {}, exclusive_connector_ids
             )
         accepted_actual["validated_frontier_connector_ids"] = sorted(
             set(config.exclusive_connector_ids) | set(steady_pull_ids)
