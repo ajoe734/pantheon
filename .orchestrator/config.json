@@ -431,7 +431,7 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
-          "CLAUDE_CONFIG_DIR": "~/.claude",
+          "CLAUDE_CONFIG_DIR": "~/.claude1",
           "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"
         },
         "model": "sonnet",
@@ -454,7 +454,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
-      "account": "claude1",
+      "account": "claude2",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -830,7 +830,7 @@
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
       "claude1": 6,
-      "claude2": 1,
+      "claude2": 3,
       "antigravity": 6,
       "antigravity2": 4,
       "codex1": 7,

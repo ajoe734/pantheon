@@ -69,6 +69,18 @@ def test_brokered_prompt_names_the_tools_and_has_no_json_reply_contract():
     assert "Return only JSON" not in p and "ignored" in p
 
 
+def test_brokered_prompt_requires_own_bank_recall_before_first_proposal_and_keeps_facts_and_mental_model_optional():
+    p = rt.build_brokered_cycle_prompt({"persona_id": "persona-crypto", "mandate": "m"}, {"pool": {}})
+    tools_line = next(line for line in p.splitlines() if line.startswith("Tools:"))
+    required_clause, optional_clause = tools_line.split(";", 1)
+    assert "before your first persona_proposal_submit" in required_clause
+    assert "must call persona_memory_recall on your own bank" in required_clause
+    assert 'bank "own"' in required_clause and "at least once" in required_clause
+    assert 'bank "facts"' in optional_clause
+    assert "persona_mental_model_read" in optional_clause
+    assert "optionally as often as you judge useful" in optional_clause
+
+
 def test_session_user_is_sent_as_the_openresponses_user():
     seen = {}
 

@@ -44,7 +44,7 @@ REGION="${PROD_GCP_ZONE%-*}"
 PROD_CADDY_CONTAINER="${PROD_CADDY_CONTAINER:-pantheon-caddy}"
 PROD_CADDY_DEFAULT_IMAGE="${PROD_CADDY_DEFAULT_IMAGE:-caddy:2.8.4@sha256:63c1eabfc22aae3fb9b8fbcefd7be7be9ec4eb9a409cb02821922e4f161dc697}"
 PROD_TARGET_MACHINE_TYPE="${PROD_TARGET_MACHINE_TYPE:-e2-standard-8}"
-PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-120}"
+PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-150}"
 PROD_DEFAULT_TEMPLATE_NAME="${PROD_DEFAULT_TEMPLATE_NAME:-pantheon-prod-control-template-e2s8-v3}"
 PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"
 PROD_SSH_WAIT_INTERVAL="${PROD_SSH_WAIT_INTERVAL:-5}"
@@ -835,6 +835,8 @@ done
   --source-instance-template "$TARGET_TEMPLATE" \
   --machine-type "$PROD_TARGET_MACHINE_TYPE" \
   --address "$STATIC_IP" \
+  --boot-disk-size="${TARGET_BOOT_SIZE_GB}GB" \
+  --boot-disk-type=pd-balanced \
   --disk "name=${PROD_DATA_DISK},device-name=${DATA_DEVICE_NAME},mode=rw,boot=no,auto-delete=no" >/dev/null 2>&1 \
   || rollback_to_old_boot_disk "create_new_vm" "failed to create replacement VM from template ${TARGET_TEMPLATE}"
 
@@ -861,6 +863,7 @@ def base(val: str) -> str:
 new_id = str(inst.get("id") or "").strip()
 new_mt = base(inst.get("machineType"))
 new_boot = ""
+new_boot_size_gb = ""
 data_attached = False
 for d in inst.get("disks") or []:
     if not isinstance(d, dict):
@@ -868,6 +871,7 @@ for d in inst.get("disks") or []:
     src = base(d.get("source"))
     if d.get("boot") is True:
         new_boot = src
+        new_boot_size_gb = str(d.get("diskSizeGb") or "").strip()
     elif src == data_disk:
         data_attached = True
 
@@ -889,11 +893,16 @@ elif got_ip != want_ip:
 print(f"NEW_INSTANCE_ID={shlex.quote(new_id)}")
 print(f"NEW_MACHINE_TYPE={shlex.quote(new_mt)}")
 print(f"NEW_BOOT_DISK={shlex.quote(new_boot if new_boot not in (old_boot, data_disk) else '')}")
+print(f"NEW_BOOT_SIZE_GB={shlex.quote(new_boot_size_gb)}")
 print(f"NEW_IDENTITY_ERR={shlex.quote(err)}")
 PY
 )" || rollback_to_old_boot_disk "verify_new_vm_identity" "replacement VM identity check failed (${NEW_VM_VARS:-invalid})"
 eval "$NEW_VM_VARS"
 [[ -z "${NEW_IDENTITY_ERR:-}" ]] || rollback_to_old_boot_disk "verify_new_vm_identity" "replacement VM identity check failed (${NEW_IDENTITY_ERR})"
+if [[ -n "${NEW_BOOT_DISK:-}" && "${NEW_BOOT_SIZE_GB:-}" =~ ^[0-9]+$ ]] && (( NEW_BOOT_SIZE_GB < PROD_MIN_BOOT_DISK_GB )); then
+  "$GCLOUD" compute disks resize "$NEW_BOOT_DISK" --size="${TARGET_BOOT_SIZE_GB}GB" --zone "$PROD_GCP_ZONE" --project "$PROD_GCP_PROJECT_ID" --quiet >/dev/null 2>&1 \
+    || rollback_to_old_boot_disk "resize_new_boot_disk" "failed to resize replacement boot disk ${NEW_BOOT_DISK} to ${TARGET_BOOT_SIZE_GB}GB"
+fi
 
 NEW_VCPUS="$("$GCLOUD" compute machine-types describe "$NEW_MACHINE_TYPE" \
   --project "$PROD_GCP_PROJECT_ID" --zone "$PROD_GCP_ZONE" --format='value(guestCpus)' 2>/dev/null | tr -d '[:space:]')"
@@ -1034,6 +1043,11 @@ RESTORE_OUT="$("$GCLOUD" compute ssh "$PROD_VM_NAME" --tunnel-through-iap --quie
   sudo install -d \"\$PROD_ROOT/bin\"
   sudo install -m 0755 \"\$B/bootstrap.sh\" \"\$B/prod_atomic_switch.sh\" \"\$B/prod_rollback.sh\" \"\$B/prod_ops.sh\" \"\$B/prod_preflight.py\" \"\$B/staging_sanitize.py\" \"\$B/release_manifest.py\" \"\$PROD_ROOT/bin/\"
   sudo install -m 0644 \"\$B/docker-compose.prod-control.yml\" \"\$B/Caddyfile\" \"\$PROD_ROOT/bin/\"
+  root_src=\"\$(findmnt -n -o SOURCE / 2>/dev/null || true)\"
+  if [[ \"\$root_src\" =~ ^(/dev/[a-z0-9]+p?)([0-9]+)\$ ]]; then
+    sudo growpart \"\${BASH_REMATCH[1]%p}\" \"\${BASH_REMATCH[2]}\" >/dev/null 2>&1 || true
+    sudo resize2fs \"\$root_src\" >/dev/null 2>&1 || true
+  fi
   sudo -H -E env PROD_USE_SUDO=true PROD_ALLOW_APT_INSTALL=true PROD_REGISTRY_AUTH=true PROD_REQUIRE_FULL_SECRET_KEYS=true \
     PROD_MACHINE_TYPE=\"${NEW_MACHINE_TYPE}\" \
     PROD_SECRETS_ENV_FILE=\"\$PROD_DATA_MOUNT/secrets/prod.secrets.env\" \

@@ -2270,14 +2270,17 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         # while both Codex accounts are quota-terminal; both lanes share this cap.
         self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
 
-    def test_repo_claude_dispatch_uses_the_shared_account_cap(self) -> None:
+    def test_repo_claude_dispatch_uses_separate_account_caps(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text())
-        account = supervisor.agent_account_id(config, "claude")
-        self.assertTrue(bool(account) and account == supervisor.agent_account_id(config, "claude2"))
-        # Operator 2026-11-11: run Claude2 at full capacity; both lanes share the claude1 account cap.
-        self.assertEqual(config["ready_dispatcher"]["max_concurrent_per_account"][account], 6)
+        # Operator 2026-11-27: each Claude lane has its own login and account cap.
+        accounts = {name: supervisor.agent_account_id(config, name) for name in ("claude", "claude2")}
+        self.assertTrue(all(accounts.values()))
+        self.assertNotEqual(accounts["claude"], accounts["claude2"])
+        caps = config["ready_dispatcher"]["max_concurrent_per_account"]
+        self.assertEqual([caps[accounts["claude"]], caps[accounts["claude2"]]], [6, 3])
         expected_capacity = {"claude": 3, "claude2": 3}
         for agent_id, capacity in expected_capacity.items():
+            account = accounts[agent_id]
             with self.subTest(agent_id=agent_id, capacity=capacity):
                 lane = supervisor.delivery_lane_for_agent(config, agent_id)
                 self.assertEqual(lane.max_parallel, capacity)
