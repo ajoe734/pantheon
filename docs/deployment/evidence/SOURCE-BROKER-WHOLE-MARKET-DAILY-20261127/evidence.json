@@ -401,6 +401,16 @@
         "command": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_finmind_broker_whole_market.py scripts/test_deploy_nonprod_vm.py -k 'session or whole_market'",
         "result": "49 passed, 222 deselected in 49.96s",
         "exit_status": 0
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -vv -s scripts/test_dev_tw_market_refresh.py",
+        "exit_status": 124,
+        "result": "The 132-item suite was still progressing at the 180-second foreground bound; no terminal pytest summary, so this is not a pass. Final running case: test_refresh_entrypoint_taifex_fails_closed_on_token_or_desired_state_exec_failure[fail_token_exec-failed to read controller_token from running source-ingest container cid-source-ingest-recreated]. No failed assertion was emitted before timeout; earlier PASSED lines are not counted as a successful batch."
+      },
+      {
+        "command": "git diff --check && python3 -m json.tool docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json > /dev/null",
+        "exit_status": 0,
+        "result": "Whitespace and JSON syntax checks passed; evidence/register changes only."
       }
     ],
     "residual_findings": [
@@ -408,7 +418,7 @@
         "class": "RC1 required-check pipeline / WP1.4",
         "finding": "Serial mixed Smoke acceptance exhausts its global 40-minute job budget after source and deployment tests passed; the final refresh suite received only about 37 seconds. This run contains no failing source test assertion.",
         "owning_domain": "Remediation mechanisms / release CI pipeline (problem-register domain owners f4c32790 and 4d1476a3)",
-        "existing_chain": "RC1 required check that fails under CI load; class-task and timing-fix successors in problem-register (prior SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125 are archived done; no active CI/pipeline task found in the canonical projection).",
+        "existing_chain": "RC1 required check that fails under CI load / WP1.4, recorded in problem-register. Governed show confirmed prior SOURCE-INGEST-TEST-WALL-CLOCK-BOUNDS-DETERMINISTIC-20261118 and CI-REQUIRED-CHECK-TIMING-FLAKES-R3-20261125 are archived done; those terminal tasks are not new dependencies. The domain coordinator must reconcile the surviving aggregate-budget obligation.",
         "required_correction": "The owning coordinator must repair the aggregate required-check budget without dropping correctness assertions, or explicitly extend this task artifact contract to the necessary pipeline files. .github/workflows/branch-ci.yml, .github/pantheon-stage0-matrix.json and scripts/ci_stage0.py are not declared artifacts for this task. A changed source head then needs fresh independent exact-head review; do not reuse the revoked approval.",
         "disposition": "External CI delivery blocker; not a dependency on already-done SOURCE-BROKER-TOP-KEYED-SIDE-20261127."
       }
