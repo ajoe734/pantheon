@@ -6291,6 +6291,28 @@
     "file": "services/registry/pg_store.py",
     "contains": "ARTIFACT_TYPE_INDEX_SQL = \"(payload ->> 'artifact_type')\""
    }
+  },
+  {
+   "name": "Agora paper intent execution (trading_room_store_state handoff paper_execution block; binding-queue decision records agora-intent:*, agora-intent-cap:*, agora-intent-enqueued:*)",
+   "owner": "paper execution lane (services/execution/lean_runtime/agora_paper_intent_consumer.py inside paper-signal-producer); handoff block in the Agora trading-room store (services/control-plane/bff/agora/trading_room/store.py)",
+   "writer": "AgoraPaperIntentConsumer.consume once per paper-signal-producer tick (PAPER_PRODUCER_INTERVAL_SECONDS, 60 s): drains at most 100 open paper_execution handoffs per tenant through GET /internal/agora/paper-execution/handoffs, writes state back through POST /internal/agora/paper-execution/handoffs/{id}/state, and enqueues one paper signal per accepted handoff through DecisionSignalProducer",
+   "task": "AGORA-PAPER-INTENT-EXECUTION-20261127",
+   "register_class": "RC4",
+   "cadence": "event-driven by trader decisions (確認執行 / 修改部位 with stage paper); one handoff, one paper signal and one broker paper order per confirmed decision; one drain GET per tenant per tick and at most three state writes per handoff (accepted, then filled / partially_filled / rejected)",
+   "cap": "AGORA_PAPER_INTENT_DAILY_CAP = 50 executed (accepted) intents per trader servant per Taipei day, enforced by the consumer with write-once slot records agora-intent-cap:<servant>:<day>:<1..50>; the 51st is rejected with reason_code daily_cap (the BFF stamps daily_cap 50 on each request). Drain page capped at 100 (route maximum 200); state_history capped at 10 entries per handoff",
+   "size": "measured: handoff record 1,073 B at submit, 1,816 B after filled (paper_execution block about 740 B); Redis per admitted intent: admission record 324 B, cap slot 48 B, enqueued marker 92 B (464 B); paper signal 1,925 B (queue item, removed on ack; processed marker 24 h)",
+   "size_per_day": "at the cap: 50 x 1.8 KB = about 91 KB of handoff JSONB and 50 x 464 B = about 23 KB of Redis records per trader per day; hosted Dev today has no trader decision locks (decision-events items=[] on 2026-11-26), so expected near 0",
+   "growth_per_day": "at most about 114 KB per trader per day at the cap; Redis part bounded by its TTL",
+   "count_at_hosted_scale": "0 handoffs on hosted Dev before this task (paper handoffs had no reader); one dev trader for the hosted proof",
+   "cleanup": "Redis decision records expire after 30 days (RedisPendingSignalStore _decision_ttl_seconds), so at most 50 x 30 x 464 B = about 0.7 MB per trader; signals leave the queue on ack; broker paper orders follow the broker paper store's existing retention; handoff records follow the existing trading-room store (one JSONB row, no retention job today; at the cap about 33 MB per trader per year, recorded as a residual for the trading-room store owner)",
+   "readers": [
+    "services/execution/lean_runtime/agora_paper_intent_consumer.py",
+    "services/control-plane/bff/agora/trading_room/routes/intents.py (GET /bff/agora/trading-intents/{intent_id})"
+   ],
+   "bound_proof": {
+    "file": "services/execution/lean_runtime/agora_paper_intent_consumer.py",
+    "contains": "AGORA_PAPER_INTENT_DAILY_CAP = 50"
+   }
   }
  ]
 }
