@@ -869,6 +869,8 @@ class PersonaStrategyPoolStore:
                              "days": stats[ref]["days"], "drawdown": stats[ref]["drawdown"]})
         return outcomes
 
+    MAX_REFUSALS = 20
+
     def _record_refusal(
         self,
         persona_id: str,
@@ -877,6 +879,7 @@ class PersonaStrategyPoolStore:
         actor_id: str,
         exc: PoolMemberRefused,
     ) -> None:
+        step = str(getattr(exc, "step", None) or "member")
         for _ in range(8):
             current = self._records.get(persona_id)
             if current is not None and current.get("tenant_id") != tenant_id:
@@ -886,16 +889,40 @@ class PersonaStrategyPoolStore:
                 if current is not None
                 else {"persona_id": persona_id, "tenant_id": tenant_id, "versions": [], "refusals": []}
             )
-            record["refusals"] = list(record.get("refusals", [])) + [
-                {
-                    "refused_at": self._now(),
-                    "actor_id": actor_id,
-                    "artifact_ref": exc.artifact_ref,
-                    "reason": exc.reason,
-                    "attempted_against_version": request.expected_version,
-                    "change_reason": request.change_reason,
-                }
-            ]
+            ts = self._now()
+            refusals = list(record.get("refusals") or [])
+            if (
+                refusals
+                and isinstance(refusals[-1], Mapping)
+                and str(refusals[-1].get("step") or "member") == step
+                and refusals[-1].get("reason") == exc.reason
+                and refusals[-1].get("artifact_ref") == exc.artifact_ref
+            ):
+                newest = dict(refusals[-1])
+                newest.setdefault("refused_at", ts)
+                newest["last_at"] = ts
+                newest["count"] = int(newest.get("count") or 1) + 1
+                newest["step"] = step
+                newest["actor_id"] = actor_id
+                newest["artifact_ref"] = exc.artifact_ref
+                newest["attempted_against_version"] = request.expected_version
+                newest["change_reason"] = request.change_reason
+                refusals[-1] = newest
+            else:
+                refusals.append(
+                    {
+                        "refused_at": ts,
+                        "last_at": ts,
+                        "count": 1,
+                        "step": step,
+                        "actor_id": actor_id,
+                        "artifact_ref": exc.artifact_ref,
+                        "reason": exc.reason,
+                        "attempted_against_version": request.expected_version,
+                        "change_reason": request.change_reason,
+                    }
+                )
+            record["refusals"] = refusals[-self.MAX_REFUSALS :]
             ok, _ = self._records.compare_and_set(persona_id, current, record)
             if ok:
                 return

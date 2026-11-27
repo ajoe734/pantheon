@@ -4,7 +4,7 @@
   "class": "RC2",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at_utc": "2026-11-27T14:15:00Z",
+  "recorded_at_utc": "2026-11-27T16:15:00Z",
   "ac1_skip_bootstrap_and_gateway_source_citations": {
     "config_entry": {
       "path": "agents.defaults.skipBootstrap",
@@ -153,7 +153,7 @@
       "just came online",
       "i'd go by"
     ],
-    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
+    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%' OR skip_reason LIKE 'hypothesis_compiler_failed:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
   },
   "ac5_discovery_pipeline_release_probe": {
     "probe_file": "acceptance/discovery_pipeline_day.py",
@@ -189,7 +189,7 @@
       ".venv-pantheon/bin/python3 scripts/git/diff_budget.py --base origin/dev"
     ],
     "results": {
-      "focused_suite": "267 passed, 1 deselected in 97.29s",
+      "focused_suite": "271 passed, 1 deselected",
       "storage_manifest_check": "passed: true, failures: []"
     }
   }

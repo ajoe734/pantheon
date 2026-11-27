@@ -310,6 +310,59 @@ def _calls(gateway, since):
     return gateway["methods"][since:]
 
 
+@pytest.mark.parametrize("identity", [
+    {"persona_class": "consult_panel"}, {"persona_class": "agora_servant"},
+    {"persona_class": "agora_advisor"}, {"origin": "private_servant"},
+    {"origin": "agora_advisor"}, {"owner_scope": "user_private"},
+    {"consult_policy_id": "consult-panel.non-trading"},
+    {"agora_user_id": "u", "execution_authority": "none"},
+])
+@pytest.mark.parametrize("lifecycle", ["paper_owner", "paper_running"])
+def test_advisory_paper_owner_removed_before_run_without_book_mutation(system, monkeypatch, identity, lifecycle):
+    controller, gateway, owner, pool = system
+    # An existing daily job and terminal run survive from before classification.
+    assert controller.reconcile_once()["eligible_count"] == 1
+    since = len(gateway["methods"])
+    gateway["runs"]["job-1"] = [run(1)]
+    pid = "persona-cycle-test"
+    old = owner._records.get(pid)
+    advisory = {**old, "metadata": {**old.get("metadata", {}), **identity}}
+    assert owner._records.compare_and_set(pid, old, advisory)[0]
+    owner_before = copy.deepcopy(owner._records.get(pid))
+    before = {**owner_before, "lifecycle_state": lifecycle}
+    if lifecycle == "paper_running":
+        # The controller also accepts this legacy read shape; current owner
+        # writes allow paper_owner, so replay it at the owner read boundary.
+        monkeypatch.setattr(controller.owners, "personas", lambda: [before])
+    pool_before = copy.deepcopy(pool._records.list_all())
+    telemetry_before = copy.deepcopy(gateway["telemetry"].list(tenant_id=TENANT_A))
+    assert not regime_consumer.is_daily_cycle_persona(before)
+    report = controller.reconcile_once()
+    assert report["excluded"] == [{"persona_id": pid, "reason": "persona_not_enrolled_for_daily_execution"}]
+    assert report["jobs"] == {} and report["personas"] == {} and report["failures"] == []
+    assert not gateway["jobs"]
+    assert "cron.runs" not in _calls(gateway, since)
+    with pytest.raises(ValueError, match="persona_not_enrolled_for_daily_execution"):
+        controller.consume_run(before, "job-1", run(1))
+    assert not read_packets(controller.path) and not controller.path.exists()
+    assert gateway["ensures"] == [] and gateway["turns"] == 0
+    assert owner._records.get(pid) == owner_before
+    assert pool._records.list_all() == pool_before
+    assert gateway["telemetry"].list(tenant_id=TENANT_A) == telemetry_before
+
+
+def test_metadata_free_trading_persona_still_runs(system):
+    controller, gateway, owner, _ = system
+    persona = owner._records.get("persona-cycle-test")
+    assert not persona.get("metadata", {}).get("persona_class")
+    assert regime_consumer.is_daily_cycle_persona(persona)
+    controller.reconcile_once()
+    gateway["runs"]["job-1"] = [run(1)]
+    report = controller.reconcile_once()
+    assert report["excluded"] == [] and report["failures"] == []
+    assert len(gateway["ensures"]) == len(read_packets(controller.path)) == 1
+
+
 def test_poll_budget_idle_pass_is_one_call_and_runs_read_only_on_change(system):
     controller, gateway, _, _ = system
     controller.reconcile_once()

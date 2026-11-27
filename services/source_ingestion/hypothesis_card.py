@@ -825,13 +825,19 @@ class FixedDefectOutcome:
     required_substrings: tuple[str, ...] = ()
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
+    prefix: str = "hypothesis_extraction_failed:"
     skip_reason_prefix: str = "hypothesis_extraction_failed:"
     skip_reason_prefixes: tuple[str, ...] = ()
     case_insensitive: bool = False
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        prefixes = self.skip_reason_prefixes or (self.skip_reason_prefix,)
+        if self.skip_reason_prefixes:
+            prefixes = self.skip_reason_prefixes
+        elif self.prefix != "hypothesis_extraction_failed:":
+            prefixes = (self.prefix,)
+        else:
+            prefixes = (self.skip_reason_prefix,)
         if not any(text.startswith(prefix) for prefix in prefixes):
             return False
         normalized = _normalize_apostrophes(text) if self.case_insensitive else text
@@ -911,6 +917,18 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         excluded_substrings=("no model call made", "> 3072"),
     ),
     FixedDefectOutcome(
+        code="compiler_proposer_15s_deadline_timeout",
+        fix="L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127",
+        description=(
+            "HypothesisCompiler client_proposer used the hard-coded 15 s "
+            "_PROPOSE_TIMEOUT_SECONDS deadline and no max_output_tokens, failing testable "
+            "cards with hypothesis_compiler_failed: proposer_failed"
+        ),
+        required_substrings=("proposer_failed",),
+        prefix="hypothesis_compiler_failed:",
+        skip_reason_prefix="hypothesis_compiler_failed:",
+    ),
+    FixedDefectOutcome(
         code="openclaw_workspace_first_run_ritual",
         fix="OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
         description=(
@@ -918,6 +936,7 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
             "was injected into workspace-structured-extraction before skipBootstrap and "
             "workspace retirement, closing 60 sources as no_hypothesis with ritual text"
         ),
+        prefix="no_hypothesis:",
         skip_reason_prefix="no_hypothesis:",
         skip_reason_prefixes=("no_hypothesis:", "hypothesis_extraction_failed:"),
         any_substrings=FIRST_RUN_RITUAL_MARKERS,

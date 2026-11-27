@@ -454,3 +454,107 @@ def test_controller_tick_uses_predictions_through_environment_wiring(tmp_path, m
             ("tw_monthly_revenue", 1), ("unlisted_orders", 1),
         ]
         assert conn.execute("SELECT support_count FROM rule_drafts").fetchall() == [(1,)]
+
+
+# --- L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127 -----------------------
+
+
+def test_proposer_deadline_and_output_limit_sized_from_measured_proposal_answers(monkeypatch):
+    from services.source_ingestion import hypothesis_compiler as hc
+    from services.source_ingestion import semantic_extraction as se
+    from services.source_ingestion.hypothesis_compiler import (
+        MEASURED_PROPOSAL_OUTPUT_TOKENS,
+        client_proposer,
+        proposer_deadline_seconds,
+        proposer_max_output_tokens,
+    )
+
+    assert not hasattr(hc, "_PROPOSE_TIMEOUT_SECONDS")
+
+    # Verify the checked-in measurement figures match actual proposal sizes.
+    legacy = _proposal()
+    screen_entry = _screen_entry_recording()["proposal"]
+    assert se.estimate_prompt_tokens(json.dumps(legacy, ensure_ascii=False, separators=(",", ":"))) == (
+        MEASURED_PROPOSAL_OUTPUT_TOKENS["legacy_compact"]
+    )
+    assert se.estimate_prompt_tokens(json.dumps(legacy, ensure_ascii=False, indent=2)) == (
+        MEASURED_PROPOSAL_OUTPUT_TOKENS["legacy_formatted"]
+    )
+    assert se.estimate_prompt_tokens(json.dumps(screen_entry, ensure_ascii=False, separators=(",", ":"))) == (
+        MEASURED_PROPOSAL_OUTPUT_TOKENS["screen_entry_compact"]
+    )
+    assert se.estimate_prompt_tokens(json.dumps(screen_entry, ensure_ascii=False, indent=2)) == (
+        MEASURED_PROPOSAL_OUTPUT_TOKENS["screen_entry_formatted"]
+    )
+
+    for env_name in (se.HYPOTHESIS_CARD_DEADLINE_ENV, se.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV):
+        monkeypatch.delenv(env_name, raising=False)
+    assert proposer_deadline_seconds() == 90.0
+    assert proposer_max_output_tokens() == 3072
+    assert proposer_max_output_tokens() >= int(1.9 * MEASURED_PROPOSAL_OUTPUT_TOKENS["screen_entry_formatted"])
+    assert proposer_max_output_tokens() >= int(1.3 * MEASURED_PROPOSAL_OUTPUT_TOKENS["alpha101_max_compact"])
+
+    seen: list[dict] = []
+    client = SemanticExtractionClient(
+        transport_fn=lambda payload: (
+            seen.append(payload),
+            {"output": {"structured_data": _proposal(), "usage": {"input_tokens": 2100, "output_tokens": 896}}},
+        )[1]
+    )
+    proposer = client_proposer(client)
+    proposer(_card(), hc.catalogue_summary())
+    assert seen[-1]["timeout_seconds"] == 90.0
+    assert seen[-1]["max_output_tokens"] == 3072
+    assert proposer.last_usage == {"input_tokens": 2100, "output_tokens": 896}
+
+    # Dynamic env override applies to both deadline and max_output_tokens.
+    monkeypatch.setenv(se.HYPOTHESIS_CARD_DEADLINE_ENV, "60")
+    monkeypatch.setenv(se.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV, "4096")
+    proposer(_card(), hc.catalogue_summary())
+    assert seen[-1]["timeout_seconds"] == 60.0
+    assert seen[-1]["max_output_tokens"] == 4096
+
+
+def test_proposer_call_metered_in_ledger_with_own_outcome_and_usage(tmp_path):
+    from services.source_ingestion.hypothesis_compiler import client_proposer
+
+    calls: list[dict] = []
+
+    def transport(payload):
+        calls.append(payload)
+        return {
+            "output": {
+                "structured_data": _proposal(),
+                "usage": {"input_tokens": 2450, "output_tokens": 896},
+            }
+        }
+
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=400)
+    client = SemanticExtractionClient(transport_fn=transport)
+    comp = HypothesisCompiler(client_proposer(client), CompilerStore(), ledger=ledger)
+
+    out1 = comp.compile(_card(1), source_id="src-1", digest="d-1")
+    assert out1.status == COMPILED
+    assert ledger.calls_today() == 1
+    assert ledger.events("src-1") == [
+        {
+            "ts": ledger.events("src-1")[0]["ts"],
+            "source_id": "src-1",
+            "outcome": "compiled",
+            "detail": out1.fingerprint,
+            "usage": {"input_tokens": 2450, "output_tokens": 896},
+        }
+    ]
+
+    # Second card with identical rule structure records support_added with usage.
+    out2 = comp.compile(_card(2), source_id="src-2", digest="d-2")
+    assert out2.status == SUPPORT_ADDED and out2.support_count == 2
+    assert ledger.calls_today() == 2
+    assert ledger.events("src-2")[0]["outcome"] == "support_added"
+    assert ledger.events("src-2")[0]["usage"] == {"input_tokens": 2450, "output_tokens": 896}
+
+    # Replay of already-compiled card in CompilerStore makes 0 calls and adds 0 ledger events.
+    cached = comp.compile(_card(1), source_id="src-1", digest="d-1")
+    assert cached.extra.get("cached") is True
+    assert ledger.calls_today() == 2
+    assert len(ledger.events("src-1")) == 1
