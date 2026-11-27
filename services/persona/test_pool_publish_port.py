@@ -10,6 +10,37 @@ from services.persona.pool_publish_port import envelope_publication_requirement,
 PERSONA = {"persona_id": "p1", "tenant_id": "t1"}
 
 
+def test_only_own_pending_decisions_for_confirmed_membership_are_superseded():
+    import copy
+    current = pool(m("a", weight=1.0), version=6)
+    confirmed = {"status": "published", "members": current["members"], "pool_version": 2,
+                 "envelope_artifact_id": "artifact-persona-pool-test-v2"}
+    own = {"decision_id": "old", "created_by_id": "persona-svc", "tenant_id": "t1", "persona_id": "p1",
+           "decision_state": "proposed", "metadata": {"decision_kind": "pool_envelope_publication", "paper_only": True,
+                                                       "membership_digest": membership_digest(current)}}
+    others = []
+    for field, value in (("tenant_id", "foreign"), ("persona_id", "other"), ("created_by_id", "operator"),
+                         ("decision_state", "approved")):
+        others.append({**copy.deepcopy(own), field: value})
+    others.append({**own, "metadata": {**own["metadata"], "membership_digest": "other-membership"}})
+    writes = []
+    def transport(method, service, path, tenant, body=None):
+        if method == "GET":
+            assert "decision_state=proposed%2Creviewed" in path and tenant == "t1"
+            return [own, *others]
+        writes.append((path, body))
+        own["decision_state"] = "superseded"
+        return own
+    ports = HttpPoolCyclePorts(transport, pool_store=SimpleNamespace(), env={})
+    assert ports.supersede_publication_operator_decisions(PERSONA, current, confirmed) == ["old"]
+    assert writes[0][0] == "/api/evolution/proposals/old/supersede"
+    assert writes[0][1]["note"] == "publication_membership_already_confirmed"
+    assert ports.supersede_publication_operator_decisions(PERSONA, current, confirmed) == []
+    changed = pool(m("a"), m("b"))
+    assert ports.supersede_publication_operator_decisions(PERSONA, changed, confirmed) == []
+    assert len(writes) == 1
+
+
 def m(ref, stage="active", weight=.5):
     return {"artifact_ref": ref, "checksum": "sha256:" + "a" * 64, "stage": stage, "risk_weight": weight}
 
@@ -76,7 +107,8 @@ def test_publish_and_history_go_through_the_bff_publish_routes():
     ports = HttpPoolCyclePorts(transport, pool_store=SimpleNamespace(), env={})
     assert ports.publish_pool(PERSONA, 7) == {"status": "published"}
     assert ports.publication_state(PERSONA) == {"status": "published"}
-    assert calls[0] == ("POST", "bff", "/bff/personas/p1/strategy-pool/publish", "t1", {"pool_version": 7, "stage": "paper"})
+    assert calls[0] == ("POST", "bff", "/bff/personas/p1/strategy-pool/publish", "t1",
+                        {"pool_version": 7, "stage": "paper", "defer_confirmation": True})
     assert calls[1][:3] == ("GET", "bff", "/bff/personas/p1/strategy-pool/publish-history")
 
 

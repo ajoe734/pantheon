@@ -5502,7 +5502,7 @@ class PersonaProvisioningCoordinator:
     # ------------------------------------------------------------------
     # Pool envelope publication (R6): same owner paths, paper scope only.
     # ------------------------------------------------------------------
-    def publish_pool_envelope(self, publication: Mapping[str, Any]) -> dict[str, Any]:
+    def publish_pool_envelope(self, publication: Mapping[str, Any], *, binding_snapshot=None) -> dict[str, Any]:
         """Admit one immutable pool-envelope artifact and move the binding.
 
         Every owner write is GET-first with authoritative readback, so a
@@ -5552,10 +5552,10 @@ class PersonaProvisioningCoordinator:
             )
         bindings = [
             b
-            for b in self.runtime_binding_reader(
+            for b in (binding_snapshot if binding_snapshot is not None else self.runtime_binding_reader(
                 str(previous.get("plan_id") or ids.deployment_plan_id),
                 ids.capital_pool_id,
-            )
+            ))
             if str(b.get("status") or "") not in TERMINAL_RUNTIME_BINDING_STATUSES
         ]
         current = [

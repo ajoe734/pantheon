@@ -22,6 +22,117 @@ class _NoCoordinator:
         raise AssertionError("owner chain must not run")
 
 
+def _dispatched_world(world):
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import PERSONA, TENANT
+    world.append([world.member("artifact-a", 1.0)], 0)
+    world.publisher.publish(tenant_id=TENANT, persona_id=PERSONA, requested_by="test")
+    history = world.publisher.history(TENANT, PERSONA)
+    # The hosted legacy shape: binding moved, receipt remains dispatched, no runtime_id.
+    history["published"]["1"]["status"] = "dispatched"
+    history["current_envelope"] = None
+    key = world.publisher._key(TENANT, PERSONA)
+    old = world.publisher.records.get(key)
+    assert world.publisher.records.compare_and_set(key, old, history)[0]
+    return TENANT, PERSONA, history
+
+
+def test_hosted_dispatch_v2_to_v6_keeps_one_binding_read_per_cycle(world, monkeypatch, tmp_path):
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import H, PERSONA, TENANT, _client
+    from services.persona.pool_autonomy_cycle import HttpPoolCyclePorts, PoolAutonomyCycle
+    from services.persona.pool_publish_port import membership_digest
+
+    for expected in range(2):
+        world.append([world.member("artifact-a", 1.0)], expected)
+    world.publisher.publish(tenant_id=TENANT, persona_id=PERSONA, requested_by="test", pool_version=2)
+    key = world.publisher._key(TENANT, PERSONA)
+    old = world.publisher.records.get(key)
+    import copy
+    legacy = copy.deepcopy(old)
+    legacy["published"]["2"]["status"] = "dispatched"
+    for pin in legacy["published"]["2"]["members"]:
+        pin.pop("joined_at", None)
+    legacy["current_envelope"] = None
+    assert world.publisher.records.compare_and_set(key, old, legacy)[0]
+    for expected in range(2, 6):
+        world.append([world.member("artifact-a", 1.0)], expected)
+    current = world.pool.current(PERSONA, TENANT)
+    pending = {"decision_id": "old-publication-decision", "created_by_id": "persona-svc", "tenant_id": TENANT,
+               "persona_id": PERSONA, "decision_state": "proposed", "metadata": {
+                   "decision_kind": "pool_envelope_publication", "paper_only": True,
+                   "membership_digest": membership_digest(current)}}
+    retired = []
+    client = _client(world, monkeypatch, tmp_path)
+    def transport(method, service, path, tenant, body=None):
+        if service == "evolution":
+            if method == "GET":
+                return [pending] if pending["decision_state"] == "proposed" else []
+            assert path.endswith("/supersede")
+            pending["decision_state"] = "superseded"
+            retired.append(body)
+            return pending
+        response = client.request(method, path, json=body, headers=H)
+        assert response.status_code == 200, response.text
+        return response.json()
+    reads = []
+    reader = world.coordinator.runtime_binding_reader
+    world.coordinator.runtime_binding_reader = lambda *args: reads.append(args) or reader(*args)
+    ports = HttpPoolCyclePorts(transport, pool_store=world.pool,
+                              consultation_factory=lambda *a: pytest.fail("no consultation"))
+    cycle = PoolAutonomyCycle(ports)
+    persona = {"persona_id": PERSONA, "tenant_id": TENANT}
+    first = cycle._publish(persona, "confirm-v2")
+    assert first["status"] == "published" and first["pool_version"] == 2 and first["next_pool_version"] == 6
+    assert len(reads) == 1 and len(retired) == 1 and pending["decision_state"] == "superseded"
+    for packet, expected_status, expected_reads in (("dispatch-v6", "unconfirmed", 1),
+                                                   ("confirm-v6", "unchanged", 1), ("settled", "unchanged", 0)):
+        reads.clear()
+        result = cycle._publish(persona, packet)
+        assert result["status"] == expected_status, result
+        assert len(reads) == expected_reads
+    history = world.publisher.history(TENANT, PERSONA)
+    assert history["current_envelope"]["pool_version"] == 6
+    assert history["published"]["6"]["members"][0]["joined_at"] == current["members"][0]["joined_at"]
+    assert len(retired) == 1 and len(world.pool.versions(PERSONA, TENANT)) == 6
+
+
+def test_dispatched_running_envelope_confirms_once_without_registry_or_dispatch(world):
+    tenant, persona, before = _dispatched_world(world)
+    reads = []
+    reader = world.coordinator.runtime_binding_reader
+    world.coordinator.runtime_binding_reader = lambda *a: reads.append(a) or reader(*a)
+    world.coordinator.publish_pool_envelope = lambda *a: pytest.fail("must not redispatch")
+    world.publisher._registry_view = lambda *a: pytest.fail("no registry read needed to confirm")
+    out = world.publisher.publish(tenant_id=tenant, persona_id=persona, requested_by="test", pool_version=1)
+    history = world.publisher.history(tenant, persona)
+    assert out["status"] == "published" and len(reads) == 1
+    assert history["current_envelope"]["artifact_id"] == before["published"]["1"]["envelope_artifact_id"]
+    assert history["published"]["1"] == {**before["published"]["1"], "status": "published"}
+    assert history["refusals"] == before["refusals"]
+
+
+@pytest.mark.parametrize("field,value", [("artifact_id", "other"), ("artifact_version", "9.9.9"),
+    ("deployment_mode", "live"), ("persona_capital_binding_id", "foreign"), ("status", "paused")])
+def test_confirmation_requires_exact_active_paper_binding(world, field, value):
+    from types import SimpleNamespace
+    tenant, persona, history = _dispatched_world(world)
+    entry = history["published"]["1"]
+    binding = next(b for b in world.runtime.bindings.values() if b["status"] == "active")
+    ids = SimpleNamespace(capital_pool_id=binding["capital_pool_id"],
+                          persona_capital_binding_id=binding["persona_capital_binding_id"])
+    assert not world.publisher._binding_moved(ids, entry, bindings=[{**binding, field: value}])
+    assert world.publisher.history(tenant, persona)["published"]["1"]["status"] == "dispatched"
+
+
+def test_confirmation_does_not_choose_between_two_nonterminal_bindings(world):
+    from types import SimpleNamespace
+    tenant, persona, history = _dispatched_world(world)
+    binding = next(b for b in world.runtime.bindings.values() if b["status"] == "active")
+    ids = SimpleNamespace(capital_pool_id=binding["capital_pool_id"],
+                          persona_capital_binding_id=binding["persona_capital_binding_id"])
+    assert not world.publisher._binding_moved(ids, history["published"]["1"],
+                                              bindings=[binding, {**binding, "status": "paused"}])
+
+
 class _Pool:
     def current(self, persona_id, tenant_id):
         raise PoolNotFound("no strategy pool for persona 'p'")
@@ -361,6 +472,8 @@ def test_running_envelope_without_joined_at_is_republished_once_and_reaches_the_
 
     # 2. The cycle's publish step through the real HTTP ports (BFF calls go to the real route).
     def transport(method, service, path, tenant, body=None):
+        if service == "evolution" and method == "GET":
+            return []
         assert service == "bff" and tenant == TENANT
         response = client.request(method, path, json=body, headers=H)
         assert response.status_code == 200, response.text
@@ -370,7 +483,7 @@ def test_running_envelope_without_joined_at_is_republished_once_and_reaches_the_
     ports = HttpPoolCyclePorts(transport, pool_store=world.pool, consultation_factory=lambda *a: pytest.fail("no consultation"))
     cycle = PoolAutonomyCycle(ports)
     first = cycle._publish(persona, "pk-1")
-    assert first["status"] == "published", first
+    assert first["status"] == "unconfirmed", first
     assert first["reasons"] == ["envelope_member_admission_missing:artifact-a"] and first["republished_version"] == 2
     versions = world.pool.versions(PERSONA, TENANT)
     assert len(versions) == 2 and versions[1]["members"] == versions[0]["members"]

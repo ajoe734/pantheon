@@ -2255,6 +2255,47 @@ def reject_proposal(decision_id: str, body: RejectRequest):
 
 # --- Cancel ------------------------------------------------------------------
 
+class SupersedePoolPublicationRequest(BaseModel):
+    tenant_id: str
+    actor_role: str
+    actor_id: str
+    membership_digest: str
+    superseded_by: str
+    note: str
+
+
+@app.post("/api/evolution/proposals/{decision_id}/supersede", response_model=DecisionResponse)
+def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationRequest):
+    """A controller may withdraw only its own pending paper-publication escalation."""
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
+    meta = decision.metadata or {}
+    if (body.actor_role != "evolution_controller" or body.actor_id != "persona-svc"
+            or decision.created_by_id != body.actor_id
+            or decision.action_type != EvolutionActionType.FLAG_FOR_REVIEW
+            or meta.get("decision_kind") != "pool_envelope_publication"
+            or meta.get("paper_only") is not True
+            or not body.membership_digest or meta.get("membership_digest") != body.membership_digest
+            or not body.superseded_by.startswith("artifact-persona-pool-")
+            or body.note != "publication_membership_already_confirmed"):
+        raise HTTPException(status_code=403, detail="pool_publication_withdrawal_binding_mismatch")
+    if decision.decision_state == EvolutionDecisionState.SUPERSEDED:
+        if decision.superseded_by == body.superseded_by:
+            return _decision_to_response(decision)
+        raise HTTPException(status_code=409, detail="pool_publication_already_superseded")
+    if decision.decision_state not in (EvolutionDecisionState.PROPOSED, EvolutionDecisionState.REVIEWED):
+        raise HTTPException(status_code=409, detail="pool_publication_already_decided")
+    try:
+        decision.supersede(body.superseded_by)
+        decision.metadata = {**meta, "superseded_reason": body.note}
+        store.put(decision)  # store snapshot CAS refuses a concurrent operator decision
+    except EvolutionDecisionError as exc:
+        raise _domain_error(exc) from exc
+    return _decision_to_response(decision)
+
+
 @app.post("/api/evolution/proposals/{decision_id}/cancel", response_model=DecisionResponse)
 def cancel_proposal(decision_id: str, body: CancelRequest):
     """

@@ -296,6 +296,7 @@ class PersonaPoolPublisher:
         requested_by: str,
         pool_version: int | None = None,
         stage: str = "paper",
+        defer_confirmation: bool = False,
     ) -> dict[str, Any]:
         if stage != "paper":
             raise PoolPublishRefused(
@@ -418,7 +419,7 @@ class PersonaPoolPublisher:
         )
         dispatch_note = None
         try:
-            receipt = self.coordinator.publish_pool_envelope(
+            publication = (
                 {
                     "tenant_id": tenant_id,
                     "persona_id": persona_id,
@@ -432,6 +433,8 @@ class PersonaPoolPublisher:
                     "market": envelope["parameters"].get("market"),
                 }
             )
+            receipt = (self.coordinator.publish_pool_envelope(publication, binding_snapshot=bindings)
+                       if defer_confirmation else self.coordinator.publish_pool_envelope(publication))
         except PoolDispatchUncertain as exc:
             # Dispatch may have been admitted and still be queued. Refuse only
             # with authoritative terminal rejection evidence plus readback that
@@ -439,7 +442,7 @@ class PersonaPoolPublisher:
             # receipt regardless of the binding being active right now.
             receipt = exc.receipt
             try:
-                kept = exc.terminal_rejection and self._previous_still_live(
+                kept = not defer_confirmation and exc.terminal_rejection and self._previous_still_live(
                     ids, receipt, previous
                 )
             except Exception:
@@ -482,7 +485,9 @@ class PersonaPoolPublisher:
                 )
 
         try:
-            moved = self._binding_moved(ids, receipt)
+            # The daily cycle spends one binding snapshot per tick. Dispatch truth
+            # is confirmed on the next tick; synchronous callers keep their readback.
+            moved = False if defer_confirmation else self._binding_moved(ids, receipt)
         except Exception:  # readback failed after dispatch: report truthfully as unconfirmed
             moved = False
         entry = {

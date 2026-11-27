@@ -713,6 +713,52 @@ def test_cancel_from_proposed():
     assert r.json()["decision_state"] == "canceled"
 
 
+def _pending_pool_publication():
+    return propose({"target_type": "persona", "target_id": "persona-pool-test", "persona_id": "persona-pool-test",
+                    "action_type": "flag_for_review", "created_by_id": "persona-svc", "risk_level": "low",
+                    "metadata": {"decision_kind": "pool_envelope_publication", "paper_only": True,
+                                 "membership_digest": "test-membership"}})
+
+
+def _withdrawal_body():
+    return {"tenant_id": "default", "actor_role": "evolution_controller", "actor_id": "persona-svc",
+            "membership_digest": "test-membership", "superseded_by": "artifact-persona-pool-test-v2",
+            "note": "publication_membership_already_confirmed"}
+
+
+def test_pool_publication_superseded_is_not_pending_and_replay_preserves_record():
+    d = _pending_pool_publication()
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"]}
+    path = f"/api/evolution/proposals/{d['decision_id']}/supersede"
+    first = client.post(path, json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["decision_state"] == "superseded"
+    assert first.json()["metadata"]["superseded_reason"] == body["note"]
+    assert client.post(path, json=body).json() == first.json()
+    pending = client.get("/api/evolution/proposals", params={"target_id": d["target_id"], "decision_state": "proposed,reviewed"})
+    assert pending.status_code == 200 and pending.json() == []
+
+
+@pytest.mark.parametrize("field,value", [("tenant_id", "foreign"), ("actor_id", "operator"),
+    ("membership_digest", "other"), ("actor_role", "operator"), ("superseded_by", "unverified"), ("note", "other")])
+def test_pool_publication_withdrawal_rejects_wrong_binding(field, value):
+    d = _pending_pool_publication()
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"], field: value}
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=body)
+    assert out.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+def test_pool_publication_withdrawal_cannot_override_an_operator_decision():
+    d = _pending_pool_publication()
+    advance_to_reviewed(d["decision_id"])
+    advance_to_approved(d["decision_id"])
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"]}
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=body)
+    assert out.status_code == 409
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "approved"
+
+
 def test_cancel_from_approved():
     d = propose()
     advance_to_reviewed(d["decision_id"])

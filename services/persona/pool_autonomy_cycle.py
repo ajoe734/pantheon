@@ -236,6 +236,7 @@ class PoolAutonomyCycle:
             pool = ports.current_pool(persona)
             history = ports.publication_state(persona)
             latest = latest_publication(history)
+            confirmed_dispatch = False
             if latest is not None and latest["status"] == "dispatched":
                 # This dispatch already passed the publication gate. Confirm/retry that
                 # exact version through the publisher, never request a new consultation.
@@ -251,6 +252,7 @@ class PoolAutonomyCycle:
                 # Use the publisher-confirmed pins, without another history/binding read.
                 history = {**history, "published": {**history["published"],
                            str(latest["pool_version"]): {**latest, **receipt, "status": "published"}}}
+                confirmed_dispatch = True
             confirmed = last_published(history)
             change = publication_change(confirmed, pool, load_policy())
         except Exception as exc:  # noqa: BLE001 - unreadable state is reported, retried next cycle
@@ -291,6 +293,12 @@ class PoolAutonomyCycle:
                             "request_id": consult.get("request_id"), "decision_id": consult.get("decision_id")}
                 else:
                     base["consultation_memo_id"] = consult["memo_id"]
+            if confirmed_dispatch:
+                # One owner binding snapshot per cycle: the confirmation has used
+                # this tick's budget. Publish the changed version on the next tick.
+                return {**base, "status": "published", "pool_version": latest["pool_version"],
+                        "next_pool_version": pool["pool_version"], "publication_pending": True,
+                        "envelope_artifact_id": latest.get("envelope_artifact_id")}
             receipt = ports.publish_pool(persona, pool["pool_version"])
         except Exception as exc:  # noqa: BLE001 - the previous envelope keeps running; the next cycle retries
             return {**base, "status": "failed", "step": "publish", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}

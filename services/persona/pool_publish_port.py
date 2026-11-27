@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 CONSULT_FAILED_STATES = ("canceled", "cancelled", "rejected", "failed", "expired")
 # The executor names a consultation failed once its dead-letter recovery budget is spent.
@@ -50,7 +50,7 @@ class PoolPublishPort:
 
     def publish_pool(self, persona, pool_version):
         out = self._call("POST", "bff", f"/bff/personas/{quote(persona['persona_id'], safe='')}/strategy-pool/publish", persona,
-                         {"pool_version": pool_version, "stage": "paper"})
+                         {"pool_version": pool_version, "stage": "paper", "defer_confirmation": True})
         return (out or {}).get("data", out)
 
     def envelope_publication_consultation(self, persona, pool, packet_id):
@@ -172,3 +172,30 @@ class PoolPublishPort:
                 raise
             return {"decision_id": decision_id, "status": "already_queued"}
         return {"decision_id": decision_id, "status": "queued"}
+
+    def supersede_publication_operator_decisions(self, persona, pool, confirmed):
+        """Withdraw our pending escalations for the now-confirmed membership only."""
+        from services.control_plane.persona.pool_policy import load_policy, publication_change
+
+        if confirmed.get("status") != "published" or publication_change(confirmed, pool, load_policy())["membership_changed"]:
+            return []
+        digest = membership_digest(pool)
+        query = urlencode({"target_type": "persona", "target_id": persona["persona_id"],
+                           "tenant_id": persona["tenant_id"], "decision_state": "proposed,reviewed"})
+        records = self._call("GET", "evolution", "/api/evolution/proposals?" + query, persona)
+        retired = []
+        for record in records or []:
+            meta = record.get("metadata") or {}
+            if (record.get("tenant_id") != persona["tenant_id"] or record.get("persona_id") != persona["persona_id"]
+                    or record.get("created_by_id") != "persona-svc"
+                    or record.get("decision_state") not in ("proposed", "reviewed")
+                    or meta.get("decision_kind") != "pool_envelope_publication"
+                    or meta.get("paper_only") is not True or meta.get("membership_digest") != digest):
+                continue
+            decision_id = record["decision_id"]
+            self._call("POST", "evolution", "/api/evolution/proposals/" + quote(decision_id, safe="") + "/supersede", persona,
+                       {"tenant_id": persona["tenant_id"], "actor_id": "persona-svc", "actor_role": "evolution_controller",
+                        "membership_digest": digest, "superseded_by": confirmed["envelope_artifact_id"],
+                        "note": "publication_membership_already_confirmed"})
+            retired.append(decision_id)
+        return retired
