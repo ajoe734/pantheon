@@ -12,14 +12,16 @@
     "1_dispatchable_dev_workflow": {
       "status": "verified_in_source",
       "workflow": ".github/workflows/dev-finmind-broker-backfill.yml",
-      "entrypoint": "scripts/deploy_nonprod_vm.sh --refresh-only --broker-backfill -> run_finmind_broker_backfill -> docker exec source-ingest python3 (services.source_ingestion.finmind_broker_backfill.run_backfill)",
-      "lease_and_egress": "Runs under the pinned dev environment lease controller (a4b0cdca261b714c386341534b07fc43badd1a7e, SHA-256 verified dev_environment_lease.py and run_with_dev_environment_lease.sh) with exact egress host allowlist api.finmindtrade.com,storage.googleapis.com; FINMIND_API_TOKEN is read from dev environment secret secrets.FINMIND_API_TOKEN, passed into source-ingest by variable name only (docker exec -e FINMIND_API_TOKEN), scrubbed from error strings via _safe_reason, and never echoed or printed.",
+      "entrypoint": "scripts/deploy_nonprod_vm.sh --refresh-only --broker-backfill --bounded-runtime-run --run-hosts api.finmindtrade.com,storage.googleapis.com --run-finmind -> run_finmind_broker_backfill -> bounded_runtime_market_open_guard + bounded runtime enter + docker exec source-ingest python3 (services.source_ingestion.finmind_broker_backfill.run_backfill) + bounded_runtime_record_memory + bounded_runtime_restore_all_states",
+      "lease_and_egress": "Runs under the pinned dev environment lease controller (a4b0cdca261b714c386341534b07fc43badd1a7e, SHA-256 verified dev_environment_lease.py and run_with_dev_environment_lease.sh) inside the bounded runtime (--bounded-runtime-run with cgroup memory.peak capture and steady restore verified by a dedicated 'Verify and restore steady source-ingest posture' step) with exact egress host allowlist api.finmindtrade.com,storage.googleapis.com; reuses bounded_runtime_market_open_guard before start and before each session so on a Taiwan weekday no session starts unless it and the restore finish before 00:55Z; FINMIND_API_TOKEN is read from dev environment secret secrets.FINMIND_API_TOKEN, passed into source-ingest by variable name only (docker exec -e FINMIND_API_TOKEN), scrubbed from error strings and stderr tracebacks via _safe_reason / _emit_safe_traceback, and never echoed or printed.",
       "tests": [
         "scripts/test_dev_finmind_broker_backfill_workflow.py::test_workflow_is_dispatchable_with_bounded_defaults_and_dev_environment",
         "scripts/test_dev_finmind_broker_backfill_workflow.py::test_workflow_uses_pinned_direct_ssh_and_dev_environment_lease",
         "scripts/test_dev_finmind_broker_backfill_workflow.py::test_workflow_enforces_exact_finmind_hosts_and_never_prints_token",
         "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_func_passes_token_by_name_and_restricts_egress",
-        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_func_rejects_wrong_hosts_and_missing_token_without_docker"
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_func_rejects_wrong_hosts_and_missing_token_without_docker",
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessions",
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_stderr_reaches_step_log_with_traceback_and_redacted_token"
       ]
     },
     "2_compact_rows_into_governed_keyed_tw_broker_top": {
@@ -64,13 +66,17 @@
         "per_dispatch_max_requests": 180,
         "per_dispatch_max_wall_seconds": 2100,
         "lease_hold_limit_minutes": 45,
-        "retention_sessions_cap": 750
+        "retention_days_cap": 750,
+        "single_session_memory_peak_cap_bytes": 1610612736,
+        "container_memory_limit_bytes": 6442450944,
+        "measured_single_session_memory_peak_bytes": 605138944
       },
       "stop_on_cap_behaviour": "run_backfill checks existing store totals and request rate before making any request; checks projected session/total rows before writing; catches DailyBudgetError on per-day 6 MB budget breach; and if a written partition would cause session bytes > 6,000,000 or total stored bytes > 3,000,000,000 (max_total_bytes), immediately unlinks the partition via store.delete_partition(day_s) before state commit, sets status='cap_exceeded' with the exact reason, and stops the run.",
-      "cleanup": "KEYED_DATASETS['tw_broker_top'] declares retention_sessions=750 (retention_days=None); existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py) retains the newest 750 valid stored session dates through today (<= 4.5 GB steady-state) and prunes older unpinned partitions; superseded generation files (part-g{generation}.jsonl.gz) are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately by delete_partition; backfill_state.json is atomically replaced in place via .tmp rename.",
+      "cleanup": "KEYED_DATASETS['tw_broker_top'] declares retention_days=750 calendar days (cap 6 MB x about 500 sessions in 750 calendar days <= 3.0 GB); existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py) retains partitions within 750 calendar days (today - 750 days, keeping the full two-year backfill window end minus 730 days) and prunes older unpinned partitions; superseded generation files (part-g{generation}.jsonl.gz) are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately by delete_partition; backfill_state.json is atomically replaced in place via .tmp rename.",
       "storage_manifest_entry": "docs/operations/storage-manifest.json::runtime_budgets['FinMind two-year broker top-20 backfill (keyed/tw_broker_top partitions + backfill_state.json)'] (and stale unreviewed records.jsonl entry removed)",
       "tests": [
         "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_stops_when_stated_cap_would_be_exceeded",
+        "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep",
         "scripts/test_dev_finmind_broker_backfill_workflow.py::test_backfill_step_missing_credential_and_cap_exceeded_do_not_quarantine_lease_and_fail_summary"
       ]
     },
@@ -80,7 +86,7 @@
       "cli_command": "python -m services.source_ingestion.finmind_broker_backfill verify --market-data-root /data/source-ingest/market_data_store --min-sessions 480 --min-symbols-per-session 1000",
       "workflow_verify_dispatch": "gh workflow run dev-finmind-broker-backfill.yml --ref dev -f verify_only=true",
       "read_only_probe_command": "docker exec -e PYTHONDONTWRITEBYTECODE=1 \"$SOURCE_INGEST_CONTAINER\" python3 -m services.source_ingestion.finmind_broker_backfill verify --market-data-root \"$MARKET_DATA_STORAGE_ROOT\" --min-sessions 480 --min-symbols-per-session 1000",
-      "guarantees": "Strictly read-only (0 provider requests, 0 directory/file creations, 0 byte/mtime mutations): verifies every partition in [latest_session - 2 years, latest_session] against its manifest, checks vendor_research / redistribution_allowed=false licence metadata, counts symbols with both buy and sell sides per session into per_session_symbol_counts, and passes only when two_sided_sessions_count >= 480, deficient_sessions == [], total_bytes <= 3,000,000,000, and total_rows <= 60,000,000.",
+      "guarantees": "Strictly read-only (0 provider requests, 0 directory/file creations, 0 byte/mtime mutations): verifies every partition in [latest_session - 2 years, latest_session] against its manifest, checks vendor_research / redistribution_allowed=false licence metadata, counts symbols with both buy and sell sides per session into per_session_symbol_counts, reports keyed_retention_days == 750, and passes only when keyed_retention_days == 750, two_sided_sessions_count >= 480, deficient_sessions == [], total_bytes <= 3,000,000,000, and total_rows <= 60,000,000.",
       "tests": [
         "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_verify_two_year_backfill_coverage_is_read_only_and_checks_480_sessions",
         "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_in_container_verify_only_runs_with_egress_deny_and_no_token"
@@ -89,7 +95,7 @@
     "6_problem_register": {
       "status": "verified",
       "file": "docs/operations/problem-register.md",
-      "row": "RC2 'Broker-branch data on hosted covers only 0050, 2317 and 2330 and has no history' row updated with SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127"
+      "row": "RC2 'Broker-branch data on hosted covers only 0050, 2317 and 2330 and has no history' row updated with SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127 and SOURCE-BROKER-RETENTION-DAYS-AND-BACKFILL-GUARD-20261127"
     }
   },
   "scope_boundaries": {
@@ -116,8 +122,8 @@
     "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py (Python 3.12.3, pyarrow 26.0.1)",
     "commands": [
       {
-        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py services/source_ingestion/tests/test_broker_session_retention.py scripts/test_dev_finmind_broker_backfill_workflow.py",
-        "result": "141 passed in 54.93s",
+        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "result": "48 passed in 56.30s",
         "exit_status": 0
       },
       {

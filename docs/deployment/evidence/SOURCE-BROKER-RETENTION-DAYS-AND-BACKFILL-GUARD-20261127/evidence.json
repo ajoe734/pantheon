@@ -1,0 +1,165 @@
+{
+  "schema_version": "pantheon_task_evidence.v1",
+  "task": "SOURCE-BROKER-RETENTION-DAYS-AND-BACKFILL-GUARD-20261127",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "register_class": [
+    "RC2",
+    "RC3 WP3.1"
+  ],
+  "delivery_state": "source implemented and validated locally; pending PR merge, dev deployment, and hosted read-only proof",
+  "acceptance": {
+    "1_calendar_retention_days_750": {
+      "status": "verified_in_source",
+      "decision": "Operator decision 2026-11-27: KEYED_DATASETS['tw_broker_top'] returns to retention_days=750 (calendar days as in the SD 6A row and every other keyed dataset); the session-count field on DatasetKeyDeclaration and the session-count branch in RetentionSweeper._plan_keyed (services/source_ingestion/retention.py) are removed; services/source_ingestion/tests/test_broker_session_retention.py is deleted; retention.py keeps one calendar-day rule.",
+      "tests": [
+        "services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window",
+        "services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_declared_day_budget_holds_a_hosted_shaped_whole_market_session"
+      ]
+    },
+    "2_session_retention_references_converted_to_calendar_days": {
+      "status": "verified_in_source",
+      "updated_references": [
+        "services/source_ingestion/finmind_broker_backfill.py::verify_two_year_backfill_coverage readback field keyed_retention_days == 750",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_declared_day_budget_holds_a_hosted_shaped_whole_market_session",
+        "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md section 6A tw_broker_top Retention column: '750 d'",
+        "docs/operations/storage-manifest.json: cap 6 MB x about 500 sessions in 750 calendar days <= 3.0 GB",
+        "docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json: hosted read-only probe checks store.declaration.retention_days == 750 and emits keyed_retention_days",
+        "docs/deployment/evidence/SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127/evidence.json: retention_days_cap=750 and read-only verifier guarantee keyed_retention_days == 750"
+      ],
+      "git_grep_check": {
+        "command": "git grep <removed session-retention field name>",
+        "exit_status": 1,
+        "stdout": "",
+        "matching_lines": 0
+      }
+    },
+    "3_two_year_backfill_default_window_inside_750_day_retention": {
+      "status": "verified_in_source",
+      "window_rule": "Backfill default window [end - 730 days, end] (BACKFILL_YEARS = 2, 365 * 2 = 730 calendar days) stays inside the 750-calendar-day retention cutoff (today - 750 days).",
+      "delete_mode_sweep_proof": "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep and services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window run RetentionSweeper in delete mode (dry_run=False) after writing a full two-year backfill window (end minus 730 days through end) plus an out-of-window partition at end minus 751 days: 0 partitions from the two-year backfill window are deleted while the 751-day-old partition is deleted.",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep",
+        "services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window"
+      ]
+    },
+    "4_market_hours_guard_reuse": {
+      "status": "verified_in_source",
+      "mechanism": "run_finmind_broker_backfill (scripts/deploy_nonprod_vm.sh) calls bounded_runtime_market_open_guard before entering the bounded runtime and passes PANTHEON_MARKET_OPEN_GUARD_FUNC=$(declare -f bounded_runtime_market_open_guard) into the container; services/source_ingestion/finmind_broker_backfill.py::invoke_bounded_runtime_market_open_guard compiles and runs the single GUARD_PY block from bounded_runtime_market_open_guard (no second time rule) before run_backfill starts and before each session so on a Taiwan weekday no session starts unless it and the steady restore end before 00:55Z. A dispatch inside the window exits with stopped_reason='market_open_0055z' and status='not_run' (0 FinMind requests, 0 bounded runtime entries); reaching the window between sessions saves state, records stopped_reason='market_open_0055z', and exits cleanly for steady restore.",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between_sessions",
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessions"
+      ]
+    },
+    "5_bounded_runtime_and_memory_budget": {
+      "status": "verified_in_source",
+      "mechanism": ".github/workflows/dev-finmind-broker-backfill.yml invokes scripts/deploy_nonprod_vm.sh --refresh-only --broker-backfill --bounded-runtime-run --run-hosts api.finmindtrade.com,storage.googleapis.com --run-finmind and runs an always() 'Verify and restore steady source-ingest posture' step (--steady-check). run_finmind_broker_backfill enters the bounded runtime (stopping steady scheduler/projector, recreating source-ingest with bounded egress and FINMIND_API_TOKEN), captures cgroup memory.peak via bounded_runtime_record_memory, and restores the steady posture via bounded_runtime_restore_all_states.",
+      "runtime_budget_memory_cap": {
+        "stated_single_session_memory_peak_cap_bytes": 1610612736,
+        "stated_single_session_memory_peak_cap_human": "1.5 GiB (1,610,612,736 bytes)",
+        "container_memory_limit_bytes": 6442450944,
+        "container_memory_limit_human": "6 GiB (6,442,450,944 bytes)"
+      },
+      "measured_single_whole_day_session_peak": {
+        "symbols": 2600,
+        "raw_price_level_rows": 312000,
+        "raw_parquet_bytes": 74330,
+        "top_records_written": 104000,
+        "compressed_partition_bytes": 818278,
+        "elapsed_seconds_uninstrumented": 7.361,
+        "vm_rss_before_bytes": 83472384,
+        "vm_rss_after_bytes": 307159040,
+        "vm_hwm_peak_bytes_uninstrumented": 605138944,
+        "vm_hwm_peak_human_uninstrumented": "577.1 MiB (605,138,944 bytes)",
+        "ru_maxrss_peak_bytes_uninstrumented": 605138944,
+        "tracemalloc_peak_bytes_instrumented": 328498248,
+        "tracemalloc_peak_human_instrumented": "313.3 MiB (328,498,248 bytes)"
+      },
+      "tests": [
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_func_passes_token_by_name_and_restricts_egress",
+        "scripts/test_dev_finmind_broker_backfill_workflow.py::test_workflow_uses_pinned_direct_ssh_and_dev_environment_lease",
+        "scripts/test_dev_finmind_broker_backfill_workflow.py::test_backfill_step_and_summary_succeed_on_bounded_run"
+      ]
+    },
+    "6_stderr_reaches_step_log_with_token_redacted": {
+      "status": "verified_in_source",
+      "mechanism": "Removed 2>/dev/null from the docker exec python3 invocation in run_finmind_broker_backfill (scripts/deploy_nonprod_vm.sh) so Python stderr reaches the workflow step log while stdout carries the final JSON receipt; services/source_ingestion/finmind_broker_backfill.py::_emit_safe_traceback scrubs FINMIND_API_TOKEN via _safe_reason and prints the failing session's full traceback to sys.stderr;FINMIND_API_TOKEN stays passed by name only (docker exec -e FINMIND_API_TOKEN) and is never printed.",
+      "tests": [
+        "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_failing_session_prints_redacted_traceback_to_stderr_without_token",
+        "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_stderr_reaches_step_log_with_traceback_and_redacted_token"
+      ]
+    },
+    "7_problem_register": {
+      "status": "verified_in_source",
+      "file": "docs/operations/problem-register.md",
+      "rows": [
+        "RC2 'Broker-branch data on hosted covers only 0050, 2317 and 2330 and has no history' row (market-data domain owner cb4f6795)",
+        "RC3 'WP3.1 / WP3.3 tw_broker_top grows from 3 symbols to the whole market' row (market-data domain owner cb4f6795)"
+      ]
+    }
+  },
+  "scope_boundaries": {
+    "changed": [
+      "services/source_ingestion/daily_bars_store.py",
+      "services/source_ingestion/retention.py",
+      "services/source_ingestion/tests/test_broker_session_retention.py (deleted)",
+      "services/source_ingestion/tests/test_retention.py",
+      "services/source_ingestion/tests/test_finmind_broker_whole_market.py",
+      "services/source_ingestion/finmind_broker_backfill.py",
+      "services/source_ingestion/tests/test_finmind_broker_backfill.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_vm.py",
+      ".github/workflows/dev-finmind-broker-backfill.yml",
+      "scripts/test_dev_finmind_broker_backfill_workflow.py",
+      "docs/04/pantheon_data_strategy_source_design_2026-06-09/SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md",
+      "docs/operations/storage-manifest.json",
+      "docs/operations/problem-register.md",
+      "docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json",
+      "docs/deployment/evidence/SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127/evidence.json",
+      "docs/deployment/evidence/SOURCE-BROKER-RETENTION-DAYS-AND-BACKFILL-GUARD-20261127/evidence.json"
+    ],
+    "not_changed": [
+      "services/source_ingestion/connectors/finmind_taiwan.py",
+      "services/data-plane/taiwan_reference.py",
+      ".github/workflows/dev-tw-market-refresh.yml"
+    ]
+  },
+  "residual_findings": [
+    {
+      "file": "services/source_ingestion/tests/test_datasets_keyed_write.py",
+      "line": 269,
+      "finding": "Commit 0e8b6a927 (PR #7954) changed test_retention_is_declared_next_to_the_key_as_in_section_6a() in services/source_ingestion/tests/test_datasets_keyed_write.py from 'tw_broker_top': 750 to 'tw_broker_top': None. Now that KEYED_DATASETS['tw_broker_top'].retention_days is restored to 750 per Acceptance 1, services/source_ingestion/tests/test_datasets_keyed_write.py needs to be in the task artifact contract so line 269 can be restored to 'tw_broker_top': 750 before Smoke acceptance runs ci_source_ingestion_test_shards.py."
+    }
+  ],
+  "verification": {
+    "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py (Python 3.12.3, pyarrow 26.0.1)",
+    "commands": [
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "result": "48 passed in 56.30s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_finmind_broker_backfill_workflow.py scripts/test_deploy_nonprod_vm.py -k 'broker_backfill or whole_market or market_open_guard or workflow'",
+        "result": "31 passed, 224 deselected in 14.22s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 90 .venv-pantheon/bin/python3 scripts/check_market_data_budget.py --only tw_broker_top",
+        "result": "2 checks passed: day_bytes=2,623,088 <= 6,000,000; declared_budget_bytes=6,000,000 <= design 6A row",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python3 -m unittest scripts.test_check_storage_manifest && timeout 60 .venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+        "result": "11 unittest passed; storage manifest check passed with 0 failures",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ci_test_inventory.py && timeout 60 .venv-pantheon/bin/python3 scripts/ci_test_inventory.py check && bash -n scripts/deploy_nonprod_vm.sh && git diff --check",
+        "result": "18 passed; test inventory ok; deploy_nonprod_vm.sh syntax ok; git diff --check clean",
+        "exit_status": 0
+      }
+    ]
+  }
+}
