@@ -845,5 +845,68 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_replace_vm_network_override_and_boot_disk_name_collision_repair_20261127": {
+    "task_generation": 90,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45948784751 (job 140339836746) completed status=prod_vm_replaced in rto_seconds=579 (new_instance_id=9190220965460877841, new_boot_disk=pantheon-prod-control 150GB pd-standard, all 24 containers + Caddy healthy via 127.0.0.1 loopback), but external HTTPS timed out because passing --address without --network/--subnet on gcloud compute instances create --source-instance-template overrides the template NIC with GCE's 'default' VPC network (missing port 443 firewall rule) and auto-named the boot disk 'pantheon-prod-control' (== PROD_VM_NAME)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh INSPECT_VARS prioritizes PROD_NETWORK over incumbent NIC network ('net = default_net.strip() or base(nic.get(\"network\"))'), Step 6 instances create always passes --network \"$VM_NETWORK\" (and --subnet \"$VM_SUBNETWORK\" when non-empty) alongside --address \"$STATIC_IP\" plus --create-disk with FRESH_BOOT_DISK=\"${PROD_VM_NAME}-os-<timestamp>\" when OLD_BOOT_DISK == PROD_VM_NAME, NEW_VM_VARS enforces NETWORK_MISMATCH/SUBNETWORK_MISMATCH, and runner-side external HTTPS probes verify /deployment.json and /bff/readyz before snapshot_schedule check (rolling back on external_https_verify failure)",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD to model gcloud's 'default' network override when --address is passed without --network/--subnet and --create-disk when OLD_BOOT_DISK == PROD_VM_NAME, and adds test_replace_vm_restores_prod_network_from_default_avoids_boot_disk_name_collision_and_verifies_external_https in ReplaceVmHarness"
+    ],
+    "runtime_budget": "unchanged from g89: no new recurring job, emitter, persistent writer, or background daemon",
+    "validation": {
+      "syntax_command": "bash -n scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "46 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "hosted_prod_vm_replacement_accepted_20261127": {
+    "task_generation": 93,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work -> accepted",
+    "captured_at_utc": "2026-11-27T08:30:31Z",
+    "receipt_file": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-evidence/ENV-PROD-CONTROL-IMPL-001/20261127/prod_vm_replaced_45962580508.json",
+    "workflow_run_id": 45962580508,
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/45962580508",
+    "deploy_job_id": 140384303960,
+    "environment": "production (environment_id=25214167886, approver=ajoe734, production_release_enabled_variable_after_preflight=absent)",
+    "replace_vm_receipt": {
+      "status": "prod_vm_replaced",
+      "exit_code": 0,
+      "release_id": "pantheon-20261108-112",
+      "vm_name": "pantheon-prod-control",
+      "machine_type": "e2-standard-8",
+      "vcpus": 8,
+      "instance_template": "pantheon-prod-control-template-e2s8-v3",
+      "migration_mode": "online_ssh",
+      "old_instance_id": "9190220965460877841",
+      "new_instance_id": "6040811078976570038",
+      "old_boot_disk": "pantheon-prod-control (preserved=true, old_vm_status=RUNNING, old_machine_type=e2-standard-8)",
+      "new_boot_disk": "pantheon-prod-control-os-20261127t081621z (150GB pd-standard)",
+      "data_disk": "pantheon-prod-control-data (uuid=08bfe81b-d71f-4db7-8055-936da4fb2bb5)",
+      "pre_replacement_snapshots": "data=pantheon-prod-vmrep-data-r45962580508-a1-20261127t080953z, boot=pantheon-prod-vmrep-boot-r45962580508-a1-20261127t080953z",
+      "static_ip": "34.80.3.129",
+      "rto_seconds": 624,
+      "rto_budget_seconds": 1800,
+      "boot_disk_decoupled": true,
+      "caddy_restored": "true (docker.io/library/caddy@sha256:5e5286cb37d44086d651a5363f05f43a692ce4d649d88fb1bd844579f45fa9e8)",
+      "snapshot_schedule": "hourly/1h, retention_days=3, attached=true, policy_present=true, newest_snapshot=pantheon-prod-contr-asia-east1-b-20261127074110-mlvi86dp (2660s <= 4500s)",
+      "restored_identity": "release_id=pantheon-20261108-112, backend_commit=78a37e06c7bfe43a6f2023729a0798b452e2f646, frontend_commit=f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6, frontend_artifact_sha256=sha256:5cb97f1a340a2192a979e621ecceed8636c35b3fab3c360cdca1f3640ce6a06a, operator_bff_digest=sha256:778ff0f874e87b9deb045eb6ba46b5cc5702911024189b11912ca24806b78a29, singleton_image=lifecycle-projector@sha256:c851df7052e18404c9e6522170c5e5cfba4dcc59b5a572a476f940fe4ea6a271, observed_from_live_vm=true, public_bff_version_verified=true, public_fe_deployment_verified=true"
+    },
+    "external_public_https_probes": {
+      "bff_readyz": "https://api.mvl-cap.tw/bff/readyz -> 200 (status=ok, ready=true, accepted_live=true, source_commit_sha=78a37e06c7bfe43a6f2023729a0798b452e2f646)",
+      "bff_version": "https://api.mvl-cap.tw/bff/version -> 200 (source_commit_sha=78a37e06c7bfe43a6f2023729a0798b452e2f646, image_digest=sha256:778ff0f874e87b9deb045eb6ba46b5cc5702911024189b11912ca24806b78a29, auth_mode=strict, auth_stub=false, dev_login_enabled=false)",
+      "fe_deployment_json": "https://app.mvl-cap.tw/deployment.json -> 200 (release_id=pantheon-20261108-112, frontend_commit=f6d528080a7a8f9d696e2474b92b5a6c5a7e2ae6, frontend_artifact_sha256=sha256:5cb97f1a340a2192a979e621ecceed8636c35b3fab3c360cdca1f3640ce6a06a, backend_commit=78a37e06c7bfe43a6f2023729a0798b452e2f646, live_broker_enabled=false, provider_enabled=false, real_writes_enabled=false, dev_stub_writes_enabled=false, control_vm_broker_credentials_present=false)",
+      "fe_runtime_config_js": "https://app.mvl-cap.tw/runtime-config.js -> 200 (configRef=pantheon-20261108-112, configSha256=sha256:ed7f8c0637af47734d4d969127a91520a08e4702de0ff3c91055e29684896f75)"
+    },
+    "production_acceptance_summary": "All hosted Production drills and acceptance requirements of ENV-PROD-CONTROL-IMPL-001 are accepted on pantheon-prod-20260902: Drills A & B forward + <120s protected rollbacks (run 44736740717 -> rollback 44896636473 in 42.60s; run 44901616492 -> rollback 44902100200 in 40.23s), final protected publication run 44902892655 + >30m observation (+84m verified), hourly snapshot schedule pantheon-prod-data-hourly + restore_drill (rpo_seconds=1224<=3600, rto_seconds=71<=1800, tables_restored=92, catalog_hash_equal=true, owner_store_manifest_equal=true, cleanup.clean=true), and protected fresh-boot control VM replacement run 45962580508 (job 140384303960, status=prod_vm_replaced, rto_seconds=624<=1800, new_instance_id=6040811078976570038 != 9190220965460877841, new_boot_disk=pantheon-prod-control-os-20261127t081621z 150GB pd-standard, machine_type=e2-standard-8, vcpus=8, static_ip=34.80.3.129 on pantheon-production VPC, external HTTPS 200 on pantheon-20261108-112).",
+    "hosted_acceptance": "accepted",
+    "hosted_acceptance_claimed": true,
+    "release_complete_claimed": true
   }
 }
