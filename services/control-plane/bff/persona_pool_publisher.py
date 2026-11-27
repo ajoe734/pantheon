@@ -172,17 +172,120 @@ class PersonaPoolPublisher:
     def history(self, tenant_id: str, persona_id: str) -> dict[str, Any]:
         return self._load(tenant_id, persona_id)
 
+    MAX_REFUSALS = 20
+
+    @staticmethod
+    def _envelope_summary(
+        envelope: Any,
+        published: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(envelope, Mapping):
+            return None
+        if (
+            set(envelope.keys()) <= {"version", "digest"}
+            and isinstance(envelope.get("digest"), str)
+            and envelope.get("digest")
+        ):
+            raw_version = envelope.get("version")
+            return {
+                "version": str(raw_version) if raw_version is not None else None,
+                "digest": str(envelope["digest"]),
+            }
+        pool_version = envelope.get("pool_version")
+        if pool_version is None and isinstance(envelope.get("parameters"), Mapping):
+            pool_version = envelope["parameters"].get("pool_version")
+        version = (
+            envelope.get("version")
+            or envelope.get("envelope_version")
+            or (f"1.{int(pool_version)}.0" if pool_version is not None else None)
+        )
+        published_map = published if isinstance(published, Mapping) else {}
+        published_entry = published_map.get(str(pool_version)) if pool_version is not None else None
+        if published_entry is None and published_map:
+            artifact_id = envelope.get("artifact_id") or envelope.get("envelope_artifact_id")
+            for candidate in published_map.values():
+                if not isinstance(candidate, Mapping):
+                    continue
+                if artifact_id and candidate.get("envelope_artifact_id") == artifact_id:
+                    published_entry = candidate
+                    break
+                if version is not None and candidate.get("envelope_version") == str(version):
+                    published_entry = candidate
+                    break
+        if (
+            version is None
+            and isinstance(published_entry, Mapping)
+            and published_entry.get("envelope_version") is not None
+        ):
+            version = published_entry.get("envelope_version")
+        digest = (
+            envelope.get("digest")
+            or envelope.get("pool_digest")
+            or envelope.get("checksum")
+            or (envelope["parameters"].get("pool_digest") if isinstance(envelope.get("parameters"), Mapping) else None)
+            or (published_entry.get("pool_digest") if isinstance(published_entry, Mapping) else None)
+            or canonical_digest(dict(envelope))
+        )
+        return {
+            "version": str(version) if version is not None else None,
+            "digest": str(digest),
+        }
+
+    @classmethod
+    def _kept_envelope_summary(cls, record: Mapping[str, Any]) -> dict[str, Any] | None:
+        published = record.get("published") if isinstance(record.get("published"), Mapping) else None
+        return cls._envelope_summary(record.get("current_envelope"), published)
+
+    @classmethod
+    def _normalize_refusal_entry(
+        cls,
+        entry: Any,
+        published: Mapping[str, Any] | None = None,
+    ) -> Any:
+        if not isinstance(entry, Mapping):
+            return entry
+        normalized = dict(entry)
+        normalized["previous_envelope_kept"] = cls._envelope_summary(
+            entry.get("previous_envelope_kept"),
+            published,
+        )
+        return normalized
+
     def _refuse(self, tenant_id, persona_id, pool_version, reason, *, status_code, step):
         def mutate(record):
-            record["refusals"].append(
-                {
-                    "at": self.now(),
-                    "pool_version": pool_version,
-                    "step": step,
-                    "reason": reason,
-                    "previous_envelope_kept": record.get("current_envelope"),
-                }
-            )
+            ts = self.now()
+            published = record.get("published") if isinstance(record.get("published"), Mapping) else None
+            kept = self._envelope_summary(record.get("current_envelope"), published)
+            refusals = list(record.get("refusals") or [])
+            if (
+                refusals
+                and isinstance(refusals[-1], Mapping)
+                and refusals[-1].get("step") == step
+                and refusals[-1].get("reason") == reason
+            ):
+                newest = dict(refusals[-1])
+                newest.setdefault("at", ts)
+                newest["last_at"] = ts
+                newest["count"] = int(newest.get("count") or 1) + 1
+                newest["pool_version"] = pool_version
+                newest["previous_envelope_kept"] = kept
+                refusals[-1] = newest
+            else:
+                refusals.append(
+                    {
+                        "at": ts,
+                        "last_at": ts,
+                        "count": 1,
+                        "pool_version": pool_version,
+                        "step": step,
+                        "reason": reason,
+                        "previous_envelope_kept": kept,
+                    }
+                )
+            record["refusals"] = [
+                self._normalize_refusal_entry(entry, published)
+                for entry in refusals[-self.MAX_REFUSALS :]
+            ]
 
         self._save(tenant_id, persona_id, mutate)
         raise PoolPublishRefused(reason, status_code=status_code, step=step)
@@ -296,6 +399,7 @@ class PersonaPoolPublisher:
         requested_by: str,
         pool_version: int | None = None,
         stage: str = "paper",
+        defer_confirmation: bool = False,
     ) -> dict[str, Any]:
         if stage != "paper":
             raise PoolPublishRefused(
@@ -356,6 +460,11 @@ class PersonaPoolPublisher:
                     status_code=409, step="binding",
                 )
             live_binding = live[0]
+            # Confirm the already accepted dispatch before rebuilding it or entering any
+            # approval/dispatch path. Legacy receipts did not persist runtime_id: the
+            # exact artifact/version, paper pool and persona capital binding identify it.
+            if pending is not None and self._binding_moved(ids, pending, bindings=bindings):
+                return self._confirm_dispatched(tenant_id, persona_id, pending)
             existing = self._guarded(
                 tenant_id, persona_id, number, lambda: self._registry_view(artifact_id), pending
             )
@@ -413,7 +522,7 @@ class PersonaPoolPublisher:
         )
         dispatch_note = None
         try:
-            receipt = self.coordinator.publish_pool_envelope(
+            publication = (
                 {
                     "tenant_id": tenant_id,
                     "persona_id": persona_id,
@@ -427,6 +536,8 @@ class PersonaPoolPublisher:
                     "market": envelope["parameters"].get("market"),
                 }
             )
+            receipt = (self.coordinator.publish_pool_envelope(publication, binding_snapshot=bindings)
+                       if defer_confirmation else self.coordinator.publish_pool_envelope(publication))
         except PoolDispatchUncertain as exc:
             # Dispatch may have been admitted and still be queued. Refuse only
             # with authoritative terminal rejection evidence plus readback that
@@ -434,7 +545,7 @@ class PersonaPoolPublisher:
             # receipt regardless of the binding being active right now.
             receipt = exc.receipt
             try:
-                kept = exc.terminal_rejection and self._previous_still_live(
+                kept = not defer_confirmation and exc.terminal_rejection and self._previous_still_live(
                     ids, receipt, previous
                 )
             except Exception:
@@ -477,7 +588,9 @@ class PersonaPoolPublisher:
                 )
 
         try:
-            moved = self._binding_moved(ids, receipt)
+            # The daily cycle spends one binding snapshot per tick. Dispatch truth
+            # is confirmed on the next tick; synchronous callers keep their readback.
+            moved = False if defer_confirmation else self._binding_moved(ids, receipt)
         except Exception:  # readback failed after dispatch: report truthfully as unconfirmed
             moved = False
         entry = {
@@ -567,16 +680,40 @@ class PersonaPoolPublisher:
             and live[0].get("status") == "active"
         )
 
-    def _binding_moved(self, ids, receipt) -> bool:
-        reader = self.coordinator.runtime_binding_reader
-        bindings = reader(receipt["deployment_plan_id"], ids.capital_pool_id) if reader else []
-        live = [b for b in bindings if b.get("status") == "active"
+    def _confirm_dispatched(self, tenant_id, persona_id, pending):
+        number = int(pending["pool_version"])
+        confirmed = {k: v for k, v in pending.items() if k != "note"}
+        confirmed["status"] = "published"
+
+        def mutate(record):
+            # Never overwrite a concurrent replacement of the receipt, or move the
+            # current pointer backwards when another publication has already won.
+            if record["published"].get(str(number)) != pending:
+                raise PoolPublishRefused("dispatch record changed during confirmation", step="record")
+            record["published"][str(number)] = confirmed
+            if int((record.get("current_envelope") or {}).get("pool_version") or 0) <= number:
+                record["current_envelope"] = {
+                    "artifact_id": pending["envelope_artifact_id"], "version": pending["envelope_version"],
+                    "plan_id": pending["deployment_plan_id"], "pool_version": number,
+                }
+
+        self._save(tenant_id, persona_id, mutate)
+        return {**confirmed, "idempotent_replay": True}
+
+    def _binding_moved(self, ids, receipt, *, bindings=None) -> bool:
+        if bindings is None:
+            reader = self.coordinator.runtime_binding_reader
+            bindings = reader(receipt["deployment_plan_id"], ids.capital_pool_id) if reader else []
+        live = [b for b in bindings if b.get("status") not in TERMINAL_RUNTIME_BINDING_STATUSES
                 and b.get("capital_pool_id") == ids.capital_pool_id]
         return bool(
             len(live) == 1
+            and live[0].get("status") == "active"
+            and live[0].get("deployment_mode") == "paper"
             and live[0].get("artifact_id") == receipt["envelope_artifact_id"]
             and live[0].get("artifact_version") == receipt["envelope_version"]
-            and live[0].get("runtime_id") == receipt.get("runtime_id")
+            and live[0].get("runtime_id")
+            and (not receipt.get("runtime_id") or live[0].get("runtime_id") == receipt["runtime_id"])
             and live[0].get("persona_capital_binding_id") == ids.persona_capital_binding_id
         )
 

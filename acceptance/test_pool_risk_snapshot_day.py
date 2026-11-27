@@ -98,6 +98,64 @@ def test_no_trading_persona_fails():
     assert report["verdict"] == "failed" and report["reason"] == "no_active_trading_persona"
 
 
+@pytest.mark.parametrize("purpose_field", ["personaPurpose", "persona_purpose"])
+def test_hosted_1127_servant_paper_book_does_not_fail_trading_pool_snapshot(purpose_field):
+    """Synthetic 11/27 replay: the servant's valid paper binding has no telemetry.
+
+    Paper ownership does not enroll the advisory assistant in a trading cycle.
+    The three real pools still await their twenty-row health window.
+    """
+    traders = {
+        "persona-2448c7053e33ea48da47": ("rt-ad81501b", 3),
+        "persona-ee7112a829d38b9135ac": ("rt-3b65a843", 3),
+        "persona-6507750312870d03a241": ("rt-3252fa75", 8),
+    }
+    servant = "agora-servant-799a3ce8c021b91cbb54"
+    servant_runtime = "rt-persona-paper-3ca8da543bef6ede0a07"
+    session = "2026-11-26"
+    personas = [{"id": pid, "ownerLifecycleState": "paper_owner", "tenantId": "tenant-dev",
+                 purpose_field: "trading"} for pid in traders]
+    advisory = {"id": servant, "ownerLifecycleState": "paper_owner", "tenantId": "tenant-dev",
+                purpose_field: "advisory_assistant"}
+    bindings = [{"persona_id": pid, "runtime_id": runtime, "deployment_stage": "paper", "status": "active"}
+                for pid, (runtime, _) in traders.items()]
+    bindings.append({"persona_id": servant, "runtime_id": servant_runtime,
+                     "deployment_stage": "paper", "status": "active"})
+    seen = []
+
+    def fetch(path):
+        seen.append(path)
+        if path.startswith("/bff/personas?"):
+            return {"items": personas}
+        if path == "/api/v1/runtime-bindings":
+            return {"data": bindings}
+        if path == f"/api/v1/telemetry/{servant_runtime}/summary":
+            raise check.persona_day.ProbeHttpError("http_404")
+        for runtime, count in traders.values():
+            if path == f"/api/v1/telemetry/{runtime}/summary":
+                return {"data": {"pool_risk_snapshots": [row(session)],
+                                 "pool_risk_snapshot_retained_days": count}}
+        if path.startswith("/bff/management/trade-journeys?"):
+            return {"data": {"items": [journey("2026-11-26T06:00:00Z")]}}
+        if path in {f"/bff/personas/{pid}" for pid in traders}:
+            return {"data": {"strategyPool": {"health": health(False)}}}
+        raise AssertionError(path)
+
+    now = datetime(2026, 11, 27, 11, 30, tzinfo=timezone.utc)
+    assert check.run(fetch, now)["verdict"] == "pending"
+    personas.append(advisory)
+    seen.clear()
+    report = check.run(fetch, now)
+    assert (report["verdict"], report.get("reason")) == ("pending", None)
+    assert {r["persona_id"] for r in report["pools"]} == set(traders)
+    assert [r["pending"] for r in report["pools"]] == [
+        ["pool_health_pending:rows=3/20"], ["pool_health_pending:rows=3/20"], ["pool_health_pending:rows=8/20"]]
+    assert report["left_out_count"] == 1
+    assert all(servant not in path and servant_runtime not in path for path in seen)
+    assert bindings[-1] == {"persona_id": servant, "runtime_id": servant_runtime,
+                            "deployment_stage": "paper", "status": "active"}
+
+
 def test_session_falls_back_to_other_pools_snapshot_dates_when_no_released_decision():
     def two(path):
         if path.startswith("/api/v1/telemetry/rt-0"):

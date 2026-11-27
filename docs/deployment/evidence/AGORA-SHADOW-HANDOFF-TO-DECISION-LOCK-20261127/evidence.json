@@ -3,19 +3,23 @@
   "title": "送 Shadow writes a decision lock that evaluation settles; the unread shadow_research target is removed",
   "owner": "Antigravity",
   "reviewer": "Claude2",
-  "recorded_at": "2026-11-27T14:04:30Z",
+  "recorded_at": "2026-11-27T15:56:00Z",
   "delivery_state": "merged",
   "root_cause_class": "RC4 (Agora: the trading servant does not serve the human trader — SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §8.3 item 6 & §12 T6)",
   "review_remediation": {
     "reopened_head": "72f612f2d6967c5811a2ea918d45432fe9694192",
+    "approved_head_before_dev_sync": "3f2349c31caf13675476d30fb80a964d8dc7bb1e",
+    "dev_sync_base": "35e13d59a0e4d6c47bb74c15b3ab4312be91fd1f",
     "finding": "On the durable store (PostgresTradingRoomStore._call deep-copy reads), the shadow verdict and shadow intent-handoff mutated the dictionary returned by get_decision_event() in-place without writing back, leaving the decision event in pending_review.",
-    "fix": "Installed shadow -> state='decided', decision_state='handed_off' onto TradingRoomStore.record_trader_decision from service.py (store.py is outside the frozen task artifacts contract) so single-transaction store calls persist the state transition, and added TradingRoomService._persist_shadow_event_state using store.upsert_decision_event for both record_trader_decision and _write_shadow_lock_from_handoff. Added copy-on-read store tests in test_trading_room.py and test_agora_shadow_mode.py verifying state=='decided', removal from pending_review, and 409 on a subsequent approve."
+    "fix": "Installed shadow -> state='decided', decision_state='handed_off' onto TradingRoomStore.record_trader_decision from service.py (store.py is outside the frozen task artifacts contract) so single-transaction store calls persist the state transition, and added TradingRoomService._persist_shadow_event_state using store.upsert_decision_event for both record_trader_decision and _write_shadow_lock_from_handoff. Added copy-on-read store tests in test_trading_room.py and test_agora_shadow_mode.py verifying state=='decided', removal from pending_review, and 409 on a subsequent approve. Synced with origin/dev (35e13d59a) to resolve the single-line problem-register.md merge conflict."
   },
   "declared_dependencies": {
     "AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127": {
       "status": "done",
       "pr": 7935,
-      "merge_commit": "20dbdff8423d5ec10153dd8a6e4c1694a141ddf9"
+      "merge_commit": "20dbdff8423d5ec10153dd8a6e4c1694a141ddf9",
+      "hosted_proof_pr": 7966,
+      "hosted_proof_merge_commit": "5ca1f60fb736d01f86948a45f1a2c32a9a399de1"
     }
   },
   "runtime_budget": {
@@ -105,7 +109,7 @@
   ],
   "verification": {
     "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/evaluation/tests/test_shadow_settlement.py services/control-plane/tests/agora/test_winner_branch_e2e_v13.py services/control-plane/tests/agora/test_winner_branch_trading_room_e2e.py scripts/test_agora_bundle_digests.py docs/contracts/agora/test_generate_backend_contract.py scripts/test_agora_compat_manifest.py",
-    "result": "all passed"
+    "result": "326 passed in 121.61s"
   },
   "residual_findings": []
 }

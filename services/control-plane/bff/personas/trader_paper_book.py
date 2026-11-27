@@ -267,6 +267,8 @@ def trader_paper_book_provisioning_record(
     payload = {
         "name": f"{clean_persona} trader paper book",
         "mandate": "user_private_agora_servant_paper_book",
+        "persona_class": "agora_servant",
+        "book_kind": "trader_servant_paper_book",
         "risk": "low",
         "currency": str(starting_capital.get("currency") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY),
         "budget": float(starting_capital.get("amount") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL),
@@ -491,6 +493,176 @@ def _transport_supports_deploy_authorities(
     return False
 
 
+def _transport_supports_paper_risk_gate(
+    coordinator: PersonaProvisioningCoordinator,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """True when Capital and Governance owners are configured for P-4 paper risk gate resolution."""
+    transport = getattr(coordinator, "transport", None)
+    if transport is None:
+        return False
+    env_map = os.environ if env is None else env
+    owner_envs = getattr(transport, "_OWNER_ENVIRONMENTS", None)
+    if isinstance(owner_envs, Mapping):
+        for owner in ("capital", "governance"):
+            env_names = owner_envs.get(owner) or ()
+            if not any(str(env_map.get(name) or "").strip() for name in env_names):
+                return False
+        return True
+    owners = getattr(transport, "owners", None)
+    if isinstance(owners, Mapping):
+        return all(owner in owners for owner in ("capital", "governance"))
+    return False
+
+
+def _resolve_paper_book_risk_profile(
+    persona_record: Optional[Mapping[str, Any]],
+    capital_pool: Optional[Mapping[str, Any]],
+) -> str:
+    meta = (
+        persona_record.get("metadata")
+        if isinstance(persona_record, Mapping) and isinstance(persona_record.get("metadata"), Mapping)
+        else {}
+    )
+    pool_meta = (
+        capital_pool.get("metadata")
+        if isinstance(capital_pool, Mapping) and isinstance(capital_pool.get("metadata"), Mapping)
+        else {}
+    )
+    for raw in (
+        pool_meta.get("requested_risk_profile"),
+        meta.get("requested_risk_profile"),
+        meta.get("risk_level"),
+        persona_record.get("risk_level") if isinstance(persona_record, Mapping) else None,
+        persona_record.get("risk") if isinstance(persona_record, Mapping) else None,
+    ):
+        clean = str(raw or "").strip().lower()
+        if clean in {"low", "medium", "high"}:
+            return clean
+    return "low"
+
+
+def _ensure_paper_book_risk_policy(
+    coordinator: PersonaProvisioningCoordinator,
+    *,
+    tenant_id: str,
+    persona_id: str,
+    ids: ProvisioningIds,
+    requested_by: str,
+    capital_pool: Mapping[str, Any],
+    persona_record: Optional[Mapping[str, Any]] = None,
+    persona_write_owner: Optional[Any] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Ensure the servant paper pool has a P-4 gate-approved risk policy mapping when Governance is configured.
+
+    GET-first and idempotent: when the pool already carries a bound active RiskPolicy and
+    gate-approved ``capital_pool_activation`` ApprovalDecision, zero POST/PATCH calls are made.
+    Otherwise obtains a risk-officer draft and automated paper risk gate approval through
+    ``coordinator.repair_paper_pool_risk_policy`` (Pass 1 proposes + gate-approves; Pass 2
+    binds the gate-approved decision onto the CapitalPool). No human approval in paper and
+    no hardcoded limits (P-4).
+    """
+    if not _transport_supports_paper_risk_gate(coordinator, env=env):
+        return deepcopy(dict(capital_pool)), None
+
+    from services.capital.risk_policy import resolve_pool_risk_policy_binding
+
+    requested_profile = _resolve_paper_book_risk_profile(persona_record, capital_pool)
+    pool_with_digest = coordinator._pool_with_authoritative_approval_digest(
+        capital_pool,
+        tenant_id=tenant_id,
+    )
+    current_resolution = resolve_pool_risk_policy_binding(
+        capital_pool_id=ids.capital_pool_id,
+        pool=pool_with_digest,
+        expected_tenant_id=tenant_id,
+        expected_stage="paper",
+        requested_profile=requested_profile,
+        require_approved_profile_mapping=True,
+        approval_reader=coordinator._governance_approval_reader(),
+        require_active=True,
+        require_limits=("gross_limit",),
+        raise_on_error=False,
+    )
+    if current_resolution.resolved and current_resolution.profile_mapping_approval_id:
+        return deepcopy(dict(capital_pool)), current_resolution.to_dict()
+
+    original_owner_provider = coordinator.persona_owner_provider
+
+    def _fallback_owner_provider() -> Any:
+        owner = original_owner_provider() if callable(original_owner_provider) else None
+        if owner is not None:
+            return owner
+        if persona_write_owner is not None:
+            return persona_write_owner
+        if isinstance(persona_record, Mapping):
+            class _StaticPersonaReader:
+                @staticmethod
+                def get_persona(pid: str) -> Optional[Mapping[str, Any]]:
+                    rec_id = str(persona_record.get("persona_id") or persona_record.get("id") or "").strip()
+                    if not rec_id or rec_id == pid:
+                        return deepcopy(dict(persona_record))
+                    return None
+            return _StaticPersonaReader()
+        return None
+
+    coordinator.persona_owner_provider = _fallback_owner_provider
+    try:
+        repair_result = coordinator.repair_paper_pool_risk_policy(
+            tenant_id=tenant_id,
+            persona_id=persona_id,
+            capital_pool_id=ids.capital_pool_id,
+            binding_id=ids.persona_capital_binding_id,
+            requested_by=requested_by,
+            requested_profile=requested_profile,
+            require_approved_profile_mapping=True,
+        )
+        owner_req = repair_result.get("owner_decision_request")
+        after_res = repair_result.get("after_resolution")
+        if (
+            isinstance(owner_req, Mapping)
+            and owner_req.get("paper_gate_status") == "decided_approved_by_automated_gate"
+            and not (isinstance(after_res, Mapping) and after_res.get("resolved") is True)
+        ):
+            repair_result = coordinator.repair_paper_pool_risk_policy(
+                tenant_id=tenant_id,
+                persona_id=persona_id,
+                capital_pool_id=ids.capital_pool_id,
+                binding_id=ids.persona_capital_binding_id,
+                requested_by=requested_by,
+                requested_profile=requested_profile,
+                require_approved_profile_mapping=True,
+            )
+            after_res = repair_result.get("after_resolution")
+    finally:
+        coordinator.persona_owner_provider = original_owner_provider
+
+    updated_pool = (
+        deepcopy(dict(repair_result["capital_pool"]))
+        if isinstance(repair_result.get("capital_pool"), Mapping)
+        else deepcopy(dict(capital_pool))
+    )
+    if not (isinstance(after_res, Mapping) and after_res.get("resolved") is True):
+        gate_status = (
+            str(owner_req.get("paper_gate_status") or owner_req.get("governance_proposal_status") or "")
+            if isinstance(owner_req, Mapping)
+            else ""
+        )
+        reason = (
+            str((after_res or {}).get("reason") or "")
+            if isinstance(after_res, Mapping)
+            else "paper risk policy mapping unresolved"
+        )
+        raise PersonaProvisioningCoordinationError(
+            f"Trader paper book risk policy gate did not resolve for pool {ids.capital_pool_id}: "
+            f"{reason} (gate_status={gate_status or 'unresolved'})",
+            reason_code="trader_paper_book_risk_policy_unresolved",
+        )
+    return updated_pool, deepcopy(dict(after_res))
+
+
 def _coordinate_paper_book_deploy_authorities(
     coordinator: PersonaProvisioningCoordinator,
     record: ProvisioningRecord,
@@ -679,7 +851,17 @@ def ensure_trader_paper_book(
             "starting_capital_source_ref": starting_capital["source_ref"],
         },
     )
-    capital_pool = deepcopy(dict(capital_receipt["capital_pool"]))
+    capital_pool, risk_policy_resolution = _ensure_paper_book_risk_policy(
+        active_coordinator,
+        tenant_id=clean_tenant,
+        persona_id=clean_persona,
+        ids=ids,
+        requested_by=clean_requester,
+        capital_pool=capital_receipt["capital_pool"],
+        persona_record=persona_record,
+        persona_write_owner=persona_write_owner,
+        env=env,
+    )
     capital_pool.setdefault("stage", "paper")
     capital_pool.setdefault("notional_only", True)
     capital_pool["created"] = not pool_existed
@@ -881,6 +1063,11 @@ def ensure_trader_paper_book(
         "capital_pool": capital_pool,
         "persona_capital_binding": persona_capital_binding,
         "runtime_binding": runtime_binding,
+        **(
+            {"risk_policy_resolution": risk_policy_resolution}
+            if risk_policy_resolution is not None
+            else {}
+        ),
         "idempotent_replay": bool(capital_existed and runtime_binding_existed),
         "created_capital_pool": not capital_existed,
         "created_runtime_binding": not runtime_binding_existed,

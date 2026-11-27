@@ -1,0 +1,137 @@
+{
+  "task_id": "DEV-LEASE-INITIAL-VISIBILITY-MISSING-20261126",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem_register": "RC1 WP1.3 row in docs/operations/problem-register.md",
+  "delivery_scope": "Source repair of scripts/dev_environment_lease.py verify() plus focused tests; controller pins bumped in every live caller so the fix reaches the immutable workflow entry point. Hosted activation happens on the first refresh/Root after merge.",
+  "incident_reference": {
+    "root_cause": "Right after a run creates the lease file (the predecessor having been deleted on release), GitHub's contents API can still answer 404. verify() with --initial-visibility-wait-seconds already retried the exact stale predecessor blob but raised LeaseLost('remote dev environment lease is missing') on 404 at once.",
+    "runs_today": [
+      {
+        "run_id": 45769776022,
+        "workflow": "dev-tw-market-refresh.yml",
+        "detected_at": "2026-11-26T06:43:41Z",
+        "seconds_after_acquisition": 0.46,
+        "caller": "Start identity-bound lease heartbeat step, verify --initial-visibility-wait-seconds 15"
+      },
+      {
+        "run_id": 45808814174,
+        "workflow": "nonprod-deploy.yml",
+        "job_id": 139898384740,
+        "detected_at": "2026-11-26T13:03:10Z",
+        "seconds_after_acquisition": 0.22,
+        "caller": "scripts/compensate_cross_repo_release.sh verify --initial-visibility-wait-seconds 15 (owner ...:45808814174:1:verify); compensation could not proceed"
+      }
+    ]
+  },
+  "frequency_last_14_days": {
+    "window": "2026-11-12T00:00Z .. 2026-11-26T14:30Z",
+    "method": "gh run list for ajoe734/pantheon workflows that run the lease controller (nonprod-deploy.yml, dev-tw-market-refresh.yml, agora-hosted-acceptance.yml) with conclusion=failure; downloaded every failed job log via GET /repos/ajoe734/pantheon/actions/jobs/{id}/logs; matched 'remote dev environment lease is missing' and measured the gap to the preceding '\"status\": \"acquired\"' line timestamp.",
+    "failed_runs_scanned": 155,
+    "failed_runs_by_workflow": {
+      "nonprod-deploy.yml": 79,
+      "dev-tw-market-refresh.yml": 76,
+      "agora-hosted-acceptance.yml": 0
+    },
+    "failed_runs_with_retrievable_failed_job_logs": 135,
+    "runs_matching_within_5s_of_acquisition": 5,
+    "instances": [
+      {
+        "run_id": 43169731205,
+        "workflow": "dev-tw-market-refresh.yml",
+        "detected_at": "2026-11-12T06:40:34Z",
+        "seconds_after_acquisition": 0.48
+      },
+      {
+        "run_id": 43280352459,
+        "workflow": "dev-tw-market-refresh.yml",
+        "detected_at": "2026-11-12T18:31:42Z",
+        "seconds_after_acquisition": 0.47
+      },
+      {
+        "run_id": 45669590538,
+        "workflow": "dev-tw-market-refresh.yml",
+        "detected_at": "2026-11-25T17:54:38Z",
+        "seconds_after_acquisition": 0.46,
+        "note": "a second identical line 0.31 s later comes from the failure-path verify without the window, a consequence of the first"
+      },
+      {
+        "run_id": 45769776022,
+        "workflow": "dev-tw-market-refresh.yml",
+        "detected_at": "2026-11-26T06:43:41Z",
+        "seconds_after_acquisition": 0.46
+      },
+      {
+        "run_id": 45808814174,
+        "workflow": "nonprod-deploy.yml",
+        "detected_at": "2026-11-26T13:03:10Z",
+        "seconds_after_acquisition": 0.22
+      }
+    ],
+    "matches_later_than_5s_after_acquisition": 0,
+    "limitations": "20 failed runs had no retrievable failed-job log (no failed job or log not found); execute-plans workflows were not scanned."
+  },
+  "runtime_budget": {
+    "new_writers": 0,
+    "success_path_added_wait_seconds": 0,
+    "worst_case_added_wait_per_acquisition_seconds": 15,
+    "worst_case_detail": "Only on the 404 path and only in callers that already pass --initial-visibility-wait-seconds 15 --initial-visibility-poll-seconds 1: at most the existing 15 s bound plus one in-flight GET, i.e. up to about 16 extra read-only GETs. The window is shared with the stale-predecessor case (one deadline, not additive). Observed 404s cleared or would have needed well under 1 s.",
+    "unchanged": "heartbeat and verify without the window still fail on the first 404"
+  },
+  "immutable_controller": {
+    "commit_sha": "a4b0cdca261b714c386341534b07fc43badd1a7e",
+    "cli_path": "scripts/dev_environment_lease.py",
+    "cli_sha256": "d0d9cc63a21bb1fbf4f5e2dc14c60a2418a598cfe608e7d0df0189818e3d74ac",
+    "wrapper_path": "scripts/run_with_dev_environment_lease.sh",
+    "wrapper_sha256": "6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2",
+    "wrapper_bytes_unchanged": true,
+    "previous_commit_sha": "081075781d28a6563c731909667b98b7b5c153f9",
+    "previous_cli_sha256": "c6fbde26c185b963d962ef9d8433fa31498440886d89691f9410ab22a5afbaaa",
+    "pinned_in": [
+      ".github/workflows/nonprod-deploy.yml",
+      ".github/workflows/dev-tw-market-refresh.yml",
+      ".github/workflows/agora-hosted-acceptance.yml",
+      ".github/workflows/persona-owner-contract.yml",
+      "scripts/compensate_cross_repo_release.sh",
+      "scripts/test_dev_environment_lease_deploy_contract.py",
+      "scripts/test_nonprod_dev_artifact_workflow.py",
+      "scripts/test_dev_paper_diagnostics_failure_path.py"
+    ],
+    "scope_note": "The pin files are outside the four declared task artifacts. They are required because test_dev_environment_lease_deploy_contract asserts the working CLI hash equals the pinned controller hash (a controller-only fix must reach the immutable workflow entry point); without them CI fails and the fix never runs. Change is a mechanical pin substitution only.",
+    "integration_constraint": "Merge with MERGE (not squash) so commit a4b0cdca2 stays reachable; workflows fetch this exact commit and verify both checksums."
+  },
+  "acceptance": {
+    "AC1": {
+      "result": "implemented",
+      "behavior": "LeaseManager._matching_remote raises InitialLeaseMissingPending (subclass of InitialLeaseVisibilityPending) on 404 only when verify() runs with initial_visibility_wait_seconds > 0; verify polls it with the same poll interval and the same visibility deadline as the stale-predecessor case. On timeout: LeaseLost('initial lease visibility remained missing (404) until the bounded timeout'). Heartbeat and verify without the window keep raising LeaseLost('remote dev environment lease is missing') at once. After a 404, the content must still match every acquisition immutable field (owner, leaseId, mode, acquiredAt, ...) or LeaseLost is raised."
+    },
+    "AC2": {
+      "result": "tests added",
+      "tests": [
+        "scripts/test_dev_environment_lease.py::LeaseManagerTests::test_initial_verify_retries_missing_lease_then_accepts_exact_acquisition",
+        "scripts/test_dev_environment_lease.py::LeaseManagerTests::test_initial_verify_missing_until_deadline_is_lease_lost",
+        "scripts/test_dev_environment_lease.py::LeaseManagerTests::test_missing_lease_outside_initial_window_is_lost_immediately",
+        "scripts/test_dev_environment_lease.py::LeaseManagerTests::test_initial_verify_missing_then_foreign_owner_is_lost"
+      ],
+      "unchanged": "existing stale-predecessor tests (test_initial_verify_retries_only_the_exact_expired_predecessor, ..._times_out_if_exact_predecessor_remains_visible, ..._fails_immediately_for_wrong_predecessor_sha, ..._without_valid_predecessor_sha, ..._does_not_retry_predecessor_without_opt_in, ..._fails_immediately_for_foreign_active_replacement) are byte-identical and pass"
+    },
+    "AC3": {
+      "result": "see frequency_last_14_days and runtime_budget"
+    },
+    "AC4": {
+      "result": "no new writer; worst case is the existing 15 s visibility bound per acquisition"
+    },
+    "AC5": {
+      "result": "registered on RC1 WP1.3 in docs/operations/problem-register.md; reviewer Antigravity is a different model family from owner Claude"
+    }
+  },
+  "verification": {
+    "commands": [
+      "cd scripts && python3 -m unittest test_dev_environment_lease  -> 53 tests OK",
+      "uvx --python 3.12 --with pyyaml pytest -q scripts/test_dev_environment_lease.py scripts/test_dev_environment_lease_deploy_contract.py scripts/test_nonprod_dev_artifact_workflow.py scripts/test_dev_paper_diagnostics_failure_path.py -> 614 passed, 56 subtests passed",
+      "uvx --python 3.12 --with pyyaml pytest per file: test_compensate_cross_repo_release_rate_limit (5), test_cross_repo_release_controller (110), test_dev_artifact_compensation_evidence (102), test_dev_direct_ssh_workflow_contract (8), test_dev_tw_market_refresh_workflow (46), test_probe_agora_hosted_service_journey (11), test_verify_agora_current_hosted_acceptance (11), test_verify_product_functional_closure (107) -> all passed"
+    ],
+    "local_environment_failures": "test_deploy_nonprod_vm, test_deploy_nonprod_artifact_restore, test_dev_tw_market_refresh and test_source_ingest_deploy_diagnostics_contract had 30 failures locally; with pydantic/fastapi/jsonschema added 13 remain, and the identical 13 fail on base b0eb2c259 with this task's files restored (dev_remote_guarded_exec 'unsafe input file' on this host's temp paths, subprocess integration env). Not caused by this change; CI is authoritative."
+  },
+  "hosted_activation": "pending: first dev-tw-market-refresh or Root after merge runs controller a4b0cdca2; a 404 inside 15 s of acquisition then shows as a retried verify instead of 'environment lease lost'"
+}

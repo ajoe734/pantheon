@@ -148,6 +148,11 @@ from .snapshot_universe import SnapshotUniverse
 from .strategy_seed_store import StrategySpecSeedStore
 
 
+_UNRESOLVED_DLQ_STATUSES = frozenset(
+    {DeadLetterStatus.PENDING, DeadLetterStatus.REPLAY_FAILED, DeadLetterStatus.SCHEMA_REJECTED}
+)
+
+
 def _ref_count(refs: Mapping[str, Any], listed_key: str, count_key: str) -> int:
     """Count from the receipt's count field (refs-only form) or its embedded list (older rows)."""
     value = refs.get(listed_key)
@@ -1914,6 +1919,9 @@ class SourceIngestionRuntime:
             for status in DeadLetterStatus
         }
         dlq_status_counts_by_connector: dict[str, dict[str, int]] = {}
+        # Oldest unresolved rejection per connector: one timestamp per connector, so a controller
+        # can report the age of a backlog it does not fail on.
+        dlq_oldest_unresolved_by_connector: dict[str, datetime] = {}
         for entry in dlq_entries:
             connector_id = entry.event.payload.get("connector_id")
             # Preserve unattributed entries in the totals. The terminal validator
@@ -1924,6 +1932,11 @@ class SourceIngestionRuntime:
                 connector_id, {status.value: 0 for status in DeadLetterStatus}
             )
             counts[entry.status.value] += 1
+            if entry.status in _UNRESOLVED_DLQ_STATUSES:
+                rejected_at = entry.rejected_at
+                oldest = dlq_oldest_unresolved_by_connector.get(connector_id)
+                if oldest is None or rejected_at < oldest:
+                    dlq_oldest_unresolved_by_connector[connector_id] = rejected_at
         unresolved_dlq_count = sum(
             dlq_status_counts[status.value]
             for status in (
@@ -1947,6 +1960,10 @@ class SourceIngestionRuntime:
             "unresolved_dlq_count": unresolved_dlq_count,
             "dlq_status_counts": dlq_status_counts,
             "dlq_status_counts_by_connector": dict(sorted(dlq_status_counts_by_connector.items())),
+            "dlq_oldest_unresolved_at_by_connector": {
+                connector_id: rejected_at.isoformat().replace("+00:00", "Z")
+                for connector_id, rejected_at in sorted(dlq_oldest_unresolved_by_connector.items())
+            },
             "frontier_backlog": frontier_backlog,
             "frontier_backlog_by_connector": dict(sorted(frontier_backlog_by_connector.items())),
             "max_lag_seconds": max(staleness_values, default=0),
