@@ -1124,3 +1124,31 @@ def test_morning_run_cap_covers_full_market_chip_profile_budget() -> None:
         )
     # An afternoon (FinMind-only) run has no chip profile and keeps the default cap.
     assert plan_run("30 10 * * 1-5", True)["max_records"] == 500
+
+
+# --- SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole-market broker receipt in the run summary ---
+
+_WM_COMPLETE = {"status": "complete", "trade_date": "2026-11-26", "stored_symbol_count": 1985, "rows": 79400,
+                "requests_made": 1, "bytes_compressed": 2100000, "fallback_required": False,
+                "coverage": {"missing_count": 3, "expected_symbols": 1820}}
+
+
+def test_summary_whole_market_complete_passes_with_counts(tmp_path: Path) -> None:
+    steps = _real_run(tmp_path, {"tw-finmind-broker-daily-report": {"broker_whole_market": _WM_COMPLETE}})
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 0, out
+    assert "tw_broker_top whole market" in table and "symbols=1985" in table and "requests=1" in table
+
+
+@pytest.mark.parametrize("wm", [
+    {**_WM_COMPLETE, "status": "partial", "reason": "coverage 1700/1820 expected symbols, 1700 stored"},
+    {"status": "provider_refused", "reason": "FinMindFetchError: FinMind API status 400: need sponsorpro",
+     "fallback_required": True, "requests_made": 1},
+])
+def test_summary_whole_market_partial_or_refused_fails_the_run(tmp_path: Path, wm: dict[str, Any]) -> None:
+    steps = _real_run(tmp_path, {"tw-finmind-broker-daily-report": {"broker_whole_market": wm}})
+    rc, out, table = _run_summary(tmp_path, steps)
+    assert rc == 1
+    assert f"check tw_broker_top whole market ({wm['status']}" in out
+    if wm.get("fallback_required"):
+        assert "per-symbol fallback" in table and "sponsorpro" in table

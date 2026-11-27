@@ -285,7 +285,8 @@ DATASET_ROWS: dict[str, Callable[[], list[Any]]] = {
     "tw_market_breadth_daily": lambda: _rows(2, lambda i: [["TWSE", "TPEX"][i], "2026-11-13", 800, 600, 120, 1.3]),
     "tw_institutional_flow": lambda: _rows(1_900 * 3, lambda i: [f"{1000 + i // 3}", "2026-11-13", ("foreign", "trust", "dealer")[i % 3], 1000 + i % 997, 900 + i % 89, (i % 211) - 100]),
     "tw_margin_short_balance": lambda: _rows(1_900, lambda i: [f"{1000 + i}", "2026-11-13", 5000 + i % 977, 300 + i % 97, 4800 + i % 911]),
-    "tw_broker_top": lambda: _rows(200 * 2 * 15, lambda i: [f"{1000 + i // 30}", "2026-11-13", ("buy", "sell")[i % 2], (i // 2) % 15 + 1, f"B{(i * 31) % 997:03d}", 100 + i % 313, 90 + i % 307]),
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market, 2,600 symbols x 2 sides x 20 ranks.
+    "tw_broker_top": lambda: _rows(BROKER_TOP_SYMBOLS * 2 * 20, lambda i: [f"{1000 + i // 40}", "2026-11-13", ("buy", "sell")[i % 2], (i // 2) % 20 + 1, f"B{(i * 31) % 997:03d}", 100 + i % 313, 90 + i % 307]),
     "tw_broker_branch_detail": lambda: _rows(200 * 15 * 3, lambda i: [f"{1000 + i // 45}", "2026-11-13", f"B{(i // 3) % 997:03d}", f"BR{i % 3}", 10 + i % 53, 9 + i % 47]),
     "taifex_ssf_contracts": lambda: _rows(600, lambda i: [f"SSF{i:04d}", "2026-11-13", 10.0 + i % 90, 100 + i % 700, 50 + i % 300]),
     "taifex_tx_daily": lambda: _rows(4, lambda i: [["TX", "MTX", "TX2", "MTX2"][i], "2026-11-13", 21000.0 + i, 21100.0, 20900.0, 21050.0, 90000]),
@@ -323,6 +324,22 @@ def _keyed_record(name: str, i: int, n: int):
 
 
 KEYED_ROW_COUNTS = {"collector_news": 45, "collector_social_posts": 30}
+BROKER_TOP_SYMBOLS = 2_600
+
+
+def _broker_top_records(n: int) -> list[dict[str, Any]]:
+    """The real compact record of the whole-market daily run (one write per session, like hosted)."""
+    from services.source_ingestion.connectors.finmind_taiwan import FinMindTaiwanBrokerDailyReportAdapter
+
+    rows = []
+    for i in range(n):
+        side, rank = ("buy", "sell")[i % 2], (i // 2) % 20 + 1
+        buy, sell = 1_000 + (i * 37) % 9_000, 100 + (i * 53) % 900
+        rows.append({"symbol": f"{1000 + i // 40}", "date": "2026-11-13", "side": side, "rank": rank,
+                     "broker": f"券商{(i * 31) % 997:03d}-分公司", "broker_id": f"{9000 + (i * 31) % 997}",
+                     "buy_qty": buy, "sell_qty": sell, "net_qty": buy - sell if side == "buy" else sell - buy,
+                     "price_levels": 1 + i % 7, "available_time": "2026-11-13T10:05:00+00:00"})
+    return FinMindTaiwanBrokerDailyReportAdapter().compact_keyed_records(rows, run_id="budget")
 
 
 def measure_dataset(name: str) -> dict[str, float]:
@@ -338,9 +355,12 @@ def measure_dataset(name: str) -> dict[str, float]:
     tmp = Path(tempfile.mkdtemp(prefix=f"budget-{name}-"))
     try:
         store = KeyedDatasetStore(tmp, replace(decl, day_budget_bytes=None))  # measure, do not let the writer refuse
-        records = [_keyed_record(name, i, n) for i in range(n)]
-        for i in range(0, n, BATCH):
-            store.write_records(records[i:i + BATCH], ingest_run_id="budget")
+        if name == "tw_broker_top":  # one whole-market write per session
+            store.write_records(_broker_top_records(n), ingest_run_id="budget")
+        else:
+            records = [_keyed_record(name, i, n) for i in range(n)]
+            for i in range(0, n, BATCH):
+                store.write_records(records[i:i + BATCH], ingest_run_id="budget")
         report = store.budget_report()
         return {"rows": float(n), "day_bytes": float(report["max_day_bytes"]),
                 "declared_budget_bytes": float(decl.day_budget_bytes or 0), "keyed": 1.0}
