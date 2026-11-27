@@ -135,6 +135,23 @@
     "change": "Move both verbatim hosted records to a fixture constant in the already-scoped producer test; retain source and per-record digests in this summary. No production or settlement changes.",
     "verification": "338 tests and 15 subtests passed in checkout-scoped interpreter; fixture bytes/digests, storage manifest, diff budget and git diff --check passed. Re-review required on new head; no merged, deployed or accepted claim."
   },
+  "release_probe_ci_repair": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46041736973/job/140667561467",
+    "failed_head": "4bd72f298bfa0dddc0ed968e4c708cdc9e22b485",
+    "root_cause": "The release-stage replay test enumerates repository probes explicitly; this task added trade-journey-parked-expired without adding it to that expected list.",
+    "change": "Add the task's release probe to the expected discovery list and assert skipped/exit 77 without hosted credentials. No release-stage implementation, deployment gate, settlement or runtime change.",
+    "supporting_test": "scripts/test_dev_acceptance_stage.py",
+    "reproduction": "The exact failing test reproduced locally with exit 1: index 13 contains probe:trade-journey-parked-expired, absent from the expected list.",
+    "validation": [
+      {
+        "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+        "exit_code": 0,
+        "result": "34 passed in 3.29s; bounded foreground command terminal status collected."
+      }
+    ],
+    "review": "New head requires fresh independent review by Claude2; no merged, deployed or accepted claim.",
+    "residual_findings": "No new out-of-scope defects. Existing market-data refresh residual remains recorded above."
+  },
   "ci_repair": {
     "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46035160872/job/140635789098",
     "failed_head": "105366ee4d4666895c0d017aef76b60c8fa8e3ea",
