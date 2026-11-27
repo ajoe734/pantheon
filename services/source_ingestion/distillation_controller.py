@@ -863,6 +863,7 @@ def run_controller_tick(
                 "skipped": run_result.skipped,
                 "deferred": run_result.deferred,
                 "failed": run_result.failed,
+                "extraction_retried": run_result.extraction_retried,
                 "enqueued": run_result.enqueued,
                 "registry_synced": run_result.registry_synced,
                 "retried": run_result.retried,
@@ -936,7 +937,9 @@ def run_controller_tick(
 
         if (
             run_result.failed
-            or queue_metrics["retry_wait"] - queue_metrics["deferred"]
+            or queue_metrics["retry_wait"]
+            - queue_metrics["deferred"]
+            - queue_metrics.get("extraction_retry", 0)
             or queue_metrics["failed"]
         ):
             raise DistillationControllerError(
