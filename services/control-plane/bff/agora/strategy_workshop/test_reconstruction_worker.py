@@ -316,6 +316,7 @@ def test_worker_missing_private_content_does_not_reconstruct_placeholder() -> No
 # --------------------------------------------------------------------------- #
 from services.control_plane.bff.agora.strategy_workshop.runner import (  # noqa: E402
     admit_reconstruction_job,
+    completeness_snapshot_id,
     run_reconstruction_job,
 )
 
@@ -498,6 +499,18 @@ def test_postgres_job_record_is_compare_and_set_on_the_card(request, provider_ca
     restarted = PostgresWorkshopStore(dsn=dsn, schema=schema)
     replay = run_reconstruction_worker(store=restarted, canonical=_NoRegistryOperations(), **_scope(workshop_id))
     assert replay["job_status"] == "replayed" and len(provider_calls) == 1
+    # One completeness snapshot per completed job; a re-write of the same job is a no-op.
+    snapshot = restarted.get_latest_completeness_snapshot(workshop_id)
+    assert snapshot["snapshot_id"] == completeness_snapshot_id(first["job_id"])
+    assert snapshot["state_map_json"]["hypothesis"]["status"] == "confirmed"
+    again = restarted.create_completeness_snapshot({**snapshot, "state_map_json": {}})
+    assert again["state_map_json"]["hypothesis"]["status"] == "confirmed"
+    with psycopg.connect(dsn) as conn:
+        count = conn.execute(
+            f'SELECT count(*) FROM "{schema}"."strategy_completeness_snapshot" WHERE workshop_id = %s',
+            (workshop_id,),
+        ).fetchone()[0]
+    assert count == 1
 
 
 def test_legacy_failed_card_without_a_job_is_re_admitted_once(provider_calls) -> None:
@@ -518,3 +531,113 @@ def test_legacy_failed_card_without_a_job_is_re_admitted_once(provider_calls) ->
     assert run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
                                      **_scope(workshop_id))["job_status"] == "replayed"
     assert len(provider_calls) == 1
+
+
+# --- completeness rail (hosted AC5 2026-11-27: GET /completeness stayed null) ---
+
+def _hosted_like_response(semantic_response: Dict[str, Any]) -> None:
+    semantic_response["strategy_map"] = {
+        "hypothesis": {"status": "confirmed", "summary": "Winner branches accumulate",
+                       "details": {"message_numbers": [1]}},
+        "signal_definition": {"status": "partial", "summary": "Net buying by winner branches",
+                              "details": {"message_numbers": [1],
+                                          "missing_definitions": ["winner branch threshold"]}},
+        "exit_rules": {"status": "partial", "summary": "20 trading days",
+                       "details": {"message_numbers": [1], "unresolved": ["stop price basis"]}},
+    }
+
+
+def test_completed_job_writes_one_completeness_snapshot_and_satisfies_state_map(
+        provider_calls, semantic_response) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.readiness import build_readiness_assessment
+
+    _hosted_like_response(semantic_response)
+    store = MemoryWorkshopStore()
+    session = _new_session(store)
+    workshop_id = session["workshop_id"]
+    _post_message(store, workshop_id, "Follow winner broker branches on TW stocks.")
+
+    def state_map_present() -> str:
+        assessment = build_readiness_assessment(
+            session=store.get_session(workshop_id), events=store.list_events(workshop_id),
+            snapshot=store.get_latest_completeness_snapshot(workshop_id), assessed_at="2026-11-27T00:00:00Z",
+        )
+        return next(req["state"] for gate in assessment["gates"] for req in gate.get("requirements", [])
+                    if req.get("requirement_id", req.get("id")) == "state_map_present")
+
+    assert store.get_latest_completeness_snapshot(workshop_id) is None
+    assert state_map_present() == "missing"
+    admission = admit_reconstruction_job(store=store, **_scope(workshop_id))
+    done = run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=admission["job_id"], **_scope(workshop_id))
+    assert done["job_status"] == "completed"
+
+    snapshot = store.get_latest_completeness_snapshot(workshop_id)
+    assert snapshot is not None and done["completeness_snapshot"]["snapshot_id"] == snapshot["snapshot_id"]
+    assert snapshot["snapshot_id"] == completeness_snapshot_id(admission["job_id"])
+    assert snapshot["strategy_version_id"] == (session.get("strategy_id") or workshop_id)
+    state_map = snapshot["state_map_json"]
+    assert state_map["hypothesis"]["status"] == "confirmed"
+    assert state_map["signal_definition"] == {
+        "status": "partial", "summary": "Net buying by winner branches",
+        "missing_definitions": ["winner branch threshold"],
+    }
+    assert state_map["exit_rules"]["missing_definitions"] == ["stop price basis"]
+    assert state_map["universe"]["status"] == "missing"
+    blocking = snapshot["blocking_items_json"]
+    assert [b["reason"] for b in blocking if b["source"] == "reconstruction_blocker"] == \
+        done["result"]["completeness"]["blockers"]
+    assert {"field": "signal_definition", "reason": "winner branch threshold",
+            "source": "missing_definition"} in blocking
+    assert snapshot["next_question_json"]["question_id"] == "q-1"
+    assert state_map_present() == "satisfied"
+
+    # Replays (worker and re-running the same job) write no second snapshot.
+    assert run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(),
+                                     **_scope(workshop_id))["job_status"] == "replayed"
+    assert run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                  job_id=admission["job_id"], **_scope(workshop_id))["job_status"] == "superseded"
+    assert len(store._snapshots[workshop_id]) == 1
+    # Re-writing the same job's snapshot is idempotent at the store too.
+    store.create_completeness_snapshot({**snapshot, "state_map_json": {}})
+    assert len(store._snapshots[workshop_id]) == 1
+    assert len(provider_calls) == 1
+
+
+def test_superseded_job_after_provider_call_writes_no_snapshot(monkeypatch, semantic_response) -> None:
+    from .semantic_provider import OpenClawOpsClient
+
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    first = admit_reconstruction_job(store=store, **_scope(workshop_id))
+
+    def newer_message_arrives(*a, **kw):
+        # A newer message's job takes the card while this provider call runs.
+        _post_message(store, workshop_id, "Universe: BTC and ETH.")
+        assert admit_reconstruction_job(store=store, **_scope(workshop_id))["admitted"]
+        return {"status": "ok", "data": {"provider": "openclaw", "status": "completed",
+                                            "output": {"structured_data": semantic_response}}}
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", newer_message_arrives)
+    outcome = run_reconstruction_job(store=store, canonical=_NoRegistryOperations(),
+                                     job_id=first["job_id"], **_scope(workshop_id))
+    assert outcome["job_status"] == "superseded" and outcome["completeness_snapshot"] is None
+    assert store.get_latest_completeness_snapshot(workshop_id) is None
+
+
+def test_failed_job_writes_no_completeness_snapshot(monkeypatch) -> None:
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import (
+        OpenClawOpsClient, OpenClawOpsClientError, ReconstructionProviderError,
+    )
+
+    def refused(*a, **kw):
+        raise OpenClawOpsClientError("bad", status_code=422, error_code="OPENCLAW_TOOL_ARGS_INVALID_JSON")
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", refused)
+    store = MemoryWorkshopStore()
+    workshop_id = _new_session(store)["workshop_id"]
+    _post_message(store, workshop_id, "Momentum on BTC.")
+    with pytest.raises(ReconstructionProviderError):
+        run_reconstruction_worker(store=store, canonical=_NoRegistryOperations(), **_scope(workshop_id))
+    assert store.get_latest_completeness_snapshot(workshop_id) is None
