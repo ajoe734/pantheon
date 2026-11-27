@@ -1,0 +1,57 @@
+{
+  "task_id": "AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127",
+  "class": "RC2",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "hosted_input": {
+    "source": "task brief: hosted walkthrough 2026-11-27 01:16-01:28Z as admintest, workshop 2de155f9-30bd-43e9-abff-d1587193165c; adapter 422 at 01:20:31Z (message admission) and 01:21:11Z (explicit /reconstruct) from operator-bff; BFF 502 structured_provider. Not re-read by this worker: no hosted credential on the worker host (gcloud cannot run in the worker sandbox)",
+    "message_admission_seconds": 50,
+    "provider_calls_per_message": 2
+  },
+  "root_cause": {
+    "adapter_error_code": "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+    "adapter_status": 422,
+    "finding": "The hypothesis to verify first (1000-token structured output cap, as in #7908) is not the cause. The BFF sent SemanticReconstructionDraft.model_json_schema() with the StrategySpec under $defs; that schema declares $defs at the root and $ref at strategy_map, next_best_question and strategy_spec/anyOf[0]. The adapter's structured validator (assistant_openclaw_provider._SUPPORTED_SCHEMA_KEYWORDS) refuses $defs/$ref, and it validates only after the model answers, so every paid reconstruction answer, of any size, became 422 OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH ('root' declares unsupported schema keyword(s) ['$defs']). The BFF then mapped every non-503/504 adapter status to 502 structured_provider and dropped the error_code.",
+    "reproduction": "offline, real adapter validator, no stub: unsupported_schema_keyword_paths(raw schema) = ['root: $defs', 'strategy_map: $ref', 'next_best_question: $ref', 'strategy_spec/anyOf[0]: $ref']; _validate_extraction_arguments(any draft, raw schema) -> OpenClawProviderError 422 OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH. Pinned by test_semantic_provider.py::test_root_cause_pydantic_refs_were_refused_by_the_adapter_validator",
+    "output_size": {
+      "hosted_measurement": "not available: the adapter refused the answer before any usage was returned to the BFF, and the worker host has no hosted log access; to be read from the post-deploy usage on the first completed hosted job",
+      "hosted_sized_fixture": "one long Chinese strategy message (788 chars, 1918 bytes UTF-8) with a full 12-block map: draft with StrategySpec 4144 chars / 5108 bytes, about 1702 tokens by the repo's bytes/3 CJK estimate; draft without StrategySpec 3222 bytes, about 1074 tokens",
+      "consequence": "the draft is above a 1000-token interactive cap, and the reconstruction turn sent no output limit at all (Gateway default applied), so the turn now states its own limit"
+    }
+  },
+  "fix": {
+    "schema": "semantic_provider.reconstruction_extraction_schema() inlines every local $ref (the StrategySpec's own $defs are lifted first) and drops annotation-only keywords (default, format, examples, $comment, $schema, $id); the adapter keyword walk finds nothing; the BFF still re-validates any proposed StrategySpec with full jsonschema",
+    "output_budget": "body max_output_tokens = PANTHEON_WORKSHOP_RECONSTRUCTION_MAX_OUTPUT_TOKENS, default 6144, clamped 1024-8192 (uses the #7908 /structured field)",
+    "adapter_guard": "invoke_structured refuses a schema with unresolvable references ($ref/$defs/definitions) before the paid model call: 422 OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED. Scoped to reference keywords only: a full static keyword check would have broken meeting synthesis (MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA has a nested uniqueItems that answers rarely reach). All current /structured callers were checked: none use reference keywords",
+    "queue_only_admission": "POST /messages calls admit_reconstruction_job (event reads + one conditional card write, no provider call, no private-content read) and runs run_reconstruction_job as a FastAPI background task after the response. Admission errors never fail message acceptance",
+    "job_record": "the existing per-workshop reconstruction card (strategy_workshop_card, one row per workshop, existing retention) is the job record: payload.job_id owns it and every transition (queued -> running -> completed|failed) is compare_and_set_workshop_card (Postgres: INSERT .. ON CONFLICT (card_id) DO UPDATE .. WHERE payload_json->>'job_id' IS NOT DISTINCT FROM expected RETURNING). The command-receipt store was not used because admit_command advances the workshop lock and would break the client's next If-Match. A job keys on the last message sequence_no, so persona/other events do not start a second job; a job superseded by a newer message never overwrites the newer card; a queued/running job older than PANTHEON_WORKSHOP_RECONSTRUCTION_JOB_LEASE_SECONDS (default 180) is taken over",
+    "reconstruct_route": "POST /reconstruct replays a completed job (job_status replayed), waits on a queued/running job by reading the card for PANTHEON_WORKSHOP_RECONSTRUCTION_WAIT_SECONDS (default 90, no provider call; 202 with job_status if still in flight), replays a deterministic failure as its typed error, and re-runs only a missing, abandoned, transiently failed (provider_timeout, provider_unavailable, private_content_unavailable) or pre-job legacy failed job. The current frontend (reconstructWorkshopStrategy awaits data.reconstruction_id) keeps working unchanged",
+    "typed_reason": "ReconstructionProviderError.reason in {provider_output_schema_mismatch, provider_output_invalid_json, extraction_schema_unsupported, provider_policy_denied, provider_timeout, provider_unavailable, draft_validation_failed, conversation_too_large, private_content_unavailable, provider_error} plus adapter_error_code (identifier-shaped only). Failed card: summary 'Reconstruction failed: <reason>', payload failure_reason / failure_status / adapter_error_code. API: error.details.reason = <reason>, error.details.adapter_error_code. No upstream message text is stored or returned",
+    "legacy_cards": "a pre-job card that did not complete (the hosted walkthrough workshop's failed card: no job_id, no reason) is re-admitted once, so the existing workshop can complete after deploy"
+  },
+  "tests": {
+    "services/control-plane/bff/agora/strategy_workshop (memory)": "71 passed, 3 skipped (Postgres-gated)",
+    "services/control-plane/bff/agora/strategy_workshop + test_strategy_workshop_command_store.py + test_strategy_workshop_store_bootstrap.py with TEST_DATABASE_URL on a throwaway postgres:16-alpine container": "86 passed, 0 skipped (before the legacy-card test was added; the Postgres job test test_postgres_job_record_is_compare_and_set_on_the_card covers CAS semantics, admit/run and replay after store restart)",
+    "test_semantic_provider.py": "root cause reproduced with the real adapter validator; sent schema has no $ref/$defs and agrees with jsonschema on valid and broken drafts; hosted-sized Chinese conversation runs through the real adapter invoke_structured (only the Gateway SSE stream faked) and publishes the draft with max_output_tokens 6144 sent; budget env bounds; seven adapter error codes map to stable reasons without upstream text",
+    "test_reconstruction_worker.py": "admission makes no provider call; second admission joins the queued job; /reconstruct path on a queued job makes no call; one run completes and later calls replay; non-message events do not start a job; waiting reader sees a job finished elsewhere; deterministic failure replayed with reason and one provider call; lease takeover and superseded-job write refusal; older job never overwrites newer; legacy failed card re-admitted once; missing private content is a failed card with reason private_content_unavailable",
+    "test_reconstruction.py (routes)": "message route returns 202 with reconstruction_job queued and no provider call (job runner deferred); /reconstruct on the queued job returns 202 without a call; with the background task, each message costs exactly one provider call and a second /reconstruct replays it (job_status replayed, reconstruction_id present); a failed job's card and API carry reason provider_output_schema_mismatch and adapter_error_code, no upstream text",
+    "services/openclaw-gateway-adapter/tests": "296 passed (adds TestUnsupportedSchemaRefusedBeforeModelCall: $ref/$defs/definitions refused with OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED and no Gateway call; supported schema and an unreached uniqueItems still reach the Gateway)",
+    "BFF workshop/servant regression (tests/test_*workshop*.py, test_agora_route_ownership.py, test_pint_012_real_persona_provider.py, test_bff_test_architecture.py, agora/strategy_workshop, agora/servant)": "323 passed, 16 skipped, 1 failed: test_agora_workshop_dev_deploy_config.py::test_private_content_key_uses_existing_secret_transport_and_only_consumer, pre-existing (fails identically on base fb109193e; reads .github workflow text this task does not touch)",
+    "test_bff_test_architecture.py + test_main_composition_seam_extraction_006.py": "49 passed (inventory unchanged: the three touched test files keep their DECOUPLED entries)"
+  },
+  "runtime_budget": {
+    "jobs_per_message": 1,
+    "provider_calls_per_message": {"before": 2, "after": 1},
+    "new_recurring_job": false,
+    "job_store": "existing strategy_workshop_card row per workshop (no new table, unchanged retention)",
+    "new_env": ["PANTHEON_WORKSHOP_RECONSTRUCTION_MAX_OUTPUT_TOKENS (default 6144)", "PANTHEON_WORKSHOP_RECONSTRUCTION_WAIT_SECONDS (default 90)", "PANTHEON_WORKSHOP_RECONSTRUCTION_JOB_LEASE_SECONDS (default 180)"]
+  },
+  "hosted_acceptance": "pending deploy (AC5): as admintest, the walkthrough workshop 2de155f9-30bd-43e9-abff-d1587193165c and one fresh long Chinese description must each end with a completed strategy_reconstruction card and an evaluated completeness rail; record POST /messages admission timings (< 2 s), the card bodies with secrets redacted, and the first completed job's usage output_tokens. Not run by this worker: no hosted credential on the worker host",
+  "residual_findings": [
+    "Hosted output token count of a real reconstruction answer is not yet measured (see hosted_acceptance)",
+    "MEETING_SYNTHESIS_EVENT_CONTENT_SCHEMA declares uniqueItems at synthesis.actions/items.required_data, outside the adapter allowlist: a synthesis answer that includes required_data on an action would be refused post-call as OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH (meetings owner)",
+    "Workshop cards take sequence_no = MAX+1 on every upsert with UNIQUE (workshop_id, sequence_no); the job now writes the card three times, so a concurrent card write could hit the unique constraint; a failed job write leaves the job to the lease takeover",
+    "services/control-plane/privacy/test_postgres_private_content_store.py::test_durable_workshop_reconstructs_actual_body_after_new_store calls the real provider without a stub and fails when PRIVATE_CONTENT_TEST_DSN is set, on base too (privacy test owner)",
+    "If /reconstruct's bounded wait expires it returns 202 with data null; the current frontend treats that as a failed reconstruction and the card readback shows the result once the job ends (frontend could poll the card instead)"
+  ]
+}

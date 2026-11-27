@@ -1479,6 +1479,23 @@ class MemoryWorkshopStore:
     # --- typed workshop cards ---
 
     def record_workshop_card(self, card: Dict[str, Any]) -> Dict[str, Any]:
+        row = self._upsert_workshop_card(card, condition=False, expected_job_id=None)
+        assert row is not None
+        return row
+
+    def compare_and_set_workshop_card(
+        self, card: Dict[str, Any], *, expected_job_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Upsert ``card`` only while the stored ``payload.job_id`` equals
+        ``expected_job_id`` (``None`` matches an absent card or a card without
+        a job id). Returns the written row, or ``None`` when another writer
+        holds the slot. The reconstruction job record uses this so exactly one
+        job owns each conversation sequence."""
+        return self._upsert_workshop_card(card, condition=True, expected_job_id=expected_job_id)
+
+    def _upsert_workshop_card(
+        self, card: Dict[str, Any], *, condition: bool, expected_job_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
         with self._lock:
             wid = card["workshop_id"]
             bucket = self._cards.setdefault(wid, [])
@@ -1486,6 +1503,13 @@ class MemoryWorkshopStore:
                 (idx for idx, item in enumerate(bucket) if item.get("card_id") == card.get("card_id")),
                 None,
             )
+            if condition:
+                current_job_id = (
+                    (bucket[existing_idx].get("payload") or {}).get("job_id")
+                    if existing_idx is not None else None
+                )
+                if current_job_id != expected_job_id:
+                    return None
             sequence_no = int(card.get("sequence_no") or (len(bucket) + 1))
             now = card.get("created_at", _utc_now())
             row: Dict[str, Any] = {
@@ -3450,6 +3474,20 @@ class PostgresWorkshopStore:
     # --- typed workshop cards ---
 
     def record_workshop_card(self, card: Dict[str, Any]) -> Dict[str, Any]:
+        row = self._upsert_workshop_card(card, condition=False, expected_job_id=None)
+        assert row is not None
+        return row
+
+    def compare_and_set_workshop_card(
+        self, card: Dict[str, Any], *, expected_job_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Conditional upsert: see ``MemoryWorkshopStore.compare_and_set_workshop_card``.
+        The check and the write are one ``INSERT .. ON CONFLICT .. WHERE``."""
+        return self._upsert_workshop_card(card, condition=True, expected_job_id=expected_job_id)
+
+    def _upsert_workshop_card(
+        self, card: Dict[str, Any], *, condition: bool, expected_job_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
         workshop_id = card["workshop_id"]
         with self._connect() as conn:
             cur = conn.execute(
@@ -3477,7 +3515,7 @@ class PostgresWorkshopStore:
                 "created_at": now,
                 "updated_at": card.get("updated_at"),
             }
-            conn.execute(
+            cur = conn.execute(
                 f"""
                 INSERT INTO {self._wct}
                     (card_id, workshop_id, sequence_no, card_type, status, title, summary,
@@ -3498,7 +3536,12 @@ class PostgresWorkshopStore:
                     evidence_refs_json = EXCLUDED.evidence_refs_json,
                     allowed_actions_json = EXCLUDED.allowed_actions_json,
                     updated_at = COALESCE(EXCLUDED.updated_at, now())
-                """,
+                """ + (
+                    f"""
+                WHERE ({self._wct}.payload_json->>'job_id') IS NOT DISTINCT FROM %s
+                RETURNING card_id
+                """ if condition else ""
+                ),
                 (
                     row["card_id"], row["workshop_id"], row["sequence_no"],
                     row["card_type"], row["status"], row["title"], row["summary"],
@@ -3509,8 +3552,11 @@ class PostgresWorkshopStore:
                     _json_dumps(row["evidence_refs"]),
                     _json_dumps(row["allowed_actions"]),
                     row["created_at"], row["updated_at"],
+                    *((expected_job_id,) if condition else ()),
                 ),
             )
+            if condition and cur.fetchone() is None:
+                return None
         return row
 
     def list_workshop_cards(
