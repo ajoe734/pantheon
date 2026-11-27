@@ -1,0 +1,75 @@
+{
+  "task_id": "PUBLICATION-PANEL-CASE-FILE-SOURCES-AND-CLAIM-SUBJECT-20261127",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "base": "8d4f90a727ef75bda2cc6629557b233aceef7230",
+  "secrets": "No token value is printed anywhere in this manifest, the tests or the commit; tests use synthetic keys or unsigned synthetic JWT shapes.",
+  "acceptance_1_which_credential_and_why_403": {
+    "credential_used_before": "services/consultation/workflow_executor.py _compose_panel_case_file called decision_case.Owners.from_env() with no override; services/knowledge/case_file.py Owners.from_env maps owners.research to PANTHEON_RESEARCH_SERVICE_TOKEN (or its _FILE).",
+    "what_that_token_is_on_hosted": "scripts/issue_dev_paper_principals.py issue_environment sets PANTHEON_RESEARCH_SERVICE_TOKEN = values['PERSONA_RESEARCH_SERVICE_TOKEN'], whose READERS entry is ('persona-pool-cycle', 'viewer'); docker-compose.yml passes it to consultation-svc as PANTHEON_RESEARCH_SERVICE_TOKEN: ${PANTHEON_RESEARCH_SERVICE_TOKEN:-}.",
+    "what_the_route_admits": "services/research/main.py GET /api/research-orchestrator/backtest-runs/{run_id}/owner-binding requires _BACKTEST_OWNER_READ_ROLES = registry-writer + AUTHENTICATED_SERVICE_ROLES (operator, admin, approver, governance_reviewer, risk_owner, governance_committee, automated_gate, service, deployment_consumer, runtime_writer); viewer is not admitted, hence 'http_403 Role ['viewer'] not authorized; need one of ['admin', 'approver', 'automated_gat...'.",
+    "why_CONSULTATION_RESEARCH_SERVICE_TOKEN_did_not_help": "c099c5a57 (2026-11-23) issued CONSULTATION_RESEARCH_SERVICE_TOKEN (consultation-svc / service) and mounted its _FILE, but only services/consultation/meeting_outputs.py (meeting-action tickets) reads it. The case-file composer never looked at that variable, so the 2026-11-24 panels still sent the persona-pool-cycle viewer token.",
+    "tests": [
+      "scripts/test_issue_dev_paper_principals.py::test_consultation_case_file_research_reader_is_admitted_by_owner_binding_and_file_delivered (real strict authenticate_tenant with the route's role set parsed from services/research/main.py refuses PERSONA_RESEARCH_SERVICE_TOKEN with 403 \"['viewer']\")",
+      "services/knowledge/test_case_file.py::test_case_file_research_facts_available_with_issued_reader_and_403_with_viewer (HTTP research owner double reproduces 'http_403:Role ['viewer'] not authorized' for run persona-provisioning-forward-artifact-039ad01f8bcd2b4aa466 with the default key)"
+    ]
+  },
+  "acceptance_2_issued_least_role_credential": {
+    "principal": "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN: subject pantheon-dev-consultation-case-file-research-reader, roles ['service'], scope pantheon:dev-owner-read, tenant-dev only, file-delivered to consultation-svc only (/run/pantheon-principals/CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN); revoked with the other principals.",
+    "why_service_is_the_narrowest_admitted_role": "Of the roles the owner-binding route admits, registry-writer would mutate the Registry; operator/admin/approver/governance_reviewer/risk_owner/governance_committee/automated_gate are decision roles. The research write owner honours 'service' only for named subjects (_ACTION_CONTROLLERS consultation-svc, persona-pool-cycle; ticket reviewer_id), which this distinct read subject is not. Scope is not enforced by any owner today, so the distinct subject is the effective boundary.",
+    "selection": "Owners.from_env(token_keys=...) lets a caller name its own credential per owner; the consultation executor passes CASE_FILE_TOKEN_KEYS = {'research': 'CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN'} at both call sites (_compose_panel_case_file, _probe_case_file_credentials). Configured-but-unreadable file => empty credential (fail closed), never the shared viewer. Persona cycle / research demand / evolution executor callers are unchanged.",
+    "tests": [
+      "scripts/test_issue_dev_paper_principals.py::test_consultation_case_file_research_reader_is_admitted_by_owner_binding_and_file_delivered",
+      "services/knowledge/test_case_file.py::test_issued_case_file_research_reader_role_is_admitted_by_owner_binding_and_no_broader",
+      "services/knowledge/test_case_file.py::test_owners_from_env_token_keys_selects_issued_research_reader",
+      "services/consultation/test_workflow_executor.py::test_panel_records_rejection_detail_on_memo_sends_contract_and_issued_research_reader (panel composes with the issued reader token, never the shared viewer)"
+    ]
+  },
+  "acceptance_3_search_timeout_bounded_and_named": {
+    "before": "search used the generic 15 s owner timeout and the reason was the generic 'owner_unreachable:TimeoutError'.",
+    "after": "case_file.search_timeout_seconds(): default 8 s, PANTHEON_CASE_FILE_SEARCH_TIMEOUT_SECONDS clamped to [1, 15]; http_json names any timeout 'owner_timeout:<n>s' (other transport errors keep owner_unreachable:<Type>). The evidence group records {'owner': 'search_gateway', 'reason': 'owner_timeout:8s'}; facts, similar_history and lessons are identical to a run where search answers.",
+    "tests": [
+      "services/knowledge/test_case_file.py::test_search_gateway_timeout_is_bounded_named_and_does_not_fail_other_sources (real HTTP search double sleeping 3 s, bound 1 s, composition < 2.8 s)",
+      "services/knowledge/test_case_file.py::test_search_timeout_seconds_default_and_clamped",
+      "services/knowledge/test_case_file.py::test_http_json_names_timeouts_and_keeps_other_transport_errors"
+    ],
+    "note": "The panel still escalates to an operator while any source is unavailable (existing gate in workflow_executor); this task bounds and names the gap, it does not hide it."
+  },
+  "acceptance_4_claim_subject_mismatch_attribution": {
+    "hosted_contributions_read": false,
+    "why_not_read": "This worker has no hosted read path: gcloud reauthentication is required (non-interactive refresh fails) and no DEV_DEPLOY_SSH_* transport credentials are present. The raw 2026-11-24 contribution bodies for consult-envelope-publication-68ffaa6c8e39... were therefore not inspected; the memo only carried the bare code 'claim_subject_mismatch' with no field, which is itself part of the defect fixed under acceptance 5.",
+    "comparison_defects_found_in_code": [
+      "Multi-family merge in _compose_panel_case_file overwrote case.subject.strategy_family with a space-joined label ('fam_a fam_b'); a claim asserting one real family of the pool while citing the pool item, a backtest verdict or memory (none carry strategy_family) could never match.",
+      "Collections on the owner side were compared by whole-value equality only: one underlying of subject.underlyings, one ref of member_artifact_refs, a subset of registry parameters, or one member object of the pool's members list were all rejected although the cited owner states them."
+    ],
+    "fix": "case.subject.strategy_families (list) is kept beside the display label for multi-family cases; _subject_value_attributed accepts a scalar member of a list or a sub-object of an object, with JSON-type-strict scalar equality (\"20\" != 20, 0 != false); nothing absent from the cited item or case subject is ever attributed; None/empty values stay rejected.",
+    "tests": [
+      "services/consultation/test_workflow_executor.py::test_pool_publication_subject_assertions_the_owner_states_are_accepted (7 pool-publication shapes; each asserted to be rejected by the pre-fix comparison and accepted now)",
+      "services/consultation/test_workflow_executor.py::test_unattributable_subject_assertions_stay_claim_subject_mismatch (11 negative shapes still rejected, with field/value/cited refs in the detail)"
+    ],
+    "pending": "Which of these shapes (or a genuinely wrong contribution) the two 衡岳 exclusions were is confirmed at the next hosted pool envelope publication panel: rejections now carry 'detail' (node, field, asserted value, cited refs) on the event and the memo summary."
+  },
+  "acceptance_5_reason_on_memo_and_prompt_contract": {
+    "memo": "panel_contribution_rejected events and the synthesis rejected_contributions carry 'detail'; the memo summary reads '<persona>: <reason> (<detail>)', e.g. 'persona-x: claim_subject_mismatch (node=0 field=\"strategy_id\" asserted=\"carry\" cited=[...])'.",
+    "prompt": "Each participant ask carries request.subject_field_contract (case_subject_fields, cited_item_subject_fields per item_id, rule) beside the digest-bound case file; the adapter prompt embeds the whole request, so participants see which subject_fields they may assert.",
+    "tests": [
+      "services/consultation/test_workflow_executor.py::test_panel_records_rejection_detail_on_memo_sends_contract_and_issued_research_reader (full panel run through the real consultation API + provider fake)",
+      "services/consultation/test_workflow_executor.py::test_subject_field_contract_names_assertable_fields_per_cited_item"
+    ],
+    "deploy_note": "A panel already mid-flight across the deploy re-asks un-gathered participants with the extra request key; the adapter's idempotency fingerprint may then report a replay conflict for that one request, which follows the existing blocked/redrive path."
+  },
+  "acceptance_6_focused_tests": {
+    "command": ".venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider services/consultation/test_workflow_executor.py services/knowledge/test_case_file.py scripts/test_issue_dev_paper_principals.py",
+    "result": "176 passed, exit 0",
+    "additional": [
+      "services/consultation/tests/test_panel_case_file.py services/consultation/tests/test_persona_panel_integration.py: 38 passed, exit 0",
+      "services/knowledge/test_case_file_integration.py services/research/tests/test_research_demand.py services/research/tests/test_retrieval_influence_case_file.py services/research/alpha_replication/test_evolution_executor_case_file.py services/persona/test_case_file_outcomes.py services/consultation/tests/test_panel_memory_tenant_binding.py services/consultation/tests/test_panel_full_interpretations.py services/consultation/tests/test_panel_agent_provisioning.py services/control-plane/bff/tests/test_case_file_views.py: 100 passed, 1 skipped, exit 0",
+      "services/consultation/tests/test_persona_meetings.py services/persona/test_persona_cycle_controller.py: 194 passed, exit 0"
+    ]
+  },
+  "acceptance_7_hosted_proof": {
+    "status": "pending_deploy",
+    "needed": "After merge and deploy (issuer refresh writes /run/pantheon-principals/CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN for consultation-svc), the next pool envelope publication panel shows facts/research available (no http_403) and no claim_subject_mismatch exclusion, or an exclusion whose detail shows a genuinely wrong assertion; recorded by the persona-loop owner."
+  },
+  "follow_up_outside_scope": "Persona cycle (persona_cycle_controller) and research demand case files also map owners.research to PANTHEON_RESEARCH_SERVICE_TOKEN (persona-pool-cycle viewer) and would get the same 403 on owner-binding if they carry backtest_run_refs; they can adopt Owners.from_env(token_keys=...) with their own issued reader."
+}

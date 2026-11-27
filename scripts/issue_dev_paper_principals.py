@@ -123,6 +123,16 @@ READERS = {
         "pantheon-dev-consultation-telemetry-reader",
         ("viewer", "reviewer"),
     ),
+    # Consultation panel case file -> research owner GET /backtest-runs/{id}/owner-binding ONLY. That route
+    # refuses viewer (2026-11-24 hosted 403 with the shared persona-pool-cycle viewer token) and admits
+    # registry-writer or an authenticated service role. "service" is the narrowest of those for a reader:
+    # registry-writer would mutate the Registry, operator/admin/approver/automated_gate are decision roles,
+    # and the research write owner honours "service" only for the named subjects consultation-svc and
+    # persona-pool-cycle, which this distinct read subject is not. Read scope; file-delivered only.
+    "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN": (
+        "pantheon-dev-consultation-case-file-research-reader",
+        "service",
+    ),
     # Consultation executor -> memory learn-feedback writeback ONLY as write_authority consultation-svc.
     # Role consultation-svc is in the memory write set and satisfies the authority check; no
     # operator/admin/system/memory-writer role, so it cannot represent any other memory writer.
@@ -324,7 +334,8 @@ CONSUMER_FILES = {
     "consultation-svc": ("CONSULTATION_PERSONA_POOL_READ_TOKEN", "CONSULTATION_MEMORY_WRITE_TOKEN",
                          "CONSULTATION_MEMORY_READ_TOKEN", "CONSULTATION_PERSONA_DIRECTORY_READ_TOKEN",
                          "CONSULTATION_TELEMETRY_READ_TOKEN",
-                         "CONSULTATION_RESEARCH_SERVICE_TOKEN"),
+                         "CONSULTATION_RESEARCH_SERVICE_TOKEN",
+                         "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"),
     "training-session-svc": ("TRAINING_SESSION_SOURCE_READ_TOKEN", "TRAINING_SESSION_PERSONA_AUTHORITY_TOKEN"),
     "source-ingest-agora-projector": ("AGORA_PROJECTOR_SERVICE_JWT",),
     "openclaw-gateway-adapter": ("OPENCLAW_ADAPTER_MEMORY_TOKEN",),
