@@ -216,6 +216,15 @@
       "red_green": "Called test_official_market_runs_first_and_steady_check_follows_every_refresh with WORKFLOW_PATH pointing first to a temporary copy of current origin/dev YAML (expected AssertionError), then task YAML (PASS); overall exit 0.",
       "reproduction_recheck": "gh api jobs for run 45917069646 confirmed TAIFEX 00:30:45–00:36:50Z, FinMind broker 00:36:50–00:39:29Z and official market 00:39:29–00:39:38Z.",
       "delivery": "Existing PR #7972; independent Antigravity review, canonical supervisor merge and acceptance_6_hosted remain outstanding."
+    },
+    "current_base_composition": {
+      "base_sha": "35e13d59a4ca368ce294c8b69aba278108b0324f",
+      "upstream_change": "PR #7911 advances the lease-controller ref, its exact-head verification and lease script checksum; preserved unchanged while merging current dev.",
+      "full_suite_command": "timeout 180 /tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q",
+      "full_suite_exit_code": 0,
+      "full_suite_terminal_result": "47 passed in 63.31s (0:01:03)",
+      "structural_and_red_green": "Full parsed YAML comparison with current origin/dev after only the unchanged market-step relocation: PASS. Current-dev ordering regression: expected failure. Task ordering regression: PASS. Exit 0.",
+      "admission": "Previous handoff rejected without transition because dev advanced during admission. Resubmit with a new exact head containing this base; no approval or merge authority inferred from source recovery."
     }
   },
   "acceptance_5_runtime_budget": {
