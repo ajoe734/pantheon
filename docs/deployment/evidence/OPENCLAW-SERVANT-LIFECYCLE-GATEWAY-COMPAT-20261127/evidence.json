@@ -1,0 +1,121 @@
+{
+  "task_id": "OPENCLAW-SERVANT-LIFECYCLE-GATEWAY-COMPAT-20261127",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "problem_register_class": "RC4 Agora trading servant / SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T1/T2",
+  "source_base": "59e600314",
+  "source_anchor_commit": "7ab52be02",
+  "delivery": {
+    "source": "locally_verified_pending_independent_review",
+    "merged": false,
+    "deployed": false,
+    "accepted": false
+  },
+  "incident": {
+    "bff_commit": "35e13d59a",
+    "session_id": "a14d51ad29414851899c63753db454ec",
+    "observed": "Hosted T2 AC7: create 201 state=failed, last_error UPSTREAM_NOT_FOUND 404 on POST /api/sessions; subsequent message 409 session_state."
+  },
+  "implementation": [
+    "main.py::_LifecycleUpstreamClient wraps only the lifecycle factory. A typed UPSTREAM_NOT_FOUND/upstream_status=404 from create triggers one _probe_upstream call. Healthy -> explicit pantheon_owned metadata without an upstream id; unhealthy -> existing retryable degraded collection error.",
+    "SessionLifecycleStore keeps the normal pending -> active create acknowledgement and additionally records mode and compatibility in its existing audit entry. Without an upstream id, existing get and cancel remain local.",
+    "Non-collection errors are re-raised unchanged. Existing raw session facade, execution gates, auth, BFF and provider turn routes are unchanged.",
+    "Existing failed records and their idempotency keys are preserved; hosted acceptance must create a fresh session/key after deployment."
+  ],
+  "acceptance": {
+    "ac1_healthy_optional_collection": {
+      "status": "verified_local",
+      "tests": [
+        "test_main.py::TestLifecycleGatewayCompatibility::test_healthy_gateway_without_collection_keeps_local_session_active",
+        "test_session_lifecycle.py::TestCreateSession::test_pantheon_owned_session_survives_reload_replay_read_and_cancel"
+      ]
+    },
+    "ac2_failure_classification": {
+      "status": "verified_local",
+      "tests": [
+        "test_main.py::TestLifecycleGatewayCompatibility::test_unreachable_gateway_with_missing_collection_is_lost",
+        "test_main.py::TestLifecycleGatewayCompatibility::test_auth_rejections_stay_failed_without_health_probe",
+        "test_main.py::TestLifecycleGatewayCompatibility::test_gateway_with_collection_retains_upstream_refresh_and_cancel"
+      ]
+    },
+    "ac3_regression_suites": {
+      "status": "passed",
+      "tests": 169,
+      "subtests": 35,
+      "elapsed_seconds": 10.68,
+      "warning": "Existing FastAPI TestClient/httpx deprecation; no assertion weakened."
+    },
+    "ac4_runtime_budget_and_class": {
+      "status": "documented",
+      "register": "docs/operations/problem-register.md RC4 Agora trading servant row"
+    },
+    "ac5_hosted": {
+      "status": "pending_post_merge_dev_deploy",
+      "evidence_refs": [],
+      "procedure": [
+        "Confirm the hosted deployment manifest and running adapter/BFF versions include this task merge; preserve deploy workflow and exact-version evidence. A local suite or /bff/version alone does not prove deployment.",
+        "Use the existing admintest dev-trader session with its already provisioned servant. POST /bff/agora/servant/sessions with a fresh Idempotency-Key, X-Request-Id and X-Trace-Id; require HTTP 201, data.state=active, data.openclaw_session_id=null.",
+        "POST /bff/agora/servant/sessions/{id}/messages with content and fresh request/idempotency headers; require HTTP 202 (no 409 session_state). This is a dev-trader conversation write and can queue a provider turn; it is separate from the GET-only probe.",
+        "Run the GET-only probe below on that session, then terminate the test session through its existing terminate link. Record redacted status/result evidence; never credentials."
+      ],
+      "read_only_probe_command": "python3 - <<'PYPROBE'\nimport json, os, pathlib, urllib.request\nbase = os.environ.get(\"DEV_BFF_URL\", \"https://api.dev.mvl-cap.tw\").rstrip(\"/\")\nassert base == \"https://api.dev.mvl-cap.tw\", \"expected current hosted dev BFF\"\nsession_id = os.environ[\"SERVANT_SESSION_ID\"]\nassert session_id.isalnum(), \"expected lifecycle session id\"\ntoken = pathlib.Path(os.environ[\"PANTHEON_DEV_TRADER_TOKEN_FILE\"]).read_text().strip()\nrequest = urllib.request.Request(base + \"/bff/agora/servant/sessions/\" + session_id,\n    headers={\"Authorization\": \"Bearer \" + token, \"Accept\": \"application/json\"})\nwith urllib.request.urlopen(request, timeout=20) as response:\n    assert response.status == 200\n    record = json.load(response)[\"data\"]\nassert record[\"session_id\"] == session_id\nassert record[\"state\"] == \"active\", record[\"state\"]\nassert record[\"openclaw_session_id\"] is None\nprint(json.dumps({\"probe\": \"servant_lifecycle_readback\", \"state\": \"active\", \"upstream_session_id\": None}))\nPYPROBE",
+      "read_only_probe_inputs": [
+        "SERVANT_SESSION_ID (fresh post-deploy admintest session)",
+        "PANTHEON_DEV_TRADER_TOKEN_FILE (existing governed dev-trader bearer, read in memory only)",
+        "DEV_BFF_URL (optional, restricted to current dev origin)"
+      ],
+      "read_only_probe_limits": "One HTTPS GET, 20 s timeout, no new files or writes; verifies hosted active readback only, not POST admission."
+    }
+  },
+  "runtime_budget": {
+    "cadence": "On demand on a non-replayed lifecycle create; zero timers, recurring jobs or background emitters.",
+    "health_probe": "At most one _probe_upstream invocation and only after a typed create collection 404. Existing /readyz then /healthz fallback: at most two HTTP GETs, each OPENCLAW_UPSTREAM_TIMEOUT (default 3 s), no new retry loop.",
+    "writers": "0 new persistent writers/tables/queues/caches. Existing SessionLifecycleStore JSON file + single atomic replacement .tmp path; existing create and transition writes only.",
+    "size_and_count_at_hosted_scale": "Compatibility metadata plus the mode in the existing acknowledgement add less than 512 B per compatibility session, independent of trader fleet size; no additional audit entries. One existing lifecycle file, at most one transient replacement path per store instance.",
+    "growth_per_day": "At most 512 * N bytes of compatibility metadata for N newly created compatibility sessions/day; replay/get create no new records or audit entries. For 100 new sessions/day: less than 50 KiB/day incremental metadata.",
+    "cap": "Per-session compatibility fields are fixed and bounded. Existing lifecycle store has no session-count cap or pruning; this pre-existing retention gap is recorded as a residual finding, not misrepresented as bounded by Agora retention.",
+    "cleanup": "Existing os.replace consumes the temporary path on successful writes. No new cleanup process; lifecycle-record retention is unchanged.",
+    "storage_manifest": "No new writer to register; existing lifecycle writer only."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_session_lifecycle.py -q",
+        "exit_code": 1,
+        "result": "System Python lacks pytest; no tests executed."
+      },
+      {
+        "command": "timeout 180 /tmp/agvenv/bin/python -m pytest services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_session_lifecycle.py -q",
+        "exit_code": 0,
+        "result": "169 passed, 1 warning, 35 subtests passed in 11.38s"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "result": "passed"
+      },
+      {
+        "command": "timeout 180 /tmp/agvenv/bin/python -m pytest services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_session_lifecycle.py -q",
+        "exit_code": 0,
+        "result": "Final verification: 169 passed, 1 warning, 35 subtests passed in 10.68s"
+      },
+      {
+        "command": "Parse evidence JSON and ast.parse embedded read-only probe",
+        "exit_code": 0,
+        "result": "Valid JSON and Python syntax; hosted probe not executed."
+      }
+    ]
+  },
+  "residual_findings": [
+    {
+      "summary": "SessionLifecycleStore loads all session records/idempotency keys and has no pruning or session-count cap; Agora owner session retention does not remove lifecycle JSON records.",
+      "scope": "services/openclaw-gateway-adapter/session_lifecycle.py::_load/_dump",
+      "disposition": "Pre-existing writer-retention gap; coordinator must attach to existing RC3 storage-budget owner before chain closure. This task adds no cleanup policy."
+    }
+  ],
+  "review": {
+    "status": "pending_assigned_independent_reviewer",
+    "reviewer": "Antigravity",
+    "binding": "Exact PR/head and this committed manifest are recorded by governed handoff; no approval claimed."
+  }
+}

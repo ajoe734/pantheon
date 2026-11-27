@@ -366,9 +366,8 @@ class SessionLifecycleStore:
         )
         upstream = self._upstream_factory()
         if upstream is None or record.upstream_session_id is None:
-            # No upstream channel; treat the cancel as final from Pantheon's
-            # perspective. The local state machine is the source of truth here
-            # because the upstream session never made it past the boundary.
+            # No upstream session to cancel (including pantheon_owned gateway
+            # compatibility mode); the local state machine is authoritative.
             self._transition(
                 session_id,
                 "canceled",
