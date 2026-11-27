@@ -210,12 +210,13 @@
   "hosted_acceptance": "pending deploy: two consecutive bounded refresh runs after deploy pass the tw-official-twse-margin-balances profile and report the four 2026-11-24 entries in pre_existing_unresolved_dlq_backlog until an operator replays them",
   "review_independence": {
     "owner": "Codex",
-    "reviewer": "Codex2",
+    "reviewer": "Claude",
     "owner_family": "Codex",
-    "reviewer_family": "Codex",
-    "status": "coordinator_capacity_decision_required",
-    "observed_at": "2026-11-27T12:18:07Z",
-    "observed_other_family_workers": "Claude2 running AGORA-PAPER-INTENT-EXECUTION-20261127; Antigravity running PAPER-TRADER-BOOK-ENROLLMENT-SKIP-20261127 and FE-PAPER-GATE-OPERATOR-DECISION-ACTION-20261127; Claude recovery_pending since 06:49Z",
-    "limitation": "worker occupancy alone does not prove all configured other-family lanes lack capacity; coordinator must assign an available different-family reviewer or record the permitted capacity exception through governed task tooling before review"
+    "reviewer_family": "Claude",
+    "status": "independent_family_reviewer_assigned",
+    "assignment_recorded_at": "2026-11-27T12:30:03Z",
+    "assignment_source": "governed ai-status.sh show: canonical owner Codex, reviewer Claude, status in_progress; coordinator reopened for exact-head handoff",
+    "coordinator_ac3_decision": "The coordinator confirms the live hosted read-only snapshot of 6824 pending entries across 19 connectors and 47 reason groups, with the historical 5776 distinguished, satisfies AC3. Residual findings above still require coordinator class attribution.",
+    "review_decision": "pending independent review of PR #7905; assignment is not approval"
   }
 }
