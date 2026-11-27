@@ -205,6 +205,17 @@
       "focused_command": "/tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -k \"official_market_runs_first or every_profile_of_the_workflow\"",
       "result": "2 passed, 45 deselected in 46.57s",
       "exit_code": 0
+    },
+    "recovery_continuation": {
+      "base_sha": "8d534d770572f97f6d7fda280a8a871b9aa814b9",
+      "base_sync": "Merged current origin/dev into the published task branch without rewriting published history; upstream workflow and workflow-test files were unchanged.",
+      "full_suite_command": "timeout 180 /tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q",
+      "full_suite_exit_code": 0,
+      "full_suite_terminal_result": "47 passed in 91.96s (0:01:31)",
+      "structural_comparison": "Parsed current origin/dev workflow, relocated its unchanged refresh mapping immediately after plan, asserted full workflow YAML equality with task workflow: PASS (exit 0).",
+      "red_green": "Called test_official_market_runs_first_and_steady_check_follows_every_refresh with WORKFLOW_PATH pointing first to a temporary copy of current origin/dev YAML (expected AssertionError), then task YAML (PASS); overall exit 0.",
+      "reproduction_recheck": "gh api jobs for run 45917069646 confirmed TAIFEX 00:30:45–00:36:50Z, FinMind broker 00:36:50–00:39:29Z and official market 00:39:29–00:39:38Z.",
+      "delivery": "Existing PR #7972; independent Antigravity review, canonical supervisor merge and acceptance_6_hosted remain outstanding."
     }
   },
   "acceptance_5_runtime_budget": {
