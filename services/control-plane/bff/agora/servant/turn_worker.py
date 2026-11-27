@@ -27,6 +27,11 @@ from services.agora.store import (
 )
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
+from .clarification import (
+    clarification_from_message,
+    count_consecutive_clarifications,
+    extract_clarification_habit_facts_from_messages,
+)
 from .data_tools import ServantDataTools, ToolContext, normalize_command_context
 from .tool_turn import SERVANT_TURN_SCHEMA, TurnOutcome, run_tool_turn
 
@@ -71,13 +76,23 @@ def history_for_turn(
     for message in window:
         role = "assistant" if message.get("role") == "assistant" else "user"
         item: Dict[str, Any] = {"role": role, "content": str(message.get("content") or "")}
+        meta = message.get("metadata") if isinstance(message.get("metadata"), Mapping) else {}
         refs = [
             a.get("ref") if isinstance(a, dict) else a for a in message.get("attachments") or []
         ]
         if role == "user":
             item["attachment_refs"] = [r for r in refs if r]
-        if role == "assistant" and not item["content"]:
-            continue  # a degraded turn left no answer to replay
+            if isinstance(meta.get("clarification_choice"), Mapping):
+                item["clarification_choice"] = dict(meta["clarification_choice"])
+            if isinstance(meta.get("habit_fact"), Mapping):
+                item["habit_fact"] = dict(meta["habit_fact"])
+        if role == "assistant":
+            card = clarification_from_message(message)
+            if card is not None:
+                item["clarification"] = card
+                item["answer_mode"] = "clarification"
+            if not item["content"]:
+                continue  # a degraded turn left no answer to replay
         history.append(item)
     return history
 
@@ -170,12 +185,16 @@ class ServantTurnWorker:
             history = history_for_turn(messages, user_message_id)
             user_message = next((m for m in messages if m.get("id") == user_message_id), {})
             user_meta = user_message.get("metadata") if isinstance(user_message.get("metadata"), dict) else {}
+            consecutive_clarifications, streak_cards = count_consecutive_clarifications(
+                messages, before_message_id=user_message_id
+            )
+            cmd_ctx = normalize_command_context(user_meta.get("command_context"))
             ctx = ToolContext(
                 tenant_id=str(turn.get("tenant_id") or ""),
                 user_id=str(turn.get("user_id") or ""),
                 operator_id=str(turn.get("operator_id") or ""),
                 servant_persona_id=persona_id,
-                command_context=normalize_command_context(user_meta.get("command_context")),
+                command_context=cmd_ctx,
             )
             try:
                 client = self.client_factory()
@@ -184,6 +203,15 @@ class ServantTurnWorker:
                     ctx=ctx,
                     history=history,
                     invoke=lambda prompt: self._structured_round(client, prompt, turn, audit),
+                    consecutive_clarifications=consecutive_clarifications,
+                    prior_clarifications=streak_cards,
+                    clarification_choice=user_meta.get("clarification_choice")
+                    if isinstance(user_meta.get("clarification_choice"), Mapping)
+                    else None,
+                    habit_facts=extract_clarification_habit_facts_from_messages(
+                        messages, strategy_id=cmd_ctx.get("strategy_id")
+                    ),
+                    turn_id=turn_id,
                 )
                 answer = outcome.answer or None
                 provider_status = outcome.provider_status
@@ -210,6 +238,11 @@ class ServantTurnWorker:
                         "provider_status": provider_status,
                         "error": error,
                         "audit": audit,
+                        **(
+                            {"clarification": outcome.clarification}
+                            if outcome is not None and outcome.clarification is not None
+                            else {}
+                        ),
                         **({"tool_turn": outcome.metadata()} if outcome is not None else {}),
                     },
                 },

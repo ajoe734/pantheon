@@ -15,8 +15,14 @@ from typing import Any, Callable, Dict, Iterable, Iterator, Literal, Mapping, Op
 
 from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from .clarification import (
+    extract_clarification_choices_from_messages,
+    extract_clarification_habit_facts_from_messages,
+    latest_pending_clarification,
+    resolve_servant_clarification_choice,
+)
 from .data_tools import normalize_command_context
 from .institutional_knowledge import (
     InstitutionalKnowledgeReader,
@@ -93,14 +99,36 @@ class ServantCommandContext(BaseModel):
     quick_task: Optional[str] = Field(default=None, max_length=64)
 
 
-class ServantMessageRequest(BaseModel):
-    """v1/v1.2 ServantMessageRequest (v1.14 adds the optional command-bar ``context``)."""
+class ServantClarificationChoice(BaseModel):
+    """Trader choice answering a servant clarification card (AGORA-SERVANT-CLARIFY-20261127, SD §5)."""
 
     model_config = {"extra": "forbid"}
 
-    content: str = Field(min_length=1, max_length=_SERVANT_MESSAGE_MAX_CHARS)
+    decision_id: Optional[str] = Field(default=None, max_length=120)
+    question_id: Optional[str] = Field(default=None, max_length=120)
+    option_id: Optional[str] = Field(default=None, max_length=64)
+    selected_option_id: Optional[str] = Field(default=None, max_length=64)
+    option_label: Optional[str] = Field(default=None, max_length=500)
+    custom_response: Optional[str] = Field(default=None, max_length=1000)
+    use_servant_default: bool = False
+    resolves: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ServantMessageRequest(BaseModel):
+    """v1/v1.2 ServantMessageRequest (v1.14 adds command-bar ``context`` and ``clarification_choice``)."""
+
+    model_config = {"extra": "forbid"}
+
+    content: str = Field(default="", max_length=_SERVANT_MESSAGE_MAX_CHARS)
     attachment_refs: list[str] = Field(default_factory=list)
     context: Optional[ServantCommandContext] = None
+    clarification_choice: Optional[ServantClarificationChoice] = None
+
+    @model_validator(mode="after")
+    def _require_content_or_choice(self) -> "ServantMessageRequest":
+        if not self.content and self.clarification_choice is None:
+            raise ValueError("content must be non-empty when clarification_choice is not provided")
+        return self
 
 
 class ServantPaperBookEnsureRequest(BaseModel):
@@ -200,6 +228,8 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
         tool_turn = metadata.get("tool_turn") if isinstance(metadata.get("tool_turn"), dict) else {}
         status = str(metadata.get("provider_status") or "completed")
         degraded = status == "degraded"
+        clarification = metadata.get("clarification") or tool_turn.get("clarification") or None
+        stated_assumptions = list(tool_turn.get("stated_assumptions") or [])
         return {
             "id": str(message.get("id")),
             "type": "servant.message.degraded" if degraded else "servant.message.completed",
@@ -216,6 +246,10 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
                 "missing_data": list(tool_turn.get("missing_data") or []),
                 "tool_rounds": int(tool_turn.get("tool_rounds") or 0),
                 "answer_mode": tool_turn.get("answer_mode"),
+                # AGORA-SERVANT-CLARIFY-20261127: typed clarification card (WorkshopNextDecisionV114 shape).
+                "clarification": clarification,
+                "cards": [{"card_type": "clarification", **clarification}] if isinstance(clarification, dict) else [],
+                "stated_assumptions": stated_assumptions,
             },
         }
     return {
@@ -229,6 +263,8 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
                 a.get("ref") if isinstance(a, dict) else a for a in message.get("attachments") or []
             ],
             "context": metadata.get("command_context") or None,
+            **({"clarification_choice": metadata["clarification_choice"]} if metadata.get("clarification_choice") else {}),
+            **({"habit_fact": metadata["habit_fact"]} if metadata.get("habit_fact") else {}),
         },
     }
 
@@ -254,7 +290,25 @@ def _events_for_session(
     answered = {
         (m.get("metadata") or {}).get("turn_id") for m in messages if m.get("role") == "assistant"
     }
-    events.extend(_message_event(session_id, m) for m in messages)
+    for m in messages:
+        events.append(_message_event(session_id, m))
+        meta = m.get("metadata") if isinstance(m.get("metadata"), dict) else {}
+        choice = meta.get("clarification_choice")
+        if m.get("role") == "user" and isinstance(choice, dict):
+            events.append(
+                {
+                    "id": f"{m.get('id')}:clarification",
+                    "type": "servant.clarification.answered",
+                    "data": {
+                        "session_id": session_id,
+                        "message_id": m.get("id"),
+                        "created_at": m.get("createdAt"),
+                        "audit": meta.get("audit") or {},
+                        **choice,
+                        "habit_fact": meta.get("habit_fact") or None,
+                    },
+                }
+            )
     for turn in owner.list_servant_turns(session_id, ("queued", "running")):
         if turn.get("turn_id") in answered:
             continue
@@ -1599,8 +1653,17 @@ def create_servant_router(
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
+        view = _session_view(record, profile=profile)
+        owner = _resolve_session_owner()
+        if owner is not None:
+            durable = owner.get_servant_session(session_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+            if isinstance(durable, Mapping):
+                msgs = [m for m in durable.get("messages") or [] if isinstance(m, dict)]
+                view["pending_clarification"] = latest_pending_clarification(msgs)
+                view["clarification_choices"] = extract_clarification_choices_from_messages(msgs)
+                view["habit_facts"] = extract_clarification_habit_facts_from_messages(msgs)
         return {
-            "data": _session_view(record, profile=profile),
+            "data": view,
             "meta": _servant_meta(
                 now=utc_now(),
                 scope=scope,
@@ -1674,7 +1737,7 @@ def create_servant_router(
             )
         session_type = _session_type_from_record(record)
         owner = _session_owner(audit)
-        _ensure_owner_session(
+        durable_session = _ensure_owner_session(
             owner,
             session_id,
             scope=scope,
@@ -1690,13 +1753,56 @@ def create_servant_router(
             body.context.model_dump(exclude_none=True) if body.context is not None else None
         )
         turn_id = f"servant-turn-{digest}"
+        now = utc_now()
+        current_session = (
+            owner.get_servant_session(session_id, tenant_id=scope.tenant_id, user_id=scope.user_id)
+            or durable_session
+            or {}
+        )
+        prior_messages = [
+            m
+            for m in (current_session.get("messages") or [])
+            if isinstance(m, dict) and m.get("id") != message_id
+        ]
+        strategy_ref = (
+            (command_context or {}).get("strategy_id")
+            or ((record.get("context_bundle") or {}).get("strategy_ref") if isinstance(record.get("context_bundle"), dict) else None)
+        )
+        try:
+            choice_event, habit_fact, eff_content = resolve_servant_clarification_choice(
+                messages=prior_messages,
+                explicit_choice=(
+                    body.clarification_choice.model_dump(exclude_none=True)
+                    if body.clarification_choice is not None
+                    else None
+                ),
+                content=body.content,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                session_id=session_id,
+                message_id=message_id,
+                created_at=now,
+                strategy_id=str(strategy_ref) if strategy_ref else None,
+            )
+        except ValueError as exc:
+            from services.control_plane.bff.models import ErrorCode
+
+            raise bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Invalid servant clarification choice",
+                str(exc),
+                precondition_failed="clarification_choice",
+                details_extra={"audit": audit},
+            ) from exc
+
         from services.agora.store import ServantSessionMessageCapError
 
         try:
             stored = owner.append_session_message(
                 session_id,
                 message_id,
-                body.content,
+                eff_content,
                 scope.user_id,
                 ("trader",),
                 payload={
@@ -1710,9 +1816,19 @@ def create_servant_router(
                             if command_context
                             else {}
                         ),
+                        **(
+                            {"clarification_choice": choice_event}
+                            if choice_event is not None
+                            else {}
+                        ),
+                        **(
+                            {"habit_fact": habit_fact}
+                            if habit_fact is not None
+                            else {}
+                        ),
                     },
                 },
-                created_at=utc_now(),
+                created_at=now,
             )
         except ServantSessionMessageCapError:
             from services.control_plane.bff.models import ErrorCode
@@ -1727,7 +1843,7 @@ def create_servant_router(
             )
         if stored is None:
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
-        if stored.get("content") != body.content and not stored.get("truncated"):
+        if stored.get("content") != eff_content and not stored.get("truncated"):
             from services.control_plane.bff.models import ErrorCode
 
             raise bff_error(
@@ -1738,6 +1854,15 @@ def create_servant_router(
                 precondition_failed="idempotency_key",
                 details_extra={"audit": audit},
             )
+        if habit_fact is not None:
+            stale_fn = getattr(owner, "mark_habit_profiles_stale", None) or getattr(
+                getattr(owner, "store", None), "mark_habit_profiles_stale", None
+            )
+            if callable(stale_fn):
+                try:
+                    stale_fn(scope.tenant_id, scope.user_id)
+                except Exception:
+                    pass
         _inserted, turn = owner.enqueue_servant_turn(
             {
                 "turn_id": turn_id,
@@ -1749,7 +1874,7 @@ def create_servant_router(
                 "servant_persona_id": profile.persona_id,
                 "user_message_id": message_id,
                 "audit": audit,
-                "created_at": utc_now(),
+                "created_at": now,
             },
             ("trader",),
         )
@@ -1766,6 +1891,16 @@ def create_servant_router(
                     "answer": None,
                     "error": None,
                 },
+                **(
+                    {"clarification_choice": choice_event}
+                    if choice_event is not None
+                    else {}
+                ),
+                **(
+                    {"habit_fact": habit_fact}
+                    if habit_fact is not None
+                    else {}
+                ),
                 "links": {"stream": f"/bff/agora/servant/sessions/{session_id}/stream"},
             },
             "meta": _servant_meta(
