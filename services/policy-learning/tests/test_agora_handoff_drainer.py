@@ -118,18 +118,44 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
         from fastapi import FastAPI, HTTPException
         from fastapi.testclient import TestClient
 
+        from services.agora.service import AgoraWriteService
         from services.agora.shadow_mode import build_decision_lock
+        from services.agora.store import AgoraStore
         from services.control_plane.bff.agora.dataset_extraction.extractor import (
             AgoraDatasetStore,
-            extract_decision_lock_evidence,
-            extract_journal_entry_evidence,
         )
         from services.control_plane.bff.agora.dataset_extraction.router import (
             create_dataset_extraction_router,
         )
+        from services.control_plane.bff.agora.service import AgoraService
+        from services.control_plane.bff.governance.decision_journal_write_owner import (
+            build_decision_journal_write_owner,
+        )
+        from services.control_plane.bff.models import OperatorIdentity
         from services.research.imitation.agora_dataset_source import build_dataset_payload
 
+        class _MemLockTable:
+            def __init__(self, **_kw):
+                self.rows = {}
+
+            def insert_if_absent(self, record_id, payload, **_kw):
+                if record_id in self.rows:
+                    return False, dict(self.rows[record_id])
+                self.rows[record_id] = dict(payload)
+                return True, dict(payload)
+
+            def get(self, record_id):
+                return dict(self.rows[record_id]) if record_id in self.rows else None
+
+            def list_all(self, **_kw):
+                return [dict(r) for r in self.rows.values()]
+
         ds_store = AgoraDatasetStore(backend="memory")
+        with patch("services.agora.store.PostgresJsonOwnerStore", _MemLockTable):
+            lock_owner = AgoraWriteService(
+                store=AgoraStore(dsn="postgresql://test/none", bootstrap=False),
+                dataset_store=ds_store,
+            )
         event = {
             "decision_event_id": "evt-drain-1",
             "event_kind": "entry",
@@ -145,7 +171,7 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
             "probability": {"value": 0.66},
             "expected_value": {"net": 0.028, "downside": -0.012},
         }
-        # 1. Extract decision and rejection from Agora decision locks
+        # 1. Emit decision and rejection through production AgoraWriteService.create_decision_lock
         for idx, verdict in enumerate(("approve", "reject")):
             lock = build_decision_lock(
                 human_decision_id=f"hdl-drain-{idx}",
@@ -160,39 +186,55 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
                 decision_time=f"2026-11-27T01:0{idx}:00Z",
                 actor_roles=["trader"],
             )
-            rec, created = extract_decision_lock_evidence(lock, store=ds_store)
-            self.assertTrue(created)
-            self.assertEqual(rec.dataset_kind.value, "learn")
+            lock_owner.create_decision_lock(lock, ["trader"])
 
-        # 2. Extract deferral and intervention from decision journal entries
-        for entry in (
-            {
-                "entry_id": "jrnl-drain-defer",
-                "tenant_id": "tenant-drain",
-                "user_id": "trader-alice",
-                "decision": "defer",
-                "symbol": "2317.TW",
-                "strategy_id": "strat-tw-semi",
-                "data_cutoff": "2026-11-27T01:10:00Z",
-                "raw_text": "Deferred entry until afternoon session liquidity check.",
-                "event_time": "2026-11-27T01:12:00Z",
-            },
-            {
-                "entry_id": "jrnl-drain-intervene",
-                "tenant_id": "tenant-drain",
-                "user_id": "trader-alice",
-                "modifications": {"action": "reduce", "size_hint": "small"},
-                "tags": ["intervention", "risk_trim"],
-                "symbol": "2330.TW",
-                "strategy_id": "strat-tw-semi",
-                "data_cutoff": "2026-11-27T01:15:00Z",
-                "raw_text": "Intervened to trim position size by half.",
-                "event_time": "2026-11-27T01:16:00Z",
-            },
-        ):
-            rec, created = extract_journal_entry_evidence(entry, store=ds_store)
-            self.assertTrue(created)
-            self.assertEqual(rec.dataset_kind.value, "learn")
+        # 2. Emit deferral and intervention through production AgoraService.create_journal_entry
+        with tempfile.TemporaryDirectory() as journal_dir:
+            journal_owner = build_decision_journal_write_owner(
+                data_dir=journal_dir,
+                dataset_store=ds_store,
+            )
+            agora_svc = AgoraService(
+                journal_write_owner=journal_owner,
+                dataset_store=ds_store,
+            )
+            identity = OperatorIdentity(
+                operator_id="trader-alice",
+                roles=["operator"],
+                claims={"tenant_id": "tenant-drain"},
+            )
+            for idx, entry in enumerate((
+                {
+                    "id": "jrnl-drain-defer",
+                    "title": "Defer entry 2317.TW",
+                    "body": "Deferred entry until afternoon session liquidity check.",
+                    "decision": "defer",
+                    "symbol": "2317.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T01:10:00Z",
+                    "event_time": "2026-11-27T01:12:00Z",
+                    "visibility": "private",
+                },
+                {
+                    "id": "jrnl-drain-intervene",
+                    "title": "Intervene trim 2330.TW",
+                    "body": "Intervened to trim position size by half.",
+                    "modifications": {"action": "reduce", "size_hint": "small"},
+                    "tags": ["intervention", "risk_trim"],
+                    "symbol": "2330.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T01:15:00Z",
+                    "event_time": "2026-11-27T01:16:00Z",
+                    "visibility": "private",
+                },
+            )):
+                agora_svc.create_journal_entry(
+                    payload=entry,
+                    identity=identity,
+                    idempotency_key=f"jrnl-drain-key-{idx}",
+                    tenant_id="tenant-drain",
+                    user_id="trader-alice",
+                )
 
         # Mount real Agora dataset extraction router
         bff_app = FastAPI()

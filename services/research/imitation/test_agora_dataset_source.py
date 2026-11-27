@@ -314,7 +314,9 @@ def test_four_decision_evidence_kinds_with_snapshot_translate_and_train_bc() -> 
     assert set(artifact["policy"]["action_labels"]) == {"enter", "reject", "defer", "reduce"}
 
 
-def test_single_decision_evidence_version_trains_and_evaluates() -> None:
+def test_single_decision_evidence_version_translates_and_preserves_two_action_bc_guard() -> None:
+    from services.research.imitation.bc_trainer import BCTrainerError
+
     single = AgoraDatasetVersion.from_record(
         {
             **_record(
@@ -341,7 +343,10 @@ def test_single_decision_evidence_version_trains_and_evaluates() -> None:
         }
     )
     payload = build_dataset_payload([single])
-    artifact = train(payload)
-    attach_step_probabilities(artifact, payload)
-    evaluation = evaluate(artifact, payload)
-    assert evaluation["action_match_rate"] == 1.0
+    lineage = build_dataset_lineage([single], payload)
+    assert len(payload["sessions"]) == 1
+    assert payload["sessions"][0]["evidence_kind"] == "decision"
+    assert payload["sessions"][0]["decision_time_snapshot"]["symbol"] == "2330.TW"
+    assert lineage["interaction_kinds"] == ["decision"]
+    with pytest.raises(BCTrainerError, match="requires at least two observed action labels"):
+        train(payload)

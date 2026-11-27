@@ -201,11 +201,13 @@ class AgoraService:
         handle_sse_stream: Optional[Callable[..., Any]] = None,
         journal_write_owner: Optional[Any] = None,
         get_journal_write_owner: Optional[Callable[[], Any]] = None,
+        dataset_store: Optional[Any] = None,
     ) -> None:
         self._get_read_store = get_read_store or (lambda: None)
         self._get_audit_store = get_audit_store or (lambda: None)
         self._get_command_store = get_command_store or (lambda: None)
         self._get_journal_write_owner = get_journal_write_owner or (lambda: journal_write_owner)
+        self.dataset_store = dataset_store
         self._idempotency = idempotency_store if idempotency_store is not None else {}
         self._sse_buffers = sse_buffers if sse_buffers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
         self._sse_subscribers = sse_subscribers if sse_subscribers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
@@ -256,6 +258,49 @@ class AgoraService:
     @property
     def command_store(self) -> Any:
         return self._get_command_store()
+
+    def _resolve_dataset_store(self) -> Optional[Any]:
+        if self.dataset_store is not None:
+            return self.dataset_store
+        try:
+            from .dataset_extraction.router import _default_store
+
+            return _default_store()
+        except Exception:
+            return None
+
+    def _emit_journal_entry_evidence(self, entry: Dict[str, Any]) -> Optional[Any]:
+        entry_id = str(
+            entry.get("entry_id")
+            or entry.get("id")
+            or entry.get("entryId")
+            or ""
+        ).strip()
+        try:
+            ds_store = self._resolve_dataset_store()
+            if ds_store is None:
+                return None
+            tenant_id = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
+            user_id = str(
+                entry.get("user_id")
+                or entry.get("userId")
+                or entry.get("createdBy")
+                or entry.get("actor_id")
+                or ""
+            ).strip()
+            if not tenant_id or not user_id or not entry_id:
+                return None
+            from .dataset_extraction.extractor import extract_journal_entry_evidence
+
+            record, _ = extract_journal_entry_evidence(entry, store=ds_store)
+            return record
+        except Exception as exc:
+            logger.warning(
+                "Best-effort decision-journal learning evidence extraction failed for entry_id=%s: %s",
+                entry_id,
+                exc,
+            )
+            return None
 
     @staticmethod
     def _default_bff_error(
@@ -1280,6 +1325,16 @@ class AgoraService:
                     "result": result,
                     "created_at": snapshot_at,
                 })
+        self._emit_journal_entry_evidence(
+            {
+                **journal_payload,
+                **(created if isinstance(created, dict) else {}),
+                "entry_id": (created.get("id") if isinstance(created, dict) else None) or entry_id,
+                "tenant_id": resolved_tenant,
+                "user_id": resolved_user,
+                "actor_id": identity.operator_id,
+            }
+        )
         return result
 
     # --- Read Surface Projections & Semantic Lists --- #

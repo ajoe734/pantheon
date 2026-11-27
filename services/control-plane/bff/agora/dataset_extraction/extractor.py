@@ -1915,7 +1915,24 @@ def _string_seq(value: Any) -> List[str]:
     if isinstance(value, Mapping):
         return []
     if isinstance(value, Iterable):
-        return [str(item).strip() for item in value if str(item).strip()]
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, Mapping):
+                ref = _clean_str(item.get("ref") or item.get("uri"))
+                if not ref:
+                    kind = _clean_str(item.get("kind") or item.get("type"))
+                    ident = _clean_str(item.get("id"))
+                    if kind and ident:
+                        ref = f"{kind}://{ident}"
+                    elif ident:
+                        ref = ident
+                if ref:
+                    out.append(ref)
+            else:
+                cleaned = _clean_str(item)
+                if cleaned:
+                    out.append(cleaned)
+        return out
     return []
 
 

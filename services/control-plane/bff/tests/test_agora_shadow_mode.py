@@ -46,8 +46,13 @@ class _MemoryTable:
 
 
 def _owner() -> AgoraWriteService:
+    from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+
     with mock.patch("services.agora.store.PostgresJsonOwnerStore", _MemoryTable):
-        return AgoraWriteService(store=AgoraStore(dsn="postgresql://test/none", bootstrap=False))
+        return AgoraWriteService(
+            store=AgoraStore(dsn="postgresql://test/none", bootstrap=False),
+            dataset_store=AgoraDatasetStore(backend="memory"),
+        )
 
 
 def _event(event_id: str, **extra) -> dict:
@@ -318,3 +323,144 @@ def test_decision_route_emits_four_learning_evidence_kinds_with_snapshot_one_per
     handoffs = ds_store.list_handoffs_for_tenant(tenant_id="tenant-001", pending_only=True)
     assert len(handoffs) == 4
     assert {h["interaction_kind"] for h in handoffs} == {"decision", "rejection", "deferral", "intervention"}
+
+
+def test_decision_succeeds_when_dataset_store_raises_on_evidence_emission():
+    from services.control_plane.bff.agora.dataset_extraction.extractor import IdempotencyConflictError
+
+    store = make_trading_room_store()
+    failing_ds_store = mock.MagicMock()
+    failing_ds_store.add_to_inbox.side_effect = RuntimeError("Postgres dataset store connection refused")
+    with mock.patch("services.agora.store.PostgresJsonOwnerStore", _MemoryTable):
+        owner = AgoraWriteService(
+            store=AgoraStore(dsn="postgresql://test/none", bootstrap=False),
+            dataset_store=failing_ds_store,
+        )
+    client = _app(store, owner, TRADER)
+
+    store.upsert_decision_event(_event("evt-fail-ds-1", data_cutoff="2026-11-27T00:59:00Z"))
+    resp = _decide(client, "evt-fail-ds-1", {"decision": "approve", "rationale": "Proceed even if dataset store is down"})
+    assert resp.status_code == 201, resp.text
+    assert store.get_decision_event("evt-fail-ds-1")["state"] == "decided"
+    lock = client.get(URL.format("evt-fail-ds-1") + "/decision-lock").json()["data"]
+    assert lock["evidence_kind"] == "decision"
+
+    # Also test IdempotencyConflictError from dataset store does not block decision lock creation
+    failing_ds_store.add_to_inbox.side_effect = IdempotencyConflictError("Conflicting durable evidence digest")
+    store.upsert_decision_event(_event("evt-fail-ds-2", data_cutoff="2026-11-27T00:59:00Z"))
+    resp2 = _decide(client, "evt-fail-ds-2", {"decision": "reject", "rationale": "Reject despite conflict"}, key="k-fail-2")
+    assert resp2.status_code == 201, resp2.text
+    assert store.get_decision_event("evt-fail-ds-2")["state"] == "decided"
+
+
+def test_journal_write_path_emits_four_learning_evidence_kinds_and_survives_dataset_store_error(tmp_path):
+    from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+    from services.control_plane.bff.agora.dataset_extraction.models import DatasetKind, InteractionKind
+    from services.control_plane.bff.agora.service import AgoraService
+    from services.control_plane.bff.governance.decision_journal_write_owner import (
+        build_decision_journal_write_owner,
+    )
+    from services.control_plane.bff.models import OperatorIdentity
+
+    ds_store = AgoraDatasetStore(backend="memory")
+    journal_owner = build_decision_journal_write_owner(
+        data_dir=str(tmp_path / "journal"),
+        dataset_store=ds_store,
+    )
+    agora_svc = AgoraService(journal_write_owner=journal_owner, dataset_store=ds_store)
+    identity = OperatorIdentity(
+        operator_id="user-001",
+        roles=["operator"],
+        claims={"tenant_id": "tenant-001"},
+    )
+
+    cases = [
+        (
+            "jrnl-k1",
+            {
+                "id": "dje-ev-1",
+                "title": "Confirm entry 2330.TW",
+                "body": "Confirmed entry at open",
+                "decision": "approve",
+                "symbol": "2330.TW",
+                "strategy_id": "strat-001",
+                "data_cutoff": "2026-11-27T01:00:00Z",
+                "visibility": "private",
+            },
+            InteractionKind.DECISION,
+        ),
+        (
+            "jrnl-k2",
+            {
+                "id": "dje-ev-2",
+                "title": "Reject signal 2330.TW",
+                "body": "Rejected due to spread",
+                "decision": "reject",
+                "symbol": "2330.TW",
+                "strategy_id": "strat-001",
+                "data_cutoff": "2026-11-27T01:05:00Z",
+                "visibility": "private",
+            },
+            InteractionKind.REJECTION,
+        ),
+        (
+            "jrnl-k3",
+            {
+                "id": "dje-ev-3",
+                "title": "Defer entry 2317.TW",
+                "body": "Defer until afternoon session",
+                "decision": "defer",
+                "symbol": "2317.TW",
+                "strategy_id": "strat-001",
+                "data_cutoff": "2026-11-27T01:10:00Z",
+                "visibility": "private",
+            },
+            InteractionKind.DEFERRAL,
+        ),
+        (
+            "jrnl-k4",
+            {
+                "id": "dje-ev-4",
+                "title": "Manual trim 2330.TW",
+                "body": "Intervened to halve position size",
+                "modifications": {"action": "reduce", "size_hint": "small"},
+                "tags": ["intervention"],
+                "symbol": "2330.TW",
+                "strategy_id": "strat-001",
+                "data_cutoff": "2026-11-27T01:15:00Z",
+                "visibility": "private",
+            },
+            InteractionKind.INTERVENTION,
+        ),
+    ]
+
+    for idem_key, payload, expected_kind in cases:
+        res = agora_svc.create_journal_entry(
+            payload=payload,
+            identity=identity,
+            idempotency_key=idem_key,
+            tenant_id="tenant-001",
+            user_id="user-001",
+        )
+        entry_id = res["data"]["id"]
+        rec = ds_store.get(f"ev-journal-{entry_id}", tenant_id="tenant-001", user_id="user-001")
+        assert rec is not None
+        assert rec.dataset_kind == DatasetKind.LEARN
+        assert rec.interaction_kind == expected_kind
+        assert rec.content["decision_time_snapshot"]["strategy_id"] == "strat-001"
+
+    assert len(ds_store.list_by_dataset(DatasetKind.LEARN, tenant_id="tenant-001", user_id="user-001")) == 4
+
+    # Verify dataset store failure does not block journal creation
+    broken_ds = mock.MagicMock()
+    broken_ds.add_to_inbox.side_effect = RuntimeError("dataset store down")
+    journal_owner.dataset_store = broken_ds
+    agora_svc.dataset_store = broken_ds
+    res_ok = agora_svc.create_journal_entry(
+        payload={"id": "dje-ev-5", "title": "Still succeeds", "body": "Journal write succeeds", "visibility": "private"},
+        identity=identity,
+        idempotency_key="jrnl-k5",
+        tenant_id="tenant-001",
+        user_id="user-001",
+    )
+    assert res_ok["data"]["id"] == "dje-ev-5"

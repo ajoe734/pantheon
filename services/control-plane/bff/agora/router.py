@@ -206,7 +206,10 @@ def create_agora_router(
         bff_error=bff_error,
         handle_sse_stream=handle_sse_stream,
         publish_event_fn=publish_event_fn,
+        dataset_store=ds_store,
     )
+    if dataset_store is not None and getattr(agora_service, "dataset_store", None) is None:
+        agora_service.dataset_store = ds_store
 
     def _operational_surface_readback(
         scope: Optional[AgoraCapabilityScope],

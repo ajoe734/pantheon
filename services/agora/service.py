@@ -7,10 +7,13 @@ Pantheon's PostgresJsonOwnerStore).
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .store import AgoraEvidenceStore, AgoraStore, DictRecord, build_agora_store
 from .write_authority import assert_authorized, is_authorized
+
+_logger = logging.getLogger(__name__)
 
 
 class AgoraEvidenceWriteService:
@@ -98,7 +101,6 @@ class AgoraWriteService:
     ) -> None:
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
         self.dataset_store = dataset_store
-        self._explicit_dataset_store = dataset_store is not None
 
     def create_session(
         self,
@@ -518,24 +520,11 @@ class AgoraWriteService:
         try:
             from services.control_plane.bff.agora.dataset_extraction.router import _default_store
 
-            self.dataset_store = _default_store()
-            return self.dataset_store
+            return _default_store()
         except Exception:
             return None
 
     def _emit_decision_lock_evidence(self, lock: Dict[str, Any]) -> Optional[Any]:
-        ds_store = self._resolve_dataset_store()
-        if ds_store is None:
-            return None
-        trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), dict) else {}
-        tenant_id = str(lock.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
-        user_id = str(
-            lock.get("user_id")
-            or lock.get("agora_user_id")
-            or trader_identity.get("user_id")
-            or trader_identity.get("agora_user_id")
-            or ""
-        ).strip()
         lock_id = str(
             lock.get("human_decision_id")
             or lock.get("decision_id")
@@ -543,30 +532,34 @@ class AgoraWriteService:
             or lock.get("decision_event_id")
             or ""
         ).strip()
-        if not tenant_id or not user_id or not lock_id:
-            return None
-        from services.control_plane.bff.agora.dataset_extraction.extractor import (
-            IdempotencyConflictError,
-            extract_decision_lock_evidence,
-        )
-
         try:
+            ds_store = self._resolve_dataset_store()
+            if ds_store is None:
+                return None
+            trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), dict) else {}
+            tenant_id = str(lock.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
+            user_id = str(
+                lock.get("user_id")
+                or lock.get("agora_user_id")
+                or trader_identity.get("user_id")
+                or trader_identity.get("agora_user_id")
+                or ""
+            ).strip()
+            if not tenant_id or not user_id or not lock_id:
+                return None
+            from services.control_plane.bff.agora.dataset_extraction.extractor import (
+                extract_decision_lock_evidence,
+            )
+
             record, _ = extract_decision_lock_evidence(lock, store=ds_store)
             return record
-        except IdempotencyConflictError:
-            if not self._explicit_dataset_store and getattr(ds_store, "backend", None) == "memory":
-                evidence_id = str(lock.get("evidence_id") or f"ev-lock-{lock_id}")
-                scope_key = (tenant_id, user_id, evidence_id)
-                with ds_store._lock:
-                    old_rec = ds_store._records.pop(scope_key, None)
-                    ds_store._inbox.pop(scope_key, None)
-                    if old_rec is not None:
-                        for h_key in list(ds_store._handoffs):
-                            if ds_store._handoffs[h_key].get("dataset_version_id") == old_rec.dataset_version_id:
-                                ds_store._handoffs.pop(h_key, None)
-                record, _ = extract_decision_lock_evidence(lock, store=ds_store)
-                return record
-            raise
+        except Exception as exc:
+            _logger.warning(
+                "Best-effort decision-lock learning evidence extraction failed for lock_id=%s: %s",
+                lock_id,
+                exc,
+            )
+            return None
 
     def create_decision_lock(
         self,
