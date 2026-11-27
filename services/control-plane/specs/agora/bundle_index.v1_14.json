@@ -3,14 +3,14 @@
   "extends": {
     "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
     "bundle_version": "1.13",
-    "bundle_index_sha256": "36cce833c8b34fb128750576435a93d40e1271d0cba6b89104898d5d68eda336"
+    "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "dba83245c515525fb563f9bed51c350ae0c9e554c08e339b7f94de9521ef9c4d"
+    "specs/agora/v15/capability_manifest_v1_14.json": "0745fb07c0b10b6ec02222a368ac9d27041b00346ced595a4ed73382b6ed116b"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "82c3c5ba7fdc8f8eda12a68575ec39fbcfd76743c338bbc8df88c2ef232bf40a"
+    "sha256": "b82ac1d745e3873531bd73cbec47a1363c152d8c1afdd6f42b53847400f7e556"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
