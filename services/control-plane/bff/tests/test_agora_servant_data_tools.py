@@ -233,8 +233,8 @@ def test_disclosure_and_news_reads_are_bounded_connector_pages():
     result = tools.run("disclosures", {"symbol": "2330"}, ToolContext("t", "u"))
     assert all(p["path"] == "/api/source-ingest/source-records" for p in pages)
     assert {p["connector_id"] for p in pages} == {"tw-mops-official-disclosures"}
-    assert len(pages) == 1 and pages[0]["page_size"] == 200  # stops once 40 facts are kept
-    assert result.freshness == "fresh" and len(result.facts) == 40
+    assert len(pages) == 1 and pages[0]["page_size"] == 200  # stops once 30 facts are kept
+    assert result.freshness == "fresh" and len(result.facts) == 30
     assert all(f["connector_id"] == "tw-mops-official-disclosures" and f["unit"] == "text" for f in result.facts)
 
     pages.clear()
@@ -451,3 +451,34 @@ def test_v1_14_bundle_records_the_servant_data_tools_contract():
     assert schemas["ServantCitedFact"]["properties"]["tool"]["enum"] == list(TOOL_NAMES)
     cap = json.loads(cap_path.read_text(encoding="utf-8"))
     assert "/api/source-ingest/broker-branch-flow" in cap["owner_contracts"]["source-ingest"]
+
+
+def test_worker_jwt_passes_strict_source_ingest_auth_with_issuer_and_audience(broker_store, monkeypatch):
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_ISSUER", "pantheon-dev-bff")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_AUDIENCE", "pantheon-runtime")
+    calls: list[str] = []
+    result = _tools(broker_store, calls).run("broker_branch_flow", {"symbols": ["2330"]}, ToolContext("pantheon-dev", "u"))
+    assert result.freshness == "fresh" and result.facts
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "a-different-secret")  # the owner now rejects the token
+    rejected = _tools(broker_store, calls).run("broker_branch_flow", {"symbols": ["2330"]}, ToolContext("pantheon-dev", "u"))
+    assert rejected.freshness == "unavailable" and rejected.facts == [] and "HTTP 401" in rejected.missing
+
+
+def test_analyze_five_selected_symbols_fits_the_citation_budget(tmp_path, monkeypatch):
+    from services.control_plane.bff.agora.servant.tool_turn import run_tool_turn
+
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", SECRET)
+    root = tmp_path / "market"
+    symbols = ["2330", "2317", "2454", "2603", "3008"]
+    for symbol in symbols:
+        _write_session(root, symbol, "2026-11-26")
+    outcome = run_tool_turn(
+        tools=_tools(root, []),
+        ctx=ToolContext("t", "u", command_context={"quick_task": "analyze_broker_branches", "selected_symbols": symbols}),
+        history=[{"role": "user", "content": "分析分點"}],
+        invoke=lambda prompt: {"action": "answer", "tool_calls": [], "answer_text": "整理如下。", "cited_fact_ids": [], "missing_data": []},
+    )
+    assert {f["symbol"] for f in outcome.facts} == set(symbols)  # top 3 buy + top 3 sell each
+    assert len(outcome.facts) == 30
+    stored = len(json.dumps(outcome.facts, ensure_ascii=False).encode("utf-8"))
+    assert stored < 14_000, stored  # evidence runtime budget: <= ~12 KB of citations per answer

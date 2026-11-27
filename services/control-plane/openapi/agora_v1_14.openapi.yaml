@@ -1110,7 +1110,7 @@
           },
           "citations": {
             "type": "array",
-            "maxItems": 60,
+            "maxItems": 30,
             "items": {
               "$ref": "#/components/schemas/ServantCitedFact"
             }

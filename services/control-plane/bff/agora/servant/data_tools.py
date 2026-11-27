@@ -39,10 +39,10 @@ FRESHNESS_STATES = (FRESH, STALE, EMPTY_FRESH, UNAVAILABLE, DEGRADED, NOT_CONFIG
 # Turn and payload bounds (SD §4.3 proposals).
 MAX_TOOL_ROUNDS = 4
 MAX_CALLS_PER_ROUND = 4
-MAX_FACTS_PER_TOOL = 40
-MAX_FACTS_PER_ANSWER = 60
+MAX_FACTS_PER_TOOL = 30
+MAX_FACTS_PER_ANSWER = 30
 BROKER_TOOL_MAX_SYMBOLS = 5
-BROKER_TOOL_TOP_PER_SIDE = 5
+BROKER_TOOL_TOP_PER_SIDE = 3
 SOURCE_RECORD_PAGE_SIZE = 200
 SOURCE_RECORD_MAX_PAGES = 3
 TEXT_FACT_MAX_CHARS = 160
@@ -188,7 +188,7 @@ class SourceIngestToolClient:
         "SOURCE_MANAGEMENT_API_URL",
     )
     TOKEN_ENVS = ("PANTHEON_AGORA_SERVANT_SOURCE_INGEST_TOKEN",)
-    SECRET_ENVS = ("PANTHEON_RUNTIME_JWT_SECRET",)
+    SECRET_ENVS = ("PANTHEON_RUNTIME_JWT_SECRET", "PANTHEON_BFF_JWT_SECRET")
 
     def __init__(
         self,
@@ -223,16 +223,22 @@ class SourceIngestToolClient:
         from services.runtime_auth_inbound import encode_jwt_hs256
 
         now = int(time.time())
-        return encode_jwt_hs256(
-            {
-                "sub": "agora-servant-tools",
-                "roles": ["source_ingest_reader"],
-                "tenant_id": tenant_id,
-                "iat": now,
-                "exp": now + 120,
-            },
-            secret=self._secret,
-        )
+        claims: Dict[str, Any] = {
+            "sub": "agora-servant-tools",
+            "roles": ["source_ingest_reader"],
+            "tenant_id": tenant_id,
+            "iat": now,
+            "exp": now + 120,
+        }
+        # source-ingest checks iss/aud when it is configured with them (strict mode).
+        for claim, names in (
+            ("iss", ("PANTHEON_RUNTIME_JWT_ISSUER", "PANTHEON_BFF_JWT_ISSUER")),
+            ("aud", ("PANTHEON_RUNTIME_JWT_AUDIENCE", "PANTHEON_BFF_JWT_AUDIENCE")),
+        ):
+            value = next((os.getenv(n, "").strip() for n in names if os.getenv(n, "").strip()), "")
+            if value:
+                claims[claim] = value
+        return encode_jwt_hs256(claims, secret=self._secret)
 
     def get(self, path: str, params: Mapping[str, Any], *, tenant_id: str) -> Dict[str, Any]:
         query = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
