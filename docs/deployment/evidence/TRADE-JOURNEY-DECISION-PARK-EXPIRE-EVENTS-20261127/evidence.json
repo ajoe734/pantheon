@@ -147,6 +147,31 @@
       "exit_code": 0,
       "result": "13 passed, 10 subtests passed, 1 deprecation warning in 7.85s"
     },
-    "review": "Prior approval invalidated; new exact-head review by Claude2 required."
+    "review": "Prior approval invalidated; new exact-head review by Claude2 required.",
+    "tested_head": "bfd41b4d837d1cb4ce0d05faa6ca2fb332ee3b08",
+    "base_sha": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+    "assertion_integrity": "All 168 existing futures-session assertion call ASTs are identical to failed head 105366ee4.",
+    "validation": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/execution",
+        "exit_code": 0,
+        "result": "948 passed, 13 skipped, 105 subtests passed, 103 warnings in 256.79s",
+        "full_output": {
+          "path": "/tmp/park-expire-execution-ci-repair.log",
+          "sha256": "0d3dfd627ee1a9171e847412a030bd87af4939103772d8a919724eaad7462471"
+        }
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+        "exit_code": 0,
+        "result": "192 passed, 3 deprecation warnings in 29.07s",
+        "full_output": {
+          "path": "/tmp/park-expire-read-ci-repair.log",
+          "sha256": "62aeeca9fda494d9cae2db4c29b538262fb54021cd298879b552fd9e617848fd"
+        }
+      }
+    ],
+    "checks": "Checkout-scoped interpreter foreign-cwd verification, storage manifest (378 entries, no failures), diff budget and git diff --check passed. All bounded command terminal exit statuses collected.",
+    "residual_findings": "No new findings outside scope; existing official-market refresh residual remains assigned as recorded above."
   }
 }
