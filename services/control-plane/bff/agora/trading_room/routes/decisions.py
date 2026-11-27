@@ -102,6 +102,30 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
         return {"data": ctx.service.get_decision_lock(decision_event_id, identity), "meta": ctx._meta()}
 
     # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison")
+    def get_shadow_comparison(
+        decision_event_id: str,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+    ) -> Dict[str, Any]:
+        """Owner-scoped four-arm shadow comparison for the caller's own decision.
+
+        Arms: human_actual, private_servant, base_strategy, committee_variant,
+        each with the locked decision detail (Agora decision-lock owner) and
+        settlement state (attribution owner). Reads only. A decision the
+        caller does not own answers the same 404 as an unknown id; the
+        caller's own undecided event answers ``status: empty``.
+        """
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        shaped = ctx.service.get_shadow_comparison(decision_event_id, identity)
+        shaped["meta"] = {**ctx._meta(), **(shaped.get("meta") or {})}
+        return shaped
+
+    # ------------------------------------------------------------------
     # POST /bff/agora/trading-room/decision-events/{decision_event_id}/decisions
     # ------------------------------------------------------------------
 
