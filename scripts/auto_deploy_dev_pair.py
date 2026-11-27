@@ -196,8 +196,9 @@ def _parse_instant(text):
 def root_span(backend, records=ROOT_SPAN_RECORDS, fallback=ROOT_SPAN_FALLBACK_MINUTES):
     """(minutes, source) of the slowest of the last `records` completed first-attempt dev Roots,
     measured dispatch (created_at, so runner queue time counts) to completion (updated_at).
-    One GitHub read. No record -> fallback. A record with unreadable timestamps adds the
-    fallback as a candidate. Unreadable list -> (None, 'unavailable: ...'), which holds."""
+    One GitHub read. No completed record -> fallback. Records whose timestamps cannot be read
+    are skipped and counted in the source; when none is readable, or the list itself is
+    unreadable, -> (None, 'unavailable: ...'), which holds fail-closed."""
     try:
         listed = runs(backend, DEPLOY, event="workflow_dispatch")
         if not isinstance(listed, list):
@@ -220,10 +221,10 @@ def root_span(backend, records=ROOT_SPAN_RECORDS, fallback=ROOT_SPAN_FALLBACK_MI
             spans.append((-(-int(minutes * 60) // 60), run["id"]))
         except (ValueError, TypeError, OverflowError):
             unreadable += 1
-    if unreadable:
-        spans.append((fallback, "fallback"))
+    if not spans:
+        return None, f"unavailable: none of the last {len(roots)} completed dev Roots has readable timestamps"
     minutes, run_id = max(spans, key=lambda item: item[0])
-    note = f"; {unreadable} unreadable record(s) counted at the fallback" if unreadable else ""
+    note = f"; {unreadable} record(s) with unreadable timestamps skipped" if unreadable else ""
     return minutes, f"recorded: slowest of last {len(roots)} completed dev Roots (run {run_id}){note}"
 
 

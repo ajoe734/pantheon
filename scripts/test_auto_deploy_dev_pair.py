@@ -718,9 +718,26 @@ def test_root_span_fallback_and_unreadable_records():
     backend = Client(BACKEND, B)
     minutes, source = root_span(backend)
     assert minutes == ROOT_SPAN_FALLBACK_MINUTES and source.startswith("fallback:")
+    # A malformed record is skipped; the readable ones still measure the span.
     backend.deploys = [root_record(1, 30), dict(root_record(2, 30), updated_at=None)]
     minutes, source = root_span(backend)
-    assert minutes == ROOT_SPAN_FALLBACK_MINUTES and "1 unreadable record" in source
+    assert minutes == 30 and "1 record(s) with unreadable timestamps skipped" in source
+    # Records exist but none is readable: no measured span, so no fallback either.
+    for bad in ({"created_at": None, "updated_at": None},
+                {"created_at": "not-a-time", "updated_at": "2026-11-27T03:00:00Z"},
+                {"updated_at": "2026-11-27T00:00:00Z", "created_at": "2026-11-27T03:00:00Z"}):
+        backend.deploys = [dict(root_record(1, 30), **bad), dict(root_record(2, 30), created_at=None)]
+        minutes, source = root_span(backend)
+        assert minutes is None and source.startswith("unavailable:")
+
+
+def test_unreadable_root_timestamps_hold_fail_closed_in_the_deployer():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.deploys = [dict(root_record(7, 30), created_at=None, updated_at=None)]
+    result = run(apply=True, quiet_windows=SPAN_WINDOWS, now=utc(16, 12, 0))
+    assert result["state"] == "held_quiet_window" and result["reason"] == "root_span_unavailable"
+    assert result["root_span_minutes"] is None and result["dispatch_allowed_from"] is None
+    assert not backend.dispatches
 
 
 def test_span_source_failure_holds_fail_closed():
