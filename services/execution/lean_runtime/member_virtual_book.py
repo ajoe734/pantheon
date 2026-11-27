@@ -267,23 +267,130 @@ def _session_event_time(session, first_event_time):
     return text.replace("+00:00", "Z") if str(first_event_time).endswith("Z") else text
 
 
+def _required_warmup_days(artifact):
+    from services.registry.portfolio_envelope import required_portfolio_history
+
+    warmup = max(required_portfolio_history(artifact) - 1, 0)
+    logic = artifact.get("strategy_logic") or {}
+    params = artifact.get("parameters") or {}
+    hold = (logic.get("exit") or {}).get("max_holding_bars")
+    if isinstance(hold, dict) and "const_param" in hold:
+        val = params.get(hold["const_param"])
+        if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
+            warmup += int(val)
+    return warmup
+
+
+def _prepare_replay_dataset(dataset):
+    """Prepare a governed daily dataset for ``pool_admission._replay`` without the backtest gate's
+    two-instrument / thirty-bar floor, so a one-symbol member fill reads only its own symbol and sessions."""
+    from services.research.vectorbt.adapter.vectorbt_adapter import (
+        GovernedVectorbtInputAdapter,
+        PreparedVectorbtDataset,
+        REQUIRED_OHLCV_FIELDS,
+        VectorbtWorkflowError,
+        normalize_data_frequency,
+    )
+
+    adapter = GovernedVectorbtInputAdapter()
+    dataset_id = adapter._req_str(dataset, "dataset_id")
+    strategy_id = adapter._req_str(dataset, "strategy_id")
+    source_dataset_refs = tuple(adapter._normalize_refs(dataset))
+    source_strategy_spec_id = adapter._opt_str(dataset.get("source_strategy_spec_id"))
+    data_frequency = normalize_data_frequency(adapter._opt_str(dataset.get("data_frequency")) or "daily")
+    if data_frequency not in ("daily", "1d"):
+        raise ValueError("backtest_requires_daily_bars")
+    records = dataset.get("records")
+    if not isinstance(records, (list, tuple)) or not records:
+        raise VectorbtWorkflowError("dataset.records must be a non-empty list of OHLCV dicts")
+    by_inst = {}
+    for rec in records:
+        if not isinstance(rec, dict):
+            raise VectorbtWorkflowError("Each record must be a mapping")
+        inst = adapter._req_str(rec, "instrument")
+        day = adapter._req_iso_date(rec, "date", inst)
+        bar = []
+        for field in REQUIRED_OHLCV_FIELDS:
+            val = rec.get(field)
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                raise VectorbtWorkflowError(f"record for {inst} missing numeric field '{field}'")
+            bar.append(float(val))
+        extras = {
+            str(k): float(v)
+            for k, v in rec.items()
+            if k not in {"instrument", "date", *REQUIRED_OHLCV_FIELDS}
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+        }
+        if isinstance(rec.get("features"), dict):
+            for fk, fv in rec["features"].items():
+                if isinstance(fv, (int, float)) and not isinstance(fv, bool):
+                    extras[str(fk)] = float(fv)
+        by_inst.setdefault(inst, []).append((day, tuple(bar), extras))
+    instruments = tuple(sorted(by_inst))
+    bars_per_inst, ohlcv_by_inst, dates_by_inst, features_by_inst = {}, {}, {}, {}
+    raw_features = dataset.get("features_by_instrument") or dataset.get("features")
+    for inst in instruments:
+        ordered = sorted(by_inst[inst], key=lambda item: item[0])
+        dates = tuple(item[0] for item in ordered)
+        bars = tuple(item[1] for item in ordered)
+        extras_list = [item[2] for item in ordered]
+        bars_per_inst[inst] = len(bars)
+        ohlcv_by_inst[inst] = bars
+        dates_by_inst[inst] = dates
+        inst_features = {
+            "open": [b[0] for b in bars],
+            "high": [b[1] for b in bars],
+            "low": [b[2] for b in bars],
+            "close": [b[3] for b in bars],
+            "volume": [b[4] for b in bars],
+        }
+        for ek in sorted({k for ex in extras_list for k in ex}):
+            if all(ek in ex for ex in extras_list):
+                inst_features[ek] = [ex[ek] for ex in extras_list]
+        if isinstance(raw_features, dict):
+            if inst in raw_features and isinstance(raw_features[inst], dict):
+                for fk, fv in raw_features[inst].items():
+                    inst_features[str(fk)] = fv
+            else:
+                for fk, fv in raw_features.items():
+                    if fk not in instruments:
+                        inst_features[str(fk)] = fv
+        features_by_inst[inst] = inst_features
+    return PreparedVectorbtDataset(
+        dataset_id=dataset_id,
+        strategy_id=strategy_id,
+        source_dataset_refs=source_dataset_refs,
+        source_strategy_spec_id=source_strategy_spec_id,
+        instruments=instruments,
+        bars_per_instrument=bars_per_inst,
+        ohlcv_by_instrument=ohlcv_by_inst,
+        data_frequency=data_frequency,
+        num_instruments=len(instruments),
+        total_bars=sum(bars_per_inst.values()),
+        dates_by_instrument=dates_by_inst,
+        features_by_instrument=features_by_inst,
+        candidate_pool_market=copy.deepcopy(dataset.get("candidate_pool_market")),
+    )
+
+
 def governed_admission_replay_source(*, entry_reader, tenant_id, env=None, dataset_resolver=None, now=None):
     """Admission fill source of the runtime: the existing pool admission replay on governed daily bars.
 
     The member's immutable strategy artifact is read from the registry owner (``entry_reader(artifact_ref,
     tenant_id)``, the reader the member baselines already use) and must carry the member's checksum; the
-    dataset is the governed whole-market dataset from the stored daily bars
-    (``services.research.governed_market_dataset.resolve_governed_dataset``); the per-session views come
+    dataset is read from the stored daily bars
+    (``services.research.governed_market_dataset.resolve_governed_dataset``) for only the member's own
+    symbols and the sessions it needs (plus warmup); the per-session views come
     from ``services.research.pool_admission._replay`` (``rows_out``), so no second replay exists.  Any
     failure raises with its reason and the caller leaves the sessions as gaps.  One registry read and one
     dataset build per (member, checksum) per process.
     """
     cache = {}
 
-    def build(member_id, member):
+    def build(member_id, member, sessions):
         from services.execution.shioaji_adapter import normalize_taiwan_symbol
         from services.research.pool_admission import _replay
-        from services.research.vectorbt.adapter.vectorbt_adapter import GovernedVectorbtInputAdapter
 
         entry = entry_reader(member_id, tenant_id) if callable(entry_reader) else None
         if not entry:
@@ -297,18 +404,23 @@ def governed_admission_replay_source(*, entry_reader, tenant_id, env=None, datas
             from services.research.governed_market_dataset import resolve_governed_dataset as resolver
         else:
             resolver = dataset_resolver
-        dataset = resolver(symbols=list(artifact["parameters"]["symbols"]), strategy_id=str(member_id),
-                           now=now, env=env)
-        prepared = GovernedVectorbtInputAdapter().prepare(dataset)
-        if prepared.data_frequency not in ("daily", "1d"):
-            raise ValueError("backtest_requires_daily_bars")
+        dataset = resolver(
+            symbols=list(artifact["parameters"]["symbols"]),
+            sessions=list(sessions),
+            warmup_days=_required_warmup_days(artifact),
+            min_instruments=1,
+            strategy_id=str(member_id),
+            now=now,
+            env=env,
+        )
+        prepared = _prepare_replay_dataset(dataset)
         return normalize_taiwan_symbol, _replay, prepared, artifact
 
     def source(member_id, member, symbol, sessions):
         key = (member_id, member["checksum"])
         if key not in cache:
             try:
-                cache[key] = build(member_id, member)
+                cache[key] = build(member_id, member, sessions)
             except Exception as exc:  # noqa: BLE001 - remembered so one failure is not retried per mark
                 cache[key] = exc
         built = cache[key]

@@ -1326,12 +1326,15 @@ class PaperFleetReconciler:
                 continue
             state = root / _binding_state_filename(binding_id)
             outbox = state.with_name(f"{state.name}.lifecycle-outbox.json")
-            books = outbox.with_name(f"{outbox.name}.member-books.json")
             if self._json_file_has_pending(
                 state, ("pending_fill_publications", "pending_performance_pair")
             ) or self._json_file_has_pending(outbox, ("pending",)):
                 continue
-            targets = [state, outbox, books]
+            # Legacy per-binding *.lifecycle-outbox.json.member-books.json files
+            # are intentionally kept so MemberVirtualBooks can lazily carry in
+            # recorded marks after a binding replacement; new books live under
+            # member-books/ so no new per-binding book file is written.
+            targets = [state, outbox]
             for target in targets:
                 sweep_stale_temp_siblings(target)
                 for extra in (

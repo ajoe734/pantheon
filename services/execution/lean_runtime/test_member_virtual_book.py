@@ -612,3 +612,169 @@ def test_marks_recorded_under_earlier_binding_files_are_carried_in_once_without_
     again = MemberVirtualBooks(persona, legacy_paths=[first, second], history_source=source)
     [later] = _live_marks(again, aid, checksum, ["2026-11-26"], joined_at=_ADMITTED, binding="rb-next", env="env-next")
     assert later["since_inception"] is True and len(later["dates"]) == len(book["dates"]) + 1
+
+
+def test_admission_fill_requests_only_member_symbols_and_needed_sessions(tmp_path):
+    """Acceptance 2: the admission fill requests only the member's symbols (1 symbol, no companion) and
+    only the sessions it needs (warmup + gap sessions, 10 bars total < 30), and replays identically."""
+    from services.execution.lean_runtime.member_virtual_book import governed_admission_replay_source
+
+    artifact, checksum = _member_artifact()
+    aid = artifact["artifact_id"]
+    entry = {"registry_id": aid, "checksum": checksum, "metadata": {"strategy_artifact": artifact}}
+    sessions = _weekdays("2026-11-09", "2026-11-18")
+    warmup = ["2026-11-05", "2026-11-06"]
+    needed_days = set(warmup + sessions)
+    resolver_calls = []
+
+    def slim_resolver(**kwargs):
+        resolver_calls.append(kwargs)
+        records = [
+            r for r in _governed_dataset()["records"]
+            if r["instrument"] == "2330.TW" and r["date"] in needed_days
+        ]
+        assert len(records) == 10  # 2 warmup + 8 sessions of 1 symbol only
+        return {
+            "dataset_id": _SNAPSHOT_ID,
+            "strategy_id": kwargs["strategy_id"],
+            "data_frequency": "daily",
+            "source_dataset_refs": [f"daily_bars:{_SNAPSHOT_ID}"],
+            "records": records,
+        }
+
+    slim_source = governed_admission_replay_source(
+        entry_reader=lambda ref, tenant: entry, tenant_id=_TENANT, dataset_resolver=slim_resolver
+    )
+    full_source, _, _ = _fill_source()
+    slim_res = slim_source(aid, _member(checksum, aid), "2330.TW", sessions)
+    full_res = full_source(aid, _member(checksum, aid), "2330.TW", sessions)
+    assert len(resolver_calls) == 1
+    assert resolver_calls[0]["symbols"] == ["2330.TW"]
+    assert resolver_calls[0]["sessions"] == sessions
+    assert resolver_calls[0]["warmup_days"] == 2
+    assert resolver_calls[0]["min_instruments"] == 1
+    assert slim_res == full_res
+
+
+def test_reconciler_retired_sweep_before_first_new_mark_keeps_legacy_book_files_for_three_hosted_personas(tmp_path):
+    """Hosted race (2026-11-27 10:00Z republish vs ~23:35Z mark): retiring the three hosted bindings
+    removes their state and outbox files but keeps rb-{2b0df305,a2cb762c,eb74118d}*.member-books.json so
+    the 3 recorded marks (2026-11-20..2026-11-24) are carried in at the new runtime's first mark."""
+    from services.execution.lean_runtime.member_virtual_book import governed_admission_replay_source
+    from services.paper_fleet_reconciler.paper_fleet_reconciler import (
+        PaperFleetReconciler,
+        _binding_state_filename,
+    )
+    from services.registry.strategy_artifact import strategy_artifact_checksum
+    from services.research.vectorbt.adapter.vectorbt_adapter import build_canonical_tw_strategy_artifact
+
+    hosted_Recorded_days = ["2026-11-20", "2026-11-21", "2026-11-24"]
+    hosted_personas = [
+        ("persona-ee7112a829d38b9135ac", "rb-2b0df30559154a93902c209b0318d95c", "rb-2b0df305-new", "0050.TW"),
+        ("persona-6507750312870d03a241", "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4", "rb-a2cb762c-new", "2317.TW"),
+        ("persona-2448c7053e33ea48da47", "rb-eb74118dd3ca4b169496b1c239087512", "rb-eb74118d-new", "2330.TW"),
+    ]
+    all_days = _weekdays("2026-10-15", "2026-11-27")
+    entries = {}
+    legacy_book_files = []
+    excluded_bindings = []
+
+    for persona_id, old_bid, _new_bid, sym in hosted_personas:
+        art = build_canonical_tw_strategy_artifact(
+            strategy_id=f"strat-{persona_id}", symbols=(sym,), lookback_bars=3, momentum_threshold=0.0
+        )
+        chk = strategy_artifact_checksum(art)
+        aid = art["artifact_id"]
+        entries[aid] = (art, chk, sym)
+
+        state_file = tmp_path / _binding_state_filename(old_bid)
+        outbox_file = state_file.with_name(f"{state_file.name}.lifecycle-outbox.json")
+        book_file = outbox_file.with_name(f"{outbox_file.name}.member-books.json")
+        state_file.write_text(_json.dumps({"pending_fill_publications": []}))
+        outbox_file.write_text(_json.dumps({"pending": []}))
+
+        legacy_books = MemberVirtualBooks(book_file)
+        for i, day in enumerate(hosted_Recorded_days):
+            legacy_books.observe(
+                binding_id=old_bid, envelope_checksum="sha256:old-env", symbol=sym,
+                event_time=f"{day}T23:35:00Z", price=100.0 + i, open_price=99.5 + i,
+                source_ref=f"recorded:{day}", bar_frequency="1d",
+                members={aid: _member(chk, aid, joined_at=None)},
+            )
+        legacy_book_files.append(book_file)
+        excluded_bindings.append({"binding_id": old_bid, "status": "retired"})
+
+    total_legacy_bytes = sum(p.stat().st_size for p in legacy_book_files)
+    assert total_legacy_bytes < 10_000  # runtime budget: 3 legacy book files total under 10 KB
+
+    # 10:00Z daily cycle retires the old bindings; reconciler sweep runs before the ~23:35Z mark.
+    recon = PaperFleetReconciler(performance_state_root=str(tmp_path), poll_interval_seconds=999)
+    removed = recon._cleanup_retired_state_files(
+        excluded_bindings,
+        desired_ids={new_bid for _, _, new_bid, _ in hosted_personas},
+        active_ids=set(),
+    )
+    assert removed == [old_bid for _, old_bid, _, _ in hosted_personas]
+    for _, old_bid, _, _ in hosted_personas:
+        st = tmp_path / _binding_state_filename(old_bid)
+        ob = st.with_name(f"{st.name}.lifecycle-outbox.json")
+        bk = ob.with_name(f"{ob.name}.member-books.json")
+        assert not st.exists() and not ob.exists()
+        assert bk.exists()  # legacy book file survives retirement sweep
+
+    # ~23:35Z: each persona's new runtime observes its first mark with joined_at carried in the envelope.
+    def resolver(**kwargs):
+        sym = kwargs["symbols"][0]
+        records = [
+            {
+                "instrument": sym, "date": d, "open": round(100.0 + i * 0.2, 4),
+                "high": round(101.0 + i * 0.2, 4), "low": round(99.0 + i * 0.2, 4),
+                "close": round(100.5 + i * 0.2 + (0.6 if i % 2 == 0 else -0.4), 4),
+                "volume": 1000.0,
+            }
+            for i, d in enumerate(all_days)
+        ]
+        return {
+            "dataset_id": _SNAPSHOT_ID, "strategy_id": kwargs["strategy_id"],
+            "data_frequency": "daily", "source_dataset_refs": [f"daily_bars:{_SNAPSHOT_ID}"],
+            "records": records,
+        }
+
+    source = governed_admission_replay_source(
+        entry_reader=lambda ref, tenant: {
+            "registry_id": ref, "checksum": entries[ref][1],
+            "metadata": {"strategy_artifact": entries[ref][0]},
+        },
+        tenant_id=_TENANT,
+        dataset_resolver=resolver,
+    )
+    expected_fill_sessions = _weekdays("2026-11-09", "2026-11-19")  # 9 sessions before 2026-11-20
+    assert len(expected_fill_sessions) == 9
+
+    for (persona_id, _old_bid, new_bid, sym), (aid, (art, chk, _)) in zip(hosted_personas, entries.items()):
+        persona_book_path = tmp_path / "member-books" / f"{persona_id}.json"
+        books = MemberVirtualBooks(
+            persona_book_path,
+            legacy_paths=sorted(tmp_path.glob("*.member-books.json")),
+            history_source=source,
+            trading_day=lambda d: d.weekday() < 5,
+        )
+        [summary] = books.observe(
+            binding_id=new_bid, envelope_checksum="sha256:new-env", symbol=sym,
+            event_time="2026-11-27T23:35:00Z", price=105.0, open_price=104.5,
+            source_ref="recorded:2026-11-27", bar_frequency="1d",
+            members={aid: _member(chk, aid, joined_at=_ADMITTED)},
+        )
+        stored = next(b for b in books.books.values() if b["binding_id"] == new_bid)
+        assert summary["admitted_at"] == _ADMITTED
+        assert summary["since_inception"] is True
+        assert summary["since_inception_reason"] is None
+        assert stored["admission_fill"]["filled"] == expected_fill_sessions
+        assert stored["admission_fill"]["gaps"] == []
+        recorded_dates = [r["event_time"][:10] for r in stored["observations"] if r["source_ref"].startswith("recorded:")]
+        assert recorded_dates == hosted_Recorded_days + ["2026-11-27"]
+        stats = _reweight_accepts(summary, chk)
+        assert stats["days"] == len(stored["observations"]) - 1
+
+    # No new per-binding *.member-books.json file was created.
+    assert sorted(tmp_path.glob("*.member-books.json")) == sorted(legacy_book_files)
