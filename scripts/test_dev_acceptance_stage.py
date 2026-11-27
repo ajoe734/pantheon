@@ -549,6 +549,15 @@ def test_pinned_transport_bounds_errors_redacts_secrets_and_strips_request_query
     assert kept[3] not in check["detail"]  # only the first three errors enter the verdict
 
 
+def test_pinned_transport_redacts_secrets_that_cross_the_entry_cap(tmp_path):
+    prefix = "GET /bff/management/human-inbox: "
+    error = prefix + "x" * (195 - len(prefix)) + TOKEN
+    check, artifact = _crawl(tmp_path, runner=_writer(_transport_manifest(errors=[error])))
+    kept = artifact["pinnedTransport"]["errors"][0]
+    assert kept == error[:195] + "[reda"
+    assert TOKEN[:5] not in json.dumps([check, artifact])
+
+
 @pytest.mark.parametrize("passed", [False, True])
 def test_manifest_without_pinned_transport_keeps_exact_artifact_and_verdict_shape(tmp_path, passed, monkeypatch):
     monkeypatch.setattr(stage, "_now", lambda: "2026-11-27T00:00:00Z")

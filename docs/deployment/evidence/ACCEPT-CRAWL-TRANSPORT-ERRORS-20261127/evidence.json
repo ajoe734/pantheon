@@ -1,0 +1,61 @@
+{
+  "task": "ACCEPT-CRAWL-TRANSPORT-ERRORS-20261127",
+  "class": "RC1 WP1.2: 503s under crawl load",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "incident": {
+    "root_run": "46039585005",
+    "backend_commit_prefix": "35e13d59a",
+    "frontend_commit_prefix": "619891d5e",
+    "problem": "The release artifact and management-crawl verdict retained Pinned BFF transport failed. but discarded pinnedTransport.errors, obscuring which request failed."
+  },
+  "contract_verification": {
+    "method": "Read-only GitHub contents API at execute-plans commit 619891d5e; no frontend edits, VM access, SSH or operator keys.",
+    "manifest_source": "scripts/accept-management-hosted-production.mjs:1103 exports pinnedTransport with pass, errors and terminatedBeforeSend beside result.",
+    "error_source": "scripts/lib/pinned-browser-bff-bearer.mjs:48-51 records label: message strings and replaces the bearer token with [REDACTED].",
+    "terminated_source": "scripts/lib/pinned-browser-bff-bearer.mjs:279-283 records outcome, interceptionId, networkId, path, requestStage, pausePhase, phase and reason. Line 294 uses target_closed_before_continuation.",
+    "error_shape_tested": "GET /bff/management/human-inbox: net::ERR_ABORTED",
+    "limits_tested": "The supplied real error shape is extended with request query/fragment, environment-secret messages and repeated long messages to test privacy and bounds; these extensions are test inputs, not claimed hosted observations."
+  },
+  "solution": {
+    "artifact": "Optional pinnedTransport object: errors (up to 20 strings, each at most 200 characters) and terminatedBeforeSendCount (number of upstream entries). No terminated-before-send row contents are copied.",
+    "privacy": "Strip query and fragment from the request pathname before clipping. Apply the existing redact() to each new error before clipping, avoiding a partial secret at the boundary, then retain the existing whole-summary redact() path and enforce the final 200-character cap.",
+    "verdict": "Append the first three retained transport errors to failed management-crawl detail. The existing 2000-character detail cap remains in force.",
+    "compatibility": "No pinnedTransport key means no additional summary or artifact fields and exactly the previous verdict shape and detail. The schema versions stay unchanged because the fields are optional.",
+    "outcomes": "No change to result.pass, process exit interpretation, required/skipped behavior, verdict_status, dev gates or rollback policy. Passed and failed manifests retain their respective outcomes even when transport diagnostics are present."
+  },
+  "verification": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py (exit 0; checkout-scoped interpreter verified)",
+    "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_acceptance_stage.py",
+    "result": "41 passed in 6.22s; exit 0 (34 existing cases and 7 added cases)",
+    "additional_check": "git diff --check (exit 0)",
+    "coverage": [
+      "Real pinned transport error reaches the artifact and failed release verdict; both passed and failed result.pass values retain their outcomes.",
+      "Two actual-shape terminatedBeforeSend rows become count 2 with no copied interception identifiers; an empty array yields count 0.",
+      "25 errors reduce to 20; every retained entry is at most 200 characters, including after short-secret redaction expands the text.",
+      "Request query keys, values and fragment are absent; minted token and viewer client secret are redacted; upstream [REDACTED] is preserved.",
+      "Only the first three transport errors enter the verdict detail.",
+      "A bearer token crossing the character cap is redacted before truncation, so no raw token prefix survives.",
+      "Passed and failed manifests without pinnedTransport yield exact pre-change artifact and check fields and detail."
+    ],
+    "existing_tests": "No existing test or assertion was modified, weakened or deleted; new tests are appended."
+  },
+  "runtime_budget": {
+    "cadence": "Once per existing post-switch release acceptance crawl; no new recurring job or workflow input.",
+    "new_runtime_files": 0,
+    "new_writers": 0,
+    "new_jobs": 0,
+    "hosted_scale_count": "At most one optional diagnostics object in the existing acceptance-crawl.json per release attempt; at most 20 retained errors and one integer count.",
+    "size_cap": "At most 4000 error characters (20 x 200), plus bounded JSON structure and the decimal count. JSON escaping adds encoding overhead; 4000 characters is not a 4000-byte claim. The verdict includes at most three error strings within its existing 2000-character detail bound.",
+    "growth_per_day": "For R release attempts/day, at most 20R retained entries / 4000R error characters plus JSON overhead in the existing release artifacts. No time-based accumulation or new persistence path is introduced.",
+    "cleanup": "Existing acceptance verdict/crawl GitHub artifact retention is 30 days (.github/workflows/nonprod-deploy.yml:4575-4585); runner crawl workspace already uses TemporaryDirectory. No retention or cleanup mechanism is added or changed.",
+    "storage_manifest": "No new writer to register; only bounded additional fields in the existing release artifact. This committed evidence file is a static task record, not a runtime output."
+  },
+  "hosted_proof": {
+    "performed": false,
+    "reason": "Task explicitly prohibits VM/SSH access and reserves hosted verification for the later operator acceptance task. Local functional evidence does not establish deployed or accepted state.",
+    "follow_up": "After deployment, the operator acceptance task inspects acceptance-crawl.json pinnedTransport.errors/terminatedBeforeSendCount and failed check:management-crawl detail at the exact served FE/BFF identities."
+  },
+  "residual_findings": [],
+  "scope_boundary": "Underlying persona-fleet/inbox/rankings availability and frontend transport behavior remain in their existing owning chains. The coordinator records this task result in the RC1 WP1.2 register row; this task does not edit the register."
+}
