@@ -645,3 +645,125 @@ def test_malformed_variable_fails_closed_to_defaults_and_says_so():
 def test_summary_shows_held_state():
     text = summary_lines(quiet_window_hold(DEFAULTS, utc(18, 3, 0)) | {"state": "held_quiet_window"})
     assert "held: quiet window" in text and "05:30" in text and "not a broken trigger" in text
+
+
+# ---- Root span (DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127) ----
+from scripts.auto_deploy_dev_pair import ROOT_SPAN_FALLBACK_MINUTES, ROOT_SPAN_RECORDS, root_span
+
+SPAN_WINDOWS = parse_quiet_windows("mon-fri 00:30-06:50; daily 09:05-10:45")
+
+
+def root_record(run_id, minutes, *, title=None, status="completed", attempt=1, created=None):
+    start = created or datetime(2026, 11, 27, 1, 0, tzinfo=timezone.utc)
+    return {"id": run_id, "head_sha": B, "status": status, "conclusion": "success", "run_attempt": attempt,
+            "display_title": title or f"Dev release {B} + {F}", "html_url": f"https://github.test/{run_id}",
+            "created_at": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_at": (start + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+from datetime import timedelta
+
+
+def recorded(minutes):
+    return minutes, "recorded: test"
+
+
+def test_recorded_165_minute_span_holds_until_the_last_window_it_would_reach():
+    # 11/16 is a Monday. 07:30 + 165 min = 10:15, inside 09:05-10:45.
+    hold = quiet_window_hold(SPAN_WINDOWS, utc(16, 7, 30), 165, "recorded: test")
+    assert hold["reason"] == "root_span_inside_window" and hold["window"] == "daily 09:05-10:45"
+    assert hold["dispatch_allowed_from"] == "2026-11-16T10:45Z"
+    assert hold["root_span_minutes"] == 165 and hold["root_span_source"] == "recorded: test"
+    # 06:10 is inside the first window; leaving it at 06:50 still reaches 09:05, so 10:45.
+    hold = quiet_window_hold(SPAN_WINDOWS, utc(16, 6, 10), 165, "recorded: test")
+    assert hold["reason"] == "dispatch_inside_window" and hold["window"] == "mon-fri 00:30-06:50"
+    assert hold["dispatch_allowed_from"] == "2026-11-16T10:45Z"
+    assert quiet_window_hold(SPAN_WINDOWS, utc(16, 10, 45), 165, "recorded: test") is None
+    # 06:19 + 165 = 09:04 would be fine if 06:19 were not inside the first window.
+    assert quiet_window_hold(SPAN_WINDOWS, utc(17, 6, 50), 134, "recorded: test") is None
+    assert quiet_window_hold(SPAN_WINDOWS, utc(17, 6, 50), 135, "recorded: test") is not None
+
+
+def test_span_hold_crosses_day_boundaries_and_adjacent_windows():
+    # Sunday 22:00 + 165 = Monday 00:45 (weekday window); leaving it at 06:50 reaches 09:05.
+    hold = quiet_window_hold(SPAN_WINDOWS, utc(15, 22, 0), 165, "recorded: test")
+    assert hold["window"] == "mon-fri 00:30-06:50" and hold["dispatch_allowed_from"] == "2026-11-16T10:45Z"
+    # Friday 22:00 reaches Saturday 00:45, but the trading window is weekdays only.
+    assert quiet_window_hold(SPAN_WINDOWS, utc(20, 22, 0), 165, "recorded: test") is None
+    # Monday 21:50 + 165 = Tuesday 00:35.
+    hold = quiet_window_hold(SPAN_WINDOWS, utc(16, 21, 50), 165, "recorded: test")
+    assert hold["window_ends_at"] == "2026-11-17T06:50Z" and hold["dispatch_allowed_from"] == "2026-11-17T10:45Z"
+    # A span that can never fit names no allowed minute instead of inventing one.
+    assert quiet_window_hold(SPAN_WINDOWS, utc(16, 12, 0), 24 * 60, "recorded: test")["dispatch_allowed_from"] is None
+
+
+def test_root_span_is_slowest_of_last_n_completed_first_attempt_dev_roots():
+    backend = Client(BACKEND, B)
+    backend.deploys = [root_record(run_id, 60 + run_id) for run_id in range(1, ROOT_SPAN_RECORDS + 3)]
+    backend.deploys += [
+        root_record(500, 400, status="in_progress"),
+        root_record(501, 400, attempt=2),  # rerun: updated_at no longer measures one Root
+        root_record(502, 400, title=drill_title(B, F)),
+        root_record(503, 400, title="Dev restore accepted baseline run 1 attempt 1"),
+    ]
+    minutes, source = root_span(backend)
+    assert minutes == 60 + ROOT_SPAN_RECORDS + 2  # newest N are runs 3..N+2
+    assert source.startswith(f"recorded: slowest of last {ROOT_SPAN_RECORDS} completed dev Roots (run {ROOT_SPAN_RECORDS + 2})")
+    # Queue time counts: the span starts at created_at; partial minutes round up.
+    backend.deploys = [dict(root_record(1, 0), updated_at="2026-11-27T03:45:01Z")]
+    assert root_span(backend)[0] == 166
+
+
+def test_root_span_fallback_and_unreadable_records():
+    backend = Client(BACKEND, B)
+    minutes, source = root_span(backend)
+    assert minutes == ROOT_SPAN_FALLBACK_MINUTES and source.startswith("fallback:")
+    # A malformed record is skipped; the readable ones still measure the span.
+    backend.deploys = [root_record(1, 30), dict(root_record(2, 30), updated_at=None)]
+    minutes, source = root_span(backend)
+    assert minutes == 30 and "1 record(s) with unreadable timestamps skipped" in source
+    # Records exist but none is readable: no measured span, so no fallback either.
+    for bad in ({"created_at": None, "updated_at": None},
+                {"created_at": "not-a-time", "updated_at": "2026-11-27T03:00:00Z"},
+                {"updated_at": "2026-11-27T00:00:00Z", "created_at": "2026-11-27T03:00:00Z"}):
+        backend.deploys = [dict(root_record(1, 30), **bad), dict(root_record(2, 30), created_at=None)]
+        minutes, source = root_span(backend)
+        assert minutes is None and source.startswith("unavailable:")
+
+
+def test_unreadable_root_timestamps_hold_fail_closed_in_the_deployer():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.deploys = [dict(root_record(7, 30), created_at=None, updated_at=None)]
+    result = run(apply=True, quiet_windows=SPAN_WINDOWS, now=utc(16, 12, 0))
+    assert result["state"] == "held_quiet_window" and result["reason"] == "root_span_unavailable"
+    assert result["root_span_minutes"] is None and result["dispatch_allowed_from"] is None
+    assert not backend.dispatches
+
+
+def test_span_source_failure_holds_fail_closed():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    original, dispatch_reads = backend.request, []
+    def request(method, path):
+        if "event=workflow_dispatch" in path:
+            dispatch_reads.append(path)
+            if len(dispatch_reads) == 2:  # 1st: failed-pair check; 2nd: the Root span read
+                raise ControllerError("GitHub 502")
+        return original(method, path)
+    backend.request = request
+    result = run(apply=True, quiet_windows=SPAN_WINDOWS, now=utc(16, 12, 0))
+    assert result["state"] == "held_quiet_window" and result["reason"] == "root_span_unavailable"
+    assert result["root_span_minutes"] is None and "GitHub 502" in result["root_span_source"]
+    assert not backend.dispatches
+    assert "fail closed" in summary_lines(result)
+
+
+def test_recorded_span_drives_the_deployer_decision_and_is_reported():
+    backend, _, _, _, run = setup_pair(OLD, F)
+    backend.deploys = [root_record(7, 165, created=datetime(2026, 11, 13, 1, 0, tzinfo=timezone.utc))]
+    result = run(apply=True, quiet_windows=SPAN_WINDOWS, now=utc(16, 7, 30))
+    assert result["state"] == "held_quiet_window" and result["dispatch_allowed_from"] == "2026-11-16T10:45Z"
+    assert result["root_span_minutes"] == 165 and "(run 7)" in result["root_span_source"]
+    assert "Root span 165 min" in summary_lines(result)
+    assert not backend.dispatches
+    result = run(apply=True, quiet_windows=SPAN_WINDOWS, now=utc(16, 10, 45))
+    assert result["state"] == "dispatched" and result["root_span_minutes"] == 165
