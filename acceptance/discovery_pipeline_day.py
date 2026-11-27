@@ -86,6 +86,10 @@ FALLBACK_PREFIX = "evidence suggests"
 GATE_REFUSALS = ("survivorship_limited", "below_threshold", "no_passing_gate_result")
 # Outcomes that mean the stage could not do its job (never working output).
 UNAVAILABLE_CODES = ("mandate_universe_missing", "dataset_unavailable")
+# Paid L2 calls per distinct news source today. One call per source and
+# unchanged extraction input leaves room for a revised article or a retry; an
+# article re-paid on every hourly collector refetch shows up as ~3 or more.
+MAX_CALLS_PER_SOURCE = 1.5
 DEAD_LETTER_RE = re.compile(r"(\d+)\s+(?:unresolved\s+)?dead letters")
 
 
@@ -447,6 +451,14 @@ def stage_hypothesis_cards(
         return _failed(name, "llm_call_cap_missing", calls_today=calls, cap=cap)
     if calls > cap:
         return _failed(name, "llm_calls_over_cap", calls_today=calls, cap=cap)
+    sources = _int(llm.get("distinct_sources"))
+    per_source = round(calls / sources, 3) if sources else None
+    # The distinct-source count comes from the ledger through the owner summary
+    # and the BFF board. Until that read is plumbed the stage still reports the
+    # calls it can read and says the ratio is not measurable (not a pass on it).
+    if per_source is not None and per_source > MAX_CALLS_PER_SOURCE:
+        return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, cap=cap,
+                       distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE)
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
     today, _ = _count(board, "hypothesis_cards_today")
@@ -459,6 +471,9 @@ def stage_hypothesis_cards(
         "cards_today": today,
         "calls_today": calls,
         "cap": cap,
+        "distinct_sources": sources,
+        "calls_per_source": per_source,
+        "calls_per_source_status": "measured" if per_source is not None else "distinct_sources_not_reported",
         "release_switched_at": switch_iso,
         "ritual_events_since_switch": ritual_events,
         "closed_last_24h_by_reason": closed,
