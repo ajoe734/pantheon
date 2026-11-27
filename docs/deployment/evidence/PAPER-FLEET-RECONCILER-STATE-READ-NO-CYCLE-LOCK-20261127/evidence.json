@@ -1,0 +1,96 @@
+{
+  "task_id": "PAPER-FLEET-RECONCILER-STATE-READ-NO-CYCLE-LOCK-20261127",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "review_independence": {
+    "owner_family": "Antigravity",
+    "reviewer_family": "Codex",
+    "independent_model_family": true
+  },
+  "problem_register_ref": "docs/operations/problem-register.md (RC1 WP1.2 '503s under crawl load', persona-fleet entry)",
+  "delivery_state": "source_ready_for_review; not merged, deployed or accepted",
+  "defect": {
+    "crawl_run_id": 46039585005,
+    "hosted_release_pair": "backend 35e13d59a + FE 619891d5e (2026-11-27 19:45-20:00Z)",
+    "symptom": "Root 46039585005 acceptance crawl failed /management/cockpit and /management/persona-fleet on GET /bff/management/persona-fleet 503 after 17,502 ms and 12,579 ms (19:49:00Z and 19:49:28Z). BFF _load_paper_runtime_monitoring_sessions reads GET /api/fleet/state with a 10 s timeout and maps timeouts to PaperReconcilerUnavailableError (503). Sampling GET /readyz inside paper-fleet-reconciler once a second for 90 s at 19:58Z yielded 85 answers in 0.01-0.03 s and slowest five 25.41 s, 14.93 s, 6.42 s, 6.00 s and 5.21 s, with ~40 BrokenPipeError lines in 19:00-20:00Z and healthcheck exit=-1 timeout entries.",
+    "root_cause": "PaperFleetReconciler.snapshot() (used by /readyz, /healthz, / and /api/fleet/state) acquired self._lock, the same lock reconcile_once() held across its entire admission/transition/worker block (_fetch_source_snapshot HTTP calls to source-ingest at 5 s timeout per symbol, _transition_binding HTTP calls to runtime-manager at 10 s timeout, _start_worker/_terminate_worker subprocess waits up to drain_timeout, and _publish_loop_truth writes)."
+  },
+  "design_choice_and_rationale": {
+    "mechanism": "execute_network_and_process_waits_outside_state_lock_with_dedicated_cycle_lock",
+    "explanation": "We perform all network I/O and subprocess waits outside self._lock and apply their resulting state updates atomically under self._lock, while serializing reconcile_once() and stop() worker teardown with a dedicated self._cycle_lock.",
+    "why_chosen": [
+      "Existing callers and unit tests directly mutate or inspect in-memory reconciler fields (_monitoring_sessions, _cycle_count, try_acquire_lease(), _fetch_fleet_state() acquiring self._lock to record _last_error) outside reconcile_once(); reading live state under the short state lock self._lock guarantees immediate consistency after any in-cycle or out-of-cycle mutation without risking a stale pre-rendered snapshot.",
+      "self._lock is never held across _fetch_fleet_state, _fetch_runtime_summaries, _fetch_source_snapshot, _transition_binding, _publish_loop_truth, leader-store acquire_or_renew/validate/release, _spawn, or process.wait() in _start_worker and _terminate_worker.",
+      "Every worker and monitoring-session lifecycle transition is applied in a single with self._lock: critical section after the network call or process wait completes: _start_worker opens the monitoring session and registers the WorkerEntry together under self._lock after _spawn and fence validation finish; _terminate_worker (including stale-heartbeat reap) terminates and waits on the subprocess outside self._lock, then ends the monitoring session and removes the WorkerEntry together under self._lock. Readers therefore never observe a torn worker/monitoring-session view, and /readyz computes ready from the same snapshot dict acquired under self._lock.",
+      "self._cycle_lock serializes reconcile_once() and stop() worker teardown so two concurrent reconcile cycles cannot concurrently mutate worker state."
+    ],
+    "unchanged": [
+      "Market snapshot admission rules and bootstrap grace period",
+      "Pause (active -> pending_pause -> paused) and auto-resume (paused -> active) transitions",
+      "Token-fenced leader lease validation before and after worker spawn",
+      "Monitoring session start, end, staleness reap and ended-session pruning/persistence",
+      "Retired binding state/outbox file cleanup",
+      "Follower demotion path",
+      "BFF 10 s timeout and 503 mapping"
+    ]
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon provisioned and verified from a foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py services/paper_fleet_reconciler/test_paper_fleet_reconciler_state_read.py",
+      "exit_code": 0,
+      "result": "111 passed, 2 skipped, 4 subtests passed; all 107 existing reconciler assertions and 4 new deterministic concurrency/state-read tests pass."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace or formatting defects."
+    }
+  ],
+  "deterministic_test_coverage": {
+    "file": "services/paper_fleet_reconciler/test_paper_fleet_reconciler_state_read.py",
+    "cases": [
+      "test_state_reads_return_while_cycle_blocked_in_source_snapshot_fetch: cycle blocked on threading.Event inside _fetch_source_snapshot while snapshot(), /api/fleet/state, /readyz and /healthz answer from another thread before the Event is set; after the Event is set the next read reflects cycle_count=2 and the newly started worker.",
+      "test_state_reads_return_while_cycle_blocked_in_runtime_manager_transition: cycle blocked on threading.Event inside _transition_binding (pending_pause) while snapshot(), /api/fleet/state and /readyz return a consistent pre-pause worker/session view from another thread before the Event is set; after the Event is set the next read reflects the paused binding, stopped worker and ended monitoring session.",
+      "test_state_reads_return_while_cycle_blocked_in_spawn_terminate_and_loop_truth: cycle blocked on threading.Event inside _spawn, loop_writer.record_success and process.wait() during _terminate_worker while state reads return without torn worker/monitoring-session views before the Event is set and reflect the updated state after.",
+      "test_two_concurrent_cycles_cannot_both_mutate_worker_state: two concurrent reconcile_once() threads are serialized by self._cycle_lock (max_concurrent_cycles=1, single worker spawned) while HTTP /api/fleet/state still answers without waiting for either cycle."
+    ]
+  },
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_persistent_writers": 0,
+    "new_emitters": 0,
+    "new_persisted_state": 0,
+    "cadence": "Unchanged: RECONCILER_POLL_INTERVAL_SECONDS default 15 s; RECONCILER_LOOP_WRITE_INTERVAL_SECONDS default 30 s.",
+    "timeouts_and_owner_calls_per_cycle": "Unchanged: same runtime-manager desired-state and transition calls (10 s timeout), telemetry runtime-summaries call (10 s timeout), source-ingest latest snapshot calls (5 s timeout), and worker drain timeout (10 s default).",
+    "growth_bytes_per_day": 0,
+    "cap_and_cleanup": "Unchanged: monitoring session persistence retains at most 20 ended sessions and retired binding state files are unlinked when nothing is pending."
+  },
+  "hosted_acceptance": {
+    "status": "pending_merge_and_first_root_release",
+    "required_read_only_probes_after_deploy": [
+      "Sample GET /readyz inside the paper-fleet-reconciler container once a second for 90 s and report the slowest five response times.",
+      "Count BrokenPipeError lines in the paper-fleet-reconciler container log per hour for one hour (baseline 19:00-20:00Z on 2026-11-27 had ~40) and inspect container healthcheck log for exit=-1 entries.",
+      "Run GET /bff/management/persona-fleet as admin three times and record status codes and elapsed seconds.",
+      "Verify the next Dev Root acceptance crawl passes /management/persona-fleet and /management/cockpit or names a different failed read."
+    ]
+  },
+  "residual_findings": [
+    {
+      "route": "/management/human-inbox",
+      "crawl_run_id": 46039585005,
+      "finding": "In the same Root 46039585005 acceptance crawl, /management/human-inbox aborted after 4,993 ms (BFF log 19:49:38Z: approval_queue failed: HTTPError, governance_review_queue failed: HTTPError, research-orchestrator tickets read timed out).",
+      "disposition": "Recorded in docs/operations/problem-register.md under the RC1 WP1.2 '503s under crawl load' row alongside BFF-HUMAN-INBOX-DETAIL-TARGETED-CONTRIBUTOR-20261126 for the owning BFF/management domain."
+    },
+    {
+      "route": "/management/trading-pulse/rankings",
+      "crawl_run_id": 46039585005,
+      "finding": "In the same Root 46039585005 acceptance crawl, /management/trading-pulse/rankings was pending at 2,381 ms (4.85 s when re-read at 19:56Z).",
+      "disposition": "Recorded in docs/operations/problem-register.md under the RC1 WP1.2 '503s under crawl load' row for the owning BFF/trading-pulse domain."
+    }
+  ]
+}
