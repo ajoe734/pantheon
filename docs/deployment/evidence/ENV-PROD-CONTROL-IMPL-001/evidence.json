@@ -703,5 +703,124 @@
     "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
     "hosted_acceptance_claimed": false,
     "release_complete_claimed": false
+  },
+  "prod_ops_sudo_env_and_120gb_boot_disk_repair_20261126": {
+    "task_generation": 81,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45897091923 (job 140173674161) installed Docker Compose v2 and migrated offline boot-disk state onto replacement e2-standard-8 VM, then failed at two defects: (1) prod_ops.sh compose() called run_priv (sudo without -E) instead of run_priv_env (sudo -E), stripping exported PANTHEON_* release/image variables during restore_active_release and rollback; (2) 50GB boot disk on replacement VM had low free root space while pre-pulling all 25+ release plus rollback baseline images",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_ops.sh adds run_priv_env() ('if [[ \"${PROD_USE_SUDO:-false}\" == \"true\" || \"${FAKE_OSLOGIN_NONROOT:-false}\" == \"true\" ]]; then \"$SUDO\" -E \"$@\"; else \"$@\"; fi') matching deploy/production/bootstrap.sh and updates compose() to use run_priv_env \"$DOCKER\" compose ... so sudo never strips exported PANTHEON_* release/image variables during restore_active_release or rollback",
+      "scripts/deploy/prod_replace_vm.sh adds PROD_MIN_BOOT_DISK_GB=\"${PROD_MIN_BOOT_DISK_GB:-120}\", computes TARGET_BOOT_SIZE_GB as max(int(OLD_BOOT_SIZE_GB), int(PROD_MIN_BOOT_DISK_GB)), bumps PROD_DEFAULT_TEMPLATE_NAME default to pantheon-prod-control-template-e2s8-v3, passes --boot-disk-size=\"${TARGET_BOOT_SIZE_GB}GB\" when creating the instance template, and in template_is_compatible() requires boot disk initializeParams.diskSizeGb >= PROD_MIN_BOOT_DISK_GB whenever initializeParams.diskSizeGb is present in template JSON (preserving minimal mock templates that omit disks), plus passes PROD_BASELINE_READY_TRIES=\"${PROD_BASELINE_READY_TRIES:-60}\" to restore_active_release in both RESTORE_OUT and rollback_to_old_boot_disk, waits up to 15s for Caddy /deployment.json readiness after starting pantheon-caddy, and captures rollback stderr into rollback_error in rollback JSON output if rollback_to_old_boot_disk fails",
+      "deploy/production/bootstrap.sh extracts docker_registry_login() helper and retries docker pull up to PROD_IMAGE_PULL_TRIES=\"${PROD_IMAGE_PULL_TRIES:-3}\" (sleeping PROD_IMAGE_PULL_RETRY_DELAY default 3 and re-running docker_registry_login on retry when PROD_REGISTRY_AUTH=true), including sanitized pull error and df -Pm / free_mb in fail IMAGE_PULL_FAILED",
+      "docs/deployment/production-control-runbook.md documents run_priv_env in prod_ops.sh, >= 120 GB boot disk on pantheon-prod-control-template-e2s8-v3, and bootstrap image pull retry within the <= 180-line runbook contract",
+      "tests/deployment/test_production_release.py adds test_bootstrap_retries_transient_docker_pull_failures_and_reports_disk_diagnostics in BootstrapTests and test_replace_vm_preserves_sudo_compose_env_and_upgrades_50gb_boot_disk_template_to_v3_120gb in ReplaceVmHarness covering prod_ops.sh restore_active_release and rollback under PROD_USE_SUDO=true + FAKE_SUDO_RESET_ENV=true, >= 120GB boot disk template upgrade from 50GB v2 to 120GB v3, rollback_error capture when rollback fails, and bootstrap.sh docker pull retry"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g80: no new recurring job, emitter, or background daemon; replacement control VM boot disk size minimum increased from 50 GB to 120 GB pd-balanced on pantheon-prod-control-template-e2s8-v3 to hold Docker CE packages and 25+ release plus rollback baseline container images without root filesystem exhaustion"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_atomic_switch.sh scripts/deploy/prod_rollback.sh scripts/deploy/prod_ops.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile scripts/deploy/prod_preflight.py tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "42 tests passed, terminal exit 0",
+      "full_prod_command": "timeout 600s .venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release",
+      "full_prod_result": "145 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "prod_replace_vm_iap_upload_retry_and_template_default_disk_size_repair_20261126": {
+    "task_generation": 82,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod runs 45905461737 and 45908618778 hit a first-boot IAP upload race on the replacement VM right after wait_for_ssh (when google-guest-agent / OS Login sshd restart or growpart transiently drops port 22 during upload_bundle_new_vm) and required template_is_compatible to reject any existing GCE Debian 12 template whose boot disk initializeParams has sourceImage without an explicit diskSizeGb (GCE default 10 GB < PROD_MIN_BOOT_DISK_GB=120)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh adds retry_upload_bundle_to_vm() with PROD_UPLOAD_BUNDLE_TRIES=\"${PROD_UPLOAD_BUNDLE_TRIES:-6}\" and PROD_UPLOAD_BUNDLE_INTERVAL=\"${PROD_UPLOAD_BUNDLE_INTERVAL:-5}\" and uses retry_upload_bundle_to_vm instead of single-shot upload_bundle_to_vm at both step 7 ('upload_bundle_new_vm') and inside rollback_to_old_boot_disk",
+      "scripts/deploy/prod_replace_vm.sh wait_for_ssh() supports PROD_SSH_STABILITY_DELAY=\"${PROD_SSH_STABILITY_DELAY:-5}\" (defaulting to 0 when FAKE_STATE is set so unit tests stay fast): after the first SSH 'true' succeeds, if PROD_SSH_STABILITY_DELAY > 0, sleeps PROD_SSH_STABILITY_DELAY and requires a second SSH 'true' to succeed before returning 0",
+      "scripts/deploy/prod_replace_vm.sh template_is_compatible() treats effective boot diskSizeGb as 10 whenever initializeParams is a dict that has 'sourceImage' and 'diskSizeGb' is None/absent (rejecting undersized GCE default 10 GB < PROD_MIN_BOOT_DISK_GB=120 templates while preserving synthetic unit-test templates that omit initializeParams/sourceImage)",
+      "tests/deployment/test_production_release.py adds test_replace_vm_retries_transient_first_boot_iap_upload_and_rejects_template_missing_disk_size_gb in ReplaceVmHarness covering transient first-boot IAP SCP/SSH failure recovery, stability re-probe after transient second-probe drop, rollback when all upload tries fail, and rejection/recreation of a template with sourceImage and missing diskSizeGb"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g81: no new recurring job, emitter, persistent writer, or background daemon; bounded in-memory retry loop (at most 6 attempts, 5s interval) during on-demand operation=replace_vm bundle upload"
+    },
+    "validation": {
+      "syntax_command": "bash -n scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "28 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "prod_replace_vm_instances_create_150gb_boot_disk_override_repair_20261127": {
+    "task_generation": 84,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45914340903 passed preflight, Environment approval, WIF auth, READY data/boot snapshots, and offline_boot_disk migration, then revealed that when 'gcloud compute instances create --source-instance-template $TARGET_TEMPLATE --disk name=$PROD_DATA_DISK,...' runs, GCE overrides the template's disks array and synthesizes a default 10GB boot disk unless --boot-disk-size is explicitly passed on 'instances create' too",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh sets PROD_MIN_BOOT_DISK_GB=\"${PROD_MIN_BOOT_DISK_GB:-150}\" (TARGET_BOOT_SIZE_GB = max(OLD_BOOT_SIZE_GB, PROD_MIN_BOOT_DISK_GB)) and passes --boot-disk-size=\"${TARGET_BOOT_SIZE_GB}GB\" and --boot-disk-type=pd-balanced directly on the 'gcloud compute instances create \"$PROD_VM_NAME\" --source-instance-template \"$TARGET_TEMPLATE\" ...' command at step 6",
+      "scripts/deploy/prod_replace_vm.sh NEW_VM_VARS extracts NEW_BOOT_SIZE_GB from the replacement VM's boot disk diskSizeGb and, if present and < PROD_MIN_BOOT_DISK_GB, runs 'gcloud compute disks resize \"$NEW_BOOT_DISK\" --size=\"${TARGET_BOOT_SIZE_GB}GB\" --zone \"$PROD_GCP_ZONE\" --project \"$PROD_GCP_PROJECT_ID\" --quiet' (rolling back to old_boot_disk on failure), and in RESTORE_OUT on the replacement VM before calling bootstrap.sh runs growpart and resize2fs on the root partition if present",
+      "deploy/production/bootstrap.sh includes total_mb alongside free_mb from 'df -Pm /' in the IMAGE_PULL_FAILED diagnostic message",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD to model GCE's 10GB default boot-disk override when --disk is passed with --source-instance-template without --boot-disk-size, asserts total_mb= alongside free_mb= in BootstrapTests, and adds test_replace_vm_passes_150gb_boot_disk_size_on_instances_create_resizes_undersized_boot_disk_and_grows_root_fs in ReplaceVmHarness"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g82: no new recurring job, emitter, persistent writer, or background daemon; replacement control VM boot disk size minimum increased from 120 GB to 150 GB pd-balanced and explicitly passed on gcloud compute instances create"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "prod_replace_vm_template_only_create_and_attach_data_disk_repair_20261127": {
+    "task_generation": 85,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45921167481 failed at failed_stage=create_new_vm (and automatically rolled back to /bff/readyz=200) because googlecloudsdk/surface/compute/instances/create.py sets CheckSpecifiedDiskArgs=True whenever ANY disk flag (--disk or --boot-disk-size) is passed alongside --source-instance-template, either synthesizing a 10GB boot disk when only --disk is passed or failing with missing disk.initializeParams.sourceImage under skip_defaults=True when --boot-disk-size is passed",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh step 6 uses the two-step GCE idiom: (1) calls 'gcloud compute instances create \"$PROD_VM_NAME\" --project \"$PROD_GCP_PROJECT_ID\" --zone \"$PROD_GCP_ZONE\" --source-instance-template \"$TARGET_TEMPLATE\" --machine-type \"$PROD_TARGET_MACHINE_TYPE\" --address \"$STATIC_IP\"' WITHOUT --disk, --boot-disk-size, or --boot-disk-type so CheckSpecifiedDiskArgs(..., skip_defaults=True) is False and GCE inherits TARGET_TEMPLATE's 150GB pd-balanced boot disk verbatim (capturing stderr in create_err on rollback), and (2) immediately attaches PROD_DATA_DISK via 'gcloud compute instances attach-disk \"$PROD_VM_NAME\" --project \"$PROD_GCP_PROJECT_ID\" --zone \"$PROD_GCP_ZONE\" --disk \"$PROD_DATA_DISK\" --device-name \"$DATA_DEVICE_NAME\" --mode=rw' (rolling back with failed_stage=attach_data_disk_new_vm on failure) followed by set-disk-auto-delete --no-auto-delete and NEW_VM_JSON verification",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD so 'instances create --source-instance-template' creates only the template's boot disk (and fails if --boot-disk-size is passed alongside --source-instance-template) and 'instances attach-disk --disk PROD_DATA_DISK --mode=rw' attaches the data disk on the fake instance, and asserts that 'instances create --source-instance-template' passes no --disk / --boot-disk-size / --boot-disk-type flags and is followed by 'instances attach-disk --disk PROD_DATA_DISK'"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g84: no new recurring job, emitter, persistent writer, or background daemon"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
+  },
+  "prod_replace_vm_pd_standard_boot_disk_quota_repair_20261127": {
+    "task_generation": 86,
+    "register_class": "RC5; problem register row: Fresh-boot VM replacement cannot work (boot-disk control state under /opt/pantheon-production and bare Debian e2-standard-2 instance template below e2-standard-8 gate)",
+    "trigger": "Protected Prod run 45929804773 (job 140279868656) inherited the 150GB boot disk from pantheon-prod-control-template-e2s8-v3 via two-step instances create without disk flags, then failed at create_new_vm with GCE Quota SSD_TOTAL_GB exceeded (Limit 250.0 in asia-east1, because pantheon-prod-control-data 200GB pd-balanced + retained rollback pantheon-prod-control-os-20261023 50GB pd-balanced already consume 250/250GB SSD_TOTAL_GB; automatic rollback restored Prod 200 OK)",
+    "scope": "source, script, and local test validation only; no live VM replacement, cloud provisioning, secrets access, or production/staging workflow dispatch",
+    "changes": [
+      "scripts/deploy/prod_replace_vm.sh adds PROD_BOOT_DISK_TYPE=\"${PROD_BOOT_DISK_TYPE:-pd-standard}\" (validating ^(pd-standard|pd-balanced|pd-ssd)$ else refusing INVALID_BOOT_DISK_TYPE), passes --boot-disk-type=\"${PROD_BOOT_DISK_TYPE}\" in gcloud compute instance-templates create so the 150GB OS/Docker boot disk uses DISKS_TOTAL_GB instead of SSD_TOTAL_GB, and updates template_is_compatible() to require image-backed templates ('sourceImage' in initializeParams) to match PROD_BOOT_DISK_TYPE by initializeParams.diskType basename (default 'pd-standard' when omitted) so existing pd-balanced v3 templates are deleted and recreated as 150GB pd-standard",
+      "tests/deployment/test_production_release.py updates FAKE_REPLACE_GCLOUD to capture --boot-disk-type into template JSON and updates ReplaceVmHarness to verify INVALID_BOOT_DISK_TYPE refusal, rejection/recreation of a pre-existing 150GB pd-balanced v3 template to 150GB pd-standard, and reuse of an image-backed v3 template with omitted diskType (GCE default pd-standard)"
+    ],
+    "runtime_budget": {
+      "change": "unchanged from g85: no new recurring job, emitter, persistent writer, or background daemon; replacement control VM 150GB boot disk defaults to pd-standard (DISKS_TOTAL_GB quota) instead of pd-balanced (SSD_TOTAL_GB quota)"
+    },
+    "validation": {
+      "syntax_command": "bash -n deploy/production/bootstrap.sh scripts/deploy/prod_replace_vm.sh && .venv-pantheon/bin/python3 -m py_compile tests/deployment/test_production_release.py",
+      "syntax_result": "SYNTAX_OK (exit 0)",
+      "focused_command": ".venv-pantheon/bin/python3 -m unittest -v tests.deployment.test_production_release.BootstrapTests tests.deployment.test_production_release.ReplaceVmHarness tests.deployment.test_production_release.StaticContractTests",
+      "focused_result": "44 tests passed, terminal exit 0"
+    },
+    "hosted_acceptance": "external_wait: coordinator dispatches and approves protected operation=replace_vm on pantheon-prod-control in GitHub Actions",
+    "hosted_acceptance_claimed": false,
+    "release_complete_claimed": false
   }
 }

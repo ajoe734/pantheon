@@ -102,7 +102,15 @@ class TestInvokeStructuredPositive:
         result = _invoke(_make_provider(), _answer_events(json.dumps({"title": "Widget", "count": 3})))
         assert result.status == "completed"
         assert result.output["structured_data"] == {"title": "Widget", "count": 3}
-        assert result.output["usage"] == {"input_tokens": 10, "output_tokens": 5}
+        # No total_tokens: the reported input may exclude cached prompt
+        # tokens, so the prompt size is unknown, never the small number.
+        assert result.output["usage"] == {
+            "input_tokens": None,
+            "output_tokens": 5,
+            "total_tokens": None,
+            "uncached_input_tokens": 10,
+            "input_tokens_source": "unknown",
+        }
         assert result.output["response_id"] == "resp_1"
 
     def test_no_tool_is_offered_and_schema_is_in_the_prompt(self):
@@ -1374,3 +1382,158 @@ class TestPersonaOpinionEnsureModelPolicyAndFallbackPropagation:
                 },
             )
         assert resp.status_code == 422
+
+
+class TestStructuredTokenLimitAndUsage:
+    """L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126."""
+
+    @staticmethod
+    def _pinned_gateway_completed(agent_usage: dict) -> dict:
+        """`response.completed` exactly as the pinned Gateway v2026.7.1 builds it.
+
+        `openresponses-http` `toUsage(agentMeta.usage)`:
+        input_tokens = input, output_tokens = output,
+        total_tokens = total ?? input + output + cacheRead + cacheWrite.
+        """
+        total = agent_usage.get("total")
+        if total is None:
+            total = sum(agent_usage.get(k, 0) for k in ("input", "output", "cacheRead", "cacheWrite"))
+        return {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_card",
+                "object": "response",
+                "status": "completed",
+                "model": "openclaw/structured-extraction",
+                "output": [],
+                "usage": {
+                    "input_tokens": agent_usage.get("input", 0),
+                    "output_tokens": agent_usage.get("output", 0),
+                    "total_tokens": total,
+                },
+            },
+        }
+
+    def test_recorded_gateway_usage_reports_prompt_size_not_uncached_input(self):
+        # Hosted 2026-11-26: every card answer reported input 3. With prompt
+        # caching the gateway's input_tokens is the uncached part only.
+        events = [
+            {"type": "response.output_text.done", "text": json.dumps({"title": "card"})},
+            self._pinned_gateway_completed({"input": 3, "output": 1820, "cacheRead": 0, "cacheWrite": 9412}),
+        ]
+        usage = _invoke(_make_provider(), events).output["usage"]
+        assert usage["input_tokens"] == 9415  # the prompt, cached + uncached
+        assert usage["output_tokens"] == 1820
+        assert usage["total_tokens"] == 11235
+        assert usage["uncached_input_tokens"] == 3
+        assert usage["cached_input_tokens"] == 9412
+        assert usage["input_tokens_source"] == "total_minus_output"
+
+    def test_uncached_usage_is_unchanged(self):
+        events = [
+            {"type": "response.output_text.done", "text": json.dumps({"title": "card"})},
+            self._pinned_gateway_completed({"input": 5200, "output": 1500}),
+        ]
+        usage = _invoke(_make_provider(), events).output["usage"]
+        assert (usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (5200, 1500, 6700)
+        assert usage["cached_input_tokens"] == 0
+
+    def test_malformed_usage_is_passed_through_for_the_caller_check(self):
+        events = [
+            {"type": "response.output_text.done", "text": json.dumps({"title": "card"})},
+            {"type": "response.completed", "response": {"status": "completed", "usage": {
+                "input_tokens": "unknown", "output_tokens": 5, "total_tokens": 9}}},
+        ]
+        assert _invoke(_make_provider(), events).output["usage"]["input_tokens"] == "unknown"
+
+    @pytest.mark.parametrize("requested,sent", [(3072, 3072), (None, None), (50_000, 8192), (0, None)])
+    def test_output_limit_is_sent_to_the_gateway(self, requested, sent):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
+
+        kwargs = {} if requested is None else {"max_output_tokens": requested}
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            _make_provider().invoke_structured(
+                "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1", **kwargs
+            )
+        assert captured["body"].get("max_output_tokens") == sent
+        if sent is None:
+            assert "max_output_tokens" not in captured["body"]
+
+    @staticmethod
+    def _endpoint_client():
+        import main as adapter_main  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        return TestClient(adapter_main.app), adapter_main
+
+    @pytest.mark.parametrize("value,status", [(3072, 200), (0, 422), (8193, 422)])
+    def test_endpoint_forwards_bounded_output_limit(self, value, status):
+        from types import SimpleNamespace
+
+        client, adapter_main = self._endpoint_client()
+        snapshot = TestStructuredEndpointRejectsCallerSuppliedTools._gateway_snapshot(
+            [{"id": adapter_main.OPENCLAW_STRUCTURED_AGENT_ID, "tools": {
+                "deny": ["*"], "exec": {"security": "deny", "ask": "always"}}}])
+        result = SimpleNamespace(to_dict=lambda: {"status": "completed"})
+        with (
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value=snapshot),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured", return_value=result) as invoke,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA, "max_output_tokens": value},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == status, response.text
+        if status == 200:
+            assert invoke.call_args.kwargs["max_output_tokens"] == value
+        else:
+            invoke.assert_not_called()
+
+
+class TestUnsupportedSchemaRefusedBeforeModelCall:
+    """AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127: hosted workshop
+    reconstruction sent a pydantic schema with `$defs`/`$ref`; every answer was
+    paid for and then refused as OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH (422). An
+    unenforceable schema is now refused before the Gateway is called."""
+
+    @pytest.mark.parametrize("schema", [
+        {"type": "object", "$defs": {"X": {"type": "string"}},
+         "properties": {"x": {"$ref": "#/$defs/X"}}},
+        {"type": "object", "properties": {"x": {"anyOf": [{"$ref": "#/definitions/X"}, {"type": "null"}]}}},
+        {"type": "object", "definitions": {"X": {"type": "string"}}, "properties": {"x": {"type": "string"}}},
+    ])
+    def test_unsupported_keyword_is_typed_422_without_gateway_call(self, schema):
+        def no_gateway(*_args, **_kwargs):
+            raise AssertionError("the Gateway must not be called for an unenforceable schema")
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", no_gateway):
+            with pytest.raises(OpenClawProviderError) as exc:
+                _make_provider().invoke_structured("extract", extraction_schema=schema, operator_id="op-1")
+        assert exc.value.status_code == 422
+        assert exc.value.error_code == "OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED"
+
+    @pytest.mark.parametrize("schema", [
+        EXTRACTION_SCHEMA,
+        # A non-reference unsupported keyword on a branch the answer never
+        # reaches keeps working as before (e.g. meeting synthesis `uniqueItems`).
+        {**EXTRACTION_SCHEMA, "properties": {**EXTRACTION_SCHEMA["properties"],
+                                             "tags": {"type": "array", "uniqueItems": True}}},
+    ])
+    def test_supported_schema_still_reaches_the_gateway(self, schema):
+        calls = []
+
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            return _FakeSSEResponse(_answer_events(json.dumps({"title": "x"})))
+
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = _make_provider().invoke_structured(
+                "extract", extraction_schema=schema, operator_id="op-1",
+            )
+        assert len(calls) == 1
+        assert result.status == "completed"

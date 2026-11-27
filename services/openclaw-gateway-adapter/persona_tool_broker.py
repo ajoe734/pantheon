@@ -63,6 +63,10 @@ PURPOSE_PANEL_INTERPRETATION = "panel_interpretation"
 PURPOSES = (PURPOSE_DAILY_CYCLE, PURPOSE_PANEL_INTERPRETATION)
 # A panel-interpretation run is a pre-meeting read of what may be shared in the meeting.
 PANEL_ALLOWED_TOOLS = frozenset({PERSONA_MEMORY_RECALL_TOOL})
+RECALL_REQUIRED_BEFORE_PROPOSAL = "recall_required_before_proposal"
+RECALL_REQUIRED_MESSAGE = (
+    'call persona_memory_recall with bank="own" at least once before persona_proposal_submit'
+)
 
 # Tool name -> default calls per run. Numeric values are coordinator proposals.
 DEFAULT_RUN_LIMITS = {
@@ -235,7 +239,7 @@ class _Store:
                     id INTEGER PRIMARY KEY AUTOINCREMENT, run_ref TEXT NOT NULL, run_id TEXT NOT NULL,
                     tool TEXT NOT NULL, persona_id TEXT NOT NULL, param_digest TEXT NOT NULL,
                     canonical_ids TEXT NOT NULL, outcome TEXT NOT NULL, reason TEXT NOT NULL,
-                    proposal TEXT, at TEXT NOT NULL);
+                    proposal TEXT, at TEXT NOT NULL, bank TEXT NOT NULL DEFAULT '');
                 CREATE INDEX IF NOT EXISTS calls_run ON calls(run_ref);
                 CREATE TABLE IF NOT EXISTS authorizations (
                     agent_id TEXT NOT NULL, session_key TEXT NOT NULL, tool_call_id TEXT NOT NULL,
@@ -243,6 +247,9 @@ class _Store:
                     PRIMARY KEY(agent_id, session_key, tool_call_id));
                 """
             )
+            cols = {r["name"] for r in self._db.execute("PRAGMA table_info(calls)").fetchall()}
+            if "bank" not in cols:
+                self._db.execute("ALTER TABLE calls ADD COLUMN bank TEXT NOT NULL DEFAULT ''")
 
     def register(self, run_ref: str, persona_id: str, purpose: str, session_user: str, expires_at: float, now: float) -> None:
         with self._lock, self._db:
@@ -311,21 +318,39 @@ class _Store:
                 return True
             return row["bound_run_id"] == run_id
 
-    def count(self, run_ref: str, tool: str) -> int:
+    def count(self, run_ref: str, tool: str, *, outcome: Optional[str] = None) -> int:
         with self._lock:
+            if outcome is not None:
+                return int(self._db.execute(
+                    "SELECT COUNT(*) FROM calls WHERE run_ref=? AND tool=? AND outcome=?",
+                    (run_ref, tool, outcome),
+                ).fetchone()[0])
             return int(self._db.execute(
                 "SELECT COUNT(*) FROM calls WHERE run_ref=? AND tool=? AND reason!='run_call_limit_exceeded'",
                 (run_ref, tool),
             ).fetchone()[0])
 
+    def own_recall_state(self, run_ref: str, persona_id: str) -> tuple[bool, Optional[str]]:
+        """Return (has_ok_own_recall, last_unavailable_own_recall_reason) for this run and persona."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT outcome, reason FROM calls WHERE run_ref=? AND persona_id=? AND tool=? AND bank='own' ORDER BY id",
+                (run_ref, persona_id, PERSONA_MEMORY_RECALL_TOOL),
+            ).fetchall()
+        if any(r["outcome"] == "ok" for r in rows):
+            return True, None
+        unavailable = [r["reason"] or "memory_unavailable" for r in rows if r["outcome"] == "unavailable"]
+        return False, (unavailable[-1] if unavailable else None)
+
     def record(self, run_ref: str, run_id: str, tool: str, persona_id: str, digest: str,
-               canonical_ids: List[str], outcome: str, reason: str, proposal: Optional[Dict[str, Any]]) -> None:
+               canonical_ids: List[str], outcome: str, reason: str, proposal: Optional[Dict[str, Any]],
+               bank: str = "") -> None:
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO calls(run_ref, run_id, tool, persona_id, param_digest, canonical_ids, outcome, reason, proposal, at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO calls(run_ref, run_id, tool, persona_id, param_digest, canonical_ids, outcome, reason, proposal, at, bank) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (run_ref, run_id, tool, persona_id, digest, json.dumps(canonical_ids), outcome, reason,
-                 json.dumps(proposal, ensure_ascii=False, sort_keys=True) if proposal is not None else None, _utc_now()),
+                 json.dumps(proposal, ensure_ascii=False, sort_keys=True) if proposal is not None else None, _utc_now(), bank),
             )
 
     def run_record(self, run_ref: str) -> Optional[Dict[str, Any]]:
@@ -505,21 +530,26 @@ class PersonaToolBroker:
             return BrokerResponse(refusal.status_code, {"error": "refused", "reason": refusal.reason,
                                                         "message": refusal.message})
         except MemoryCallError as exc:
-            self._finish(run, run_id, tool, persona_id, digest, [], "unavailable", exc.reason, None)
+            self._finish(run, run_id, tool, persona_id, digest, [], "unavailable", exc.reason, None,
+                         bank=str(getattr(exc, "bank", "") or ""))
             return BrokerResponse(503 if exc.status_code >= 500 or exc.status_code == 0 else exc.status_code,
                                   {"error": "unavailable", "reason": exc.reason})
+        reason = f"recall_unavailable:{result['recall_failure']}" if isinstance(result, dict) and result.get("recall_failure") else ""
+        bank = str(result.get("bank") or "") if tool == PERSONA_MEMORY_RECALL_TOOL and isinstance(result, dict) else ""
         self._finish(run, run_id, tool, persona_id, digest, canonical_ids,
-                     "recorded" if tool == PERSONA_PROPOSAL_TOOL else "ok", "", proposal)
+                     "recorded" if tool == PERSONA_PROPOSAL_TOOL else "ok", reason, proposal, bank=bank)
         return BrokerResponse(200, {"status": "ok", "tool": tool, "persona_id": persona_id,
                                     "run_ref": run["run_ref"], "result": result})
 
     def _finish(self, run: Optional[Dict[str, Any]], run_id: str, tool: str, persona_id: str, digest: str,
-                canonical_ids: List[str], outcome: str, reason: str, proposal: Optional[Dict[str, Any]]) -> None:
+                canonical_ids: List[str], outcome: str, reason: str, proposal: Optional[Dict[str, Any]],
+                bank: str = "") -> None:
         self._telemetry(persona_id=persona_id, run_id=run_id, tool=tool, param_digest=digest,
                         canonical_ids=canonical_ids, outcome=outcome, reason=reason,
                         run_ref=(run or {}).get("run_ref"))
         if run is not None:  # a call outside any registered run has no per-run record, only telemetry
-            self._store.record(run["run_ref"], run_id, tool, persona_id, digest, canonical_ids, outcome, reason, proposal)
+            self._store.record(run["run_ref"], run_id, tool, persona_id, digest, canonical_ids, outcome, reason, proposal,
+                               bank=bank)
 
     # -- tools --
     def _execute(self, tool: str, params: Dict[str, Any], persona_id: str, run: Dict[str, Any]):
@@ -549,7 +579,11 @@ class PersonaToolBroker:
             query.update(scope="persona", persona_id=persona_id)
         else:  # the tenant facts bank: a separate scoped call, never mixed with the own bank
             query.update(scope="institutional")
-        payload = self._memory_get("/api/memory/retrieve", query, actor_roles=query["actor_roles"])
+        try:
+            payload = self._memory_get("/api/memory/retrieve", query, actor_roles=query["actor_roles"])
+        except MemoryCallError as exc:
+            exc.bank = args.bank  # type: ignore[attr-defined]
+            raise
         hits, rejected = normalize_retrieval_hits(payload, persona_id=persona_id, max_hits=args.limit)
         want = "persona" if args.bank == "own" else "institutional"
         stray = [h for h in hits if h["type"] != want]
@@ -596,11 +630,22 @@ class PersonaToolBroker:
         if cited == stated:
             raise BrokerRefusal(422, "invalid_parameters",
                                 "cite case_file_item_ids or state none_applicable_reason, not both or neither")
+        recall_failure: Optional[str] = None
+        if run.get("purpose") == PURPOSE_DAILY_CYCLE:
+            recalled, recall_failure = self._store.own_recall_state(run["run_ref"], persona_id)
+            if not recalled and recall_failure is None:
+                raise BrokerRefusal(409, RECALL_REQUIRED_BEFORE_PROPOSAL, RECALL_REQUIRED_MESSAGE)
         record = proposal.model_dump(mode="json")
         # Recorded only: nothing is applied here; the controller reads the per-run record
         # and the owning services' gates decide.
-        return ({"recorded": True, "applied": False, "proposal_index": self._store.count(run["run_ref"], PERSONA_PROPOSAL_TOOL)},
-                [], record)
+        result: Dict[str, Any] = {
+            "recorded": True,
+            "applied": False,
+            "proposal_index": self._store.count(run["run_ref"], PERSONA_PROPOSAL_TOOL, outcome="recorded"),
+        }
+        if recall_failure is not None:
+            result["recall_failure"] = recall_failure
+        return (result, [], record)
 
 
 def _validation_message(exc: ValidationError) -> str:
@@ -669,5 +714,6 @@ def http_memory_get(config: BrokerConfig, *, timeout_seconds: float = 8.0) -> Me
 __all__ = [
     "BrokerConfig", "BrokerResponse", "BrokerRefusal", "MemoryCallError", "PersonaToolBroker",
     "PURPOSES", "PURPOSE_DAILY_CYCLE", "PURPOSE_PANEL_INTERPRETATION", "PERSONA_AGENT_TOOL_PROFILE",
+    "RECALL_REQUIRED_BEFORE_PROPOSAL", "RECALL_REQUIRED_MESSAGE",
     "http_memory_get",
 ]

@@ -1149,3 +1149,175 @@ def test_meeting_lost_lease_joins_provider_and_prevents_publication(tmp_path, mo
                                   provider=SimpleNamespace(obtain=obtain), claim=claim,
                                   request={}, phase_hook=None)
     assert joined.is_set() and not posts
+
+
+# ---- PUBLICATION-PANEL-CASE-FILE-SOURCES-AND-CLAIM-SUBJECT-20261127 -------------------------------
+
+from services.consultation import workflow_executor as wf  # noqa: E402
+from services.consultation.provider import QualifiedContribution  # noqa: E402
+from services.consultation.tests.test_persona_panel_integration import stack  # noqa: E402,F401 (fixture)
+
+# A pool envelope publication case file as _compose_panel_case_file merges it for a two-family pool:
+# one display label in strategy_family, owner-resolved families/underlyings/members as lists, a pool
+# item whose subject_fields carry no strategy_family, registry items that do, a backtest verdict item
+# with no subject_fields at all.
+POOL_CASE = {
+    "subject": {"decision_type": "consult", "persona_id": "persona-hengyue", "tenant_id": "tenant-dev",
+                "strategy_family": "mean_reversion momentum", "strategy_families": ["mean_reversion", "momentum"],
+                "underlyings": ["2330", "0050"], "instrument_class": "equity",
+                "member_artifact_refs": ["reg-a", "reg-b"], "backtest_run_refs": ["bt-a"], "regime_tag": ""},
+    "groups": {
+        "facts": {"items": [
+            {"item_id": "facts:registry_entry:reg-a", "subject_fields": {
+                "strategy_id": "mean_reversion", "strategy_family": "mean_reversion",
+                "parameters": {"lookback": 20, "z_entry": 2.0, "allow_short": False}}},
+            {"item_id": "facts:registry_entry:reg-b", "subject_fields": {
+                "strategy_id": "momentum", "strategy_family": "momentum"}},
+            {"item_id": "facts:strategy_pool:persona-hengyue@7", "subject_fields": {
+                "pool_version": 7, "members": [{"artifact_ref": "reg-a", "weight": 0.5},
+                                               {"artifact_ref": "reg-b", "weight": 0.5}]}},
+            {"item_id": "facts:backtest_gate_verdict:bt-a", "subject_fields": {}},
+        ]},
+        "similar_history": {"items": []}, "lessons": {"items": []}, "evidence": {"items": []},
+    },
+}
+POOL_ITEMS = [i["item_id"] for i in POOL_CASE["groups"]["facts"]["items"]]
+
+
+def _pre_fix_subject_rejection(fields, refs, case):
+    """The comparison as shipped before this task (whole-value equality only), for contrast."""
+    items = {i["item_id"]: i for g in case["groups"].values() for i in g["items"]}
+    for field, value in fields.items():
+        if value is None or not any(
+            (field in items[ref].get("subject_fields", {}) and value == items[ref]["subject_fields"][field])
+            or (field in case["subject"] and value == case["subject"][field]) for ref in refs):
+            return "claim_subject_mismatch"
+    return None
+
+
+def _pool_contribution(subject_fields, refs):
+    return QualifiedContribution.from_payload({
+        "contribution_id": "c-hy", "tenant_id": "tenant-dev", "request_id": "consult-envelope-publication-68ffaa6c8e39",
+        "participant_type": "persona", "participant_ref": "persona-ee7112a829d38b9135ac", "summary": "summary",
+        "recommendation": "approve", "confidence": .6,
+        "event_content": {"claims": [{"claim": "pool claim", "evidence_refs": refs,
+                                      "subject_fields": subject_fields}],
+                          "summary_evidence_refs": refs[:1],
+                          "interpretation": {"mode": "fallback", "reason": "broker_disabled", "citations": []}},
+        "evidence": [{"id": r, "evidence_type": "case_file_item", "link": f"casefile://{r}"} for r in POOL_ITEMS],
+        "findings": []}, expected_tenant_id="tenant-dev",
+        expected_request_id="consult-envelope-publication-68ffaa6c8e39")
+
+
+@pytest.mark.parametrize("fields,refs", [
+    # One family of a multi-family pool, citing the pool item (which carries no strategy_family).
+    ({"strategy_family": "momentum"}, ["facts:strategy_pool:persona-hengyue@7"]),
+    ({"strategy_family": "mean_reversion"}, ["facts:backtest_gate_verdict:bt-a"]),
+    # One member of a subject collection.
+    ({"underlyings": "2330"}, ["facts:strategy_pool:persona-hengyue@7"]),
+    ({"member_artifact_refs": "reg-b"}, ["facts:strategy_pool:persona-hengyue@7"]),
+    ({"underlyings": ["0050"]}, ["facts:backtest_gate_verdict:bt-a"]),
+    # A subset of an owner object / list of objects.
+    ({"parameters": {"lookback": 20}}, ["facts:registry_entry:reg-a"]),
+    ({"members": [{"artifact_ref": "reg-b"}]}, ["facts:strategy_pool:persona-hengyue@7"]),
+])
+def test_pool_publication_subject_assertions_the_owner_states_are_accepted(fields, refs):
+    # Before the fix every one of these attributable assertions was excluded as claim_subject_mismatch.
+    assert _pre_fix_subject_rejection(fields, refs, POOL_CASE) == "claim_subject_mismatch"
+    assert wf._case_file_rejection(_pool_contribution(fields, refs), POOL_CASE) is None
+
+
+@pytest.mark.parametrize("fields,refs", [
+    ({"strategy_family": "carry"}, ["facts:strategy_pool:persona-hengyue@7"]),       # not in the pool
+    ({"strategy_family": "mean_reversion momentum x"}, ["facts:registry_entry:reg-a"]),
+    ({"underlyings": "2454"}, ["facts:strategy_pool:persona-hengyue@7"]),
+    ({"underlyings": []}, ["facts:strategy_pool:persona-hengyue@7"]),
+    ({"parameters": {"lookback": "20"}}, ["facts:registry_entry:reg-a"]),             # wrong JSON type
+    ({"parameters": {"allow_short": 0}}, ["facts:registry_entry:reg-a"]),             # 0 is not false
+    ({"parameters": {}}, ["facts:registry_entry:reg-a"]),
+    ({"parameters": {"lookback": 20}}, ["facts:registry_entry:reg-b"]),               # not the cited owner's
+    ({"persona_id": "persona-other"}, ["facts:registry_entry:reg-a"]),
+    ({"pool_version": 7}, ["facts:registry_entry:reg-a"]),                            # uncited item's field
+    ({"strategy_id": None}, ["facts:registry_entry:reg-a"]),
+])
+def test_unattributable_subject_assertions_stay_claim_subject_mismatch(fields, refs):
+    contribution = _pool_contribution(fields, refs)
+    assert wf._case_file_rejection(contribution, POOL_CASE) == "claim_subject_mismatch"
+    reason, detail = wf._case_file_rejection_detail(contribution, POOL_CASE)
+    field = next(iter(fields))
+    assert reason == "claim_subject_mismatch"
+    assert f'field="{field}"' in detail and refs[0] in detail and detail.startswith("node=0 ")
+
+
+def test_subject_field_contract_names_assertable_fields_per_cited_item():
+    contract = wf.subject_field_contract(POOL_CASE)
+    assert contract["optional"] is True
+    assert contract["case_subject_fields"] == sorted(POOL_CASE["subject"])
+    assert contract["cited_item_subject_fields"] == {
+        "facts:registry_entry:reg-a": ["parameters", "strategy_family", "strategy_id"],
+        "facts:registry_entry:reg-b": ["strategy_family", "strategy_id"],
+        "facts:strategy_pool:persona-hengyue@7": ["members", "pool_version"]}
+    assert "claim_subject_mismatch" in contract["rule"]
+
+
+def test_panel_records_rejection_detail_on_memo_sends_contract_and_issued_research_reader(stack, monkeypatch, tmp_path):
+    from services.consultation.client import ConsultationServiceClient
+    from services.consultation.tests.test_persona_panel_integration import (
+        INITIATOR, SERVICE_TOKEN, TENANT, _bootstrap, _config, _get, _provider, _provider_fake, triggers)
+
+    # Hosted shape: the shared research token is the persona viewer; consultation has its own reader file.
+    issued = "synthetic.case-file-research.reader"
+    token_file = tmp_path / wf.CASE_FILE_RESEARCH_TOKEN_ENV
+    token_file.write_text(issued)
+    token_file.chmod(0o600)
+    monkeypatch.setenv("PANTHEON_RESEARCH_API_URL", "http://research.invalid")
+    monkeypatch.setenv("PANTHEON_RESEARCH_SERVICE_TOKEN", "synthetic.persona-pool-cycle.viewer")
+    monkeypatch.setenv(wf.CASE_FILE_RESEARCH_TOKEN_ENV + "_FILE", str(token_file))
+    research_tokens = []
+    real_compose = wf.decision_case.compose_case_file
+
+    def spy(subject, caller, owners, **kw):
+        research_tokens.append(owners.research.token)
+        return real_compose(subject, caller, owners, **kw)
+
+    monkeypatch.setattr(wf.decision_case, "compose_case_file", spy)
+
+    _bootstrap(stack)
+    risk = triggers.RISK_PERSONA_ID
+    requirement = triggers.required_consultation(
+        "trial_admission", "reg-trial", initiator_persona_id=INITIATOR, target_version="1")
+    answers = {p.persona_id: "approve" for p in requirement.participants}
+    with _provider_fake(answers) as fake:
+        config = _config(stack, f"http://127.0.0.1:{fake.server_address[1]}/contribute")
+        provider = _provider(config)
+        real_obtain = provider.obtain
+
+        def obtain(**kw):  # the risk persona's agent asserts a strategy_id no case item states
+            got = real_obtain(**kw)
+            if got.participant_ref != risk:
+                return got
+            claims = [{**c, "subject_fields": {"strategy_id": "carry"}} for c in got.event_content["claims"]]
+            return replace(got, event_content={**got.event_content, "claims": claims})
+
+        monkeypatch.setattr(provider, "obtain", obtain)
+        created = ConsultationServiceClient(
+            base_url=stack["api"], token=SERVICE_TOKEN, tenant_id=TENANT
+        ).open_persona_panel(requirement, persona_id=INITIATOR, trace_id="trace-subject")
+        state = WorkflowStateStore(config.state_path)
+        result = wf.run_tick(config=config, state=state, provider=provider)
+    assert result["completed"] == 1, result
+    assert research_tokens and set(research_tokens) == {issued}
+
+    case = fake.calls[0]["payload"]["request"]["case_file"]
+    for call in fake.calls:
+        assert call["payload"]["request"]["subject_field_contract"] == wf.subject_field_contract(case)
+        assert "subject_field_contract" not in call["payload"]["request"]["case_file"]
+
+    rid = created["request_id"]
+    transcript = _get(stack["api"], f"/api/consult/requests/{rid}/transcript")
+    rejected = [e["content"] for e in transcript["events"] if e["event_type"] == "panel_contribution_rejected"]
+    assert [(r["persona_id"], r["reason"]) for r in rejected] == [(risk, "claim_subject_mismatch")]
+    assert rejected[0]["detail"].startswith('node=0 field="strategy_id" asserted="carry" cited=')
+    memo = _get(stack["api"], f"/api/consult/memos?request_id={rid}")[0]
+    assert f'{risk}: claim_subject_mismatch (node=0 field="strategy_id" asserted="carry"' in memo["summary"]
+    assert issued not in json.dumps(transcript) and issued not in memo["summary"]

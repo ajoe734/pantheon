@@ -97,13 +97,27 @@ class Owners:
     search: Optional[OwnerEndpoint] = None
 
     @classmethod
-    def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Owners":
-        env = os.environ if env is None else env
+    def from_env(cls, env: Optional[Mapping[str, str]] = None, *,
+                 token_keys: Optional[Mapping[str, str]] = None) -> "Owners":
+        """Owner endpoints from deployment env.
 
-        def ep(url_key: str, token_key: str) -> Optional[OwnerEndpoint]:
+        ``token_keys`` lets one caller name its own issued credential for an owner
+        (e.g. ``{"research": "CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN"}``).  When
+        that credential is configured (``<KEY>`` or ``<KEY>_FILE``) it is the only
+        one used for that owner; when it is not configured at all the shared
+        default key applies.  A configured but unreadable file yields no
+        credential (fail closed), never the shared default.
+        """
+        env = os.environ if env is None else env
+        overrides = dict(token_keys or {})
+
+        def ep(url_key: str, token_key: str, owner: str = "") -> Optional[OwnerEndpoint]:
             url = (env.get(url_key) or "").strip()
             if not url:
                 return None
+            own_key = overrides.get(owner)
+            if own_key and ((env.get(own_key) or "").strip() or (env.get(own_key + "_FILE") or "").strip()):
+                token_key = own_key
             try:  # honours <TOKEN>_FILE (rotating issued principal); unreadable file => no credential
                 token = configured_service_token(token_key, env)
             except RuntimeError:
@@ -111,12 +125,12 @@ class Owners:
             return OwnerEndpoint(url.rstrip("/"), token)
 
         return cls(
-            registry=ep("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_SERVICE_TOKEN"),
-            research=ep("PANTHEON_RESEARCH_API_URL", "PANTHEON_RESEARCH_SERVICE_TOKEN"),
-            pool=ep("PANTHEON_PERSONA_API_URL", "PANTHEON_PERSONA_SERVICE_TOKEN"),
-            telemetry=ep("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_SERVICE_TOKEN"),
-            memory=ep("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_TOKEN"),
-            search=ep("PANTHEON_SEARCH_API_URL", "PANTHEON_SEARCH_SERVICE_TOKEN"),
+            registry=ep("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_SERVICE_TOKEN", "registry"),
+            research=ep("PANTHEON_RESEARCH_API_URL", "PANTHEON_RESEARCH_SERVICE_TOKEN", "research"),
+            pool=ep("PANTHEON_PERSONA_API_URL", "PANTHEON_PERSONA_SERVICE_TOKEN", "pool"),
+            telemetry=ep("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_SERVICE_TOKEN", "telemetry"),
+            memory=ep("PANTHEON_MEMORY_API_URL", "PANTHEON_MEMORY_SERVICE_TOKEN", "memory"),
+            search=ep("PANTHEON_SEARCH_API_URL", "PANTHEON_SEARCH_SERVICE_TOKEN", "search"),
         )
 
 
@@ -156,7 +170,36 @@ def http_json(endpoint: Optional[OwnerEndpoint], path: str, *, tenant_id: str,
             pass
         raise OwnerUnavailable(f"http_{exc.code}" + (f":{str(detail)[:80]}" if detail else "")) from exc
     except (OSError, ValueError) as exc:
+        if _is_timeout(exc):  # bounded by ``timeout``; name it instead of a generic transport error
+            raise OwnerUnavailable(f"owner_timeout:{timeout:g}s") from exc
         raise OwnerUnavailable(f"owner_unreachable:{type(exc).__name__}") from exc
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError):  # socket.timeout is TimeoutError on py>=3.10
+        return True
+    return isinstance(exc, urllib.error.URLError) and isinstance(getattr(exc, "reason", None), TimeoutError)
+
+
+SEARCH_TIMEOUT_ENV = "PANTHEON_CASE_FILE_SEARCH_TIMEOUT_SECONDS"
+SEARCH_TIMEOUT_DEFAULT = 8.0
+SEARCH_TIMEOUT_BOUNDS = (1.0, 15.0)
+
+
+def search_timeout_seconds(env: Optional[Mapping[str, str]] = None) -> float:
+    """Upper bound for one governed-search call while composing a case file.
+
+    The search gateway is one of four sources; a slow gateway must not hold the
+    whole composition (and the consultation lease) for the generic owner timeout.
+    """
+    env = os.environ if env is None else env
+    try:
+        value = float((env.get(SEARCH_TIMEOUT_ENV) or "").strip() or SEARCH_TIMEOUT_DEFAULT)
+    except ValueError:
+        value = SEARCH_TIMEOUT_DEFAULT
+    if value != value:  # NaN
+        value = SEARCH_TIMEOUT_DEFAULT
+    return min(max(value, SEARCH_TIMEOUT_BOUNDS[0]), SEARCH_TIMEOUT_BOUNDS[1])
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -905,8 +948,9 @@ def _evidence(subject: Subject, caller: Caller, owners: Owners, budgets: Budgets
             "source_types": ["internal_note", "research_finding", "source_document"]}
     try:
         resp = http_json(owners.search, "/api/search/v2/query", tenant_id=subject.tenant_id,
-                         method="POST", body=body) or {}
+                         method="POST", body=body, timeout=search_timeout_seconds()) or {}
     except OwnerUnavailable as exc:
+        # Recorded by name on the evidence group; facts/history/lessons are unaffected.
         g.missing("search_gateway", exc.reason)
         return
     mode = str(resp.get("retrieval_mode") or "unreported")

@@ -283,6 +283,14 @@ run_priv() {
   fi
 }
 
+run_priv_env() {
+  if [[ "${PROD_USE_SUDO:-false}" == "true" || "${FAKE_OSLOGIN_NONROOT:-false}" == "true" ]]; then
+    "$SUDO" -E "$@"
+  else
+    "$@"
+  fi
+}
+
 need PROD_ROOT PROD_DATA_MOUNT PROD_BLUE_PORT PROD_GREEN_PORT PROD_BFF_HOST PROD_FE_HOST \
      RELEASE_MANIFEST_PATH PROD_COMPOSE_FILE PROD_COMPOSE_ENV_FILE
 
@@ -317,7 +325,7 @@ owner_images() {
 }
 
 color_for_port() { if [[ "$1" == "$PROD_BLUE_PORT" ]]; then echo blue; elif [[ "$1" == "$PROD_GREEN_PORT" ]]; then echo green; else return 1; fi; }
-compose() { run_priv "$DOCKER" compose -p pantheon-production -f "$PROD_COMPOSE_FILE" --env-file "$PROD_COMPOSE_ENV_FILE" "$@"; }
+compose() { run_priv_env "$DOCKER" compose -p pantheon-production -f "$PROD_COMPOSE_FILE" --env-file "$PROD_COMPOSE_ENV_FILE" "$@"; }
 manifest_field() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));
 for k in sys.argv[2].split("."): d=d[k]
 print(d)' "$RELEASE_MANIFEST_PATH" "$1" 2>/dev/null; }

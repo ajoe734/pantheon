@@ -623,20 +623,50 @@ for img in images:
 PY
   )" || fail IMAGE_NOT_DIGEST_PINNED "all production images must be immutable @sha256:... digests"
 
-  if [[ "${PROD_REGISTRY_AUTH:-false}" == "true" ]]; then
-    TOKEN_URL="${PROD_METADATA_TOKEN_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
-    RAW_TOK="$("$CURL" -fsS -m 5 -H "Metadata-Flavor: Google" "$TOKEN_URL" 2>/dev/null)" \
+  docker_registry_login() {
+    local token_url raw_tok access_tok reg_host
+    token_url="${PROD_METADATA_TOKEN_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
+    raw_tok="$("$CURL" -fsS -m 5 -H "Metadata-Flavor: Google" "$token_url" 2>/dev/null)" \
       || fail REGISTRY_TOKEN_FAILED "cannot obtain runtime service account token from metadata server"
-    ACCESS_TOK="$(python3 -c 'import json,sys;d=json.loads(sys.argv[1]);t=str(d.get("access_token") or "").strip();assert t;print(t)' "$RAW_TOK" 2>/dev/null)" \
+    access_tok="$(python3 -c 'import json,sys;d=json.loads(sys.argv[1]);t=str(d.get("access_token") or "").strip();assert t;print(t)' "$raw_tok" 2>/dev/null)" \
       || fail REGISTRY_TOKEN_FAILED "invalid metadata token payload"
-    REG_HOST="${PROD_REGISTRY_HOST:-asia-east1-docker.pkg.dev}"
-    printf '%s' "$ACCESS_TOK" | run_priv "$DOCKER" login -u oauth2accesstoken --password-stdin "https://${REG_HOST}" >/dev/null 2>&1 \
-      || fail REGISTRY_AUTH_FAILED "docker login to https://${REG_HOST} failed"
+    reg_host="${PROD_REGISTRY_HOST:-asia-east1-docker.pkg.dev}"
+    printf '%s' "$access_tok" | run_priv "$DOCKER" login -u oauth2accesstoken --password-stdin "https://${reg_host}" >/dev/null 2>&1 \
+      || fail REGISTRY_AUTH_FAILED "docker login to https://${reg_host} failed"
+  }
+
+  if [[ "${PROD_REGISTRY_AUTH:-false}" == "true" ]]; then
+    docker_registry_login
   fi
+
+  PROD_IMAGE_PULL_TRIES="${PROD_IMAGE_PULL_TRIES:-3}"
+  PROD_IMAGE_PULL_RETRY_DELAY="${PROD_IMAGE_PULL_RETRY_DELAY:-3}"
+  [[ "$PROD_IMAGE_PULL_TRIES" =~ ^[0-9]+$ ]] && (( PROD_IMAGE_PULL_TRIES > 0 )) || PROD_IMAGE_PULL_TRIES=3
 
   while IFS= read -r img; do
     [[ -z "$img" ]] && continue
-    run_priv "$DOCKER" pull "$img" >/dev/null 2>&1 || fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img}"
+    pulled_ok=false
+    pull_err=""
+    for attempt in $(seq 1 "$PROD_IMAGE_PULL_TRIES"); do
+      if pull_err="$(run_priv "$DOCKER" pull "$img" 2>&1)"; then
+        pulled_ok=true
+        break
+      fi
+      if (( attempt < PROD_IMAGE_PULL_TRIES )); then
+        sleep "$PROD_IMAGE_PULL_RETRY_DELAY"
+        if [[ "${PROD_REGISTRY_AUTH:-false}" == "true" ]]; then
+          docker_registry_login
+        fi
+      fi
+    done
+    if [[ "$pulled_ok" != "true" ]]; then
+      sanitized_pull_err="$(tail -c 400 <<<"$pull_err" | tr '\n\r"\\' '    ' | sed 's/  */ /g; s/^ //; s/ $//')"
+      total_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $2}' | tr -d '[:space:]' || true)"
+      [[ -n "$total_mb" ]] || total_mb="unknown"
+      free_mb="$(df -Pm / 2>/dev/null | awk 'NR==2 {print $4}' | tr -d '[:space:]' || true)"
+      [[ -n "$free_mb" ]] || free_mb="unknown"
+      fail IMAGE_PULL_FAILED "failed to pull digest-pinned image ${img} after ${PROD_IMAGE_PULL_TRIES} attempts (total_mb=${total_mb}, free_mb=${free_mb}): ${sanitized_pull_err}"
+    fi
     run_priv "$DOCKER" image inspect "$img" >/dev/null 2>&1 || fail IMAGE_INSPECT_FAILED "pulled image ${img} failed inspect"
   done <<< "$IMAGE_LIST"
 fi
