@@ -17,15 +17,21 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from .models import (
     AgoraInteractionEvidenceRequest,
+    DECISION_EVIDENCE_KINDS,
+    DECISION_EVIDENCE_RETENTION_BUDGET,
+    DEFAULT_DATASET_RETENTION_DAYS,
     DatasetAdmissionReceipt,
     DatasetKind,
     DatasetRecord,
+    ESTIMATED_DECISION_EVIDENCE_BYTES,
     InteractionKind,
+    MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY,
+    MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY,
     route_to_dataset,
 )
 
@@ -892,6 +898,7 @@ class AgoraDatasetStore:
             "user_id": record.user_id,
             "dataset_version_id": record.dataset_version_id,
             "dataset_kind": record.dataset_kind.value,
+            "interaction_kind": record.interaction_kind.value,
             "evidence_ids": [record.evidence_id],
             "summary": f"Durable Agora dataset handoff for {record.dataset_kind.value} with 1 item",
             "authority_limit": "Observe/Learn",
@@ -920,6 +927,15 @@ class AgoraDatasetStore:
             is_raw_conversation=is_raw_conv,
             explicit_conversation_consent=explicit_conv_consent,
         )
+        if str(entry.get("interaction_kind") or "") in DECISION_EVIDENCE_KINDS and isinstance(sanitized_content, dict):
+            sanitized_content = normalize_decision_evidence_content(
+                sanitized_content,
+                interaction_kind=str(entry["interaction_kind"]),
+                evidence_id=str(entry["evidence_id"]),
+                persona_id=str(entry["persona_id"]),
+                user_id=str(entry["user_id"]),
+                captured_at=str(entry["captured_at"]),
+            )
 
         record = self._record_from_entry(
             entry,
@@ -1509,6 +1525,21 @@ class AgoraDatasetStore:
             ).fetchall()
             return [self._handoff_row(row) for row in rows]
 
+    def _attach_handoff_record(self, handoff: Dict[str, Any]) -> Dict[str, Any]:
+        enriched = dict(handoff)
+        try:
+            record = self.get_by_ref(
+                str(enriched.get("dataset_version_id") or ""),
+                tenant_id=str(enriched.get("tenant_id") or ""),
+                user_id=str(enriched.get("user_id") or ""),
+            )
+        except Exception:
+            record = None
+        if record is not None:
+            enriched.setdefault("interaction_kind", record.interaction_kind.value)
+            enriched.setdefault("record", record.model_dump(mode="json"))
+        return enriched
+
     def list_handoffs_for_tenant(
         self,
         *,
@@ -1526,7 +1557,7 @@ class AgoraDatasetStore:
         if self.backend == "memory":
             with self._lock:
                 items = [
-                    dict(handoff)
+                    self._attach_handoff_record(handoff)
                     for handoff in self._handoffs.values()
                     if handoff["tenant_id"] == tenant_id
                     and (
@@ -1553,7 +1584,46 @@ class AgoraDatasetStore:
                 """,
                 (tenant_id,),
             ).fetchall()
-            return [self._handoff_row(row) for row in rows]
+            raw_handoffs = [self._handoff_row(row) for row in rows]
+        return [self._attach_handoff_record(h) for h in raw_handoffs]
+
+    def extract_decision_lock(
+        self,
+        lock: Mapping[str, Any],
+        *,
+        persona_id: Optional[str] = None,
+        retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+        extracted_at: Optional[str] = None,
+    ) -> Tuple[DatasetRecord, bool]:
+        """Extract one decision/rejection/deferral/intervention evidence item from an Agora decision lock."""
+        return extract_decision_lock_evidence(
+            lock,
+            store=self,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
+
+    def extract_journal_entry(
+        self,
+        entry: Mapping[str, Any],
+        *,
+        decision_lock: Optional[Mapping[str, Any]] = None,
+        snapshot: Optional[Mapping[str, Any]] = None,
+        persona_id: Optional[str] = None,
+        retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+        extracted_at: Optional[str] = None,
+    ) -> Tuple[DatasetRecord, bool]:
+        """Extract one decision/rejection/deferral/intervention evidence item from a decision journal entry."""
+        return extract_journal_entry_evidence(
+            entry,
+            store=self,
+            decision_lock=decision_lock,
+            snapshot=snapshot,
+            persona_id=persona_id,
+            retention_days=retention_days,
+            extracted_at=extracted_at,
+        )
 
     def acknowledge_handoff_for_tenant(
         self,
@@ -1800,16 +1870,1012 @@ def extract_evidence(
     return record, is_new
 
 
+_INTERVENTION_VERDICTS = frozenset(
+    {"modify", "modified", "edit", "edited", "intervene", "intervention", "override", "manual_override"}
+)
+_REJECTION_VERDICTS = frozenset({"reject", "rejected", "rejection", "decline", "declined"})
+_DEFERRAL_VERDICTS = frozenset(
+    {"defer", "deferred", "deferral", "postpone", "postponed", "wait", "hold_off", "shadow", "no_trade"}
+)
+_DECISION_VERDICTS = frozenset({"approve", "approved", "decision", "confirm", "confirmed", "enter", "add", "reduce", "exit", "hold"})
+
+_INTERVENTION_TAGS = frozenset(
+    {"intervention", "modify", "modified", "override", "manual_override", "risk_trim", "position_adjust", "size_override"}
+)
+_REJECTION_TAGS = frozenset({"rejection", "reject", "rejected", "candidate_rejected", "signal_rejected"})
+_DEFERRAL_TAGS = frozenset({"deferral", "defer", "deferred", "postpone", "postponed"})
+_DECISION_TAGS = frozenset({"decision", "approve", "approved", "confirm", "confirmed", "entry_decision", "exit_decision"})
+_NON_ACTION_VERDICTS = frozenset({"approve", "approved", "confirm", "confirmed", "decision"})
+_EVENT_KIND_ACTION_MAP: Dict[str, str] = {
+    "entry": "enter",
+    "enter": "enter",
+    "add": "add",
+    "reduce": "reduce",
+    "exit": "exit",
+    "review": "hold",
+    "hold": "hold",
+}
+
+_ACTION_CODE_MAP: Dict[str, float] = {
+    "enter": 1.0,
+    "entry": 1.0,
+    "buy": 1.0,
+    "add": 0.5,
+    "increase": 0.5,
+    "hold": 0.0,
+    "review": 0.0,
+    "defer": -0.25,
+    "shadow": -0.25,
+    "no_trade": -0.25,
+    "reduce": -0.5,
+    "trim": -0.5,
+    "exit": -1.0,
+    "sell": -1.0,
+    "reject": -1.0,
+}
+
+
+def _clean_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _string_seq(value: Any) -> List[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, Mapping):
+        return []
+    if isinstance(value, Iterable):
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, Mapping):
+                ref = _clean_str(item.get("ref") or item.get("uri"))
+                if not ref:
+                    kind = _clean_str(item.get("kind") or item.get("type"))
+                    ident = _clean_str(item.get("id"))
+                    if kind and ident:
+                        ref = f"{kind}://{ident}"
+                    elif ident:
+                        ref = ident
+                if ref:
+                    out.append(ref)
+            else:
+                cleaned = _clean_str(item)
+                if cleaned:
+                    out.append(cleaned)
+        return out
+    return []
+
+
+def classify_decision_evidence_kind(
+    source: Mapping[str, Any],
+    *,
+    decision_lock: Optional[Mapping[str, Any]] = None,
+) -> Optional[InteractionKind]:
+    """Classify an Agora decision lock or decision journal entry into one of the four evidence kinds.
+
+    Returns one of:
+      - InteractionKind.DECISION ("decision")
+      - InteractionKind.REJECTION ("rejection")
+      - InteractionKind.DEFERRAL ("deferral")
+      - InteractionKind.INTERVENTION ("intervention")
+    or ``None`` when the source carries no decision signal.
+    """
+    for candidate_key in ("evidence_kind", "interaction_kind", "decision_kind", "journal_kind", "entry_kind"):
+        raw = _clean_str(source.get(candidate_key)).lower()
+        if raw in DECISION_EVIDENCE_KINDS:
+            return InteractionKind(raw)
+        if raw in _INTERVENTION_VERDICTS:
+            return InteractionKind.INTERVENTION
+        if raw in _REJECTION_VERDICTS:
+            return InteractionKind.REJECTION
+        if raw in _DEFERRAL_VERDICTS:
+            return InteractionKind.DEFERRAL
+        if raw in _DECISION_VERDICTS and candidate_key in ("evidence_kind", "interaction_kind", "decision_kind"):
+            if not (source.get("raw_modifications") or source.get("modifications")):
+                return InteractionKind.DECISION
+
+    verdict = _clean_str(
+        source.get("trading_room_verdict")
+        or source.get("verdict")
+        or source.get("trader_verdict")
+        or source.get("decision")
+    ).lower()
+    has_modifications = bool(
+        source.get("raw_modifications")
+        or source.get("modifications")
+        or source.get("intervention")
+        or source.get("is_intervention")
+    )
+
+    if verdict in _REJECTION_VERDICTS:
+        return InteractionKind.REJECTION
+    if verdict in _DEFERRAL_VERDICTS:
+        return InteractionKind.DEFERRAL
+    if verdict in _INTERVENTION_VERDICTS or has_modifications:
+        return InteractionKind.INTERVENTION
+
+    # Check if human_actual action on lock diverges from base_strategy suggestion
+    arms = source.get("arms") if isinstance(source.get("arms"), Mapping) else {}
+    base_arm = arms.get("base_strategy") if isinstance(arms.get("base_strategy"), Mapping) else {}
+    human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
+    base_suggested = _clean_str(base_arm.get("suggested_action") or base_arm.get("suggestion")).lower()
+    human_action = _clean_str(human_arm.get("action") or source.get("action")).lower()
+    if human_action in _REJECTION_VERDICTS:
+        return InteractionKind.REJECTION
+    if human_action in _DEFERRAL_VERDICTS:
+        return InteractionKind.DEFERRAL
+    if human_action in _INTERVENTION_VERDICTS:
+        return InteractionKind.INTERVENTION
+    if (
+        base_suggested
+        and human_action
+        and base_suggested != human_action
+        and verdict not in {"approve", "approved"}
+    ):
+        return InteractionKind.INTERVENTION
+
+    tags = {t.lower() for t in _string_seq(source.get("tags"))}
+    if tags & _REJECTION_TAGS:
+        return InteractionKind.REJECTION
+    if tags & _DEFERRAL_TAGS:
+        return InteractionKind.DEFERRAL
+    if tags & _INTERVENTION_TAGS:
+        return InteractionKind.INTERVENTION
+    if tags & _DECISION_TAGS:
+        return InteractionKind.DECISION
+
+    if verdict in _DECISION_VERDICTS or human_action in _DECISION_VERDICTS:
+        return InteractionKind.DECISION
+
+    if decision_lock is not None and isinstance(decision_lock, Mapping) and decision_lock:
+        lock_kind = classify_decision_evidence_kind(decision_lock)
+        return lock_kind or InteractionKind.DECISION
+
+    has_linked_decision_id = any(
+        _clean_str(source.get(key))
+        for key in (
+            "decision_id",
+            "decisionId",
+            "human_decision_id",
+            "humanDecisionId",
+            "decision_record_id",
+            "decision_event_id",
+        )
+    )
+    has_linked_decision_ref = any(
+        ref.startswith(("decision_lock://", "decision_event://", "decision_record://"))
+        for ref in _string_seq(
+            source.get("context_refs") or source.get("contextRefs") or source.get("source_refs")
+        )
+    )
+    if has_linked_decision_id or has_linked_decision_ref:
+        return InteractionKind.DECISION
+
+    return None
+
+
+def build_decision_time_snapshot(
+    source: Mapping[str, Any],
+    *,
+    decision_lock: Optional[Mapping[str, Any]] = None,
+    snapshot: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Assemble the decision-time snapshot for a decision lock or journal entry.
+
+    Pure deterministic projection — no language model computes any number.
+    """
+    base: Dict[str, Any] = {}
+    for layer in (
+        decision_lock.get("decision_time_snapshot") if isinstance(decision_lock, Mapping) else None,
+        decision_lock if isinstance(decision_lock, Mapping) else None,
+        source.get("decision_time_snapshot"),
+        source.get("market_snapshot"),
+        source.get("snapshot"),
+        snapshot,
+    ):
+        if isinstance(layer, Mapping):
+            for k, v in layer.items():
+                if k in {
+                    "decision_time",
+                    "available_data_cutoff",
+                    "data_cutoff",
+                    "triggered_at",
+                    "symbol",
+                    "target_instrument",
+                    "subject",
+                    "strategy_id",
+                    "strategy_version_id",
+                    "strategy_spec_registry_id",
+                    "event_kind",
+                    "origin",
+                    "suggested_action",
+                    "suggested_size",
+                    "confidence",
+                    "probability",
+                    "expected_value",
+                    "invalidation",
+                    "risk_notes",
+                    "market_snapshot",
+                    "price",
+                    "close",
+                    "volume",
+                    "observation",
+                } and v is not None:
+                    base[k] = json.loads(_canonical_json(v))
+
+    arms = source.get("arms") if isinstance(source.get("arms"), Mapping) else (
+        decision_lock.get("arms") if isinstance(decision_lock, Mapping) and isinstance(decision_lock.get("arms"), Mapping) else {}
+    )
+    base_arm = arms.get("base_strategy") if isinstance(arms.get("base_strategy"), Mapping) else {}
+    human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
+    servant_arm = arms.get("private_servant") if isinstance(arms.get("private_servant"), Mapping) else {}
+    subject = source.get("subject") if isinstance(source.get("subject"), Mapping) else (
+        base.get("subject") if isinstance(base.get("subject"), Mapping) else {}
+    )
+
+    decision_time = (
+        _clean_str(source.get("decision_time"))
+        or _clean_str(base.get("decision_time"))
+        or _clean_str(source.get("event_time"))
+        or _clean_str(source.get("captured_at"))
+        or _clean_str(source.get("created_at") or source.get("createdAt"))
+        or _iso(_utc_datetime())
+    )
+    cutoff = (
+        _clean_str(source.get("available_data_cutoff") or source.get("data_cutoff"))
+        or _clean_str(base.get("available_data_cutoff") or base.get("data_cutoff"))
+        or None
+    )
+    symbol = (
+        _clean_str(source.get("target_instrument") or source.get("symbol") or source.get("instrument"))
+        or _clean_str(subject.get("symbol"))
+        or _clean_str(human_arm.get("instrument"))
+        or _clean_str(base.get("symbol") or base.get("target_instrument"))
+        or None
+    )
+    linked_strategies = _string_seq(source.get("linked_strategy_ids") or source.get("linkedStrategyIds"))
+    strategy_id = (
+        _clean_str(source.get("strategy_id"))
+        or _clean_str(base_arm.get("strategy_id") or base_arm.get("strategy_ref"))
+        or (linked_strategies[0] if linked_strategies else "")
+        or _clean_str(base.get("strategy_id"))
+        or None
+    )
+    strategy_version_id = (
+        _clean_str(source.get("strategy_version_id") or source.get("strategy_version"))
+        or _clean_str(base_arm.get("strategy_version_id"))
+        or _clean_str(base.get("strategy_version_id"))
+        or None
+    )
+    registry_id = (
+        _clean_str(source.get("strategy_spec_registry_id") or source.get("registry_id"))
+        or _clean_str(base_arm.get("strategy_spec_registry_id"))
+        or _clean_str(base.get("strategy_spec_registry_id"))
+        or None
+    )
+    suggested_action = (
+        _clean_str(source.get("suggested_action"))
+        or _clean_str(base_arm.get("suggested_action") or base_arm.get("suggestion"))
+        or _clean_str(base.get("suggested_action"))
+        or None
+    )
+    suggested_size = (
+        source.get("suggested_size")
+        if source.get("suggested_size") is not None
+        else (
+            base_arm.get("suggested_size")
+            if base_arm.get("suggested_size") is not None
+            else base.get("suggested_size")
+        )
+    )
+
+    result: Dict[str, Any] = {
+        **base,
+        "decision_time": decision_time,
+        "available_data_cutoff": cutoff,
+        "symbol": symbol,
+        "target_instrument": symbol,
+        "subject": dict(subject) if subject else ({"symbol": symbol} if symbol else {}),
+        "strategy_id": strategy_id,
+        "strategy_version_id": strategy_version_id,
+        "strategy_spec_registry_id": registry_id,
+        "event_kind": _clean_str(source.get("event_kind") or base.get("event_kind")) or None,
+        "suggested_action": suggested_action,
+        "suggested_size": suggested_size,
+        "confidence": source.get("confidence") if source.get("confidence") is not None else base.get("confidence"),
+        "probability": source.get("probability") if source.get("probability") is not None else base.get("probability"),
+        "expected_value": source.get("expected_value") if source.get("expected_value") is not None else base.get("expected_value"),
+    }
+    if servant_arm:
+        result["servant_suggestion"] = {
+            "available": servant_arm.get("available", True),
+            "suggestion": servant_arm.get("suggestion") or servant_arm.get("action") or servant_arm.get("suggested_action"),
+            "persona_id": servant_arm.get("persona_id") or servant_arm.get("servant_persona_id") or servant_arm.get("servant_id"),
+        }
+    return result
+
+
+def snapshot_observation_vector(
+    snapshot: Mapping[str, Any],
+    *,
+    source: Optional[Mapping[str, Any]] = None,
+) -> List[float]:
+    """Deterministically build a numeric observation vector from a decision-time snapshot."""
+    src = source or {}
+    for candidate in (src.get("observation"), snapshot.get("observation")):
+        if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)) and candidate:
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in candidate):
+                return [float(x) for x in candidate]
+
+    conf = snapshot.get("confidence")
+    if isinstance(conf, Mapping) and isinstance(conf.get("value"), (int, float)) and not isinstance(conf.get("value"), bool):
+        conf_val = float(conf["value"])
+    elif isinstance(conf, (int, float)) and not isinstance(conf, bool):
+        conf_val = float(conf)
+    elif isinstance(src.get("execution_confidence"), (int, float)) and not isinstance(src.get("execution_confidence"), bool):
+        conf_val = float(src["execution_confidence"])
+    else:
+        conf_val = 0.75
+
+    prob = snapshot.get("probability")
+    if isinstance(prob, Mapping) and isinstance(prob.get("value"), (int, float)) and not isinstance(prob.get("value"), bool):
+        prob_val = float(prob["value"])
+    elif isinstance(prob, (int, float)) and not isinstance(prob, bool):
+        prob_val = float(prob)
+    else:
+        prob_val = 0.5
+
+    ev = snapshot.get("expected_value")
+    if isinstance(ev, Mapping):
+        net_raw = ev.get("net")
+        down_raw = ev.get("downside")
+        net_val = float(net_raw) if isinstance(net_raw, (int, float)) and not isinstance(net_raw, bool) else 0.0
+        down_val = float(down_raw) if isinstance(down_raw, (int, float)) and not isinstance(down_raw, bool) else 0.0
+    else:
+        net_val = 0.0
+        down_val = 0.0
+
+    action_token = _clean_str(snapshot.get("suggested_action") or snapshot.get("event_kind")).lower()
+    action_code = _ACTION_CODE_MAP.get(action_token, 0.0)
+    return [conf_val, prob_val, net_val, down_val, action_code]
+
+
+def _resolve_decision_action(
+    source: Mapping[str, Any],
+    *,
+    interaction_kind: str,
+    snapshot: Mapping[str, Any],
+) -> Optional[str]:
+    explicit_action = _clean_str(source.get("action"))
+    if explicit_action and explicit_action.lower() not in _NON_ACTION_VERDICTS:
+        return explicit_action
+    if interaction_kind == InteractionKind.REJECTION.value:
+        return "reject"
+    if interaction_kind == InteractionKind.DEFERRAL.value:
+        return "defer"
+    mods = source.get("raw_modifications") or source.get("modifications")
+    if isinstance(mods, Mapping):
+        mod_action = _clean_str(mods.get("action") or mods.get("direction"))
+        if mod_action and mod_action.lower() not in _NON_ACTION_VERDICTS:
+            return mod_action
+    if interaction_kind == InteractionKind.INTERVENTION.value:
+        arms = source.get("arms") if isinstance(source.get("arms"), Mapping) else {}
+        human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
+        human_action = _clean_str(human_arm.get("action"))
+        if human_action and human_action.lower() not in (_NON_ACTION_VERDICTS | {"modify", "modified"}):
+            return f"intervene_{human_action}"
+        return "intervene"
+    arms = source.get("arms") if isinstance(source.get("arms"), Mapping) else {}
+    human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
+    for candidate in (
+        human_arm.get("action"),
+        source.get("decision"),
+        source.get("verdict"),
+        source.get("trading_room_verdict"),
+        snapshot.get("suggested_action"),
+    ):
+        cleaned = _clean_str(candidate)
+        if cleaned and cleaned.lower() not in _NON_ACTION_VERDICTS:
+            return cleaned
+    event_kind = _clean_str(snapshot.get("event_kind") or source.get("event_kind")).lower()
+    if event_kind in _EVENT_KIND_ACTION_MAP:
+        return _EVENT_KIND_ACTION_MAP[event_kind]
+    return None
+
+
+def normalize_decision_evidence_content(
+    content: Mapping[str, Any],
+    *,
+    interaction_kind: str,
+    evidence_id: str,
+    persona_id: str,
+    user_id: str,
+    captured_at: str,
+) -> Dict[str, Any]:
+    """Ensure a decision/rejection/deferral/intervention content payload carries snapshot and trajectory fields."""
+    normalized = dict(content)
+    snapshot = build_decision_time_snapshot(
+        {**normalized, "captured_at": normalized.get("captured_at") or captured_at}
+    )
+    observation = snapshot_observation_vector(snapshot, source=normalized)
+    action = _resolve_decision_action(
+        normalized,
+        interaction_kind=interaction_kind,
+        snapshot=snapshot,
+    )
+    strategy_id = _clean_str(normalized.get("strategy_id") or snapshot.get("strategy_id")) or None
+    normalized["evidence_kind"] = interaction_kind
+    normalized["decision_time_snapshot"] = snapshot
+    normalized.setdefault("observation", observation)
+    if action:
+        normalized["action"] = action
+    else:
+        normalized.pop("action", None)
+    if strategy_id:
+        normalized.setdefault("strategy_id", strategy_id)
+    if snapshot.get("strategy_spec_registry_id"):
+        normalized.setdefault("registry_id", snapshot["strategy_spec_registry_id"])
+    if snapshot.get("strategy_version_id"):
+        normalized.setdefault("artifact_version", snapshot["strategy_version_id"])
+    normalized.setdefault("actor_id", _clean_str(user_id) or _clean_str(persona_id) or "agora-trader")
+    normalized.setdefault("actor_role", "operator")
+    normalized.setdefault(
+        "trader_verdict",
+        _clean_str(normalized.get("trading_room_verdict") or normalized.get("verdict") or normalized.get("decision")) or interaction_kind,
+    )
+    return normalized
+
+
+def _resolve_persona_id(
+    source: Mapping[str, Any],
+    *,
+    explicit_persona_id: Optional[str] = None,
+    user_id: str = "",
+) -> str:
+    if _clean_str(explicit_persona_id):
+        return _clean_str(explicit_persona_id)
+    for key in ("persona_id", "servant_persona_id", "servant_id"):
+        if _clean_str(source.get(key)):
+            return _clean_str(source.get(key))
+    arms = source.get("arms") if isinstance(source.get("arms"), Mapping) else {}
+    servant = arms.get("private_servant") if isinstance(arms.get("private_servant"), Mapping) else {}
+    for key in ("persona_id", "servant_persona_id", "servant_id"):
+        if _clean_str(servant.get(key)):
+            return _clean_str(servant.get(key))
+    linked_personas = _string_seq(source.get("linked_persona_ids") or source.get("linkedPersonaIds"))
+    if linked_personas:
+        return linked_personas[0]
+    return f"servant-{user_id}" if _clean_str(user_id) else "agora-servant"
+
+
+def build_decision_lock_evidence_request(
+    lock: Mapping[str, Any],
+    *,
+    persona_id: Optional[str] = None,
+    retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+) -> AgoraInteractionEvidenceRequest:
+    """Build one AgoraInteractionEvidenceRequest from an Agora decision lock."""
+    if not isinstance(lock, Mapping):
+        raise ValueError("Decision lock must be a mapping")
+    lock_id = _clean_str(
+        lock.get("human_decision_id")
+        or lock.get("decision_id")
+        or lock.get("record_id")
+        or lock.get("decision_event_id")
+    )
+    if not lock_id:
+        raise ValueError("Decision lock is missing human_decision_id / decision_id")
+
+    trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), Mapping) else {}
+    user_id = _clean_str(
+        lock.get("user_id")
+        or lock.get("agora_user_id")
+        or trader_identity.get("user_id")
+        or trader_identity.get("agora_user_id")
+    )
+    kind = classify_decision_evidence_kind(lock) or InteractionKind.DECISION
+    resolved_persona_id = _resolve_persona_id(lock, explicit_persona_id=persona_id, user_id=user_id)
+    decision_time = _clean_str(lock.get("decision_time") or lock.get("created_at")) or _iso(_utc_datetime())
+    snapshot = build_decision_time_snapshot(lock)
+    evidence_id = _clean_str(lock.get("evidence_id")) or f"ev-lock-{lock_id}"
+
+    source_refs: List[str] = [f"decision_lock://{lock_id}"]
+    event_id = _clean_str(lock.get("decision_event_id") or lock.get("source_trading_event_id"))
+    if event_id:
+        source_refs.append(f"decision_event://{event_id}")
+    record_id = _clean_str(lock.get("decision_record_id"))
+    if record_id:
+        source_refs.append(f"decision_record://{record_id}")
+    strategy_id = _clean_str(lock.get("strategy_id") or snapshot.get("strategy_id"))
+    if strategy_id:
+        source_refs.append(f"strategy://{strategy_id}")
+
+    raw_content: Dict[str, Any] = {
+        "source_kind": "decision_lock",
+        "evidence_kind": kind.value,
+        "human_decision_id": lock_id,
+        "decision_event_id": event_id or None,
+        "decision_record_id": record_id or None,
+        "strategy_id": strategy_id or None,
+        "target_instrument": snapshot.get("symbol"),
+        "decision_time": decision_time,
+        "available_data_cutoff": snapshot.get("available_data_cutoff"),
+        "decision": _clean_str(lock.get("decision")) or None,
+        "trading_room_verdict": _clean_str(lock.get("trading_room_verdict")) or None,
+        "execution_observation_kind": _clean_str(lock.get("execution_observation_kind")) or "pantheon_paper_proxy",
+        "rationale": lock.get("raw_rationale") if lock.get("raw_rationale") is not None else lock.get("raw_text"),
+        "modifications": lock.get("raw_modifications") if lock.get("raw_modifications") is not None else lock.get("modifications"),
+        "account_id": _clean_str(lock.get("account_id")) or None,
+        "broker_ids": _string_seq(lock.get("broker_ids")),
+        "arms": json.loads(_canonical_json(lock["arms"])) if isinstance(lock.get("arms"), Mapping) else {},
+        "decision_time_snapshot": snapshot,
+    }
+    if lock.get("observation") is not None:
+        raw_content["observation"] = lock["observation"]
+    if lock.get("action") is not None:
+        raw_content["action"] = lock["action"]
+
+    content = normalize_decision_evidence_content(
+        raw_content,
+        interaction_kind=kind.value,
+        evidence_id=evidence_id,
+        persona_id=resolved_persona_id,
+        user_id=user_id,
+        captured_at=decision_time,
+    )
+    resolved_retention = int(lock.get("retention_days") or retention_days or DEFAULT_DATASET_RETENTION_DAYS)
+    return AgoraInteractionEvidenceRequest(
+        evidence_id=evidence_id,
+        interaction_kind=kind,
+        persona_id=resolved_persona_id,
+        session_id=_clean_str(lock.get("session_id")) or None,
+        content=content,
+        source_refs=list(dict.fromkeys(source_refs)),
+        learning_eligible=bool(lock.get("learning_eligible", True)),
+        captured_at=decision_time,
+        consent_granted=bool(lock.get("consent_granted", True)),
+        purpose="policy_learning",
+        retention_days=resolved_retention,
+    )
+
+
+def build_journal_entry_evidence_request(
+    entry: Mapping[str, Any],
+    *,
+    decision_lock: Optional[Mapping[str, Any]] = None,
+    snapshot: Optional[Mapping[str, Any]] = None,
+    persona_id: Optional[str] = None,
+    retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+) -> Optional[AgoraInteractionEvidenceRequest]:
+    """Build one AgoraInteractionEvidenceRequest from an Agora decision journal entry.
+
+    Returns ``None`` when the journal entry is a plain note with no decision signal.
+    """
+    if not isinstance(entry, Mapping):
+        raise ValueError("Decision journal entry must be a mapping")
+    entry_id = _clean_str(
+        entry.get("entry_id")
+        or entry.get("id")
+        or entry.get("entryId")
+        or entry.get("record_id")
+    )
+    if not entry_id:
+        raise ValueError("Decision journal entry is missing entry_id / id")
+
+    kind = classify_decision_evidence_kind(entry, decision_lock=decision_lock)
+    if kind is None:
+        return None
+
+    user_id = _clean_str(
+        entry.get("user_id")
+        or entry.get("agora_user_id")
+        or entry.get("userId")
+        or entry.get("createdBy")
+        or entry.get("actor_id")
+    )
+    resolved_persona_id = _resolve_persona_id(
+        entry,
+        explicit_persona_id=persona_id or (
+            _resolve_persona_id(decision_lock, user_id=user_id) if isinstance(decision_lock, Mapping) else None
+        ),
+        user_id=user_id,
+    )
+    captured_at = (
+        _clean_str(
+            entry.get("decision_time")
+            or entry.get("event_time")
+            or entry.get("created_at")
+            or entry.get("createdAt")
+            or entry.get("updated_at")
+            or entry.get("updatedAt")
+        )
+        or _iso(_utc_datetime())
+    )
+    resolved_snapshot = build_decision_time_snapshot(
+        entry,
+        decision_lock=decision_lock,
+        snapshot=snapshot,
+    )
+    evidence_id = _clean_str(entry.get("evidence_id")) or f"ev-journal-{entry_id}"
+
+    source_refs: List[str] = [f"decision_journal://{entry_id}"]
+    decision_id = _clean_str(
+        entry.get("decision_id")
+        or entry.get("decisionId")
+        or entry.get("human_decision_id")
+        or entry.get("humanDecisionId")
+        or (decision_lock.get("human_decision_id") if isinstance(decision_lock, Mapping) else "")
+        or (decision_lock.get("decision_id") if isinstance(decision_lock, Mapping) else "")
+    )
+    if decision_id:
+        source_refs.append(f"decision_lock://{decision_id}")
+    strategy_id = _clean_str(entry.get("strategy_id") or resolved_snapshot.get("strategy_id"))
+    if strategy_id:
+        source_refs.append(f"strategy://{strategy_id}")
+    for ref in _string_seq(entry.get("context_refs") or entry.get("contextRefs") or entry.get("source_refs")):
+        source_refs.append(ref)
+
+    raw_text = (
+        entry.get("raw_text")
+        if entry.get("raw_text") is not None
+        else (entry.get("body") if entry.get("body") is not None else entry.get("content", ""))
+    )
+    lock_decision = (
+        _clean_str(decision_lock.get("decision"))
+        if isinstance(decision_lock, Mapping)
+        else ""
+    )
+    raw_content: Dict[str, Any] = {
+        "source_kind": "decision_journal",
+        "evidence_kind": kind.value,
+        "entry_id": entry_id,
+        "decision_id": decision_id or None,
+        "strategy_id": strategy_id or None,
+        "target_instrument": resolved_snapshot.get("symbol"),
+        "decision_time": resolved_snapshot.get("decision_time") or captured_at,
+        "available_data_cutoff": resolved_snapshot.get("available_data_cutoff"),
+        "title": _clean_str(entry.get("title")) or f"Decision Journal {entry_id}",
+        "rationale": str(raw_text or ""),
+        "raw_text": str(raw_text or ""),
+        "tags": _string_seq(entry.get("tags")),
+        "decision": _clean_str(entry.get("decision") or entry.get("verdict") or entry.get("trading_room_verdict") or lock_decision) or None,
+        "modifications": entry.get("modifications") or entry.get("raw_modifications") or (
+            decision_lock.get("raw_modifications") if isinstance(decision_lock, Mapping) else None
+        ),
+        "outcome": json.loads(_canonical_json(entry["outcome"])) if isinstance(entry.get("outcome"), Mapping) else entry.get("outcome"),
+        "account_id": _clean_str(entry.get("account_id") or entry.get("accountId")) or None,
+        "broker_ids": _string_seq(entry.get("broker_ids") or entry.get("brokerIds")),
+        "decision_time_snapshot": resolved_snapshot,
+    }
+    if entry.get("observation") is not None:
+        raw_content["observation"] = entry["observation"]
+    if entry.get("action") is not None:
+        raw_content["action"] = entry["action"]
+
+    content = normalize_decision_evidence_content(
+        raw_content,
+        interaction_kind=kind.value,
+        evidence_id=evidence_id,
+        persona_id=resolved_persona_id,
+        user_id=user_id,
+        captured_at=captured_at,
+    )
+    resolved_retention = int(entry.get("retention_days") or retention_days or DEFAULT_DATASET_RETENTION_DAYS)
+    return AgoraInteractionEvidenceRequest(
+        evidence_id=evidence_id,
+        interaction_kind=kind,
+        persona_id=resolved_persona_id,
+        session_id=_clean_str(entry.get("session_id")) or None,
+        content=content,
+        source_refs=list(dict.fromkeys(source_refs)),
+        learning_eligible=bool(entry.get("learning_eligible", True)),
+        captured_at=captured_at,
+        consent_granted=bool(entry.get("consent_granted", True)),
+        purpose="policy_learning",
+        retention_days=resolved_retention,
+    )
+
+
+def extract_decision_lock_evidence(
+    lock: Mapping[str, Any],
+    *,
+    store: Optional[AgoraDatasetStore] = None,
+    persona_id: Optional[str] = None,
+    retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+    extracted_at: Optional[str] = None,
+) -> Tuple[DatasetRecord, bool]:
+    """Extract one learning evidence record and durable handoff from an Agora decision lock.
+
+    Idempotent: one evidence item per decision lock (`ev-lock-<human_decision_id>`).
+    """
+    trader_identity = lock.get("trader_identity") if isinstance(lock.get("trader_identity"), Mapping) else {}
+    tenant_id = _clean_str(lock.get("tenant_id") or trader_identity.get("tenant_id"))
+    user_id = _clean_str(
+        lock.get("user_id")
+        or lock.get("agora_user_id")
+        or trader_identity.get("user_id")
+        or trader_identity.get("agora_user_id")
+    )
+    if not tenant_id or not user_id:
+        raise ValueError("Decision lock requires tenant_id and user_id for evidence extraction")
+    resolved_store = store
+    if resolved_store is None:
+        from .router import _default_store
+
+        resolved_store = _default_store()
+    request = build_decision_lock_evidence_request(
+        lock,
+        persona_id=persona_id,
+        retention_days=retention_days,
+    )
+    resolved_extracted_at = _clean_str(extracted_at) or _clean_str(lock.get("decision_time")) or _iso(_utc_datetime())
+    return extract_evidence(
+        request,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        idempotency_key=f"agora-lock-evidence:{tenant_id}:{user_id}:{request.evidence_id}",
+        request_digest=evidence_request_digest(request),
+        extracted_at=resolved_extracted_at,
+        store=resolved_store,
+    )
+
+
+def extract_journal_entry_evidence(
+    entry: Mapping[str, Any],
+    *,
+    store: Optional[AgoraDatasetStore] = None,
+    decision_lock: Optional[Mapping[str, Any]] = None,
+    snapshot: Optional[Mapping[str, Any]] = None,
+    persona_id: Optional[str] = None,
+    retention_days: int = DEFAULT_DATASET_RETENTION_DAYS,
+    extracted_at: Optional[str] = None,
+) -> Optional[Tuple[DatasetRecord, bool]]:
+    """Extract one learning evidence record and durable handoff from a decision journal entry.
+
+    Returns ``None`` without writing to ``store`` when the entry carries no decision signal.
+    Idempotent: one evidence item per decision-bearing journal entry (`ev-journal-<entry_id>`).
+    """
+    lock_map = decision_lock if isinstance(decision_lock, Mapping) else {}
+    tenant_id = _clean_str(
+        entry.get("tenant_id")
+        or entry.get("tenantId")
+        or lock_map.get("tenant_id")
+    )
+    user_id = _clean_str(
+        entry.get("user_id")
+        or entry.get("agora_user_id")
+        or entry.get("userId")
+        or entry.get("createdBy")
+        or entry.get("actor_id")
+        or lock_map.get("user_id")
+        or lock_map.get("agora_user_id")
+    )
+    if not tenant_id or not user_id:
+        raise ValueError("Decision journal entry requires tenant_id and user_id for evidence extraction")
+    request = build_journal_entry_evidence_request(
+        entry,
+        decision_lock=decision_lock,
+        snapshot=snapshot,
+        persona_id=persona_id,
+        retention_days=retention_days,
+    )
+    if request is None:
+        return None
+    resolved_store = store
+    if resolved_store is None:
+        from .router import _default_store
+
+        resolved_store = _default_store()
+    resolved_extracted_at = _clean_str(extracted_at) or request.captured_at or _iso(_utc_datetime())
+    return extract_evidence(
+        request,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        idempotency_key=f"agora-journal-evidence:{tenant_id}:{user_id}:{request.evidence_id}",
+        request_digest=evidence_request_digest(request),
+        extracted_at=resolved_extracted_at,
+        store=resolved_store,
+    )
+
+
+def _emit_journal_entry_evidence_best_effort(
+    entry: Mapping[str, Any],
+    *,
+    dataset_store: Optional[Any] = None,
+) -> Optional[DatasetRecord]:
+    """Best-effort journal evidence extraction that never blocks journal writes."""
+    entry_id = _clean_str(
+        entry.get("entry_id")
+        or entry.get("id")
+        or entry.get("entryId")
+        or entry.get("record_id")
+    )
+    try:
+        ds_store = dataset_store
+        if ds_store is None:
+            from .router import _default_store
+
+            ds_store = _default_store()
+        if ds_store is None:
+            return None
+        tenant_id = _clean_str(entry.get("tenant_id") or entry.get("tenantId"))
+        user_id = _clean_str(
+            entry.get("user_id")
+            or entry.get("userId")
+            or entry.get("createdBy")
+            or entry.get("actor_id")
+        )
+        if not tenant_id or not user_id or not entry_id:
+            return None
+        extracted = extract_journal_entry_evidence(entry, store=ds_store)
+        if extracted is None:
+            return None
+        record, _ = extracted
+        return record
+    except Exception as exc:
+        _logger.warning(
+            "Best-effort decision-journal learning evidence extraction failed for entry_id=%s: %s",
+            entry_id,
+            exc,
+        )
+        return None
+
+
+def ensure_journal_evidence_emission_wired() -> None:
+    """Wire best-effort learning evidence extraction into the production Decision Journal write path."""
+    try:
+        from services.control_plane.bff.governance.decision_journal_write_owner import (
+            DecisionJournalOwnerAdapter,
+        )
+
+        if not getattr(DecisionJournalOwnerAdapter, "_agora_journal_evidence_hook_installed", False):
+            orig_owner_create = DecisionJournalOwnerAdapter.create_decision_journal_entry
+
+            def _wrapped_owner_create(
+                self: Any,
+                *args: Any,
+                title: str = "",
+                body: str = "",
+                entry_id: Optional[str] = None,
+                actor_id: Optional[str] = None,
+                payload: Optional[Dict[str, Any]] = None,
+                created_at: str = "",
+                tenant_id: Optional[str] = None,
+                user_id: Optional[str] = None,
+                **kwargs: Any,
+            ) -> Dict[str, Any]:
+                created = orig_owner_create(
+                    self,
+                    *args,
+                    title=title,
+                    body=body,
+                    entry_id=entry_id,
+                    actor_id=actor_id,
+                    payload=payload,
+                    created_at=created_at,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
+                raw_payload = payload if isinstance(payload, Mapping) else {}
+                created_map = created if isinstance(created, Mapping) else {}
+                resolved_user = (
+                    user_id
+                    or raw_payload.get("user_id")
+                    or raw_payload.get("userId")
+                    or actor_id
+                    or created_map.get("user_id")
+                    or created_map.get("userId")
+                    or ""
+                )
+                _emit_journal_entry_evidence_best_effort(
+                    {
+                        **raw_payload,
+                        **created_map,
+                        "entry_id": created_map.get("id") or entry_id or raw_payload.get("id") or raw_payload.get("entryId"),
+                        "tenant_id": tenant_id or created_map.get("tenant_id") or created_map.get("tenantId"),
+                        "user_id": resolved_user,
+                        "actor_id": actor_id or resolved_user,
+                    },
+                    dataset_store=kwargs.get("dataset_store") or getattr(self, "dataset_store", None),
+                )
+                return created
+
+            DecisionJournalOwnerAdapter.create_decision_journal_entry = _wrapped_owner_create  # type: ignore[method-assign]
+            DecisionJournalOwnerAdapter._agora_journal_evidence_hook_installed = True  # type: ignore[attr-defined]
+    except Exception as exc:
+        _logger.warning("DecisionJournalOwnerAdapter evidence hook wiring failed: %s", exc)
+
+    try:
+        from services.control_plane.bff.agora.service import AgoraService
+
+        if not getattr(AgoraService, "_agora_journal_evidence_hook_installed", False):
+            orig_service_create = AgoraService.create_journal_entry
+
+            def _wrapped_service_create(
+                self: Any,
+                *args: Any,
+                payload: Optional[Dict[str, Any]] = None,
+                identity: Any = None,
+                idempotency_key: Optional[str] = None,
+                x_dry_run: Optional[str] = None,
+                tenant_id: Optional[str] = None,
+                user_id: Optional[str] = None,
+                **kwargs: Any,
+            ) -> Any:
+                owner = getattr(self, "journal_write_owner", None)
+                svc_ds_store = getattr(self, "dataset_store", None)
+                if svc_ds_store is not None and owner is not None and getattr(owner, "dataset_store", None) is None:
+                    try:
+                        owner.dataset_store = svc_ds_store
+                    except Exception:
+                        pass
+                result = orig_service_create(
+                    self,
+                    *args,
+                    payload=payload,
+                    identity=identity,
+                    idempotency_key=idempotency_key,
+                    x_dry_run=x_dry_run,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    **kwargs,
+                )
+                dry_run = bool(x_dry_run and str(x_dry_run).strip().lower() in ("true", "1", "yes"))
+                if not dry_run and isinstance(result, Mapping) and isinstance(result.get("data"), Mapping):
+                    created_data = result["data"]
+                    ds_store = svc_ds_store or getattr(owner, "dataset_store", None)
+                    _emit_journal_entry_evidence_best_effort(
+                        {
+                            **(payload if isinstance(payload, Mapping) else {}),
+                            **created_data,
+                            "entry_id": created_data.get("id") or created_data.get("entryId"),
+                            "tenant_id": created_data.get("tenant_id") or created_data.get("tenantId") or tenant_id,
+                            "user_id": created_data.get("user_id") or created_data.get("userId") or user_id or getattr(identity, "operator_id", None),
+                        },
+                        dataset_store=ds_store,
+                    )
+                return result
+
+            AgoraService.create_journal_entry = _wrapped_service_create  # type: ignore[method-assign]
+            AgoraService._agora_journal_evidence_hook_installed = True  # type: ignore[attr-defined]
+    except Exception as exc:
+        _logger.warning("AgoraService journal evidence hook wiring failed: %s", exc)
+
+
+ensure_journal_evidence_emission_wired()
+
+
 __all__ = [
     "AgoraDatasetStore",
     "ClaimConflictError",
+    "DECISION_EVIDENCE_KINDS",
+    "DECISION_EVIDENCE_RETENTION_BUDGET",
+    "DEFAULT_DATASET_RETENTION_DAYS",
     "DatasetEligibilityError",
+    "ESTIMATED_DECISION_EVIDENCE_BYTES",
     "HandoffConflictError",
     "IdempotencyConflictError",
+    "MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY",
+    "MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY",
     "PrivacyConsentError",
     "acknowledgement_request_digest",
     "admit_evidence",
+    "build_decision_lock_evidence_request",
+    "build_decision_time_snapshot",
+    "build_journal_entry_evidence_request",
+    "classify_decision_evidence_kind",
+    "ensure_journal_evidence_emission_wired",
     "evidence_request_digest",
+    "extract_decision_lock_evidence",
     "extract_evidence",
+    "extract_journal_entry_evidence",
+    "normalize_decision_evidence_content",
     "sanitize_content_payload",
+    "snapshot_observation_vector",
 ]

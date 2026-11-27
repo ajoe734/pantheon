@@ -24,6 +24,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from services.research.imitation.agora_dataset_source import (
     AgoraDatasetVersion,
+    DECISION_EVIDENCE_KINDS,
     LEARN_DATASET_KIND,
 )
 
@@ -271,10 +272,16 @@ class AgoraDatasetAuthority:
         user_id: str,
         dataset_kind: str,
         dataset_version_id: str = "",
+        interaction_kinds: Optional[Sequence[str]] = None,
         limit: Optional[int] = None,
     ) -> list[Mapping[str, Any]]:
         self._require_backend()
         tenant = self._require_tenant(tenant_id)
+        allowed_kinds = (
+            {str(k).strip() for k in interaction_kinds if str(k).strip()}
+            if interaction_kinds is not None
+            else None
+        )
 
         if self.backend == "memory":
             rows = [
@@ -283,6 +290,10 @@ class AgoraDatasetAuthority:
                 if str(row.get("tenant_id") or "") == tenant
                 and (not user_id or str(row.get("user_id") or "") == user_id)
                 and (not dataset_kind or str(row.get("dataset_kind") or "") == dataset_kind)
+                and (
+                    allowed_kinds is None
+                    or str(row.get("interaction_kind") or "") in allowed_kinds
+                )
                 and (
                     not dataset_version_id
                     or str(row.get("dataset_version_id") or "") == dataset_version_id
@@ -302,6 +313,10 @@ class AgoraDatasetAuthority:
         if dataset_kind:
             clauses.append("dataset_kind = %s")
             params.append(dataset_kind)
+        if allowed_kinds:
+            placeholders = ", ".join("%s" for _ in sorted(allowed_kinds))
+            clauses.append(f"interaction_kind IN ({placeholders})")
+            params.extend(sorted(allowed_kinds))
         if dataset_version_id:
             clauses.append("dataset_version_id = %s")
             params.append(dataset_version_id)
@@ -331,6 +346,7 @@ class AgoraDatasetAuthority:
         tenant_id: str,
         user_id: str = "",
         dataset_kind: str = LEARN_DATASET_KIND,
+        interaction_kinds: Optional[Sequence[str]] = None,
         limit: Optional[int] = None,
     ) -> list[AgoraDatasetVersion]:
         """List learning-eligible dataset versions inside one tenant scope."""
@@ -339,6 +355,7 @@ class AgoraDatasetAuthority:
             tenant_id=tenant_id,
             user_id=user_id,
             dataset_kind=dataset_kind,
+            interaction_kinds=interaction_kinds,
             limit=limit,
         )
         versions: list[AgoraDatasetVersion] = []
@@ -350,6 +367,22 @@ class AgoraDatasetAuthority:
                 # from discovery and recorded, never repaired with defaults.
                 _logger.warning("Skipping malformed Agora dataset record: %s", exc)
         return versions
+
+    def list_decision_evidence_versions(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str = "",
+        limit: Optional[int] = None,
+    ) -> list[AgoraDatasetVersion]:
+        """List learning-eligible decision, rejection, deferral, and intervention versions."""
+        return self.list_dataset_versions(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            dataset_kind=LEARN_DATASET_KIND,
+            interaction_kinds=tuple(DECISION_EVIDENCE_KINDS),
+            limit=limit,
+        )
 
     def get_dataset_versions(
         self,
@@ -422,6 +455,7 @@ __all__ = [
     "AgoraAuthorityUnavailable",
     "AgoraDatasetAuthority",
     "BACKEND_ENV",
+    "DECISION_EVIDENCE_KINDS",
     "DSN_ENV",
     "SCHEMA_ENV",
     "TENANT_ENV",
