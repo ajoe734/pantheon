@@ -1317,7 +1317,8 @@ def test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker(brokered):
 
     # Cycle 3: cites an id nobody returned (a stranger, even a well-formed one) -> rejected, no decisions.
     def script_stranger(seen_):
-        return [("persona_proposal_submit", _proposal(item_ids=["persona_memory:pmem-99999999-1111-1111-1111-111111111111"]))]
+        return [("persona_memory_recall", {"query": "momentum 2330 sizing"}),
+                ("persona_proposal_submit", _proposal(item_ids=["persona_memory:pmem-99999999-1111-1111-1111-111111111111"]))]
     state["script"] = script_stranger
     third = controller.consume_run(persona, "job-1", run(3))
     assert third["persona_cycle"]["failure_reason"] == "case_file_citation_invalid"

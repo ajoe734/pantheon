@@ -306,11 +306,13 @@ def test_mental_model_read_returns_only_own_answers_and_fails_closed_on_mismatch
 def test_proposals_are_validated_recorded_and_never_applied(env):
     broker, _, memory = env
     ref = register(broker)
+    assert call(broker, "persona_memory_recall", {"query": "q"}).status_code == 200
+    memory.requests.clear()
     resp = call(broker, "persona_proposal_submit", PROPOSAL)
     assert resp.status_code == 200 and resp.body["result"] == {"recorded": True, "applied": False, "proposal_index": 0}
     assert memory.requests == []
     record = broker.run_record(ref)
-    assert record["proposals"][0]["kind"] == "no_action" and record["calls"][0]["outcome"] == "recorded"
+    assert record["proposals"][0]["kind"] == "no_action" and record["calls"][1]["outcome"] == "recorded"
     bad_kind = call(broker, "persona_proposal_submit", {**PROPOSAL, "kind": "place_order"})
     both = call(broker, "persona_proposal_submit", {**PROPOSAL, "case_file_item_ids": ["i1"]})
     neither = call(broker, "persona_proposal_submit", {**PROPOSAL, "none_applicable_reason": None})
@@ -322,6 +324,8 @@ def test_proposals_are_validated_recorded_and_never_applied(env):
 def test_meeting_action_uses_existing_proposal_tool_and_panel_remains_read_only(env):
     broker, _, memory = env
     ref = register(broker)
+    assert call(broker, "persona_memory_recall", {"query": "q"}).status_code == 200
+    memory.requests.clear()
     proposal = {**PROPOSAL, "kind": "meeting_action", "parameters": {
         "ticket_id": "rt-action-1", "action": "submit", "analysis": "Compare the observed evidence"}}
     assert call(broker, "persona_proposal_submit", proposal).status_code == 200
@@ -330,6 +334,109 @@ def test_meeting_action_uses_existing_proposal_tool_and_panel_remains_read_only(
     register(broker, session="meeting-read", purpose="panel_interpretation")
     response = call(broker, "persona_proposal_submit", proposal, session_key="x:meeting-read", run_id="read-run")
     assert response.status_code == 403
+
+
+def test_daily_cycle_refuses_proposal_before_own_bank_recall_and_records_after_recall(env):
+    broker, _, _ = env
+    ref = register(broker)
+    refused = call(broker, "persona_proposal_submit", PROPOSAL)
+    assert refused.status_code == 409
+    assert refused.body["reason"] == "recall_required_before_proposal"
+    assert "persona_memory_recall" in refused.body["message"] and 'bank="own"' in refused.body["message"]
+    assert broker.run_record(ref)["proposals"] == []
+    assert broker.run_record(ref)["calls"][0]["outcome"] == "refused"
+    assert broker.run_record(ref)["calls"][0]["reason"] == "recall_required_before_proposal"
+
+    recall = call(broker, "persona_memory_recall", {"query": "momentum"})
+    assert recall.status_code == 200
+    accepted = call(broker, "persona_proposal_submit", PROPOSAL)
+    assert accepted.status_code == 200
+    assert accepted.body["result"] == {"recorded": True, "applied": False, "proposal_index": 0}
+    record = broker.run_record(ref)
+    assert len(record["proposals"]) == 1 and record["proposals"][0]["kind"] == "no_action"
+    assert [(c["tool"], c["outcome"], c["reason"]) for c in record["calls"]] == [
+        ("persona_proposal_submit", "refused", "recall_required_before_proposal"),
+        ("persona_memory_recall", "ok", ""),
+        ("persona_proposal_submit", "recorded", ""),
+    ]
+
+
+def test_zero_hit_recall_satisfies_rule_and_failed_recall_allows_proposal_with_failure_noted(env):
+    broker, _, memory = env
+    ref_zero = register(broker, session="s-zero")
+    broker._memory_get = lambda path, params, **kw: {"hits": [], "retrieval_mode": "hindsight"}
+    zero = call(broker, "persona_memory_recall", {"query": "narrow"}, session_key="x:s-zero", run_id="run-zero")
+    assert zero.status_code == 200 and zero.body["result"]["count"] == 0
+    ok_after_zero = call(broker, "persona_proposal_submit", PROPOSAL, session_key="x:s-zero", run_id="run-zero")
+    assert ok_after_zero.status_code == 200
+    assert ok_after_zero.body["result"] == {"recorded": True, "applied": False, "proposal_index": 0}
+    assert len(broker.run_record(ref_zero)["proposals"]) == 1
+
+    broker._memory_get = memory
+    memory.fail = MemoryCallError(503, "memory_unreachable")
+    ref_outage = register(broker, session="s-outage")
+    # Even during an outage, the persona must attempt own-bank recall first.
+    before_try = call(broker, "persona_proposal_submit", PROPOSAL, session_key="x:s-outage", run_id="run-outage")
+    assert before_try.status_code == 409 and before_try.body["reason"] == "recall_required_before_proposal"
+    failed_recall = call(broker, "persona_memory_recall", {"query": "momentum"},
+                         session_key="x:s-outage", run_id="run-outage")
+    assert failed_recall.status_code == 503 and failed_recall.body["reason"] == "memory_unreachable"
+    accepted = call(broker, "persona_proposal_submit", PROPOSAL, session_key="x:s-outage", run_id="run-outage")
+    assert accepted.status_code == 200
+    assert accepted.body["result"] == {
+        "recorded": True, "applied": False, "proposal_index": 0, "recall_failure": "memory_unreachable",
+    }
+    record = broker.run_record(ref_outage)
+    assert len(record["proposals"]) == 1 and record["proposals"][0]["kind"] == "no_action"
+    assert [(c["tool"], c["outcome"], c["reason"]) for c in record["calls"]] == [
+        ("persona_proposal_submit", "refused", "recall_required_before_proposal"),
+        ("persona_memory_recall", "unavailable", "memory_unreachable"),
+        ("persona_proposal_submit", "recorded", "recall_unavailable:memory_unreachable"),
+    ]
+
+
+def test_panel_interpretation_and_other_run_purposes_keep_existing_behaviour(env):
+    broker, _, _ = env
+    panel_ref = register(broker, "panel_interpretation", session="s-panel")
+    assert call(broker, "persona_memory_recall", {"query": "q"}, session_key="x:s-panel", run_id="r-panel").status_code == 200
+    refused = call(broker, "persona_proposal_submit", PROPOSAL, session_key="x:s-panel", run_id="r-panel")
+    assert refused.status_code == 403 and refused.body["reason"] == "tool_not_allowed_for_purpose"
+    assert broker.run_record(panel_ref)["proposals"] == []
+
+    now = broker._clock()
+    broker._store.register("ptr-other", ALPHA, "ad_hoc_review", "s-other", now + 3600, now)
+    other = call(broker, "persona_proposal_submit", PROPOSAL, session_key="x:s-other", run_id="r-other")
+    assert other.status_code == 200 and other.body["result"] == {"recorded": True, "applied": False, "proposal_index": 0}
+    assert len(broker.run_record("ptr-other")["proposals"]) == 1
+
+
+def test_facts_bank_mental_model_and_other_persona_never_count_as_own_bank_recall(env):
+    broker, _, memory = env
+    alpha_ref = register(broker, persona=ALPHA, session=SESSION)
+    beta_ref = register(broker, persona=BETA, session="s-beta")
+    beta_key = "agent:persona-beta:openai-user:s-beta"
+    # Beta recalling Beta's own bank satisfies Beta, never Alpha.
+    assert call(broker, "persona_memory_recall", {"query": "q"}, agent=BETA, session_key=beta_key, run_id="r-beta").status_code == 200
+    assert call(broker, "persona_proposal_submit", PROPOSAL, agent=BETA, session_key=beta_key, run_id="r-beta").status_code == 200
+    assert len(broker.run_record(beta_ref)["proposals"]) == 1
+
+    # Alpha reads the facts bank, standing questions, and attempts another persona's bank.
+    assert call(broker, "persona_memory_recall", {"query": "q", "bank": "facts"}).status_code == 200
+    assert call(broker, "persona_mental_model_read").status_code == 200
+    assert call(broker, "persona_memory_recall", {"query": "q", "persona_id": BETA}).status_code == 422
+    assert call(broker, "persona_memory_recall", {"query": "q", "bank": BETA}).status_code == 422
+    # Even a failed facts-bank recall does not count as an own-bank recall failure.
+    memory.fail = MemoryCallError(503, "facts_down")
+    assert call(broker, "persona_memory_recall", {"query": "q", "bank": "facts"}).status_code == 503
+    memory.fail = None
+
+    refused = call(broker, "persona_proposal_submit", PROPOSAL)
+    assert refused.status_code == 409 and refused.body["reason"] == "recall_required_before_proposal"
+    assert broker.run_record(alpha_ref)["proposals"] == []
+
+    assert call(broker, "persona_memory_recall", {"query": "q", "bank": "own"}).status_code == 200
+    accepted = call(broker, "persona_proposal_submit", PROPOSAL)
+    assert accepted.status_code == 200 and len(broker.run_record(alpha_ref)["proposals"]) == 1
 
 
 def test_per_run_call_limits_are_enforced_per_tool(limited):
@@ -469,11 +576,22 @@ def test_registry_is_cached_only_within_the_ttl():
 
 
 def test_records_persist_across_a_restart(tmp_path):
-    cfg = BrokerConfig(enabled=True, token=TOKEN, registry_ttl_seconds=0.0, state_path=str(tmp_path / "ptb.sqlite3"))
+    import sqlite3
+
+    db_path = tmp_path / "ptb.sqlite3"
+    # Pre-seed a legacy calls table without the bank column (as on hosted before this change).
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            "CREATE TABLE calls (id INTEGER PRIMARY KEY AUTOINCREMENT, run_ref TEXT NOT NULL, run_id TEXT NOT NULL, "
+            "tool TEXT NOT NULL, persona_id TEXT NOT NULL, param_digest TEXT NOT NULL, canonical_ids TEXT NOT NULL, "
+            "outcome TEXT NOT NULL, reason TEXT NOT NULL, proposal TEXT, at TEXT NOT NULL)"
+        )
+    cfg = BrokerConfig(enabled=True, token=TOKEN, registry_ttl_seconds=0.0, state_path=str(db_path))
     first = PersonaToolBroker(cfg, agent_lookup=Registry(), memory_get=Memory())
     ref = first.register_run(ALPHA, "daily_cycle", SESSION)["run_ref"]
-    call(first, "persona_proposal_submit", PROPOSAL)
+    call(first, "persona_memory_recall", {"query": "q"})
     second = PersonaToolBroker(cfg, agent_lookup=Registry(), memory_get=Memory())
+    assert call(second, "persona_proposal_submit", PROPOSAL).status_code == 200
     assert second.run_record(ref)["proposals"][0]["kind"] == "no_action"
 
 
