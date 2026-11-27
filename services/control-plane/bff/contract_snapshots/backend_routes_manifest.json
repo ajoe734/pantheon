@@ -3,7 +3,7 @@
     "snapshot_date": "2026-11-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 681,
+    "total_routes": 684,
     "status_values": [
       "implemented",
       "alias",
@@ -381,6 +381,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/servant/institutional-knowledge",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/paper-book",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -867,6 +873,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/servant/ensure",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/paper-book/ensure",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -3131,6 +3143,12 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/provisioning/advisory-admission",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/paper-book",
       "family": "strategy-persona",
       "status": "implemented"
     },

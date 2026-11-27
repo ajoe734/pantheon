@@ -1235,6 +1235,13 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/servant/paper-book",
+        "method": "GET",
+        "path": "/bff/agora/servant/paper-book",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/servant/sessions/{param}",
         "method": "GET",
         "path": "/bff/agora/servant/sessions/{param}",
@@ -3161,6 +3168,13 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/servant/paper-book/ensure",
+        "method": "POST",
+        "path": "/bff/agora/servant/paper-book/ensure",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/servant/sessions",
         "method": "POST",
         "path": "/bff/agora/servant/sessions",
@@ -3728,6 +3742,13 @@
       },
       {
         "family": "strategy-persona",
+        "key": "POST /bff/personas/{param}/provisioning/paper-book",
+        "method": "POST",
+        "path": "/bff/personas/{param}/provisioning/paper-book",
+        "status": "implemented"
+      },
+      {
+        "family": "strategy-persona",
         "key": "POST /bff/personas/{param}/provisioning/paper-capital",
         "method": "POST",
         "path": "/bff/personas/{param}/provisioning/paper-capital",
@@ -3897,17 +3918,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 681,
-    "failure_count": 550,
+    "backend_routes": 684,
+    "failure_count": 553,
     "failures": {
-      "backend_missing_frontend": 549,
+      "backend_missing_frontend": 552,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 550,
+    "mode_failure_count": 553,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

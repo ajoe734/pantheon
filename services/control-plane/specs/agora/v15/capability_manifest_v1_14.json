@@ -36,11 +36,26 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/servant/paper-book",
+      "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/paper-book/ensure",
+      "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
       "owner": "agora-decision-lock"
     }
   ],
   "owner_contracts": {
+    "capital": [
+      "/api/capital/pools",
+      "/api/capital/pools/{pool_id}",
+      "/api/capital/bindings"
+    ],
     "consultation": [
       "/api/consult/requests",
       "/api/consult/memos",
@@ -50,6 +65,10 @@
       "/api/memory/retrieve",
       "/api/memory/trade-lessons",
       "/api/memory/trade-lessons/{candidate_id}/decide"
+    ],
+    "runtime_manager": [
+      "/api/runtime-manager/runtime-bindings",
+      "/api/runtime-manager/runtime-bindings/{runtime_binding_id}"
     ],
     "agora-decision-lock": [
       "/api/attribution/shadow/{decision_id}"

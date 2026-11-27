@@ -3,7 +3,7 @@
   "info": {
     "title": "Agora committee and memory owner views",
     "version": "1.14",
-    "description": "AGORA-COMMITTEE-MEMORY-RESTORE-20261112. Thin owner forwarding; paper ceiling; no execution authority. Owner absence fails closed. AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127 adds the trader's owner-scoped shadow comparison read."
+    "description": "AGORA-COMMITTEE-MEMORY-RESTORE-20261112. Thin owner forwarding; paper ceiling; no execution authority. Owner absence fails closed."
   },
   "paths": {
     "/bff/agora/committee/sessions": {
@@ -402,6 +402,93 @@
         "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Only paper lesson candidates support quarantine; persona/institutional entry quarantine returns unavailable without a write."
       }
     },
+    "/bff/agora/servant/paper-book": {
+      "get": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Get caller servant paper book",
+        "operationId": "get_agora_servant_paper_book_bff_agora_servant_paper_book_get",
+        "responses": {
+          "200": {
+            "description": "Caller's provisioned paper capital pool and paper RuntimeBinding with operator starting capital source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantPaperBookEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Trader servant paper book is not yet provisioned."
+          },
+          "409": {
+            "description": "Paper-only invariant conflict or owner readback failure."
+          }
+        },
+        "x-business-owner": "capital+runtime_manager",
+        "description": "PAPER-TRADER-BOOK-PROVISION-20261127: Reads the caller's single paper CapitalPool, active paper PersonaCapitalBinding, and active paper RuntimeBinding from the existing Capital and Runtime-Manager owners, including operator-configured starting capital and its source."
+      }
+    },
+    "/bff/agora/servant/paper-book/ensure": {
+      "post": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Provision or verify caller servant paper book on first paper use",
+        "operationId": "ensure_agora_servant_paper_book_bff_agora_servant_paper_book_ensure_post",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantPaperBookEnsureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent paper book provisioning receipt with single paper capital pool, paper RuntimeBinding, and operator starting capital source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantPaperBookEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "409": {
+            "description": "Non-paper stage rejected (canary/live forbidden) or owner provisioning conflict."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-business-owner": "capital+runtime_manager",
+        "description": "PAPER-TRADER-BOOK-PROVISION-20261127: On first paper use, ensures the caller's servant persona gets exactly one paper CapitalPool, one active paper PersonaCapitalBinding, and one active paper RuntimeBinding through the existing Capital and Runtime-Manager owners. Repeated calls are GET-first and idempotent. Rejects any canary or live stage before any owner write."
+      }
+    },
     "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison": {
       "get": {
         "tags": [
@@ -445,6 +532,134 @@
   },
   "components": {
     "schemas": {
+      "ServantPaperBookEnsureRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target_stage": {
+            "type": "string",
+            "default": "paper"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "allowed_deployment_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_ceiling": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtime_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capital_pool_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_gross_notional": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ServantPaperBookEnsureRequest"
+      },
+      "ServantPaperBookEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "object"
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "title": "ServantPaperBookEnvelope"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
