@@ -612,10 +612,11 @@ class FixedDefectOutcome:
     required_substrings: tuple[str, ...]
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
+    prefix: str = "hypothesis_extraction_failed:"
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        if not text.startswith("hypothesis_extraction_failed:"):
+        if not text.startswith(self.prefix):
             return False
         if not all(needle in text for needle in self.required_substrings):
             return False
@@ -672,6 +673,17 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         ),
         required_substrings=("budget_breach",),
         excluded_substrings=("no model call made", "> 3072"),
+    ),
+    FixedDefectOutcome(
+        code="compiler_proposer_15s_deadline_timeout",
+        fix="L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127",
+        description=(
+            "HypothesisCompiler client_proposer used the hard-coded 15 s "
+            "_PROPOSE_TIMEOUT_SECONDS deadline and no max_output_tokens, failing testable "
+            "cards with hypothesis_compiler_failed: proposer_failed"
+        ),
+        required_substrings=("proposer_failed",),
+        prefix="hypothesis_compiler_failed:",
     ),
 )
 
