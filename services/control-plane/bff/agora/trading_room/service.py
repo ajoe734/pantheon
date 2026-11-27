@@ -160,11 +160,13 @@ class TradingRoomService:
         decision_lock_owner: Optional[Any] = None,
         institutional_knowledge_reader: Optional[Any] = None,
         attribution_client_factory: Optional[Callable[[str, str], Any]] = None,
+        imitation_candidate_reader: Optional[Any] = None,
     ):
         global _active_service
         self.decision_lock_owner = decision_lock_owner
         self.attribution_client_factory = attribution_client_factory
         self.institutional_knowledge_reader = institutional_knowledge_reader
+        self.imitation_candidate_reader = imitation_candidate_reader
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
         self.utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat())
@@ -596,6 +598,92 @@ class TradingRoomService:
             )
         self.store.upsert_decision_event(updated_event)
 
+    def _resolve_imitation_candidate_state(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolve the caller's latest trader_imitation behaviour candidate(s) and training state."""
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        clean_strategy = str(strategy_id or "").strip()
+
+        reader = self.imitation_candidate_reader
+        if reader is None and self.decision_lock_owner is not None:
+            reader = getattr(self.decision_lock_owner, "_imitation_candidate_resolver", None)
+
+        raw: Any = None
+        if callable(reader):
+            try:
+                raw = reader(
+                    tenant_id=clean_tenant,
+                    user_id=clean_user,
+                    strategy_id=clean_strategy or None,
+                )
+            except TypeError:
+                raw = reader(clean_tenant, clean_user, clean_strategy or None)
+        elif reader is not None and hasattr(reader, "get_trader_imitation_state"):
+            raw = reader.get_trader_imitation_state(
+                tenant_id=clean_tenant,
+                user_id=clean_user,
+                strategy_id=clean_strategy or None,
+            )
+        elif reader is not None and hasattr(reader, "list_trader_behaviour_candidates"):
+            cands = reader.list_trader_behaviour_candidates(
+                tenant_id=clean_tenant,
+                user_id=clean_user,
+                strategy_id=clean_strategy,
+            )
+            raw = {"candidates": cands, "candidate": cands[0] if cands else None}
+
+        if isinstance(raw, Mapping):
+            if "candidate" in raw or "candidates" in raw or "decision_count" in raw:
+                cands_raw = raw.get("candidates")
+                cands_list = (
+                    [dict(c) for c in cands_raw if isinstance(c, Mapping)]
+                    if isinstance(cands_raw, (list, tuple))
+                    else []
+                )
+                cand_obj = dict(raw["candidate"]) if isinstance(raw.get("candidate"), Mapping) else (
+                    cands_list[0] if cands_list else None
+                )
+                if cand_obj is not None and not cands_list:
+                    cands_list = [cand_obj]
+                return {
+                    "candidate": cand_obj,
+                    "candidates": cands_list[:3],
+                    "decision_count": raw.get("decision_count"),
+                    "training_approved": bool(raw.get("training_approved", True)),
+                    "source": "policy_learning",
+                }
+            # Direct candidate mapping
+            cand_direct = dict(raw)
+            return {
+                "candidate": cand_direct,
+                "candidates": [cand_direct],
+                "decision_count": cand_direct.get("decision_count"),
+                "training_approved": True,
+                "source": "policy_learning",
+            }
+        if isinstance(raw, (list, tuple)):
+            cands_seq = [dict(c) for c in raw if isinstance(c, Mapping)]
+            return {
+                "candidate": cands_seq[0] if cands_seq else None,
+                "candidates": cands_seq[:3],
+                "decision_count": (cands_seq[0].get("decision_count") if cands_seq else None),
+                "training_approved": True,
+                "source": "policy_learning",
+            }
+        return {
+            "candidate": None,
+            "candidates": [],
+            "decision_count": None,
+            "training_approved": True,
+            "source": "agora",
+        }
+
     def _write_shadow_lock(
         self,
         *,
@@ -622,6 +710,11 @@ class TradingRoomService:
                 "decision_lock_owner_unavailable",
             )
         roles = self._identity_roles(identity)
+        imitation_state = self._resolve_imitation_candidate_state(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=str(event.get("strategy_id") or "").strip() or None,
+        )
         try:
             lock = build_decision_lock(
                 human_decision_id=owner.store.decision_lock_id(scope["tenant_id"], decision_event_id),
@@ -638,6 +731,7 @@ class TradingRoomService:
                 account_id=body.account_id,
                 broker_ids=body.broker_ids,
                 actor_roles=roles,
+                trader_imitation_candidate=imitation_state.get("candidate"),
             )
             return dict(owner.create_decision_lock(lock, roles))
         except DecisionLockExistsError as exc:
@@ -673,7 +767,7 @@ class TradingRoomService:
         return dict(lock)
 
     def get_shadow_comparison(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
-        """Owner-scoped four-arm shadow comparison for the caller's own decision.
+        """Owner-scoped shadow comparison for the caller's own decision.
 
         Reads only. The decision lock comes from the one composed Agora
         decision-lock owner and must belong to the caller (no read_all widening,
@@ -718,10 +812,20 @@ class TradingRoomService:
         ):
             lock = None
         snap = self.utc_now()
+        has_trained_imitation_on_lock = (
+            isinstance(lock, Mapping)
+            and isinstance(lock.get("arms"), Mapping)
+            and isinstance(lock["arms"].get("trader_imitation"), Mapping)
+            and lock["arms"]["trader_imitation"].get("available") is True
+        )
         shape_kwargs = dict(
             is_operator=False,
             snapshot_at=snap,
-            arm_names=CANONICAL_SHADOW_ARMS,
+            arm_names=(
+                (*CANONICAL_SHADOW_ARMS, "trader_imitation")
+                if has_trained_imitation_on_lock
+                else CANONICAL_SHADOW_ARMS
+            ),
             arm_aliases=CANONICAL_ARM_ALIASES,
         )
 
@@ -779,6 +883,182 @@ class TradingRoomService:
             for key in ("data_cutoff", "cost_model", "observation_window", "settled_at"):
                 shaped["data"][key] = attribution.get(key)
         return shaped
+
+    def get_trader_imitation_comparison(
+        self,
+        identity: Any,
+        *,
+        strategy_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Owner-scoped read comparing the caller's trader_imitation candidate against human_actual.
+
+        Never widens to other traders' decisions or candidates (even for operator roles).
+        Enforces the 30-decision threshold (returns ``not_enough_decisions`` when < 30 decisions)
+        and computes 1,000-resample bootstrap intervals where an interval containing 0 is
+        labelled ``luck`` (``可能是運氣``).
+        """
+        from ...attribution.client import (
+            AttributionOwnerClient,
+            AttributionOwnerNotFoundError,
+            AttributionOwnerUnavailableError,
+            AttributionOwnerValidationError,
+        )
+        from services.evaluation.attribution.decomposition import (
+            MIN_TRADER_DECISIONS_FOR_IMITATION,
+            compare_trader_imitation,
+        )
+
+        owner = self.decision_lock_owner
+        if owner is None or not hasattr(owner, "list_decision_locks"):
+            raise self.bff_error(
+                503,
+                "SERVICE_UNAVAILABLE",
+                "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        scope = _workspace_scope(identity)
+        clean_strategy = str(strategy_id or "").strip()
+        try:
+            raw_locks = owner.list_decision_locks(
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                actor_roles=self._identity_roles(identity),
+            )
+        except Exception as exc:
+            raise self.bff_error(
+                503,
+                "SERVICE_UNAVAILABLE",
+                "Agora decision-lock owner read failed",
+                "decision_lock_owner_unavailable",
+            ) from exc
+
+        # Strictly owner-scoped to caller's (tenant_id, user_id), never widened.
+        own_locks: List[Dict[str, Any]] = []
+        for lock in raw_locks or ():
+            if not isinstance(lock, Mapping):
+                continue
+            if (
+                str(lock.get("tenant_id") or "") != scope["tenant_id"]
+                or str(lock.get("user_id") or "") != scope["user_id"]
+            ):
+                continue
+            if clean_strategy:
+                lock_strat = str(
+                    lock.get("strategy_id")
+                    or (
+                        lock.get("arms", {}).get("base_strategy", {}).get("strategy_id")
+                        if isinstance(lock.get("arms"), Mapping)
+                        and isinstance(lock.get("arms", {}).get("base_strategy"), Mapping)
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                if lock_strat and lock_strat != clean_strategy:
+                    continue
+            own_locks.append(dict(lock))
+
+        imitation_state = self._resolve_imitation_candidate_state(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=clean_strategy or None,
+        )
+        candidate = imitation_state.get("candidate")
+        candidates = list(imitation_state.get("candidates") or [])
+
+        # If locks carry a trained trader_imitation arm metadata and no external candidate was resolved,
+        # surface that candidate reference for comparison.
+        if candidate is None:
+            for lock in own_locks:
+                arm = (lock.get("arms") or {}).get("trader_imitation") if isinstance(lock.get("arms"), Mapping) else None
+                if isinstance(arm, Mapping) and arm.get("available") is True:
+                    cand_id = str(arm.get("candidate_id") or "").strip() or "lock-embedded-imitation-candidate"
+                    candidate = {
+                        "candidate_id": cand_id,
+                        "version_id": str(arm.get("candidate_version") or cand_id),
+                        "strategy_id": str(arm.get("strategy_id") or lock.get("strategy_id") or clean_strategy or ""),
+                        "status": "processed",
+                        "decision_count": int(arm.get("decision_count") or max(len(own_locks), MIN_TRADER_DECISIONS_FOR_IMITATION)),
+                    }
+                    candidates = [candidate]
+                    break
+
+        explicit_decision_count = imitation_state.get("decision_count")
+        if explicit_decision_count is None:
+            ds_count = 0
+            if hasattr(owner, "_resolve_dataset_store"):
+                try:
+                    ds_store = owner._resolve_dataset_store()
+                    if ds_store is not None and hasattr(ds_store, "list_decision_evidence_versions"):
+                        versions = ds_store.list_decision_evidence_versions(
+                            tenant_id=scope["tenant_id"],
+                            user_id=scope["user_id"],
+                        )
+                        if clean_strategy:
+                            versions = [
+                                v
+                                for v in versions
+                                if not str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip()
+                                or str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip() == clean_strategy
+                            ]
+                        ds_count = len(versions)
+                except Exception:
+                    ds_count = 0
+            explicit_decision_count = max(
+                len(own_locks),
+                ds_count,
+                int((candidate or {}).get("decision_count") or 0),
+            )
+
+        settlements: Dict[str, Dict[str, Any]] = {}
+        attr_status = "ok"
+        factory = self.attribution_client_factory or (lambda t, a: AttributionOwnerClient(t, a))
+        for lock in own_locks:
+            attribution_id = str(lock.get("human_decision_id") or lock.get("decision_id") or "").strip()
+            if not attribution_id:
+                continue
+            try:
+                payload = factory(scope["tenant_id"], scope["user_id"]).get_shadow(attribution_id)
+                if isinstance(payload, Mapping):
+                    settlements[attribution_id] = dict(payload)
+            except AttributionOwnerNotFoundError:
+                if attr_status == "ok":
+                    attr_status = "pending_settlement"
+            except (AttributionOwnerUnavailableError, AttributionOwnerValidationError):
+                attr_status = "unavailable"
+            except Exception:
+                attr_status = "unavailable"
+
+        comparison = compare_trader_imitation(
+            own_locks,
+            settlements=settlements,
+            candidate=candidate,
+            candidates=candidates,
+            decision_count=int(explicit_decision_count or 0),
+            minimum_decisions_required=MIN_TRADER_DECISIONS_FOR_IMITATION,
+            training_approved=bool(imitation_state.get("training_approved", True)),
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=clean_strategy,
+        )
+        comparison["snapshot_at"] = self.utc_now()
+        is_empty = comparison.get("comparison_state") in {
+            "not_enough_decisions",
+            "awaiting_training_approval",
+        }
+        return {
+            "status": "empty" if is_empty else "ok",
+            "empty": is_empty,
+            "owner": "agora",
+            "comparison_state": comparison.get("comparison_state"),
+            "data": comparison,
+            "meta": {
+                "sources": {
+                    "agora": "ok",
+                    "policy_learning": str(imitation_state.get("source") or "agora"),
+                    "attribution": attr_status if own_locks else "idle",
+                }
+            },
+        }
 
     # -----------------------------------------------------------------------
     # Institutional knowledge & system suggestions (Design §12.7)
