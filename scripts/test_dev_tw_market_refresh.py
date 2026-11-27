@@ -3132,8 +3132,12 @@ def test_finmind_prepare_and_missing_secret_paths_exist():
     guard = script.index(
         '=~ ^(tw-finmind-broker-daily-report|tw-finmind-monthly-revenue|tw-finmind-quarterly-statements|tw-finmind-valuation)$ && -z "${FINMIND_API_TOKEN:-}"'
     )
-    assert guard < script.index("resolve_bounded_source_refresh_active_symbols\n  preflight_output=")
+    resolve = script.index("  resolve_bounded_source_refresh_active_symbols\n  if [[ \"${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}\" == \"tw-finmind-broker-daily-report\"")
+    assert guard < resolve
     assert '"skipped" "missing_credential"' in script[guard:guard + 600]
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: the whole-market run comes before the per-symbol preflight.
+    assert resolve < script.index("    run_finmind_broker_whole_market || true\n", resolve) < script.index(
+        'preflight_output="$(check_taiwan_refresh_preflight', resolve)
 
 
 # --- COLLECTOR-STEADY-PULL-RESTORE-20261112: restore keeps the steady Collector pull ---
