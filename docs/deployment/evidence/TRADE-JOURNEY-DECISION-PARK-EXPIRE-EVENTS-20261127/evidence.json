@@ -172,6 +172,18 @@
       }
     ],
     "checks": "Checkout-scoped interpreter foreign-cwd verification, storage manifest (378 entries, no failures), diff budget and git diff --check passed. All bounded command terminal exit statuses collected.",
-    "residual_findings": "No new findings outside scope; existing official-market refresh residual remains assigned as recorded above."
+    "residual_findings": "No new findings outside scope; existing official-market refresh residual remains assigned as recorded above.",
+    "final_base_refresh": {
+      "base_sha": "50a65493c596eb00567e5ae34e5fe804559e77ad",
+      "tested_head": "2f077d6f2781ceeb6b78a05eedfbae499b29472f",
+      "reason": "Dev advanced with unrelated Agora/shadow-settlement changes during publication; composed before exact-head review. git diff --quiet bfd41b4d8 HEAD -- services/execution passed: full execution tested content unchanged.",
+      "command": ".venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+      "exit_code": 0,
+      "result": "205 passed, 10 subtests passed, 3 deprecation warnings in 30.82s",
+      "full_output": {
+        "path": "/tmp/park-expire-final-base.log",
+        "sha256": "4b3abe73a9a04d701d364c3830c155b885608d2a35f1d27a01eeae62acca9ff2"
+      }
+    }
   }
 }
