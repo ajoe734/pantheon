@@ -1,0 +1,64 @@
+{
+  "task_id": "AGORA-SERVANT-SESSION-DURABLE-20261127",
+  "class": "RC4",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "review_independence_exception": {
+    "event_id": "supervisor-task-reassigned-a99057f88369edfb1eb2f87203a01e1add0a50414c4fd61d54f7ecf310177723",
+    "recorded_at": "2026-11-27T03:54:37Z",
+    "reason": "Supervisor lost-lease recovery reassigned owner Claude2 -> Antigravity while claude/claude2 could not take the task and codex/copilot/piastra had zero capacity or terminal quota."
+  },
+  "acceptance_verification": {
+    "ac1_durable_owner_and_process_dict_removed": {
+      "status": "verified",
+      "details": "Servant session messages (user and assistant) persist through AgoraWriteService.append_session_message -> AgoraStore.append_session_message in services/agora/store.py using compare-and-set on agora.sessions (mode='servant') with idempotency on message_id. Process-local _SERVANT_SESSION_EVENTS and _SERVANT_EVENT_LOCK are removed from services/control-plane/bff/agora/servant/router.py."
+    },
+    "ac2_queued_202_and_worker_execution_stream": {
+      "status": "verified",
+      "details": "POST /bff/agora/servant/sessions/{id}/messages appends the user message to the Agora owner, durably queues a turn in agora.servant_turns via enqueue_servant_turn, and immediately returns 202 Accepted with provider.status='queued' (AD-AG-05). ServantTurnWorker (services/control-plane/bff/agora/servant/turn_worker.py), wired into scripts/run_agora_interaction_worker.py (--once and continuous background loop with SERVANT_HEARTBEAT_PATH), claims queued or lease-expired turns, invokes OpenClaw, appends the assistant reply via append_session_message, and settles the turn. GET /bff/agora/servant/sessions/{id}/stream projects durable messages and in-flight turns from the Agora owner."
+    },
+    "ac3_turn_carries_last_20_messages": {
+      "status": "verified",
+      "details": "history_for_turn in services/control-plane/bff/agora/servant/turn_worker.py slices the last SERVANT_HISTORY_MESSAGES = 20 messages up to and including the turn's user message and passes them to invoke_assistant_provider. Verified by test_servant_turn_carries_last_20_messages."
+    },
+    "ac4_restart_and_no_provider_in_request_tests": {
+      "status": "verified",
+      "details": "test_servant_history_survives_bff_restart builds a fresh FastAPI BFF app and AgoraWriteService instance over the same underlying owner table rows, confirms hasattr(servant_router, '_SERVANT_SESSION_EVENTS') is False, verifies /stream replays the identical event history, and verifies a follow-up turn carries the earlier turn in its prompt history. test_servant_message_request_makes_no_provider_call replaces invoke_assistant_provider with a raising stub and proves POST /messages returns 202 with status='queued' without calling the provider."
+    },
+    "ac5_runtime_budget_and_storage_manifest": {
+      "status": "verified",
+      "details": "Per-message budget: SERVANT_MESSAGE_MAX_CHARS = 4000 (~2 KB typical; request validates max_length=4000 and owner truncates long assistant replies). Per-session cap: SERVANT_MESSAGE_CAP = 500 messages per session (409 RESOURCE_CONFLICT on the 501st message). Retention and cleanup path: SERVANT_SESSION_RETENTION_DAYS = 180 days, cleaned by AgoraWriteService.purge_expired_servant_sessions / AgoraStore.purge_expired_servant_sessions (invoked hourly by ServantTurnWorker.maybe_purge). Registered in docs/operations/storage-manifest.json under schema_table agora.servant_turns (bound_status='bounded') and verified by scripts/check_storage_manifest.py."
+    },
+    "ac6_hosted_proof": {
+      "status": "pending_deploy",
+      "details": "Requires deployment of this PR to hosted dev (operator-bff and agora-interaction-worker); worker sandbox has no hosted dev credentials or SSH/gcloud access. Post-deploy verification procedure: authenticate as dev trader (admintest), POST /bff/agora/servant/sessions, POST /bff/agora/servant/sessions/{id}/messages (assert 202 provider.status='queued'), read GET /bff/agora/servant/sessions/{id}/stream after agora-interaction-worker processes the turn (assert servant.message.completed), restart operator-bff container, and re-read GET /bff/agora/servant/sessions/{id}/stream (assert identical message history survives BFF restart)."
+    }
+  },
+  "runtime_budget": {
+    "writer": "agora.servant_turns (and mode='servant' rows in agora.sessions)",
+    "cadence": "event-driven on trader POST /bff/agora/servant/sessions/{id}/messages (1 turn row + 1 user message on admission, 1 assistant message + turn settlement by agora-interaction-worker); hourly cleanup check via ServantTurnWorker.maybe_purge",
+    "size_per_message": "about 2 KB typical (SERVANT_MESSAGE_MAX_CHARS = 4000 chars cap per message; ~1 KB per turn row in agora.servant_turns)",
+    "cap_per_session": "500 messages per session (SERVANT_MESSAGE_CAP = 500; at most 250 user turns per session)",
+    "retention_days": 180,
+    "cleanup_path": "AgoraWriteService.purge_expired_servant_sessions -> AgoraStore.purge_expired_servant_sessions (called hourly by ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py)"
+  },
+  "validation": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_sessions.py tests/agora_write_owner/test_agora_write_authority.py scripts/test_check_storage_manifest.py scripts/test_ci_test_inventory.py",
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      ".venv-pantheon/bin/python3 scripts/ci_test_inventory.py check",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_router.py"
+    ],
+    "results": {
+      "test_agora_servant_sessions_and_manifest_suites": "44 passed",
+      "check_storage_manifest": "passed (0 failures, 378 entries, 23 bounded)",
+      "ci_test_inventory_check": "test inventory ok",
+      "bff_architecture_tenant_and_agora_router": "206 passed, 1 skipped"
+    }
+  },
+  "residual_findings": [
+    "services/control-plane/tests/agora/test_cross_user_isolation.py:194 (outside this task's artifact contract and currently listed in docs/operations/ci-test-inventory.json under domain:control-plane for a pre-existing collection/setup error) still calls servant_router._SERVANT_SESSION_EVENTS.clear(). When domain:control-plane repairs test_cross_user_isolation.py, line 194 should remove _SERVANT_SESSION_EVENTS.clear() and wire FakeOwnerTable into servant_router._default_servant_session_owner.",
+    "Hosted dev restart proof (AC6) is pending merge and deployment of this PR to hosted dev because the background worker sandbox has no hosted credentials or VM access."
+  ]
+}

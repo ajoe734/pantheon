@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
 import uuid
 from typing import Any, Callable, Dict, Iterable, Iterator, Literal, Mapping, Optional
 
@@ -47,8 +46,10 @@ _SERVANT_POLICY_REFS = [
 _PROHIBITED_AUTHORITY = ("runtime_binding", "broker_order", "capital_binding")
 _PROFILE_STATUSES = {"active", "suspended", "paper_only", "shadow_only", "retired"}
 _OPENCLAW_DEGRADED_CODE = "OPENCLAW_UPSTREAM_DEGRADED"
-_SERVANT_EVENT_LOCK = threading.RLock()
-_SERVANT_SESSION_EVENTS: Dict[str, list[Dict[str, Any]]] = {}
+_UNSET_SERVANT_OWNER = object()
+# Mirrors services.agora.store.SERVANT_MESSAGE_MAX_CHARS (the owner enforces it); the request
+# rejects a longer message instead of letting the owner truncate what the trader wrote.
+_SERVANT_MESSAGE_MAX_CHARS = 4000
 
 
 class ServantSessionCreateRequest(BaseModel):
@@ -72,7 +73,7 @@ class ServantMessageRequest(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=_SERVANT_MESSAGE_MAX_CHARS)
     attachment_refs: list[str] = Field(default_factory=list)
 
 
@@ -112,25 +113,135 @@ def _audit_fields(
     }
 
 
-def _record_servant_event(session_id: str, event_type: str, data: Mapping[str, Any]) -> Dict[str, Any]:
-    event = {
-        "id": _new_prefixed_id("evt-servant"),
-        "type": event_type,
-        "data": _json_clone(dict(data)),
+def _default_servant_session_owner() -> Optional[Any]:
+    """Agora owner holding servant conversations; None (fail closed, 503) if unreachable."""
+    import logging
+    import os
+
+    if not (os.getenv("AGORA_STORE_DSN") or os.getenv("DATABASE_URL")):
+        return None
+    try:
+        from services.agora.service import build_agora_write_service
+
+        return build_agora_write_service()
+    except Exception:  # messages then fail closed with 503
+        logging.getLogger(__name__).exception("agora servant session owner unavailable")
+        return None
+
+
+_default_owner_cache: Dict[str, Any] = {}
+
+
+def _lazy_default_servant_session_owner() -> Optional[Any]:
+    """Build the production owner on first use (not at app import) and keep it."""
+    owner = _default_owner_cache.get("owner")
+    if owner is None:
+        owner = _default_servant_session_owner()
+        if owner is not None:
+            _default_owner_cache["owner"] = owner
+    return owner
+
+
+def _stable_digest(*parts: str) -> str:
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project one durable owner message into the SSE event the trader's stream replays."""
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    base = {
+        "session_id": session_id,
+        "message_id": message.get("id"),
+        "created_at": message.get("createdAt"),
+        "audit": metadata.get("audit") or {},
     }
-    with _SERVANT_EVENT_LOCK:
-        _SERVANT_SESSION_EVENTS.setdefault(session_id, []).append(event)
-    return event
+    if message.get("role") == "assistant":
+        status = str(metadata.get("provider_status") or "completed")
+        degraded = status == "degraded"
+        return {
+            "id": str(message.get("id")),
+            "type": "servant.message.degraded" if degraded else "servant.message.completed",
+            "data": {
+                **base,
+                "turn_id": metadata.get("turn_id"),
+                "reply_to": metadata.get("reply_to"),
+                "provider_status": status,
+                "answer": None if degraded else message.get("content"),
+                "error": metadata.get("error"),
+                "truncated": bool(message.get("truncated")),
+            },
+        }
+    return {
+        "id": str(message.get("id")),
+        "type": "servant.message.accepted",
+        "data": {
+            **base,
+            "role": message.get("role"),
+            "content": message.get("content"),
+            "attachment_refs": [
+                a.get("ref") if isinstance(a, dict) else a for a in message.get("attachments") or []
+            ],
+        },
+    }
 
 
-def _events_for_session(session_id: str, last_event_id: Optional[str] = None) -> list[Dict[str, Any]]:
-    with _SERVANT_EVENT_LOCK:
-        events = list(_SERVANT_SESSION_EVENTS.get(session_id, []))
+def _events_for_session(
+    owner: Any, session: Mapping[str, Any], last_event_id: Optional[str] = None
+) -> list[Dict[str, Any]]:
+    """Replayable event list built from the Agora owner (survives a BFF restart)."""
+    session_id = str(session.get("id"))
+    events: list[Dict[str, Any]] = [
+        {
+            "id": f"{session_id}:created",
+            "type": "servant.session.created",
+            "data": {
+                "session_id": session_id,
+                "session_type": session.get("sessionType") or "interactive",
+                "servant_persona_id": session.get("personaId"),
+                "created_at": session.get("createdAt"),
+            },
+        }
+    ]
+    messages = [m for m in session.get("messages") or [] if isinstance(m, dict)]
+    answered = {
+        (m.get("metadata") or {}).get("turn_id") for m in messages if m.get("role") == "assistant"
+    }
+    events.extend(_message_event(session_id, m) for m in messages)
+    for turn in owner.list_servant_turns(session_id, ("queued", "running")):
+        if turn.get("turn_id") in answered:
+            continue
+        events.append(
+            {
+                "id": f"{turn.get('turn_id')}:{turn.get('status')}",
+                "type": "servant.message.queued",
+                "data": {
+                    "session_id": session_id,
+                    "turn_id": turn.get("turn_id"),
+                    "message_id": turn.get("user_message_id"),
+                    "status": turn.get("status"),
+                },
+            }
+        )
+    if session.get("status") == "closed":
+        events.append(
+            {
+                "id": f"{session_id}:terminated",
+                "type": "servant.session.terminated",
+                "data": {"session_id": session_id, "status": session.get("outcome") or "canceled"},
+            }
+        )
     if not last_event_id:
         return events
     for idx, event in enumerate(events):
         if event.get("id") == last_event_id:
             return events[idx + 1 :]
+    # A "<turn>:queued|running" marker disappears once the answer lands: resume at the answer.
+    turn_id = last_event_id.rsplit(":", 1)[0]
+    for idx, event in enumerate(events):
+        if (event.get("data") or {}).get("turn_id") == turn_id and event["type"].startswith(
+            "servant.message."
+        ) and event["type"] != "servant.message.queued":
+            return events[idx:]
     return events
 
 
@@ -692,19 +803,6 @@ def _session_view(record: Mapping[str, Any], *, profile: ServantProfile) -> Dict
     }
 
 
-def _provider_answer_from(data: Mapping[str, Any]) -> Optional[str]:
-    for key in ("output", "answer"):
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    provider = data.get("provider")
-    if isinstance(provider, dict):
-        value = provider.get("answer")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
 def _servant_meta(
     *,
     now: str,
@@ -772,9 +870,38 @@ def create_servant_router(
     trading_room_service: Optional[Any] = None,
     trading_room_store: Optional[Any] = None,
     institutional_knowledge_reader: Optional[InstitutionalKnowledgeReader] = None,
+    servant_session_owner: Any = _UNSET_SERVANT_OWNER,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
     knowledge_reader = institutional_knowledge_reader or InstitutionalKnowledgeReader()
+
+    router_owner_cache: Dict[str, Any] = {}
+
+    def _resolve_session_owner() -> Any:
+        if servant_session_owner is not _UNSET_SERVANT_OWNER:
+            return servant_session_owner() if callable(servant_session_owner) else servant_session_owner
+        owner = router_owner_cache.get("owner")
+        if owner is None:
+            owner = _default_servant_session_owner()
+            if owner is not None:
+                router_owner_cache["owner"] = owner
+        return owner
+
+    def _session_owner(audit: Optional[Mapping[str, Any]] = None) -> Any:
+        """The Agora owner that holds servant conversations; none means fail closed."""
+        resolved_session_owner = _resolve_session_owner()
+        if resolved_session_owner is None:
+            from services.control_plane.bff.models import ErrorCode
+
+            raise bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Agora owner is unavailable for servant conversations",
+                "servant_session_owner_unavailable",
+                precondition_failed="agora_owner",
+                details_extra={"audit": dict(audit)} if audit else None,
+            )
+        return resolved_session_owner
 
     def _resolve_trading_room_service() -> Any:
         if trading_room_service is not None:
@@ -789,6 +916,31 @@ def create_servant_router(
         if getattr(active, "institutional_knowledge_reader", None) is None:
             active.institutional_knowledge_reader = knowledge_reader
         return active
+
+    def _ensure_owner_session(
+        owner: Any,
+        session_id: str,
+        *,
+        scope: Any,
+        persona_id: str,
+        session_type: str,
+        audit: Mapping[str, Any],
+    ) -> Any:
+        """Create the durable conversation row once; another trader's row is forbidden."""
+        from services.agora.store import ServantSessionConflictError
+
+        try:
+            return owner.ensure_servant_session(
+                session_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operator_id=scope.operator_id,
+                persona_id=persona_id,
+                session_type=session_type,
+                actor_roles=("trader",),
+            )
+        except ServantSessionConflictError:
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
 
     @router.get("/bff/agora/servant")
     def get_agora_servant(
@@ -1087,16 +1239,16 @@ def create_servant_router(
             request_id=request_id,
             trace_id=trace_id,
         )
-        _record_servant_event(
-            session_id,
-            "servant.session.created",
-            {
-                "session_id": session_id,
-                "session_type": request.session_type,
-                "servant_persona_id": profile.persona_id,
-                "audit": audit,
-            },
-        )
+        owner = _resolve_session_owner()
+        if owner is not None:
+            _ensure_owner_session(
+                owner,
+                session_id,
+                scope=scope,
+                persona_id=profile.persona_id,
+                session_type=request.session_type,
+                audit=audit,
+            )
         return {
             "data": _session_view(record, profile=profile),
             "meta": _servant_meta(
@@ -1229,82 +1381,91 @@ def create_servant_router(
                 precondition_failed="session_state",
                 details_extra={"audit": audit},
             )
-        message_id = _new_prefixed_id("servant-msg")
         session_type = _session_type_from_record(record)
-        provider_status = "accepted"
-        provider_answer: Optional[str] = None
-        provider_error: Optional[Dict[str, Any]] = None
-        try:
-            provider_raw = OpenClawOpsClient().invoke_assistant_provider(
-                provider="openclaw",
-                mode="user",
-                prompt=body.content,
-                context_pack={
-                    "source": "agora.servant.session",
-                    "session_id": session_id,
-                    "session_type": session_type,
-                    "servant_persona_id": profile.persona_id,
-                    "audit": audit,
-                },
-                operator_id=scope.operator_id,
-                metadata={
-                    "audit": audit,
-                    "session_type": session_type,
-                    "servant_persona_id": profile.persona_id,
-                    "openclaw_lifecycle_session_id": session_id,
-                },
-                trace_id=trace_id,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": body.content,
-                        "attachment_refs": list(body.attachment_refs),
-                    }
-                ],
-                attachments=[{"ref": ref} for ref in body.attachment_refs],
-            )
-            data = provider_raw.get("data") if isinstance(provider_raw, dict) else {}
-            if isinstance(data, dict):
-                provider_answer = _provider_answer_from(data)
-                provider_status = str(data.get("status") or provider_raw.get("status") or "accepted")
-            else:
-                provider_status = (
-                    str(provider_raw.get("status") or "accepted")
-                    if isinstance(provider_raw, dict)
-                    else "accepted"
-                )
-        except OpenClawOpsClientError as exc:
-            provider_status = "degraded"
-            provider_error = {
-                "code": _OPENCLAW_DEGRADED_CODE,
-                "source_error_code": exc.error_code,
-                "status_code": exc.status_code,
-                "message": exc.message,
-            }
-        _record_servant_event(
+        owner = _session_owner(audit)
+        _ensure_owner_session(
+            owner,
             session_id,
-            "servant.message.completed" if provider_status != "degraded" else "servant.message.degraded",
+            scope=scope,
+            persona_id=profile.persona_id,
+            session_type=session_type,
+            audit=audit,
+        )
+        # AD-AG-05: the request only makes the turn durable. The provider call runs in
+        # agora-interaction-worker; the answer reaches the trader over /stream.
+        digest = _stable_digest(scope.tenant_id, scope.user_id, session_id, str(idempotency_key))
+        message_id = f"servant-msg-{digest}"
+        turn_id = f"servant-turn-{digest}"
+        from services.agora.store import ServantSessionMessageCapError
+
+        try:
+            stored = owner.append_session_message(
+                session_id,
+                message_id,
+                body.content,
+                scope.user_id,
+                ("trader",),
+                payload={
+                    "role": "user",
+                    "sender": {"type": "trader", "id": scope.user_id},
+                    "attachments": [{"ref": ref} for ref in body.attachment_refs],
+                    "metadata": {"audit": audit},
+                },
+                created_at=utc_now(),
+            )
+        except ServantSessionMessageCapError:
+            from services.control_plane.bff.models import ErrorCode
+
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Servant session is full",
+                "The conversation reached its message limit; start a new session",
+                precondition_failed="servant_session_message_cap",
+                details_extra={"audit": audit},
+            )
+        if stored is None:
+            _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
+        if stored.get("content") != body.content and not stored.get("truncated"):
+            from services.control_plane.bff.models import ErrorCode
+
+            raise bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Idempotency-Key was already used with a different message",
+                "idempotency_key_reuse",
+                precondition_failed="idempotency_key",
+                details_extra={"audit": audit},
+            )
+        _inserted, turn = owner.enqueue_servant_turn(
             {
+                "turn_id": turn_id,
                 "session_id": session_id,
-                "message_id": message_id,
-                "provider_status": provider_status,
-                "answer": provider_answer,
-                "error": provider_error,
+                "session_type": session_type,
+                "tenant_id": scope.tenant_id,
+                "user_id": scope.user_id,
+                "operator_id": scope.operator_id,
+                "servant_persona_id": profile.persona_id,
+                "user_message_id": message_id,
                 "audit": audit,
+                "created_at": utc_now(),
             },
+            ("trader",),
         )
         return {
             "status": "accepted",
             "data": {
                 "message_id": message_id,
+                "turn_id": turn_id,
                 "session_id": session_id,
                 "session_type": session_type,
                 "servant_persona_id": profile.persona_id,
                 "provider": {
-                    "status": provider_status,
-                    "answer": provider_answer,
-                    "error": provider_error,
+                    "status": str(turn.get("status") or "queued"),
+                    "answer": None,
+                    "error": None,
                 },
+                "links": {"stream": f"/bff/agora/servant/sessions/{session_id}/stream"},
             },
             "meta": _servant_meta(
                 now=utc_now(),
@@ -1366,15 +1527,14 @@ def create_servant_router(
         record = _session_record(raw)
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
-        _record_servant_event(
-            session_id,
-            "servant.session.terminated",
-            {
-                "session_id": session_id,
-                "status": record.get("state") or record.get("status") or "canceled",
-                "audit": audit,
-            },
-        )
+        owner = _resolve_session_owner()
+        if owner is not None and owner.get_servant_session(session_id, tenant_id=scope.tenant_id, user_id=scope.user_id):
+            owner.close_session(
+                session_id,
+                scope.user_id,
+                ("trader",),
+                outcome=str(record.get("state") or record.get("status") or "canceled"),
+            )
         return {
             "data": _session_view(record, profile=profile),
             "meta": _servant_meta(
@@ -1436,8 +1596,15 @@ def create_servant_router(
         if not _session_belongs_to_scope(record, scope=scope, profile=profile):
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
 
+        owner = _session_owner(audit)
+        durable = owner.get_servant_session(
+            session_id, tenant_id=scope.tenant_id, user_id=scope.user_id
+        )
+
         def _iter_events() -> Iterator[str]:
-            replay_events = _events_for_session(session_id, last_event_id)
+            replay_events = (
+                _events_for_session(owner, durable, last_event_id) if durable is not None else []
+            )
             if not replay_events:
                 yield _format_sse(
                     {
