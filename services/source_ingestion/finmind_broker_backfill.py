@@ -388,6 +388,48 @@ def _safe_reason(exc: BaseException, token: str | None) -> str:
     return text.replace(token, "***") if token else text
 
 
+def _whole_market_readback(store: Any, trade_date: str, expected: set[str] | None) -> dict[str, Any]:
+    """Coverage is measured from verified persisted keys, including on a complete receipt's rerun."""
+    check = store.verify_partition(trade_date)
+    per_symbol: dict[str, set[str]] = defaultdict(set)
+    sides = {"buy": 0, "sell": 0}
+    if check.get("verified"):
+        for symbol, day, side, rank in check["keys"]:
+            if day == trade_date and side in sides:
+                per_symbol[symbol].add(side)
+                sides[side] += 1
+    both_sides = {symbol for symbol, values in per_symbol.items() if values == {"buy", "sell"}}
+    single_sided = sorted(set(per_symbol) - both_sides)
+    coverage: dict[str, Any] = {
+        "max_missing_ratio": COVERAGE_MAX_MISSING_RATIO, "min_stored_symbols": MIN_STORED_SYMBOLS,
+        "expected_basis": "daily_bars volume>0, 4-digit share codes",
+        "partition_verified": bool(check.get("verified")),
+        "symbols_with_both_sides": len(both_sides),
+        "single_sided_count": len(single_sided), "single_sided_sample": single_sided[:20],
+    }
+    if expected is None:
+        coverage.update(expected_symbols=None, missing_symbols=None)
+    else:
+        missing = sorted(expected - both_sides)
+        ratio = len(missing) / len(expected) if expected else 1.0
+        coverage.update(expected_symbols=len(expected), missing_count=len(missing),
+                        missing_ratio=round(ratio, 4), missing_sample=missing[:20])
+    if not check.get("verified"):
+        reason = f"coverage_unverified: persisted partition {check.get('reason')}"
+    elif not expected:
+        reason = "coverage_unverified: daily_bars has no traded share for the session"
+    elif single_sided:
+        reason = f"coverage incomplete: {len(single_sided)} stored symbols lack buy or sell side"
+    elif ratio > COVERAGE_MAX_MISSING_RATIO or len(both_sides) < MIN_STORED_SYMBOLS:
+        reason = (f"coverage {len(expected) - len(missing)}/{len(expected)} expected symbols, "
+                  f"{len(both_sides)} stored with both sides")
+    else:
+        reason = None
+    return {"status": "partial" if reason else "complete", "reason": reason, "coverage": coverage,
+            "stored_symbol_count": len(per_symbol), "rows_by_side": sides,
+            "partition_row_count": int(check.get("row_count") or 0)}
+
+
 def run_whole_market_session(
     *,
     market_data_root: str | Path,
@@ -416,11 +458,12 @@ def run_whole_market_session(
         "fallback_required": False,
     }
     store = keyed_dataset_store(root, "tw_broker_top")
+    expected = expected_symbols if expected_symbols is not None else traded_share_symbols(root, trade_date)
     prior = read_whole_market_receipt(root, trade_date)
     if prior and prior.get("status") == "complete" and store is not None:
-        check = store.verify_partition(trade_date)
-        if check.get("verified"):
-            return {**prior, "status": "already_complete", "fresh": True, "requests_made": 0,
+        readback = _whole_market_readback(store, trade_date, expected)
+        if readback["status"] == "complete":
+            return {**prior, **readback, "status": "already_complete", "fresh": True, "requests_made": 0,
                     "checked_at": started.isoformat()}
 
     fetcher = fetcher or FinMindLiveFetcher()
@@ -487,14 +530,10 @@ def run_whole_market_session(
     report = FinMindTaiwanBrokerDailyReportAdapter(max_rank=max_rank)
     available_time = now().isoformat()
     records: list[dict[str, Any]] = []
-    sides: dict[str, int] = {"buy": 0, "sell": 0}
     for sym in sorted(by_symbol):
         top = report.top_rows_from_payload(by_symbol[sym], symbol=sym, trade_date=trade_date,
                                            available_time=available_time)
-        for row in top:
-            sides[row["side"]] += 1
         records.extend(report.compact_keyed_records(top, run_id=run_id))
-    stored_symbols = sorted({r["metadata"]["normalized_row"]["symbol"] for r in records})
     uncompressed = sum(len(json.dumps(r, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")) + 1
                        for r in records)
     try:
@@ -505,36 +544,14 @@ def run_whole_market_session(
         return finish("failed", _safe_reason(exc, token), rows_built=len(records))
     manifest = store.read_manifest(trade_date) or {}
 
-    expected = expected_symbols if expected_symbols is not None else traded_share_symbols(root, trade_date)
-    stored_set = set(stored_symbols)
-    coverage: dict[str, Any] = {"max_missing_ratio": COVERAGE_MAX_MISSING_RATIO,
-                                "min_stored_symbols": MIN_STORED_SYMBOLS,
-                                "expected_basis": "daily_bars volume>0, 4-digit share codes"}
-    if expected is None:
-        status, reason = "partial", "coverage_unverified: daily_bars has no row for the session"
-        coverage.update(expected_symbols=None, missing_symbols=None)
-    else:
-        missing = sorted(set(expected) - stored_set)
-        ratio = (len(missing) / len(expected)) if expected else 1.0
-        coverage.update(expected_symbols=len(expected), missing_count=len(missing),
-                        missing_ratio=round(ratio, 4), missing_sample=missing[:20])
-        if not expected:
-            status, reason = "partial", "coverage_unverified: no traded share in daily_bars for the session"
-        elif ratio > COVERAGE_MAX_MISSING_RATIO or len(stored_set) < MIN_STORED_SYMBOLS:
-            status, reason = "partial", (f"coverage {len(expected) - len(missing)}/{len(expected)} expected symbols, "
-                                         f"{len(stored_set)} stored")
-        else:
-            status, reason = "complete", None
+    readback = _whole_market_readback(store, trade_date, expected)
     return finish(
-        status, reason,
+        **readback,
         source_branch_rows=len(agg),
-        stored_symbol_count=len(stored_set),
-        rows=len(records), rows_by_side=sides,
+        rows=len(records),
         bytes_uncompressed=uncompressed,
         bytes_compressed=int(manifest.get("bytes") or 0),
-        partition_row_count=int(manifest.get("row_count") or 0),
         partition_written=bool(write.get("partitions_written")),
-        coverage=coverage,
     )
 
 

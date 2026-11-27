@@ -141,9 +141,78 @@ def test_rerun_of_a_complete_session_makes_no_request(tmp_path: Path) -> None:
     body = _parquet(_session())
     first = _run(tmp_path, Fetcher(body), expected={f"{1101 + s}" for s in range(30)})
     again = Fetcher(body)
-    second = _run(tmp_path, again)
+    second = _run(tmp_path, again, expected={f"{1101 + s}" for s in range(30)})
     assert first["status"] == "complete"
     assert second["status"] == "already_complete" and second["requests_made"] == 0 and again.calls == []
+
+
+@pytest.mark.parametrize("one_sided_symbols", [1, 1000])
+def test_missing_sell_side_is_partial_even_with_all_1000_symbols_and_retried(
+    tmp_path: Path, monkeypatch, one_sided_symbols: int,
+) -> None:
+    monkeypatch.setattr(fbb, "MIN_STORED_SYMBOLS", 1000)
+    expected = {str(1101 + i) for i in range(1000)}
+    rows = [{"date": DAY, "stock_id": str(1101 + i), "securities_trader_id": side,
+             "securities_trader": side, "buy": 100 if side == "buy" else 0,
+             "sell": 100 if side == "sell" else 0}
+            for i in range(1000) for side in ("buy", "sell")
+            if side == "buy" or i >= one_sided_symbols]
+    body = _parquet(rows)
+    first = _run(tmp_path, Fetcher(body), expected=expected)
+    assert first["status"] == "partial" and first["fresh"] is False
+    assert first["stored_symbol_count"] == 1000
+    assert first["rows_by_side"] == {"buy": 1000, "sell": 1000 - one_sided_symbols}
+    assert first["coverage"]["partition_verified"] is True
+    assert first["coverage"]["single_sided_count"] == one_sided_symbols
+    assert first["coverage"]["missing_count"] == one_sided_symbols
+    again = Fetcher(body)
+    assert _run(tmp_path, again, expected=expected)["status"] == "partial"
+    assert len(again.calls) == 1
+
+
+def test_coverage_uses_persisted_sides_and_rejects_legacy_complete_receipt(tmp_path: Path, monkeypatch) -> None:
+    original_write = dbs.KeyedDatasetStore.write_records
+
+    def lose_sell_side(store, records, **kwargs):
+        return original_write(store, [r for r in records if r["metadata"]["normalized_row"]["side"] == "buy"], **kwargs)
+
+    monkeypatch.setattr(dbs.KeyedDatasetStore, "write_records", lose_sell_side)
+    expected = {str(1101 + i) for i in range(30)}
+    body = _parquet(_session())
+    first = _run(tmp_path, Fetcher(body), expected=expected)
+    # The generated parquet has both sides, but only buy rows reached the valid keyed partition.
+    assert first["status"] == "partial" and first["fresh"] is False
+    assert first["rows_by_side"]["sell"] == 0 and first["coverage"]["single_sided_count"] == 30
+    assert first["rows"] > first["partition_row_count"]
+    assert dbs.keyed_dataset_store(tmp_path, "tw_broker_top").verify_partition(DAY)["verified"] is True
+    # Simulate a complete receipt produced by the previous buggy writer. Digest verification alone
+    # must not cause a skip; a repaired download fills the missing persisted sell keys.
+    fbb._write_receipt(tmp_path, {**first, "trade_date": DAY, "status": "complete", "fresh": True})
+    monkeypatch.setattr(dbs.KeyedDatasetStore, "write_records", original_write)
+    again = Fetcher(body)
+    repaired = _run(tmp_path, again, expected=expected)
+    assert len(again.calls) == 1 and repaired["status"] == "complete"
+    assert repaired["coverage"]["symbols_with_both_sides"] == 30
+    assert repaired["rows_by_side"]["sell"] > 0
+
+
+def test_persisted_partition_must_verify_before_freshness(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(dbs.KeyedDatasetStore, "verify_partition",
+                        lambda *args: {"verified": False, "reason": "manifest_mismatch", "keys": set()})
+    result = _run(tmp_path, Fetcher(_parquet(_session())), expected={str(1101 + i) for i in range(30)})
+    assert result["status"] == "partial" and result["fresh"] is False
+    assert result["coverage"]["partition_verified"] is False
+    assert "manifest_mismatch" in result["reason"]
+
+
+def test_complete_receipt_revalidates_current_expected_symbols(tmp_path: Path) -> None:
+    expected = {str(1101 + i) for i in range(30)}
+    body = _parquet(_session())
+    assert _run(tmp_path, Fetcher(body), expected=expected)["status"] == "complete"
+    again = Fetcher(body)
+    result = _run(tmp_path, again, expected=expected | {"9999"})
+    assert len(again.calls) == 1 and result["status"] == "partial" and result["fresh"] is False
+    assert result["coverage"]["missing_count"] == 1
 
 
 def test_coverage_outside_tolerance_is_partial_and_never_fresh(tmp_path: Path) -> None:
