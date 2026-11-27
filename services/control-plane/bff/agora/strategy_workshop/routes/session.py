@@ -74,14 +74,28 @@ def build_session_router(
             raise bff_error(exc.http_status, exc.error_code,
                             "Workshop message content is unavailable", "private_content_store") from None
 
+    def _publish_completeness(workshop_id: str, outcome: Dict[str, Any]) -> None:
+        snapshot = outcome.get("completeness_snapshot")
+        if snapshot:
+            _ws_publish(
+                workshop_id,
+                "workshop.completeness.updated",
+                {
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "strategy_version_id": snapshot.get("strategy_version_id"),
+                },
+                utc_now_fn=utc_now,
+            )
+
     def _run_queued_reconstruction(*, workshop_id: str, tenant_id: str, user_id: str, job_id: str) -> None:
         """Background job body: failures are already recorded on the card."""
         try:
-            run_reconstruction_job(
+            outcome = run_reconstruction_job(
                 store=store, canonical=canonical, workshop_id=workshop_id,
                 tenant_id=tenant_id, user_id=user_id, job_id=job_id,
                 private_content_store=private_content_store,
             )
+            _publish_completeness(workshop_id, outcome)
         except ReconstructionProviderError as exc:
             _LOG.warning("workshop reconstruction job %s failed: %s (%s)",
                          job_id, exc.reason, exc.adapter_error_code)
@@ -844,6 +858,7 @@ def build_session_router(
                 exc.status_code, exc.error_code, str(exc), exc.reason,
                 details_extra={"adapter_error_code": exc.adapter_error_code},
             ) from None
+        _publish_completeness(workshop_id, outcome)
         meta = {
             "snapshot_at": utc_now(),
             "capability": "agora.workshop.v1",
