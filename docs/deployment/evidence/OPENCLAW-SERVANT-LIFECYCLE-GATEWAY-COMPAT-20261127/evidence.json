@@ -3,7 +3,7 @@
   "owner": "Codex2",
   "reviewer": "Antigravity",
   "problem_register_class": "RC4 Agora trading servant / SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T1/T2",
-  "source_base": "59e600314",
+  "source_base": "4cfee20d8fa70bf20ca19727091117582b51cde4",
   "source_anchor_commit": "7ab52be02",
   "delivery": {
     "source": "locally_verified_pending_independent_review",
@@ -42,8 +42,9 @@
       "status": "passed",
       "tests": 169,
       "subtests": 35,
-      "elapsed_seconds": 10.68,
-      "warning": "Existing FastAPI TestClient/httpx deprecation; no assertion weakened."
+      "elapsed_seconds": 14.17,
+      "warning": "Existing FastAPI TestClient/httpx deprecation; no assertion weakened.",
+      "environment": "Checkout-scoped .venv-pantheon provisioned with the supervisor dependency interpreter."
     },
     "ac4_runtime_budget_and_class": {
       "status": "documented",
@@ -103,6 +104,26 @@
         "command": "Parse evidence JSON and ast.parse embedded read-only probe",
         "exit_code": 0,
         "result": "Valid JSON and Python syntax; hosted probe not executed."
+      },
+      {
+        "command": "timeout 120 python3 scripts/dev/provision_python_distribution.py --quiet",
+        "exit_code": 0,
+        "result": "Checkout-scoped Python provisioned successfully."
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_session_lifecycle.py -q",
+        "exit_code": 0,
+        "result": "After dev refresh: 169 passed, 1 existing deprecation warning, 35 subtests passed in 14.17s."
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD; compare incoming file bytes to origin/dev; compare adapter tree to previous reviewed head; parse evidence and embedded probe",
+        "exit_code": 0,
+        "result": "Passed. No incoming changes lost; current dev is an ancestor; adapter implementation and tests unchanged; hosted probe not executed."
+      },
+      {
+        "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+        "exit_code": 0,
+        "result": "Pre-manifest-refresh: production +47/-7 (net +40), tests +138/-0 (net +138), docs/evidence +122/-1 (net +121)."
       }
     ]
   },
@@ -117,5 +138,12 @@
     "status": "pending_assigned_independent_reviewer",
     "reviewer": "Antigravity",
     "binding": "Exact PR/head and this committed manifest are recorded by governed handoff; no approval claimed."
+  },
+  "base_refresh": {
+    "previous_reviewed_head": "dd66b0454b38442142e3c14f108a1db1e57812c5",
+    "merge_anchor_commit": "b613020f2ccf9e84e1f08186189d709ecd8fc841",
+    "reason": "PR #7991 reopened after origin/dev advanced through #7952 and #7984 and the RC4 register row conflicted.",
+    "resolution": "Retained both the lifecycle incident and incoming T5 habit-profile progress in the RC4 servant row; all other incoming paths are byte-identical to origin/dev, including workspace-retirement records, storage manifest, OpenAPI, bundle manifests and route snapshots.",
+    "implementation": "Adapter production and test files are byte-identical to the previously reviewed head; new head requires a fresh governed handoff and independent review."
   }
 }
