@@ -34,12 +34,15 @@ from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_mana
 DEFAULT_TRADER_PAPER_STARTING_CAPITAL = 10_000_000.0
 DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY = "TWD"
 
+TRADER_PAPER_STARTING_CAPITAL_ENV = "PANTHEON_TRADER_PAPER_STARTING_CAPITAL"
+TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV = "PANTHEON_TRADER_PAPER_STARTING_CAPITAL_CURRENCY"
+
 TRADER_PAPER_STARTING_CAPITAL_ENV_KEYS: tuple[str, ...] = (
-    "PANTHEON_TRADER_PAPER_STARTING_CAPITAL",
+    TRADER_PAPER_STARTING_CAPITAL_ENV,
     "PANTHEON_AGORA_TRADER_PAPER_STARTING_CAPITAL",
 )
 TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV_KEYS: tuple[str, ...] = (
-    "PANTHEON_TRADER_PAPER_STARTING_CAPITAL_CURRENCY",
+    TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV,
     "PANTHEON_AGORA_TRADER_PAPER_CURRENCY",
 )
 
@@ -93,12 +96,14 @@ def resolve_trader_paper_starting_capital(
             parsed_amount = float(raw_amount.replace(",", "_"))
         except (TypeError, ValueError) as exc:
             raise PersonaProvisioningCoordinationError(
-                f"Invalid operator starting capital in {amount_key}={raw_amount!r}: must be a positive number",
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital in "
+                f"{amount_key}={raw_amount!r}: must be a positive number",
                 reason_code="starting_capital_setting_invalid",
             ) from exc
         if not math.isfinite(parsed_amount) or parsed_amount <= 0.0:
             raise PersonaProvisioningCoordinationError(
-                f"Invalid operator starting capital in {amount_key}={raw_amount!r}: must be finite and > 0",
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital in "
+                f"{amount_key}={raw_amount!r}: must be finite and > 0",
                 reason_code="starting_capital_setting_invalid",
             )
         amount = float(parsed_amount)
@@ -118,8 +123,8 @@ def resolve_trader_paper_starting_capital(
         normalized_currency = raw_currency.upper()
         if raw_currency != normalized_currency or not _CURRENCY_RE.fullmatch(normalized_currency):
             raise PersonaProvisioningCoordinationError(
-                f"Invalid operator starting capital currency in {currency_key}={raw_currency!r}: "
-                "must be an uppercase 3-8 letter currency code",
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital currency in "
+                f"{currency_key}={raw_currency!r}: must be an uppercase 3-8 letter currency code",
                 reason_code="starting_capital_currency_invalid",
             )
         currency = normalized_currency
@@ -156,14 +161,15 @@ def validate_paper_only_stage(**stage_fields: Any) -> None:
             continue
         if isinstance(raw_value, bool) or not isinstance(raw_value, str):
             raise PersonaProvisioningCoordinationError(
-                f"Trader paper book {field_name} must be 'paper'; got {raw_value!r}",
+                f"PAPER_ONLY_TRADER_BOOK_STAGE_VIOLATION: Trader paper book {field_name} must be 'paper'; "
+                f"got {raw_value!r}",
                 reason_code="non_paper_stage_forbidden",
             )
         cleaned = raw_value.strip().lower()
         if not cleaned or cleaned != "paper":
             raise PersonaProvisioningCoordinationError(
-                f"Trader paper book provisioning is paper-only; {field_name}={raw_value!r} "
-                "cannot create canary or live bindings on this path",
+                f"PAPER_ONLY_TRADER_BOOK_STAGE_VIOLATION: Trader paper book provisioning is paper-only; "
+                f"{field_name}={raw_value!r} cannot create canary or live bindings on this path",
                 reason_code="non_paper_stage_forbidden",
             )
 
@@ -171,8 +177,8 @@ def validate_paper_only_stage(**stage_fields: Any) -> None:
 def validate_servant_persona_paper_ceiling(
     persona: Optional[Mapping[str, Any]],
     *,
-    tenant_id: str,
-    persona_id: str,
+    tenant_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
 ) -> None:
     """Fail closed if a persona record carries non-paper ceiling, live authority, or foreign tenant."""
     if not isinstance(persona, Mapping):
@@ -181,29 +187,40 @@ def validate_servant_persona_paper_ceiling(
     meta_map = meta if isinstance(meta, Mapping) else {}
 
     rec_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
-    if rec_id and rec_id != persona_id:
+    expected_persona = str(persona_id or rec_id or "").strip()
+    if rec_id and expected_persona and rec_id != expected_persona:
         raise PersonaProvisioningCoordinationError(
-            f"Persona record identity {rec_id!r} does not match requested {persona_id!r}",
+            f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona record identity {rec_id!r} "
+            f"does not match requested {expected_persona!r}",
             reason_code="persona_identity_mismatch",
         )
 
-    for tenant_val in (
-        persona.get("tenant_id"),
-        persona.get("tenantId"),
-        meta_map.get("tenant_id"),
-        meta_map.get("tenantId"),
-    ):
-        if tenant_val not in (None, "") and str(tenant_val).strip() != tenant_id:
-            raise PersonaProvisioningCoordinationError(
-                f"Persona {persona_id!r} does not belong to tenant {tenant_id!r}",
-                reason_code="persona_tenant_mismatch",
-            )
+    expected_tenant = str(tenant_id or "").strip()
+    if expected_tenant:
+        for tenant_val in (
+            persona.get("tenant_id"),
+            persona.get("tenantId"),
+            meta_map.get("tenant_id"),
+            meta_map.get("tenantId"),
+        ):
+            if tenant_val not in (None, "") and str(tenant_val).strip() != expected_tenant:
+                raise PersonaProvisioningCoordinationError(
+                    f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} "
+                    f"does not belong to tenant {expected_tenant!r}",
+                    reason_code="persona_tenant_mismatch",
+                )
 
     for field_name in _STAGE_FIELD_NAMES:
         for container in (persona, meta_map):
             val = container.get(field_name)
             if val not in (None, ""):
-                validate_paper_only_stage(**{field_name: str(val)})
+                try:
+                    validate_paper_only_stage(**{field_name: str(val)})
+                except PersonaProvisioningCoordinationError as exc:
+                    raise PersonaProvisioningCoordinationError(
+                        f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: {exc}",
+                        reason_code="persona_ceiling_not_paper",
+                    ) from exc
 
     for live_flag in (
         "live_capital_enabled",
@@ -213,7 +230,8 @@ def validate_servant_persona_paper_ceiling(
     ):
         if persona.get(live_flag) is True or meta_map.get(live_flag) is True:
             raise PersonaProvisioningCoordinationError(
-                f"Persona {persona_id!r} has {live_flag}=True; refusing trader paper book provisioning",
+                f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} has "
+                f"{live_flag}=True; refusing trader paper book provisioning",
                 reason_code="persona_ceiling_not_paper",
             )
 
@@ -227,8 +245,9 @@ def validate_servant_persona_paper_ceiling(
         exec_auth = auth_container.get("execution_authority")
         if exec_auth not in (None, "") and str(exec_auth).strip().lower() not in {"none", "paper"}:
             raise PersonaProvisioningCoordinationError(
-                f"Persona {persona_id!r} has execution_authority={exec_auth!r}; "
-                "trader paper book requires paper ceiling with no live/canary authority",
+                f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} has "
+                f"execution_authority={exec_auth!r}; trader paper book requires paper ceiling "
+                "with no live/canary authority",
                 reason_code="persona_ceiling_not_paper",
             )
 
@@ -573,6 +592,7 @@ def ensure_trader_paper_book(
     persona_record: Optional[Mapping[str, Any]] = None,
     coordinator: Optional[PersonaProvisioningCoordinator] = None,
     runtime_client: Optional[Any] = None,
+    runtime_manager_client: Optional[Any] = None,
     persona_write_owner: Optional[Any] = None,
     env: Optional[Mapping[str, str]] = None,
     **stage_kwargs: Any,
@@ -622,7 +642,7 @@ def ensure_trader_paper_book(
     active_runtime_client = _build_runtime_manager_client(
         tenant_id=clean_tenant,
         actor_id=active_coordinator.actor_id,
-        explicit_client=runtime_client,
+        explicit_client=runtime_client if runtime_client is not None else runtime_manager_client,
         env=env,
     )
 
@@ -630,14 +650,17 @@ def ensure_trader_paper_book(
     binding_path = f"/api/bindings/{ids.persona_capital_binding_id}"
     existing_pool = active_coordinator._owner_get("capital", pool_path)
     existing_pcb = active_coordinator._owner_get("capital", binding_path)
-    capital_existed = bool(
+    pool_existed = bool(
         isinstance(existing_pool, Mapping)
         and existing_pool.get("pool_id") == ids.capital_pool_id
         and existing_pool.get("status") == "active"
-        and isinstance(existing_pcb, Mapping)
+    )
+    pcb_existed = bool(
+        isinstance(existing_pcb, Mapping)
         and existing_pcb.get("binding_id") == ids.persona_capital_binding_id
         and existing_pcb.get("status") == "active"
     )
+    capital_existed = bool(pool_existed and pcb_existed)
 
     capital_receipt = active_coordinator.ensure_chain_paper_capital(
         tenant_id=clean_tenant,
@@ -652,10 +675,18 @@ def ensure_trader_paper_book(
         labels={
             "task_id": "PAPER-TRADER-BOOK-PROVISION-20261127",
             "paper_only": True,
+            "starting_capital_source": starting_capital["source"],
+            "starting_capital_source_ref": starting_capital["source_ref"],
         },
     )
     capital_pool = deepcopy(dict(capital_receipt["capital_pool"]))
+    capital_pool.setdefault("stage", "paper")
+    capital_pool.setdefault("notional_only", True)
+    capital_pool["created"] = not pool_existed
     persona_capital_binding = deepcopy(dict(capital_receipt["persona_capital_binding"]))
+    persona_capital_binding.setdefault("stage", "paper")
+    persona_capital_binding.setdefault("notional_only", True)
+    persona_capital_binding["created"] = not pcb_existed
 
     pool_meta = capital_pool.get("metadata")
     pool_meta_map = pool_meta if isinstance(pool_meta, Mapping) else {}
@@ -812,6 +843,14 @@ def ensure_trader_paper_book(
             persona_capital_binding_id=ids.persona_capital_binding_id,
         )
 
+    runtime_binding = dict(runtime_binding)
+    runtime_binding.setdefault("allowed_deployment_scope", "paper")
+    runtime_binding.setdefault(
+        "execution_mode",
+        str(runtime_binding.get("deployment_mode") or "paper"),
+    )
+    runtime_binding["created"] = not runtime_binding_existed
+
     resolved_user_id = str(
         agora_user_id
         or ((persona_record or {}).get("metadata") or {}).get("agora_user_id")
@@ -820,13 +859,16 @@ def ensure_trader_paper_book(
     ).strip() or None
 
     book_summary: Dict[str, Any] = {
+        "status": "provisioned",
         "tenant_id": clean_tenant,
         "agora_user_id": resolved_user_id,
         "persona_id": clean_persona,
         "book_kind": "trader_servant_paper_book",
+        "stage": "paper",
         "deployment_stage": "paper",
         "environment_ceiling": "paper",
         "execution_authority": "none",
+        "notional_only": True,
         "capital_pool_id": ids.capital_pool_id,
         "persona_capital_binding_id": ids.persona_capital_binding_id,
         "runtime_binding_id": runtime_binding["binding_id"],
@@ -868,6 +910,7 @@ def read_trader_paper_book(
     persona_record: Optional[Mapping[str, Any]] = None,
     coordinator: Optional[PersonaProvisioningCoordinator] = None,
     runtime_client: Optional[Any] = None,
+    runtime_manager_client: Optional[Any] = None,
     env: Optional[Mapping[str, str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Read-only lookup of a trader servant persona's paper book from Capital and Runtime-Manager.
@@ -899,7 +942,7 @@ def read_trader_paper_book(
     active_runtime_client = _build_runtime_manager_client(
         tenant_id=clean_tenant,
         actor_id=active_coordinator.actor_id,
-        explicit_client=runtime_client,
+        explicit_client=runtime_client if runtime_client is not None else runtime_manager_client,
         env=env,
     )
 
@@ -960,7 +1003,13 @@ def read_trader_paper_book(
             f"CapitalPool {ids.capital_pool_id} has {len(pool_bindings)} non-terminal RuntimeBindings",
             reason_code="multiple_runtime_bindings",
         )
-    runtime_binding = pool_bindings[0]
+    runtime_binding = dict(pool_bindings[0])
+    runtime_binding.setdefault("allowed_deployment_scope", "paper")
+    runtime_binding.setdefault(
+        "execution_mode",
+        str(runtime_binding.get("deployment_mode") or "paper"),
+    )
+    runtime_binding["created"] = False
     effective_starting = _effective_starting_capital(starting_capital, capital_pool)
     resolved_user_id = str(
         agora_user_id
@@ -969,14 +1018,26 @@ def read_trader_paper_book(
         or ""
     ).strip() or None
 
+    pool_copy = deepcopy(dict(capital_pool))
+    pool_copy.setdefault("stage", "paper")
+    pool_copy.setdefault("notional_only", True)
+    pool_copy["created"] = False
+    pcb_copy = deepcopy(dict(persona_capital_binding))
+    pcb_copy.setdefault("stage", "paper")
+    pcb_copy.setdefault("notional_only", True)
+    pcb_copy["created"] = False
+
     return {
+        "status": "provisioned",
         "tenant_id": clean_tenant,
         "agora_user_id": resolved_user_id,
         "persona_id": clean_persona,
         "book_kind": "trader_servant_paper_book",
+        "stage": "paper",
         "deployment_stage": "paper",
         "environment_ceiling": "paper",
         "execution_authority": "none",
+        "notional_only": True,
         "capital_pool_id": ids.capital_pool_id,
         "persona_capital_binding_id": ids.persona_capital_binding_id,
         "runtime_binding_id": runtime_binding["binding_id"],
@@ -986,8 +1047,8 @@ def read_trader_paper_book(
         "strategy_artifact_id": str(runtime_binding.get("artifact_id") or ids.strategy_artifact_id),
         "strategy_artifact_version": str(runtime_binding.get("artifact_version") or ids.version),
         "starting_capital": effective_starting,
-        "capital_pool": deepcopy(dict(capital_pool)),
-        "persona_capital_binding": deepcopy(dict(persona_capital_binding)),
+        "capital_pool": pool_copy,
+        "persona_capital_binding": pcb_copy,
         "runtime_binding": runtime_binding,
         "idempotent_replay": True,
         "created_capital_pool": False,

@@ -91,15 +91,12 @@ class ServantPaperBookEnsureRequest(BaseModel):
 
     target_stage: str = "paper"
     stage: Optional[str] = None
+    deployment_stage: Optional[str] = None
+    deployment_mode: Optional[str] = None
     allowed_deployment_scope: Optional[str] = None
+    environment: Optional[str] = None
     environment_ceiling: Optional[str] = None
     execution_mode: Optional[str] = None
-    runtime_id: Optional[str] = None
-    strategy_id: Optional[str] = None
-    strategy_artifact_id: Optional[str] = None
-    capital_pool_id: Optional[str] = None
-    max_gross_notional: Optional[float] = Field(default=None, gt=0.0)
-    currency: Optional[str] = None
 
 
 def _json_clone(value: Any) -> Any:
@@ -1047,7 +1044,6 @@ def create_servant_router(
                     requested_by=scope.operator_id,
                     agora_user_id=scope.user_id,
                     target_stage="paper",
-                    authorization=authorization,
                     persona_record=persona,
                     persona_write_owner=write_owner,
                 )
@@ -1056,7 +1052,7 @@ def create_servant_router(
 
                 raise bff_error(
                     409,
-                    ErrorCode.INVALID_STATE,
+                    ErrorCode.PRECONDITION_FAILED,
                     "Trader servant paper book provisioning failed",
                     str(exc)[:300],
                     precondition_failed="paper_book_provisioning",
@@ -1119,14 +1115,17 @@ def create_servant_router(
             validate_paper_only_stage(
                 target_stage=request.target_stage,
                 stage=request.stage,
+                deployment_stage=request.deployment_stage,
+                deployment_mode=request.deployment_mode,
                 allowed_deployment_scope=request.allowed_deployment_scope,
+                environment=request.environment,
                 environment_ceiling=request.environment_ceiling,
                 execution_mode=request.execution_mode,
             )
         except PersonaProvisioningCoordinationError as exc:
             raise bff_error(
                 409,
-                ErrorCode.INVALID_STATE,
+                ErrorCode.PRECONDITION_FAILED,
                 "Trader servant paper book only supports paper stage",
                 str(exc)[:300],
                 precondition_failed="paper_only_stage",
@@ -1168,18 +1167,21 @@ def create_servant_router(
                 else expected_persona_id
             )
         try:
-            validate_servant_persona_paper_ceiling(persona)
+            validate_servant_persona_paper_ceiling(
+                persona,
+                tenant_id=scope.tenant_id,
+                persona_id=persona_id,
+            )
         except PersonaProvisioningCoordinationError as exc:
             raise bff_error(
                 409,
-                ErrorCode.INVALID_STATE,
+                ErrorCode.PRECONDITION_FAILED,
                 "Trader servant persona violates paper-only ceiling",
                 str(exc)[:300],
                 precondition_failed="servant_paper_ceiling",
                 details_extra={"error": str(exc)[:300]},
             ) from exc
 
-        eff_auth = authorization or (f"Bearer {pantheon_session}" if pantheon_session else None)
         provision_fn = ensure_paper_book or ensure_trader_paper_book
         try:
             book = provision_fn(
@@ -1189,23 +1191,19 @@ def create_servant_router(
                 agora_user_id=scope.user_id,
                 target_stage=request.target_stage,
                 stage=request.stage,
+                deployment_stage=request.deployment_stage,
+                deployment_mode=request.deployment_mode,
                 allowed_deployment_scope=request.allowed_deployment_scope,
+                environment=request.environment,
                 environment_ceiling=request.environment_ceiling,
                 execution_mode=request.execution_mode,
-                runtime_id=request.runtime_id,
-                strategy_id=request.strategy_id,
-                strategy_artifact_id=request.strategy_artifact_id,
-                capital_pool_id=request.capital_pool_id,
-                max_gross_notional=request.max_gross_notional,
-                currency=request.currency,
-                authorization=eff_auth,
                 persona_record=persona,
                 persona_write_owner=write_owner,
             )
         except PersonaProvisioningCoordinationError as exc:
             raise bff_error(
                 409,
-                ErrorCode.INVALID_STATE,
+                ErrorCode.PRECONDITION_FAILED,
                 "Trader servant paper book provisioning failed",
                 str(exc)[:300],
                 precondition_failed="paper_book_provisioning",
@@ -1236,7 +1234,7 @@ def create_servant_router(
         """Return the caller's provisioned paper capital pool and paper RuntimeBinding."""
         from services.control_plane.bff.models import ErrorCode
 
-        identity, scope, servant_persona_id, eff_auth = _resolve_knowledge_caller(
+        identity, scope, servant_persona_id, _eff_auth = _resolve_knowledge_caller(
             authorization,
             pantheon_session,
             x_tenant_id,
@@ -1249,12 +1247,11 @@ def create_servant_router(
                 tenant_id=scope.tenant_id,
                 persona_id=servant_persona_id,
                 agora_user_id=scope.user_id,
-                authorization=eff_auth,
             )
         except PersonaProvisioningCoordinationError as exc:
             raise bff_error(
                 409,
-                ErrorCode.INVALID_STATE,
+                ErrorCode.PRECONDITION_FAILED,
                 "Trader servant paper book readback failed",
                 str(exc)[:300],
                 precondition_failed="paper_book_readback",
