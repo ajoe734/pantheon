@@ -1,7 +1,7 @@
 {
   "task_id": "PAPER-TRADER-BOOK-ENROLLMENT-SKIP-20261127",
   "title": "Trader servant paper book is retried as a trading persona and its pool publish refusals grow without a cap",
-  "generated_at": "2026-11-27T13:26:00Z",
+  "generated_at": "2026-11-27T13:40:00Z",
   "delivery_state": "open",
   "owner": {
     "agent": "Antigravity",
@@ -181,11 +181,13 @@
   },
   "validation": {
     "commands": [
-      "./.venv-pantheon/bin/python3 -m pytest -v services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py",
+      "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py",
+      "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/control-plane/bff/tests/test_persona_enrollment_seed_integration.py services/control-plane/bff/tests/test_persona_paper_enrollment.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
       "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py"
     ],
     "results": [
-      "43 passed in 17.51s (exit code 0)",
+      "43 passed in 17.67s (exit code 0)",
+      "86 passed in 34.61s (exit code 0; includes test_enrolled_readback_is_never_replaced_by_a_failed_pass)",
       "117 passed in 103.21s (exit code 0)"
     ]
   },

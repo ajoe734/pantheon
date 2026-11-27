@@ -722,10 +722,17 @@ class PersonaProvisioningCoordinator:
         """True when a provisioning record belongs to a non-trading persona or trader servant paper book."""
         from .personas import fleet_classification as _fleet_cls
 
-        payload = record.request_payload if isinstance(record.request_payload, Mapping) else {}
-        result = record.result if isinstance(record.result, Mapping) else {}
-        references = record.references if isinstance(record.references, Mapping) else {}
-        if _fleet_cls.is_non_trading_persona(payload) or _fleet_cls.is_non_trading_persona(record.to_dict()):
+        raw_payload = getattr(record, "request_payload", None)
+        payload = raw_payload if isinstance(raw_payload, Mapping) else {}
+        raw_result = getattr(record, "result", None)
+        result = raw_result if isinstance(raw_result, Mapping) else {}
+        raw_references = getattr(record, "references", None)
+        references = raw_references if isinstance(raw_references, Mapping) else {}
+        to_dict = getattr(record, "to_dict", None)
+        record_dict = to_dict() if callable(to_dict) else {}
+        if _fleet_cls.is_non_trading_persona(payload) or (
+            isinstance(record_dict, Mapping) and _fleet_cls.is_non_trading_persona(record_dict)
+        ):
             return True
         for container in (
             payload,
@@ -736,14 +743,15 @@ class PersonaProvisioningCoordinator:
             if str(container.get("book_kind") or "").strip().lower() == "trader_servant_paper_book":
                 return True
         if (
-            str(record.idempotency_key or "").strip().startswith("trader-paper-book:")
+            str(getattr(record, "idempotency_key", None) or "").strip().startswith("trader-paper-book:")
             or str(payload.get("mandate") or "").strip().lower() == "user_private_agora_servant_paper_book"
         ):
             return True
         try:
-            owner = self.persona_owner_provider() if callable(self.persona_owner_provider) else None
+            provider = getattr(self, "persona_owner_provider", None)
+            owner = provider() if callable(provider) else None
             getter = getattr(owner, "get_persona", None) if owner is not None else None
-            persona_id = str(record.persona_id or "").strip()
+            persona_id = str(getattr(record, "persona_id", None) or "").strip()
             persona = getter(persona_id) if callable(getter) and persona_id else None
         except Exception:
             persona = None
