@@ -28,6 +28,11 @@ logger = logging.getLogger("agora-interaction-worker")
 
 HEARTBEAT_PATH = Path(os.getenv("AGORA_WORKER_HEARTBEAT_PATH", "/tmp/agora-interaction-worker.heartbeat"))
 HEARTBEAT_MAX_AGE_SECONDS = float(os.getenv("AGORA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "300"))
+# AGORA-SERVANT-SESSION-DURABLE-20261127: the servant turn loop runs beside the interaction loop
+# and keeps its own heartbeat, so a stalled turn loop also fails the container healthcheck.
+SERVANT_HEARTBEAT_PATH = Path(
+    os.getenv("AGORA_SERVANT_WORKER_HEARTBEAT_PATH", "/tmp/agora-servant-turn-worker.heartbeat")
+)
 
 
 def check_heartbeat(path: Path = HEARTBEAT_PATH, max_age: float = HEARTBEAT_MAX_AGE_SECONDS) -> bool:
@@ -43,6 +48,22 @@ def check_heartbeat(path: Path = HEARTBEAT_PATH, max_age: float = HEARTBEAT_MAX_
     return True
 
 
+def _run_servant_loop(
+    servant_worker, stop_event: threading.Event, poll_interval: float, max_ticks: int = 0
+) -> None:
+    """Poll queued servant turns until stopped; one provider call per claimed turn."""
+    ticks = 0
+    while not stop_event.is_set() and (max_ticks <= 0 or ticks < max_ticks):
+        ticks += 1
+        SERVANT_HEARTBEAT_PATH.touch()
+        try:
+            if servant_worker.run_once() == 0:
+                stop_event.wait(poll_interval)
+        except Exception as exc:  # keep the loop alive; the next tick re-claims
+            logger.error("Error in servant turn tick %d: %s", ticks, exc)
+            stop_event.wait(poll_interval)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agora Persona interaction background worker")
     parser.add_argument("--once", action="store_true", help="Process pending interactions once and exit")
@@ -54,6 +75,8 @@ def main() -> int:
 
     if args.healthcheck:
         if not check_heartbeat():
+            return 1
+        if os.getenv("AGORA_SERVANT_WORKER_HEARTBEAT_PATH") and not check_heartbeat(SERVANT_HEARTBEAT_PATH):
             return 1
         logger.info("Healthcheck OK")
         return 0
@@ -168,10 +191,49 @@ def main() -> int:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
+    # The Agora owner holds servant conversations and their queued turns. It is a required
+    # dependency: startup fails rather than leaving queued turns unanswered.
+    from agora.servant.turn_worker import ServantTurnWorker
+    from services.agora.service import AgoraWriteService, build_agora_write_service
+
+    servant_backend = (
+        os.getenv("AGORA_STORE_BACKEND")
+        or (workshop_backend if workshop_backend == "postgres" else "memory")
+    ).strip().lower()
+    servant_dsn = os.getenv("AGORA_STORE_DSN") or os.getenv("DATABASE_URL") or dsn
+    servant_schema = os.getenv("AGORA_STORE_SCHEMA", workshop_schema)
+    if servant_backend == "postgres":
+        servant_owner = build_agora_write_service(dsn=servant_dsn, schema=servant_schema)
+    elif servant_backend in ("off", "memory"):
+        from unittest import mock
+        from agora.servant.pg_owner_fake import FakeOwnerTable
+        from services.agora.store import AgoraStore
+
+        with mock.patch("services.agora.store.PostgresJsonOwnerStore", FakeOwnerTable):
+            servant_owner = AgoraWriteService(
+                store=AgoraStore(dsn="memory://", schema=servant_schema, bootstrap=False)
+            )
+    else:
+        raise ValueError(f"Unsupported AGORA_STORE_BACKEND: {servant_backend}")
+
+    servant_worker = ServantTurnWorker(owner=servant_owner)
+    SERVANT_HEARTBEAT_PATH.unlink(missing_ok=True)
+
     if args.once:
         processed = worker.run_once(tenant_id=tenant_id)
-        logger.info("Processed %d interaction(s)", processed)
+        servant_processed = servant_worker.run_once()
+        logger.info(
+            "Processed %d interaction(s), %d servant turn(s)", processed, servant_processed
+        )
         return 0
+
+    servant_thread = threading.Thread(
+        target=_run_servant_loop,
+        args=(servant_worker, stop_event, args.poll_interval, args.max_ticks),
+        name="agora-servant-turn-worker",
+        daemon=True,
+    )
+    servant_thread.start()
 
     worker.run_loop(
         poll_interval=args.poll_interval,
@@ -180,6 +242,8 @@ def main() -> int:
         tenant_id=tenant_id,
         heartbeat_path=HEARTBEAT_PATH,
     )
+    stop_event.set()
+    servant_thread.join(timeout=5)
     return 0
 
 
