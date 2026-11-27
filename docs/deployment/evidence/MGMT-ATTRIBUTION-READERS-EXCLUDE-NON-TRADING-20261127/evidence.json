@@ -5,7 +5,7 @@
   "review_independence": "Codex versus Antigravity model families; assigned canonical reviewer, no self-approval.",
   "root_cause_class": "RC2 / WP2.3: explicit advisory persona selected as an institutional trading persona after T7 paper book provisioning",
   "implementation_status": "source_validated_pending_independent_review",
-  "source_base": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+  "source_base": "50a65493c596eb00567e5ae34e5fe804559e77ad",
   "anchors": [
     "8bb212957",
     "79bf07588"
@@ -376,6 +376,16 @@
       "command": "python3 services/control-plane/bff/tests/probe_management_strategy_cohort.py --help; python3 -m py_compile services/control-plane/bff/tests/probe_management_strategy_cohort.py; git diff --check",
       "exit_code": 0,
       "result": "CLI/compilation/whitespace checks passed; hosted browser probe intentionally pending deployment, not counted as passed"
+    },
+    {
+      "command": "timeout 180 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/control-plane/bff/tests/test_agora_shadow_mode.py",
+      "exit_code": 0,
+      "result": "89 passed in 21.69s after composing current dev 50a65493c; terminal output collected"
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check; git diff --check origin/dev...HEAD",
+      "exit_code": 0,
+      "result": "test inventory ok; no whitespace errors"
     }
   ],
   "hosted_acceptance": {
@@ -408,5 +418,10 @@
       "finding": "Source review cannot satisfy acceptance item 6; this task branch is not served by hosted dev.",
       "disposition": "Keep pending until canonical integration, dev deployment and admintest browser probe; no acceptance claim."
     }
-  ]
+  ],
+  "initial_source_base": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+  "base_refresh": {
+    "merge_commit": "355c913bf",
+    "reason": "Canonical handoff rejected the old head because it lacked six current-dev commits; merged current dev cleanly before repeating handoff. No canonical review was admitted for the stale head. Upstream Agora shadow repair and both problem-register entries preserved."
+  }
 }
