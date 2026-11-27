@@ -102,9 +102,11 @@ class AgoraWriteService:
         dsn: Optional[str] = None,
         schema: str = "agora",
         dataset_store: Optional[Any] = None,
+        imitation_candidate_resolver: Optional[Any] = None,
     ) -> None:
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
         self.dataset_store = dataset_store
+        self.imitation_candidate_resolver = imitation_candidate_resolver
         try:
             from services.control_plane.bff.agora.dataset_extraction.extractor import (
                 ensure_journal_evidence_emission_wired,
@@ -665,13 +667,94 @@ class AgoraWriteService:
             )
             return None
 
+    def _attach_trader_imitation_arm(self, lock: Dict[str, Any]) -> Dict[str, Any]:
+        from .shadow_mode import (
+            canonical_checksum,
+            predict_trader_imitation_action,
+            unavailable,
+        )
+
+        prepared = dict(lock)
+        arms = dict(prepared.get("arms")) if isinstance(prepared.get("arms"), dict) else {}
+        existing = arms.get("trader_imitation")
+        if isinstance(existing, dict) and existing.get("available") is True:
+            prepared["arms"] = arms
+            opt = dict(prepared.get("optional_alt_versions")) if isinstance(prepared.get("optional_alt_versions"), dict) else {}
+            opt.setdefault("trader_imitation", dict(existing))
+            prepared["optional_alt_versions"] = opt
+            return prepared
+
+        candidate = None
+        if callable(self.imitation_candidate_resolver):
+            trader_identity = prepared.get("trader_identity") if isinstance(prepared.get("trader_identity"), dict) else {}
+            tenant_id = str(prepared.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
+            user_id = str(
+                prepared.get("user_id")
+                or prepared.get("agora_user_id")
+                or trader_identity.get("user_id")
+                or trader_identity.get("agora_user_id")
+                or ""
+            ).strip()
+            strategy_id = str(
+                prepared.get("strategy_id")
+                or ((prepared.get("decision_time_snapshot") or {}) if isinstance(prepared.get("decision_time_snapshot"), dict) else {}).get("strategy_id")
+                or ""
+            ).strip()
+            try:
+                candidate = self.imitation_candidate_resolver(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                )
+            except Exception as exc:
+                _logger.warning("Failed to resolve trader imitation candidate for lock: %s", exc)
+                candidate = None
+
+        imitation_arm: Optional[Dict[str, Any]] = None
+        if isinstance(candidate, dict):
+            if candidate.get("available") is False:
+                imitation_arm = unavailable(
+                    str(
+                        candidate.get("unavailable_reason")
+                        or candidate.get("reason")
+                        or "no_trader_imitation_candidate_on_decision_event"
+                    )
+                )
+            else:
+                snap = (
+                    prepared.get("decision_time_snapshot")
+                    if isinstance(prepared.get("decision_time_snapshot"), dict)
+                    else {}
+                )
+                pred = predict_trader_imitation_action(candidate, snapshot=snap, event=prepared)
+                if pred.get("available") is True:
+                    imitation_arm = pred
+
+        changed = False
+        if imitation_arm is not None:
+            arms["trader_imitation"] = dict(imitation_arm)
+            changed = True
+        elif "trader_imitation" not in arms:
+            arms["trader_imitation"] = unavailable("no_trader_imitation_candidate_on_decision_event")
+            changed = True
+
+        if changed:
+            prepared["arms"] = arms
+            opt = dict(prepared.get("optional_alt_versions")) if isinstance(prepared.get("optional_alt_versions"), dict) else {}
+            opt["trader_imitation"] = dict(arms["trader_imitation"])
+            prepared["optional_alt_versions"] = opt
+            if "checksum" in prepared:
+                prepared["checksum"] = canonical_checksum(prepared)
+        return prepared
+
     def create_decision_lock(
         self,
         lock: Dict[str, Any],
         actor_roles: Union[Sequence[str], str],
     ) -> DictRecord:
         assert_authorized("AgoraDecisionLock", "create", actor_roles)
-        created = self.store.create_decision_lock(lock)
+        enriched = self._attach_trader_imitation_arm(lock)
+        created = self.store.create_decision_lock(enriched)
         self._emit_decision_lock_evidence(created)
         return created
 

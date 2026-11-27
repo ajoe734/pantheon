@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Iterable, List, Optional
+import math
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 LOCK_SCHEMA = "AgoraHumanDecisionLock.v1"
 LOCK_RESOURCE = "AgoraDecisionLock"
@@ -249,6 +250,242 @@ def _arm_from_event_key(event: Dict[str, Any], keys: Iterable[str], reason: str)
     return unavailable(reason)
 
 
+_IMITATION_ACTION_CODE_MAP: Dict[str, float] = {
+    "enter": 1.0,
+    "entry": 1.0,
+    "buy": 1.0,
+    "add": 0.5,
+    "increase": 0.5,
+    "hold": 0.0,
+    "review": 0.0,
+    "defer": -0.25,
+    "reduce": -0.5,
+    "trim": -0.5,
+    "exit": -1.0,
+    "sell": -1.0,
+    "reject": -1.0,
+}
+
+
+def _observation_for_imitation(event: Mapping[str, Any], snapshot: Mapping[str, Any]) -> List[float]:
+    for candidate in (event.get("observation"), snapshot.get("observation")):
+        if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)) and candidate:
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in candidate):
+                return [float(x) for x in candidate]
+
+    conf = snapshot.get("confidence") if snapshot.get("confidence") is not None else event.get("confidence")
+    if isinstance(conf, Mapping) and isinstance(conf.get("value"), (int, float)) and not isinstance(conf.get("value"), bool):
+        conf_val = float(conf["value"])
+    elif isinstance(conf, (int, float)) and not isinstance(conf, bool):
+        conf_val = float(conf)
+    else:
+        conf_val = 0.75
+
+    prob = snapshot.get("probability") if snapshot.get("probability") is not None else event.get("probability")
+    if isinstance(prob, Mapping) and isinstance(prob.get("value"), (int, float)) and not isinstance(prob.get("value"), bool):
+        prob_val = float(prob["value"])
+    elif isinstance(prob, (int, float)) and not isinstance(prob, bool):
+        prob_val = float(prob)
+    else:
+        prob_val = 0.5
+
+    ev = snapshot.get("expected_value") if snapshot.get("expected_value") is not None else event.get("expected_value")
+    if isinstance(ev, Mapping):
+        net_raw = ev.get("net")
+        down_raw = ev.get("downside")
+        net_val = float(net_raw) if isinstance(net_raw, (int, float)) and not isinstance(net_raw, bool) else 0.0
+        down_val = float(down_raw) if isinstance(down_raw, (int, float)) and not isinstance(down_raw, bool) else 0.0
+    else:
+        net_val = 0.0
+        down_val = 0.0
+
+    action_token = _clean(
+        snapshot.get("suggested_action") or snapshot.get("event_kind") or event.get("suggested_action")
+    ).lower()
+    action_code = _IMITATION_ACTION_CODE_MAP.get(action_token, 0.0)
+    return [conf_val, prob_val, net_val, down_val, action_code]
+
+
+def predict_trader_imitation_action(
+    candidate_or_policy: Mapping[str, Any],
+    *,
+    snapshot: Optional[Mapping[str, Any]] = None,
+    event: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Deterministically evaluate a trained trader behaviour candidate on decision-time inputs."""
+    if not isinstance(candidate_or_policy, Mapping):
+        return unavailable("invalid_trader_imitation_candidate")
+
+    policy: Mapping[str, Any] = candidate_or_policy
+    for key in ("policy_weights", "policy"):
+        sub = candidate_or_policy.get(key)
+        if isinstance(sub, Mapping) and sub.get("weights") and sub.get("action_labels"):
+            policy = sub
+            break
+    if not (policy.get("weights") and policy.get("action_labels")):
+        art = candidate_or_policy.get("artifact")
+        if isinstance(art, Mapping) and isinstance(art.get("policy"), Mapping):
+            policy = art["policy"]
+        elif isinstance(art, Mapping) and isinstance(art.get("model"), Mapping):
+            model = art["model"]
+            m_weights = model.get("weights")
+            m_biases = model.get("biases")
+            m_actions = [str(a).strip() for a in (model.get("actions") or []) if str(a).strip()]
+            if isinstance(m_weights, Mapping) and m_actions:
+                feat_names = ["confidence", "probability", "expected_net", "expected_downside", "suggested_action_code"]
+                converted_w: List[List[float]] = []
+                converted_b: List[float] = []
+                for act in m_actions:
+                    row_map = m_weights.get(act) if isinstance(m_weights.get(act), Mapping) else {}
+                    row_vec = [
+                        float(row_map.get("confidence", 0.0) or 0.0),
+                        float(row_map.get("probability", row_map.get("risk_score", 0.0)) or 0.0),
+                        float(row_map.get("expected_net", 0.0) or 0.0),
+                        float(row_map.get("expected_downside", 0.0) or 0.0),
+                        float(row_map.get("suggested_action_code", 0.0) or 0.0),
+                    ]
+                    converted_w.append(row_vec)
+                    b_val = float((m_biases or {}).get(act, 0.0) or 0.0) if isinstance(m_biases, Mapping) else 0.0
+                    converted_b.append(b_val)
+                policy = {
+                    "action_labels": m_actions,
+                    "weights": converted_w,
+                    "bias": converted_b,
+                    "feature_names": feat_names,
+                }
+
+    weights = policy.get("weights")
+    bias = policy.get("bias")
+    action_labels = [str(a).strip() for a in (policy.get("action_labels") or []) if str(a).strip()]
+    if (
+        not isinstance(weights, Sequence)
+        or not isinstance(bias, Sequence)
+        or not action_labels
+        or len(weights) != len(action_labels)
+        or len(bias) != len(action_labels)
+    ):
+        return unavailable("candidate_missing_policy_weights")
+
+    event_map = event if isinstance(event, Mapping) else {}
+    snap_map = (
+        snapshot
+        if isinstance(snapshot, Mapping)
+        else (
+            event_map.get("decision_time_snapshot")
+            if isinstance(event_map.get("decision_time_snapshot"), Mapping)
+            else {}
+        )
+    )
+    observation = _observation_for_imitation(event_map, snap_map)
+
+    logits: List[float] = []
+    for row, offset in zip(weights, bias):
+        if not isinstance(row, Sequence):
+            return unavailable("candidate_malformed_weight_row")
+        dot = sum(float(w) * float(x) for w, x in zip(row, observation))
+        logits.append(dot + float(offset))
+
+    max_logit = max(logits)
+    exps = [math.exp(l - max_logit) for l in logits]
+    denom = sum(exps)
+    if denom <= 0.0:
+        return unavailable("candidate_zero_probability_norm")
+
+    probabilities = {label: val / denom for label, val in zip(action_labels, exps)}
+    predicted_action = max(probabilities.items(), key=lambda kv: (round(kv[1], 12), kv[0]))[0]
+    predicted_conf = probabilities[predicted_action]
+
+    return {
+        "available": True,
+        "arm": "trader_imitation",
+        "arm_kind": "optional_alt_version",
+        "source_field": "trader_imitation_candidate",
+        "action": predicted_action,
+        "suggested_action": predicted_action,
+        "suggestion": predicted_action,
+        "confidence": round(predicted_conf, 6),
+        "action_probabilities": {k: round(v, 6) for k, v in probabilities.items()},
+        "observation": [round(float(x), 6) for x in observation],
+        "candidate_id": _clean(candidate_or_policy.get("candidate_id") or candidate_or_policy.get("id")) or None,
+        "candidate_version": candidate_or_policy.get("candidate_version") or candidate_or_policy.get("version"),
+        "strategy_id": _clean(candidate_or_policy.get("strategy_id")) or None,
+        "decision_count": candidate_or_policy.get("decision_count"),
+        "artifact_checksum": _clean(
+            candidate_or_policy.get("artifact_checksum") or candidate_or_policy.get("checksum")
+        )
+        or None,
+    }
+
+
+def _arm_trader_imitation(
+    event: Dict[str, Any],
+    *,
+    snapshot: Dict[str, Any],
+    trader_imitation_candidate: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    candidate = (
+        trader_imitation_candidate
+        or event.get("trader_imitation_candidate")
+        or event.get("imitation_candidate")
+    )
+    if isinstance(candidate, Mapping):
+        if candidate.get("available") is False:
+            return unavailable(
+                _clean(
+                    candidate.get("unavailable_reason")
+                    or candidate.get("reason")
+                    or "no_trader_imitation_candidate_on_decision_event"
+                )
+            )
+        pred = predict_trader_imitation_action(candidate, snapshot=snapshot, event=event)
+        if pred.get("available") is True:
+            return pred
+
+    for key in ("trader_imitation", "trader_imitation_suggestion"):
+        value = event.get(key)
+        if isinstance(value, Mapping) and value:
+            if value.get("available") is False:
+                return unavailable(
+                    _clean(
+                        value.get("unavailable_reason")
+                        or value.get("reason")
+                        or "no_trader_imitation_candidate_on_decision_event"
+                    )
+                )
+            if value.get("policy_weights") or value.get("policy") or value.get("weights"):
+                pred = predict_trader_imitation_action(value, snapshot=snapshot, event=event)
+                if pred.get("available") is True:
+                    return pred
+            action = _clean(
+                value.get("action")
+                or value.get("suggestion")
+                or value.get("suggested_action")
+                or value.get("decision")
+                or value.get("verdict")
+                or value.get("stance")
+            )
+            if action:
+                return {
+                    "available": True,
+                    "arm": "trader_imitation",
+                    "arm_kind": "optional_alt_version",
+                    "source_field": key,
+                    **json.loads(json.dumps(dict(value))),
+                    "action": action,
+                    "suggested_action": _clean(value.get("suggested_action")) or action,
+                    "suggestion": _clean(value.get("suggestion")) or action,
+                }
+            return unavailable(
+                _clean(value.get("unavailable_reason") or value.get("reason") or "trader_imitation_missing_suggestion")
+            )
+
+    reason = (
+        _clean(event.get("trader_imitation_unavailable_reason"))
+        or "no_trader_imitation_candidate_on_decision_event"
+    )
+    return unavailable(reason)
+
+
 def canonical_checksum(lock: Dict[str, Any]) -> str:
     body = {k: v for k, v in lock.items() if k != "checksum"}
     encoded = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -271,6 +508,7 @@ def build_decision_lock(
     account_id: Optional[str] = None,
     broker_ids: Optional[List[str]] = None,
     actor_roles: Optional[List[str]] = None,
+    trader_imitation_candidate: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     if not _clean(tenant_id) or not _clean(user_id):
         raise DecisionLockInvalidError("trader_identity_missing")
@@ -280,6 +518,16 @@ def build_decision_lock(
     subject = event.get("subject") if isinstance(event.get("subject"), dict) else {}
     acct = _clean(account_id) or _clean(event.get("account_id")) or None
     brokers = [str(b) for b in (broker_ids or event.get("broker_ids") or []) if _clean(b)]
+    snapshot = build_decision_time_snapshot(
+        event,
+        decision_time=decision_time,
+        data_cutoff=cutoff or None,
+    )
+    imitation_arm = _arm_trader_imitation(
+        event,
+        snapshot=snapshot,
+        trader_imitation_candidate=trader_imitation_candidate,
+    )
     lock: Dict[str, Any] = {
         "schema": LOCK_SCHEMA,
         "human_decision_id": human_decision_id,
@@ -304,11 +552,7 @@ def build_decision_lock(
         "decision": a4_decision(body_decision, event_kind),
         "trading_room_verdict": body_decision,
         "evidence_kind": decision_evidence_kind(body_decision, modifications),
-        "decision_time_snapshot": build_decision_time_snapshot(
-            event,
-            decision_time=decision_time,
-            data_cutoff=cutoff or None,
-        ),
+        "decision_time_snapshot": snapshot,
         "target_instrument": _clean(subject.get("symbol")) or None,
         "event_kind": event_kind or None,
         "raw_rationale": rationale,
@@ -343,6 +587,10 @@ def build_decision_lock(
                 ("institutional_view", "committee_variant"),
                 "no_institutional_view_on_decision_event",
             ),
+            "trader_imitation": dict(imitation_arm),
+        },
+        "optional_alt_versions": {
+            "trader_imitation": dict(imitation_arm),
         },
         "no_order_route_proof": "agora_decision_lock_record_only",
         "immutable": True,
@@ -371,6 +619,7 @@ __all__ = [
     "build_decision_time_snapshot",
     "canonical_checksum",
     "decision_evidence_kind",
+    "predict_trader_imitation_action",
     "unavailable",
     "verify_checksum",
 ]
