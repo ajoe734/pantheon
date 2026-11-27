@@ -1200,5 +1200,3 @@ def test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_tr
     assert transition_calls == []
     assert deploy_calls == []
     assert rm_service.get_binding(paused_binding_id).status == "paused"
-
-

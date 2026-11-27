@@ -4093,5 +4093,92 @@ class TestTraderServantPaperBookIntentOnlyAndPersonaSettlement(unittest.TestCase
         )
         self.assertEqual(stores[trader_binding["binding_id"]].queue_depth(), 0)
 
+    def test_preseeded_parked_strategy_decision_is_not_settled_or_released_for_trader_servant_paper_book(
+        self,
+    ) -> None:
+        """P1 / AC3 regression: even if a strategy decision was previously parked in
+        pending_settlement for the binding before metadata.book_kind='trader_servant_paper_book'
+        was set/restored, neither settle_pending_intraday nor produce may settle or release
+        a strategy signal for the trader servant paper book on D+1 open.
+        """
+        from services.execution.lean_runtime.intraday_settlement import (
+            ENQUEUED_RECORD_SUFFIX,
+            PENDING_RECORD_SUFFIX,
+            SETTLEMENT_RECORD_SUFFIX,
+            index_slot_id,
+        )
+        from services.execution.lean_runtime.paper_signal_producer import (
+            CurrentArtifactStrategy,
+        )
+        from services.execution.lean_runtime.test_current_artifact_signal import (
+            _artifact,
+            _binding,
+        )
 
+        binding_id = "rb-77d962be4e324032808324109f2c154e"
+        trader_art = _artifact()
+        trader_art["parameters"]["symbols"] = ["2330.TW"]
+        binding = _binding(trader_art, binding_id=binding_id)
+        binding["runtime_id"] = "rt-persona-paper-3ca8da543bef6ede0a07"
+        binding["capital_pool_id"] = "pool-persona-paper-3ca8da543bef6ede0a07"
+        binding["persona_capital_binding_id"] = "pcb-persona-paper-3ca8da543bef6ede0a07"
+        binding["symbol"] = "2330.TW"
+        binding["market_input"] = {
+            "symbol": "2330.TW",
+            "closes": [100.0, 110.0],
+            "source_ref": "source-ingest:tw_price_daily",
+            "event_time": "2026-11-13T05:30:00Z",
+            "observed_at": "2026-11-13T06:00:00Z",
+        }
+        # Step 1: Preseed a parked 2330.TW strategy decision on 2026-11-13 before
+        # metadata.book_kind == 'trader_servant_paper_book' is set/restored.
+        binding["metadata"] = {"symbol": "2330.TW"}
+        store = InMemoryPendingSignalStore()
+        d1_ready = [False]
+
+        def _daily_reader(symbol: str, session_date: str, _now: datetime) -> list[dict[str, Any]]:
+            if not d1_ready[0] or session_date != "2026-11-16" or symbol != "2330.TW":
+                return []
+            return [
+                {
+                    "symbol": "2330.TW",
+                    "bar_start": "2026-11-16T09:00:00+08:00",
+                    "bar_frequency": "1d",
+                    "bar_availability_ts": "2026-11-16T16:00:00+08:00",
+                    "open": 1040.0,
+                }
+            ]
+
+        producer = _RealPaperSignalProducer(
+            store_for=lambda _b: store,
+            strategy=CurrentArtifactStrategy(expression_layer=False),
+            daily_bar_reader=_daily_reader,
+        )
+        self.assertEqual(producer.produce(binding, "2026-11-13T10:00:00Z"), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        slot = store.get_decision_record(index_slot_id(binding_id, "2026-11-13", 0))
+        self.assertIsNotNone(slot)
+        decision_id = slot["decision_id"]
+        pending_rec = store.get_decision_record(decision_id + PENDING_RECORD_SUFFIX)
+        self.assertIsNotNone(pending_rec)
+        self.assertEqual(pending_rec["status"], "pending_settlement")
+
+        # Step 2: Restore/set metadata.book_kind = 'trader_servant_paper_book', make the
+        # official D+1 open available on 2026-11-16, and verify settle_pending_intraday
+        # and produce both return 0 and release 0 strategy signals.
+        binding["metadata"]["book_kind"] = "trader_servant_paper_book"
+        binding["metadata"]["persona_id"] = "agora-servant-799a3ce8c021b91cbb54"
+        d1_ready[0] = True
+
+        self.assertEqual(
+            producer.settle_pending_intraday(binding, "2026-11-16T10:00:00Z"),
+            0,
+        )
+        self.assertEqual(
+            producer.produce(binding, "2026-11-16T10:00:00Z"),
+            0,
+        )
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertIsNone(store.get_decision_record(decision_id + SETTLEMENT_RECORD_SUFFIX))
+        self.assertIsNone(store.get_decision_record(decision_id + ENQUEUED_RECORD_SUFFIX))
 

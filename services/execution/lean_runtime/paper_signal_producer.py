@@ -2570,6 +2570,9 @@ class PaperSignalProducer:
         """
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        if _is_trader_servant_paper_book_binding(binding):
+            self._degraded_by_binding.pop(binding_id, None)
+            return 0
         store = self._store_for(binding)
         getter = getattr(store, "get_decision_record", None)
         if not callable(getter) or not callable(getattr(store, "put_decision_record", None)):
@@ -2653,6 +2656,9 @@ class PaperSignalProducer:
         """Emit + enqueue signals for one binding; return the count enqueued."""
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        if _is_trader_servant_paper_book_binding(binding):
+            self._degraded_by_binding.pop(binding_id, None)
+            return 0
         try:
             released = self.settle_pending_intraday(binding, now_iso)
         except Exception as exc:  # noqa: BLE001 - a settlement-index fault must not block daily production
