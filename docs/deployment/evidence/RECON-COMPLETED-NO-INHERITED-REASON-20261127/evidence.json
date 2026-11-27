@@ -1,0 +1,19 @@
+{
+  "task": "RECON-COMPLETED-NO-INHERITED-REASON-20261127",
+  "class": "RC6",
+  "status": "source_and_focused_tests_only_hosted_proof_pending",
+  "cause": "In services/reconciliation-drift/main.py (_scheduled_lifecycle_event), metadata was copied directly from the committed position_snapshot event. When reconciliation_completed was emitted for a fill journey (such as 2026-11-23T23:40:32Z 青禾 2330 sell, where all 9 booking checks passed), metadata.reason_code retained the inherited expression choice code ('close_leg'), which downstream BFF timeline mapping treated as an expression code in reason_code and replaced with 'reason_not_recorded'.",
+  "fix": [
+    "services/reconciliation-drift/main.py (_scheduled_lifecycle_event): pop inherited reason_code from the copied position_snapshot metadata so reconciliation_completed never carries an inherited reason_code; if the inherited value is an expression choice code (long_cash, long_lever, short_via_future, close_leg), preserve it as metadata.expression_reason_code when not already set; reconciliation_failed continues to set its own reconciliation metadata.reason_code; no top-level reason fields and no new writer."
+  ],
+  "tests": {
+    "updated": "services/reconciliation-drift/tests/test_journey_booking_reconciliation.py",
+    "cases": [
+      "test_recorded_20261123_completed_reconciliation_drops_inherited_expression_reason_code (recorded hosted 2026-11-23T23:40:32Z 2330 sell payload with metadata.reason_code='close_leg' and all 9 passed booking checks emits reconciliation_completed without reason_code, with metadata.expression_reason_code='close_leg', and with the passed booking checks in metadata.reason_detail)",
+      "test_recorded_20261125_failed_reconciliation_keeps_runtime_unhealthy_reason_code (recorded hosted 2026-11-25T12:11:10Z degraded-runtime payload emits reconciliation_failed with metadata.reason_code='runtime_unhealthy_at_reconciliation' and metadata.expression_reason_code='close_leg')",
+      "test_reconciliation_events_never_carry_expression_choice_as_reason_code (all 4 expression choice codes long_cash, long_lever, short_via_future, close_leg)",
+      "test_completed_reconciliation_never_inherits_non_expression_reason_code"
+    ]
+  },
+  "runtime_budget": "No new writer, recurring job, or storage change; modifies only in-memory metadata fields on the existing reconciliation lifecycle event."
+}
