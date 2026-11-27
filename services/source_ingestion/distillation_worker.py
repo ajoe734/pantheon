@@ -64,6 +64,7 @@ from services.source_ingestion.hypothesis_card import (
     extractor_from_env,
     fixed_defect_for_skip_reason,
     l2_extraction_tick_budget_seconds,
+    sync_release_switch_row,
 )
 from services.source_ingestion.hypothesis_compiler import (
     COMPILED,
@@ -871,6 +872,14 @@ class DistillationJobQueue:
                 "ALTER TABLE distillation_outbox ADD COLUMN defect_reattempted INTEGER NOT NULL DEFAULT 0"
             )
         self._migrate_terminal_counts(connection)
+        defect_idx = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'distillation_outbox_defect_reattempt_idx'"
+        ).fetchone()
+        if defect_idx is not None and (
+            "no_hypothesis:%" not in str(defect_idx["sql"] or "")
+            or "hypothesis_compiler_failed:%" not in str(defect_idx["sql"] or "")
+        ):
+            connection.execute("DROP INDEX IF EXISTS distillation_outbox_defect_reattempt_idx")
         # Indexes support the bounded claim, lease recovery, pruning and the
         # per-tick readbacks; none of them may require a sort or a scan that
         # grows with total history.
@@ -890,7 +899,9 @@ class DistillationJobQueue:
             """CREATE INDEX IF NOT EXISTS distillation_outbox_defect_reattempt_idx
                ON distillation_outbox(enqueued_at)
                WHERE status = 'skipped' AND defect_reattempted = 0
-                 AND skip_reason LIKE 'hypothesis_extraction_failed:%'""",
+                 AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
+                      OR skip_reason LIKE 'no_hypothesis:%'
+                      OR skip_reason LIKE 'hypothesis_compiler_failed:%')""",
             # Exact (source_id, source_digest) readbacks (get/claim/due_tenants)
             # would otherwise scan the whole outbox for every lookup.
             """CREATE INDEX IF NOT EXISTS distillation_outbox_source_version_idx
@@ -899,6 +910,30 @@ class DistillationJobQueue:
                ON distillation_dead_letters(resolved_at) WHERE resolved_at IS NOT NULL""",
         ):
             connection.execute(statement)
+        sync_release_switch_row(connection, now_epoch=float(self._now()))
+
+    def record_release_switch(
+        self,
+        *,
+        deployment_sha: str | None = None,
+        switched_at: Any = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, str] | None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                out = sync_release_switch_row(
+                    connection,
+                    now_epoch=float(self._now()),
+                    deployment_sha=deployment_sha,
+                    switched_at=switched_at,
+                    env=env,
+                )
+                connection.execute("COMMIT")
+                return out
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
 
     @staticmethod
     def _migrate_terminal_counts(connection: sqlite3.Connection) -> None:
@@ -2900,7 +2935,7 @@ class DistillationJobQueue:
         Only ``skipped`` rows with ``defect_reattempted = 0`` that are still the
         newest outbox version of their source and whose ``skip_reason`` matches
         ``FIXED_DEFECT_REATTEMPT_OUTCOMES`` are eligible. Irrelevant,
-        admission-denied (redaction) and model-abstained records never match.
+        admission-denied (redaction) and genuine model-abstained records never match.
         Stamped with ``defect_reattempted = 1`` so ``claim_due`` orders them
         after fresh records and they are never re-opened a second time.
         """
@@ -2942,6 +2977,7 @@ class DistillationJobQueue:
                        AND defect_reattempted = 0
                        AND pruned_at IS NULL
                        AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
+                            OR skip_reason LIKE 'no_hypothesis:%'
                             OR skip_reason LIKE 'hypothesis_compiler_failed:%')
                        {tenant_clause}
                        AND NOT EXISTS (

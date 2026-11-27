@@ -3086,6 +3086,26 @@
    "task": "DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "singleton INTEGER PRIMARY KEY CHECK (singleton = 1)",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 1 row (singleton INTEGER PRIMARY KEY CHECK (singleton = 1)), overwritten in place only when a new deployed GIT_SHA activates (~100 bytes total)",
+   "cleanup": "singleton row is replaced in place on release switch; no history is appended",
+   "growth_driver": "one singleton row per SQLite database (l2_extraction_ledger.sqlite and distill_job_queue.jsonl) recording the active deployment_sha and initial switched_at timestamp",
+   "growth_per_day": "0 rows/day (1 row maximum, ~100 bytes)",
+   "kind": "table",
+   "name": "services/source_ingestion/hypothesis_card.py::{RELEASE_SWITCH_TABLE}",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/discovery_summary.py",
+    "services/source_ingestion/distillation_worker.py",
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -6433,6 +6453,29 @@
    "bound_proof": {
     "file": "services/registry/storage.py",
     "contains": "LINEAGE_INDEX_MAX_TENANT_VIEWS = 16"
+   }
+  },
+  {
+   "name": "OpenClaw retired stock first-run workspace archive and receipts (<stateDir>/retired-stock-bootstrap/<workspace>/* and <stateDir>/retired-stock-bootstrap/receipts.jsonl)",
+   "owner": "openclaw-gateway configuration (scripts/openclaw-configure-shared-model-pool.sh, L2 extraction / RC2)",
+   "writer": "scripts/openclaw-configure-shared-model-pool.sh (shell-embedded Node writer retiring stock BOOTSTRAP.md across workspace-* and workspaces/* plus stock IDENTITY.md/USER.md/SOUL.md/HEARTBEAT.md/AGENTS.md in workspace-structured-extraction and workspace-memory-index via fs.renameSync to <stateDir>/retired-stock-bootstrap/<workspace>/<file> and fs.appendFileSync to <stateDir>/retired-stock-bootstrap/receipts.jsonl, and writing Pantheon-authored ~660 B AGENTS.md in workspace-structured-extraction and workspace-memory-index; not discovered by check_storage_manifest.py static inventory because shell-embedded Node under scripts/ is outside services/**/*.py)",
+   "task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+   "register_class": "RC2",
+   "cadence": "deploy-time gateway configuration step (scripts/openclaw-configure-shared-model-pool.sh); runs once per gateway deploy/configure and is idempotent on repeat runs (once agents.defaults.skipBootstrap=true is set and existing stock files are moved to retired-stock-bootstrap/, a second run moves 0 files and appends 0 receipt lines; no recurring background job)",
+   "count_at_hosted_scale": "<= ~60 archived stock files of <= 8 KB each and <= ~60 JSONL receipt lines in receipts.jsonl across existing workspaces under the gateway state dir (measured on hosted dev 2026-11-27: 20 workspaces = 18 stock BOOTSTRAP.md + 2 x 5 service-agent stock templates IDENTITY.md/USER.md/SOUL.md/HEARTBEAT.md/AGENTS.md = 28-34 retired files, ~70 KB total)",
+   "size": "<= 8 KB per retired stock file (stock BOOTSTRAP.md is 1,449 B, stock AGENTS.md is 7,870 B; 5 service-agent stock files + BOOTSTRAP.md total 13,267 B per service workspace), <= ~480 KB total archive cap across <= ~60 files; ~220 B per receipt line in receipts.jsonl (<= ~16 KB for 60 lines); 2 Pantheon-authored service-agent AGENTS.md files (~660 B each, ~1.3 KB total replaced in place)",
+   "size_per_day": "0 B/day steady-state (one-time <= ~480 KB archive + <= ~16 KB receipts.jsonl on first run)",
+   "growth_per_day": "0 B/day steady-state after the one-time deploy retirement (agents.defaults.skipBootstrap=true stops future stock seeding and second runs move nothing)",
+   "growth": "one-time archive of <= ~480 KB (measured ~70 KB on hosted dev) + <= ~16 KB receipts.jsonl on first deploy; 0 B/day afterwards",
+   "cap": "at most 1 archived copy per stock first-run template file per existing workspace under the gateway state dir (<= ~60 files x <= 8 KB each, <= ~480 KB total archive bytes) plus 1 receipt line (~220 B JSONL) per retired file in retired-stock-bootstrap/receipts.jsonl (<= ~60 lines, <= ~16 KB total)",
+   "cleanup": "retained permanent audit archive on the existing openclaw-data volume (<stateDir>/retired-stock-bootstrap/<workspace>/<file> and <stateDir>/retired-stock-bootstrap/receipts.jsonl) per operator decision (retire retained, not deleted); skipBootstrap=true prevents OpenClaw from seeding new stock files, and idempotent renameSync leaves 0 source stock files for subsequent runs",
+   "readers": [
+    "scripts/openclaw-configure-shared-model-pool.sh",
+    "scripts/test_openclaw_shared_model_pool_contract.py"
+   ],
+   "bound_proof": {
+    "file": "scripts/openclaw-configure-shared-model-pool.sh",
+    "contains": "retired-stock-bootstrap"
    }
   }
  ]
