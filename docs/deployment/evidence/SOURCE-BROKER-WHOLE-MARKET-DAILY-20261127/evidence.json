@@ -140,7 +140,8 @@
     "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
     "the two-year SponsorPro backfill still has not been run on hosted",
     "RC3 / market-data retention owner: services/source_ingestion/retention.py expires keyed partitions using today minus retention_days=750 calendar days; acceptance asks for 750 trading sessions. No retention code is changed by this reader repair. Receipts separately cap their count at 750 session files. The coordinator must reconcile this within the existing RC3 market-data work package before claiming full retention acceptance.",
-    "Current canonical reviewer is Codex2 after supervisor reassignment, whereas the older next-message says Antigravity. Handoff uses the governed assigned reviewer; the coordinator retains responsibility for the different-model-family capacity rule."
+    "Current canonical reviewer is Codex2 after supervisor reassignment, whereas the older next-message says Antigravity. Handoff uses the governed assigned reviewer; the coordinator retains responsibility for the different-model-family capacity rule.",
+    "Validation limitation: the expanded 242-test refresh/storage/retention batch and all four 180-second shards timed out. No expanded-batch pass is claimed. Focused broker/route, whole-market deploy and budget validation are recorded separately; required repository CI remains authoritative for its full suites."
   ],
   "verification": {
     "previous_owner_commands": [
@@ -209,21 +210,61 @@
       },
       {
         "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py",
-        "result": "TIMEOUT; not counted as passed. The same 242 collected IDs are being rerun in four bounded round-robin shards.",
+        "result": "TIMEOUT; not counted as passed. All 242 collected IDs were retried in four round-robin 180-second shards, which also timed out and are not counted as passed.",
         "exit_status": 124
       },
       {
         "cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py",
         "result": "Local synthetic fixture only: 1000 symbols with both sides; 2000 compact rows, 15873 gzip bytes, 1325000 uncompressed bytes; probe passed. Missing-store and partial-receipt probes failed as expected. File SHA-256 and mtime snapshots unchanged; missing root not created. No hosted proof claimed.",
         "exit_status": 0
+      },
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py -k 'finmind or whole_market'",
+        "result": "16 passed, 165 deselected in 9.43s",
+        "exit_status": 0
       }
-    ]
+    ],
+    "script_shard_attempts": [
+      {
+        "shard": 0,
+        "timeout_seconds": 180,
+        "exit_status": 124,
+        "result": "timeout; no pass claim",
+        "collected_test_count": 61,
+        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
+      },
+      {
+        "shard": 1,
+        "timeout_seconds": 180,
+        "exit_status": 124,
+        "result": "timeout; no pass claim",
+        "collected_test_count": 61,
+        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
+      },
+      {
+        "shard": 2,
+        "timeout_seconds": 180,
+        "exit_status": 124,
+        "result": "timeout; no pass claim",
+        "collected_test_count": 60,
+        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
+      },
+      {
+        "shard": 3,
+        "timeout_seconds": 180,
+        "exit_status": 124,
+        "result": "timeout; no pass claim",
+        "collected_test_count": 60,
+        "selection": "round-robin collected IDs [shard::4] from the exact six-file expanded-batch command above"
+      }
+    ],
+    "passed_focused_unique_tests": 143
   },
   "continuation_20261127": {
     "prior_owner": "Claude",
     "prior_reviewer": "Antigravity",
     "canonical_assignment": "Governed show at dispatch assigns Codex / Codex2; handoff follows the current canonical reviewer rather than the older next-message naming Antigravity.",
-    "base_sha": "d8dd4db14",
+    "base_sha": "d8dd4db14a47a688b6737fe1b582e57721d7151d",
     "base_sync": "Merged current dev without rewriting the published PR history; f71a168ca preserves both independently appended storage-manifest entries.",
     "reader_anchor": "a7fa56799",
     "change": "broker-branch-flow picks fields from metadata.normalized_row, then metadata, then the record; canonical symbol/date/source aliases follow parse_tw_broker_top_record without importing the data-plane service.",
