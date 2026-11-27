@@ -579,13 +579,15 @@ class PersonaPoolPublisher:
 
     def _confirm_dispatched(self, tenant_id, persona_id, pending):
         number = int(pending["pool_version"])
+        confirmed = {k: v for k, v in pending.items() if k != "note"}
+        confirmed["status"] = "published"
 
         def mutate(record):
             # Never overwrite a concurrent replacement of the receipt, or move the
             # current pointer backwards when another publication has already won.
             if record["published"].get(str(number)) != pending:
                 raise PoolPublishRefused("dispatch record changed during confirmation", step="record")
-            record["published"][str(number)] = {**pending, "status": "published"}
+            record["published"][str(number)] = confirmed
             if int((record.get("current_envelope") or {}).get("pool_version") or 0) <= number:
                 record["current_envelope"] = {
                     "artifact_id": pending["envelope_artifact_id"], "version": pending["envelope_version"],
@@ -593,7 +595,7 @@ class PersonaPoolPublisher:
                 }
 
         self._save(tenant_id, persona_id, mutate)
-        return {**pending, "status": "published", "idempotent_replay": True}
+        return {**confirmed, "idempotent_replay": True}
 
     def _binding_moved(self, ids, receipt, *, bindings=None) -> bool:
         if bindings is None:

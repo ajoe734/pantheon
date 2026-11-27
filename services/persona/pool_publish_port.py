@@ -195,7 +195,7 @@ class PoolPublishPort:
             decision_id = record["decision_id"]
             self._call("POST", "evolution", "/api/evolution/proposals/" + quote(decision_id, safe="") + "/supersede", persona,
                        {"tenant_id": persona["tenant_id"], "actor_id": "persona-svc", "actor_role": "evolution_controller",
-                        "membership_digest": digest, "superseded_by": confirmed["envelope_artifact_id"],
+                        "membership_digest": digest, "superseded_by": confirmed["approval_decision_id"],
                         "note": "publication_membership_already_confirmed"})
             retired.append(decision_id)
         return retired

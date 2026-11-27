@@ -14,6 +14,7 @@ def test_only_own_pending_decisions_for_confirmed_membership_are_superseded():
     import copy
     current = pool(m("a", weight=1.0), version=6)
     confirmed = {"status": "published", "members": current["members"], "pool_version": 2,
+                 "approval_decision_id": "apv-persona-pool-test-v2",
                  "envelope_artifact_id": "artifact-persona-pool-test-v2"}
     own = {"decision_id": "old", "created_by_id": "persona-svc", "tenant_id": "t1", "persona_id": "p1",
            "decision_state": "proposed", "metadata": {"decision_kind": "pool_envelope_publication", "paper_only": True,

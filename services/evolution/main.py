@@ -2278,7 +2278,7 @@ def supersede_pool_publication(decision_id: str, body: SupersedePoolPublicationR
             or meta.get("decision_kind") != "pool_envelope_publication"
             or meta.get("paper_only") is not True
             or not body.membership_digest or meta.get("membership_digest") != body.membership_digest
-            or not body.superseded_by.startswith("artifact-persona-pool-")
+            or not body.superseded_by.startswith("apv-persona-pool-")
             or body.note != "publication_membership_already_confirmed"):
         raise HTTPException(status_code=403, detail="pool_publication_withdrawal_binding_mismatch")
     if decision.decision_state == EvolutionDecisionState.SUPERSEDED:

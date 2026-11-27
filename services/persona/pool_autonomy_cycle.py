@@ -477,7 +477,7 @@ def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
     """Fill the persona's daily OODA record with the pool cycle's real content."""
     packet["pool_autonomy"] = dict(result)
     publication = (result.get("act") or {}).get("publication") or {}
-    if publication.get("status") in ("failed", "unconfirmed", "operator_rejected"):
+    if publication.get("status") in ("failed", "unconfirmed", "publication_dispatch_unconfirmed", "operator_rejected"):
         packet["audit_refs"].append(
             f"pool-publication:{publication['status']}:{publication.get('reason') or publication.get('note')}"[:300])
     if result.get("status") != "completed":

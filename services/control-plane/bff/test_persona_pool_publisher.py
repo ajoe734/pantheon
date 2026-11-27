@@ -110,6 +110,32 @@ def test_dispatched_running_envelope_confirms_once_without_registry_or_dispatch(
     assert history["refusals"] == before["refusals"]
 
 
+def test_unmoved_dispatch_retries_existing_owner_chain_with_one_snapshot(world):
+    from services.control_plane.bff.tests.test_persona_pool_publish_route import PERSONA, TENANT
+    world.append([world.member("artifact-a", 1.0)], 0)
+    world.transport.queue_dispatch = True
+    reads = []
+    reader = world.coordinator.runtime_binding_reader
+    world.coordinator.runtime_binding_reader = lambda *a: reads.append(a) or reader(*a)
+    for _ in range(2):
+        reads.clear()
+        out = world.publisher.publish(tenant_id=TENANT, persona_id=PERSONA, requested_by="cycle",
+                                      pool_version=1, defer_confirmation=True)
+        assert out["status"] == "dispatched" and len(reads) == 1
+    assert world.publisher.history(TENANT, PERSONA)["current_envelope"] is None
+
+
+def test_pending_owner_read_failure_remains_dispatched_without_new_refusal(world):
+    tenant, persona, before = _dispatched_world(world)
+    def unavailable(*a):
+        raise RuntimeError("owner_unavailable")
+    world.coordinator.runtime_binding_reader = unavailable
+    out = world.publisher.publish(tenant_id=tenant, persona_id=persona, requested_by="cycle",
+                                  pool_version=1, defer_confirmation=True)
+    assert out["status"] == "dispatched" and "owner_unavailable" in out["note"]
+    assert world.publisher.history(tenant, persona) == before
+
+
 @pytest.mark.parametrize("field,value", [("artifact_id", "other"), ("artifact_version", "9.9.9"),
     ("deployment_mode", "live"), ("persona_capital_binding_id", "foreign"), ("status", "paused")])
 def test_confirmation_requires_exact_active_paper_binding(world, field, value):

@@ -1,0 +1,314 @@
+{
+  "task": "POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "recorded_at": "2026-11-27T12:18:02.034664+00:00",
+  "root_cause_class": "RC2 persona-loop; follow-through of POOL-PUBLICATION-OPERATOR-DECISION-QUEUE-20261127 (#7932), composed with admission-only republish #7907",
+  "source_anchors": [
+    "47a7d7b58",
+    "4b0f11bef"
+  ],
+  "changes": {
+    "confirmation": "Existing publish POST confirms a dispatched receipt against the existing runtime_binding_reader and _binding_moved before Registry, approval or dispatch. Exact active paper artifact/version, capital pool and persona binding must match; missing runtime_id in legacy receipts is allowed, but the binding must identify its runtime. CAS updates the receipt and current_envelope without a schema change; stale uncertainty notes are removed.",
+    "cycle": "Compare only after reconciling the newest dispatch, even when an older published version exists. Retry that dispatched version at most once per cycle through the existing publish path; an unavailable/unmoved dispatch reports publication_dispatch_unconfirmed, never no_publication_record or a membership consultation. Confirmed pins are used without another history read.",
+    "budget": "The cycle sets defer_confirmation=true on the existing publish POST. Publisher and coordinator share one just-read binding snapshot, all existing identity/stage and Deployment replacement guards remain, and dispatch confirmation occurs on the next natural tick. A tick that confirmed an older receipt reports its actual published pool_version plus next_pool_version/publication_pending and defers the new publication. Existing synchronous callers keep synchronous readback.",
+    "admission_only": "Confirmed v2 pins with one active member at weight 1.0 but no joined_at versus current v6 select the existing admission-only branch. No consultation or operator approval is requested; a newer pool version is appended only when the existing branch needs one.",
+    "obsolete_decisions": "When the current membership matches confirmed pins, list pending persona proposals and withdraw only persona-svc proposed/reviewed paper pool-envelope publication proposals for that exact tenant, persona and membership digest. The narrow Evolution /supersede endpoint checks those bindings and uses the existing EvolutionDecision store CAS. superseded_reason=publication_membership_already_confirmed; superseded_by references the confirmed publication ApprovalDecision. Approved/rejected/executed decisions, other kinds and real membership changes are preserved.",
+    "necessary_adjacent_files": "BFF lifecycle route admits only the new boolean option; coordinator accepts an internal binding snapshot (never a public payload); Evolution main and its service tests expose the previously absent owner supersede path. These are required to meet AC5 and the strict reading of AC8, beyond the initial likely-related-file list."
+  },
+  "acceptance": {
+    "1": "test_dispatched_running_envelope_confirms_once_without_registry_or_dispatch (one read, no Registry or dispatch, receipt/current_envelope updated)",
+    "2": "test_pending_dispatch_retries_exact_version_without_membership_gate; test_unmoved_dispatch_retries_existing_owner_chain_with_one_snapshot; test_pending_owner_read_failure_remains_dispatched_without_new_refusal",
+    "3": "Shared _binding_moved and existing runtime_binding_reader; exact active paper binding and ambiguity tests; no second reader implementation",
+    "4": "test_hosted_dispatch_v2_to_v6_keeps_one_binding_read_per_cycle (real pool, HTTP port, BFF route, publisher, coordinator and Deployment double): confirm v2 -> dispatch v6 -> confirm v6/unchanged -> unchanged; read counts 1,1,1,0; no consultation; joined_at carried",
+    "5": "Port test filters other tenants/personas/memberships/actors/approved rows; real Evolution HTTP tests assert superseded no longer pending, named reason, replay, unrelated-kind refusal, operator-decision preservation and CAS protection when an approval wins concurrently",
+    "6": "Existing membership consultation/operator tests plus test_confirmed_dispatch_does_not_bypass_real_membership_consultation; consultation memo verification unchanged",
+    "7": "No table, schema, status enum or publication-record shape changes. Previous release can read published/current_envelope and the existing superseded state and optional metadata; rollback stops the new cycle option while pending records remain retryable by the prior publish API.",
+    "8": "Strict total cycle binding-readback budget, including coordinator, measured by the v2/v6 integration test and queued-dispatch retry test; see runtime_budget",
+    "9": "Focused four requested suites and Evolution suite pass; existing owner route/coordinator regression suites pass; see validation",
+    "10": "Pending post-merge/dev deploy natural weekday cycle; persona-loop owner records the executable read-only probe output. Pre-change observations are not hosted acceptance."
+  },
+  "validation": [
+    {
+      "command": "timeout 300 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/persona/test_pool_policy.py services/persona/test_pool_autonomy_cycle.py services/persona/test_pool_publish_port.py services/evolution/test_evolution_service.py -q --disable-warnings",
+      "exit_code": 0,
+      "passed": 286,
+      "elapsed_seconds": 185.5
+    },
+    {
+      "command": "timeout 150 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/bff/test_persona_provisioning_coordinator.py -q --disable-warnings",
+      "exit_code": 0,
+      "passed": 172,
+      "elapsed_seconds": 51.75
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "runtime_budget": {
+    "cadence": "Existing weekday daily-cycle schedule, one cycle per trading persona; no new scheduler, emitter, queue, table or file writer.",
+    "binding_readback_count": "0 on a settled unchanged cycle, at most 1 authoritative snapshot per persona per cycle on confirm/dispatch/retry, including coordinator. Existing reader performs by-plan and by-pool GETs and deduplicates; at three hosted personas at most 3 snapshots / 6 binding GETs per trading day. No immediate post-dispatch readback in cycle mode.",
+    "other_reads_and_writes": "Existing history GET once per cycle. One Evolution list GET for confirmed unchanged membership; at most one supersede POST per matching pending proposal (3 current incidents total), repeated settled cycles issue no retirement write. A genuine membership change retains its existing consultation and operator queue budget. The existing one publish attempt per cycle is preserved.",
+    "inherited_failure_path": "At most 3 existing publish attempts per hosted trading day. On owner rejection the existing publisher refusal array may append up to 3 small entries/day (roughly 0.6-1.5 KiB/day); no new refusal writer is added. Its global cap/retention remains unverified in the registered RC3 writer, and is not claimed fixed. Successful confirmation appends no refusal.",
+    "size_count_growth_cap_cleanup": "Confirmation updates 3 existing publish rows in place (status/current pointer; under 512 bytes incremental JSON per row), and retirement updates 3 existing proposal rows (under 256 bytes incremental reason/reference per row). No rows added by confirmation/retirement, under 2.25 KiB one-time field growth for these three personas, 0 recurring new rows/day. Each dispatched receipt confirms once and each pending proposal retires once. Admission-only republish uses existing publication/Registry/Deployment writers, at most once per persona to carry missing joined_at; member ceiling remains 20. No new retained object class or cleanup job.",
+    "storage_manifest": "Existing bff.persona_pool_publish_records and evolution.decisions are already in docs/operations/storage-manifest.json; no new writer registration is needed. Existing unreviewed global retention/caps remain with RC3 and are not claimed fixed."
+  },
+  "hosted_prechange": {
+    "scope": "Read-only; no publish, supersede, manual cycle tick, data edit or deployment performed.",
+    "manifest_declared_identity": {
+      "sourceRef": "fb2c4f1bfc18b115f95449b2d3a7445f5b7a3bfe",
+      "bffCommit": "3291296e85e7a4b7a6317abef20e1199cb3c24a7",
+      "deploymentState": "accepted",
+      "deployedAt": "20261127T085836Z"
+    },
+    "manifest_note": "Observed public manifest declaration only; not a fresh stack-health acceptance claim.",
+    "owner_binding_readback": {
+      "read_at": "2026-11-27T12:11:03.747132+00:00",
+      "reader": "BFF existing _runtime_bindings_for_case; GET by plan + pool, deduplicated",
+      "rows": [
+        {
+          "persona_id": "persona-2448c7053e33ea48da47",
+          "bindings": [
+            {
+              "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+              "runtime_id": "rt-ad81501b",
+              "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+              "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+              "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-pool-06d4775a9b6a8f63b311-v2"
+            },
+            {
+              "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+              "runtime_id": "rt-ad81501b",
+              "capital_pool_id": "pool-persona-paper-06d4775a9b6a8f63b311",
+              "persona_capital_binding_id": "pcb-persona-paper-06d4775a9b6a8f63b311",
+              "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-paper-06d4775a9b6a8f63b311"
+            }
+          ]
+        },
+        {
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "bindings": [
+            {
+              "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+              "runtime_id": "rt-3b65a843",
+              "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+              "persona_capital_binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+              "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-pool-a81b4fd15944698341aa-v2"
+            },
+            {
+              "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+              "runtime_id": "rt-3b65a843",
+              "capital_pool_id": "pool-persona-paper-a81b4fd15944698341aa",
+              "persona_capital_binding_id": "pcb-persona-paper-a81b4fd15944698341aa",
+              "artifact_id": "artifact-persona-paper-a81b4fd15944698341aa",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-paper-a81b4fd15944698341aa"
+            }
+          ]
+        },
+        {
+          "persona_id": "persona-6507750312870d03a241",
+          "bindings": [
+            {
+              "binding_id": "rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4",
+              "runtime_id": "rt-3252fa75",
+              "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+              "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+              "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-pool-039ad01f8bcd2b4aa466-v2"
+            },
+            {
+              "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+              "runtime_id": "rt-3252fa75",
+              "capital_pool_id": "pool-persona-paper-039ad01f8bcd2b4aa466",
+              "persona_capital_binding_id": "pcb-persona-paper-039ad01f8bcd2b4aa466",
+              "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper",
+              "plan_id": "plan-persona-paper-039ad01f8bcd2b4aa466"
+            }
+          ]
+        }
+      ]
+    },
+    "probe_exit_code": 1,
+    "probe_expected_failure_before_change": {
+      "passed": false,
+      "failures": [
+        "persona-2448c7053e33ea48da47: publication not confirmed",
+        "persona-2448c7053e33ea48da47: current envelope does not match active paper binding",
+        "persona-2448c7053e33ea48da47: obsolete decision not superseded",
+        "persona-ee7112a829d38b9135ac: publication not confirmed",
+        "persona-ee7112a829d38b9135ac: current envelope does not match active paper binding",
+        "persona-ee7112a829d38b9135ac: obsolete decision not superseded",
+        "persona-6507750312870d03a241: publication not confirmed",
+        "persona-6507750312870d03a241: current envelope does not match active paper binding",
+        "persona-6507750312870d03a241: obsolete decision not superseded"
+      ],
+      "runtime": [
+        {
+          "persona_id": "persona-2448c7053e33ea48da47",
+          "packet_id": "ooda-persona-9a6c69daa187e31a8e5f80160f0c9fbd121e9fc420dd8d5b0e70b5838ac30680",
+          "cron_run_at_ms": 1795773600067,
+          "publication": {
+            "pool_version": 10,
+            "reasons": [
+              "no_publication_record"
+            ],
+            "status": "consultation_operator",
+            "reason": "risk_persona_requires_operator",
+            "request_id": "consult-envelope-publication-02695a7e4b41ea27d7db1138405bff6a-r2",
+            "decision_id": "envelope-publication-02695a7e4b41ea27d7db1138405bff6a",
+            "operator_decision": {
+              "decision_id": "pool-publication-op-1b629935bb460e4bab3267f1",
+              "status": "queued"
+            }
+          },
+          "current_envelope": {},
+          "bindings": [
+            {
+              "artifact_id": "artifact-persona-paper-06d4775a9b6a8f63b311",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper"
+            },
+            {
+              "artifact_id": "artifact-persona-pool-06d4775a9b6a8f63b311-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper"
+            }
+          ]
+        },
+        {
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "packet_id": "ooda-persona-2ea67c93f4438b1e3f2eddbc92d9fd8baef2db2aac907b14aacba604e2eab793",
+          "cron_run_at_ms": 1795773600083,
+          "publication": {
+            "pool_version": 9,
+            "reasons": [
+              "no_publication_record"
+            ],
+            "status": "consultation_operator",
+            "reason": "risk_persona_requires_operator",
+            "request_id": "consult-envelope-publication-68ffaa6c8e39764731a9c031403f1bab-r1",
+            "decision_id": "envelope-publication-68ffaa6c8e39764731a9c031403f1bab",
+            "operator_decision": {
+              "decision_id": "pool-publication-op-e89b5a86424eab8651b8a09b",
+              "status": "queued"
+            }
+          },
+          "current_envelope": {},
+          "bindings": [
+            {
+              "artifact_id": "artifact-persona-paper-a81b4fd15944698341aa",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper"
+            },
+            {
+              "artifact_id": "artifact-persona-pool-a81b4fd15944698341aa-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper"
+            }
+          ]
+        },
+        {
+          "persona_id": "persona-6507750312870d03a241",
+          "packet_id": "ooda-persona-4abbfbdd50fe623b5cf988bb25dd21529bc688e489986af7a7c1deb715fa14b0",
+          "cron_run_at_ms": 1795773600076,
+          "publication": {
+            "pool_version": 9,
+            "reasons": [
+              "no_publication_record"
+            ],
+            "status": "consultation_operator",
+            "reason": "risk_persona_requires_operator",
+            "request_id": "consult-envelope-publication-ddfaf9cdb2dc1643a19279a65604befa-r1",
+            "decision_id": "envelope-publication-ddfaf9cdb2dc1643a19279a65604befa",
+            "operator_decision": {
+              "decision_id": "pool-publication-op-e41aab6d46cfdb2057beab04",
+              "status": "queued"
+            }
+          },
+          "current_envelope": {},
+          "bindings": [
+            {
+              "artifact_id": "artifact-persona-paper-039ad01f8bcd2b4aa466",
+              "artifact_version": "1.0.0",
+              "status": "retired",
+              "deployment_mode": "paper"
+            },
+            {
+              "artifact_id": "artifact-persona-pool-039ad01f8bcd2b4aa466-v2",
+              "artifact_version": "1.2.0",
+              "status": "active",
+              "deployment_mode": "paper"
+            }
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "persona_id": "persona-2448c7053e33ea48da47",
+          "decision_id": "pool-publication-op-1b629935bb460e4bab3267f1",
+          "state": "proposed",
+          "reason": null
+        },
+        {
+          "persona_id": "persona-ee7112a829d38b9135ac",
+          "decision_id": "pool-publication-op-e89b5a86424eab8651b8a09b",
+          "state": "proposed",
+          "reason": null
+        },
+        {
+          "persona_id": "persona-6507750312870d03a241",
+          "decision_id": "pool-publication-op-e41aab6d46cfdb2057beab04",
+          "state": "proposed",
+          "reason": null
+        }
+      ]
+    }
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "owner": "persona-loop owner",
+    "instructions": "After merge and exact-version dev deploy, set POOL_CONFIRM_NOT_BEFORE to the real UTC switch time and POOL_CONFIRM_SSH_KEY to the existing authorized dev SSH key. Run after the next natural weekday cycle. The probe performs owner/file reads and GETs only; it does not tick or publish. Require passed=true and exit 0. It also checks the confirmed envelope against the live active paper binding and all three 2026-11-27 obsolete decisions by full owner IDs.",
+    "command": "python3 -c 'import json; exec(json.load(open(\"docs/deployment/evidence/POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127/evidence.json\"))[\"hosted_acceptance\"][\"probe_python\"])'",
+    "probe_python": "import json\nimport os\nimport shlex\nimport subprocess\nfrom datetime import datetime\n\npersonas = ['persona-2448c7053e33ea48da47', 'persona-ee7112a829d38b9135ac', 'persona-6507750312870d03a241']\ncutoff = datetime.fromisoformat(os.environ['POOL_CONFIRM_NOT_BEFORE'].replace('Z', '+00:00')).timestamp() * 1000\nssh = ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-i',\n       os.environ['POOL_CONFIRM_SSH_KEY'], 'chloe_ong_dev_cctech_support_com@35.194.154.62']\ndef remote(container, source):\n    command = ' '.join(shlex.quote(x) for x in ['docker', 'exec', '-i', container, 'python', '-'])\n    out = subprocess.run(ssh + [command], input=source, text=True, capture_output=True, timeout=60, check=True)\n    return json.loads(out.stdout)\n\nruntime = remote('pantheon-operator-bff-1', '''\nimport json\nfrom services.control_plane.bff.persona_pool_publisher import build_publish_records\nfrom services.control_plane.bff.ports.ooda_management import read_persona_ooda_owner_packets\nfrom services.control_plane.bff.personas.service import _runtime_bindings_for_case\npersonas = PERSONAS\npackets = read_persona_ooda_owner_packets()\nrecords = build_publish_records()\nout = []\nfor pid in personas:\n    history = records.get('tenant-dev:' + pid) or {}\n    matched = [p for p in packets if p.get('tenant_id') == 'tenant-dev' and (p.get('pool_autonomy') or {}).get('persona_id') == pid]\n    latest = max(matched, key=lambda p: (p.get('producer') or {}).get('cron_run_at_ms') or 0) if matched else {}\n    publication = ((latest.get('pool_autonomy') or {}).get('act') or {}).get('publication') or {}\n    current = history.get('current_envelope') or {}\n    bindings = _runtime_bindings_for_case(current.get('plan_id') or '', 'pool-persona-paper-' + {\n        'persona-2448c7053e33ea48da47':'06d4775a9b6a8f63b311',\n        'persona-ee7112a829d38b9135ac':'a81b4fd15944698341aa',\n        'persona-6507750312870d03a241':'039ad01f8bcd2b4aa466'}[pid])\n    out.append({'persona_id':pid, 'packet_id':latest.get('packet_id'), 'cron_run_at_ms':(latest.get('producer') or {}).get('cron_run_at_ms'),\n                'publication':publication, 'current_envelope':current,\n                'bindings':[{k:b.get(k) for k in ('artifact_id','artifact_version','status','deployment_mode')} for b in bindings]})\nprint(json.dumps(out))\n'''.replace('PERSONAS', repr(personas)))\n\ndecisions = remote('pantheon-evolution-1', '''\nimport json, os\nfrom urllib.parse import urlencode\nfrom urllib.request import Request, urlopen\nrows=[]\nfor pid in PERSONAS:\n    path = '/api/evolution/proposals?' + urlencode({'tenant_id':'tenant-dev','target_type':'persona','target_id':pid})\n    request = Request('http://localhost:8093' + path, headers={'Authorization':'Bearer '+os.environ['EVOLUTION_AUTH_TOKEN'],'X-Tenant-Id':'tenant-dev'})\n    with urlopen(request, timeout=15) as response:\n        records=json.load(response)\n    rows.extend({'persona_id':pid,'decision_id':r['decision_id'],'state':r['decision_state'],\n                 'reason':(r.get('metadata') or {}).get('superseded_reason')}\n                for r in records if str(r.get('created_at') or '').startswith('2026-11-27')\n                and (r.get('metadata') or {}).get('decision_kind') == 'pool_envelope_publication')\nprint(json.dumps(rows))\n'''.replace('PERSONAS', repr(personas)))\n\nfailures=[]\nfor row in runtime:\n    pid=row['persona_id']\n    at=row.get('cron_run_at_ms') or 0\n    publication=row['publication']\n    if at < cutoff or datetime.fromtimestamp(at / 1000).weekday() >= 5:\n        failures.append(pid + ': no post-deploy weekday cycle')\n    if publication.get('status') not in ('published','unchanged') or 'no_publication_record' in publication.get('reasons',[]):\n        failures.append(pid + ': publication not confirmed')\n    current=row['current_envelope']\n    live=[b for b in row['bindings'] if b['status']=='active']\n    if len(live)!=1 or live[0]['deployment_mode']!='paper' or live[0]['artifact_id']!=current.get('artifact_id') or live[0]['artifact_version']!=current.get('version'):\n        failures.append(pid + ': current envelope does not match active paper binding')\n    prior=[d for d in decisions if d['persona_id']==pid]\n    if not prior or any(d['state']!='superseded' or d['reason']!='publication_membership_already_confirmed' for d in prior):\n        failures.append(pid + ': obsolete decision not superseded')\nprint(json.dumps({'passed':not failures,'failures':failures,'runtime':runtime,'decisions':decisions},ensure_ascii=False))\nraise SystemExit(1 if failures else 0)\n"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 persona-loop",
+      "disposition": "Hosted acceptance retained by persona-loop owner after deployment; no acceptance from source/tests or the pre-change probe."
+    },
+    {
+      "class": "RC3",
+      "disposition": "Existing global publish-history and Evolution-store retention/caps are registered unreviewed. This task adds no writer or continuing growth; their broader storage cleanup stays with the owning RC3 package."
+    }
+  ],
+  "review": {
+    "status": "pending independent review",
+    "reviewer": "Antigravity"
+  }
+}

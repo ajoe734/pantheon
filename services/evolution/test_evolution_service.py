@@ -722,7 +722,7 @@ def _pending_pool_publication():
 
 def _withdrawal_body():
     return {"tenant_id": "default", "actor_role": "evolution_controller", "actor_id": "persona-svc",
-            "membership_digest": "test-membership", "superseded_by": "artifact-persona-pool-test-v2",
+            "membership_digest": "test-membership", "superseded_by": "apv-persona-pool-test-v2",
             "note": "publication_membership_already_confirmed"}
 
 
@@ -756,6 +756,30 @@ def test_pool_publication_withdrawal_cannot_override_an_operator_decision():
     body = {**_withdrawal_body(), "tenant_id": d["tenant_id"]}
     out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=body)
     assert out.status_code == 409
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "approved"
+
+
+def test_pool_publication_withdrawal_cannot_supersede_other_proposal_kinds():
+    d = propose()
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede",
+                      json={**_withdrawal_body(), "tenant_id": d["tenant_id"]})
+    assert out.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+def test_pool_publication_withdrawal_cas_preserves_concurrent_operator_approval(monkeypatch):
+    d = _pending_pool_publication()
+    advance_to_reviewed(d["decision_id"])
+    put = evo_main.store.put
+    def operator_wins(decision):
+        if decision.decision_state == "superseded":
+            monkeypatch.setattr(evo_main.store, "put", put)
+            advance_to_approved(d["decision_id"])
+        return put(decision)
+    monkeypatch.setattr(evo_main.store, "put", operator_wins)
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede",
+                      json={**_withdrawal_body(), "tenant_id": d["tenant_id"]})
+    assert out.status_code == 422
     assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "approved"
 
 

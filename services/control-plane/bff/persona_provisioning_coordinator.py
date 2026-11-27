@@ -5502,8 +5502,15 @@ class PersonaProvisioningCoordinator:
     # ------------------------------------------------------------------
     # Pool envelope publication (R6): same owner paths, paper scope only.
     # ------------------------------------------------------------------
-    def publish_pool_envelope(self, publication: Mapping[str, Any], *, binding_snapshot=None) -> dict[str, Any]:
+    def publish_pool_envelope(
+        self, publication: Mapping[str, Any], *, binding_snapshot: list[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Admit one immutable pool-envelope artifact and move the binding.
+
+        ``binding_snapshot`` is the publisher's just-read owner state, supplied
+        internally to share one pre-dispatch read in a daily cycle. It is never
+        accepted in a public request; all binding identity/stage checks below
+        and the Deployment owner's replacement guards still run.
 
         Every owner write is GET-first with authoritative readback, so a
         retry after response loss, or a duplicate publish, replays instead of
