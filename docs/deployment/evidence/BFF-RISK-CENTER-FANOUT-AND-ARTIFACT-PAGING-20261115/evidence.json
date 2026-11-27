@@ -1,0 +1,1126 @@
+{
+  "task_id": "BFF-RISK-CENTER-FANOUT-AND-ARTIFACT-PAGING-20261115",
+  "owner": "Codex2",
+  "reviewer": "Claude2",
+  "status": "implementation_incomplete_owner_contract_prerequisite",
+  "source_base_commit": "e2f185058632ea4873ff047d46342c2a02851a0a",
+  "diagnostic_anchor_commit": "aa9a582846a60ff20bda4accad9311be7f1b4baf",
+  "runtime_changes": [],
+  "acceptance": {
+    "1": {
+      "status": "not_met_on_served_baseline",
+      "detail": "20 real hosted rounds of the exact nine concurrent RiskCenter list reads: strategies p95 > 2s; alerts p95 < 2s. No after-change fixture run exists."
+    },
+    "2": {
+      "status": "not_established",
+      "detail": "Real hosted 331-row four-page traversal is measured. The 662-row local fixture excludes owner network/DB latency and is diagnostic, not end-to-end performance acceptance."
+    },
+    "3": {
+      "status": "not_met",
+      "detail": "Fixed 100-row first page receives 662 vs 6620 owner rows as the population grows 10x; Registry HTTP calls grow 2 to 14. Every subsequent page repeats the population read."
+    },
+    "4": {
+      "status": "measured_read_only",
+      "strategies_all_nonretired": 3648,
+      "strategies_excluding_draft": 166,
+      "alerts": 2,
+      "artifacts": 331,
+      "registry_execution_bundles": 329,
+      "research_outputs": 2,
+      "fixture_artifacts_minimum": 662,
+      "tenant_id": "tenant-dev"
+    },
+    "5": {
+      "status": "partial_baseline_only",
+      "detail": "p50/p95/max and raw samples committed for 20 hosted rounds and 20 fixture rounds; no product change, so after is null."
+    },
+    "6": {
+      "status": "not_established_for_implementation",
+      "detail": "Diagnostic tests preserve known numeric page tokens and tie ordering; no production implementation change or before/after body equivalence claim."
+    },
+    "7": {
+      "status": "unchanged_source_not_new_acceptance",
+      "detail": "Existing viewer credentials were used through the normal dev-login issuer; no signing keys or credential/token values were copied into evidence. No product RBAC/tenant implementation changed. This task has not yet added its required second-tenant end-to-end regression."
+    },
+    "8": {
+      "status": "unchanged",
+      "detail": "Only diagnostic tests and this evidence file changed; no crawler, FE gate, timeout, route signature or personas service edits."
+    }
+  },
+  "read_only_hosted_baseline": {
+    "measured_at": "2026-11-14T23:32:06Z",
+    "measurements": {
+      "/bff/version": {
+        "seconds": 0.0033848999955807813,
+        "keys": [
+          "service",
+          "version",
+          "source_commit_sha",
+          "commit",
+          "source_commit_known",
+          "image_digest",
+          "build_time",
+          "environment",
+          "config_posture"
+        ],
+        "page_info": null,
+        "total": null,
+        "rows": 0
+      },
+      "/bff/me": {
+        "seconds": 0.14697722800337942,
+        "keys": [
+          "data",
+          "meta"
+        ],
+        "page_info": null,
+        "total": null,
+        "rows": null
+      },
+      "/bff/strategies?page_size=200": {
+        "seconds": 1.8595967900037067,
+        "keys": [
+          "data",
+          "items",
+          "page_info",
+          "meta"
+        ],
+        "page_info": {
+          "next_page_token": "200",
+          "total": 3648
+        },
+        "total": null,
+        "rows": 200
+      },
+      "/bff/alerts": {
+        "seconds": 0.16848050599946873,
+        "keys": [
+          "alerts",
+          "summary",
+          "meta"
+        ],
+        "page_info": null,
+        "total": null,
+        "rows": 2
+      },
+      "/bff/artifacts?page_size=100": {
+        "seconds": 0.3301250930016977,
+        "keys": [
+          "data",
+          "items",
+          "page_info",
+          "meta"
+        ],
+        "page_info": {
+          "next_page_token": "100",
+          "total": 331
+        },
+        "total": null,
+        "rows": 100
+      }
+    },
+    "version": {
+      "service": "operator-bff",
+      "version": "0.2.0",
+      "source_commit_sha": "bee62bc2978618539984aff9db136b064adc14a0",
+      "commit": "bee62bc2978618539984aff9db136b064adc14a0",
+      "source_commit_known": true,
+      "image_digest": "unknown",
+      "build_time": "2026-11-12T00:02:42Z",
+      "environment": "dev",
+      "config_posture": {
+        "auth_stub": false,
+        "auth_mode": "strict",
+        "dev_login_enabled": true,
+        "mfa_required": false,
+        "assistant_kernel_enabled": true,
+        "trade_journey_reader_backend": "postgres",
+        "trade_journey_projection_schema": "trade_journey_projection"
+      }
+    },
+    "identity": {
+      "tenant": null,
+      "data_keys": [
+        "operator_id",
+        "operatorId",
+        "user",
+        "current_user",
+        "currentUser",
+        "tenant",
+        "tenant_id",
+        "tenantId",
+        "allowed_tenants",
+        "allowedTenants",
+        "locale",
+        "environment",
+        "feature_flags",
+        "featureFlags",
+        "session",
+        "session_kind",
+        "sessionKind",
+        "roles",
+        "capabilities"
+      ]
+    }
+  },
+  "read_only_hosted_owner_profiles": {
+    "tenant_id": "tenant-dev",
+    "profiles": {
+      "strategies_page": {
+        "rows": 166,
+        "total_time": 0.5394594669999998,
+        "total_calls": 6996,
+        "top_cumulative": [
+          {
+            "file": "<stdin>",
+            "line": 16,
+            "name": "<lambda>",
+            "calls": 1,
+            "self_seconds": 1.248e-05,
+            "cumulative_seconds": 0.5394472370000001
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 2460,
+            "name": "list_strategy_specs_page",
+            "calls": 1,
+            "self_seconds": 1.3860000000000001e-05,
+            "cumulative_seconds": 0.539434757
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 2831,
+            "name": "_fetch_canonical_strategy_specs_page",
+            "calls": 1,
+            "self_seconds": 2.22e-05,
+            "cumulative_seconds": 0.539419657
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/core/owner_reads.py",
+            "line": 85,
+            "name": "cached_owner_call",
+            "calls": 1,
+            "self_seconds": 1.645e-05,
+            "cumulative_seconds": 0.539395947
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 2878,
+            "name": "<lambda>",
+            "calls": 1,
+            "self_seconds": 8.303000000000001e-05,
+            "cumulative_seconds": 0.539358607
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 2887,
+            "name": "_fetch_canonical_strategy_specs_page_uncached",
+            "calls": 1,
+            "self_seconds": 0.001063017,
+            "cumulative_seconds": 0.5392755770000001
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/command_adapters/base.py",
+            "line": 222,
+            "name": "http_request_json",
+            "calls": 1,
+            "self_seconds": 2.3740000000000003e-05,
+            "cumulative_seconds": 0.5371179970000001
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/command_executor.py",
+            "line": 229,
+            "name": "_get_json",
+            "calls": 1,
+            "self_seconds": 3.4790000000000004e-05,
+            "cumulative_seconds": 0.523859568
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 138,
+            "name": "urlopen",
+            "calls": 1,
+            "self_seconds": 4.22e-06,
+            "cumulative_seconds": 0.468276752
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 496,
+            "name": "open",
+            "calls": 1,
+            "self_seconds": 1.8290000000000003e-05,
+            "cumulative_seconds": 0.468272532
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 525,
+            "name": "_open",
+            "calls": 1,
+            "self_seconds": 4.360000000000001e-06,
+            "cumulative_seconds": 0.468233012
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 485,
+            "name": "_call_chain",
+            "calls": 2,
+            "self_seconds": 4.76e-06,
+            "cumulative_seconds": 0.468228652
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1385,
+            "name": "http_open",
+            "calls": 1,
+            "self_seconds": 8.94e-06,
+            "cumulative_seconds": 0.468222652
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1316,
+            "name": "do_open",
+            "calls": 1,
+            "self_seconds": 2.61e-05,
+            "cumulative_seconds": 0.468213712
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 1434,
+            "name": "getresponse",
+            "calls": 1,
+            "self_seconds": 1.79e-05,
+            "cumulative_seconds": 0.466583252
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 336,
+            "name": "begin",
+            "calls": 1,
+            "self_seconds": 3.319e-05,
+            "cumulative_seconds": 0.46651576200000006
+          }
+        ]
+      },
+      "registry_artifacts": {
+        "rows": 329,
+        "total_time": 0.269925649,
+        "total_calls": 16448,
+        "top_cumulative": [
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 3872,
+            "name": "read_registry_strategy_artifacts",
+            "calls": 1,
+            "self_seconds": 0.000535133,
+            "cumulative_seconds": 0.26988917900000003
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 3834,
+            "name": "_registry_http_get",
+            "calls": 1,
+            "self_seconds": 4.592e-05,
+            "cumulative_seconds": 0.263742169
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 138,
+            "name": "urlopen",
+            "calls": 1,
+            "self_seconds": 2.51e-06,
+            "cumulative_seconds": 0.262696719
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 496,
+            "name": "open",
+            "calls": 1,
+            "self_seconds": 1.535e-05,
+            "cumulative_seconds": 0.262694209
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 525,
+            "name": "_open",
+            "calls": 1,
+            "self_seconds": 4.05e-06,
+            "cumulative_seconds": 0.262656959
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 485,
+            "name": "_call_chain",
+            "calls": 2,
+            "self_seconds": 4.05e-06,
+            "cumulative_seconds": 0.262652909
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1385,
+            "name": "http_open",
+            "calls": 1,
+            "self_seconds": 6.42e-06,
+            "cumulative_seconds": 0.26264713900000003
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1316,
+            "name": "do_open",
+            "calls": 1,
+            "self_seconds": 2.084e-05,
+            "cumulative_seconds": 0.262640719
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 1434,
+            "name": "getresponse",
+            "calls": 1,
+            "self_seconds": 1.1010000000000001e-05,
+            "cumulative_seconds": 0.261785989
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 336,
+            "name": "begin",
+            "calls": 1,
+            "self_seconds": 2.6900000000000003e-05,
+            "cumulative_seconds": 0.261735969
+          },
+          {
+            "file": "/usr/local/lib/python3.12/socket.py",
+            "line": 706,
+            "name": "readinto",
+            "calls": 4,
+            "self_seconds": 1.736e-05,
+            "cumulative_seconds": 0.261451259
+          },
+          {
+            "file": "~",
+            "line": 0,
+            "name": "<method 'recv_into' of '_socket.socket' objects>",
+            "calls": 4,
+            "self_seconds": 0.261424989,
+            "cumulative_seconds": 0.261424989
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 303,
+            "name": "_read_status",
+            "calls": 1,
+            "self_seconds": 5.327e-05,
+            "cumulative_seconds": 0.26141784900000004
+          },
+          {
+            "file": "~",
+            "line": 0,
+            "name": "<method 'readline' of '_io.BufferedReader' objects>",
+            "calls": 7,
+            "self_seconds": 1.843e-05,
+            "cumulative_seconds": 0.261365809
+          },
+          {
+            "file": "~",
+            "line": 0,
+            "name": "<built-in method builtins.isinstance>",
+            "calls": 3966,
+            "self_seconds": 0.001035328,
+            "cumulative_seconds": 0.0034584610000000003
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 147,
+            "name": "normalize_registry_catalog_row",
+            "calls": 329,
+            "self_seconds": 0.001045645,
+            "cumulative_seconds": 0.0034054940000000002
+          }
+        ]
+      },
+      "research_artifacts": {
+        "rows": 2,
+        "total_time": 0.019443308999999985,
+        "total_calls": 1916,
+        "top_cumulative": [
+          {
+            "file": "/workspace/services/control-plane/bff/ports/research_knowledge_source.py",
+            "line": 4003,
+            "name": "read_research_artifact_catalog_rows",
+            "calls": 1,
+            "self_seconds": 3.706e-05,
+            "cumulative_seconds": 0.019425329
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/research/client.py",
+            "line": 153,
+            "name": "list_research_artifacts",
+            "calls": 1,
+            "self_seconds": 7.280000000000001e-06,
+            "cumulative_seconds": 0.013279749
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/research/client.py",
+            "line": 82,
+            "name": "_call",
+            "calls": 1,
+            "self_seconds": 1.1390000000000001e-05,
+            "cumulative_seconds": 0.013063729000000001
+          },
+          {
+            "file": "/workspace/services/control-plane/bff/research/client.py",
+            "line": 39,
+            "name": "default_http_request",
+            "calls": 1,
+            "self_seconds": 2.739e-05,
+            "cumulative_seconds": 0.013050769
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 138,
+            "name": "urlopen",
+            "calls": 1,
+            "self_seconds": 2.9400000000000002e-06,
+            "cumulative_seconds": 0.012725109
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 496,
+            "name": "open",
+            "calls": 1,
+            "self_seconds": 1.355e-05,
+            "cumulative_seconds": 0.012722169
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 525,
+            "name": "_open",
+            "calls": 1,
+            "self_seconds": 3.61e-06,
+            "cumulative_seconds": 0.012685829000000001
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 485,
+            "name": "_call_chain",
+            "calls": 2,
+            "self_seconds": 4.440000000000001e-06,
+            "cumulative_seconds": 0.012682219000000002
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1385,
+            "name": "http_open",
+            "calls": 1,
+            "self_seconds": 6.95e-06,
+            "cumulative_seconds": 0.012657859
+          },
+          {
+            "file": "/usr/local/lib/python3.12/urllib/request.py",
+            "line": 1316,
+            "name": "do_open",
+            "calls": 1,
+            "self_seconds": 2.6220000000000003e-05,
+            "cumulative_seconds": 0.012650909
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 1434,
+            "name": "getresponse",
+            "calls": 1,
+            "self_seconds": 1.1540000000000001e-05,
+            "cumulative_seconds": 0.011612189
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 336,
+            "name": "begin",
+            "calls": 1,
+            "self_seconds": 2.5049e-05,
+            "cumulative_seconds": 0.011559609
+          },
+          {
+            "file": "/usr/local/lib/python3.12/http/client.py",
+            "line": 303,
+            "name": "_read_status",
+            "calls": 1,
+            "self_seconds": 1.6411000000000003e-05,
+            "cumulative_seconds": 0.01117278
+          },
+          {
+            "file": "/usr/local/lib/python3.12/socket.py",
+            "line": 706,
+            "name": "readinto",
+            "calls": 2,
+            "self_seconds": 1.201e-05,
+            "cumulative_seconds": 0.011160979000000001
+          },
+          {
+            "file": "~",
+            "line": 0,
+            "name": "<method 'readline' of '_io.BufferedReader' objects>",
+            "calls": 7,
+            "self_seconds": 1.3820000000000002e-05,
+            "cumulative_seconds": 0.011158069000000001
+          },
+          {
+            "file": "~",
+            "line": 0,
+            "name": "<method 'recv_into' of '_socket.socket' objects>",
+            "calls": 2,
+            "self_seconds": 0.011142899000000001,
+            "cumulative_seconds": 0.011142899000000001
+          }
+        ]
+      }
+    }
+  },
+  "before": {
+    "hosted": {
+      "at": "2026-11-14T23:36:50Z",
+      "scope": "Read-only served baseline, real hosted population; not a 2x fixture acceptance run or an after-change result",
+      "fanout": {
+        "/bff/strategies?exclude_state=draft&page_size=200": {
+          "p50_seconds": 2.0678912219955237,
+          "p95_seconds": 3.2318405890036956,
+          "max_seconds": 3.598078668997914,
+          "rounds": 20,
+          "samples_seconds": [
+            3.598078668997914,
+            2.629087237000931,
+            1.9178238550011883,
+            2.1159719880015473,
+            1.7134769919939572,
+            1.9010996759971022,
+            2.0678912219955237,
+            2.2125308309987304,
+            2.0878529519977747,
+            1.8087759640038712,
+            2.027895785999135,
+            2.2453761780052446,
+            1.6511513959994772,
+            2.5053587970032822,
+            2.63418422700488,
+            3.2318405890036956,
+            2.054717883998819,
+            1.998531807999825,
+            2.376288896994083,
+            1.8305040419945726
+          ]
+        },
+        "/bff/personas?page_size=200": {
+          "p50_seconds": 1.7357295699985116,
+          "p95_seconds": 3.044756363997294,
+          "max_seconds": 3.391436796002381,
+          "rounds": 20,
+          "samples_seconds": [
+            1.9518281320051756,
+            2.4791706789983436,
+            1.3797529989969917,
+            1.4253975940009695,
+            1.7827344559991616,
+            1.6982579420000548,
+            1.516879627997696,
+            3.391436796002381,
+            2.1501584659999935,
+            1.558489663999353,
+            2.14607224700012,
+            1.846483970999543,
+            1.7179062810027972,
+            1.7276270110014593,
+            1.956776811995951,
+            3.044756363997294,
+            1.3072005139983958,
+            1.7727608470013365,
+            1.7357295699985116,
+            1.3755489690011018
+          ]
+        },
+        "/bff/capital-pools?page_size=200": {
+          "p50_seconds": 0.17170031600107905,
+          "p95_seconds": 0.3675003899988951,
+          "max_seconds": 0.4873539210020681,
+          "rounds": 20,
+          "samples_seconds": [
+            0.4873539210020681,
+            0.24007361099938862,
+            0.1555600069987122,
+            0.17170031600107905,
+            0.09430038300342858,
+            0.20929935300227953,
+            0.07875834299920825,
+            0.20709364300273592,
+            0.3675003899988951,
+            0.07153274399752263,
+            0.10454007200314663,
+            0.2500961490004556,
+            0.2280733820007299,
+            0.12032722999720136,
+            0.16226317700056825,
+            0.2342838819968165,
+            0.16493590600293828,
+            0.22917258200322976,
+            0.1820420660005766,
+            0.08061192299646791
+          ]
+        },
+        "/bff/runtimes?page_size=200": {
+          "p50_seconds": 0.22157575200253632,
+          "p95_seconds": 0.46011011200607754,
+          "max_seconds": 0.5367811769974651,
+          "rounds": 20,
+          "samples_seconds": [
+            0.42712322599982144,
+            0.46011011200607754,
+            0.14900248799676774,
+            0.16737194599409122,
+            0.2022575040027732,
+            0.19462807399395388,
+            0.23929224099993007,
+            0.2019848540003295,
+            0.5367811769974651,
+            0.29557314600242535,
+            0.22996824199799448,
+            0.22157575200253632,
+            0.2282994420020259,
+            0.328903674002504,
+            0.1577384769989294,
+            0.438216315000318,
+            0.15990207700087922,
+            0.22332795200054534,
+            0.17770587599807186,
+            0.19129139400320128
+          ]
+        },
+        "/bff/tools": {
+          "p50_seconds": 0.03142992700304603,
+          "p95_seconds": 0.06305726400023559,
+          "max_seconds": 0.25799708900012774,
+          "rounds": 20,
+          "samples_seconds": [
+            0.044652486001723446,
+            0.06305726400023559,
+            0.03142992700304603,
+            0.027182847996300552,
+            0.02804673799982993,
+            0.02614649799943436,
+            0.03296775700437138,
+            0.03606695700000273,
+            0.25799708900012774,
+            0.030402677999518346,
+            0.05861411499790847,
+            0.026506836999033112,
+            0.03666839699872071,
+            0.05621448600140866,
+            0.02870810699823778,
+            0.034406966995447874,
+            0.027277998000499792,
+            0.03571532700152602,
+            0.02919414799544029,
+            0.027851628001371864
+          ]
+        },
+        "/bff/mcp-servers": {
+          "p50_seconds": 0.03152948799834121,
+          "p95_seconds": 0.07148256399523234,
+          "max_seconds": 0.2705342679983005,
+          "rounds": 20,
+          "samples_seconds": [
+            0.04228432700620033,
+            0.07148256399523234,
+            0.02922130699880654,
+            0.025050457996258046,
+            0.029555968001659494,
+            0.024201076994359028,
+            0.033711428004608024,
+            0.036577506994945,
+            0.2705342679983005,
+            0.028736548003507778,
+            0.06318987499980722,
+            0.02891159700084245,
+            0.03429846699873451,
+            0.05330259599577403,
+            0.031197078002151102,
+            0.03666650699597085,
+            0.028984477001358755,
+            0.03588794699317077,
+            0.03152948799834121,
+            0.028637847004574724
+          ]
+        },
+        "/bff/skills": {
+          "p50_seconds": 0.03387150799972005,
+          "p95_seconds": 0.07211881399416598,
+          "max_seconds": 0.2384960709969164,
+          "rounds": 20,
+          "samples_seconds": [
+            0.042027265997603536,
+            0.07211881399416598,
+            0.03539432699471945,
+            0.02339152900094632,
+            0.029827477999788243,
+            0.02728140800172696,
+            0.03387150799972005,
+            0.03666257699660491,
+            0.2384960709969164,
+            0.030282187995908316,
+            0.056901544994616415,
+            0.03172569700109307,
+            0.03754996699717594,
+            0.05579056599526666,
+            0.02602026899694465,
+            0.03504509699996561,
+            0.027764106998802163,
+            0.03448139800457284,
+            0.029457718002959155,
+            0.024366867997741792
+          ]
+        },
+        "/bff/alerts": {
+          "p50_seconds": 0.39202486899739597,
+          "p95_seconds": 1.0259335869995994,
+          "max_seconds": 1.0260594070059597,
+          "rounds": 20,
+          "samples_seconds": [
+            0.5438398059995961,
+            0.6005971410049824,
+            0.3538586310023675,
+            0.374810888999491,
+            0.29305569599819137,
+            0.2906497860021773,
+            0.3970622880005976,
+            0.4336059050037875,
+            1.0259335869995994,
+            0.39202486899739597,
+            0.8827543680017698,
+            0.32224647399561945,
+            0.39380369799619075,
+            0.41436290700221434,
+            0.3284317430006922,
+            1.0260594070059597,
+            0.24614324000140186,
+            0.43686249499296537,
+            0.3357584629993653,
+            0.341073702002177
+          ]
+        },
+        "/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200": {
+          "p50_seconds": 0.3549782419941039,
+          "p95_seconds": 1.3524353300017538,
+          "max_seconds": 1.427834284993878,
+          "rounds": 20,
+          "samples_seconds": [
+            0.60308578099648,
+            1.1084523899990018,
+            0.2642088290012907,
+            0.27229234900005395,
+            0.3504704419974587,
+            0.35124625199387083,
+            0.3549782419941039,
+            0.4926505900002667,
+            0.9691367119958159,
+            0.3577131409983849,
+            0.8478403109984356,
+            1.427834284993878,
+            0.35474248100217665,
+            0.6299229789947276,
+            0.2423594809952192,
+            1.1258618490028311,
+            1.3524353300017538,
+            0.34314640200318536,
+            0.32025220400100807,
+            0.3197784939984558
+          ]
+        }
+      },
+      "artifact_full_walk": {
+        "p50_seconds": 1.1537263770005666,
+        "p95_seconds": 2.005985698000586,
+        "max_seconds": 2.2677062260045204,
+        "rounds": 20,
+        "samples_seconds": [
+          1.0580131139940931,
+          1.0799400129981223,
+          1.0030708990016137,
+          2.005985698000586,
+          1.4315537939983187,
+          1.1509548169997288,
+          1.1596290560046327,
+          1.2048391229982371,
+          1.5954092999963905,
+          1.1537263770005666,
+          0.9986730790042202,
+          1.1135466800042195,
+          1.1971973429972422,
+          1.2952533349962323,
+          1.4114974660042208,
+          2.2677062260045204,
+          1.3014639339962741,
+          0.9446463829954155,
+          0.9823338010028237,
+          1.0133549790043617
+        ],
+        "rows": 331,
+        "pages": 4
+      }
+    },
+    "fixture": {
+      "kind": "baseline_diagnostic",
+      "acceptance_3": "NOT_MET",
+      "fixtures": [
+        {
+          "artifacts": 662,
+          "first_page": {
+            "rounds": 20,
+            "p50_seconds": 0.00266307000129018,
+            "p95_seconds": 0.0028246799993212335,
+            "max_seconds": 0.0028294799994910136
+          },
+          "sequential_all_pages": {
+            "rounds": 20,
+            "p50_seconds": 0.01871304899395909,
+            "p95_seconds": 0.01990858800127171,
+            "max_seconds": 0.04790003699599765
+          },
+          "per_page_owner_rows_received": 662,
+          "per_page_owner_requests": 2,
+          "profile": [
+            {
+              "function": "list_artifact_catalog",
+              "calls": 1,
+              "self_seconds": 8.2619e-05,
+              "cumulative_seconds": 0.011773529000000001
+            },
+            {
+              "function": "read_registry_strategy_artifacts",
+              "calls": 1,
+              "self_seconds": 0.000786233,
+              "cumulative_seconds": 0.008792619
+            },
+            {
+              "function": "<built-in method builtins.isinstance>",
+              "calls": 8629,
+              "self_seconds": 0.0014064210000000001,
+              "cumulative_seconds": 0.0051084400000000005
+            },
+            {
+              "function": "normalize_registry_catalog_row",
+              "calls": 662,
+              "self_seconds": 0.001558712,
+              "cumulative_seconds": 0.005097695
+            },
+            {
+              "function": "__instancecheck__",
+              "calls": 2649,
+              "self_seconds": 0.000842224,
+              "cumulative_seconds": 0.004256201
+            },
+            {
+              "function": "__subclasscheck__",
+              "calls": 2649,
+              "self_seconds": 0.001126016,
+              "cumulative_seconds": 0.0034139770000000003
+            },
+            {
+              "function": "<method 'sort' of 'list' objects>",
+              "calls": 1,
+              "self_seconds": 0.000132979,
+              "cumulative_seconds": 0.00287505
+            },
+            {
+              "function": "<lambda>",
+              "calls": 662,
+              "self_seconds": 0.0006085460000000001,
+              "cumulative_seconds": 0.002742071
+            },
+            {
+              "function": "<built-in method builtins.issubclass>",
+              "calls": 2649,
+              "self_seconds": 0.000773322,
+              "cumulative_seconds": 0.0017337790000000002
+            },
+            {
+              "function": "<method 'get' of 'dict' objects>",
+              "calls": 10601,
+              "self_seconds": 0.0013921950000000002,
+              "cumulative_seconds": 0.0013921950000000002
+            },
+            {
+              "function": "_naive_utc",
+              "calls": 662,
+              "self_seconds": 0.00029405400000000003,
+              "cumulative_seconds": 0.001059983
+            },
+            {
+              "function": "__subclasscheck__",
+              "calls": 2649,
+              "self_seconds": 0.000496137,
+              "cumulative_seconds": 0.0009604570000000001
+            }
+          ]
+        },
+        {
+          "artifacts": 6620,
+          "first_page": {
+            "rounds": 20,
+            "p50_seconds": 0.02849473899550503,
+            "p95_seconds": 0.031027867997181602,
+            "max_seconds": 0.031657548002840485
+          },
+          "sequential_all_pages": {
+            "rounds": 20,
+            "p50_seconds": 1.9018203239975264,
+            "p95_seconds": 2.0348765360031393,
+            "max_seconds": 2.0970988720000605
+          },
+          "per_page_owner_rows_received": 6620,
+          "per_page_owner_requests": 14,
+          "profile": [
+            {
+              "function": "list_artifact_catalog",
+              "calls": 1,
+              "self_seconds": 0.00014522000000000002,
+              "cumulative_seconds": 0.11365916300000001
+            },
+            {
+              "function": "read_registry_strategy_artifacts",
+              "calls": 1,
+              "self_seconds": 0.0073028730000000005,
+              "cumulative_seconds": 0.08421859500000001
+            },
+            {
+              "function": "normalize_registry_catalog_row",
+              "calls": 6620,
+              "self_seconds": 0.015690508000000002,
+              "cumulative_seconds": 0.049206715000000005
+            },
+            {
+              "function": "<built-in method builtins.isinstance>",
+              "calls": 86227,
+              "self_seconds": 0.012947302,
+              "cumulative_seconds": 0.047145806000000005
+            },
+            {
+              "function": "__instancecheck__",
+              "calls": 26481,
+              "self_seconds": 0.007706426000000001,
+              "cumulative_seconds": 0.039310296
+            },
+            {
+              "function": "__subclasscheck__",
+              "calls": 26481,
+              "self_seconds": 0.010095646,
+              "cumulative_seconds": 0.03160387
+            },
+            {
+              "function": "<method 'sort' of 'list' objects>",
+              "calls": 1,
+              "self_seconds": 0.0014670330000000002,
+              "cumulative_seconds": 0.029265628000000002
+            },
+            {
+              "function": "<lambda>",
+              "calls": 6620,
+              "self_seconds": 0.0059326990000000005,
+              "cumulative_seconds": 0.027798595000000002
+            },
+            {
+              "function": "<built-in method builtins.issubclass>",
+              "calls": 26481,
+              "self_seconds": 0.007088314,
+              "cumulative_seconds": 0.016396432000000002
+            },
+            {
+              "function": "<method 'get' of 'dict' objects>",
+              "calls": 105977,
+              "self_seconds": 0.016009909000000003,
+              "cumulative_seconds": 0.016009909000000003
+            },
+            {
+              "function": "_naive_utc",
+              "calls": 6620,
+              "self_seconds": 0.0028734850000000003,
+              "cumulative_seconds": 0.010714953000000001
+            },
+            {
+              "function": "__subclasscheck__",
+              "calls": 26481,
+              "self_seconds": 0.004762552000000001,
+              "cumulative_seconds": 0.009308118
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "after": null,
+  "findings": [
+    "Artifact per-request cost is dominated by Registry owner HTTP wait: 0.261425s socket receive out of 0.269926s total for 329 rows; normalizing 329 rows takes 0.003405s cumulative. Concurrent BFF reads alone cannot remove the owner population cost.",
+    "Strategies bounded owner page takes 0.539459s in the separate owner-port profile (166 non-draft rows), including 0.537118s in http_request_json; nine-read hosted strategies p95 is 3.231841s. This does not isolate the complete strategies route or prove all remaining cost is in the BFF.",
+    "ResearchRouterService.list_artifact_catalog calls both complete-list owner ports on each request, concatenates and sorts all rows, then slices with numeric offsets.",
+    "Registry GET /api/registry/strategy-artifacts accepts page tokens but its service first builds all visible rows; PostgresRegistryStore.list_strategy_artifact_rows uses list_all_selected without a page bound.",
+    "Research GET /api/research/artifacts returns an unpaged list from _visible_saved_artifacts, which scans runs/artifacts and sorts all visible rows.",
+    "To satisfy constant per-page work, the owner contracts need an indexed ordered catalog read (including exact totals and deterministic cross-owner merge boundaries) before the BFF can consume bounded pages. Merely reducing normalization, adding fan-out, or memoizing a complete BFF catalog does not establish this criterion."
+  ],
+  "required_continuation": {
+    "reason": "The stated BFF-layer artifact contract cannot provide acceptance 3 using the current owner APIs. Preserve this task and its measured baseline while its owner-side paging/index design and source scope are reconciled.",
+    "affected_owner_surfaces": [
+      "services/registry/service.py:_strategy_artifact_catalog_rows/list_all_strategy_artifact_entries",
+      "services/registry/pg_store.py:PostgresRegistryStore.list_strategy_artifact_rows",
+      "services/registry/storage.py:RegistryStore.list_strategy_artifact_rows",
+      "services/research/main.py:_visible_saved_artifacts/list_saved_research_artifacts",
+      "services/research/store.py:ResearchOrchestratorStore",
+      "services/control-plane/bff/ports/research_knowledge_source.py:artifact catalog read contracts",
+      "services/control-plane/bff/ports/read_surface_ports.py:artifact catalog read contracts"
+    ],
+    "preserve": "Exact existing response shape/order/numeric tokens, tenant/RBAC rules, owner write authority, unchanged FE budgets and route signatures. Do not touch personas/service.py owned by BFF-LEAGUE-RANKING-CONCURRENT-READ-20261115.",
+    "not_a_dependency_claim": "No declared task dependencies. This is a missing product owner read capability, not a wait for an already-completed task."
+  },
+  "standard_approaches_consulted": [
+    {
+      "url": "https://docs.python.org/3.12/library/profile.html",
+      "application": "cProfile/pstats cumulative time to distinguish BFF normalization from downstream wait"
+    },
+    {
+      "url": "https://www.postgresql.org/docs/18/queries-limit.html",
+      "application": "Stable ordered paging must be owner-backed; LIMIT/OFFSET after full retrieval does not bound total source work"
+    }
+  ],
+  "rerun": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py",
+    "tests": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_risk_center_fanout_and_artifact_paging.py",
+    "fixture_benchmark": ".venv-pantheon/bin/python services/control-plane/bff/tests/test_risk_center_fanout_and_artifact_paging.py --benchmark",
+    "hosted_transport": "Save each embedded source to its named /tmp path; run from an authorized dev workstation with its existing pinned SSH identity. No credential values are printed or stored. Commands below use the current documented dev identity.",
+    "hosted_commands": [
+      "timeout 180 ssh -F /dev/null -i /home/chloe_ong_dev_cctech_support_com/.ssh/google_compute_engine -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 chloe_ong_dev_cctech_support_com@35.194.154.62 'docker exec -i pantheon-operator-bff-1 python -' < /tmp/risk-hosted-read.py",
+      "timeout 180 ssh -F /dev/null -i /home/chloe_ong_dev_cctech_support_com/.ssh/google_compute_engine -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 chloe_ong_dev_cctech_support_com@35.194.154.62 'docker exec -i pantheon-operator-bff-1 python -' < /tmp/risk-owner-profile.py",
+      "timeout 180 ssh -F /dev/null -i /home/chloe_ong_dev_cctech_support_com/.ssh/google_compute_engine -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 chloe_ong_dev_cctech_support_com@35.194.154.62 'docker exec -i pantheon-operator-bff-1 python -' < /tmp/risk-hosted-benchmark.py"
+    ],
+    "hosted_sources": {
+      "risk-hosted-read.py": "import json, os, time, urllib.request\nbase = 'http://127.0.0.1:8001'\nprefix = 'PANTHEON_BFF_DEV_LOGIN_VIEWER_'\nbody = {'grant_type':'client_credentials', 'client_id':os.environ[prefix+'CLIENT_ID'], 'client_secret':os.environ[prefix+'CLIENT_SECRET']}\nwith urllib.request.urlopen(urllib.request.Request(base+'/bff/auth/dev-login', data=json.dumps(body).encode(), headers={'Content-Type':'application/json'}), timeout=20) as r:\n    token = json.load(r)['access_token']\nheaders = {'Authorization':'Bearer '+token}\nout = {'measured_at':time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'measurements':{}}\nfor path in ['/bff/version','/bff/me','/bff/strategies?page_size=200', '/bff/alerts','/bff/artifacts?page_size=100']:\n    start = time.perf_counter()\n    with urllib.request.urlopen(urllib.request.Request(base+path,headers=headers),timeout=30) as r:\n        data = json.load(r)\n    out['measurements'][path] = {'seconds':time.perf_counter()-start, 'keys':list(data), 'page_info':data.get('page_info'), 'total':data.get('total_count'), 'rows':len(data.get('data',data.get('alerts',[]))) if isinstance(data.get('data',data.get('alerts',[])),list) else None}\n    if path == '/bff/version': out['version'] = data\n    if path == '/bff/me': out['identity'] = {'tenant': data.get('tenant_id'), 'data_keys':list(data.get('data',{}))}\nprint(json.dumps(out))\n",
+      "risk-owner-profile.py": "import cProfile, json, os, pstats, time, urllib.request\nfrom services.control_plane.bff.core.owner_reads import authorization, selected_tenant, request_read_scope\nfrom services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort\nbase='http://127.0.0.1:8001'\nprefix='PANTHEON_BFF_DEV_LOGIN_VIEWER_'\nbody={'grant_type':'client_credentials','client_id':os.environ[prefix+'CLIENT_ID'],'client_secret':os.environ[prefix+'CLIENT_SECRET']}\nwith urllib.request.urlopen(urllib.request.Request(base+'/bff/auth/dev-login',data=json.dumps(body).encode(),headers={'Content-Type':'application/json'}),timeout=20) as r:\n    token=json.load(r)['access_token']\nauthorization.set('Bearer '+token)\nwith urllib.request.urlopen(urllib.request.Request(base+'/bff/me',headers={'Authorization':'Bearer '+token}),timeout=20) as r:\n    identity=json.load(r)['data']\ntenant=identity['tenant_id']\nselected_tenant.set(tenant)\nport=DefaultResearchKnowledgeSourcePort()\nout={'tenant_id':tenant,'profiles':{}}\nfor name, fn in [('strategies_page',lambda:port.list_strategy_specs_page(exclude_state='draft',page_size=200)),('registry_artifacts',port.read_registry_strategy_artifacts),('research_artifacts',port.read_research_artifact_catalog_rows)]:\n    prof=cProfile.Profile()\n    with request_read_scope(): result=prof.runcall(fn)\n    stats=pstats.Stats(prof)\n    top=sorted(stats.stats.items(), key=lambda x:x[1][3], reverse=True)[:16]\n    out['profiles'][name]={'rows':len(result.items) if hasattr(result,'items') and not isinstance(result,dict) else len(result.get('items',[])), 'total_time':stats.total_tt,'total_calls':stats.total_calls,'top_cumulative':[{'file':k[0],'line':k[1],'name':k[2],'calls':v[1],'self_seconds':v[2],'cumulative_seconds':v[3]} for k,v in top]}\nprint(json.dumps(out))\n",
+      "risk-hosted-benchmark.py": "import concurrent.futures, json, math, os, time, urllib.request\nbase='http://127.0.0.1:8001'\nprefix='PANTHEON_BFF_DEV_LOGIN_VIEWER_'\nbody={'grant_type':'client_credentials','client_id':os.environ[prefix+'CLIENT_ID'],'client_secret':os.environ[prefix+'CLIENT_SECRET']}\nwith urllib.request.urlopen(urllib.request.Request(base+'/bff/auth/dev-login',data=json.dumps(body).encode(),headers={'Content-Type':'application/json'}),timeout=20) as r:\n    token=json.load(r)['access_token']\nheaders={'Authorization':'Bearer '+token}\npaths=['/bff/strategies?exclude_state=draft&page_size=200','/bff/personas?page_size=200','/bff/capital-pools?page_size=200','/bff/runtimes?page_size=200','/bff/tools','/bff/mcp-servers','/bff/skills','/bff/alerts','/bff/incidents?status=open%2Cinvestigating%2Cmitigating%2Cin_progress&page_size=200']\ndef read(path):\n    start=time.perf_counter()\n    with urllib.request.urlopen(urllib.request.Request(base+path,headers=headers),timeout=15) as r: data=json.load(r)\n    return time.perf_counter()-start,data\ndef stats(values):\n    values=sorted(values)\n    return {'p50_seconds':values[math.ceil(len(values)*.5)-1],'p95_seconds':values[math.ceil(len(values)*.95)-1],'max_seconds':values[-1],'rounds':len(values)}\nsamples={p:[] for p in paths}\nartifact=[]\nwith concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:\n    for _ in range(20):\n        pending={p:pool.submit(read,p) for p in paths}\n        for p,f in pending.items(): samples[p].append(f.result()[0])\nfor _ in range(20):\n    start=time.perf_counter(); token=None; rows=0; pages=0\n    while True:\n        _,data=read('/bff/artifacts?page_size=100'+('&page_token='+token if token else ''))\n        rows+=len(data['data']); pages+=1\n        token=data['page_info'].get('next_page_token')\n        if not token: break\n    artifact.append(time.perf_counter()-start)\nprint(json.dumps({'at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'scope':'Read-only served baseline, real hosted population; not a 2x fixture acceptance run or an after-change result','fanout':{p:{**stats(v),'samples_seconds':v} for p,v in samples.items()},'artifact_full_walk':{**stats(artifact),'samples_seconds':artifact,'rows':rows,'pages':pages}}))\n"
+    },
+    "statistics": "Nearest-rank p50/p95 over exactly 20 completed samples; JSON bodies consumed before stop time. Tests/benchmarks ran as finite foreground batches and all terminal exits were collected."
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_risk_center_fanout_and_artifact_paging.py",
+      "exit_code": 0,
+      "result": "3 diagnostic tests passed, 2 existing jsonschema.RefResolver deprecation warnings"
+    },
+    {
+      "command": ".venv-pantheon/bin/python services/control-plane/bff/tests/test_risk_center_fanout_and_artifact_paging.py --benchmark",
+      "exit_code": 0,
+      "result": "20 rounds per size, 662 and 6620 rows; constant-work acceptance NOT_MET"
+    },
+    {
+      "command": "read-only hosted baseline probe, owner cProfile and 20-round fan-out/paging benchmark (embedded above)",
+      "exit_code": 0,
+      "result": "All three batches terminal; no product writes or deployment"
+    },
+    {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_artifact_catalog_registry.py",
+      "exit_code": 0,
+      "result": "4 existing catalog integration tests passed; no new acceptance claim"
+    }
+  ]
+}
