@@ -36,6 +36,7 @@ except ImportError:
 from services.agora.service import AgoraWriteService
 from services.agora.store import AgoraStore
 from services.control_plane.bff.agora.servant.turn_worker import ServantTurnWorker
+from services.control_plane.bff.agora.servant.tool_turn import PACKET_MARKER
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.personas.service import (
     _extract_identity,
@@ -292,6 +293,40 @@ class FakeOpenClawClient:
         self.sessions[session_id] = record
         return {"status": "ok", "session": record}
 
+    def invoke_structured_extraction(self, **kwargs: Any) -> dict[str, Any]:
+        """AGORA-SERVANT-DATA-TOOLS-20261127: the servant turn is a structured tool turn.
+
+        Recorded in the old call shape (``messages`` rebuilt from the turn packet) so the T1
+        history assertions keep proving what the provider received.
+        """
+        packet = json.loads(kwargs["prompt"].split(PACKET_MARKER, 1)[1])
+        messages = [dict(m) for m in packet["history"]] + [
+            {"role": "user", "content": packet["trader_message"], "attachment_refs": packet["attachment_refs"]}
+        ]
+        self.invoke_calls.append({**kwargs, "provider": "openclaw", "packet": packet, "messages": messages})
+        if self.fail_next_invoke:
+            self.fail_next_invoke = False
+            raise OpenClawOpsClientError(
+                "adapter unavailable",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_UNREACHABLE",
+            )
+        return {
+            "status": "ok",
+            "data": {
+                "status": "completed",
+                "output": {
+                    "structured_data": {
+                        "action": "answer",
+                        "tool_calls": [],
+                        "answer_text": "Servant response grounded in the supplied context.",
+                        "cited_fact_ids": [],
+                        "missing_data": [],
+                    }
+                },
+            },
+        }
+
     def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
         self.invoke_calls.append(kwargs)
         if self.fail_next_invoke:
@@ -502,9 +537,8 @@ def test_servant_session_detail_message_stream_and_terminate(
     _run_worker(client, fake)
     invoke = fake.invoke_calls[-1]
     assert invoke["provider"] == "openclaw"
-    assert invoke["metadata"]["audit"]["trace_id"] == "trace-message-001"
-    assert invoke["metadata"]["audit"]["request_id"] == "req-message-001"
-    assert invoke["metadata"]["audit"]["persona_id"] == persona_id
+    assert invoke["trace_id"] == "trace-message-001"
+    assert invoke["operator_id"] == "agora-test-user"
     assert invoke["messages"][0]["attachment_refs"] == ["evidence://seed-1"]
 
     stream = client.get(f"/bff/agora/servant/sessions/{session_id}/stream", headers=AUTH)
@@ -613,6 +647,7 @@ def test_servant_message_request_makes_no_provider_call(monkeypatch: Any, tmp_pa
         raise AssertionError("provider call inside the request")
 
     monkeypatch.setattr(fake, "invoke_assistant_provider", _boom)
+    monkeypatch.setattr(fake, "invoke_structured_extraction", _boom)
     response = _send(client, session_id, "no provider here", "noprov-001")
 
     assert response.status_code == 202, response.text

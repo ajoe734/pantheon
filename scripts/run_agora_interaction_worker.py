@@ -64,6 +64,25 @@ def _run_servant_loop(
             stop_event.wait(poll_interval)
 
 
+def build_servant_data_tools(servant_owner, research_store, journal_reader):
+    """The servant's read-only tool set wired to the owners this worker already holds."""
+    from agora.servant.data_tools import ServantDataTools, SourceIngestToolClient
+    from agora.servant.institutional_knowledge import InstitutionalKnowledgeReader
+    from agora.servant.research_proposal import draft_research_plan
+
+    def research_drafter(question, ctx):
+        return draft_research_plan(question, operator_id=ctx.operator_id or ctx.user_id)
+
+    return ServantDataTools(
+        source_ingest=SourceIngestToolClient(),
+        agora_owner=servant_owner,
+        research_store=research_store,
+        journal_reader=journal_reader,
+        institutional_reader=InstitutionalKnowledgeReader(),
+        research_drafter=research_drafter,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Agora Persona interaction background worker")
     parser.add_argument("--once", action="store_true", help="Process pending interactions once and exit")
@@ -216,7 +235,11 @@ def main() -> int:
     else:
         raise ValueError(f"Unsupported AGORA_STORE_BACKEND: {servant_backend}")
 
-    servant_worker = ServantTurnWorker(owner=servant_owner)
+    # AGORA-SERVANT-DATA-TOOLS-20261127 (SD §4.3): the fixed read-only data tools, resolved in
+    # this process against their owners. A source without configuration answers not_configured.
+    servant_worker = ServantTurnWorker(
+        owner=servant_owner, tools=build_servant_data_tools(servant_owner, research_store, read_store)
+    )
     SERVANT_HEARTBEAT_PATH.unlink(missing_ok=True)
 
     if args.once:
