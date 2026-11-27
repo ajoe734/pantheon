@@ -378,6 +378,17 @@ class PostgresPolicyLearningCandidateStore:
             self._upsert(conn, record)
         return record
 
+    def delete_candidate(self, candidate_id: str) -> bool:
+        clean_id = str(candidate_id or "").strip()
+        if not clean_id:
+            return False
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM {self.table} WHERE candidate_id = %s",
+                (clean_id,),
+            )
+            return bool(getattr(cursor, "rowcount", 0))
+
     def _row_values(self, record: Dict[str, Any]) -> tuple:
         return (
             record["candidate_id"],
@@ -628,6 +639,8 @@ class PolicyLearningStore:
             "dsn": "",
         }
         self._thread_lock = threading.RLock()
+        self._trader_training_approvals: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        self._decision_evidence_records: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     def describe(self) -> Dict[str, Any]:
         """Non-secret description of which backend owns candidate authority."""
@@ -733,6 +746,131 @@ class PolicyLearningStore:
             records[candidate_id] = record
             self._write_candidates(records)
         return record
+
+    def delete_candidate(self, candidate_id: str) -> bool:
+        if self.candidate_store is not None:
+            return self.candidate_store.delete_candidate(candidate_id)
+        clean_id = str(candidate_id or "").strip()
+        if not clean_id:
+            return False
+        with self._candidate_lock():
+            records = self._read_candidates()
+            if clean_id not in records:
+                return False
+            del records[clean_id]
+            self._write_candidates(records)
+            return True
+
+    def prune_trader_behaviour_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: str,
+        max_keep: int = 3,
+    ) -> List[str]:
+        """Keep at most ``max_keep`` (default 3) trader behaviour candidates per (tenant, trader, strategy)."""
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        clean_strategy = str(strategy_id or "").strip()
+        cap = max(1, int(max_keep))
+
+        matching: List[Dict[str, Any]] = []
+        for cand in self.list_candidates():
+            if not isinstance(cand, dict):
+                continue
+            if (
+                str(cand.get("candidate_kind") or "") != "trader_behaviour_candidate"
+                and str(cand.get("eval_type") or "").lower() != "trader_imitation"
+            ):
+                continue
+            if candidate_tenant_id(cand) != clean_tenant:
+                continue
+            if str(cand.get("user_id") or "") != clean_user:
+                continue
+            if str(cand.get("strategy_id") or "") != clean_strategy:
+                continue
+            matching.append(cand)
+
+        matching.sort(
+            key=lambda c: (
+                int(c.get("candidate_version") or 0),
+                str(c.get("created_at") or ""),
+                str(c.get("candidate_id") or ""),
+            ),
+            reverse=True,
+        )
+        pruned: List[str] = []
+        for stale in matching[cap:]:
+            cid = str(stale.get("candidate_id") or stale.get("id") or "").strip()
+            if cid and self.delete_candidate(cid):
+                pruned.append(cid)
+        return pruned
+
+    def set_trader_training_approval(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: str = "*",
+        approval: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        key = (
+            str(tenant_id or "").strip(),
+            str(user_id or "*").strip() or "*",
+            str(strategy_id or "*").strip() or "*",
+        )
+        stored = json.loads(json.dumps(approval))
+        with self._thread_lock:
+            self._trader_training_approvals[key] = stored
+        return stored
+
+    def get_trader_training_approval(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        clean_strategy = str(strategy_id or "").strip()
+        with self._thread_lock:
+            for key in (
+                (clean_tenant, clean_user, clean_strategy),
+                (clean_tenant, clean_user, "*"),
+                (clean_tenant, "*", clean_strategy),
+                (clean_tenant, "*", "*"),
+            ):
+                found = self._trader_training_approvals.get(key)
+                if found and found.get("approved") is not False:
+                    return dict(found)
+        return None
+
+    def record_decision_evidence_version(self, record: Dict[str, Any]) -> None:
+        tenant = str(record.get("tenant_id") or "").strip()
+        ver_id = str(record.get("dataset_version_id") or record.get("evidence_id") or "").strip()
+        if not tenant or not ver_id:
+            return
+        with self._thread_lock:
+            self._decision_evidence_records[(tenant, ver_id)] = json.loads(json.dumps(record))
+
+    def list_decision_evidence_records(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str = "",
+    ) -> List[Dict[str, Any]]:
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        with self._thread_lock:
+            rows = [
+                dict(rec)
+                for (t_id, _), rec in self._decision_evidence_records.items()
+                if t_id == clean_tenant
+                and (not clean_user or str(rec.get("user_id") or "") == clean_user)
+            ]
+        return rows
 
     def create_candidate_if_absent(self, candidate: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         """Insert a candidate unless its dedupe key already exists.
