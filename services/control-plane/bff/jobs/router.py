@@ -20,13 +20,41 @@ a false 404.
 """
 from __future__ import annotations
 
+import inspect
+import os
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Header, Query
 
 from ..auth.policy import require_operator_role as _policy_operator_role
 from ..models import ErrorCode
+from ..core.owner_reads import remaining_management_read_budget
 from ..ports.job_read import JobSourceUnavailableError, sort_jobs_newest_first
+
+# Whole-list deadline for GET /bff/jobs (BFF-JOBS-LIST-BOUNDED-OWNER-READ-20261127).
+# Each owner GET is capped by PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS (2.0 s), and
+# the first BFF pages need one owner page per bounded source, so 5 s covers a
+# slow first owner page plus one follow-up page while a stalled source is
+# reported as ``timeout`` instead of holding the crawl's page render (hosted
+# reads took 10-18 s before this change).
+_JOBS_LIST_DEADLINE_DEFAULT_SECONDS = 5.0
+
+
+def _jobs_list_deadline_seconds() -> float:
+    raw = os.getenv("PANTHEON_BFF_JOBS_LIST_DEADLINE_SECONDS", "").strip()
+    try:
+        value = max(float(raw), 0.1) if raw else _JOBS_LIST_DEADLINE_DEFAULT_SECONDS
+    except ValueError:
+        value = _JOBS_LIST_DEADLINE_DEFAULT_SECONDS
+    remaining = remaining_management_read_budget()
+    return value if remaining is None else max(0.1, min(value, remaining))
+
+
+def _page_offset(page_token: Optional[str]) -> int:
+    try:
+        return max(int(page_token), 0) if page_token else 0
+    except (TypeError, ValueError):
+        return 0
 
 JobOverlay = Callable[[], Dict[str, Dict[str, Any]]]
 SubmitJobAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]
@@ -141,16 +169,43 @@ def create_jobs_router(
         read_store = _resolve_read_store()
         snapshot_at = utc_now()
         diagnostics: Dict[str, Any] = {}
-        jobs = list(
-            read_store.list_jobs_bff(status=status, job_type=job_type, diagnostics=diagnostics) or []
-        )
+        # Validate the token before any owner read (page_slice owns its format).
+        page_slice([], page_token, page_size)
+        offset = _page_offset(page_token)
+        # Bounded owners are read only as deep as this page needs; the newest
+        # (offset + page_size) rows of every source contain this page exactly.
+        kwargs: Dict[str, Any] = {
+            "status": status,
+            "job_type": job_type,
+            "diagnostics": diagnostics,
+            "limit": offset + page_size,
+            "deadline_seconds": _jobs_list_deadline_seconds(),
+        }
+        try:
+            accepted = inspect.signature(read_store.list_jobs_bff).parameters
+            if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in accepted.values()):
+                kwargs = {k: v for k, v in kwargs.items() if k in accepted}
+        except (TypeError, ValueError):
+            pass
+        raw_jobs = list(read_store.list_jobs_bff(**kwargs) or [])
+        jobs = raw_jobs
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:
             jobs = [j for j in jobs if j.get("job_type") == job_type]
         jobs = sort_jobs_newest_first(jobs)
-        total = len(jobs)
-        page_items, next_page_token = page_slice(jobs, page_token, page_size)
+        reported_total = diagnostics.get("total")
+        if (
+            isinstance(reported_total, int)
+            and not isinstance(reported_total, bool)
+            and len(jobs) == len(raw_jobs)
+        ):
+            # Owner totals (bounded sources) plus counted rows (unbounded sources).
+            total = max(reported_total, len(jobs))
+        else:
+            total = len(jobs)
+        page_items, _ = page_slice(jobs, page_token, page_size)
+        next_page_token = str(offset + page_size) if offset + page_size < total else None
         # Compact rows: the heavy ``detail`` payload is served only by
         # GET /bff/jobs/{job_id}. Sorting above still used detail timestamps.
         page_items = [

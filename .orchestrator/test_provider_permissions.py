@@ -1299,13 +1299,17 @@ EOF
         claude_runtime = config["providers"]["claude"]["runtime"]
         claude2_runtime = config["providers"]["claude2"]["runtime"]
 
-        self.assertEqual(claude_runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude")
+        self.assertEqual(claude_runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude1")
         self.assertEqual(claude2_runtime["home"], "~/.claude2")
         self.assertEqual(claude2_runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude2")
         self.assertNotEqual(
             claude_runtime["env"]["CLAUDE_CONFIG_DIR"],
             claude2_runtime["env"]["CLAUDE_CONFIG_DIR"],
         )
+        # ~/.claude is the operator's interactive profile; a worker sharing it
+        # spends the operator's login and quota.
+        for runtime in (claude_runtime, claude2_runtime):
+            self.assertNotEqual(runtime["env"]["CLAUDE_CONFIG_DIR"], "~/.claude")
 
     def test_antigravity2_auth_probe_matches_antigravity_qualified_timeout(self) -> None:
         config = json.loads((Path(ROOT) / ".orchestrator" / "config.json").read_text(encoding="utf-8"))

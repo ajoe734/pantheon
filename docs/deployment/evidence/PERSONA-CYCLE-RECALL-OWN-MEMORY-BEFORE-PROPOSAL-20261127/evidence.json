@@ -1,0 +1,35 @@
+{
+  "task_id": "PERSONA-CYCLE-RECALL-OWN-MEMORY-BEFORE-PROPOSAL-20261127",
+  "root_cause_class": "RC1 / RC2 row for PERSONA-TOOLS-HOOK-AUTHORIZATION-ACROSS-PLUGIN-INSTANCES-20261119 (memory_read_via_broker acceptance)",
+  "incident": "Hosted 2026-11-26 10:00Z persona-day run 45890458260 failed only because 青禾 (persona-2448c7053e33ea48da47) submitted persona_proposal_submit without calling persona_memory_recall (tool_use memory_recall_ok=0, proposals_recorded=1), while 衡岳 and 澄川 passed all seven checks. build_brokered_cycle_prompt described memory reads as 'as often as you judge useful' and PersonaToolBroker._proposal accepted daily-cycle proposals before any own-bank recall.",
+  "changes": {
+    "prompt": "integrations/openclaw/persona_ooda_runtime.py::build_brokered_cycle_prompt now instructs the persona to call persona_memory_recall on its own bank (bank=\"own\") at least once before its first persona_proposal_submit, while keeping bank=\"facts\" and persona_mental_model_read optional as often as judged useful.",
+    "broker": "services/openclaw-gateway-adapter/persona_tool_broker.py::PersonaToolBroker._proposal enforces that for purpose == 'daily_cycle', a proposal is refused with HTTP 409 and reason 'recall_required_before_proposal' (message telling the model to call persona_memory_recall with bank=\"own\" at least once before persona_proposal_submit) until the run has recorded an own-bank persona_memory_recall for that persona. A zero-hit own-bank recall (outcome='ok', count=0) satisfies the rule. An own-bank recall that failed with MemoryCallError (recorded as outcome='unavailable' with bank='own') allows subsequent proposals in the same run so a memory outage never blocks all proposals, noting the failure in result['recall_failure'] and the proposal call's reason ('recall_unavailable:<reason>'). Facts-bank recalls, standing-question reads, and other personas' recalls never satisfy the own-bank requirement. Panel interpretation runs and other run purposes keep their existing behaviour.",
+    "caller_integration_test": "services/persona/test_persona_cycle_controller.py::test_cron_dispatched_cycle_turn_through_gateway_plugin_and_broker Cycle 3 (script_stranger) now performs an own-bank persona_memory_recall before submitting the proposal that cites an unreturned stranger memory id, preserving the case_file_citation_invalid assertion under the new broker precondition."
+  },
+  "acceptance": {
+    "1_prompt": "test_brokered_prompt_requires_own_bank_recall_before_first_proposal_and_keeps_facts_and_mental_model_optional in integrations/openclaw/test_persona_ooda_runtime.py",
+    "2_refusal_and_recording_after_recall": "test_daily_cycle_refuses_proposal_before_own_bank_recall_and_records_after_recall in services/openclaw-gateway-adapter/test_persona_tool_broker.py",
+    "3_zero_hits_and_memory_outage": "test_zero_hit_recall_satisfies_rule_and_failed_recall_allows_proposal_with_failure_noted in services/openclaw-gateway-adapter/test_persona_tool_broker.py",
+    "4_panel_and_other_purposes": "test_panel_interpretation_and_other_run_purposes_keep_existing_behaviour in services/openclaw-gateway-adapter/test_persona_tool_broker.py",
+    "5_own_bank_isolation": "test_facts_bank_mental_model_and_other_persona_never_count_as_own_bank_recall in services/openclaw-gateway-adapter/test_persona_tool_broker.py",
+    "6_runtime_budget": "stated in runtime_budget below; scripts/check_storage_manifest.py passed with 0 failures",
+    "7_focused_tests": "integrations/openclaw/test_persona_ooda_runtime.py (13 passed) and services/openclaw-gateway-adapter/test_persona_tool_broker.py (34 passed, 4 skipped opt-in container tests); plus services/persona/test_persona_cycle_controller.py, services/consultation/tests/test_panel_full_interpretations.py, and services/memory/test_mental_models.py",
+    "8_hosted_proof": "pending deploy; on the next daily cycle after deployment each of the three trading personas records memory_recall_ok >= 1 and the persona-day probe passes memory_read_via_broker for all three (recorded by the persona-loop owner)"
+  },
+  "runtime_budget": {
+    "extra_memory_retrieves_per_persona_per_cycle": "at most 1 extra GET /api/memory/retrieve (scope=persona, limit<=10) per trading persona per daily cycle when the model would otherwise have proposed without recalling its own bank (3 trading personas = at most 3 extra retrieve calls per weekday cycle)",
+    "cadence": "once per weekday daily OODA cycle (10:00Z) per enrolled trading persona",
+    "size_and_count_at_hosted_scale": "at most 1 extra calls row (<=512 bytes) in existing /root/.openclaw/persona-tool-broker.sqlite3 table calls if a persona attempts proposal_submit before recall; bank column ('own' | 'facts' | '') added in-place to existing table calls",
+    "growth_per_day": "<=1.5 KB/day across 3 trading personas inside the existing calls table",
+    "cap": "per-run call limits unchanged (persona_memory_recall: 12/run, persona_proposal_submit: 20/run); authorizations table remains capped at MAX_AUTHORIZATIONS = 2000 with AUTHORIZATION_TTL_SECONDS = 600s",
+    "cleanup": "authorizations rows deleted on consumption and pruned by TTL/cap on each authorize; calls table remains registered under RC3 WP3.1 in docs/operations/storage-manifest.json",
+    "new_writer": false
+  },
+  "review_independence": {
+    "owner": "Antigravity",
+    "reviewer": "Antigravity2",
+    "same_family_exception": "Claude lane hit durable terminal_quota:claude and OpenAI lanes were out of quota until 2026-11-27 10:03Z; supervisor auto-reassigned owner from Claude to Antigravity while Antigravity2 is the only available reviewer with capacity."
+  },
+  "residual_findings": []
+}

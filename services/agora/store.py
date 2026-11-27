@@ -13,7 +13,7 @@ Does not use SQLite, JSON file fallbacks, or in-memory caches.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -25,6 +25,43 @@ from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
 def _utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_rfc3339(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _rfc3339_after(base: str, seconds: float) -> str:
+    start = _parse_rfc3339(base) or datetime.now(timezone.utc)
+    return (
+        (start + timedelta(seconds=seconds))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+# AGORA-SERVANT-SESSION-DURABLE-20261127 runtime budget (SD_AGORA_SERVANT_CORE §4.3, T1).
+# Servant conversations live in the Agora owner table ``agora.sessions`` (mode "servant",
+# messages embedded in the session row) and their queued turns in ``agora.servant_turns``.
+SERVANT_SESSION_MODE = "servant"
+SERVANT_MESSAGE_CAP = 500  # messages per session (user + servant); the 501st user message gets a 409
+SERVANT_MESSAGE_MAX_CHARS = 4000  # per message, about 2 KB typical; a longer answer is stored truncated
+SERVANT_HISTORY_MESSAGES = 20  # messages carried into one provider turn
+SERVANT_SESSION_RETENTION_DAYS = 180  # untouched sessions and their turns are purged after this
+SERVANT_TURN_MAX_ATTEMPTS = 3  # claims per turn (crash recovery) before it is settled as degraded
+SERVANT_TURNS_TABLE = "agora.servant_turns"  # table: one ~1 KB row per user message
+
+
+class ServantSessionMessageCapError(Exception):
+    """The servant session already holds the maximum number of messages."""
+
+
+class ServantSessionConflictError(Exception):
+    """A servant session id or message id is already used by a different caller or content."""
 
 
 class DictRecord(dict):
@@ -206,6 +243,9 @@ class AgoraStore:
         self._decision_locks = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.decision_locks", owner_service="agora-svc", bootstrap=bootstrap
         )
+        self._servant_turns = PostgresJsonOwnerStore(
+            dsn=self.dsn, table=f"{self.schema}.servant_turns", owner_service="agora-svc", bootstrap=bootstrap
+        )
 
     # -------------------------------------------------------------------------
     # Sessions & Committees
@@ -321,28 +361,223 @@ class AgoraStore:
         payload: Dict[str, Any],
         created_at: Optional[str] = None,
     ) -> Optional[DictRecord]:
+        """Append one message; idempotent on ``message_id`` and safe against concurrent appends.
+
+        The BFF (user message) and the turn worker (servant answer) append to the same
+        session row, so the write is a compare-and-set retried on a stale snapshot.
+        Servant sessions enforce the per-session cap and per-message size budget.
+        """
+        for _attempt in range(8):
+            session = self.get_session(session_id)
+            if not session:
+                return None
+            messages = list(session.get("messages") or [])
+            for existing in messages:
+                if isinstance(existing, dict) and existing.get("id") == message_id:
+                    return DictRecord(existing)
+            role = str(payload.get("role") or "user")
+            truncated = False
+            if session.get("mode") == SERVANT_SESSION_MODE:
+                # A user message needs room for its answer, so it stops one short of the cap.
+                room = SERVANT_MESSAGE_CAP - (1 if role == "user" else 0)
+                if len(messages) >= room:
+                    raise ServantSessionMessageCapError(session_id)
+                if len(content) > SERVANT_MESSAGE_MAX_CHARS:
+                    content = content[:SERVANT_MESSAGE_MAX_CHARS]
+                    truncated = True
+            now = created_at or _utc_now_rfc3339()
+            msg = DictRecord({
+                "id": message_id,
+                "sessionId": session_id,
+                "sender": dict(payload.get("sender") or {"type": "operator", "id": actor_id}),
+                "role": role,
+                "content": content,
+                "language": str(payload.get("language") or "zh-TW"),
+                "attachments": list(payload.get("attachments") or []),
+                "citations": list(payload.get("citations") or []),
+                "annotations": list(payload.get("annotations") or []),
+                "createdAt": now,
+            })
+            if payload.get("metadata"):
+                msg["metadata"] = dict(payload["metadata"])
+            if truncated:
+                msg["truncated"] = True
+            updated = DictRecord(session)
+            updated["messages"] = messages + [msg]
+            updated["updatedAt"] = now
+            swapped, _current = self._sessions.compare_and_set(session_id, dict(session), dict(updated))
+            if swapped:
+                return msg
+        raise RuntimeError(f"agora session {session_id} append lost 8 concurrent races")
+
+    # -------------------------------------------------------------------------
+    # Servant conversations (AGORA-SERVANT-SESSION-DURABLE-20261127)
+    # -------------------------------------------------------------------------
+    def ensure_servant_session(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+        operator_id: str,
+        persona_id: str,
+        session_type: str = "interactive",
+        created_at: Optional[str] = None,
+    ) -> DictRecord:
+        """Create the durable servant conversation row once; a different owner is a conflict."""
+        existing = self.get_session(session_id)
+        if existing is None:
+            now = created_at or _utc_now_rfc3339()
+            record = DictRecord({
+                "id": session_id,
+                "sessionId": session_id,
+                "title": "Agora servant conversation",
+                "mode": SERVANT_SESSION_MODE,
+                "status": "active",
+                "outcome": None,
+                "targetEntity": {},
+                "contextRefs": [],
+                "participants": [{"id": user_id, "role": "trader", "joinedAt": now}],
+                "messages": [],
+                "tenantId": tenant_id,
+                "userId": user_id,
+                "operatorId": operator_id,
+                "personaId": persona_id,
+                "sessionType": session_type,
+                "createdAt": now,
+                "updatedAt": now,
+                "closedAt": None,
+                "canonicalWriteAuthority": "agora_servant_service",
+                "persistenceMode": "owner_store",
+            })
+            created, current = self._sessions.compare_and_set(session_id, None, dict(record))
+            if created:
+                return record
+            existing = DictRecord(current) if current else None
+        if (
+            existing is None
+            or existing.get("mode") != SERVANT_SESSION_MODE
+            or str(existing.get("tenantId")) != str(tenant_id)
+            or str(existing.get("userId")) != str(user_id)
+        ):
+            raise ServantSessionConflictError(session_id)
+        return existing
+
+    def get_servant_session(self, session_id: str) -> Optional[DictRecord]:
         session = self.get_session(session_id)
-        if not session:
+        if session is None or session.get("mode") != SERVANT_SESSION_MODE:
             return None
-        now = created_at or _utc_now_rfc3339()
-        msg = DictRecord({
-            "id": message_id,
-            "sessionId": session_id,
-            "sender": dict(payload.get("sender") or {"type": "operator", "id": actor_id}),
-            "role": str(payload.get("role") or "user"),
-            "content": content,
-            "language": str(payload.get("language") or "zh-TW"),
-            "attachments": list(payload.get("attachments") or []),
-            "citations": list(payload.get("citations") or []),
-            "annotations": list(payload.get("annotations") or []),
-            "createdAt": now,
-        })
-        messages = list(session.get("messages") or [])
-        messages.append(msg)
-        session["messages"] = messages
-        session["updatedAt"] = now
-        self._sessions.put(session_id, session)
-        return msg
+        return session
+
+    def enqueue_servant_turn(self, turn: Dict[str, Any]) -> tuple[bool, DictRecord]:
+        """Durably queue one turn; the same ``turn_id`` is queued once (idempotent replay)."""
+        now = str(turn.get("created_at") or _utc_now_rfc3339())
+        record = {
+            **dict(turn),
+            "status": "queued",
+            "attempts": 0,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "answer_message_id": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        inserted, current = self._servant_turns.insert_if_absent(str(record["turn_id"]), record)
+        return inserted, DictRecord(current)
+
+    def get_servant_turn(self, turn_id: str) -> Optional[DictRecord]:
+        data = self._servant_turns.get(turn_id)
+        return DictRecord(data) if data else None
+
+    def list_servant_turns(self, session_id: str, statuses: Sequence[str] = ("queued", "running")) -> List[DictRecord]:
+        rows: List[DictRecord] = []
+        for status in statuses:
+            rows.extend(
+                DictRecord(r)
+                for r in self._servant_turns.select_where(
+                    "payload ->> 'session_id' = %s AND payload ->> 'status' = %s",
+                    (session_id, status),
+                )
+            )
+        rows.sort(key=lambda r: (str(r.get("created_at")), str(r.get("turn_id"))))
+        return rows
+
+    def claim_servant_turn(
+        self,
+        *,
+        lease_owner: str,
+        lease_seconds: float = 600,
+        now: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        """Claim the oldest queued turn, or a running turn whose lease expired (crash recovery)."""
+        now = now or _utc_now_rfc3339()
+        for status in ("queued", "running"):
+            rows = self._servant_turns.select_where(
+                "payload ->> 'status' = %s",
+                (status,),
+                tail_sql="ORDER BY payload ->> 'created_at' ASC LIMIT 25",
+            )
+            for row in sorted(rows, key=lambda r: (str(r.get("created_at")), str(r.get("turn_id")))):
+                if status == "running" and str(row.get("lease_expires_at") or "") > now:
+                    continue
+                claimed = {
+                    **row,
+                    "status": "running",
+                    "attempts": int(row.get("attempts") or 0) + 1,
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": _rfc3339_after(now, lease_seconds),
+                    "updated_at": now,
+                }
+                swapped, _current = self._servant_turns.compare_and_set(str(row["turn_id"]), row, claimed)
+                if swapped:
+                    return DictRecord(claimed)
+        return None
+
+    def finish_servant_turn(
+        self,
+        turn: Dict[str, Any],
+        *,
+        status: str,
+        answer_message_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        """Settle a claimed turn as completed, degraded or failed (compare-and-set on the claim)."""
+        current = self._servant_turns.get(str(turn["turn_id"]))
+        if current is None or current.get("lease_owner") != turn.get("lease_owner"):
+            return None
+        settled = {
+            **current,
+            "status": status,
+            "answer_message_id": answer_message_id,
+            "reason": reason,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "updated_at": finished_at or _utc_now_rfc3339(),
+        }
+        swapped, _current = self._servant_turns.compare_and_set(str(turn["turn_id"]), current, settled)
+        return DictRecord(settled) if swapped else None
+
+    def purge_expired_servant_sessions(
+        self,
+        *,
+        now: Optional[str] = None,
+        retention_days: int = SERVANT_SESSION_RETENTION_DAYS,
+    ) -> Dict[str, int]:
+        """Cleanup path: delete servant sessions untouched for ``retention_days`` and their turns."""
+        cutoff = _parse_rfc3339(now or _utc_now_rfc3339()) - timedelta(days=retention_days)
+        removed = {"sessions": 0, "turns": 0}
+        for row in self._sessions.select_where("payload ->> 'mode' = %s", (SERVANT_SESSION_MODE,)):
+            touched = _parse_rfc3339(row.get("updatedAt") or row.get("createdAt"))
+            if touched is None or touched >= cutoff:
+                continue
+            session_id = str(row.get("id"))
+            for turn in self._servant_turns.select_where("payload ->> 'session_id' = %s", (session_id,)):
+                if self._servant_turns.delete_if_matches(str(turn["turn_id"]), turn):
+                    removed["turns"] += 1
+            if self._sessions.delete_if_matches(session_id, row):
+                removed["sessions"] += 1
+        return removed
 
     # -------------------------------------------------------------------------
     # Committee Memos
@@ -1064,4 +1299,14 @@ def build_agora_store(
     )
 
 
-__all__ = ["AgoraStore", "DictRecord", "build_agora_store"]
+__all__ = [
+    "AgoraStore",
+    "DictRecord",
+    "SERVANT_HISTORY_MESSAGES",
+    "SERVANT_MESSAGE_CAP",
+    "SERVANT_SESSION_MODE",
+    "SERVANT_SESSION_RETENTION_DAYS",
+    "ServantSessionConflictError",
+    "ServantSessionMessageCapError",
+    "build_agora_store",
+]

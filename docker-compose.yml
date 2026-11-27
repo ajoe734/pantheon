@@ -280,6 +280,9 @@ services:
       # Issued meeting-owner principal (consultation-svc, role service) for meeting-action tickets at the
       # research owner, read per request from the rotating file; no signing secret is distributed.
       CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE: ${CONSULTATION_RESEARCH_SERVICE_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_RESEARCH_SERVICE_TOKEN}
+      # Issued case-file research reader (role service, distinct read subject) for the panel case file's
+      # backtest owner-binding facts read; the research owner refuses the shared viewer token above.
+      CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN_FILE: ${CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN_FILE:-/run/pantheon-principals/CONSULTATION_CASE_FILE_RESEARCH_READ_TOKEN}
       PANTHEON_TELEMETRY_API_URL: http://telemetry:8083
       PANTHEON_TELEMETRY_SERVICE_TOKEN: ${PANTHEON_TELEMETRY_SERVICE_TOKEN:-}
       # Issued telemetry-read principal (viewer: GET /api/telemetry/runtime-summaries only), read per request.
@@ -542,6 +545,10 @@ services:
       # A tick spends at most the tick budget on extraction (+ one call), inside the 300 s health window.
       PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS: ${PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS:-90}
       PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS: ${PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS:-120}
+      # HYPOTHESIS_CARD token limits (L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126): the output limit is sent
+      # to the provider so the model stops there; the input limit is checked on the prompt before the call (bounded).
+      PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS: ${PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS:-3072}
+      PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS: ${PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS:-40000}
       # A compiled card rule is bound to the governed whole-market dataset (HYPOTHESIS-CARD-GOVERNED-BINDING-20261125):
       # a logical id or a pinned gmd- snapshot; no symbol list. Unset or not governed keeps every rule a research-only
       # draft with the reason in the controller state. The boundary is read from the stored daily bars below.

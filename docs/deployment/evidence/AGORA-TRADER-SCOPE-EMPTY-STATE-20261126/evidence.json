@@ -1,0 +1,259 @@
+{
+  "task": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
+  "task_id": "AGORA-TRADER-SCOPE-EMPTY-STATE-20261126",
+  "pr": 7916,
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "root_cause_class": "RC6 WP6.1 to WP6.4",
+  "register_instance": "RC6 (docs/operations/problem-register.md, WP6.1 to WP6.4 Agora pages, coordinator 70b5f70f)",
+  "defect": "Per the operator's 2026-11-26 hosted observation on BFF b0eb2c259 as admintest (who has no Strategy Workshop strategy), recorded in the canonical task summary and docs/operations/problem-register.md RC6 Agora row: (1) the Trading Room readiness bar showed English status lines and a red UNAVAILABLE badge for the release-probe persona's active paper binding rb-23c9d71a91c5420dae77ca14eea9f988 (last success 2026-11-24 23:35Z, source_instance_identity_not_unique) and 'snapshot snapshot not reported', because GET /bff/agora/operational-readiness resolved the tenant's active paper binding without checking whether the calling trader had any ready Strategy Workshop StrategySpec; (2) Strategy Performance (GET /bff/agora/trading-room/performance-attribution/by-strategy) waited 76 s before returning empty results and printing strategy_directory, telemetry, and trade_journeys, because project_agora_performance_attribution_by_strategy called projection_reader.scan_owner_journeys(tenant_id, owner_user_id, limit=100) unfiltered (scanning up to limit * 10 = 1,000 tenant journeys and fetching full timelines per journey) even when the caller had zero Strategy Workshop sessions, and further populated user_strategies from journey strategy_ids (user_strategies.setdefault(j_strat, ...)).",
+  "pre_deploy_operator_record": {
+    "source": "Canonical task summary for AGORA-TRADER-SCOPE-EMPTY-STATE-20261126 and docs/operations/problem-register.md RC6 row 'WP6.1 to WP6.4 Agora pages (operator question 2026-11-26 with four screenshots; coordinator 70b5f70f)'",
+    "observed_on_date": "2026-11-26",
+    "hosted_bff_commit": "b0eb2c259",
+    "caller": {
+      "actor": "admintest",
+      "workshop_strategies_count": 0
+    },
+    "observed_defects": {
+      "trading_room_operational_readiness": {
+        "active_binding_shown": "rb-23c9d71a91c5420dae77ca14eea9f988",
+        "binding_owner": "release-probe persona",
+        "last_success_at": "2026-11-24T23:35:00Z",
+        "failure_reason": "source_instance_identity_not_unique",
+        "observed_ui_badge": "UNAVAILABLE (red) with 'snapshot snapshot not reported'"
+      },
+      "strategy_performance_attribution": {
+        "endpoint": "GET /bff/agora/trading-room/performance-attribution/by-strategy",
+        "elapsed_seconds": 76,
+        "journeys_walked": 1000,
+        "observed_behavior": "Waited 76 s walking 1,000 tenant journeys with full timelines before returning empty results and printing strategy_directory, telemetry, and trade_journeys"
+      }
+    }
+  },
+  "fix": {
+    "operational_readiness_trader_scope": "Wire workshop_store into create_operational_readiness_router and AgoraOperationalReadinessService. Before touching runtime-manager, source-ingest, or telemetry, _check_ready_workshop_strategy checks _list_ready_strategy_projections(workshop_store=..., scope={'tenant_id': ..., 'user_id': ...}, events=[], assessed_at=...). When the caller has no ready Strategy Workshop StrategySpec, compose_readiness short-circuits via _compose_no_workshop_strategies_readiness and returns data.status='not_configured', source.freshness='not_configured', source.last_failure=None, signal_producer.status='not_configured', signal_producer.reason='no_workshop_strategies', signal_producer.active_binding=None, signal_producer.consumed_snapshot_id=None, signal_producer.last_success_at=None, and all five surfaces (decision_events, journal, candidates, interactions, performance) with status='not_configured', reason='no_workshop_strategies', freshness='not_configured', count=0, cursor=None, with zero upstream authority calls. If workshop_store raises an exception, compose_readiness fails closed via _compose_workshop_store_unavailable_readiness with status='unavailable' and reason='workshop_store_unavailable' rather than masking the outage as not_configured.",
+    "performance_attribution_workshop_scope": "In project_agora_performance_attribution_by_strategy (services/control-plane/bff/agora/performance/attribution.py) and TradingRoomPerformanceService (services/control-plane/bff/agora/performance/service.py), build user_strategies exclusively from the caller's Strategy Workshop sessions (workshop_store.list_sessions(user_id=owner_user_id, tenant_id=tenant_id, status=None, limit=100)). Remove user_strategies.setdefault(j_strat, ...) so trade journey projections never invent Agora strategy rows. Pass projection_reader lazily and, when target_strategy_ids is empty (caller has no workshop strategies or strategy_id filter is not in caller's workshop sessions), set meta.surfaces.strategy_directory.reason='no_workshop_strategies' and return zero rows without calling or instantiating projection_reader. When target_strategy_ids is non-empty, call projection_reader.scan_owner_journeys(..., strategy_id=s_id) per caller workshop strategy id and discard any journey whose strategy_id is outside user_strategies.",
+    "verify_script": "Updated scripts/verify_agora_operational_readiness.py (verify_distinct_freshness_states and verify_bounded_recovery_sequence) and scripts/test_verify_agora_operational_readiness.py to verify the trader-scoped not_configured / no_workshop_strategies readiness contract when a caller has an empty workshop store alongside configured-trader states."
+  },
+  "post_change_verification": {
+    "in_process_caller_with_no_workshop_strategies": {
+      "captured_at": "2026-11-26T16:25:00Z",
+      "capture_method": "FastAPI TestClient against create_operational_readiness_router and create_performance_router with raising upstream authority readers and an empty MemoryWorkshopStore for caller admintest (tenant=default)",
+      "GET /bff/agora/operational-readiness": {
+        "http_status": 200,
+        "elapsed_ms": 104.5,
+        "upstream_calls": {
+          "runtime_manager": 0,
+          "source_ingest": 0,
+          "telemetry": 0,
+          "read_store": 0
+        },
+        "response": {
+          "data": {
+            "status": "not_configured",
+            "source": {
+              "snapshot_id": null,
+              "source_instance_id": null,
+              "source_timestamp": null,
+              "age_seconds": null,
+              "sla_seconds": 86400,
+              "freshness": "not_configured",
+              "desired_state": "not_configured",
+              "observed_state": "not_configured",
+              "last_failure": null
+            },
+            "signal_producer": {
+              "status": "not_configured",
+              "producer_id": "paper-signal-producer",
+              "active_binding": null,
+              "consumed_snapshot_id": null,
+              "last_success_at": null,
+              "enqueued": 0,
+              "reason": "no_workshop_strategies"
+            },
+            "surfaces": {
+              "decision_events": {
+                "status": "not_configured",
+                "count": 0,
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "cursor": null
+              },
+              "journal": {
+                "status": "not_configured",
+                "count": 0,
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "cursor": null
+              },
+              "candidates": {
+                "status": "not_configured",
+                "count": 0,
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "cursor": null
+              },
+              "interactions": {
+                "status": "not_configured",
+                "count": 0,
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "cursor": null
+              },
+              "performance": {
+                "status": "not_configured",
+                "count": 0,
+                "reason": "no_workshop_strategies",
+                "freshness": "not_configured",
+                "cursor": null
+              }
+            },
+            "deployment": {
+              "service": "pantheon-bff",
+              "environment": "dev",
+              "source_commit_sha": null,
+              "bundle_version": "v1.13"
+            }
+          },
+          "meta": {
+            "snapshot_at": "2026-11-26T16:25:00Z",
+            "capability": "agora.operational_readiness.v1",
+            "requiredForAuthentication": false,
+            "no_order_route_proof": "agora_operational_readiness_read_only",
+            "audience": "tenant:default:user:admintest"
+          }
+        }
+      },
+      "GET /bff/agora/trading-room/performance-attribution/by-strategy": {
+        "http_status": 200,
+        "elapsed_ms": 22.36,
+        "journey_projection_reader_calls": 0,
+        "response": {
+          "data": {
+            "id": "agora-trading-room-performance-attribution-by-strategy",
+            "period": "latest",
+            "dimensions": [
+              "strategy"
+            ],
+            "items": [],
+            "summary": {
+              "period": "latest",
+              "dimensions": [
+                "strategy"
+              ],
+              "supported_dimensions": [
+                "strategy"
+              ],
+              "row_count": 0,
+              "returned_row_count": 0,
+              "runtime_count": 0,
+              "telemetry_runtime_count": 0,
+              "holding_count": 0,
+              "total_pnl": null,
+              "total_notional": null,
+              "total_exposure": null,
+              "worst_drawdown": null,
+              "average_fill_rate": null,
+              "average_slippage_bps": null,
+              "total_trades": 0,
+              "latest_telemetry_at": null,
+              "basis": "owner_scoped_strategy_attribution",
+              "direction_hit_rate": null,
+              "instrument_regret": null,
+              "margin_use": null
+            },
+            "page_info": {
+              "next_page_token": null,
+              "total": 0,
+              "page_size": 50
+            }
+          },
+          "page_info": {
+            "next_page_token": null,
+            "total": 0,
+            "page_size": 50
+          },
+          "meta": {
+            "scope": {
+              "tenant_id": "default",
+              "owner_user_id": "admintest",
+              "environment": "paper"
+            },
+            "period": "latest",
+            "snapshot_at": "2026-11-26T16:25:00Z",
+            "availability": "available",
+            "unavailable_sources": [
+              "strategy_directory",
+              "telemetry"
+            ],
+            "composition_sources": [
+              "strategy_directory",
+              "telemetry",
+              "trade_journeys"
+            ],
+            "surfaces": {
+              "strategy_directory": {
+                "status": "unavailable",
+                "as_of": null,
+                "source_ids": [],
+                "reason": "no_workshop_strategies"
+              },
+              "telemetry": {
+                "status": "unavailable",
+                "as_of": null,
+                "source_ids": [],
+                "reason": "no_current_rows"
+              },
+              "trade_journeys": {
+                "status": "available",
+                "as_of": "2026-11-26T16:25:00Z",
+                "source_ids": [],
+                "reason": null
+              }
+            },
+            "policy": "read_only_performance_attribution",
+            "no_order_route_proof": "agora_performance_read_only"
+          }
+        }
+      }
+    },
+    "hosted_post_deploy_proof": {
+      "status": "pending_deploy",
+      "reason": "Auto worker does not hold the protected hosted admintest login secret and this branch is not yet deployed to hosted dev. Post-deploy hosted verification as admintest (GET /bff/agora/trading-room/performance-attribution/by-strategy < 2 s with 0 rows and reason='no_workshop_strategies'; GET /bff/agora/operational-readiness reporting status='not_configured' with reason='no_workshop_strategies' and active_binding=null) will be recorded after the release carrying this PR is deployed."
+    }
+  },
+  "runtime_budget": {
+    "path_type": "read_path_only",
+    "recurring_jobs": 0,
+    "emitters": 0,
+    "persistent_writers": 0,
+    "read_cost_change": "For a caller with 0 ready Strategy Workshop strategies, GET /bff/agora/operational-readiness drops from 4+ upstream authority reads (runtime-manager bindings, source-ingest snapshots/sources, telemetry events) to 0 upstream reads (1 local workshop session list read), and GET /bff/agora/trading-room/performance-attribution/by-strategy drops from an unfiltered tenant journey scan walking up to 1,000 journeys with full timelines (76 s on hosted b0eb2c259 per the operator's 2026-11-26 observation) to 0 trade journey projection reads."
+  },
+  "review_independence": {
+    "owner": "Antigravity",
+    "owner_family": "Antigravity",
+    "reviewer": "Claude",
+    "reviewer_family": "Claude",
+    "independent": true
+  },
+  "tests": {
+    "services/control-plane/bff/agora/test_operational_readiness.py": "Added unit and router tests proving that a caller with no ready Strategy Workshop StrategySpec receives not_configured / no_workshop_strategies with null binding/snapshot/failure fields and zero runtime-manager, source-ingest, or telemetry calls (using raising authority readers), that a workshop store exception reports unavailable / workshop_store_unavailable instead of not_configured, and that a caller with a ready workshop StrategySpec preserves full upstream evaluation.",
+    "services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py": "Added live-binding test proving AgoraOperationalReadinessService with an empty workshop store returns not_configured / no_workshop_strategies without invoking raising runtime-manager, source-ingest, or telemetry readers.",
+    "services/control-plane/bff/agora/performance/test_performance.py": "Added unit and router tests proving performance-attribution/by-strategy returns 200 with 0 rows and meta.surfaces.strategy_directory.reason='no_workshop_strategies' without calling a raising projection_reader when the caller has no workshop sessions, and that journeys belonging to institutional persona strategies owned by the same user_id never create or feed attribution rows.",
+    "scripts/test_verify_agora_operational_readiness.py": "Updated and verified all 7 stages of scripts/verify_agora_operational_readiness.py including distinct freshness states with trader-scoped no_workshop_strategies verification."
+  },
+  "verification": [
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/performance/test_performance.py services/control-plane/bff/agora/test_operational_readiness.py services/control-plane/bff/tests/test_agora_operational_readiness_live_binding.py scripts/test_verify_agora_operational_readiness.py",
+    ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py services/control-plane/bff/tests/test_tenant_fallback_audit.py -k 'readiness or performance or receipt or suggestion'",
+    ".venv-pantheon/bin/python3 scripts/verify_agora_operational_readiness.py --mode in-process",
+    "git diff --check"
+  ],
+  "residual_findings": [
+    {
+      "finding": "In services/control-plane/bff/agora/trading_room/service.py (TradingRoomService.get_trading_room_aggregate), risk_summary is hard-coded to RiskSummary(state='normal', alerts=[]) and position_summaries is hard-coded to [] even when the trader has no Strategy Workshop strategies or active trading room positions.",
+      "location": "services/control-plane/bff/agora/trading_room/service.py",
+      "disposition": "Recorded as residual finding in the handoff and RC6 register row."
+    }
+  ]
+}

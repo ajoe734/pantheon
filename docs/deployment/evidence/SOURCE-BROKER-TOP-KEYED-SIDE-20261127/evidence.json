@@ -1,0 +1,126 @@
+{
+  "acceptance": {
+    "1_key_includes_side": {
+      "declaration": "services/source_ingestion/daily_bars_store.py::KEYED_DATASETS['tw_broker_top']",
+      "key_aliases": [
+        [
+          "symbol_canonical",
+          "symbol",
+          "stock_id",
+          "code"
+        ],
+        [
+          "date",
+          "trade_date",
+          "as_of_date",
+          "event_time"
+        ],
+        [
+          "side",
+          "direction"
+        ],
+        [
+          "rank",
+          "broker_rank",
+          "broker_id"
+        ]
+      ],
+      "key_fields": [
+        "symbol",
+        "trade_date",
+        "side",
+        "rank"
+      ],
+      "partition_field": "trade_date",
+      "status": "verified"
+    },
+    "2_real_keyed_write_and_idempotent_rewrite": {
+      "idempotent_rewrite_test": "services/source_ingestion/tests/test_datasets_keyed_write.py::test_tw_broker_top_rewriting_same_session_is_idempotent",
+      "real_keyed_write_test": "services/source_ingestion/tests/test_datasets_keyed_write.py::test_tw_broker_top_key_includes_side_and_keeps_20_buy_and_20_sell_rows",
+      "result": "40 rows stored and read back for one symbol-session (20 buy ranks 1..20 + 20 sell ranks 1..20); rewriting the same session with a new ingest_run_id and available_time leaves generation=1, content_digest, manifest bytes, and part file mtime unchanged (partitions_unchanged=1, partitions_written=0)",
+      "status": "verified"
+    },
+    "3_readers_return_both_sides": {
+      "declared_readers": [
+        "services/data-plane/taiwan_reference.py::parse_tw_broker_top_record",
+        "services/data-plane/taiwan_reference.py::read_tw_broker_top_rows",
+        "services/data-plane/taiwan_reference.py::read_keyed_tw_broker_top_rows",
+        "services/source_ingestion/daily_bars_store.py::KeyedDatasetStore.records"
+      ],
+      "status": "verified",
+      "tests": [
+        "services/data-plane/tests/test_data_plane_schemas.py::TestTaiwanReferenceData::test_read_tw_broker_top_rows_returns_both_buy_and_sell_sides",
+        "services/source_ingestion/tests/test_datasets_keyed_write.py::test_taiwan_reference_reader_returns_both_buy_and_sell_sides",
+        "scripts/test_rebuild_keyed_broker_top.py::test_apply_repairs_all_partitions_with_20_buy_and_20_sell_per_symbol_and_is_idempotent"
+      ]
+    },
+    "4_hosted_partitions_repaired_from_normalized": {
+      "automatic_deploy_and_refresh_hooks": [
+        "services/source_ingestion/daily_bars_store.py::DailyBarsStore.__init__ -> _repair_keyed_broker_top_if_needed(self.root)",
+        "services/source_ingestion/daily_bars_store.py::keyed_dataset_store(root, 'tw_broker_top') -> _repair_keyed_broker_top_if_needed(root)"
+      ],
+      "hosted_verification_post_deploy": "Worker has no direct hosted VM access; automatic idempotent repair runs on source-ingest startup during deploy and on tw_broker_top refresh without any manual VM write. Coordinator read-only check after deploy confirms each repaired keyed/tw_broker_top partition 2026-11-16..latest holds 20 buy and 20 sell rows per symbol.",
+      "repair_module": "scripts/rebuild_keyed_broker_top.py",
+      "status": "verified_locally_hosted_readback_by_coordinator_after_deploy",
+      "tests": [
+        "scripts/test_rebuild_keyed_broker_top.py::test_dry_run_reports_dropped_buy_side_and_changes_nothing_on_disk",
+        "scripts/test_rebuild_keyed_broker_top.py::test_apply_repairs_all_partitions_with_20_buy_and_20_sell_per_symbol_and_is_idempotent",
+        "scripts/test_rebuild_keyed_broker_top.py::test_automatic_repair_runs_through_existing_deploy_and_refresh_paths",
+        "scripts/test_rebuild_keyed_broker_top.py::test_cli_report_and_if_needed_flags"
+      ]
+    },
+    "5_runtime_budget_and_storage_manifest": {
+      "cadence": "unchanged (daily after close Taiwan market refresh; one-time idempotent repair of existing 3-field manifests on deploy/refresh startup, 0 writes once key_fields == ['symbol', 'trade_date', 'side', 'rank'] and both sides are present)",
+      "cap": "day_budget_bytes = 200,000 bytes (0.2 MB per trading day partition, enforced in KeyedDatasetStore._write_partition; retention_days = 750, total bound <= 150 MB)",
+      "cleanup": "existing RetentionSweeper (750 days for tw_broker_top) plus superseded part-g{generation}.jsonl.gz unlink after atomic manifest swap",
+      "growth_per_day": "hosted 3-symbol session (0050, 2317, 2330; 40 rows/symbol = 120 rows/session) doubles from ~35 KB (sell-only) to ~70 KB compressed; section 6A benchmark (200 symbols x 2 sides x 15 ranks = 6,000 rows/day) measures 117,644 bytes (0.118 MB/day <= 0.2 MB/day budget)",
+      "new_writers": 0,
+      "status": "verified",
+      "storage_manifest_entry": "docs/operations/storage-manifest.json::part-g{generation}.jsonl"
+    },
+    "6_problem_register": {
+      "file": "docs/operations/problem-register.md",
+      "row": "RC3 WP3.1 market data stored once per key (Instance 2026-11-27: SOURCE-BROKER-TOP-KEYED-SIDE-20261127)",
+      "status": "verified"
+    }
+  },
+  "owner": "Antigravity",
+  "register_class": "RC3 WP3.1",
+  "residual_findings": [],
+  "reviewer": "Claude2",
+  "schema_version": "pantheon_task_evidence.v1",
+  "scope_boundaries": {
+    "owned": "keyed tw_broker_top key declaration (symbol, trade_date, side, rank), content_hash volatile body/raw_row normalization, taiwan_reference.py keyed reader, idempotent repair from normalized/tw_broker_top on deploy/refresh, runtime budget check, storage manifest and problem register updates",
+    "separate_tasks": [
+      "SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127 (whole-market daily broker coverage)",
+      "SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127 (two-year historical broker backfill on hosted)"
+    ]
+  },
+  "task": "SOURCE-BROKER-TOP-KEYED-SIDE-20261127",
+  "verification": {
+    "budget_check": {
+      "command": "python3 scripts/check_market_data_budget.py --only tw_broker_top",
+      "declared_budget_bytes": 200000.0,
+      "limit_bytes": 200000.0,
+      "measured_day_bytes": 117644.0,
+      "ok": true,
+      "rows_measured": 6000
+    },
+    "pytest_batches": [
+      {
+        "command": "pytest -v services/source_ingestion/tests/test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py services/data-plane/tests/test_data_plane_schemas.py -k 'broker_top or rebuild or keyed'",
+        "result": "49 passed, 0 skipped in 25.27s"
+      },
+      {
+        "command": "pytest -q services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_market_data_storage.py services/source_ingestion/tests/test_daily_bars_store.py services/source_ingestion/tests/test_retention.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_yahoo_taiwan_connectors.py scripts/test_rebuild_keyed_broker_top.py scripts/test_check_market_data_budget.py scripts/test_cleanup_market_run_files.py services/data-plane/tests/test_data_plane_schemas.py",
+        "result": "120 passed, 8 skipped in 8.65s"
+      }
+    ],
+    "storage_manifest_check": {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "entries": 377,
+      "failures": [],
+      "passed": true
+    }
+  }
+}

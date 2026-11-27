@@ -322,6 +322,9 @@ def meetings_stack(monkeypatch: pytest.MonkeyPatch):
             ],
         },
         "convened_by_key": {},
+        "panels": [],
+        "panel_transcripts": {},
+        "panel_memos": {},
     }
     calls: List[Tuple[str, str, Dict[str, List[str]], Dict[str, str], Any]] = []
 
@@ -475,6 +478,30 @@ def meetings_stack(monkeypatch: pytest.MonkeyPatch):
             res = io.BytesIO(json.dumps(out_detail).encode("utf-8"))
             res.status = 200
             return res
+
+        def _json(payload: Any, code: int = 200):
+            if code >= 400:
+                raise HTTPError(req.full_url, code, "owner", {}, io.BytesIO(json.dumps(payload).encode("utf-8")))
+            res = io.BytesIO(json.dumps(payload).encode("utf-8"))
+            res.status = code
+            return res
+
+        if req.method == "GET" and u.path == "/api/consult/requests":
+            return _json(list(state["panels"]))
+        if req.method == "GET" and u.path.startswith("/api/consult/requests/"):
+            rest = u.path.removeprefix("/api/consult/requests/")
+            if rest.endswith("/transcript"):
+                rid = rest.removesuffix("/transcript")
+                if rid in state["panel_transcripts"]:
+                    return _json(state["panel_transcripts"][rid])
+                return _json({"detail": "transcript not found"}, 404)
+            for panel in state["panels"]:
+                if panel["request_id"] == rest:
+                    return _json(panel)
+            return _json({"detail": "request not found"}, 404)
+        if req.method == "GET" and u.path == "/api/consult/memos":
+            rid = (query.get("request_id") or [""])[0]
+            return _json(list(state["panel_memos"].get(rid, [])))
 
         raise AssertionError(f"Unhandled request {req.method} {u.path}")
 
@@ -772,7 +799,9 @@ def test_200_meetings_reads_complete_within_management_gate_budget(meetings_stac
         elapsed = time.perf_counter() - t0
         assert resp.status_code == 200, (route, resp.text)
         assert elapsed < budget, f"{route} took {elapsed:.3f}s >= budget {budget:.3f}s"
-        assert len(calls) == 1, f"{route} must make exactly 1 owner HTTP call, made {len(calls)}"
+        # The list also reads the persona gate panels (one list read, no panels here).
+        expected = 2 if route.startswith("/bff/management/meetings?") else 1
+        assert len(calls) == expected, f"{route} must make exactly {expected} owner HTTP calls, made {len(calls)}"
 
 
 def test_operator_review_route_enforces_role_tenant_validation_idempotency_and_failure_distinction(
@@ -947,3 +976,123 @@ def test_app_factory_mounts_meetings_routes():
         ("POST", "/bff/meetings/{meeting_id}/review"),
     ):
         assert expected in route_set, f"Missing mounted route {expected}"
+
+
+def _gate_panel(idx: int, *, created_at: str, completed_at: str | None, version: int) -> Dict[str, Any]:
+    rid = f"consult-envelope-publication-{idx:032x}"
+    return {
+        "request_id": rid,
+        "tenant_id": "tenant-a",
+        "request_type": "persona_policy",
+        "consultation_type": "persona_panel",
+        "from_persona_id": "persona-alpha",
+        "target_type": "envelope_publication",
+        "target_id": f"envelope-publication-{idx:032x}",
+        "task": f"Risk review of paper envelope publication of pool v{version} (live membership changed)",
+        "status": "published" if completed_at else "submitted",
+        "created_at": created_at,
+        "completed_at": completed_at,
+        "evidence_refs": ["ooda://packet-1"],
+        "metadata": {
+            "panel": {
+                "policy_id": "consult-policy-v1",
+                "gated_decision": {"type": "envelope_publication", "id": f"envelope-publication-{idx:032x}",
+                                   "target_version": str(version)},
+                "initiator_persona_id": "persona-alpha",
+                "participants": [
+                    {"persona_id": "persona-alpha", "role": "initiator"},
+                    {"persona_id": "persona-risk-officer", "role": "risk"},
+                ],
+            }
+        },
+    }
+
+
+def _gate_transcript(rid: str) -> Dict[str, Any]:
+    return {
+        "request_id": rid,
+        "events": [
+            {"event_id": f"{rid}-1", "event_type": "persona_contribution",
+             "actor": {"actor_type": "persona", "actor_id": "persona-alpha"},
+             "content": {"role": "initiator", "recommendation": "approve", "claims": []}},
+            {"event_id": f"{rid}-2", "event_type": "persona_contribution",
+             "actor": {"actor_type": "persona", "actor_id": "persona-risk-officer"},
+             "content": {"role": "risk", "recommendation": "escalate", "claims": []}},
+            {"event_id": f"{rid}-3", "event_type": "panel_synthesis",
+             "actor": {"actor_type": "committee", "actor_id": f"consult-panel:{rid}"},
+             "content": {"voting": False, "gate": {"outcome": "operator_decision",
+                                                   "operator_decision_required": True,
+                                                   "vetoed_by": None, "reasons": ["risk escalated"]}}},
+        ],
+    }
+
+
+def test_meetings_center_lists_gate_panels_beside_deliberative_meetings_newest_first(meetings_stack):
+    client, calls, state = meetings_stack
+    older = _gate_panel(1, created_at="2026-11-15T08:00:00Z", completed_at="2026-11-15T08:04:00Z", version=3)
+    newer = _gate_panel(2, created_at="2026-11-17T08:00:00Z", completed_at=None, version=4)
+    state["panels"] = [older, newer, {**older, "request_id": "ordinary-1", "consultation_type": None}]
+    state["panel_transcripts"] = {older["request_id"]: _gate_transcript(older["request_id"])}
+    state["panel_memos"] = {older["request_id"]: [{
+        "memo_id": "memo-gate-1", "request_id": older["request_id"], "memo_type": "committee_summary",
+        "author_type": "committee", "author_ref": f"consult-panel:{older['request_id']}",
+        "summary": "Risk escalated; operator decision required.", "recommendation": "escalate",
+        "status": "published",
+    }]}
+    hdrs = make_headers("op-alice", roles=["operator"])
+
+    resp = client.get("/bff/management/meetings", headers=hdrs)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    rows = body["data"]["items"]
+    # Newest first by created_at (ties by id, descending).
+    assert [r["meeting_id"] for r in rows] == [newer["request_id"], "mtg-002", "mtg-001", older["request_id"]]
+    panels = {r["meeting_id"]: r for r in rows if r.get("session_class") == "gate_panel"}
+    assert set(panels) == {older["request_id"], newer["request_id"]}
+    assert "ordinary-1" not in resp.text
+    done = panels[older["request_id"]]
+    assert done["created_at"] == "2026-11-15T08:00:00Z"
+    assert done["completed_at"] == "2026-11-15T08:04:00Z"
+    assert done["conclusion"]["gate_decision"] == "operator_decision"
+    assert {(r["persona_id"], r["recommendation"]) for r in done["conclusion"]["reviewers"]} == {
+        ("persona-alpha", "approve"), ("persona-risk-officer", "escalate"),
+    }
+    assert "pool v3" in done["title"] and "operator_decision" in done["title"]
+    assert "approve" in done["title"] and "escalate" in done["title"]
+    assert done["subject_persona_display_name"]
+    pending = panels[newer["request_id"]]
+    assert pending["conclusion"]["gate_decision"] is None
+    assert pending["conclusion"]["reason"] == "no_panel_transcript"
+    assert "pool v4" in pending["title"] and pending["title"].endswith("pending")
+    assert body["data"]["summary"]["gate_panel_count"] == 2
+    assert body["meta"]["surfaces"]["gate_panels"]["status"] == "ok"
+
+    # Filters: a deliberative type excludes panels without reading them; gate_panel lists only panels.
+    calls.clear()
+    typed = client.get("/bff/management/meetings?type=MT-1", headers=hdrs)
+    assert all(r.get("session_class") != "gate_panel" for r in typed.json()["data"]["items"])
+    assert not any(c[1].startswith("/api/consult/requests") for c in calls)
+    only = client.get("/bff/management/meetings?type=gate_panel", headers=hdrs)
+    assert {r["meeting_id"] for r in only.json()["data"]["items"]} == set(panels)
+    closed = client.get("/bff/management/meetings?status=closed&type=gate_panel", headers=hdrs)
+    assert [r["meeting_id"] for r in closed.json()["data"]["items"]] == [older["request_id"]]
+
+    # Detail: positions, memo and the existing case-file view of one gate panel.
+    detail = client.get(f"/bff/management/meetings/{older['request_id']}", headers=hdrs)
+    assert detail.status_code == 200, detail.text
+    data = detail.json()["data"]
+    assert data["session_class"] == "gate_panel"
+    assert {p["persona_id"]: p["stance"] for p in data["positions"]} == {
+        "persona-alpha": "approve", "persona-risk-officer": "escalate",
+    }
+    assert data["memo"]["memo_id"] == "memo-gate-1"
+    assert data["case_file_view"] == {"status": "unavailable", "reason": "no_case_file_recorded", "case_file": None}
+    assert data["conclusion"]["gate_decision"] == "operator_decision"
+
+    # Panel read failure leaves deliberative meetings visible and names the surface.
+    state["status_override"]["/api/consult/requests"] = 503
+    degraded = client.get("/bff/management/meetings", headers=hdrs)
+    assert degraded.status_code == 200
+    assert {r["meeting_id"] for r in degraded.json()["data"]["items"]} == {"mtg-001", "mtg-002"}
+    assert degraded.json()["meta"]["surfaces"]["gate_panels"]["status"] == "unavailable"
+    assert client.get("/bff/management/meetings/consult-unknown", headers=hdrs).status_code == 404

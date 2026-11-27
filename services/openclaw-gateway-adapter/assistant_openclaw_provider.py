@@ -419,6 +419,9 @@ _SUPPORTED_SCHEMA_KEYWORDS = {
 }
 
 _COMBINATOR_LIST_KEYWORDS = ("anyOf", "allOf")
+# Reference keywords: a schema using them can never be enforced here, so it
+# is refused before the model call rather than after a paid answer.
+_REFERENCE_SCHEMA_KEYWORDS = frozenset({"$ref", "$defs", "definitions"})
 _COMBINATOR_SCHEMA_KEYWORDS = ("if", "then", "else")
 
 
@@ -573,6 +576,62 @@ def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -
                 _validate_extraction_value(field_value, additional_properties, field_path)
             continue
         _validate_extraction_value(field_value, prop_schema, field_path)
+
+
+# Largest output token limit a structured turn may ask the Gateway for.
+STRUCTURED_MAX_OUTPUT_TOKENS_CEILING = 8192
+
+
+def _bounded_max_output_tokens(value: Any) -> Optional[int]:
+    """A positive output limit no larger than the ceiling, or None (not stated)."""
+    if value is None or type(value) is bool:
+        return None
+    try:
+        tokens = int(value)
+    except (TypeError, ValueError):
+        return None
+    if tokens <= 0:
+        return None
+    return min(tokens, STRUCTURED_MAX_OUTPUT_TOKENS_CEILING)
+
+
+def structured_call_usage(raw: Any) -> Any:
+    """Prompt and answer token counts of one structured call.
+
+    The pinned Gateway (v2026.7.1 `openresponses-http` `toUsage`) reports
+    `input_tokens` as the provider's *uncached* input only, while
+    `total_tokens` is input + output + cacheRead + cacheWrite. With prompt
+    caching the uncached part is a handful of tokens (hosted: 3), so the
+    prompt size is `total_tokens - output_tokens`. Without a total the
+    reported input may exclude cached tokens, so it is recorded as unknown
+    (None), never as the small uncached count. Values that are not
+    non-negative integers are passed through unchanged for the caller's
+    malformed-usage check.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    counts: Dict[str, Optional[int]] = {}
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        value = raw.get(key)
+        if value is None:
+            counts[key] = None
+        elif type(value) is int and value >= 0:
+            counts[key] = value
+        else:
+            return raw
+    uncached, output, total = counts["input_tokens"], counts["output_tokens"], counts["total_tokens"]
+    usage: Dict[str, Any] = {"input_tokens": None, "output_tokens": output, "total_tokens": total}
+    if output is not None and total is not None and total >= output:
+        prompt = max(total - output, uncached or 0)
+        usage["input_tokens"] = prompt
+        usage["input_tokens_source"] = "total_minus_output"
+        if uncached is not None:
+            usage["cached_input_tokens"] = prompt - uncached
+    else:
+        usage["input_tokens_source"] = "unknown"
+    if uncached is not None:
+        usage["uncached_input_tokens"] = uncached
+    return usage
 
 
 def _validate_extraction_arguments(parsed_arguments: Any, extraction_schema: Dict[str, Any]) -> None:
@@ -1152,6 +1211,7 @@ class AssistantOpenClawProvider:
         timeout_seconds: Optional[float] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Any] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> OpenClawProviderResult:
         """Run one ordinary agent turn through the Gateway `POST /v1/responses`
         (OpenResponses) HTTP transport.
@@ -1168,6 +1228,9 @@ class AssistantOpenClawProvider:
         session_user = derive_session_user(
             operator_id=operator_id, session_id=session_id, metadata=metadata
         )
+        limit_kwargs: Dict[str, Any] = (
+            {"max_output_tokens": max_output_tokens} if max_output_tokens is not None else {}
+        )
         events = list(
             self.stream(
                 prompt,
@@ -1183,6 +1246,7 @@ class AssistantOpenClawProvider:
                 tools=tools,
                 tool_choice=tool_choice,
                 timeout_seconds=timeout_seconds,
+                **limit_kwargs,
             )
         )
         error = next((event for event in events if event.get("type") == "error"), None)
@@ -1320,6 +1384,7 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> OpenClawProviderResult:
         """Run one restricted, data-only extraction turn.
 
@@ -1343,6 +1408,22 @@ class AssistantOpenClawProvider:
                 status_code=422,
                 error_code="OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
             )
+        # Refuse a schema whose references this validator can never resolve
+        # *before* the paid model call (AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-
+        # 20261127: the workshop reconstruction schema carried `$defs`/`$ref`,
+        # so every hosted answer was paid for and then refused as
+        # OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH). Other unsupported keywords keep
+        # failing only where an answer reaches them, as before.
+        unresolvable = [
+            path for path in unsupported_schema_keyword_paths(extraction_schema)
+            if path.rsplit(": ", 1)[-1] in _REFERENCE_SCHEMA_KEYWORDS
+        ]
+        if unresolvable:
+            raise OpenClawProviderError(
+                f"extraction schema declares unresolvable reference(s) {unresolvable[:5]!r}",
+                status_code=422,
+                error_code="OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED",
+            )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
         # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
@@ -1355,6 +1436,7 @@ class AssistantOpenClawProvider:
             operator_id=operator_id,
             trace_id=trace_id,
             timeout_seconds=timeout_seconds,
+            max_output_tokens=_bounded_max_output_tokens(max_output_tokens),
         )
         if result.output.get("function_calls"):
             raise OpenClawProviderError(
@@ -1378,7 +1460,7 @@ class AssistantOpenClawProvider:
             "transport": "responses_http",
         }
         if "usage" in result.output:
-            output["usage"] = result.output["usage"]
+            output["usage"] = structured_call_usage(result.output["usage"])
         if "response_id" in result.output:
             output["response_id"] = result.output["response_id"]
         return OpenClawProviderResult(
@@ -1610,6 +1692,7 @@ class AssistantOpenClawProvider:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Any] = None,
         timeout_seconds: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream an agent turn via the gateway OpenAI-compatible `POST /v1/responses`
         (OpenResponses) endpoint with SSE, yielding NORMALIZED events:
@@ -1775,6 +1858,10 @@ class AssistantOpenClawProvider:
             payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        # The pinned Gateway passes `max_output_tokens` to the model as its
+        # output token limit, so the model stops there (structured turns).
+        if max_output_tokens is not None:
+            payload["max_output_tokens"] = int(max_output_tokens)
         # The pinned Gateway's `metadata` field is the only strict-schema slot
         # for opaque caller context — trace_id is otherwise silently dropped
         # at the HTTP boundary rather than actually reaching the upstream

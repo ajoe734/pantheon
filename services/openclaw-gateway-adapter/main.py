@@ -112,6 +112,7 @@ from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
     DEFAULT_AGENT_ID as OPENCLAW_DEFAULT_AGENT_ID,
     STRUCTURED_AGENT_ID as OPENCLAW_STRUCTURED_AGENT_ID,
+    STRUCTURED_MAX_OUTPUT_TOKENS_CEILING,
     OpenClawProviderError as GatewayOpenClawProviderError,
     delegates_kernel_mode_to_codex,
     derive_session_user,
@@ -920,6 +921,9 @@ class AssistantProviderStructuredInvokeRequest(BaseModel):
     # Caller deadline for the whole turn (policy check + gateway call). It can
     # only shorten the adapter's own timeout, never extend it.
     timeout_seconds: Optional[float] = None
+    # Output token limit for the turn; sent to the Gateway so the model stops
+    # there. Bounded by the provider's ceiling; omitted means not stated.
+    max_output_tokens: Optional[int] = None
     tools: Optional[Any] = None
     tool_choice: Optional[Any] = None
     # See AssistantProviderInvokeRequest.model's comment -- no mounted route
@@ -941,6 +945,15 @@ class AssistantProviderStructuredInvokeRequest(BaseModel):
             raise ValueError(
                 "an explicit model override is not supported on this mounted route; "
                 "routing is by agent_id only"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def bound_max_output_tokens(self) -> "AssistantProviderStructuredInvokeRequest":
+        value = self.max_output_tokens
+        if value is not None and not 1 <= value <= STRUCTURED_MAX_OUTPUT_TOKENS_CEILING:
+            raise ValueError(
+                f"max_output_tokens must be between 1 and {STRUCTURED_MAX_OUTPUT_TOKENS_CEILING}"
             )
         return self
 
@@ -1918,6 +1931,8 @@ def invoke_openclaw_structured_provider(
         "operator_id": x_operator_id.strip(),
         "trace_id": x_trace_id,
     }
+    if req.max_output_tokens is not None:
+        invoke_kwargs["max_output_tokens"] = req.max_output_tokens
     if req.agent_id is not None:
         invoke_kwargs["agent_id"] = req.agent_id
     if req.session_id is not None:

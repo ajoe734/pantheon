@@ -361,7 +361,7 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
                 env = spawn.call_args.kwargs["env"]
                 self.assertEqual(env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                 expected_dir = (
-                    "~/.claude" if provider_id == "claude" else "~/.claude2"
+                    "~/.claude1" if provider_id == "claude" else "~/.claude2"
                 )
                 self.assertEqual(env["CLAUDE_CONFIG_DIR"], os.path.expanduser(expected_dir))
 

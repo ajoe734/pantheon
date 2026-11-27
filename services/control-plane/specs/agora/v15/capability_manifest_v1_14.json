@@ -33,9 +33,39 @@
       "method": "POST",
       "path": "/bff/agora/memory/{memory_id}/actions/quarantine",
       "owner": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/paper-book",
+      "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/paper-book/ensure",
+      "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
+      "owner": "agora-decision-lock"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/sessions/{session_id}/messages",
+      "owner": "agora+source-ingest"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/sessions/{session_id}/stream",
+      "owner": "agora"
     }
   ],
   "owner_contracts": {
+    "capital": [
+      "/api/capital/pools",
+      "/api/capital/pools/{pool_id}",
+      "/api/capital/bindings"
+    ],
     "consultation": [
       "/api/consult/requests",
       "/api/consult/memos",
@@ -45,11 +75,29 @@
       "/api/memory/retrieve",
       "/api/memory/trade-lessons",
       "/api/memory/trade-lessons/{candidate_id}/decide"
+    ],
+    "runtime_manager": [
+      "/api/runtime-manager/runtime-bindings",
+      "/api/runtime-manager/runtime-bindings/{runtime_binding_id}"
+    ],
+    "agora-decision-lock": [
+      "/api/attribution/shadow/{decision_id}"
+    ],
+    "source-ingest": [
+      "/api/source-ingest/broker-branch-flow",
+      "/api/source-ingest/source-records",
+      "/api/source-ingest/snapshots/latest"
+    ],
+    "agora": [
+      "agora.servant_sessions",
+      "agora.servant_turns",
+      "agora.decision_locks"
     ]
   },
   "limitations": [
     "No BFF-owned committee or memory store",
     "No frontend delivery or hosted acceptance claimed",
-    "Entry quarantine unavailable until the memory owner supplies an entry mutation API"
+    "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
+    "Shadow comparison route is read-only; hosted proof is recorded separately (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127)"
   ]
 }

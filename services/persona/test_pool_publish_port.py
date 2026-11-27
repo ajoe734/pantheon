@@ -56,7 +56,7 @@ def test_consultation_opens_once_per_membership_then_verifies_published_memo():
     try:
         ct.verify_published_memo = lambda *a, **k: ct.MemoCheck(False, "risk_persona_requires_operator")
         assert ports.envelope_publication_consultation(PERSONA, pool(m("a"), version=4), "pk-5") == {
-            "state": "operator", "reason": "risk_persona_requires_operator",
+            "state": "operator", "reason": "risk_persona_requires_operator", "memo_id": "memo-1", "pool_version": 3,
             "decision_id": opened[0].decision_id, "request_id": requests[0]["request_id"]}
         ct.verify_published_memo = lambda *a, **k: ct.MemoCheck(True)
         ok = ports.envelope_publication_consultation(PERSONA, pool(m("a"), version=4), "pk-6")
@@ -118,3 +118,47 @@ def test_dead_lettered_consultation_is_named_failed_and_replaced_once_per_failur
     # other terminal states are unchanged
     requests[:] = [dict(requests[0], status="cancelled")]
     assert ports.envelope_publication_consultation(PERSONA, p, "k-c")["state"] == "operator"
+
+
+def test_operator_decision_id_binds_the_consultation_and_survives_daily_reweights():
+    """One queue entry per persona per escalated membership + pool version; the read checks the binding."""
+    import pytest
+    from services.persona.pool_publish_port import PoolPublishPort
+
+    calls, store = [], {}
+
+    class NotFound(Exception):
+        code = 404
+
+    def transport(method, service, path, tenant, body=None):
+        calls.append((method, service, path))
+        assert service == "evolution"
+        if method == "POST":
+            store[body["decision_id"]] = {**body, "decision_state": "proposed", "review_chain": []}
+            return store[body["decision_id"]]
+        decision_id = path.rsplit("/", 1)[1]
+        if decision_id not in store:
+            raise NotFound()
+        return store[decision_id]
+
+    ports = HttpPoolCyclePorts(transport, pool_store=SimpleNamespace(), env={})
+    p = pool(m("a"), m("b"), version=7)
+    consult = {"state": "operator", "reason": "risk_persona_requires_operator", "memo_id": "memo-9",
+               "decision_id": envelope_publication_requirement("t1", "p1", p, 5).decision_id, "request_id": "r-5",
+               "pool_version": 5}
+    decision_id = PoolPublishPort.publication_operator_decision_id(consult)
+    assert decision_id.startswith("pool-publication-op-")
+    assert ports.publication_operator_decision(PERSONA, consult) is None
+    assert ports.queue_publication_operator_decision(PERSONA, p, consult) == {"decision_id": decision_id, "status": "queued"}
+    body = store[decision_id]
+    assert body["target_version"] == "5" and body["metadata"]["membership_digest"] == membership_digest(p)
+    assert body["metadata"]["consultation_memo_id"] == "memo-9" and body["metadata"]["paper_only"] is True
+    read = ports.publication_operator_decision(PERSONA, consult)
+    assert read["decision_id"] == decision_id and read["decision_state"] == "proposed"
+    # a different membership (or pool version) is a different consultation, hence a different queue entry
+    other = {**consult, "decision_id": envelope_publication_requirement("t1", "p1", pool(m("a")), 5).decision_id}
+    assert PoolPublishPort.publication_operator_decision_id(other) != decision_id
+    store[decision_id]["persona_id"] = "p2"
+    with pytest.raises(ValueError, match="operator_decision_binding_mismatch"):
+        ports.publication_operator_decision(PERSONA, consult)
+    assert [c[0] for c in calls] == ["GET", "POST", "GET", "GET"]

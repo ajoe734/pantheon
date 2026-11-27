@@ -594,12 +594,14 @@ class PersonaPoolPublisher:
                     "artifact": copy.deepcopy(entry["metadata"]["strategy_artifact"]),
                     "risk_weight": weight,
                     "virtual_only": virtual,
+                    # Pool admission time; the member virtual book derives admitted_at from it.
+                    **({"joined_at": member["joined_at"]} if member.get("joined_at") else {}),
                 }
             )
             pins.append(
                 {"artifact_ref": member["artifact_ref"], "version": entry["version"],
                  "checksum": member["checksum"], "risk_weight": weight, "virtual_only": virtual,
-                 "stage": member["stage"]}
+                 "stage": member["stage"], "joined_at": member.get("joined_at")}
             )
         empty_template = None
         if not members:
