@@ -1,0 +1,180 @@
+{
+  "task_id": "MEMBER-BOOK-FILL-HOSTED-READER-20261127",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "register": {
+    "class": "RC2",
+    "row": "Every pool reweight is refused with virtual_book_high_water_history_missing",
+    "follows_up": "MEMBER-BOOK-ADMISSION-GAP-FILL-20261126 (PR #7920) and POOL-MEMBER-JOINED-AT-CARRY-20261126 (PR #7907)"
+  },
+  "review_independence_exception": "The other model families are at terminal quota until 2026-11-27T10:03Z, so the reviewer (Antigravity2) is from the owner's model family. Recorded per the task brief.",
+  "summary": "Adds pyarrow==26.0.1 to the paper-fleet-reconciler image requirements and lock so runtime workers can read governed daily bars via DailyBarsReader; bounds the admission fill in governed_admission_replay_source and governed_market_dataset.resolve_governed_dataset to read only the member's symbols and the sessions it needs (plus warmup) without scanning the whole-market boundary or adding companion symbols; and keeps legacy per-binding *.lifecycle-outbox.json.member-books.json files during the reconciler's retired-binding sweep so the 3 recorded hosted marks (2026-11-20 to 2026-11-24) survive the 2026-11-27 10:00Z one-time envelope republish until the new runtime's first mark (~23:35Z) carries them into member-books/.",
+  "republish_race_timing": {
+    "prepared_at_utc": "2026-11-27T01:05:00Z",
+    "daily_cycle_republish_utc": "2026-11-27T10:00:00Z",
+    "next_expected_mark_utc": "2026-11-27T23:35:00Z",
+    "status_at_handoff": "Prepared and handed off before the 2026-11-27T10:00Z daily cycle. When deployed to hosted before 2026-11-27T10:00Z, paper_fleet_reconciler._cleanup_retired_state_files keeps /data/runtime/paper-performance/rb-{2b0df305,a2cb762c,eb74118d}*.lifecycle-outbox.json.member-books.json when the 10:00Z one-time envelope republish (#7907) retires the old RuntimeBindings, so at the ~2026-11-27T23:35Z mark the 3 recorded marks (2026-11-20 to 2026-11-24) are carried in and the preceding 9 sessions (2026-11-09..2026-11-19) are filled from governed daily bars. If deployment reaches hosted after 2026-11-27T10:00Z, the old sweep will have deleted those 3 legacy per-binding files at 10:00Z so the 3 recorded marks are lost, and the governed replay fills all sessions from admission (2026-11-09..2026-11-26) at the ~23:35Z mark."
+  },
+  "acceptance": {
+    "1_reconciler_image_pyarrow_reader": {
+      "status": "met",
+      "requirements_file": "services/paper_fleet_reconciler/requirements.txt (pyarrow>=15,<30)",
+      "lock_file": "dependencies/locks/services-paper_fleet_reconciler.txt (pyarrow==26.0.1, matching dependencies/locks/services-control-plane-persona.txt and dependencies/locks/services-source_ingestion.txt, formatted like the other entries in services-paper_fleet_reconciler.txt)",
+      "lock_only_test": "services/research/tests/test_governed_market_dataset.py::test_reconciler_lock_carries_pyarrow_and_reads_governed_daily_bars_with_only_lock_packages runs a subprocess with a sys.meta_path guard derived from dependencies/locks/services-paper_fleet_reconciler.txt (verifying pandas, numpy, scipy, vectorbt fail with ModuleNotFoundError) and reads governed daily bars through governed_market_dataset and governed_admission_replay_source into MemberVirtualBooks.observe."
+    },
+    "2_bounded_member_symbol_and_session_read_and_memory_budget": {
+      "status": "met",
+      "code_change": "governed_admission_replay_source in services/execution/lean_runtime/member_virtual_book.py now calls resolve_governed_dataset with symbols=list(artifact['parameters']['symbols']), sessions=list(sessions), warmup_days=_required_warmup_days(artifact), min_instruments=1, and prepares PreparedVectorbtDataset via _prepare_replay_dataset (no 2-instrument companion requirement or 30-bar backtest gate floor). In services/research/governed_market_dataset.py, _reader sets ARROW_DEFAULT_MEMORY_POOL=system by default and _resolve_symbol_sessions reads only the requested symbols and the requested sessions (plus warmup_days stored trading days before the first session) one date at a time via DailyBarsReader.read_range(..., any_form=True), clearing _meta_cache and _manifest_cache after each date and shutting down the reader thread pool in finally. It never calls build_market_boundary or list_symbols across the whole market.",
+      "memory_measurement": {
+        "store_shape": "1,950 symbols x 483 trade days ending 2026-11-24 written in DailyBarsStore v2 format; measured in an isolated subprocess with ReconcilerLockOnlyFinder (only dependencies/locks/services-paper_fleet_reconciler.txt packages importable) after importing paper_runtime and member_virtual_book",
+        "baseline_before_fill": {
+          "vm_hwm_bytes": 56012800,
+          "vm_hwm_mib": 53.42,
+          "rss_anon_bytes": 43679744,
+          "rss_anon_mib": 41.66
+        },
+        "one_fill_hosted_gap_11_sessions_of_1_symbol": {
+          "sessions_read": 11,
+          "detail": "2 warmup sessions (2026-11-05, 2026-11-06) + 9 gap sessions (2026-11-09..2026-11-19) of 2330.TW",
+          "elapsed_seconds": 0.578,
+          "added_anon_bytes": 5808128,
+          "added_anon_mib": 5.54,
+          "added_file_bytes": 36372480,
+          "added_file_mib": 34.69,
+          "added_hwm_bytes": 42180608,
+          "added_hwm_mib": 40.23
+        },
+        "one_fill_two_years_483_sessions_of_1_symbol": {
+          "sessions_read": 483,
+          "detail": "Full two years (483 trading days, 2025-01-17..2026-11-24) of one symbol (2330.TW)",
+          "elapsed_seconds": 1.122,
+          "added_anon_bytes": 9895936,
+          "added_anon_mib": 9.44,
+          "added_file_bytes": 36323328,
+          "added_file_mib": 34.64,
+          "added_hwm_bytes": 46219264,
+          "added_hwm_mib": 44.08
+        }
+      },
+      "container_arithmetic": {
+        "mem_limit_config": "${DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER:-1280m}",
+        "mem_limit_bytes": 1342177280,
+        "mem_limit_mib": 1280.0,
+        "hosted_docker_stats_live_mib": 526.0,
+        "hosted_cgroup_memory_peak_bytes": 1148297216,
+        "hosted_cgroup_memory_peak_mib": 1095.1,
+        "headroom_before_fill_bytes": 193880064,
+        "headroom_before_fill_mib": 184.9,
+        "headroom_before_fill_percent": 14.45,
+        "ten_percent_headroom_floor_bytes": 134217728,
+        "ten_percent_headroom_floor_mib": 128.0,
+        "max_added_peak_for_ten_percent_headroom_bytes": 59662336,
+        "max_added_peak_for_ten_percent_headroom_mib": 56.9,
+        "with_one_fill_needed_sessions_11d": {
+          "projected_peak_hwm_bytes": 1190477824,
+          "projected_peak_hwm_mib": 1135.33,
+          "remaining_headroom_bytes": 151699456,
+          "remaining_headroom_mib": 144.67,
+          "remaining_headroom_percent": 11.3,
+          "projected_peak_anon_only_bytes": 1154105344,
+          "remaining_headroom_anon_only_percent": 14.01
+        },
+        "with_one_fill_two_years_483d_of_one_symbol": {
+          "projected_peak_hwm_bytes": 1194516480,
+          "projected_peak_hwm_mib": 1139.18,
+          "remaining_headroom_bytes": 147660800,
+          "remaining_headroom_mib": 140.82,
+          "remaining_headroom_percent": 11.0,
+          "projected_peak_anon_only_bytes": 1158193152,
+          "remaining_headroom_anon_only_percent": 13.71
+        },
+        "with_three_concurrent_fills_needed_sessions": {
+          "note": "RssFile (34.69 MiB libarrow.so shared library pages) is shared across all processes in the container cgroup; 3 * 5.54 MiB RssAnon + 34.69 MiB shared RssFile = 51.31 MiB (53,796,864 bytes)",
+          "projected_peak_bytes": 1202094080,
+          "projected_peak_mib": 1146.41,
+          "remaining_headroom_bytes": 140083200,
+          "remaining_headroom_mib": 133.59,
+          "remaining_headroom_percent": 10.44
+        },
+        "host_totals": {
+          "budget_baseline_host_total_mib": 32086,
+          "current_vm_memtotal_kib": 49322832,
+          "current_vm_memtotal_mib": 48166.83,
+          "compose_sum_limits_mib": 85120
+        },
+        "decision": "At least 10 percent headroom remains above cgroup memory.peak 1,148,297,216 bytes under mem_limit 1280m (11.30% remaining for the bounded 11-session fill, 11.00% remaining for a full two-year 483-session fill of one symbol, and 10.44% even if all 3 workers filled concurrently; >55% headroom against live 526 MiB docker stats). DEV_MEM_LIMIT_PAPER_FLEET_RECONCILER default in docker-compose.yml therefore stays at 1280m."
+      }
+    },
+    "3_retired_binding_sweep_keeps_legacy_book_files": {
+      "status": "met",
+      "change": "PaperFleetReconciler._cleanup_retired_state_files in services/paper_fleet_reconciler/paper_fleet_reconciler.py now unlinks only [state, outbox] (and their .lock and stale temp siblings) and leaves *.lifecycle-outbox.json.member-books.json untouched.",
+      "tests": [
+        "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py::TestPaperFleetReconcilerEnvBuilder::test_retired_binding_state_removed_only_when_nothing_pending",
+        "services/execution/lean_runtime/test_member_virtual_book.py::test_reconciler_retired_sweep_before_first_new_mark_keeps_legacy_book_files_for_three_hosted_personas"
+      ]
+    },
+    "4_runtime_budget": {
+      "status": "met",
+      "image_growth": {
+        "package": "pyarrow==26.0.1",
+        "wheel": "pyarrow-26.0.1-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "wheel_sha256": "c718bf97a92a6dea97fd1062c3b9f9e2e83cb9cc926e752289fa4ffff41738f9",
+        "wheel_bytes": 55043763,
+        "wheel_mib": 52.49,
+        "unpacked_site_packages_bytes": 171390364,
+        "unpacked_site_packages_mib": 163.45,
+        "detail": "pip install --no-cache-dir in services/paper_fleet_reconciler/Dockerfile downloads the 55,043,763-byte (52.49 MiB) wheel and installs 171,390,364 bytes (163.45 MiB) into site-packages with zero transitive package additions."
+      },
+      "writers": "No new writer; scripts/check_storage_manifest.py passes unchanged.",
+      "kept_legacy_book_files": "Since PR #7920, persona books are written under /data/runtime/paper-performance/member-books/<sha256(tenant, persona)>.json, so no new per-binding *.lifecycle-outbox.json.member-books.json file is ever written. The kept per-binding book files for the 3 active hosted trading personas (rb-2b0df30559154a93902c209b0318d95c, rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4, rb-eb74118dd3ca4b169496b1c239087512) are ~1.5 KB each (~4.5 KB total, under 10 KB; 4,768 bytes across the 3 files in the hosted-shape test)."
+    },
+    "5_hosted_acceptance_probe": {
+      "status": "met_in_code_pending_hosted_release",
+      "probe": "acceptance/probes/persona-member-book-admission (existing read-only release probe; no new probe)",
+      "expected_first_mark_time": "2026-11-27T23:35:00Z (the next daily market-mark observation after release)",
+      "expected_admission_fill_outcome": {
+        "personas": [
+          {
+            "persona_id": "persona-2448c7053e33ea48da47",
+            "symbol": "2330.TW",
+            "legacy_binding_prefix": "rb-eb74118d"
+          },
+          {
+            "persona_id": "persona-6507750312870d03a241",
+            "symbol": "2317.TW",
+            "legacy_binding_prefix": "rb-a2cb762c"
+          },
+          {
+            "persona_id": "persona-ee7112a829d38b9135ac",
+            "symbol": "0050.TW",
+            "legacy_binding_prefix": "rb-2b0df305"
+          }
+        ],
+        "if_deployed_before_2026_11_27_10_00Z": "At the ~2026-11-27T23:35Z mark after the 10:00Z one-time envelope republish, each persona book carries in the 3 recorded marks (2026-11-20 to 2026-11-24) from its kept rb-*.lifecycle-outbox.json.member-books.json file (first_live_mark = 2026-11-20 mark), records admitted_at = joined_at (2026-11-08T18:10:02Z), fills the 9 governed Taiwan trading sessions 2026-11-09..2026-11-19 via governed_admission_replay_source (admission_fill.filled = 9 sessions, admission_fill.gaps = [], source_refs = ['governed-replay:<gmd-snapshot-id>:pool_admission._replay']), and reports since_inception = true, since_inception_reason = null.",
+        "if_deployed_after_2026_11_27_10_00Z": "If the 10:00Z republish ran under the pre-fix reconciler image, the old sweep deleted the 3 legacy per-binding files so those 3 recorded marks are lost; at the ~2026-11-27T23:35Z mark, first_live_mark is the 2026-11-27 mark and governed_admission_replay_source fills all governed trading sessions from 2026-11-09 through 2026-11-26 with admission_fill.gaps = [], admitted_at = joined_at, and since_inception = true, since_inception_reason = null."
+      }
+    },
+    "6_test_integrity": {
+      "status": "met",
+      "changed_assertions": [
+        {
+          "file": "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+          "test": "TestPaperFleetReconcilerEnvBuilder.test_retired_binding_state_removed_only_when_nothing_pending",
+          "change": "Replaced self.assertFalse(any(p.exists() for p in retired)) with self.assertFalse(any(p.exists() for p in (retired[0], retired[1], retired[3]))) and self.assertTrue(retired[2].exists()).",
+          "justification": "retired is [state, outbox, books, tmp]. Acceptance 3 requires that _cleanup_retired_state_files keep *.lifecycle-outbox.json.member-books.json (retired[2]) while still removing state (retired[0]), outbox (retired[1]), and stale temp siblings (retired[3])."
+        }
+      ],
+      "deleted_or_weakened": []
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/research/tests/test_governed_market_dataset.py services/execution/lean_runtime/test_member_virtual_book.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_paper_image_dependencies.py scripts/test_check_service_lock_shared_deps.py scripts/test_compose_memory_limits.py acceptance/test_persona_member_book_admission.py",
+      ".venv-pantheon/bin/python3 scripts/check_service_lock_shared_deps.py",
+      ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report.json"
+    ]
+  },
+  "residual_findings": []
+}

@@ -110,6 +110,7 @@ def _as_of(now: Callable[[], datetime] | datetime | None) -> datetime:
 
 
 def _reader(root: Path):
+    os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
     try:
         from services.source_ingestion.daily_bars_reader import DailyBarsReader
     except ImportError as exc:  # pyarrow absent: not an empty market
@@ -300,15 +301,126 @@ def dataset_for(
     }
 
 
+def _resolve_symbol_sessions(
+    *, symbols: Sequence[str] | None, sessions: Sequence[str] | None, warmup_days: int,
+    snapshot_id: str | None, end_date: str | None, strategy_id: str,
+    root: str | Path | None, now: Callable[[], datetime] | datetime | None,
+    policy: MarketPolicy | None, env: Mapping[str, str] | None,
+) -> dict[str, Any]:
+    """Read only the requested symbols and the sessions they need (plus ``warmup_days`` stored sessions
+    before the first session), without scanning the whole-market boundary or adding companion symbols."""
+    policy = policy or MarketPolicy()
+    as_of = _as_of(now)
+    wanted = [str(s).strip() for s in dict.fromkeys(symbols or ()) if str(s).strip()]
+    if not wanted:
+        raise GovernedMarketDatasetError("dataset_symbols_missing", "no symbol requested")
+    if len(wanted) > MAX_DATASET_SYMBOLS:
+        raise GovernedMarketDatasetError(
+            "dataset_symbols_over_limit", f"{len(wanted)} symbols requested, the limit is {MAX_DATASET_SYMBOLS}")
+    reader = _reader(Path(root) if root is not None else store_root(env))
+    try:
+        window, digests = _window_manifests(reader, end_date, policy)
+        latest = window[-1]
+        age = (as_of.date() - date.fromisoformat(latest)).days
+        if end_date is None and age > policy.max_stale_calendar_days:
+            raise GovernedMarketDatasetError(
+                "daily_bars_store_stale", f"newest stored day {latest} is {age} days before {as_of.date().isoformat()}"
+                f" (limit {policy.max_stale_calendar_days})")
+        derived_id = _snapshot_id(digests, policy)
+        if snapshot_id and derived_id != snapshot_id:
+            raise GovernedMarketDatasetError(
+                "snapshot_not_reproducible", f"{snapshot_id} now derives as {derived_id}")
+        reader._manifest_cache.clear()
+        if sessions is None:
+            read_days = list(window)
+            earlier_days: list[str] = []
+            need_warmup = 0
+            first_day = window[0]
+        else:
+            asked = sorted({str(d).strip()[:10] for d in sessions if str(d).strip()})
+            if not asked:
+                raise GovernedMarketDatasetError("dataset_records_missing", "no session requested")
+            first_day, last_day = asked[0], asked[-1]
+            before = [d for d in window if d < first_day]
+            need_warmup = max(int(warmup_days), 0)
+            warmup = before[-need_warmup:] if need_warmup > 0 else []
+            earlier_days = list(reversed(before[:-need_warmup])) if need_warmup > 0 else []
+            in_range = [d for d in window if first_day <= d <= last_day]
+            read_days = warmup + in_range
+            if not read_days:
+                raise GovernedMarketDatasetError(
+                    "dataset_records_missing", f"no bar of {len(wanted)} symbols is available")
+        cutoff = as_of
+        records: list[dict[str, Any]] = []
+        unavailable = 0
+        seen: dict[str, int] = {s: 0 for s in wanted}
+        warmup_seen: dict[str, int] = {s: 0 for s in wanted}
+        cols = ["symbol", "trade_date", "open", "high", "low", "close", "volume", "traded_value", "available_time"]
+        for chunk in _chunks(wanted, _READ_CHUNK):
+            for day in read_days:
+                rows = reader.read_range(chunk, day, day, any_form=True, columns=cols)
+                for requested in chunk:
+                    for r in rows[requested]:
+                        seen[requested] += 1
+                        available = r.get("available_time")
+                        if not isinstance(available, datetime) or available > cutoff:
+                            unavailable += 1
+                            continue
+                        if day < first_day:
+                            warmup_seen[requested] += 1
+                        records.append({
+                            "instrument": r["symbol"], "date": r["trade_date"], "open": r["open"], "high": r["high"],
+                            "low": r["low"], "close": r["close"], "volume": r["volume"],
+                            "traded_value": r["traded_value"], "available_time": _iso(available)})
+                reader._meta_cache.clear()
+                reader._manifest_cache.clear()
+            if need_warmup > 0 and earlier_days:
+                for day in earlier_days:
+                    short = [s for s in chunk if seen[s] > 0 and warmup_seen[s] < need_warmup]
+                    if not short:
+                        break
+                    rows = reader.read_range(short, day, day, any_form=True, columns=cols)
+                    for requested in short:
+                        for r in rows[requested]:
+                            seen[requested] += 1
+                            available = r.get("available_time")
+                            if not isinstance(available, datetime) or available > cutoff:
+                                unavailable += 1
+                                continue
+                            warmup_seen[requested] += 1
+                            records.append({
+                                "instrument": r["symbol"], "date": r["trade_date"], "open": r["open"],
+                                "high": r["high"], "low": r["low"], "close": r["close"], "volume": r["volume"],
+                                "traded_value": r["traded_value"], "available_time": _iso(available)})
+                    reader._meta_cache.clear()
+                    reader._manifest_cache.clear()
+        missing = [s for s in wanted if seen[s] == 0]
+        if missing:
+            raise GovernedMarketDatasetError("symbols_not_in_store", ", ".join(missing[:5]))
+    finally:
+        reader._pool.shutdown(wait=False)
+    if not records:
+        raise GovernedMarketDatasetError("dataset_records_missing", f"no bar of {len(wanted)} symbols is available")
+    records.sort(key=lambda r: (r["date"], r["instrument"]))
+    return {
+        "dataset_id": derived_id, "strategy_id": strategy_id,
+        "source_dataset_refs": [f"daily_bars:{derived_id}"], "data_frequency": "daily",
+        "records": records, "bars_not_point_in_time": unavailable,
+    }
+
+
 def resolve_governed_dataset(
     *, symbols: Sequence[str] | None = None, snapshot_id: str | None = None, strategy_id: str = "governed-market-dataset",
     root: str | Path | None = None, now: Callable[[], datetime] | datetime | None = None,
     policy: MarketPolicy | None = None, env: Mapping[str, str] | None = None,
     min_instruments: int = MIN_INSTRUMENTS,
+    sessions: Sequence[str] | None = None, warmup_days: int = 0,
 ) -> dict[str, Any]:
     """One call for the three consumers. ``symbols`` are matched to stored forms (``2330`` finds ``2330.TW``).
     ``snapshot_id`` pins an earlier snapshot: the dataset is built at that snapshot's day and its id must
-    re-derive identically, otherwise it fails closed (the store changed or the id is not ours)."""
+    re-derive identically, otherwise it fails closed (the store changed or the id is not ours).
+    When ``sessions`` is given (or ``min_instruments <= 1`` with explicit ``symbols``), only those symbols and
+    the needed sessions (plus ``warmup_days`` stored sessions before the first session) are read."""
     _require_worker()
     end = None
     if snapshot_id:
@@ -316,6 +428,10 @@ def resolve_governed_dataset(
         if len(parts) != 5 or parts[0] != "gmd":
             raise GovernedMarketDatasetError("snapshot_id_unknown", f"{snapshot_id!r} is not a governed market snapshot id")
         end = "-".join(parts[1:4])
+    if sessions is not None or (symbols is not None and min_instruments <= 1):
+        return _resolve_symbol_sessions(
+            symbols=symbols, sessions=sessions, warmup_days=warmup_days, snapshot_id=snapshot_id,
+            end_date=end, strategy_id=strategy_id, root=root, now=now, policy=policy, env=env)
     boundary = build_market_boundary(root, policy=policy, now=now, end_date=end, env=env)
     if snapshot_id and boundary.snapshot_id != snapshot_id:
         raise GovernedMarketDatasetError("snapshot_not_reproducible", f"{snapshot_id} now derives as {boundary.snapshot_id}")
