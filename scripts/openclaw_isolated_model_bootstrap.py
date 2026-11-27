@@ -128,8 +128,16 @@ def render_batch(environ: dict[str, str] | None = None) -> list[dict[str, object
     if not chain:
         raise BootstrapError("OPENCLAW_MODEL_CHAIN is empty and no default chain file is readable")
     chain_policy = {"primary": chain[0], "fallbacks": chain[1:]}
+    pool_batch = _script_batch(source, "MODEL_POOL_BATCH")
+    if not any(
+        item.get("path") == "agents.defaults.skipBootstrap" and item.get("value") is True
+        for item in pool_batch
+    ):
+        raise BootstrapError(
+            f"{POOL_SCRIPT.name} MODEL_POOL_BATCH must set agents.defaults.skipBootstrap=true"
+        )
     batch = (
-        _script_batch(source, "MODEL_POOL_BATCH")
+        pool_batch
         + [
             {"path": "agents.defaults.model.primary", "value": chain[0]},
             {"path": "agents.defaults.model.fallbacks", "value": chain[1:]},

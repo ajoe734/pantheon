@@ -40,6 +40,7 @@ from .data_tools import (
 )
 
 TURN_SCHEMA_VERSION = "agora.servant.tool_turn.v1"
+MAX_HABIT_FACTS_CITED = 12  # habit facts kept in one answer's citations (on top of 30 tool facts)
 PACKET_MARKER = "SERVANT_TURN_PACKET_JSON:"
 HISTORY_CONTENT_MAX_CHARS = 1000
 ANSWER_MAX_CHARS = 3000
@@ -170,11 +171,13 @@ INSTRUCTIONS = (
     "4. 沒有工具能提供的資料，寫進 missing_data，並在回答中說明缺什麼；不得用你的記憶當作資料回答。\n"
     "5. cited_fact_ids 列出回答用到的 fact id。\n"
     "6. 不要諮詢任何 persona，也不要開會。用繁體中文回答。\n"
+    "7. habit_profile.facts 是交易員的習慣事實（id 為 h1、h2…，附樣本數）與你對這些習慣的解讀。"
+    "回答與提案若依據某個習慣，請用 {{hN}} 引用它並在 cited_fact_ids 列出；不要自己寫數字，也不要把解讀當成事實。\n"
 )
 
-_FACT_REF = re.compile(r"\{\{\s*(f\d{1,3})\s*\}\}")
+_FACT_REF = re.compile(r"\{\{\s*([fh]\d{1,3})\s*\}\}")
 _NUMBER = re.compile(r"\d+(?:[.,:/\-]\d+)*%?")
-_UNIT_LABELS = {"shares": "股", "TWD": "元", "symbols": "檔", "score": "分"}
+_UNIT_LABELS = {"shares": "股", "TWD": "元", "symbols": "檔", "score": "分", "percent": "%", "days": "天", "minutes": "分鐘"}
 
 
 @dataclass
@@ -189,6 +192,7 @@ class TurnOutcome:
     number_guard: Dict[str, Any] = field(default_factory=dict)
     answer_mode: str = "model"
     error: Optional[Dict[str, Any]] = None
+    habit: Dict[str, Any] = field(default_factory=dict)
     clarification: Optional[Dict[str, Any]] = None
     stated_assumptions: List[str] = field(default_factory=list)
     consecutive_clarifications: int = 0
@@ -197,6 +201,7 @@ class TurnOutcome:
 
     def metadata(self) -> Dict[str, Any]:
         return {
+            **({"habit_profile": self.habit} if self.habit else {}),
             "schema_version": TURN_SCHEMA_VERSION,
             "tool_rounds": self.tool_rounds,
             "provider_calls": self.provider_calls,
@@ -320,6 +325,8 @@ def _packet(
     consecutive_clarifications: int = 0,
     active_clarification_choice: Optional[Mapping[str, Any]] = None,
     habit_facts: Sequence[Mapping[str, Any]] = (),
+    habit_ref: Optional[Mapping[str, Any]] = None,
+    style_habit_facts: Sequence[Mapping[str, Any]] = (),
     forced_assumptions: Sequence[str] = (),
 ) -> str:
     packet = {
@@ -335,6 +342,14 @@ def _packet(
             {k: f.get(k) for k in ("id", "label", "value", "unit", "as_of", "freshness", "symbol")}
             for f in facts
         ],
+        "habit_profile": {
+            "ref": dict(habit_ref or {}),
+            "facts": [
+                {k: f.get(k) for k in ("id", "label", "value", "unit", "sample_size", "habit_kind", "origin")
+                 if f.get(k) is not None}
+                for f in habit_facts
+            ],
+        },
         "tool_results": list(trace),
         "tool_rounds_used": rounds_used,
         "tool_rounds_left": max(0, MAX_TOOL_ROUNDS - rounds_used),
@@ -343,7 +358,7 @@ def _packet(
         "consecutive_clarifications": consecutive_clarifications,
         "max_consecutive_clarifications": MAX_CONSECUTIVE_CLARIFICATIONS,
         "active_clarification_choice": dict(active_clarification_choice) if isinstance(active_clarification_choice, Mapping) else None,
-        "style_habit_facts": [dict(f) for f in habit_facts],
+        "style_habit_facts": [dict(f) for f in style_habit_facts],
         "forced_assumptions": list(forced_assumptions),
     }
     return INSTRUCTIONS + "\n" + PACKET_MARKER + "\n" + json.dumps(packet, ensure_ascii=False, default=str)
@@ -370,6 +385,7 @@ def run_tool_turn(
     ctx: ToolContext,
     history: Sequence[Mapping[str, Any]],
     invoke: Callable[[str], Mapping[str, Any]],
+    habit: Any = None,
     consecutive_clarifications: int = 0,
     prior_clarifications: Sequence[Mapping[str, Any]] = (),
     clarification_choice: Optional[Mapping[str, Any]] = None,
@@ -387,6 +403,11 @@ def run_tool_turn(
     missing: List[str] = []
     rounds = 0
     provider_calls = 0
+    # SD §6: every turn carries the trader's habit profile (h-facts); they are context, not a
+    # tool round, and do not count against the 30-fact citation budget of tool facts.
+    profile_habit_facts: List[Dict[str, Any]] = [dict(f) for f in (getattr(habit, "facts", None) or [])]
+    habit_ref: Dict[str, Any] = dict(getattr(habit, "ref", None) or {})
+    shown_habit_ids = [f["id"] for f in profile_habit_facts]
 
     hist_streak, hist_cards = _history_clarification_streak(history[:-1] if history else ())
     effective_streak = max(int(consecutive_clarifications or 0), hist_streak)
@@ -417,6 +438,9 @@ def run_tool_turn(
                 if len(facts) >= MAX_FACTS_PER_ANSWER:
                     break
                 fact["id"] = f"f{len(facts) + 1}"
+                if result.tool == "propose_research" and shown_habit_ids:
+                    # A proposal names the habit facts it was made against (V6 §13.2).
+                    fact["habit_refs"] = list(shown_habit_ids)
                 facts.append(fact)
             trace.append(result.summary())
             if result.missing:
@@ -446,7 +470,9 @@ def run_tool_turn(
             clarification_allowed=can_clarify,
             consecutive_clarifications=effective_streak,
             active_clarification_choice=active_choice,
-            habit_facts=session_habit_facts,
+            habit_facts=profile_habit_facts,
+            habit_ref=habit_ref,
+            style_habit_facts=session_habit_facts,
             forced_assumptions=stated_assumptions,
         )
         provider_calls += 1
@@ -496,6 +522,7 @@ def run_tool_turn(
     missing = list(dict.fromkeys(missing))
 
     facts_by_id = {f["id"]: f for f in facts}
+    facts_by_id.update({f["id"]: f for f in profile_habit_facts})
     raw_answer = str((plan or {}).get("answer_text") or "").strip()
     extra_number_tokens: List[str] = list(ctx.command_context.get("selected_symbols") or [])
     if isinstance(active_choice, Mapping) and active_choice.get("option_label"):
@@ -519,6 +546,10 @@ def run_tool_turn(
         allowed = _allowed_number_tokens(facts, trader_text, extra_number_tokens)
         answer, used, guard = render_answer(raw_answer, facts_by_id, allowed_tokens=allowed)
         cited = set(used) | {str(i) for i in (plan.get("cited_fact_ids") or []) if str(i) in facts_by_id}
+        # A proposal made in this turn is part of the answer, and it is cited together with
+        # the habit facts it names (SD §6: proposals cite the habits they relied on).
+        cited |= {f["id"] for f in facts if f.get("tool") == "propose_research" and f.get("habit_refs")}
+        cited |= {h for f in facts if f["id"] in cited for h in f.get("habit_refs") or []}
         if stated_assumptions:
             prefix = format_stated_assumptions_prefix(stated_assumptions)
             if prefix and not any(a in answer for a in stated_assumptions):
@@ -553,10 +584,22 @@ def run_tool_turn(
         new_streak = 0
     for fact in facts:
         fact["cited"] = fact["id"] in cited
+    habit_cited = [f for f in profile_habit_facts if f["id"] in cited][:MAX_HABIT_FACTS_CITED]
+    for fact in habit_cited:
+        fact["cited"] = True
+    habit_meta: Dict[str, Any] = {}
+    if habit_ref or profile_habit_facts:
+        habit_meta = {
+            **habit_ref,
+            "carried_fact_ids": shown_habit_ids,
+            "cited_fact_ids": [f["id"] for f in habit_cited],
+            "cited_features": sorted({str(f.get("feature_key")) for f in habit_cited}),
+        }
     return TurnOutcome(
         answer=answer,
         provider_status=status,
-        facts=facts,
+        facts=facts + habit_cited,
+        habit=habit_meta,
         tool_trace=trace,
         missing_data=missing,
         tool_rounds=rounds,

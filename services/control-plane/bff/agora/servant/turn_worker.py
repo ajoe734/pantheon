@@ -33,6 +33,7 @@ from .clarification import (
     extract_clarification_habit_facts_from_messages,
 )
 from .data_tools import ServantDataTools, ToolContext, normalize_command_context
+from .habits import HabitService, build_default_habit_service
 from .tool_turn import SERVANT_TURN_SCHEMA, TurnOutcome, run_tool_turn
 
 logger = logging.getLogger("agora.servant.turn_worker")
@@ -110,10 +111,16 @@ class ServantTurnWorker:
         purge_interval_seconds: float = DEFAULT_PURGE_INTERVAL_SECONDS,
         clock: Callable[[], str] = _utc_now,
         tools: Optional[ServantDataTools] = None,
+        habits: Optional[HabitService] = None,
     ) -> None:
         self.owner = owner
         # SD §4.3: the fixed read-only tool set, resolved here and never by the model.
         self.tools = tools if tools is not None else ServantDataTools(agora_owner=owner)
+        # SD §6: every turn carries the trader's habit profile and the servant's live (private)
+        # interpretations, so a correction by the trader changes the next answer.
+        self.habits = habits if habits is not None else build_default_habit_service(
+            owner, journal_reader=getattr(self.tools, "journal_reader", None)
+        )
         self.client_factory = client_factory or OpenClawOpsClient
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_SERVANT_WORKER_ID", f"servant-turn-worker-{uuid.uuid4().hex[:12]}"
@@ -125,6 +132,19 @@ class ServantTurnWorker:
         self.metrics: Dict[str, int] = {"completed": 0, "degraded": 0, "failed": 0, "purged_sessions": 0}
 
     # -- one turn -----------------------------------------------------------------
+
+    def _habit_context(self, ctx: ToolContext) -> Any:
+        """Habit facts for the turn; a habit failure never blocks the trader's answer."""
+        if self.habits is None:
+            return None
+        try:
+            return self.habits.turn_context(
+                tenant_id=ctx.tenant_id, user_id=ctx.user_id, persona_id=ctx.servant_persona_id,
+                strategy_id=ctx.command_context.get("strategy_id"),
+            )
+        except Exception as exc:
+            logger.warning("servant habit context unavailable: %s", type(exc).__name__)
+            return None
 
     @staticmethod
     def _structured_round(client: Any, prompt: str, turn: Mapping[str, Any], audit: Mapping[str, Any]) -> Dict[str, Any]:
@@ -203,6 +223,7 @@ class ServantTurnWorker:
                     ctx=ctx,
                     history=history,
                     invoke=lambda prompt: self._structured_round(client, prompt, turn, audit),
+                    habit=self._habit_context(ctx),
                     consecutive_clarifications=consecutive_clarifications,
                     prior_clarifications=streak_cards,
                     clarification_choice=user_meta.get("clarification_choice")

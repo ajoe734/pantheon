@@ -6,11 +6,11 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "78d8543e0acb5d47d038959a58b2afd935bfd442b318975645af1b3a554625d0"
+    "specs/agora/v15/capability_manifest_v1_14.json": "76472482b4b140eb79deb1eab40d79c9284f5e6d71adfa4699e497d011815db4"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "07d3363ec5c380bd3cbff31a87cd5fd87c349b0fb5eb7b1eea295ccaeb1fff05"
+    "sha256": "068b6f009765f483ef0cee52e9392e0d089723593feb08baf66085a172cefbb0"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -36,6 +36,10 @@
       "GET /bff/agora/workshops/{workshop_id}/completeness",
       "POST /bff/agora/workshops/{workshop_id}/completeness",
       "POST /bff/agora/workshops/{workshop_id}/decisions"
+    ],
+    "agora.servant.habits.v1": [
+      "GET /bff/agora/servant/habits",
+      "PATCH /bff/agora/servant/habits"
     ],
     "agora.servant.clarify.v1": [
       "POST /bff/agora/servant/sessions/{session_id}/messages",

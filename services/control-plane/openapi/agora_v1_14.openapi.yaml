@@ -831,6 +831,125 @@
         "x-business-owner": "agora",
         "description": "AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127: Records the trader choice (or servant default) for the next high-value decision as a workshop event under existing write admission and idempotency so the next reconstruction folds it into the strategy map and advances the decision rail."
       }
+    },
+    "/bff/agora/servant/habits": {
+      "get": {
+        "tags": [
+          "agora-servant-habits"
+        ],
+        "summary": "The caller's habit profile and the servant's private interpretations",
+        "operationId": "get_servant_habits_bff_agora_servant_habits_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "name": "trader_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Must equal the caller; any other trader reads as 404."
+          },
+          {
+            "name": "profile_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 80
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-scoped habit facts (each with its sample size) and interpretations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantHabitsEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Another trader's profile or interpretation reads as not found."
+          },
+          "503": {
+            "description": "Agora owner or servant private memory unavailable (fail closed; interpretations are never guessed)."
+          }
+        },
+        "x-business-owner": "agora"
+      },
+      "patch": {
+        "tags": [
+          "agora-servant-habits"
+        ],
+        "summary": "Correct the servant's reading of a habit",
+        "operationId": "patch_servant_habits_bff_agora_servant_habits_patch",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantHabitCorrectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The correction was stored as training_example evidence; the interpretation is superseded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantHabitCorrectionEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Another trader's profile or interpretation reads as not found."
+          },
+          "422": {
+            "description": "Unsupported action or missing statement or feature."
+          },
+          "503": {
+            "description": "Agora owner or servant private memory unavailable (fail closed; interpretations are never guessed)."
+          }
+        },
+        "x-business-owner": "agora"
+      }
     }
   },
   "components": {
@@ -1268,6 +1387,13 @@
           },
           "cited": {
             "type": "boolean"
+          },
+          "habit_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A proposal fact names the habit facts (ServantHabitFact ids) it was made against."
           }
         }
       },
@@ -1302,9 +1428,16 @@
           },
           "citations": {
             "type": "array",
-            "maxItems": 30,
+            "maxItems": 42,
             "items": {
-              "$ref": "#/components/schemas/ServantCitedFact"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ServantCitedFact"
+                },
+                {
+                  "$ref": "#/components/schemas/ServantHabitFact"
+                }
+              ]
             }
           },
           "missing_data": {
@@ -1329,6 +1462,16 @@
               "clarification",
               "none",
               null
+            ]
+          },
+          "habit_profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServantTurnHabitRef"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "clarification": {
@@ -2077,6 +2220,614 @@
           },
           "meta": {
             "type": "object"
+          }
+        }
+      },
+      "ServantTurnHabitRef": {
+        "type": "object",
+        "description": "The habit profile one servant turn carried and the habit facts the answer cited.",
+        "properties": {
+          "profile_key": {
+            "type": "string"
+          },
+          "profile_version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "input_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_count": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "interpretations_status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          },
+          "carried_fact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cited_fact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cited_features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServantHabitFact": {
+        "type": "object",
+        "required": [
+          "id",
+          "tool",
+          "label",
+          "value",
+          "unit",
+          "source_id",
+          "as_of",
+          "freshness",
+          "habit_kind",
+          "feature_key",
+          "cited"
+        ],
+        "description": "A habit fact (h1, h2…) or the servant's private interpretation of one, cited by a servant answer. Fact values carry their sample size; interpretations never carry a number.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^h[0-9]+$"
+          },
+          "tool": {
+            "type": "string",
+            "enum": [
+              "habit_profile"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {},
+          "unit": {
+            "type": "string"
+          },
+          "sample_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "feature_key": {
+            "type": "string",
+            "enum": [
+              "holding_period",
+              "entry_timing",
+              "rule_discipline",
+              "position_size",
+              "rejected_candidates",
+              "data_order",
+              "intervention"
+            ]
+          },
+          "habit_kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "interpretation"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "servant",
+              "trader_correction"
+            ]
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "enum": [
+              "agora.habit_profiles",
+              "agora.servant_private_memory"
+            ]
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh"
+            ]
+          },
+          "cited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServantHabitFeature": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "sample_size",
+          "min_sample",
+          "shown",
+          "value",
+          "headline",
+          "inputs",
+          "source_refs"
+        ],
+        "description": "One deterministic habit feature (SD §6). It is shown only from min_sample (10) samples; otherwise value is null and unavailable_reason says why.",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "holding_period",
+              "entry_timing",
+              "rule_discipline",
+              "position_size",
+              "rejected_candidates",
+              "data_order",
+              "intervention"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "sample_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "min_sample": {
+            "type": "integer",
+            "const": 10
+          },
+          "shown": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "headline": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string"
+              },
+              "value": {},
+              "unit": {
+                "type": "string"
+              }
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_refs": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServantHabitProfile": {
+        "type": "object",
+        "required": [
+          "schema",
+          "profile_key",
+          "tenant_id",
+          "user_id",
+          "strategy_id",
+          "computed_at",
+          "input_digest",
+          "version",
+          "decision_count",
+          "min_sample",
+          "derivation",
+          "features"
+        ],
+        "description": "The trader's habit facts, derived deterministically from the trader's own decision locks, journal entries and servant widget context. No language model computes a feature.",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "AgoraTraderHabitProfile.v1"
+            ]
+          },
+          "profile_key": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "strategy_id": {
+            "type": "string",
+            "description": "Strategy id, or * for all strategies."
+          },
+          "computed_at": {
+            "type": "string"
+          },
+          "input_digest": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "decision_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "journal_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "min_sample": {
+            "type": "integer",
+            "const": 10
+          },
+          "derivation": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "deterministic_rules.v1"
+                ]
+              },
+              "language_model": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServantHabitFeature"
+            }
+          }
+        }
+      },
+      "ServantHabitInterpretation": {
+        "type": "object",
+        "required": [
+          "interpretation_id",
+          "memory_id",
+          "feature_key",
+          "statement",
+          "origin",
+          "status"
+        ],
+        "description": "The servant's reading of a habit fact. It lives only in the servant persona's private memory and is shown to its own trader; it crosses to a meeting only through minutes.",
+        "properties": {
+          "interpretation_id": {
+            "type": "string"
+          },
+          "memory_id": {
+            "type": "string"
+          },
+          "feature_key": {
+            "type": "string"
+          },
+          "feature_label": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "servant",
+              "trader_correction"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "rejected"
+            ]
+          },
+          "fact_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "profile_version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "written_at": {
+            "type": "string"
+          }
+        }
+      },
+      "ServantHabitsData": {
+        "type": "object",
+        "required": [
+          "profile",
+          "interpretations",
+          "interpretations_status",
+          "servant_persona_id"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/ServantHabitProfile"
+          },
+          "interpretations": {
+            "type": "array",
+            "maxItems": 24,
+            "items": {
+              "$ref": "#/components/schemas/ServantHabitInterpretation"
+            }
+          },
+          "interpretations_status": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "unavailable"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "servant_persona_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ServantHabitCorrectionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "description": "Correct the servant's reading: reject it, replace it with the trader's own statement, or add a statement under a feature. The correction is stored as training_example evidence and the interpretation is superseded, not deleted.",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reject",
+              "replace",
+              "add"
+            ]
+          },
+          "interpretation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80,
+            "description": "Required for reject and replace."
+          },
+          "feature_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "description": "Required for add."
+          },
+          "statement": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300,
+            "description": "Required for replace and add."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          }
+        }
+      },
+      "ServantHabitCorrectionData": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServantHabitsData"
+          },
+          {
+            "type": "object",
+            "required": [
+              "correction"
+            ],
+            "properties": {
+              "correction": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "interpretation": {
+                    "$ref": "#/components/schemas/ServantHabitInterpretation"
+                  },
+                  "superseded_interpretation_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "training_example": {
+                    "type": "object",
+                    "properties": {
+                      "evidence_id": {
+                        "type": "string"
+                      },
+                      "interaction_kind": {
+                        "type": "string",
+                        "enum": [
+                          "training_example"
+                        ]
+                      },
+                      "status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ServantHabitsEnvelope": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ServantHabitsData"
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "enum": [
+                  "agora.servant.habits.v1"
+                ]
+              },
+              "audience": {
+                "type": "string"
+              },
+              "advice_only": {
+                "type": "boolean"
+              },
+              "execution_authority": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              },
+              "environment_ceiling": {
+                "type": "string",
+                "enum": [
+                  "paper"
+                ]
+              },
+              "min_sample": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ServantHabitCorrectionEnvelope": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ServantHabitCorrectionData"
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "capability": {
+                "type": "string",
+                "enum": [
+                  "agora.servant.habits.v1"
+                ]
+              },
+              "audience": {
+                "type": "string"
+              },
+              "advice_only": {
+                "type": "boolean"
+              },
+              "execution_authority": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              },
+              "environment_ceiling": {
+                "type": "string",
+                "enum": [
+                  "paper"
+                ]
+              },
+              "min_sample": {
+                "type": "integer"
+              }
+            }
           }
         }
       }

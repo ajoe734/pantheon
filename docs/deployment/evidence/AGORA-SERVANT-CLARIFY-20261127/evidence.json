@@ -90,13 +90,13 @@
   },
   "verification": {
     "commands": [
-      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_servant_clarify.py services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/agora/servant/ services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_agora_servant_clarify.py services/control-plane/bff/tests/test_agora_trader_habit_profile.py services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/agora/servant/ services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py",
       ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py --output /tmp/storage-manifest-report.json",
       ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
       ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
       "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD"
     ],
-    "result": "124 passed; BFF test architecture (no sys.path mutation) green; storage manifest check green; route manifest matches snapshot; route diff baseline matches"
+    "result": "synced with origin/dev (4cfee20d8, preserving AGORA-TRADER-HABIT-PROFILE-20261127 #7984 and OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127 #7952); all servant, clarify, habit profile, BFF test architecture, tenant fallback, and adapter schema contract suites green; storage manifest check green; route manifest matches snapshot; route diff baseline matches"
   },
   "residual_findings": []
 }
