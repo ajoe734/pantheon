@@ -8,23 +8,30 @@ the existing engine, and persists exactly one effective result per workshop
 as a durable, upsert-safe workshop card so replay, staleness, crash, and
 restart all converge on the same effective result and Next-Best-Question.
 
-Concurrency model: this worker executes synchronously inside the caller's
-request, the same pattern ``interaction/runner.py`` uses for persona
-invocations.  There is no cross-process lease; durability comes from the
-workshop card being written to the durable store (Postgres in production)
-before the caller's response is returned, and idempotent convergence comes
-from a versioned completed-card replay and deterministic Registry draft ID.
-Provider calls are at-least-once across concurrent requests or crashes, not
-exactly-once. They are data-only and cannot execute financial actions.
+Job model (AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127): message admission
+only queues a job (``admit_reconstruction_job``) and the route runs it after
+the response (``run_reconstruction_job``). The job record is the workshop's
+one reconstruction card; ``payload.job_id`` owns it and every transition is a
+compare-and-set on that token, so there is one job (one provider call) per
+message sequence_no across the message route, ``/reconstruct`` and replicas.
+``/reconstruct`` waits on an in-flight job by reading the card. A job whose
+replica died is taken over after a lease. Provider calls are data-only and
+cannot execute financial actions.
 """
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional
+import os
+import time
+import uuid
+from typing import Any, Callable, Dict, List, Optional
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
 from .reconstruction import StrategyReconstructionResult
-from .semantic_provider import ENGINE_VERSION, ReconstructionProviderError, reconstruct_strategy_with_agent
+from .semantic_provider import (
+    ENGINE_VERSION, REASON_PRIVATE_CONTENT_UNAVAILABLE, REASON_PROVIDER_ERROR, RETRYABLE_REASONS,
+    ReconstructionProviderError, reconstruct_strategy_with_agent,
+)
 
 RECONSTRUCTION_CARD_TYPE = "strategy_reconstruction"
 
@@ -163,84 +170,229 @@ def _maybe_create_registry_draft(
     }
 
 
-def run_reconstruction_worker(
+def _reconstruction_job_lease_seconds() -> float:
+    """A queued/running job older than this is treated as abandoned (crashed
+    BFF replica) and may be taken over. Well above the provider timeout."""
+    raw = os.getenv("PANTHEON_WORKSHOP_RECONSTRUCTION_JOB_LEASE_SECONDS", "").strip()
+    try:
+        return max(float(raw), 30.0) if raw else 180.0
+    except ValueError:
+        return 180.0
+
+
+def reconstruction_wait_seconds() -> float:
+    """How long ``POST /reconstruct`` waits on an in-flight job (no provider call)."""
+    raw = os.getenv("PANTHEON_WORKSHOP_RECONSTRUCTION_WAIT_SECONDS", "").strip()
+    try:
+        return min(max(float(raw), 0.0), 300.0) if raw else 90.0
+    except ValueError:
+        return 90.0
+
+
+def _message_sequence_no(events: List[Dict[str, Any]]) -> int:
+    """The job identity: the last conversation message, not any later event.
+
+    Reconstruction reads messages only, so persona opinions or other
+    non-message events must not start a second provider call."""
+    return max(
+        (int(event.get("sequence_no", 0)) for event in events if event.get("event_type") == "message"),
+        default=0,
+    )
+
+
+def _current_card(store: Any, workshop_id: str) -> Optional[Dict[str, Any]]:
+    card_id = reconstruction_card_id(workshop_id)
+    return next(
+        (card for card in store.list_workshop_cards(workshop_id) if card.get("card_id") == card_id),
+        None,
+    )
+
+
+def _write_job_card(store: Any, card: Dict[str, Any], *, expected_job_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    writer = getattr(store, "compare_and_set_workshop_card", None)
+    if writer is None:  # minimal test fakes without the conditional write
+        return store.record_workshop_card(card)
+    return writer(card, expected_job_id=expected_job_id)
+
+
+def _card_is_for(payload: Dict[str, Any], sequence_no: int, events: List[Dict[str, Any]]) -> bool:
+    return (
+        payload.get("engine_version") == ENGINE_VERSION
+        and int(payload.get("based_on_sequence_no", -1)) == sequence_no
+        and (not any(event.get("private_content_ref") for event in events)
+             or payload.get("private_content_reader_version") == 1
+             or payload.get("job_status") != "completed")
+    )
+
+
+def _job_is_stale(payload: Dict[str, Any], now: float) -> bool:
+    started = max(float(payload.get("admitted_at_epoch") or 0), float(payload.get("started_at_epoch") or 0))
+    return now - started > _reconstruction_job_lease_seconds()
+
+
+def _job_view(card: Optional[Dict[str, Any]], *, admitted: bool, sequence_no: int) -> Dict[str, Any]:
+    payload = dict((card or {}).get("payload") or {})
+    return {
+        "admitted": admitted,
+        "job_id": payload.get("job_id"),
+        "job_status": payload.get("job_status"),
+        "sequence_no": sequence_no,
+        "card": card,
+    }
+
+
+def _scoped_session(store: Any, workshop_id: str, tenant_id: str, user_id: str,
+                    session: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    session = session if session is not None else store.get_session(workshop_id)
+    if session is None:
+        raise ValueError(f"workshop not found: {workshop_id}")
+    if session.get("tenant_id") != tenant_id or session.get("user_id") != user_id:
+        raise ValueError("workshop reconstruction scope mismatch")
+    return session
+
+
+def admit_reconstruction_job(
+    *,
+    store: Any,
+    workshop_id: str,
+    tenant_id: str,
+    user_id: str,
+    session: Optional[Dict[str, Any]] = None,
+    retry_failed: bool = False,
+    clock: Callable[[], float] = time.time,
+) -> Dict[str, Any]:
+    """Durably queue the one reconstruction job for the latest message.
+
+    No provider call and no private-content read happen here, so message
+    admission stays fast. The job record is the workshop's reconstruction
+    card: ``payload.job_id`` is the owner token and every transition is a
+    compare-and-set on it, so concurrent callers (message route, an explicit
+    ``/reconstruct``, another replica) converge on one job per sequence_no.
+
+    Returns ``{"admitted": bool, "job_id", "job_status", "sequence_no", "card"}``.
+    ``admitted`` is True only for the caller that must run the job.
+    """
+    _scoped_session(store, workshop_id, tenant_id, user_id, session)
+    events = store.list_events(workshop_id)
+    sequence_no = _message_sequence_no(events)
+    card: Optional[Dict[str, Any]] = None
+    for _attempt in range(3):
+        card = _current_card(store, workshop_id)
+        payload = dict((card or {}).get("payload") or {})
+        if card is not None and _card_is_for(payload, sequence_no, events):
+            status = payload.get("job_status")
+            if status == "completed":
+                return _job_view(card, admitted=False, sequence_no=sequence_no)
+            if status == "failed" and not (
+                retry_failed and payload.get("failure_reason") in RETRYABLE_REASONS
+            ):
+                return _job_view(card, admitted=False, sequence_no=sequence_no)
+            if status in {"queued", "running"} and not _job_is_stale(payload, clock()):
+                return _job_view(card, admitted=False, sequence_no=sequence_no)
+        same_round = card is not None and int(payload.get("based_on_sequence_no", -1)) == sequence_no
+        job_id = "rjob_" + uuid.uuid4().hex
+        written = _write_job_card(store, {
+            "card_id": reconstruction_card_id(workshop_id),
+            "card_type": RECONSTRUCTION_CARD_TYPE,
+            "workshop_id": workshop_id,
+            "status": "running",
+            "title": "Strategy reconstruction queued",
+            "summary": f"Queued for the conversation up to message sequence {sequence_no}.",
+            "payload": {
+                "job_id": job_id,
+                "job_status": "queued",
+                "engine_version": ENGINE_VERSION,
+                "based_on_sequence_no": sequence_no,
+                "admitted_at_epoch": clock(),
+                "attempt": (int(payload.get("attempt") or 1) + 1) if same_round else 1,
+            },
+            "evidence_refs": [],
+            "allowed_actions": {},
+        }, expected_job_id=payload.get("job_id"))
+        if written is not None:
+            return _job_view(written, admitted=True, sequence_no=sequence_no)
+    # Lost the slot three times: another writer owns the job; report it.
+    return _job_view(_current_card(store, workshop_id) or card, admitted=False, sequence_no=sequence_no)
+
+
+def _failed_card(workshop_id: str, *, job_id: str, sequence_no: int, attempt: Any,
+                 reason: str, status_code: int, adapter_error_code: Optional[str]) -> Dict[str, Any]:
+    return {
+        "card_id": reconstruction_card_id(workshop_id), "card_type": RECONSTRUCTION_CARD_TYPE,
+        "workshop_id": workshop_id, "status": "failed",
+        "title": "Semantic reconstruction unavailable",
+        "summary": f"Reconstruction failed: {reason}",
+        "payload": {"job_id": job_id, "job_status": "failed", "engine_version": ENGINE_VERSION,
+                    "based_on_sequence_no": sequence_no, "attempt": attempt,
+                    "failure_reason": reason, "failure_status": status_code,
+                    "adapter_error_code": adapter_error_code},
+        "evidence_refs": [], "allowed_actions": {},
+    }
+
+
+def run_reconstruction_job(
     *,
     store: Any,
     canonical: WorkshopCanonicalOperations,
     workshop_id: str,
     tenant_id: str,
     user_id: str,
+    job_id: str,
     session: Optional[Dict[str, Any]] = None,
     private_content_store: Any = None,
+    clock: Callable[[], float] = time.time,
 ) -> Dict[str, Any]:
-    """Admit-or-resume the one reconstruction job for this workshop's conversation.
+    """Run one admitted job: exactly one provider call, result on the card.
 
-    Returns ``{"result": <StrategyReconstructionResult dict>,
-    "registry_draft_ref": <dict|None>, "job_status": "replayed"|"completed",
-    "card": <persisted workshop card>}``.
+    Every write is conditional on ``job_id``; a job superseded by a newer
+    message never overwrites the newer job's card. Provider and content
+    failures are recorded on the card with a typed reason and re-raised.
     """
-    session = session if session is not None else store.get_session(workshop_id)
-    if session is None:
-        raise ValueError(f"workshop not found: {workshop_id}")
-    if session.get("tenant_id") != tenant_id or session.get("user_id") != user_id:
-        raise ValueError("workshop reconstruction scope mismatch")
-
-    events = store.list_events(workshop_id)
-    sequence_no = max((int(event.get("sequence_no", 0)) for event in events), default=0)
-    card_id = reconstruction_card_id(workshop_id)
-    existing = next(
-        (card for card in store.list_workshop_cards(workshop_id) if card.get("card_id") == card_id),
-        None,
-    )
-    existing_payload = dict((existing or {}).get("payload") or {})
-    if (
-        existing is not None
-        and existing.get("status") == "completed"
-        and existing_payload.get("engine_version") == ENGINE_VERSION
-        and int(existing_payload.get("based_on_sequence_no", -1)) == sequence_no
-        and (not any(event.get("private_content_ref") for event in events)
-             or existing_payload.get("private_content_reader_version") == 1)
-    ):
-        # Replay: the conversation has not advanced since the last effective
-        # result, so the durable card is returned unchanged.  No re-invoking
-        # the engine, no repeat Registry draft call.
-        return {
-            "result": existing_payload.get("reconstruction"),
-            "registry_draft_ref": existing_payload.get("registry_draft_ref"),
-            "job_status": "replayed",
-            "card": existing,
-        }
-
-    messages_content = _messages_from_events(
-        events, private_content_store=private_content_store,
-        tenant_id=tenant_id, user_id=user_id, workshop_id=workshop_id,
-    )
-    store.record_workshop_card({
-        "card_id": card_id,
-        "card_type": RECONSTRUCTION_CARD_TYPE,
-        "workshop_id": workshop_id,
+    session = _scoped_session(store, workshop_id, tenant_id, user_id, session)
+    card = _current_card(store, workshop_id)
+    payload = dict((card or {}).get("payload") or {})
+    if payload.get("job_id") != job_id or payload.get("job_status") != "queued":
+        return {"job_status": "superseded", "job_id": job_id, "card": card,
+                "result": None, "registry_draft_ref": None}
+    sequence_no = int(payload["based_on_sequence_no"])
+    attempt = payload.get("attempt")
+    # The job reads the conversation it was admitted for, even if newer
+    # messages arrived since (they have their own job).
+    events = [event for event in store.list_events(workshop_id)
+              if int(event.get("sequence_no", 0)) <= sequence_no]
+    running = _write_job_card(store, {
+        **{k: card[k] for k in ("card_id", "card_type", "workshop_id")},
         "status": "running",
         "title": "Strategy reconstruction in progress",
-        "summary": f"Reconstructing from {len(messages_content)} message(s) up to sequence {sequence_no}.",
-        "payload": {"based_on_sequence_no": sequence_no, "job_status": "running"},
-        "evidence_refs": [],
-        "allowed_actions": {},
-    })
+        "summary": f"Reconstructing the conversation up to message sequence {sequence_no}.",
+        "payload": {**payload, "job_status": "running", "started_at_epoch": clock()},
+        "evidence_refs": [], "allowed_actions": {},
+    }, expected_job_id=job_id)
+    if running is None:
+        return {"job_status": "superseded", "job_id": job_id, "card": _current_card(store, workshop_id),
+                "result": None, "registry_draft_ref": None}
 
+    def fail(reason: str, status_code: int, adapter_error_code: Optional[str] = None) -> None:
+        _write_job_card(store, _failed_card(
+            workshop_id, job_id=job_id, sequence_no=sequence_no, attempt=attempt, reason=reason,
+            status_code=status_code, adapter_error_code=adapter_error_code,
+        ), expected_job_id=job_id)
+
+    try:
+        messages_content = _messages_from_events(
+            events, private_content_store=private_content_store,
+            tenant_id=tenant_id, user_id=user_id, workshop_id=workshop_id,
+        )
+    except Exception:
+        fail(REASON_PRIVATE_CONTENT_UNAVAILABLE, 503)
+        raise
     try:
         result = reconstruct_strategy_with_agent(
             workshop_id=workshop_id, sequence_no=sequence_no, events=events,
             messages_content=messages_content, tenant_id=tenant_id, user_id=user_id,
         )
-    except ReconstructionProviderError:
-        store.record_workshop_card({
-            "card_id": card_id, "card_type": RECONSTRUCTION_CARD_TYPE,
-            "workshop_id": workshop_id, "status": "failed",
-            "title": "Semantic reconstruction unavailable",
-            "payload": {"based_on_sequence_no": sequence_no, "job_status": "failed",
-                        "engine_version": ENGINE_VERSION},
-            "evidence_refs": [], "allowed_actions": {},
-        })
+    except ReconstructionProviderError as exc:
+        fail(exc.reason, exc.status_code, exc.adapter_error_code)
         raise
     registry_draft_ref = _maybe_create_registry_draft(
         canonical=canonical,
@@ -252,16 +404,8 @@ def run_reconstruction_worker(
         result=result,
     )
     result_dict = result.model_dump(mode="json")
-    completed_payload = {
-        "engine_version": ENGINE_VERSION,
-        "private_content_reader_version": 1,
-        "reconstruction": result_dict,
-        "based_on_sequence_no": sequence_no,
-        "registry_draft_ref": registry_draft_ref,
-        "job_status": "completed",
-    }
-    completed_card = store.record_workshop_card({
-        "card_id": card_id,
+    completed_card = _write_job_card(store, {
+        "card_id": reconstruction_card_id(workshop_id),
         "card_type": RECONSTRUCTION_CARD_TYPE,
         "workshop_id": workshop_id,
         "status": "completed",
@@ -270,16 +414,113 @@ def run_reconstruction_worker(
             result.next_best_question.text
             if result.next_best_question else "Reconstruction complete."
         ),
-        "payload": completed_payload,
+        "payload": {
+            "job_id": job_id,
+            "job_status": "completed",
+            "attempt": attempt,
+            "engine_version": ENGINE_VERSION,
+            "private_content_reader_version": 1,
+            "reconstruction": result_dict,
+            "based_on_sequence_no": sequence_no,
+            "registry_draft_ref": registry_draft_ref,
+        },
         "evidence_refs": result.evidence_refs,
         "allowed_actions": {},
-    })
+    }, expected_job_id=job_id)
     return {
         "result": result_dict,
         "registry_draft_ref": registry_draft_ref,
-        "job_status": "completed",
-        "card": completed_card,
+        "job_status": "completed" if completed_card is not None else "superseded",
+        "job_id": job_id,
+        "card": completed_card if completed_card is not None else _current_card(store, workshop_id),
     }
 
 
-__all__ = ["run_reconstruction_worker", "reconstruction_card_id", "RECONSTRUCTION_CARD_TYPE"]
+def wait_for_reconstruction_job(
+    *,
+    store: Any,
+    workshop_id: str,
+    job_id: Optional[str],
+    timeout_seconds: float,
+    poll_seconds: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> Optional[Dict[str, Any]]:
+    """Poll the durable card until ``job_id`` is terminal, superseded or the
+    deadline passes. Reads only: never calls the provider."""
+    deadline = monotonic() + max(timeout_seconds, 0.0)
+    while True:
+        card = _current_card(store, workshop_id)
+        payload = dict((card or {}).get("payload") or {})
+        if (payload.get("job_id") != job_id
+                or payload.get("job_status") in {"completed", "failed"}
+                or monotonic() >= deadline):
+            return card
+        sleep(min(poll_seconds, max(deadline - monotonic(), 0.0)))
+
+
+def provider_error_from_card(card: Optional[Dict[str, Any]]) -> ReconstructionProviderError:
+    payload = dict((card or {}).get("payload") or {})
+    return ReconstructionProviderError(
+        int(payload.get("failure_status") or 502),
+        reason=str(payload.get("failure_reason") or REASON_PROVIDER_ERROR),
+        adapter_error_code=payload.get("adapter_error_code"),
+    )
+
+
+def run_reconstruction_worker(
+    *,
+    store: Any,
+    canonical: WorkshopCanonicalOperations,
+    workshop_id: str,
+    tenant_id: str,
+    user_id: str,
+    session: Optional[Dict[str, Any]] = None,
+    private_content_store: Any = None,
+    wait_seconds: float = 0.0,
+) -> Dict[str, Any]:
+    """Admit-or-resume the reconstruction job for the latest message, inline.
+
+    Used by ``POST /reconstruct`` and store-level callers. A completed job for
+    the same message is replayed without a provider call; a job queued by
+    message admission is awaited for ``wait_seconds`` (reads only); a failed
+    job is replayed as its typed error unless the reason is transient.
+
+    Returns ``{"result", "registry_draft_ref", "job_status", "job_id", "card"}``
+    where ``job_status`` is ``completed`` (this call ran it), ``replayed``,
+    or ``queued``/``running`` (still in flight after the wait).
+    """
+    admission = admit_reconstruction_job(
+        store=store, workshop_id=workshop_id, tenant_id=tenant_id, user_id=user_id,
+        session=session, retry_failed=True,
+    )
+    if admission["admitted"]:
+        return run_reconstruction_job(
+            store=store, canonical=canonical, workshop_id=workshop_id, tenant_id=tenant_id,
+            user_id=user_id, job_id=admission["job_id"], session=session,
+            private_content_store=private_content_store,
+        )
+    card = admission["card"]
+    if admission["job_status"] in {"queued", "running"} and wait_seconds > 0:
+        card = wait_for_reconstruction_job(
+            store=store, workshop_id=workshop_id, job_id=admission["job_id"],
+            timeout_seconds=wait_seconds,
+        )
+    payload = dict((card or {}).get("payload") or {})
+    status = payload.get("job_status")
+    if status == "failed":
+        raise provider_error_from_card(card)
+    return {
+        "result": payload.get("reconstruction") if status == "completed" else None,
+        "registry_draft_ref": payload.get("registry_draft_ref"),
+        "job_status": "replayed" if status == "completed" else status,
+        "job_id": payload.get("job_id"),
+        "card": card,
+    }
+
+
+__all__ = [
+    "admit_reconstruction_job", "run_reconstruction_job", "wait_for_reconstruction_job",
+    "run_reconstruction_worker", "reconstruction_card_id", "reconstruction_wait_seconds",
+    "provider_error_from_card", "RECONSTRUCTION_CARD_TYPE",
+]

@@ -8,10 +8,12 @@ build_session_router wrapper binding the shared admission context) is new.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Callable, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from services.control_plane.privacy.private_content_models import PrivateContentError
 
 from .._common import (
@@ -23,8 +25,15 @@ from ..events import _ws_publish
 from ..operations import CanonicalOperationError, bind_workshop_authorization
 from ..readiness import build_readiness_assessment as _build_readiness_assessment
 from ..cards import _build_workshop_cards, _merge_cards
-from ..runner import run_reconstruction_worker
+from ..runner import (
+    admit_reconstruction_job,
+    reconstruction_wait_seconds,
+    run_reconstruction_job,
+    run_reconstruction_worker,
+)
 from ..semantic_provider import ReconstructionProviderError
+
+_LOG = logging.getLogger(__name__)
 from ..schemas import (
     WorkshopCompletenessSnapshotRequest,
     WorkshopCreateRequest,
@@ -64,6 +73,20 @@ def build_session_router(
         except PrivateContentError as exc:
             raise bff_error(exc.http_status, exc.error_code,
                             "Workshop message content is unavailable", "private_content_store") from None
+
+    def _run_queued_reconstruction(*, workshop_id: str, tenant_id: str, user_id: str, job_id: str) -> None:
+        """Background job body: failures are already recorded on the card."""
+        try:
+            run_reconstruction_job(
+                store=store, canonical=canonical, workshop_id=workshop_id,
+                tenant_id=tenant_id, user_id=user_id, job_id=job_id,
+                private_content_store=private_content_store,
+            )
+        except ReconstructionProviderError as exc:
+            _LOG.warning("workshop reconstruction job %s failed: %s (%s)",
+                         job_id, exc.reason, exc.adapter_error_code)
+        except Exception:
+            _LOG.warning("workshop reconstruction job %s failed", job_id, exc_info=True)
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/workshops — list user-scoped workshop sessions
@@ -260,6 +283,7 @@ def build_session_router(
     def post_workshop_message(
         workshop_id: str,
         body: WorkshopMessageRequest,
+        background_tasks: BackgroundTasks,
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
@@ -369,25 +393,38 @@ def build_session_router(
             },
             utc_now_fn=utc_now,
         )
-        # Durably admits this conversation's reconstruction job by invoking
-        # the one worker path right after the message event is durably
-        # committed.  Best-effort: a reconstruction/Registry-draft hiccup
-        # must never fail message acceptance.  An explicit POST /reconstruct
-        # (same run_reconstruction_worker) recovers a missed or stale round.
+        # Durably queue this message's reconstruction job; never run the model
+        # inside message admission (8/27 SA AD-AG-05). The job runs after the
+        # response; POST /reconstruct reads it back (or recovers a missed one).
+        reconstruction_job: Optional[Dict[str, Any]] = None
         try:
-            run_reconstruction_worker(
+            admission = admit_reconstruction_job(
                 store=store,
-                canonical=canonical,
                 workshop_id=workshop_id,
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
-                session=store.get_session(workshop_id) or session,
-                private_content_store=private_content_store,
+                session=session,
             )
+            reconstruction_job = {
+                "job_id": admission["job_id"],
+                "job_status": admission["job_status"],
+                "sequence_no": admission["sequence_no"],
+            }
+            if admission["admitted"] and background_tasks is not None:
+                background_tasks.add_task(
+                    _run_queued_reconstruction,
+                    workshop_id=workshop_id,
+                    tenant_id=scope.tenant_id,
+                    user_id=scope.user_id,
+                    job_id=admission["job_id"],
+                )
         except Exception:
-            pass
+            # A queueing hiccup must never fail message acceptance; the next
+            # POST /reconstruct admits the job for this message.
+            _LOG.warning("workshop reconstruction job was not queued", exc_info=True)
         return {
-            "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"]},
+            "data": {"event_id": event["event_id"], "sequence_no": event["sequence_no"],
+                     "reconstruction_job": reconstruction_job},
             "meta": {
                 "snapshot_at": utc_now(),
                 "capability": "agora.workshop.v1",
@@ -780,10 +817,10 @@ def build_session_router(
         authorization: Optional[str] = Header(default=None),
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> Dict[str, Any]:
-        # Single worker path (AGORA-WORKSHOP-CORE-20260813 disposition): this
-        # endpoint and the message-post durable trigger both call
-        # run_reconstruction_worker, so replay/staleness/crash-restart
-        # semantics live in one place rather than being duplicated per caller.
+        # One job per message sequence_no (AGORA-WORKSHOP-RECONSTRUCTION-
+        # HOSTED-20261127): a job already queued by message admission is
+        # awaited by reading its card, a finished one is replayed, and only a
+        # missing, abandoned or transiently failed job is run here.
         scope = _scope(authorization, x_tenant_id)
         session = _scoped_session(workshop_id, scope)
         try:
@@ -795,21 +832,28 @@ def build_session_router(
                 tenant_id=scope.tenant_id,
                 user_id=scope.user_id,
                 session=session,
+                wait_seconds=reconstruction_wait_seconds(),
             )
         except PrivateContentError as exc:
             raise bff_error(exc.http_status, exc.error_code,
                             "Workshop message content is unavailable", "private_content_store") from None
         except ReconstructionProviderError as exc:
-            raise bff_error(exc.status_code, exc.error_code, str(exc), "structured_provider") from None
-        return {
-            "data": outcome["result"],
-            "meta": {
-                "snapshot_at": utc_now(),
-                "capability": "agora.workshop.v1",
-                "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
-                "job_status": outcome["job_status"],
-                "registry_draft_ref": outcome.get("registry_draft_ref"),
-            },
+            raise bff_error(
+                exc.status_code, exc.error_code, str(exc), exc.reason,
+                details_extra={"adapter_error_code": exc.adapter_error_code},
+            ) from None
+        meta = {
+            "snapshot_at": utc_now(),
+            "capability": "agora.workshop.v1",
+            "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            "job_status": outcome["job_status"],
+            "job_id": outcome.get("job_id"),
+            "registry_draft_ref": outcome.get("registry_draft_ref"),
         }
+        if outcome["result"] is None:
+            # Still in flight after the bounded wait: the card carries the
+            # result when the job finishes. No second provider call is made.
+            return JSONResponse(status_code=202, content={"data": None, "meta": meta})
+        return {"data": outcome["result"], "meta": meta}
 
     return router

@@ -1405,6 +1405,17 @@ class AssistantOpenClawProvider:
                 status_code=422,
                 error_code="OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
             )
+        # Refuse a schema this validator cannot enforce *before* the paid model
+        # call (AGORA-WORKSHOP-RECONSTRUCTION-HOSTED-20261127: the workshop
+        # reconstruction schema carried `$defs`/`$ref`, so every hosted answer
+        # was paid for and then refused as OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH).
+        unsupported = unsupported_schema_keyword_paths(extraction_schema)
+        if unsupported:
+            raise OpenClawProviderError(
+                f"extraction schema declares unsupported keyword(s) {unsupported[:5]!r}",
+                status_code=422,
+                error_code="OPENCLAW_EXTRACTION_SCHEMA_UNSUPPORTED",
+            )
         # One-shot and stateless: a stable `user` key would reuse one warm CLI
         # session per caller, accumulating history until context_overflow.
         result = self._invoke_via_http(
