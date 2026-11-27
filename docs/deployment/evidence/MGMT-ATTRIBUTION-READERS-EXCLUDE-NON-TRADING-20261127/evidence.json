@@ -15,329 +15,175 @@
   "management_read_surface_inventory": [
     {
       "file": "services/control-plane/bff/strategies/routes/common.py",
-      "functions": [
-        "read_persona_state_lookup",
-        "PersonaStateLookup.is_management_excluded",
-        "strategy_stub_reason"
-      ],
+      "functions": ["read_persona_state_lookup", "PersonaStateLookup.is_management_excluded", "strategy_stub_reason"],
       "surface": "Management strategy cohort",
       "disposition": "fixed_here",
       "behavior": "Canonical non_trading_identity_source from the same directory snapshot as test_persona_ids. Only an all-excluded nonempty persona set is hidden; mixed trading/unknown and unbound strategies remain subject to existing stub rules."
     },
     {
       "file": "services/control-plane/bff/strategies/routes/collection.py",
-      "functions": [
-        "bff_list_strategies",
-        "_list_strategies_page"
-      ],
+      "functions": ["bff_list_strategies", "_list_strategies_page"],
       "surface": "GET /bff/strategies, default Management strategies view",
       "disposition": "fixed_here",
       "behavior": "Registry receives the union of test and non-trading ids before selecting/counting/paging. Older owner fallback uses the same predicate. Explicit include_test/include_test_personas keeps the pre-existing all-strategies diagnostic view. With advisory identities present, hidden_persona_strategy_count reports the combined owner count; test-only count is null rather than mislabelling advisory rows."
     },
     {
       "file": "services/control-plane/bff/strategies/routes/detail.py",
-      "functions": [
-        "bff_get_strategy",
-        "bff_list_strategy_specs",
-        "bff_list_strategy_experiments",
-        "bff_list_strategy_artifacts",
-        "bff_get_strategy_lineage",
-        "bff_get_strategy_audit",
-        "bff_list_strategy_ooda_packets"
-      ],
+      "functions": ["bff_get_strategy", "bff_list_strategy_specs", "bff_list_strategy_experiments", "bff_list_strategy_artifacts", "bff_get_strategy_lineage", "bff_get_strategy_audit", "bff_list_strategy_ooda_packets"],
       "surface": "Explicit strategy detail/spec/experiment/deployment history",
       "disposition": "infrastructure_unchanged",
       "behavior": "Explicit identity lookups remain readable, including the servant book artifact; they do not construct an institutional cohort. Runtime metrics call shared read_strategy_runtime_truth, composed with the Trading Pulse task."
     },
     {
       "file": "services/control-plane/bff/strategies/routes/seeds.py",
-      "functions": [
-        "_load_persona_strategy_profiles",
-        "_strategy_seed_persona_suggestions",
-        "_strategy_seed_similar_existing_strategies",
-        "bff_list_strategy_seed_inbox",
-        "bff_get_strategy_seed_card"
-      ],
+      "functions": ["_load_persona_strategy_profiles", "_strategy_seed_persona_suggestions", "_strategy_seed_similar_existing_strategies", "bff_list_strategy_seed_inbox", "bff_get_strategy_seed_card"],
       "surface": "Management research StrategySpecSeed inbox, suggestions and lineage",
       "disposition": "research_provenance_unchanged",
       "behavior": "Lists source-owned research seeds, not active institutional strategy/performance rows. Existing candidate profiles and explicit similar-strategy lineage are preserved; no change to seed adoption or research governance. See residual findings for the unfiltered candidate-profile selector."
     },
     {
       "file": "services/control-plane/bff/personas/service.py",
-      "functions": [
-        "_pm12_persona_league_rows",
-        "_pm12_persona_league_rows_shared",
-        "_pm12_quarterly_ranking_items"
-      ],
+      "functions": ["_pm12_persona_league_rows", "_pm12_persona_league_rows_shared", "_pm12_quarterly_ranking_items"],
       "surface": "Shared league and quarterly institutional cohort",
       "disposition": "already_canonical",
       "behavior": "Filters raw records through fleet_classification.is_non_trading_persona (which calls non_trading_identity_source) before metadata is projected away. Unknown records remain. include_advisory is explicit per-persona operations/readiness use, not institutional rankings."
     },
     {
       "file": "services/control-plane/bff/personas/service.py",
-      "functions": [
-        "get_persona_league",
-        "get_persona_league_rankings",
-        "get_persona_league_movers",
-        "get_persona_league_tiers",
-        "get_persona_league_heatmap",
-        "get_quarterly_ranking",
-        "get_quarterly_ranking_drilldown",
-        "get_quarterly_ranking_recommendations",
-        "get_promotion_reviews",
-        "get_promotion_review_detail"
-      ],
+      "functions": ["get_persona_league", "get_persona_league_rankings", "get_persona_league_movers", "get_persona_league_tiers", "get_persona_league_heatmap", "get_quarterly_ranking", "get_quarterly_ranking_drilldown", "get_quarterly_ranking_recommendations", "get_promotion_reviews", "get_promotion_review_detail"],
       "surface": "Management league/table/rankings/movers/tiers/heatmap, quarterly ranking/drilldown/recommendations/promotion reviews",
       "disposition": "already_canonical",
       "behavior": "All consume the shared filtered league cohort. No new directory read or rank-snapshot writer introduced."
     },
     {
       "file": "services/control-plane/bff/personas/routes/ranking.py",
-      "functions": [
-        "bff_persona_league",
-        "bff_persona_league_detail"
-      ],
+      "functions": ["bff_persona_league", "bff_persona_league_detail"],
       "surface": "Legacy /bff/persona-league list and explicit historical entry",
       "disposition": "historical_records_unchanged",
       "behavior": "Legacy list/detail reads saved league entries, not a fresh persona cohort or performance computation. Historical records retain their identity; current Management league/ranking routes use the canonical cohort above."
     },
     {
       "file": "services/control-plane/bff/personas/service.py",
-      "functions": [
-        "_persona_fleet_slim_list_payload",
-        "_persona_fleet_record_visible_to",
-        "_persona_fleet_strip_trading_facts"
-      ],
+      "functions": ["_persona_fleet_slim_list_payload", "_persona_fleet_record_visible_to", "_persona_fleet_strip_trading_facts"],
       "surface": "Management persona fleet and /bff/personas inventory",
       "disposition": "already_canonical",
       "behavior": "Canonical purpose classification; owner-private records scoped to the viewer and advisory rows have trading/rank/runtime/capital fields stripped. Fleet purpose filters may explicitly include advisory assistants; this is an identity inventory, not a performance leaderboard."
     },
     {
       "file": "services/control-plane/bff/personas/routes/collection.py",
-      "functions": [
-        "list_personas",
-        "bff_list_personas",
-        "bff_management_persona_fleet",
-        "bff_management_persona_intent"
-      ],
+      "functions": ["list_personas", "bff_list_personas", "bff_management_persona_fleet", "bff_management_persona_intent"],
       "surface": "Persona directory/fleet/intent selection",
       "disposition": "already_canonical",
       "behavior": "Current fleet projection delegates to canonical purpose/list-scope classification. Raw directory and explicit intent reads remain identity/administration views rather than trading cohorts."
     },
     {
       "file": "services/control-plane/bff/personas/routes/detail.py",
-      "functions": [
-        "get_persona_detail",
-        "get_persona_management",
-        "bff_get_persona",
-        "bff_get_persona_route_policy",
-        "bff_get_persona_runtime_profile",
-        "bff_get_persona_activity",
-        "bff_get_persona_evaluations",
-        "bff_get_persona_memory",
-        "bff_get_persona_audit",
-        "bff_get_persona_tools"
-      ],
+      "functions": ["get_persona_detail", "get_persona_management", "bff_get_persona", "bff_get_persona_route_policy", "bff_get_persona_runtime_profile", "bff_get_persona_activity", "bff_get_persona_evaluations", "bff_get_persona_memory", "bff_get_persona_audit", "bff_get_persona_tools"],
       "surface": "Explicit persona operations and evidence drilldowns",
       "disposition": "infrastructure_unchanged",
       "behavior": "Caller-tenant and explicit persona identity remain authoritative. Advisory diagnostic records are still inspectable; no list/ranking cohort is generated."
     },
     {
       "file": "services/control-plane/bff/agora/performance/service.py",
-      "functions": [
-        "pm12_performance_attribution_sources",
-        "pm12_performance_attribution_response"
-      ],
+      "functions": ["pm12_performance_attribution_sources", "pm12_performance_attribution_response"],
       "surface": "Management PM-12 attribution: all/persona/strategy/pool/asset/broker/runtime/regime",
       "disposition": "fixed_here",
       "behavior": "Management-only response filters canonical non-trading personas before common filters/grouping/totals/paging, including include_test diagnostics. Counterfactual instrument grades exclude known excluded runtimes, preserving metadata-free legacy telemetry. Sources and the general fact builder remain unmodified for other domains."
     },
     {
       "file": "services/control-plane/bff/management_read_models/ranking_router.py",
-      "functions": [
-        "bff_management_performance_attribution",
-        "bff_management_performance_attribution_by_strategy",
-        "bff_management_performance_attribution_by_persona",
-        "bff_management_performance_attribution_by_pool"
-      ],
+      "functions": ["bff_management_performance_attribution", "bff_management_performance_attribution_by_strategy", "bff_management_performance_attribution_by_persona", "bff_management_performance_attribution_by_pool"],
       "surface": "Four mounted Management attribution routes",
       "disposition": "fixed_here_via_shared_response",
       "behavior": "All four delegate to the fixed PM-12 response; route regression asserts scoped totals, source call count, learning input and immutable source records."
     },
     {
       "file": "services/control-plane/bff/management_read_models/ranking_router.py",
-      "functions": [
-        "bff_list_rankings",
-        "bff_get_ranking",
-        "bff_list_ranking_formulas",
-        "bff_get_ranking_formula"
-      ],
+      "functions": ["bff_list_rankings", "bff_get_ranking", "bff_list_ranking_formulas", "bff_get_ranking_formula"],
       "surface": "Stored ranking snapshot/formula long tail",
       "disposition": "historical_records_unchanged",
       "behavior": "Reads saved owner records/formulas; does not select current personas or recompute scores. Canonical live ranking cohorts are filtered before snapshots are built. Historical audit snapshots are not rewritten."
     },
     {
       "file": "services/control-plane/bff/strategies/routes/common.py",
-      "functions": [
-        "_build_ranking_strategy_index",
-        "_project_strategy_ranking_metrics",
-        "StrategyRouteContext.project_strategy_dto",
-        "StrategyRouteContext.read_strategy_runtime_truth"
-      ],
+      "functions": ["_build_ranking_strategy_index", "_project_strategy_ranking_metrics", "StrategyRouteContext.project_strategy_dto", "StrategyRouteContext.read_strategy_runtime_truth"],
       "surface": "Strategy metrics and runtime joins",
       "disposition": "already_canonical_or_composed",
       "behavior": "Metrics consume canonical generated ranking snapshots. Runtime metrics use read_strategy_runtime_truth and its _pulse_operator_scope; non-trading binding selection belongs to the Trading Pulse task below. This task does not alter those functions."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
-      "functions": [
-        "_pulse_operator_scope",
-        "get_trading_pulse",
-        "get_trading_pulse_rankings",
-        "read_strategy_runtime_truth"
-      ],
+      "functions": ["_pulse_operator_scope", "get_trading_pulse", "get_trading_pulse_rankings", "read_strategy_runtime_truth"],
       "surface": "Trading Pulse, Pulse rankings, shared strategy runtime attribution",
       "disposition": "owned_by_TRADING-PULSE-EXCLUDE-NON-TRADING-IDENTITIES-20261127",
       "behavior": "Codex owns the shared binding cohort and Pulse operator probe. No edits here. The task that merges second must compose current dev and preserve both repairs."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
-      "functions": [
-        "get_operator_home",
-        "get_management_cockpit",
-        "compose_management_cockpit_sections"
-      ],
+      "functions": ["get_operator_home", "get_management_cockpit", "compose_management_cockpit_sections"],
       "surface": "Operator home/cockpit trading summaries",
       "disposition": "owned_by_TRADING-PULSE-EXCLUDE-NON-TRADING-IDENTITIES-20261127",
       "behavior": "Trading summary sections delegate to Trading Pulse; other sections remain operational diagnostics. No duplicate classifier added."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
-      "functions": [
-        "get_operator_health_status",
-        "get_operator_alerts",
-        "get_management_anomalies",
-        "get_risk_radar",
-        "get_operations_read_model",
-        "build_shell_summary_counts",
-        "get_shell_summary"
-      ],
+      "functions": ["get_operator_health_status", "get_operator_alerts", "get_management_anomalies", "get_risk_radar", "get_operations_read_model", "build_shell_summary_counts", "get_shell_summary"],
       "surface": "Health/alerts/anomalies/risk radar/per-persona operations/shell inventory",
       "disposition": "infrastructure_unchanged",
       "behavior": "Owner runtime/capital/persona inventory, risk and diagnostic state deliberately include actual bindings. No institutional performance leaderboard is built; removing a private book from risk/runtime oversight would hide infrastructure truth."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
-      "functions": [
-        "get_context_runtime_bindings",
-        "get_context_personas",
-        "get_context_bindings_for_persona",
-        "get_context_sessions_for_persona",
-        "get_context_strategies_for_persona",
-        "get_context_teaching_sessions_for_persona",
-        "get_context_telemetry_summary",
-        "get_context_telemetry_summaries_for_runtimes",
-        "get_context_monitoring_session",
-        "get_context_monitoring_sessions_for_bindings"
-      ],
+      "functions": ["get_context_runtime_bindings", "get_context_personas", "get_context_bindings_for_persona", "get_context_sessions_for_persona", "get_context_strategies_for_persona", "get_context_teaching_sessions_for_persona", "get_context_telemetry_summary", "get_context_telemetry_summaries_for_runtimes", "get_context_monitoring_session", "get_context_monitoring_sessions_for_bindings"],
       "surface": "Read-only Management diagnostics context",
       "disposition": "infrastructure_unchanged",
       "behavior": "Typed owner observations and explicit persona/runtime binding lookups retain their provenance and tenant boundaries; advisory identity remains inspectable."
     },
     {
       "file": "services/control-plane/bff/management_read_models/service.py",
-      "functions": [
-        "_bounded_persona_readiness_rows",
-        "get_human_inbox",
-        "get_human_inbox_detail",
-        "get_hiq_backlog",
-        "get_loop_throughput",
-        "get_incident_timeline",
-        "get_evidence"
-      ],
+      "functions": ["_bounded_persona_readiness_rows", "get_human_inbox", "get_human_inbox_detail", "get_hiq_backlog", "get_loop_throughput", "get_incident_timeline", "get_evidence"],
       "surface": "Human inbox/readiness/throughput/incidents/evidence",
       "disposition": "infrastructure_unchanged",
       "behavior": "Operational and governance evidence, not a trading cohort; existing readiness owner rules, tenant filtering and explicit evidence references preserved."
     },
     {
       "file": "services/control-plane/bff/runtime/router.py",
-      "functions": [
-        "list_bindings",
-        "list_runtime_bindings",
-        "get_runtime_status",
-        "get_runtime_binding",
-        "get_binding",
-        "get_runtime_rollbacks",
-        "list_operator_runtime_state",
-        "bff_list_runtimes",
-        "bff_get_runtime",
-        "bff_v5_execution_persona_health",
-        "bff_v5_execution_strategy_health",
-        "bff_list_runtime_ooda_packets"
-      ],
+      "functions": ["list_bindings", "list_runtime_bindings", "get_runtime_status", "get_runtime_binding", "get_binding", "get_runtime_rollbacks", "list_operator_runtime_state", "bff_list_runtimes", "bff_get_runtime", "bff_v5_execution_persona_health", "bff_v5_execution_strategy_health", "bff_list_runtime_ooda_packets"],
       "surface": "Runtime inventory/health/state/OODA and explicit runtime drilldowns",
       "disposition": "infrastructure_unchanged",
       "behavior": "All actual RuntimeBindings stay visible according to existing lifecycle/tenant/status filters. Servant pool/binding/strategy is not deleted or relabelled."
     },
     {
       "file": "services/control-plane/bff/capital/router.py",
-      "functions": [
-        "list_capital_pools",
-        "get_capital_pool",
-        "bff_list_capital_pools",
-        "bff_get_capital_pool",
-        "bff_list_rebalances",
-        "bff_get_rebalance",
-        "bff_management_strategy_allocation",
-        "bff_management_capital_flow",
-        "bff_management_portfolio_book",
-        "bff_management_portfolio_book_pools",
-        "bff_management_portfolio_book_exposure",
-        "bff_management_portfolio_book_holdings",
-        "bff_management_portfolio_book_positions",
-        "bff_management_cost_attribution",
-        "bff_management_board_pack"
-      ],
+      "functions": ["list_capital_pools", "get_capital_pool", "bff_list_capital_pools", "bff_get_capital_pool", "bff_list_rebalances", "bff_get_rebalance", "bff_management_strategy_allocation", "bff_management_capital_flow", "bff_management_portfolio_book", "bff_management_portfolio_book_pools", "bff_management_portfolio_book_exposure", "bff_management_portfolio_book_holdings", "bff_management_portfolio_book_positions", "bff_management_cost_attribution", "bff_management_board_pack"],
       "surface": "Capital pool/rebalance/allocation/portfolio/exposure/holdings/cost/board reads",
       "disposition": "infrastructure_unchanged",
       "behavior": "Capital and accounting projections stay owner-scoped to actual pools/bindings/holdings, including the trader paper ledger. No change to allocation, risk, capital or execution authority."
     },
     {
       "file": "services/control-plane/bff/attribution/router.py",
-      "functions": [
-        "list_records",
-        "list_outliers",
-        "get_record",
-        "get_shadow"
-      ],
+      "functions": ["list_records", "list_outliers", "get_record", "get_shadow"],
       "surface": "Management agent-attribution records/outliers/detail and Agora shadow diagnostic",
       "disposition": "owner_records_unchanged",
       "behavior": "Reads canonical attribution-owner records and explicit decision/meeting provenance, not personas or runtime-derived institutional PnL. Existing operator/private audience and owner filters remain. The known shadow key residual belongs to AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, already in the register."
     },
     {
       "file": "services/control-plane/bff/agora/performance/attribution.py",
-      "functions": [
-        "project_agora_performance_attribution_by_strategy"
-      ],
+      "functions": ["project_agora_performance_attribution_by_strategy"],
       "surface": "Agora trader performance",
       "disposition": "agora_owner_scope_unchanged",
       "behavior": "Filters to the authenticated trader workshop strategies and never calls the Management PM-12 response. No institutional cohort filtering injected here."
     },
     {
       "file": "services/control-plane/bff/agora/performance/service.py",
-      "functions": [
-        "PerformanceProjectionService",
-        "pm12_performance_attribution_facts"
-      ],
+      "functions": ["PerformanceProjectionService", "pm12_performance_attribution_facts"],
       "surface": "Agora projections and reusable unscoped facts",
       "disposition": "agora_owner_scope_unchanged",
       "behavior": "The Agora projection service and reusable fact builder keep their original scope. Test asserts the servant fact remains accessible to other readers and source data is not mutated."
     },
     {
       "file": "services/control-plane/bff/personas/trader_paper_book.py",
-      "functions": [
-        "ensure_trader_paper_book"
-      ],
+      "functions": ["ensure_trader_paper_book"],
       "surface": "T7 trader book provisioning and Agora book reads",
       "disposition": "agora_owner_scope_unchanged",
       "behavior": "No edits to provisioning, StrategySpec, pool, ledger, RuntimeBinding, broker or write authority. Executable binding intent is owned by PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127."
