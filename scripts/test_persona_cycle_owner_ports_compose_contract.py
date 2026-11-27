@@ -235,6 +235,8 @@ CODE_READ_OWNER_ENV_SPECS: tuple[tuple[str, str, str, str], ...] = (
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_LEDGER_PATH"),
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/hypothesis_card.py", "PANTHEON_L2_EXTRACTION_TICK_BUDGET_SECONDS"),
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction.py", "PANTHEON_L2_EXTRACTION_DEADLINE_SECONDS"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction.py", "PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS"),
+    ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction.py", "PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS"),
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction_client.py", "PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"),
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/semantic_extraction_client.py", "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"),
     ("strategy-distillation-worker", "hypothesis_card_binding", "services/source_ingestion/distillation_controller.py", "PANTHEON_L2_CARD_DATASET_ID"),

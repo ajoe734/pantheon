@@ -77,6 +77,58 @@ def hypothesis_card_deadline_seconds(value: Any = None) -> float:
     return min(HYPOTHESIS_CARD_DEADLINE_MAX_SECONDS, max(HYPOTHESIS_CARD_DEADLINE_MIN_SECONDS, seconds))
 
 
+# HYPOTHESIS_CARD turns have their own token limits; the interactive turn keeps
+# the client's 8 000 input / 1 000 output. Hosted answers after the 2026-11-26
+# switch needed 1 438-2 061 output tokens (all discarded as budget_breach at
+# 1 000), so the output default is 3 072, about 1.5x the largest measured
+# answer. The output limit is sent with the call (`max_output_tokens`), so the
+# model stops there instead of being paid for and then discarded. The input
+# limit is checked on the prompt before the call: the prompt text is cut at
+# 20 000 characters (`hypothesis_card.MAX_PROMPT_TEXT_CHARS`), at most about
+# 20 000 tokens for CJK text by the estimate below plus about 4 000 for the
+# instructions and schema, so 40 000 leaves well over 1.5x margin.
+HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV = "PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS"
+HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_DEFAULT = 3072
+HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_BOUNDS = (1024, 8192)
+HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV = "PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS"
+HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT = 40_000
+HYPOTHESIS_CARD_MAX_INPUT_TOKENS_BOUNDS = (8_000, 100_000)
+# Conservative prompt-size estimate: UTF-8 bytes / 3 is one token per CJK
+# character and one per three ASCII characters (real English is nearer four).
+PROMPT_BYTES_PER_TOKEN_ESTIMATE = 3
+
+
+def _bounded_int_env(name: str, default: int, bounds: tuple[int, int]) -> int:
+    raw = os.environ.get(name)
+    try:
+        value = int(str(raw).strip()) if raw not in (None, "") else default
+    except (TypeError, ValueError):
+        value = default
+    return min(bounds[1], max(bounds[0], value))
+
+
+def hypothesis_card_token_limits() -> dict[str, int]:
+    """Bounded HYPOTHESIS_CARD token limits (env override, else the defaults)."""
+    return {
+        "max_input_tokens": _bounded_int_env(
+            HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV,
+            HYPOTHESIS_CARD_MAX_INPUT_TOKENS_DEFAULT,
+            HYPOTHESIS_CARD_MAX_INPUT_TOKENS_BOUNDS,
+        ),
+        "max_output_tokens": _bounded_int_env(
+            HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV,
+            HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_DEFAULT,
+            HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_BOUNDS,
+        ),
+    }
+
+
+def estimate_prompt_tokens(*parts: str) -> int:
+    """Upper-side token estimate of a prompt, used before the call."""
+    size = sum(len(part.encode("utf-8")) for part in parts if part)
+    return -(-size // PROMPT_BYTES_PER_TOKEN_ESTIMATE)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

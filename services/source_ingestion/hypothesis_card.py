@@ -391,6 +391,10 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
             )
+            if "usage" not in {row[1] for row in c.execute("PRAGMA table_info(events)")}:
+                # Provider token usage of the call behind this outcome (JSON);
+                # NULL when no call was made, null fields when not reported.
+                c.execute("ALTER TABLE events ADD COLUMN usage TEXT")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS cards (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " card TEXT NOT NULL, PRIMARY KEY(source_id, digest))"
@@ -530,22 +534,32 @@ class ExtractionLedger:
             row = c.execute("SELECT n FROM calls WHERE day=?", (_today(),)).fetchone()
         return int(row[0]) if row else 0
 
-    def record(self, source_id: str, outcome: str, detail: str = "") -> None:
+    def record(
+        self, source_id: str, outcome: str, detail: str = "",
+        usage: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        usage_json = json.dumps(dict(usage), sort_keys=True) if usage is not None else None
         with self._lock, self._conn() as c:
             c.execute(
-                "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500]),
+                "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+                (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500], usage_json),
             )
 
-    def events(self, source_id: str | None = None) -> list[dict[str, str]]:
+    def events(self, source_id: str | None = None) -> list[dict[str, Any]]:
         with self._conn() as c:
             rows = c.execute(
-                "SELECT ts, source_id, outcome, detail FROM events"
+                "SELECT ts, source_id, outcome, detail, usage FROM events"
                 + (" WHERE source_id=?" if source_id else "")
                 + " ORDER BY id",
                 (source_id,) if source_id else (),
             ).fetchall()
-        return [dict(zip(("ts", "source_id", "outcome", "detail"), r)) for r in rows]
+        events: list[dict[str, Any]] = []
+        for ts, sid, outcome, detail, usage in rows:
+            event: dict[str, Any] = {"ts": ts, "source_id": sid, "outcome": outcome, "detail": detail}
+            if usage is not None:
+                event["usage"] = json.loads(usage)
+            events.append(event)
+        return events
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +570,14 @@ class ExtractionLedger:
 # A billing-only failure (every provider key skipped for billing) is retried
 # with backoff, never recorded as "no hypothesis".
 UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
+
+
+def call_usage(result: Any) -> Optional[dict[str, Optional[int]]]:
+    """Input/output tokens the provider reported for this call (None: unknown)."""
+    usage = getattr(result, "usage", None)
+    if not isinstance(usage, Mapping):
+        return None
+    return {key: usage.get(key) for key in ("input_tokens", "output_tokens")}
 
 _TEXT_KEYS = ("body", "text", "abstract", "excerpt", "summary")
 
@@ -707,14 +729,15 @@ class HypothesisExtractor:
             detail = f"{type(exc).__name__}: {exc}"
             self._ledger.note_call_failure(sid, digest, "transport_error", detail)
             return self._done(sid, "unavailable", detail)
+        usage = call_usage(result)
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
             detail = f"{result.failure_code}: {result.failure_message}"
             if result.failure_code in UNAVAILABLE_FAILURE_CODES:
                 self._ledger.note_call_failure(sid, digest, str(result.failure_code), detail)
-                return self._done(sid, "unavailable", detail)
-            return self._done(sid, "failed", detail)
+                return self._done(sid, "unavailable", detail, usage=usage)
+            return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
-            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained")
+            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage)
         try:
             prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
@@ -725,16 +748,19 @@ class HypothesisExtractor:
                 prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
-            return self._done(sid, "rejected", str(exc), {"code": exc.code})
+            return self._done(sid, "rejected", str(exc), {"code": exc.code}, usage=usage)
         for rejection in prediction_rejections:
             self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
-            return self._done(sid, "no_hypothesis", "not_testable")
-        self._ledger.record(sid, "card", card["testability"])
+            return self._done(sid, "no_hypothesis", "not_testable", usage=usage)
+        self._ledger.record(sid, "card", card["testability"], usage=usage)
         return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
 
-    def _done(self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None) -> ExtractionOutcome:
-        self._ledger.record(sid, status, detail)
+    def _done(
+        self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
+        *, usage: Optional[Mapping[str, Any]] = None,
+    ) -> ExtractionOutcome:
+        self._ledger.record(sid, status, detail, usage=usage)
         return ExtractionOutcome(status, detail=detail, extra=extra or {})
 
 

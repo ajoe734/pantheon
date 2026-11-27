@@ -1,0 +1,57 @@
+{
+  "task_id": "L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126",
+  "class": "RC2",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "hosted_input": {
+    "source": "task source document: /data/source-ingest/l2_extraction_ledger.sqlite events 2026-11-26 11:53Z-14:15Z (read-only, not re-read by this worker: no hosted credential on the worker host)",
+    "budget_breach_answers": 8,
+    "measured_output_tokens": [
+      1438,
+      1669,
+      1750,
+      1820,
+      1823,
+      1854,
+      1884,
+      2061
+    ],
+    "reported_input_tokens": 3
+  },
+  "root_cause": {
+    "budget": "semantic_extraction_client applied the interactive _DEFAULT_TOKEN_LIMITS (8000 in / 1000 out) to HYPOTHESIS_CARD after the answer arrived; no output limit was sent with the request, so every paid card answer above 1000 output tokens was discarded",
+    "usage": "pinned OpenClaw Gateway 2026.7.1 dist/openresponses-http-*.js toUsage(agentMeta.usage): input_tokens = usage.input (provider uncached input only), total_tokens = usage.total ?? input + output + cacheRead + cacheWrite. With prompt caching input is a handful of tokens (hosted 3); the adapter passed input_tokens through unchanged. Read from ghcr.io/openclaw/openclaw:2026.7.1 (digest sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c); the same file accepts max_output_tokens in CreateResponseBodySchema and passes it to the run as streamParams.maxTokens",
+    "registry_sync": "distillation_worker._distill_one returned ('failed', retry_wait) for extraction outcome 'unavailable' (timeout / transport / billing: hosted 5 OPENCLAW_RESPONSES_TIMEOUT since the switch); catch_up counted it in run_result.failed, which the controller reads as Registry delivery trouble and raised DistillationControllerError('registry_sync'). Its retry_wait row (last_error hypothesis_extraction_unavailable: ...) was also not counted in metrics()['deferred'], so retry_wait - deferred kept the next ticks failing until the retry ran"
+  },
+  "decisions": {
+    "card_token_limits": "semantic_extraction.hypothesis_card_token_limits(): max_output_tokens default 3072 (about 1.5x the largest measured answer 2061; env PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS clamped 1024-8192), max_input_tokens default 40000 (prompt text cut at 20000 chars = at most about 20000 tokens for CJK by the bytes/3 estimate plus instructions and schema; env PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS clamped 8000-100000). Interactive turns keep 8000/1000 and send no output limit",
+    "output_limit_sent": "client -> transport_fn payload / provider kwarg / HTTP body max_output_tokens -> adapter /structured request field (422 outside 1..8192) -> invoke_structured -> _invoke_via_http -> /v1/responses max_output_tokens",
+    "input_limit": "checked on estimate_prompt_tokens(prompt, schema) before the call (budget_breach with 'no model call made', no usage). After a paid card answer only the stated output limit is checked; the input limit is not re-applied to a reported count",
+    "usage": "adapter structured_call_usage(): input_tokens = max(total_tokens - output_tokens, reported input); keeps uncached_input_tokens, cached_input_tokens, input_tokens_source. Without total_tokens input_tokens is None (unknown), never the uncached count. Malformed values pass through unchanged for the client's malformed-usage check",
+    "ledger": "events table gains a nullable usage TEXT column (ALTER TABLE on open, same writer); every post-call outcome records {input_tokens, output_tokens} from the call's provider usage; events() returns usage only when recorded",
+    "registry_sync": "new outcome EXTRACTION_RETRY_OUTCOME ('extraction_retry') counted as DistillationRunResult.extraction_retried, not failed; metrics()['extraction_retry'] counts retry_wait rows whose last_error starts with hypothesis_extraction_unavailable; the controller fails registry_sync on run_result.failed or retry_wait - deferred - extraction_retry or failed rows. A Registry exception/non-terminal result still returns failed",
+    "compose_wiring": "docker-compose.yml passes PANTHEON_L2_EXTRACTION_MAX_OUTPUT_TOKENS (default 3072) and PANTHEON_L2_EXTRACTION_MAX_INPUT_TOKENS (default 40000) to strategy-distillation-worker; both are in the card-path env completeness specs"
+  },
+  "tests": {
+    "services/openclaw-gateway-adapter/tests/": "291 passed",
+    "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestStructuredTokenLimitAndUsage": "pinned-gateway usage shape (input 3, output 1820, cacheWrite 9412) -> input_tokens 9415; uncached usage unchanged; malformed usage passed through; max_output_tokens sent / omitted / clamped to 8192; endpoint forwards 3072 and refuses 0 and 8193 with 422 before invoke",
+    "services/source_ingestion/tests/test_hypothesis_extraction.py": "100 passed: card limits default/env/bounds and interactive 8000/1000; measured answers 1438/1820/2061 kept as cards with max_output_tokens 3072 sent and ledger usage recorded; interactive INTENT sends no limit and still breaches at 1500; pre-call input check makes no call; paid card not discarded for an unstated input limit; HTTP body carries 3072 for the card only; real adapter provider over the pinned Gateway usage shape -> ledger input tokens of the prompt's size (> 1000), not 3",
+    "services/source_ingestion/tests/test_distillation_controller.py::test_extraction_provider_failure_is_not_registry_sync_failure": "[False] timed-out extraction: tick success, reconcile failed 0, extraction_retried 1, Registry never called; [True] Registry raises: tick fails stage registry_sync",
+    "services/source_ingestion/tests (demand_priority, discovery_summary, distillation_controller, distillation_queue_lifetime, distillation_worker, e2e acceptance, hypothesis_compiler_wiring, ids_008, l12 x2, product_v2 x2, semantic_extraction, semantic_extraction_admission, hypothesis_extraction)": "396 passed, 1 skipped",
+    "services/research/tests/test_hypothesis_card_gate_candidate.py services/consultation/tests/test_persona_own_agent_routing.py": "14 passed, 4 skipped",
+    "scripts/check_storage_manifest.py": "passed",
+    "scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_l2_extraction_deploy_switch_contract.py": "19 passed (CI Test sweep shard 6 had failed the card-path env completeness check on the two new reads before compose wiring)"
+  },
+  "runtime_budget": {
+    "daily_call_cap": 400,
+    "changed": false,
+    "new_writer": false
+  },
+  "hosted_acceptance": "pending deploy (read-only): budget_breach outcomes near zero, ledger events.usage input_tokens of the prompt's size, at least one card or recorded model abstention, controller ticks not failing on registry_sync without a Registry failure",
+  "residual_findings": [
+    "The hypothesis compiler proposer (hypothesis_compiler.client_proposer) calls _dispatch_turn directly with no output limit and no usage check; its provider failure (proposer_failed) still returns 'failed' and fails the tick on registry_sync",
+    "SemanticExtractionClient.calculate_cost prices all input tokens at the uncached input rate; with the corrected prompt size the cost figure is an upper bound when most of the prompt was a cache read",
+    "A pre-call input budget_breach is reserved against the daily cap before the client refuses it (reservation precedes extract); with the 40000 default and the 20000-char prompt cut this should not occur",
+    "When the model reaches max_output_tokens the gateway returns the truncated text, which fails as OPENCLAW_TOOL_ARGS_INVALID_JSON (one paid call); no separate truncation code"
+  ]
+}

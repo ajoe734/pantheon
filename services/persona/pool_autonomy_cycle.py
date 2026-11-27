@@ -16,7 +16,9 @@ every action goes through an existing owner route, paper only:
   publish          after the act step, an applied pool version that changes live membership, a stage or a
                    weight beyond the policy tolerance is published through the BFF publish route (the
                    existing publisher + owner chain); a membership change proceeds only with the verified
-                   envelope_publication memo. An unchanged re-weight publishes nothing; a failed publish is
+                   envelope_publication memo or, when that panel escalates, an operator approval of the one
+                   operator decision the cycle queues for it (evolution proposals, as for trial admission); an
+                   operator rejection keeps the previous envelope. An unchanged re-weight publishes nothing; a failed publish is
                    recorded on the cycle record and retried by the next cycle (compared with the last
                    confirmed publication).
   propose_mutate   evolution owner proposal (same builder as the pool scheduler)
@@ -250,11 +252,18 @@ class PoolAutonomyCycle:
                 base = {**base, "pool_version": pool["pool_version"], "republished_version": pool["pool_version"]}
             if change["membership_changed"]:
                 consult = ports.envelope_publication_consultation(persona, pool, packet_id)
-                if consult["state"] != "verified":
+                if consult["state"] == "operator" and hasattr(ports, "publication_operator_decision"):
+                    held = self._publication_operator_gate(persona, pool, consult)
+                    if held is not None:
+                        return {**base, **held}
+                    base.update(operator_decision_id=ports.publication_operator_decision_id(consult),
+                                consultation_request_id=consult.get("request_id"))
+                elif consult["state"] != "verified":
                     reason = consult.get("reason") or "consultation_" + consult["state"]
                     return {**base, "status": "consultation_" + consult["state"], "reason": reason,
                             "request_id": consult.get("request_id"), "decision_id": consult.get("decision_id")}
-                base["consultation_memo_id"] = consult["memo_id"]
+                else:
+                    base["consultation_memo_id"] = consult["memo_id"]
             receipt = ports.publish_pool(persona, pool["pool_version"])
         except Exception as exc:  # noqa: BLE001 - the previous envelope keeps running; the next cycle retries
             return {**base, "status": "failed", "step": "publish", "reason": f"{type(exc).__name__}: {str(exc)[:200]}"}
@@ -262,6 +271,43 @@ class PoolAutonomyCycle:
         return {**base, "status": "published" if status == "published" else "unconfirmed",
                 "envelope_artifact_id": receipt.get("envelope_artifact_id"),
                 "deployment_plan_id": receipt.get("deployment_plan_id"), "note": receipt.get("note")}
+
+    OPERATOR_APPROVED = ("approved", "executed")
+    OPERATOR_CLOSED = ("rejected", "canceled", "cancelled", "superseded")
+
+    def _publication_operator_gate(self, persona, pool, consult) -> dict[str, Any] | None:
+        """An escalated envelope publication waits for, and then follows, the operator's decision.
+
+        Returns None only when the operator approved this exact consultation (membership + pool version):
+        the caller then publishes. Otherwise the cycle result: the decision is queued once through the
+        governance queue trial admissions use and the publication stays held (``consultation_operator``),
+        or the operator rejected it (``operator_rejected``) and the previous envelope keeps running.
+        """
+        ports = self.ports
+        held = {"status": "consultation_operator", "reason": consult.get("reason") or "consultation_operator",
+                "request_id": consult.get("request_id"), "decision_id": consult.get("decision_id")}
+        try:
+            decision = ports.publication_operator_decision(persona, consult)
+        except Exception as exc:  # noqa: BLE001 - an unreadable decision is never an approval
+            return {**held, "operator_decision": {"status": "read_failed",
+                                                  "error": f"{type(exc).__name__}: {str(exc)[:160]}"}}
+        if decision is None:
+            try:
+                queued = ports.queue_publication_operator_decision(persona, pool, consult)
+            except Exception as exc:  # noqa: BLE001 - still held; the next cycle queues again
+                return {**held, "operator_decision": {"decision_id": ports.publication_operator_decision_id(consult),
+                                                      "status": "queue_failed",
+                                                      "error": f"{type(exc).__name__}: {str(exc)[:160]}"}}
+            return {**held, "operator_decision": queued}
+        state = decision["decision_state"]
+        if state in self.OPERATOR_APPROVED:
+            return None
+        if state in self.OPERATOR_CLOSED:
+            return {**held, "status": "operator_rejected", "reason": decision.get("note") or "operator_" + state,
+                    "operator_decision": {"decision_id": decision["decision_id"], "status": state,
+                                          "actor_id": decision.get("actor_id")}}
+        return {**held, "operator_decision": {"decision_id": decision["decision_id"], "status": "awaiting_operator",
+                                              "decision_state": state}}
 
     def _learn(self, persona, entries, packet_id, errors):
         for entry in entries:
@@ -396,7 +442,7 @@ def apply_to_packet(packet: dict[str, Any], result: Mapping[str, Any]) -> None:
     """Fill the persona's daily OODA record with the pool cycle's real content."""
     packet["pool_autonomy"] = dict(result)
     publication = (result.get("act") or {}).get("publication") or {}
-    if publication.get("status") in ("failed", "unconfirmed"):
+    if publication.get("status") in ("failed", "unconfirmed", "operator_rejected"):
         packet["audit_refs"].append(
             f"pool-publication:{publication['status']}:{publication.get('reason') or publication.get('note')}"[:300])
     if result.get("status") != "completed":

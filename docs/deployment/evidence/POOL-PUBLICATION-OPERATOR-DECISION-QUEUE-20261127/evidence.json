@@ -1,0 +1,46 @@
+{
+  "task": "POOL-PUBLICATION-OPERATOR-DECISION-QUEUE-20261127",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "problem": "Hosted 2026-11-24..26: every trading persona's envelope publication ended consultation_operator (risk_persona_requires_operator / escalate memo) and _publish only reported the state; nothing was queued for an operator, so the publication never progressed.",
+  "change": {
+    "services/persona/pool_autonomy_cycle.py": [
+      "_publish (L222-273): when the envelope_publication consultation state is 'operator' and the port exposes publication_operator_decision, the new _publication_operator_gate decides; other states keep today's behaviour",
+      "_publication_operator_gate (L278-310): read the operator decision; absent -> queue it once and stay consultation_operator (operator_decision.status=queued); proposed/reviewed -> consultation_operator with status=awaiting_operator; approved/executed -> publish the current pool version (same live membership as the escalated consultation) with operator_decision_id + consultation_request_id on the publication receipt; rejected/canceled/superseded -> status operator_rejected with the operator's note as reason, nothing published so the previous envelope keeps running; read/queue failure -> held with read_failed/queue_failed, never treated as approval",
+      "apply_to_packet: operator_rejected is added to the packet audit_refs with its reason"
+    ],
+    "services/persona/pool_publish_port.py": [
+      "envelope_publication_consultation: the operator/verified/pending results now carry pool_version (the version the panel reviewed) and the operator result carries the panel memo_id; the dead-letter retries-exhausted operator result binds the consultation's own pool version instead of today's (so the operator decision does not change id with each daily re-weight)",
+      "publication_operator_decision_id (L120): 'pool-publication-op-' + sha256(consultation decision_id)[:24]; the consultation decision_id binds tenant, persona, live-membership digest and pool version (envelope_publication_requirement)",
+      "publication_operator_decision (L123-147): GET /api/evolution/proposals/{id} on the evolution owner; 404 -> None; a record whose tenant, persona or metadata.consultation_decision_id does not match raises operator_decision_binding_mismatch (fails closed)",
+      "queue_publication_operator_decision (L149-): POST /api/evolution/proposals, the same governance queue and body shape as trial admission's queue_operator_decision (action_type flag_for_review, target persona, created_by persona-svc/evolution_controller); metadata carries reason, pool_version, membership_digest, consultation_decision_id/request_id/memo_id, paper_only; 409 (occupied id) -> already_queued"
+    ]
+  },
+  "acceptance": {
+    "1_queue_once": "test_escalated_publication_queues_one_operator_decision_with_memo_reason_and_pool_version: one POST carrying memo id, reason and pool version 4; two later cycles (and a newer daily re-weight version with the same membership) read the same entry and POST nothing more. Port level: test_operator_decision_id_binds_the_consultation_and_survives_daily_reweights.",
+    "2_consume_decision": "test_operator_approval_is_consumed_by_the_next_cycle_and_recorded_on_the_receipt (published, operator_decision_id on the receipt, BFF publish called once for the pool version); test_operator_rejection_keeps_the_previous_envelope_and_records_the_reason (operator_rejected with the operator's note, no publish, no re-queue, audit ref on the packet). Both use the real HttpPoolCyclePorts/PoolPublishPort and PoolAutonomyCycle._publish with a governance (evolution owner) double, a consultation double, a BFF double and the real pool_policy. Fail-closed: test_operator_decision_of_another_consultation_is_never_taken_as_approval, test_unreadable_or_unqueueable_governance_keeps_the_publication_held.",
+    "3_management_reaches_the_cycle_read": {
+      "write_path": [
+        "Management command ReviewMutation -> services/control-plane/bff/command_executor.py:1118 _execute_review_mutation -> POST /api/evolution/proposals/{id}/review",
+        "Management command ApproveEvolutionDecision (approval_action approve|reject) -> command_executor.py:735 _execute_approve_evolution_decision -> POST /api/evolution/proposals/{id}/approve|reject; ApproveMutation/RejectMutation -> command_executor.py:993/1030 (registered at L1371-1376)",
+        "Evolution owner services/evolution/main.py:2118 review_proposal, :2149 approve_proposal, :2228 reject_proposal -> store.put(decision) on the EvolutionDecision store"
+      ],
+      "read_path": "The cycle reads the same record from the same owner: services/evolution/main.py:1958 get_proposal (GET /api/evolution/proposals/{decision_id}, store.get) via pool_publish_port.py:123 publication_operator_decision, with the persona service's existing evolution credential (EVOLUTION_AUTH_TOKEN, X-Tenant-Id = persona tenant) already used by queue_operator_decision and propose_evolution.",
+      "listing": "Management lists these proposals through services/control-plane/bff/core/owner_reads.py:407 (decidable states) and :544 (GET /api/evolution/proposals); the entry carries persona_id, rationale and metadata.",
+      "binding_gap": "No separate binding gap: the H4 gap (EVOLUTION-H4-APPROVAL-BINDING-20261103) was in the BFF precondition that binds a Governance approval to ReviewMutation/ApproveEvolutionDecision; it is fixed in services/control-plane/bff/command_adapters/preconditions.py:652-680 (_evolution_execute_binding_matches binds exactly on the EvolutionDecision id) and the approval request is created via evolution_adapter.create_evolution_decision_approval_router. That gate applies identically to this flag_for_review decision type (same as trial-admission operator decisions). The cycle side has no binding of its own: it reads decision_state of the owner record, so whatever Management commits on the owner is what the next cycle consumes. No fix needed in this task."
+    },
+    "4_unchanged_membership": "test_unchanged_membership_needs_no_consultation_or_operator_decision: identical membership -> unchanged; a weight move beyond tolerance publishes with no consultation, no governance read and no queue entry. Existing tests (test_unchanged_daily_reweight_publishes_nothing, test_weight_move_beyond_tolerance_publishes_without_consultation, test_membership_change_needs_the_verified_memo_and_proceeds_with_it for ports without the operator gate) still pass.",
+    "5_runtime_budget": {
+      "queue_entries": "at most one per persona per escalated consultation (live membership + pool version); decision id is deterministic and a repeat POST is 409 -> already_queued",
+      "reads_per_cycle": "only when the membership changed AND the consultation is in operator state: 1 GET evolution proposal; plus 1 POST only when that GET returned 404. Unchanged membership / pure re-weight / verified / pending: 0 extra calls.",
+      "writers": "no new writer; the existing evolution proposals queue (same route and credential as trial admission's queue_operator_decision) and the existing BFF publish route"
+    },
+    "6_focused_tests": "services/persona/test_pool_autonomy_cycle.py + services/persona/test_pool_publish_port.py: 66 passed (2026-11-27, .venv-pantheon). Adjacent: test_pool_dataset_authority_features, test_persona_demand_discovery, test_pool_dataset_authority, bff/test_persona_pool_publisher, research/test_persona_cycle_demand_integration: 37 passed 16 skipped; research/test_pool_evolution_integration + evolution/test_auto_consumer_runtime: 25 passed.",
+    "7_hosted_proof": "pending deploy: after the persona service runs this code, each trading persona with an escalated publication should show one pool-publication-op-* flag_for_review proposal in Management; after an operator decision the next cycle's ooda packet pool_autonomy.act.publication reports published (with operator_decision_id) or operator_rejected (with reason). To be recorded by the persona-loop owner."
+  },
+  "residual_risks": [
+    "Evolution single-active rule (services/control-plane/governance/evolution_decision.py:1550) allows one active (proposed/reviewed/approved) decision per tenant + target_type persona + persona id. If a trial-admission operator decision for the same persona is still active, the publication POST is refused by the owner; the cycle records operator_decision.status=queue_failed with the owner's reason and retries next cycle. Same constraint the trial-admission path already has.",
+    "An approved flag_for_review decision stays active until the evolution dispatch path executes it; this task does not change that owner behaviour."
+  ],
+  "review_independence": "Reviewer Antigravity (different model family from owner Claude)."
+}

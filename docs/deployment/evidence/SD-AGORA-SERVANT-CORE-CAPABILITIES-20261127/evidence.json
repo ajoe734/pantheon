@@ -1,0 +1,100 @@
+{
+ "schema_version": "pantheon.task-evidence.v1",
+ "task_id": "SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127",
+ "owner": "Claude",
+ "reviewer": "Antigravity",
+ "review_independence": "owner family Claude, reviewer family Antigravity (different families)",
+ "problem_register_class": "RC4",
+ "delivery": {
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md",
+  "register_row": "docs/operations/problem-register.md RC4 table, Agora row",
+  "base_commit": "76786decd"
+ },
+ "hosted_behavior_claimed": false,
+ "read_only_method": {
+  "summary": "GitHub Actions run and job log reads for ajoe734/pantheon via gh api (read-only), plus hosted evidence already committed by other tasks. No authenticated BFF read was made: the worker has no hosted operator credential and the build host pantheon-dev serves no BFF (localhost /bff/readyz unreachable).",
+  "writes": 0,
+  "credentials_included": false
+ },
+ "hosted_checks": [
+  {
+   "check": "FinMind broker-branch daily report ingested on hosted Dev",
+   "result": "live",
+   "observed": "Dev Taiwan Market Daily Refresh schedule run 45900668771 (2026-11-26T21:48:50Z) job 140185364113: step 'Execute bounded FinMind broker branch refresh' success; preflight {connector_id: tw-finmind-broker-daily-report, dataset: tw_broker_top, reason: already_fresh, session_date: 2026-11-26, source_id: finmind-broker-top:0050:2026-11-26:sell:f22adfe6e427325e, status: noop}",
+   "source": "https://github.com/ajoe734/pantheon/actions/runs/45900668771"
+  },
+  {
+   "check": "latest refresh run",
+   "result": "failed_outside_broker_step",
+   "observed": "run 45917069646 (2026-11-27T00:30:07Z): broker step success; 'chip refresh profiles failed: tw-official-twse-margin-balances, tw-official-tpex-margin-balances, tw-official-tpex-institutional-flow, tw-taifex-institutional-positions, tw-taifex-put-call, tw-taifex-tx-daily exit 1'",
+   "source": "https://github.com/ajoe734/pantheon/actions/runs/45917069646",
+   "residual_owner": "market-data"
+  },
+  {
+   "check": "broker-branch data read by any Agora surface",
+   "result": "absent",
+   "observed": "scripts/project_market_data_to_bff_agora_surfaces.py:27 projects only tw-twse-tpex-official-market; no adapter under services/control-plane/bff/agora/trading_data reads tw_broker_top",
+   "source": "code at 76786decd"
+  },
+  {
+   "check": "tw-yahoo-broker-top15",
+   "result": "disabled_by_build",
+   "source": "services/source_ingestion/connector_definitions.py:669"
+  },
+  {
+   "check": "tw-finmind-broker-bulk-parquet and tw-mops-official-disclosures hosted freshness",
+   "result": "not_verified_in_this_pass",
+   "note": "T2 hosted proof records them"
+  },
+  {
+   "check": "news RSS",
+   "result": "live_hourly_per_prior_evidence",
+   "source": "docs/deployment/evidence/COLLECTOR-NEWS-FINANCE-ROUTES-20261125/evidence.json"
+  },
+  {
+   "check": "services running on hosted Dev",
+   "result": "policy-learning-svc, policy-learning-shadow-eval-scheduler, evaluation, broker, runtime-manager, capital, paper-signal-producer, paper-fleet-reconciler, agora-interaction-worker, source-ingest, source-ingest-scheduler running; no imitation-worker",
+   "source": "docs/deployment/evidence/DEV-COMPOSE-MEMORY-LIMITS-PEAK-SIZED-20261117/evidence.json (release 80d4cf2ca, cgroup memory.peak per service)"
+  },
+  {
+   "check": "trader decisions on hosted",
+   "result": "none",
+   "observed": "GET /bff/agora/trading-room/decision-events -> 200 items=[] for the Dev operator on 2026-11-26",
+   "source": "docs/deployment/evidence/AGORA-SHADOW-ATTRIBUTION-HOSTED-ACCEPTANCE-20261116/evidence.json AC1"
+  }
+ ],
+ "code_facts_verified": [
+  "services/control-plane/bff/agora/trading_room/service.py:1634-1640 stage table shadow->shadow_research, paper->management_governance",
+  "repo-wide grep: shadow_research appears in no non-test Python file other than trading_room/service.py and trading_room/routes/common.py",
+  "services/control-plane/bff/agora/servant/router.py:265 interaction_capabilities [persona_opinion]; :51,:122 process-dict session events; :1237-1265 provider call with ids-only context_pack",
+  "services/learning/imitation/worker.py:9-20 idles unless PANTHEON_IMITATION_MODE=smoke",
+  "services/control-plane/bff/agora/dataset_extraction/models.py:18-39 interaction kinds ask/feedback/journal/note/insight/training_example only",
+  "services/control-plane/bff/agora/trading_data/service.py:36-42 seven widget adapters, none for broker-branch data",
+  "services/agora/service.py:149 append_session_message exists and is unused by the servant router"
+ ],
+ "acceptance": {
+  "AC1_seven_capabilities": "SD §4-§10",
+  "AC2_planning_and_component_map": "SD §2 (planning) and Exists/Missing per capability with file references; hosted state SD §3 and hosted_checks above",
+  "AC3_trading_for_trader": "SD §8.3; shadow_research removed via T6",
+  "AC4_imitation": "SD §7.3; T4 and T10",
+  "AC5_habits": "SD §6; T5",
+  "AC6_find_data": "SD §4.3 with live table; T2",
+  "AC7_reports_dashboards": "SD §9 with writer budgets; T11",
+  "AC8_meetings_optional": "SD §10",
+  "AC9_task_list_and_register": "SD §12 (T1-T12 reuse R1-R8); RC4 Agora row added"
+ },
+ "verification": {
+  "commands": [
+   "git diff --check",
+   "python3 -c 'json.load(evidence.json)'",
+   "grep of every cited path in the SD exists at base"
+  ],
+  "tests_run": "none (design-only change)"
+ },
+ "residual_findings": [
+  "Dev Taiwan Market Daily Refresh 45917069646 chip profiles failed (market-data owner)",
+  "services/learning/imitation worker built in cloudbuild.yaml:50,105 but never run (decided in T10)",
+  "attribution weekly run requested only by persona meeting triggers (services/persona/meeting_triggers.py:113,380); T11 must ensure it runs without a persona cycle",
+  "duplicate attribution module services/control-plane/bff/agora/performance/attribution.py beside services/evaluation/attribution"
+ ]
+}

@@ -443,13 +443,14 @@ def test_adapter_503_then_200_retries_to_one_card_and_counts_every_call(tmp_path
     source = _source("src-1", "news")
     worker.enqueue_from_source_record(source)
     first = worker.run_pending()
-    assert (first.failed, first.retried, first.skipped, first.created) == (1, 1, 0, 0)
+    # Not ``failed``: the controller reads that as Registry delivery trouble.
+    assert (first.failed, first.extraction_retried, first.retried, first.skipped, first.created) == (0, 1, 1, 0, 0)
     job = queue.get("src-1")
     assert job.status == "retry_wait" and "hypothesis_extraction_unavailable" in (job.error or "")
     assert transport.calls == 1 and ledger.calls_today() == 1
     assert not [e for e in ledger.events("src-1") if e["outcome"] == "no_hypothesis"]
     clock[0] += 120
-    assert worker.run_pending().failed == 1
+    assert worker.run_pending().extraction_retried == 1
     clock[0] += 240
     third = worker.run_pending()
     assert third.created == 1
@@ -791,3 +792,165 @@ def test_adapter_structured_route_deadline_is_the_callers_bounded_by_its_own(mon
     assert budget(88.0) == 88.0
     assert budget(500.0) == 170.0
     assert [budget(v) for v in (None, -1, 0, float("nan"), "x")] == [170.0] * 5
+
+
+# --- L2-HYPOTHESIS-CARD-TOKEN-BUDGET-AND-USAGE-20261126 ----------------------
+
+_ADAPTER_DIR = Path(__file__).resolve().parents[2] / "openclaw-gateway-adapter"
+
+
+def _card_answer_usage(output_tokens: int, input_tokens: int = 3, **extra: int) -> dict[str, Any]:
+    return {"output": {"structured_data": {"is_abstained": False, "abstention_reason": None,
+                                           "hypothesis_card": _card()},
+                       "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens, **extra}}}
+
+
+def test_card_turn_has_its_own_bounded_token_limits(monkeypatch):
+    for env in (semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV,
+                semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV):
+        monkeypatch.delenv(env, raising=False)
+    limits = semantic_extraction.hypothesis_card_token_limits()
+    # 1.5x the largest hosted card answer (2 061 output tokens).
+    assert limits == {"max_output_tokens": 3072, "max_input_tokens": 40_000}
+    assert limits["max_output_tokens"] >= 1.45 * 2061
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV, "4096")
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV, "not-a-number")
+    assert semantic_extraction.hypothesis_card_token_limits() == {"max_output_tokens": 4096, "max_input_tokens": 40_000}
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_OUTPUT_TOKENS_ENV, "999999")
+    monkeypatch.setenv(semantic_extraction.HYPOTHESIS_CARD_MAX_INPUT_TOKENS_ENV, "1")
+    assert semantic_extraction.hypothesis_card_token_limits() == {"max_output_tokens": 8192, "max_input_tokens": 8000}
+    client = SemanticExtractionClient(transport_fn=_Transport())
+    assert client.token_limits_for(ExtractionTaskType.INTENT) == {"max_input_tokens": 8000, "max_output_tokens": 1000}
+
+
+@pytest.mark.parametrize("output_tokens", [1438, 1820, 2061])
+def test_measured_card_answer_is_kept_and_the_limit_is_sent(tmp_path, output_tokens):
+    calls: list[dict[str, Any]] = []
+
+    def transport(payload):
+        calls.append(payload)
+        return _card_answer_usage(output_tokens, input_tokens=9415)
+
+    worker, queue, ledger, _clock = _queue_worker(tmp_path, transport)
+    worker.enqueue_from_source_record(_source("src-1"))
+    result = worker.run_pending()
+    assert result.created == 1
+    assert calls[0]["max_output_tokens"] == 3072
+    card_events = [e for e in ledger.events("src-1") if e["outcome"] == "card"]
+    assert card_events[0]["usage"] == {"input_tokens": 9415, "output_tokens": output_tokens}
+    assert not [e for e in ledger.events("src-1") if "budget_breach" in e["detail"]]
+
+
+def test_interactive_turn_keeps_its_limits_and_states_none(fake_monotonic):
+    transport = _Slow(fake_monotonic, 0.0)
+    client = SemanticExtractionClient(transport_fn=lambda p: (transport.payloads.append(p), {
+        "output": {"structured_data": {"is_abstained": True, "abstention_reason": "insufficient_evidence"},
+                   "usage": {"input_tokens": 100, "output_tokens": 1500}}})[1])
+    request = SemanticExtractionRequest(
+        source_id="s", text="Buy 2330 on revenue momentum.", task_type=ExtractionTaskType.INTENT,
+    )
+    result = client.extract(request)
+    assert "max_output_tokens" not in transport.payloads[0]
+    assert result.failure_code == "budget_breach"
+
+
+def test_card_input_limit_is_checked_on_the_prompt_before_any_call(tmp_path):
+    calls: list[dict[str, Any]] = []
+    worker, queue, ledger, _clock = _queue_worker(
+        tmp_path, lambda p: (calls.append(p), _card_answer_usage(1500))[1],
+        client_kw={"hypothesis_token_limits": {"max_input_tokens": 100, "max_output_tokens": 3072}},
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+    worker.run_pending()
+    assert calls == []
+    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "failed"]
+    assert "no model call made" in event["detail"] and "usage" not in event
+
+
+def test_paid_card_answer_is_not_discarded_for_an_unstated_input_limit(tmp_path):
+    worker, queue, ledger, _clock = _queue_worker(
+        tmp_path, lambda p: _card_answer_usage(1500, input_tokens=60_000),
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+    assert worker.run_pending().created == 1
+
+
+def test_http_adapter_body_carries_the_output_limit(monkeypatch):
+    from services.source_ingestion import semantic_extraction_client as mod
+
+    seen: list[dict[str, Any]] = []
+
+    def fake_http(endpoint, *, body_bytes, headers, deadline_at, **_):
+        seen.append(json.loads(body_bytes))
+        return 200, json.dumps({"data": _answer()}).encode(), {}
+
+    monkeypatch.setattr(mod, "_perform_http_request", fake_http)
+    client = SemanticExtractionClient(adapter_url="http://adapter.test")
+    client.extract(SemanticExtractionRequest(
+        source_id="src-1", text="x", task_type=ExtractionTaskType.HYPOTHESIS_CARD,
+        source_type="news", license_scope="collector_public_web"))
+    client.extract(SemanticExtractionRequest(
+        source_id="s", text="Buy 2330 on revenue momentum.", task_type=ExtractionTaskType.INTENT))
+    assert seen[0]["max_output_tokens"] == 3072
+    assert "max_output_tokens" not in seen[1]
+
+
+def test_real_adapter_response_shape_reports_prompt_sized_input(tmp_path, monkeypatch):
+    """The real adapter provider over the pinned Gateway's usage shape
+    (`toUsage`: input = uncached only, total includes cacheRead/cacheWrite):
+    the ledger shows the prompt's size, not 3."""
+    import sys
+    from unittest.mock import patch
+
+    monkeypatch.syspath_prepend(str(_ADAPTER_DIR))
+    monkeypatch.setenv("OPENCLAW_MODEL_CHAIN", "fx-a/model-1")
+    sys.modules.pop("assistant_openclaw_provider", None)
+    import assistant_openclaw_provider as provider_mod  # noqa: PLC0415
+
+    provider = provider_mod.AssistantOpenClawProvider(
+        gateway_url="ws://openclaw-gateway:18789", agent_id="main", token="t",
+        _which_func=lambda _: None, _run_func=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no CLI")),
+    )
+    sent: list[dict[str, Any]] = []
+
+    class _SSE:
+        def __init__(self, events):
+            self._lines = [("data: " + json.dumps(e) + "\n").encode() for e in events] + [b"data: [DONE]\n"]
+
+        def __iter__(self):
+            return iter(self._lines)
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        body = json.loads(req.data.decode("utf-8"))
+        sent.append(body)
+        answer = {"is_abstained": False, "abstention_reason": None, "hypothesis_card": _card()}
+        # Prompt cached on a previous call: 3 uncached input tokens, the rest
+        # cacheRead; total_tokens = input + output + cacheRead + cacheWrite.
+        cache_read = semantic_extraction.estimate_prompt_tokens(body["input"])
+        usage = {"input_tokens": 3, "output_tokens": 1820, "total_tokens": 3 + 1820 + cache_read}
+        return _SSE([
+            {"type": "response.output_text.done", "text": json.dumps(answer)},
+            {"type": "response.completed", "response": {"id": "r", "object": "response",
+             "status": "completed", "model": "openclaw/structured-extraction", "output": [], "usage": usage}},
+        ])
+
+    def adapter_transport(payload):
+        # What the /structured route returns as `data` (result.to_dict()).
+        with patch.object(provider_mod, "_urlopen_with_deadline", fake_urlopen):
+            return provider.invoke_structured(
+                payload["prompt"], extraction_schema=payload["extraction_schema"],
+                operator_id="system", max_output_tokens=payload.get("max_output_tokens"),
+            ).to_dict()
+
+    worker, queue, ledger, _clock = _queue_worker(tmp_path, adapter_transport)
+    worker.enqueue_from_source_record(_source("src-1"))
+    assert worker.run_pending().created == 1
+    assert sent[0]["max_output_tokens"] == 3072
+    (event,) = [e for e in ledger.events("src-1") if e["outcome"] == "card"]
+    prompt_estimate = semantic_extraction.estimate_prompt_tokens(sent[0]["input"])
+    assert event["usage"]["output_tokens"] == 1820
+    assert event["usage"]["input_tokens"] == prompt_estimate + 3
+    assert event["usage"]["input_tokens"] > 1000  # the prompt's order of magnitude, not 3
