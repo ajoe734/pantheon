@@ -380,6 +380,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/servant/habits",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/servant/institutional-knowledge",
       "family": "agora-core",
       "status": "implemented"
@@ -579,6 +585,12 @@
     {
       "method": "PATCH",
       "path": "/bff/agora/journal/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/servant/habits",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -1012,8 +1024,7 @@
       "method": "POST",
       "path": "/bff/agora/workshops/{param}/decisions",
       "family": "agora-core",
-      "status": "deferred",
-      "task_id": "FE-AGORA-WORKSHOP-CONVERSATION-FIRST-20261127"
+      "status": "implemented"
     },
     {
       "method": "POST",
