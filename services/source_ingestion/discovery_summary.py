@@ -308,7 +308,8 @@ def _read_ledger(
                 return _unavailable(LEDGER_SOURCE, "extraction_ledger_not_initialized")
             cols = {str(r[1]) for r in connection.execute("PRAGMA table_info(calls)")}
             row = connection.execute(
-                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap FROM calls WHERE day = ?", (day,)
+                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap,"
+                f" {'sources' if 'sources' in cols else 'NULL'} AS sources FROM calls WHERE day = ?", (day,)
             ).fetchone()
             for card in newest:
                 found = None
@@ -331,12 +332,20 @@ def _read_ledger(
             card.setdefault("claim_status", "ledger_unavailable")
         return _unavailable(LEDGER_SOURCE, _failure_reason(exc, "extraction_ledger_unreadable"))
     recorded_cap = row["cap"] if row is not None else None
+    calls = int(row["n"]) if row is not None else 0
+    # Distinct sources that got a paid call today (None: ledger predates the
+    # per-source count). Calls per source shows whether one article is paid
+    # for once per collector refetch.
+    sources = row["sources"] if row is not None else 0
+    distinct = int(sources) if sources is not None else None
     return {
         "status": "ok",
         "source": LEDGER_SOURCE,
         "scope": "service",  # one daily budget shared by every tenant of this deployment
         "utc_day": day,
-        "calls": int(row["n"]) if row is not None else 0,
+        "calls": calls,
+        "distinct_sources": distinct,
+        "calls_per_source": round(calls / distinct, 3) if distinct else None,
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
     }
