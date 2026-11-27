@@ -303,32 +303,56 @@ class JobReadPort:
         *,
         statuses: Optional[frozenset],
         page_size: Optional[int],
-    ) -> Tuple[bool, List[Dict[str, Any]], bool]:
-        """Read one source. Returns ``(ok, records, truncated)``."""
+        limit: Optional[int] = None,
+    ) -> Tuple[bool, List[Dict[str, Any]], str, Optional[int]]:
+        """Read one source. Returns ``(ok, records, flag, owner_total)``.
+
+        ``flag`` is ``""``, ``"truncated"`` (the full crawl hit the page cap) or
+        ``"partial"`` (a later owner page failed; the rows already read are
+        kept). ``owner_total`` is the bounded owner's reported ``page_info.total``
+        and ``None`` when the owner did not report one.
+        """
         if not spec.bounded_list:
             ok, payload = self.http_get(f"{base}{spec.list_path}")
-            return ok, (_extract_list(payload) if ok else []), False
-        # Bounded owner form: follow owner pages so the union stays complete.
-        single_page = page_size is not None
-        size = page_size or _OWNER_PAGE_SIZE
-        query: Dict[str, Any] = {"page_size": size}
+            return ok, (_extract_list(payload) if ok else []), "", None
+        # Bounded owner form. ``limit``: read only the newest ``limit`` rows (the
+        # owner answers newest first). ``page_size``: one owner page. Neither:
+        # follow owner pages so the union stays complete (capped).
+        single_page = page_size is not None and limit is None
+        max_pages = 1 if single_page else _OWNER_MAX_PAGES
+        query: Dict[str, Any] = {}
         if statuses:
             query["status"] = ",".join(sorted(statuses))
         records: List[Dict[str, Any]] = []
+        owner_total: Optional[int] = None
         token: Optional[str] = None
-        for _ in range(1 if single_page else _OWNER_MAX_PAGES):
-            page_query = dict(query)
+        for _ in range(max_pages):
+            if limit is not None:
+                size = min(max(limit - len(records), 1), _OWNER_PAGE_SIZE)
+            else:
+                size = page_size or _OWNER_PAGE_SIZE
+            page_query = {**query, "page_size": size}
             if token:
                 page_query["page_token"] = token
             ok, payload = self.http_get(f"{base}{spec.list_path}?{urllib.parse.urlencode(page_query)}")
             if not ok:
-                return False, records, False
+                if records:
+                    return True, records, "partial", owner_total
+                return False, [], "", None
             records.extend(_extract_list(payload))
             info = payload.get("page_info") if isinstance(payload, dict) else None
-            token = str(info.get("next_page_token") or "") if isinstance(info, dict) else ""
-            if not token:
-                return True, records, False
-        return True, records, bool(token)
+            if isinstance(info, dict):
+                reported = info.get("total")
+                if isinstance(reported, int) and not isinstance(reported, bool) and reported >= 0:
+                    owner_total = reported
+                token = str(info.get("next_page_token") or "")
+            else:
+                token = ""
+            if not token or (limit is not None and len(records) >= limit):
+                if limit is not None:
+                    records = records[:limit]
+                return True, records, "", owner_total
+        return True, records, ("truncated" if token else ""), owner_total
 
     def list_jobs_bff(
         self,
@@ -338,22 +362,30 @@ class JobReadPort:
         diagnostics: Optional[Dict[str, Any]] = None,
         statuses: Optional[Iterable[str]] = None,
         page_size: Optional[int] = None,
+        limit: Optional[int] = None,
         deadline_seconds: Optional[float] = None,
         **_kwargs: Any,
     ) -> List[Dict[str, Any]]:
         """Compose jobs across sources, reading them concurrently.
 
         ``statuses``/``page_size`` request a bounded active-job read (one owner
-        page per source); ``deadline_seconds`` caps the whole read so a stalled
-        source is reported as ``timeout`` instead of delaying the caller.
-        Availability is reported only through ``diagnostics`` (and the return of
-        this call), never inferred from shared state.
+        page per source). ``limit`` requests the newest ``limit`` rows per
+        bounded source (a BFF page needs ``offset + page_size``); the total is
+        then the owners' reported totals plus the counted rows of unbounded
+        sources, reported as ``diagnostics["total"]``. ``deadline_seconds``
+        caps the whole read so a stalled source is reported as ``timeout``
+        instead of delaying the caller. A bounded owner that fails after some
+        rows were read keeps them and is reported ``partial``. Availability is
+        reported only through ``diagnostics`` (and the return of this call),
+        never inferred from shared state.
         """
         wanted = frozenset(_normalize_status(v) for v in statuses) if statuses else None
         if status:
             wanted = (wanted & {status}) if wanted else frozenset({status})
+        if limit is not None:
+            limit = max(int(limit), 1)
         degraded_sources: Dict[str, str] = {}
-        outcomes: Dict[str, Tuple[bool, List[Dict[str, Any]], bool]] = {}
+        outcomes: Dict[str, Tuple[bool, List[Dict[str, Any]], str, Optional[int]]] = {}
         todo: List[Tuple[JobSourceSpec, str]] = []
         configured: List[str] = []
         for spec in self.sources:
@@ -373,7 +405,7 @@ class JobReadPort:
                 spec.name: pool.submit(
                     copy_context().run,
                     lambda spec=spec, base=base: self._fetch_source_records(
-                        spec, base, statuses=wanted, page_size=page_size
+                        spec, base, statuses=wanted, page_size=page_size, limit=limit
                     ),
                 )
                 for spec, base in todo
@@ -385,7 +417,7 @@ class JobReadPort:
             for spec, _base in todo:
                 future = futures[spec.name]
                 if not future.done():
-                    outcomes[spec.name] = (False, [], False)
+                    outcomes[spec.name] = (False, [], "", None)
                     degraded_sources[spec.name] = "timeout"
                     continue
                 try:
@@ -394,31 +426,39 @@ class JobReadPort:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     log.warning("job source %s read failed: %s", spec.name, exc)
-                    outcomes[spec.name] = (False, [], False)
+                    outcomes[spec.name] = (False, [], "", None)
                 if not outcomes[spec.name][0]:
                     degraded_sources[spec.name] = "unreachable"
                 elif outcomes[spec.name][2]:
-                    degraded_sources[spec.name] = "truncated"
+                    degraded_sources[spec.name] = outcomes[spec.name][2]
         healthy_sources: List[str] = []
         jobs: List[Dict[str, Any]] = []
+        total = 0
         for spec, _base in todo:
-            ok, records, _truncated = outcomes[spec.name]
+            ok, records, _flag, owner_total = outcomes[spec.name]
             if not ok:
                 continue
             healthy_sources.append(spec.name)
+            source_jobs: List[Dict[str, Any]] = []
             for record in records:
                 native_id = str(record.get(spec.native_id_field) or record.get("id") or "").strip()
                 if not native_id:
                     continue
-                jobs.append(_project_job(spec, native_id, record))
+                source_jobs.append(_project_job(spec, native_id, record))
+            if wanted:
+                source_jobs = [j for j in source_jobs if j.get("status") in wanted]
+            jobs.extend(source_jobs)
+            if spec.bounded_list and owner_total is not None:
+                total += max(owner_total, len(source_jobs))
+            else:
+                total += len(source_jobs)
         self._degraded_sources = dict(degraded_sources)
         if isinstance(diagnostics, dict):
             diagnostics.clear()
             diagnostics["healthy_sources"] = healthy_sources
             diagnostics["degraded_sources"] = dict(degraded_sources)
             diagnostics["configured_sources"] = list(configured)
-        if wanted:
-            jobs = [j for j in jobs if j.get("status") in wanted]
+            diagnostics["total"] = total
         return sort_jobs_newest_first(jobs)
 
     def get_job_bff(self, job_id: Optional[str]) -> Optional[Dict[str, Any]]:
