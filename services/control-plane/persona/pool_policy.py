@@ -198,6 +198,13 @@ def last_published(history: Mapping[str, Any] | None) -> Mapping[str, Any] | Non
     return max(done, key=lambda e: e["pool_version"]) if done else None
 
 
+def latest_publication(history: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """Newest accepted dispatch, including one whose owner readback is outstanding."""
+    entries = [e for e in ((history or {}).get("published") or {}).values()
+               if e.get("status") in ("published", "dispatched")]
+    return max(entries, key=lambda e: int(e["pool_version"])) if entries else None
+
+
 def publication_change(published: Mapping[str, Any] | None, pool: Mapping[str, Any], policy) -> dict[str, Any]:
     """Would publishing ``pool`` change what runs? A re-weight inside tolerance changes nothing.
 
