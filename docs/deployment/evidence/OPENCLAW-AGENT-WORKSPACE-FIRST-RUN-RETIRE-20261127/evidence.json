@@ -124,6 +124,10 @@
     "outcome": "openclaw_workspace_first_run_ritual",
     "fix_task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
     "skip_reason_prefix": "no_hypothesis:",
+    "skip_reason_prefixes": [
+      "no_hypothesis:",
+      "hypothesis_extraction_failed:"
+    ],
     "case_insensitive": true,
     "markers": [
       "bootstrap.md",
@@ -134,7 +138,7 @@
       "who am i? who are you?",
       "figure out who i am"
     ],
-    "sql_candidate_filter_updated": "services/source_ingestion/distillation_worker.py :: DistillationJobQueue.reattempt_fixed_defect_records matches skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%' and filters via fixed_defect_for_skip_reason so ritual-closed no_hypothesis rows are re-opened once while genuine abstentions remain closed."
+    "extractor_and_matcher_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason while rejecting genuine abstentions, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
   },
   "ac5_discovery_pipeline_release_probe": {
     "probe_file": "acceptance/discovery_pipeline_day.py",
@@ -153,6 +157,11 @@
       {
         "finding": "Consult panel workspaces (workspaces/consult-*) still run on the stock '# SOUL.md - Who You Are' template after stock BOOTSTRAP.md is retired; Pantheon-authored consult panel SOUL.md / AGENTS.md templates belong to the persona-loop domain.",
         "owning_domain": "Persona loop / OpenClaw consultation",
+        "register_class": "RC2"
+      },
+      {
+        "finding": "DistillationJobQueue.reattempt_fixed_defect_records in services/source_ingestion/distillation_worker.py:2770 (outside this task's declared artifacts contract) pre-filters distillation_outbox in SQL with AND skip_reason LIKE 'hypothesis_extraction_failed:%' before calling fixed_defect_for_skip_reason(row['skip_reason']); widening that SQL predicate with OR skip_reason LIKE 'no_hypothesis:%' is needed for the SQL scan to reach the 52 historical no_hypothesis rows from 2026-11-26 12:51Z..2026-11-27 05:30Z.",
+        "owning_domain": "L2 / source ingestion",
         "register_class": "RC2"
       }
     ]

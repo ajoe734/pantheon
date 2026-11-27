@@ -657,11 +657,13 @@ class FixedDefectOutcome:
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
     skip_reason_prefix: str = "hypothesis_extraction_failed:"
+    skip_reason_prefixes: tuple[str, ...] = ()
     case_insensitive: bool = False
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        if not text.startswith(self.skip_reason_prefix):
+        prefixes = self.skip_reason_prefixes or (self.skip_reason_prefix,)
+        if not any(text.startswith(prefix) for prefix in prefixes):
             return False
         haystack = text.lower() if self.case_insensitive else text
         req = (
@@ -746,6 +748,7 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
             "workspace retirement, closing 52 sources as no_hypothesis with ritual text"
         ),
         skip_reason_prefix="no_hypothesis:",
+        skip_reason_prefixes=("no_hypothesis:", "hypothesis_extraction_failed:"),
         any_substrings=FIRST_RUN_RITUAL_MARKERS,
         case_insensitive=True,
     ),
@@ -931,7 +934,15 @@ class HypothesisExtractor:
                 return self._done(sid, "unavailable", detail, usage=usage)
             return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
-            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage)
+            reason = result.abstention_reason or "model_abstained"
+            if has_first_run_ritual_marker(reason):
+                return self._done(
+                    sid,
+                    "failed",
+                    f"openclaw_workspace_first_run_ritual: {reason}",
+                    usage=usage,
+                )
+            return self._done(sid, "no_hypothesis", reason, usage=usage)
         try:
             prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(

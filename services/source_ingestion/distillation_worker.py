@@ -2767,8 +2767,7 @@ class DistillationJobQueue:
                      WHERE status = 'skipped'
                        AND defect_reattempted = 0
                        AND pruned_at IS NULL
-                       AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
-                            OR skip_reason LIKE 'no_hypothesis:%')
+                       AND skip_reason LIKE 'hypothesis_extraction_failed:%'
                        {tenant_clause}
                        AND NOT EXISTS (
                            SELECT 1

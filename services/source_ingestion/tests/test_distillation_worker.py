@@ -1625,15 +1625,28 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         assert [j.source_id for j in claimed] == ["src-fresh-new"]
         assert fresh_job.job_id == claimed[0].job_id
 
-    def test_reattempt_fixed_defect_records_reopens_ritual_no_hypothesis_once_and_keeps_genuine_abstentions_closed(
+    def test_reattempt_fixed_defect_records_reopens_ritual_defect_once_and_keeps_genuine_abstentions_closed(
         self, tmp_path: Path
     ) -> None:
+        from services.source_ingestion.hypothesis_card import fixed_defect_for_skip_reason
+
         queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
-        ritual_reason = (
+        ritual_no_hyp_reason = (
             "no_hypothesis: First-run setup is pending, so I haven't extracted the document yet. "
             "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
         )
+        ritual_failed_reason = (
+            "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
+            "First-run setup is pending, so I haven't extracted the document yet. "
+            "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+        )
         genuine_reason = "no_hypothesis: The document summarizes earnings dates with no testable hypothesis."
+        assert fixed_defect_for_skip_reason(ritual_no_hyp_reason) is not None
+        assert fixed_defect_for_skip_reason(ritual_no_hyp_reason).code == "openclaw_workspace_first_run_ritual"
+        assert fixed_defect_for_skip_reason(ritual_failed_reason) is not None
+        assert fixed_defect_for_skip_reason(ritual_failed_reason).code == "openclaw_workspace_first_run_ritual"
+        assert fixed_defect_for_skip_reason(genuine_reason) is None
+
         ritual_job = queue.enqueue_source_record(
             _normalized_source("src-ritual-closed", tenant_id="default"), enqueued_at=100.0
         )
@@ -1643,7 +1656,7 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         with sqlite3.connect(queue.path) as conn:
             conn.execute(
                 "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=100.0 WHERE job_id=?",
-                (ritual_reason, ritual_job.job_id),
+                (ritual_failed_reason, ritual_job.job_id),
             )
             conn.execute(
                 "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=110.0 WHERE job_id=?",
@@ -1662,7 +1675,7 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         with sqlite3.connect(queue.path) as conn:
             conn.execute(
                 "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
-                (ritual_reason, ritual_job.job_id),
+                (ritual_failed_reason, ritual_job.job_id),
             )
         assert queue.reattempt_fixed_defect_records(
             requested_by="ctl", tenant_id="default", now=300.0

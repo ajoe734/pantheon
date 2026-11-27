@@ -1155,11 +1155,41 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
     )
     called_ids: list[str] = []
 
+    state = {"ritual": True}
+
     def transport(payload: dict[str, Any]) -> dict[str, Any]:
         prompt = payload["prompt"]
         for sid in ("ritual-en", "ritual-zh", "genuine-abstained"):
             if f"source_record_id={sid!r}" in prompt:
                 called_ids.append(sid)
+                if sid == "genuine-abstained":
+                    return {
+                        "output": {
+                            "structured_data": {
+                                "is_abstained": True,
+                                "abstention_reason": "The article reports quarterly revenue without stating a testable mechanism.",
+                                "hypothesis_card": None,
+                            },
+                            "usage": {"input_tokens": 8900, "output_tokens": 90},
+                        }
+                    }
+                if state["ritual"]:
+                    reason = (
+                        "First-run setup is pending, so I haven't extracted the document yet. "
+                        "I'd go by Finch 🐦. Does that work for you, and what should I call you?"
+                        if sid == "ritual-en"
+                        else "請問該怎麼稱呼你？尚未完成 BOOTSTRAP.md 初次設定。"
+                    )
+                    return {
+                        "output": {
+                            "structured_data": {
+                                "is_abstained": True,
+                                "abstention_reason": reason,
+                                "hypothesis_card": None,
+                            },
+                            "usage": {"input_tokens": 12100, "output_tokens": 110},
+                        }
+                    }
                 return {
                     "output": {
                         "structured_data": {
@@ -1174,22 +1204,29 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
 
     worker, queue, ledger, _ = _queue_worker(tmp_path, transport, cap=10, clock=clock)
 
-    def seed_closed(sid: str, skip_reason: str, enqueued_at: float):
-        src = _source(sid, body=BODY)
-        job = queue.enqueue_source_record(src, enqueued_at=enqueued_at)
-        claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=enqueued_at, job_ids=[job.job_id])[0]
-        started = queue.begin_job(claimed, lease_seconds=30, now=enqueued_at)
-        queue.mark_skipped(started.job_id, reason=skip_reason, processed_at=enqueued_at, claim_token=started.lease_token)
-        return job
-
-    seed_closed("ritual-en", FIRST_RUN_RITUAL_SKIP_REASON, 100.0)
-    seed_closed("ritual-zh", "no_hypothesis: 請問該怎麼稱呼你？尚未萃取文章。", 110.0)
-    seed_closed(
-        "genuine-abstained",
-        "no_hypothesis: The article reports quarterly revenue without stating a testable mechanism.",
-        120.0,
+    seed_closed_en = (
+        "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
+        "First-run setup is pending, so I haven't extracted the document yet. what should I call you?"
     )
+    seed_closed_zh = (
+        "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
+        "請問該怎麼稱呼你？尚未萃取文章。"
+    )
+    for sid, skip_reason, ts in (
+        ("ritual-en", seed_closed_en, 100.0),
+        ("ritual-zh", seed_closed_zh, 110.0),
+        (
+            "genuine-abstained",
+            "no_hypothesis: The article reports quarterly revenue without stating a testable mechanism.",
+            120.0,
+        ),
+    ):
+        job = queue.enqueue_source_record(_source(sid, body=BODY), enqueued_at=ts)
+        claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=ts, job_ids=[job.job_id])[0]
+        started = queue.begin_job(claimed, lease_seconds=30, now=ts)
+        queue.mark_skipped(started.job_id, reason=skip_reason, processed_at=ts, claim_token=started.lease_token)
 
+    state["ritual"] = False
     result = worker.run_pending()
     assert called_ids == ["ritual-en", "ritual-zh"]
     assert result.defect_reattempted == 2 and result.created == 2
