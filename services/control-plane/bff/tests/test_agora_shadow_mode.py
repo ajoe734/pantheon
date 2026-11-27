@@ -256,3 +256,65 @@ def test_owner_write_authority_denies_roles_outside_matrix(world):
     assert owner.store.list_decision_locks() == []
     with pytest.raises(AgoraWriteForbiddenError):
         owner.create_decision_lock({"human_decision_id": "x"}, ["viewer"])
+
+
+def test_decision_route_emits_four_learning_evidence_kinds_with_snapshot_one_per_lock():
+    from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+    from services.control_plane.bff.agora.dataset_extraction.models import DatasetKind, InteractionKind
+
+    store = make_trading_room_store()
+    ds_store = AgoraDatasetStore(backend="memory")
+    with mock.patch("services.agora.store.PostgresJsonOwnerStore", _MemoryTable):
+        owner = AgoraWriteService(
+            store=AgoraStore(dsn="postgresql://test/none", bootstrap=False),
+            dataset_store=ds_store,
+        )
+    client = _app(store, owner, TRADER)
+
+    verdicts = [
+        ("evt-ev-1", {"decision": "approve", "rationale": "確認進場"}, InteractionKind.DECISION, "enter"),
+        ("evt-ev-2", {"decision": "reject", "rationale": "流動性不足拒絕"}, InteractionKind.REJECTION, "reject"),
+        ("evt-ev-3", {"decision": "defer", "rationale": "延後至尾盤再看"}, InteractionKind.DEFERRAL, "defer"),
+        (
+            "evt-ev-4",
+            {"decision": "modify", "rationale": "手動減半部位", "modifications": {"action": "reduce", "size_hint": "small"}},
+            InteractionKind.INTERVENTION,
+            "reduce",
+        ),
+    ]
+
+    for idx, (event_id, payload, expected_kind, expected_action) in enumerate(verdicts):
+        store.upsert_decision_event(
+            _event(
+                event_id,
+                data_cutoff="2026-11-27T00:59:00Z",
+                strategy_version_id="sv-11",
+                servant_suggestion={"action": "enter", "persona_id": "servant-user-001"},
+            )
+        )
+        resp = _decide(client, event_id, payload, key=f"k-ev-{idx}")
+        assert resp.status_code == 201, resp.text
+        human_decision_id = resp.json()["data"]["human_decision_id"]
+
+        lock = client.get(URL.format(event_id) + "/decision-lock").json()["data"]
+        assert lock["evidence_kind"] == expected_kind.value
+        assert lock["decision_time_snapshot"]["symbol"] == "2330.TW"
+        assert lock["decision_time_snapshot"]["available_data_cutoff"] == "2026-11-27T00:59:00Z"
+
+        evidence_rec = ds_store.get(
+            f"ev-lock-{human_decision_id}",
+            tenant_id="tenant-001",
+            user_id="user-001",
+        )
+        assert evidence_rec is not None
+        assert evidence_rec.dataset_kind == DatasetKind.LEARN
+        assert evidence_rec.interaction_kind == expected_kind
+        assert evidence_rec.retention_days == 30
+        assert evidence_rec.content["action"] == expected_action
+        assert evidence_rec.content["decision_time_snapshot"]["symbol"] == "2330.TW"
+
+    learn_items = ds_store.list_by_dataset(DatasetKind.LEARN, tenant_id="tenant-001", user_id="user-001")
+    assert len(learn_items) == 4
+    handoffs = ds_store.list_handoffs_for_tenant(tenant_id="tenant-001", pending_only=True)
+    assert len(handoffs) == 4
+    assert {h["interaction_kind"] for h in handoffs} == {"decision", "rejection", "deferral", "intervention"}

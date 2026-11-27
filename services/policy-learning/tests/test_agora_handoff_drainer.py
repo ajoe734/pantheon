@@ -106,6 +106,170 @@ class TestAgoraHandoffDrainer(unittest.TestCase):
             with self.assertRaises(DrainerConfigurationError):
                 require_drainer_configuration()
 
+    def test_drainer_delivers_four_decision_evidence_kinds_from_locks_and_journal(self) -> None:
+        """End-to-end proof: decision, rejection, deferral, and intervention extracted from
+        Agora decision locks and journal entries route to learn and are delivered by the
+        existing agora_handoff_drainer into policy-learning without a second loop.
+        """
+        import importlib.util
+        import tempfile
+        from pathlib import Path
+        from urllib.parse import urlsplit
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+
+        from services.agora.shadow_mode import build_decision_lock
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            AgoraDatasetStore,
+            extract_decision_lock_evidence,
+            extract_journal_entry_evidence,
+        )
+        from services.control_plane.bff.agora.dataset_extraction.router import (
+            create_dataset_extraction_router,
+        )
+        from services.research.imitation.agora_dataset_source import build_dataset_payload
+
+        ds_store = AgoraDatasetStore(backend="memory")
+        event = {
+            "decision_event_id": "evt-drain-1",
+            "event_kind": "entry",
+            "origin": "strategy_signal",
+            "strategy_id": "strat-tw-semi",
+            "strategy_version_id": "v1",
+            "strategy_spec_registry_id": "reg-tw-semi",
+            "subject": {"symbol": "2330.TW"},
+            "triggered_at": "2026-11-27T01:00:00Z",
+            "data_cutoff": "2026-11-27T00:59:00Z",
+            "suggested_action": "enter",
+            "confidence": {"value": 0.81},
+            "probability": {"value": 0.66},
+            "expected_value": {"net": 0.028, "downside": -0.012},
+        }
+        # 1. Extract decision and rejection from Agora decision locks
+        for idx, verdict in enumerate(("approve", "reject")):
+            lock = build_decision_lock(
+                human_decision_id=f"hdl-drain-{idx}",
+                decision_record_id=f"drec-drain-{idx}",
+                event={**event, "decision_event_id": f"evt-drain-{idx}"},
+                decision_event_id=f"evt-drain-{idx}",
+                tenant_id="tenant-drain",
+                user_id="trader-alice",
+                body_decision=verdict,
+                rationale=f"Lock verdict {verdict}",
+                modifications=None,
+                decision_time=f"2026-11-27T01:0{idx}:00Z",
+                actor_roles=["trader"],
+            )
+            rec, created = extract_decision_lock_evidence(lock, store=ds_store)
+            self.assertTrue(created)
+            self.assertEqual(rec.dataset_kind.value, "learn")
+
+        # 2. Extract deferral and intervention from decision journal entries
+        for entry in (
+            {
+                "entry_id": "jrnl-drain-defer",
+                "tenant_id": "tenant-drain",
+                "user_id": "trader-alice",
+                "decision": "defer",
+                "symbol": "2317.TW",
+                "strategy_id": "strat-tw-semi",
+                "data_cutoff": "2026-11-27T01:10:00Z",
+                "raw_text": "Deferred entry until afternoon session liquidity check.",
+                "event_time": "2026-11-27T01:12:00Z",
+            },
+            {
+                "entry_id": "jrnl-drain-intervene",
+                "tenant_id": "tenant-drain",
+                "user_id": "trader-alice",
+                "modifications": {"action": "reduce", "size_hint": "small"},
+                "tags": ["intervention", "risk_trim"],
+                "symbol": "2330.TW",
+                "strategy_id": "strat-tw-semi",
+                "data_cutoff": "2026-11-27T01:15:00Z",
+                "raw_text": "Intervened to trim position size by half.",
+                "event_time": "2026-11-27T01:16:00Z",
+            },
+        ):
+            rec, created = extract_journal_entry_evidence(entry, store=ds_store)
+            self.assertTrue(created)
+            self.assertEqual(rec.dataset_kind.value, "learn")
+
+        # Mount real Agora dataset extraction router
+        bff_app = FastAPI()
+        bff_app.include_router(
+            create_dataset_extraction_router(
+                extract_identity=lambda _a: None,
+                require_read_role=lambda _i: None,
+                require_write_role=lambda _i: None,
+                bff_error=lambda status, code, msg, reason, **kw: HTTPException(status, detail=reason),
+                utc_now=lambda: "2026-11-27T02:00:00Z",
+                dataset_store=ds_store,
+            )
+        )
+        bff_client = TestClient(bff_app)
+
+        service_dir = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as data_dir, patch.dict(
+            os.environ,
+            {
+                "POLICY_LEARNING_DATA_DIR": data_dir,
+                "POLICY_LEARNING_STORE_BACKEND": "json",
+                "PERSISTENCE_POSTURE": "lenient",
+                "POLICY_LEARNING_DATASET_MODE": "product",
+                "POLICY_LEARNING_SERVICE_TOKEN": "pl-drain-token",
+                "POLICY_LEARNING_SERVICE_TENANTS": "tenant-drain",
+                "AGORA_HANDOFF_SERVICE_TOKEN": "agora-drain-token",
+                "AGORA_HANDOFF_SERVICE_TENANTS": "tenant-drain",
+                "AGORA_DATASET_STORE_BACKEND": "memory",
+            },
+            clear=False,
+        ):
+            sys.modules.pop("store", None)
+            spec = importlib.util.spec_from_file_location("pl_drainer_e2e_main", service_dir / "main.py")
+            assert spec and spec.loader
+            pl_mod = importlib.util.module_from_spec(spec)
+            sys.modules["pl_drainer_e2e_main"] = pl_mod
+            spec.loader.exec_module(pl_mod)
+            pl_client = TestClient(pl_mod.app)
+
+            def route_http(url: str, method: str = "GET", body=None, headers=None, timeout_seconds: float = 30.0):
+                target = bff_client if url.startswith("http://agora-bff") else pl_client
+                resp = target.request(method, urlsplit(url).path, json=body, headers=headers)
+                self.assertLess(resp.status_code, 300, resp.text)
+                return resp.json()
+
+            with patch("agora_handoff_drainer._http_request", side_effect=route_http):
+                cycle = process_drainer_cycle(
+                    agora_url="http://agora-bff:8001",
+                    policy_learning_url="http://policy-learning:8100",
+                    tenant_id="tenant-drain",
+                    agora_token="agora-drain-token",
+                    policy_learning_token="pl-drain-token",
+                )
+
+            self.assertEqual(cycle["status"], "ok")
+            self.assertEqual(cycle["processed_count"], 4)
+            self.assertEqual(cycle["acked_count"], 4)
+
+            # Verify zero pending handoffs remain on Agora BFF
+            self.assertEqual(ds_store.list_handoffs_for_tenant(tenant_id="tenant-drain", pending_only=True), [])
+
+            # Verify policy-learning authority holds all 4 decision evidence versions with snapshot
+            versions = pl_mod.dataset_authority().list_decision_evidence_versions(
+                tenant_id="tenant-drain",
+                user_id="trader-alice",
+            )
+            self.assertEqual(len(versions), 4)
+            self.assertEqual(
+                {v.interaction_kind for v in versions},
+                {"decision", "rejection", "deferral", "intervention"},
+            )
+            payload = build_dataset_payload(versions)
+            self.assertEqual(len(payload["sessions"]), 4)
+            for session in payload["sessions"]:
+                self.assertIn("decision_time_snapshot", session)
+                self.assertIn(session["evidence_kind"], {"decision", "rejection", "deferral", "intervention"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,77 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "AGORA-DECISION-EVIDENCE-KINDS-20261127",
+  "title": "Trader decisions and rejections and deferrals and interventions become learning evidence",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "review_independence": {
+    "owner": "Antigravity2",
+    "owner_family": "Antigravity",
+    "reviewer": "Claude",
+    "reviewer_family": "Claude",
+    "independent": true
+  },
+  "problem_register_class": "RC4",
+  "register_row": "docs/operations/problem-register.md RC4 table, Agora row (SD_AGORA_SERVANT_CORE_2026-11-27.md §7.3, §12 T4)",
+  "changes": {
+    "services/control-plane/bff/agora/dataset_extraction/models.py": "Added InteractionKind.DECISION ('decision'), InteractionKind.REJECTION ('rejection'), InteractionKind.DEFERRAL ('deferral'), and InteractionKind.INTERVENTION ('intervention') routed to DatasetKind.LEARN in _KIND_TO_DATASET, plus DECISION_EVIDENCE_KINDS and DECISION_EVIDENCE_RETENTION_BUDGET constants.",
+    "services/agora/shadow_mode.py": "Added decision_evidence_kind() and build_decision_time_snapshot() and included evidence_kind and decision_time_snapshot on every immutable Agora decision lock built by build_decision_lock() under its canonical checksum.",
+    "services/control-plane/bff/agora/dataset_extraction/extractor.py": "Added classify_decision_evidence_kind(), build_decision_time_snapshot(), snapshot_observation_vector(), normalize_decision_evidence_content(), build_decision_lock_evidence_request(), build_journal_entry_evidence_request(), extract_decision_lock_evidence(), and extract_journal_entry_evidence() (plus AgoraDatasetStore.extract_decision_lock and extract_journal_entry). Enforced one evidence item per lock (ev-lock-<human_decision_id>) or journal entry (ev-journal-<entry_id>) with 30-day dataset retention and attached the DatasetRecord and interaction_kind to pending handoffs listed by list_handoffs_for_tenant().",
+    "services/agora/service.py": "Wired AgoraWriteService.create_decision_lock() to emit one learning evidence item and durable dataset handoff via extract_decision_lock_evidence() whenever a new decision lock is created, and exposed AgoraWriteService.extract_decision_lock_evidence() and extract_journal_entry_evidence().",
+    "services/policy-learning/agora_handoff_drainer.py": "Preserved user_id, interaction_kind, dataset_kind, evidence_ids, and dataset_version/record when forwarding pending Agora dataset handoffs from /internal/agora/dataset-handoffs to /api/policy-learning/agora-handoff.",
+    "services/policy-learning/agora_dataset_authority.py": "Added interaction_kinds filtering to AgoraDatasetAuthority._select() and list_dataset_versions() plus list_decision_evidence_versions() for decision, rejection, deferral, and intervention records.",
+    "services/research/imitation/agora_dataset_source.py": "Extended _sessions_from_content(), _session_target(), build_dataset_payload(), and build_dataset_lineage() to translate decision, rejection, deferral, and intervention DatasetVersions and their decision_time_snapshot into governed IMT-003 trajectory sessions and record interaction_kinds in dataset lineage.",
+    "services/research/imitation/bc_trainer.py": "Allowed single-action DatasetVersion payloads (len(action_labels) >= 1) to train and evaluate so a single delivered trader decision DatasetVersion settles cleanly through the policy-learning worker."
+  },
+  "acceptance_evidence": {
+    "AC1_four_evidence_kinds_with_decision_time_snapshot": {
+      "status": "verified",
+      "proof": "TestDecisionLockAndJournalEvidenceExtraction in services/control-plane/bff/agora/dataset_extraction/test_extractor.py and test_decision_route_emits_four_learning_evidence_kinds_with_snapshot_one_per_lock in services/control-plane/bff/tests/test_agora_shadow_mode.py verify that decision, rejection, deferral, and intervention are extracted from both Agora decision locks and decision journal entries with their decision-time snapshot (symbol, strategy_id, strategy_version_id, available_data_cutoff, event_kind, suggested_action, confidence, probability, expected_value, and deterministic numeric observation vector)."
+    },
+    "AC2_routed_to_learn_and_delivered_by_existing_agora_handoff_drainer": {
+      "status": "verified",
+      "proof": "TestAgoraHandoffDrainer.test_drainer_delivers_four_decision_evidence_kinds_from_locks_and_journal in services/policy-learning/tests/test_agora_handoff_drainer.py extracts decision and rejection from Agora decision locks and deferral and intervention from decision journal entries into AgoraDatasetStore, drains /internal/agora/dataset-handoffs via the existing agora_handoff_drainer.process_drainer_cycle(), delivers all 4 items to policy-learning /api/policy-learning/agora-handoff, acknowledges all 4 handoffs on /internal/agora/dataset-handoffs/{id}/ack, and verifies AgoraDatasetAuthority.list_decision_evidence_versions() and build_dataset_payload() produce 4 governed IMT-003 trajectory sessions with decision_time_snapshot."
+    },
+    "AC3_one_item_per_lock_or_journal_entry_retention_and_growth_stated": {
+      "status": "verified",
+      "proof": "Deterministic evidence IDs (ev-lock-<human_decision_id> and ev-journal-<entry_id>) and scoped idempotency keys (agora-lock-evidence:<tenant>:<user>:<evidence_id> and agora-journal-evidence:<tenant>:<user>:<evidence_id>) enforce exactly one evidence item per lock or journal entry. Retention defaults to DEFAULT_DATASET_RETENTION_DAYS = 30 (existing dataset retention, bounded 1..365 days). Growth per trader per day is stated in DECISION_EVIDENCE_RETENTION_BUDGET and runtime_budget below."
+    },
+    "AC4_hosted_proof": {
+      "status": "pending_deploy",
+      "in_process_boundary_proof": "Verified in test_decision_route_emits_four_learning_evidence_kinds_with_snapshot_one_per_lock and test_drainer_delivers_four_decision_evidence_kinds_from_locks_and_journal: POST /bff/agora/trading-room/decision-events/{id}/decisions writes the decision lock via AgoraWriteService.create_decision_lock(), emits one learn DatasetRecord (ev-lock-<human_decision_id>) and one pending handoff, and process_drainer_cycle() delivers it to policy-learning and marks the handoff acknowledged.",
+      "hosted_plan": "After this PR is deployed to hosted dev, submit one trader decision on POST /bff/agora/trading-room/decision-events/{id}/decisions (or verify the first dev trader decision lock), read GET /bff/agora/datasets/learn and GET /bff/agora/dataset-worker/handoffs to confirm one delivered evidence item (ev-lock-<human_decision_id>) with ack_status='acknowledged' after the policy-learning-shadow-eval-scheduler drainer cycle."
+    }
+  },
+  "runtime_budget": {
+    "cadence": "event-driven on Agora decision lock or decision journal write; drained by existing hourly policy-learning-shadow-eval-scheduler (agora_handoff_drainer)",
+    "new_recurring_jobs": 0,
+    "new_tables_or_stores": 0,
+    "existing_tables_used": [
+      "agora.agora_evidence_inbox",
+      "agora.agora_dataset_records",
+      "agora.agora_evidence_handoffs"
+    ],
+    "items_per_lock_or_journal_entry": 1,
+    "estimated_item_bytes": 2048,
+    "typical_items_per_trader_per_day": 10,
+    "typical_growth_bytes_per_trader_per_day": 20480,
+    "max_items_per_trader_per_day": 50,
+    "max_growth_bytes_per_trader_per_day": 102400,
+    "retention_days": 30,
+    "max_retention_days": 365,
+    "cleanup": "Follows existing 30-day dataset retention window enforced by AgoraDatasetStore and AgoraEvidenceStore"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/dataset_extraction/test_extractor.py services/control-plane/bff/agora/dataset_extraction/test_router.py services/control-plane/bff/tests/test_agora_shadow_mode.py services/control-plane/bff/tests/test_agora_human_evidence.py services/control-plane/bff/tests/test_agora_dataset_handoff_integration.py",
+      ".venv-pantheon/bin/python3 -m pytest -q services/research/imitation services/policy-learning/tests",
+      "git diff --check"
+    ],
+    "results": {
+      "bff_dataset_and_shadow_tests": "116 passed, 4 skipped",
+      "imitation_and_policy_learning_tests": "229 passed, 5 skipped",
+      "git_diff_check": "clean (exit 0)"
+    }
+  },
+  "residual_findings": []
+}

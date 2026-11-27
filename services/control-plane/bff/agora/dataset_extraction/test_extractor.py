@@ -20,13 +20,22 @@ import pytest
 from .extractor import (
     AgoraDatasetStore,
     ClaimConflictError,
+    DECISION_EVIDENCE_KINDS,
+    DECISION_EVIDENCE_RETENTION_BUDGET,
+    DEFAULT_DATASET_RETENTION_DAYS,
+    ESTIMATED_DECISION_EVIDENCE_BYTES,
     HandoffConflictError,
     IdempotencyConflictError,
+    MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY,
+    MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY,
     PrivacyConsentError,
     acknowledgement_request_digest,
     admit_evidence,
+    classify_decision_evidence_kind,
     evidence_request_digest,
+    extract_decision_lock_evidence,
     extract_evidence,
+    extract_journal_entry_evidence,
     sanitize_content_payload,
 )
 from .models import (
@@ -333,6 +342,16 @@ class TestInteractionKindEnum:
     def test_feedback_and_training_example_are_learn(self) -> None:
         assert route_to_dataset(InteractionKind.FEEDBACK.value) == DatasetKind.LEARN
         assert route_to_dataset(InteractionKind.TRAINING_EXAMPLE.value) == DatasetKind.LEARN
+
+    def test_decision_rejection_deferral_intervention_are_learn(self) -> None:
+        for kind in (
+            InteractionKind.DECISION,
+            InteractionKind.REJECTION,
+            InteractionKind.DEFERRAL,
+            InteractionKind.INTERVENTION,
+        ):
+            assert route_to_dataset(kind.value) == DatasetKind.LEARN
+            assert kind.value in DECISION_EVIDENCE_KINDS
 
     def test_remaining_kinds_are_observe(self) -> None:
         observe_kinds = {InteractionKind.ASK, InteractionKind.JOURNAL, InteractionKind.NOTE, InteractionKind.INSIGHT}
@@ -1049,4 +1068,204 @@ class TestSingleItemOrderedHandoffAck:
                 request_digest="digest-test",
                 acknowledged_at="2026-08-13T10:05:00Z",
             )
+
+
+class TestDecisionLockAndJournalEvidenceExtraction:
+    def test_extract_four_kinds_from_decision_locks_one_item_per_lock(self) -> None:
+        from services.agora.shadow_mode import build_decision_lock
+
+        store = AgoraDatasetStore(backend="memory")
+        event = {
+            "decision_event_id": "evt-semi-01",
+            "event_kind": "entry",
+            "origin": "strategy_signal",
+            "strategy_id": "strat-tw-semi",
+            "strategy_version_id": "v2",
+            "strategy_spec_registry_id": "reg-tw-semi",
+            "subject": {"symbol": "2330.TW"},
+            "triggered_at": "2026-11-27T01:00:00Z",
+            "data_cutoff": "2026-11-27T00:59:00Z",
+            "suggested_action": "enter",
+            "suggested_size": {"size_hint": "medium", "portfolio_pct": 0.05},
+            "confidence": {"value": 0.82, "basis": "model"},
+            "probability": {"value": 0.67, "horizon": "5d"},
+            "expected_value": {"net": 0.031, "downside": -0.015},
+            "servant_suggestion": {"action": "enter", "persona_id": "servant-trader-1"},
+        }
+        cases = [
+            ("approve", None, InteractionKind.DECISION, "enter"),
+            ("reject", None, InteractionKind.REJECTION, "reject"),
+            ("defer", None, InteractionKind.DEFERRAL, "defer"),
+            ("modify", {"action": "reduce", "size_hint": "small"}, InteractionKind.INTERVENTION, "reduce"),
+        ]
+        for idx, (verdict, mods, expected_kind, expected_action) in enumerate(cases):
+            lock = build_decision_lock(
+                human_decision_id=f"hdl-lock-{idx}",
+                decision_record_id=f"drec-{idx}",
+                event={**event, "decision_event_id": f"evt-semi-{idx}"},
+                decision_event_id=f"evt-semi-{idx}",
+                tenant_id="tenant-alpha",
+                user_id="trader-1",
+                body_decision=verdict,
+                rationale=f"Trader rationale for {verdict}",
+                modifications=mods,
+                decision_time=f"2026-11-27T01:0{idx}:00Z",
+                account_id="acct-01",
+                broker_ids=["fubon-sec"],
+                actor_roles=["trader"],
+            )
+            assert lock["evidence_kind"] == expected_kind.value
+            assert lock["decision_time_snapshot"]["symbol"] == "2330.TW"
+            assert lock["decision_time_snapshot"]["available_data_cutoff"] == "2026-11-27T00:59:00Z"
+
+            rec, is_new = extract_decision_lock_evidence(lock, store=store)
+            assert is_new is True
+            assert rec.evidence_id == f"ev-lock-hdl-lock-{idx}"
+            assert rec.dataset_kind == DatasetKind.LEARN
+            assert rec.interaction_kind == expected_kind
+            assert rec.retention_days == DEFAULT_DATASET_RETENTION_DAYS == 30
+            assert rec.content["evidence_kind"] == expected_kind.value
+            assert rec.content["source_kind"] == "decision_lock"
+            assert rec.content["action"] == expected_action
+            assert rec.content["decision_time_snapshot"]["symbol"] == "2330.TW"
+            assert rec.content["decision_time_snapshot"]["strategy_id"] == "strat-tw-semi"
+            assert rec.content["observation"] == [0.82, 0.67, 0.031, -0.015, 1.0]
+
+            # Re-extraction of the same lock is idempotent (one evidence item per lock)
+            dup_rec, dup_new = extract_decision_lock_evidence(lock, store=store)
+            assert dup_new is False
+            assert dup_rec.idempotent is True
+            assert dup_rec.dataset_version_id == rec.dataset_version_id
+
+        learn_records = store.list_by_dataset(
+            DatasetKind.LEARN,
+            tenant_id="tenant-alpha",
+            user_id="trader-1",
+        )
+        assert len(learn_records) == 4
+        assert {r.interaction_kind for r in learn_records} == {
+            InteractionKind.DECISION,
+            InteractionKind.REJECTION,
+            InteractionKind.DEFERRAL,
+            InteractionKind.INTERVENTION,
+        }
+        handoffs = store.list_handoffs_for_tenant(tenant_id="tenant-alpha", pending_only=True)
+        assert len(handoffs) == 4
+        assert {h["interaction_kind"] for h in handoffs} == set(DECISION_EVIDENCE_KINDS)
+        assert all(h["dataset_kind"] == "learn" and "record" in h for h in handoffs)
+
+    def test_extract_four_kinds_from_journal_entries_one_item_per_entry(self) -> None:
+        store = AgoraDatasetStore(backend="memory")
+        journal_cases = [
+            (
+                {
+                    "entry_id": "jrnl-decision-1",
+                    "tenant_id": "tenant-alpha",
+                    "user_id": "trader-1",
+                    "title": "Confirmed 2330.TW breakout entry",
+                    "raw_text": "Entered full planned size after foreign institutional buy flow confirmed.",
+                    "verdict": "approve",
+                    "action": "enter",
+                    "symbol": "2330.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T01:30:00Z",
+                    "confidence": {"value": 0.85},
+                    "probability": {"value": 0.70},
+                    "expected_value": {"net": 0.04, "downside": -0.01},
+                    "event_time": "2026-11-27T01:35:00Z",
+                },
+                InteractionKind.DECISION,
+                "enter",
+            ),
+            (
+                {
+                    "entry_id": "jrnl-rejection-1",
+                    "tenant_id": "tenant-alpha",
+                    "user_id": "trader-1",
+                    "title": "Rejected low-liquidity small-cap candidate",
+                    "raw_text": "Rejected entry signal because 5-day average volume fell below threshold.",
+                    "tags": ["rejection", "low_liquidity"],
+                    "symbol": "3008.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T01:40:00Z",
+                    "event_time": "2026-11-27T01:42:00Z",
+                },
+                InteractionKind.REJECTION,
+                "reject",
+            ),
+            (
+                {
+                    "entry_id": "jrnl-deferral-1",
+                    "tenant_id": "tenant-alpha",
+                    "user_id": "trader-1",
+                    "title": "Deferred add until 13:00 volume check",
+                    "raw_text": "Deferred adding to 2317.TW until afternoon session liquidity confirms.",
+                    "decision": "defer",
+                    "symbol": "2317.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T01:50:00Z",
+                    "event_time": "2026-11-27T01:55:00Z",
+                },
+                InteractionKind.DEFERRAL,
+                "defer",
+            ),
+            (
+                {
+                    "entry_id": "jrnl-intervention-1",
+                    "tenant_id": "tenant-alpha",
+                    "user_id": "trader-1",
+                    "title": "Trimmed position size by half on TAIFEX divergence",
+                    "raw_text": "Rule suggested full hold; manually trimmed 50% due to futures basis drop.",
+                    "modifications": {"action": "reduce", "size_hint": "small"},
+                    "tags": ["2330.TW", "risk_trim"],
+                    "symbol": "2330.TW",
+                    "strategy_id": "strat-tw-semi",
+                    "data_cutoff": "2026-11-27T02:00:00Z",
+                    "event_time": "2026-11-27T02:05:00Z",
+                },
+                InteractionKind.INTERVENTION,
+                "reduce",
+            ),
+        ]
+
+        for entry, expected_kind, expected_action in journal_cases:
+            assert classify_decision_evidence_kind(entry) == expected_kind
+            rec, is_new = extract_journal_entry_evidence(entry, store=store)
+            assert is_new is True
+            assert rec.evidence_id == f"ev-journal-{entry['entry_id']}"
+            assert rec.dataset_kind == DatasetKind.LEARN
+            assert rec.interaction_kind == expected_kind
+            assert rec.retention_days == DEFAULT_DATASET_RETENTION_DAYS == 30
+            assert rec.content["source_kind"] == "decision_journal"
+            assert rec.content["evidence_kind"] == expected_kind.value
+            assert rec.content["action"] == expected_action
+            assert rec.content["decision_time_snapshot"]["symbol"] == entry["symbol"]
+            assert rec.content["decision_time_snapshot"]["available_data_cutoff"] == entry["data_cutoff"]
+
+            dup_rec, dup_new = extract_journal_entry_evidence(entry, store=store)
+            assert dup_new is False
+            assert dup_rec.idempotent is True
+            assert dup_rec.dataset_version_id == rec.dataset_version_id
+
+        learn_records = store.list_by_dataset(
+            DatasetKind.LEARN,
+            tenant_id="tenant-alpha",
+            user_id="trader-1",
+        )
+        assert len(learn_records) == 4
+        assert {r.interaction_kind for r in learn_records} == {
+            InteractionKind.DECISION,
+            InteractionKind.REJECTION,
+            InteractionKind.DEFERRAL,
+            InteractionKind.INTERVENTION,
+        }
+
+    def test_retention_and_growth_budget_stated(self) -> None:
+        assert DEFAULT_DATASET_RETENTION_DAYS == 30
+        assert ESTIMATED_DECISION_EVIDENCE_BYTES == 2048
+        assert MAX_DECISION_EVIDENCE_PER_TRADER_PER_DAY == 50
+        assert MAX_DECISION_EVIDENCE_GROWTH_BYTES_PER_TRADER_PER_DAY == 50 * 2048
+        assert DECISION_EVIDENCE_RETENTION_BUDGET["items_per_lock_or_journal_entry"] == 1
+        assert DECISION_EVIDENCE_RETENTION_BUDGET["retention_days"] == 30
+        assert DECISION_EVIDENCE_RETENTION_BUDGET["max_growth_bytes_per_trader_per_day"] == 102400
 

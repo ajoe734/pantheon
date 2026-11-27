@@ -223,3 +223,125 @@ def test_attach_step_probabilities_feeds_the_evaluator() -> None:
 def test_attach_step_probabilities_is_a_no_op_without_a_policy() -> None:
     assert attach_step_probabilities({}, {"sessions": []}) == {}
     assert attach_step_probabilities({"policy": {}}, {"sessions": []}) == {}
+
+
+def test_four_decision_evidence_kinds_with_snapshot_translate_and_train_bc() -> None:
+    snapshot_base = {
+        "decision_time": "2026-11-27T02:00:00Z",
+        "available_data_cutoff": "2026-11-27T01:59:00Z",
+        "symbol": "2330.TW",
+        "strategy_id": "strat-tw-semi",
+        "strategy_version_id": "v2",
+        "strategy_spec_registry_id": "reg-tw-semi",
+        "event_kind": "entry",
+        "suggested_action": "enter",
+        "confidence": {"value": 0.8},
+        "probability": {"value": 0.65},
+        "expected_value": {"net": 0.03, "downside": -0.015},
+    }
+    versions = [
+        AgoraDatasetVersion.from_record(
+            {
+                **_record("dsv-dec", evidence_id="ev-lock-1", content={
+                    "source_kind": "decision_lock",
+                    "evidence_kind": "decision",
+                    "strategy_id": "strat-tw-semi",
+                    "decision_time_snapshot": snapshot_base,
+                }),
+                "interaction_kind": "decision",
+            }
+        ),
+        AgoraDatasetVersion.from_record(
+            {
+                **_record("dsv-rej", evidence_id="ev-lock-2", content={
+                    "source_kind": "decision_lock",
+                    "evidence_kind": "rejection",
+                    "strategy_id": "strat-tw-semi",
+                    "decision_time_snapshot": {**snapshot_base, "confidence": {"value": 0.35}},
+                }),
+                "interaction_kind": "rejection",
+            }
+        ),
+        AgoraDatasetVersion.from_record(
+            {
+                **_record("dsv-def", evidence_id="ev-jrnl-3", content={
+                    "source_kind": "decision_journal",
+                    "evidence_kind": "deferral",
+                    "strategy_id": "strat-tw-semi",
+                    "decision_time_snapshot": {**snapshot_base, "probability": {"value": 0.45}},
+                }),
+                "interaction_kind": "deferral",
+            }
+        ),
+        AgoraDatasetVersion.from_record(
+            {
+                **_record("dsv-int", evidence_id="ev-jrnl-4", content={
+                    "source_kind": "decision_journal",
+                    "evidence_kind": "intervention",
+                    "strategy_id": "strat-tw-semi",
+                    "modifications": {"action": "reduce", "size_hint": "small"},
+                    "decision_time_snapshot": {**snapshot_base, "expected_value": {"net": -0.01, "downside": -0.03}},
+                }),
+                "interaction_kind": "intervention",
+            }
+        ),
+    ]
+
+    payload = build_dataset_payload(versions, dataset_id="dsv-trader-decisions")
+    lineage = build_dataset_lineage(versions, payload)
+
+    assert payload["strategy_id"] == "strat-tw-semi"
+    assert len(payload["sessions"]) == 4
+    assert [s["evidence_kind"] for s in payload["sessions"]] == [
+        "decision",
+        "rejection",
+        "deferral",
+        "intervention",
+    ]
+    assert [s["steps"][0]["action"] for s in payload["sessions"]] == [
+        "enter",
+        "reject",
+        "defer",
+        "reduce",
+    ]
+    assert all(s["decision_time_snapshot"]["symbol"] == "2330.TW" for s in payload["sessions"])
+    assert lineage["interaction_kinds"] == ["decision", "rejection", "deferral", "intervention"]
+
+    artifact = train(payload)
+    attach_step_probabilities(artifact, payload)
+    evaluation = evaluate(artifact, payload)
+    assert evaluation["action_match_rate"] is not None
+    assert set(artifact["policy"]["action_labels"]) == {"enter", "reject", "defer", "reduce"}
+
+
+def test_single_decision_evidence_version_trains_and_evaluates() -> None:
+    single = AgoraDatasetVersion.from_record(
+        {
+            **_record(
+                "dsv-single-dec",
+                evidence_id="ev-lock-single",
+                content={
+                    "source_kind": "decision_lock",
+                    "evidence_kind": "decision",
+                    "strategy_id": "strat-tw-semi",
+                    "decision_time_snapshot": {
+                        "decision_time": "2026-11-27T02:00:00Z",
+                        "available_data_cutoff": "2026-11-27T01:59:00Z",
+                        "symbol": "2330.TW",
+                        "strategy_id": "strat-tw-semi",
+                        "event_kind": "entry",
+                        "suggested_action": "enter",
+                        "confidence": {"value": 0.8},
+                        "probability": {"value": 0.65},
+                        "expected_value": {"net": 0.03, "downside": -0.015},
+                    },
+                },
+            ),
+            "interaction_kind": "decision",
+        }
+    )
+    payload = build_dataset_payload([single])
+    artifact = train(payload)
+    attach_step_probabilities(artifact, payload)
+    evaluation = evaluate(artifact, payload)
+    assert evaluation["action_match_rate"] == 1.0
