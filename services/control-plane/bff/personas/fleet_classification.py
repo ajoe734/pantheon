@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+from services.control_plane.persona.persona_policy_resolver import non_trading_identity_source
+
 PURPOSE_TRADING = "trading"
 PURPOSE_ADVISORY = "advisory_assistant"
 PURPOSE_UNKNOWN = "unknown"
@@ -31,7 +33,7 @@ PURPOSE_FILTERS = frozenset({PURPOSE_TRADING, PURPOSE_ADVISORY, PURPOSE_UNKNOWN,
 DATA_SCOPE_FILTERS = frozenset({DATA_SCOPE_REGULAR, DATA_SCOPE_TEST, DATA_SCOPE_UNKNOWN, "all"})
 ARCHIVED_FILTERS = frozenset({"exclude", "only", "include"})
 
-_ADVISORY_CLASSES = frozenset({"agora_servant", "consult_panel"})
+_ADVISORY_CLASSES = frozenset({"agora_servant", "consult_panel", "agora_advisor"})
 _TEST_SCOPE_VALUES = frozenset({"test", "acceptance", "fixture", "synthetic"})
 # Values a create request may declare; the test-like ones reuse the set above.
 DECLARABLE_DATA_SCOPES = frozenset({DATA_SCOPE_REGULAR}) | _TEST_SCOPE_VALUES
@@ -65,15 +67,12 @@ def _truthy(record: Mapping[str, Any], *keys: str) -> bool:
 
 def classify_persona_purpose(record: Mapping[str, Any]) -> Tuple[str, str]:
     """Return ``(purpose, source)`` from canonical role metadata."""
+    advisory_source = non_trading_identity_source(record)
+    if advisory_source:
+        return PURPOSE_ADVISORY, advisory_source
     persona_class = _text(record, "persona_class", "personaClass")
-    if persona_class in _ADVISORY_CLASSES:
-        return PURPOSE_ADVISORY, "persona_class"
     if persona_class == "trading":
         return PURPOSE_TRADING, "persona_class"
-    # Agora servants are also identifiable by their user-private scope with
-    # no execution authority; that is explicit canonical metadata too.
-    if _text(record, "agora_user_id", "agoraUserId") and _text(record, "execution_authority") == "none":
-        return PURPOSE_ADVISORY, "agora_scope"
     # Records created through the canonical persona provisioning coordinator,
     # or carrying a trading mandate/stage, are trading personas.
     if _text(record, "provisioning_idempotency_key", "provisioning_request_hash"):

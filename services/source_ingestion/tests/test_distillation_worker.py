@@ -1625,4 +1625,55 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         assert [j.source_id for j in claimed] == ["src-fresh-new"]
         assert fresh_job.job_id == claimed[0].job_id
 
+    def test_proposer_failed_dead_letter_and_skipped_row_redriven_at_most_once(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        proposer_reason = (
+            "hypothesis_compiler_failed: proposer_failed:SemanticExtractionClientError"
+        )
+        dl_job = queue.enqueue_source_record(
+            _normalized_source("src-proposer-dl", tenant_id="default"), enqueued_at=100.0
+        )
+        _force_dead_letter(queue, dl_job, reason=proposer_reason)
+
+        skipped_job = queue.enqueue_source_record(
+            _normalized_source("src-proposer-skip", tenant_id="default"), enqueued_at=110.0
+        )
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=110.0 WHERE job_id=?",
+                (proposer_reason, skipped_job.job_id),
+            )
+
+        out = queue.redrive_extraction_unavailable_dead_letters(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert out == {"redriven": [dl_job.job_id], "superseded": []}
+        assert queue.dead_letter_count() == 0
+
+        reopened = queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert reopened == [skipped_job.job_id]
+
+        # If the redriven dead letter is claimed and fails with proposer_failed again,
+        # mark_retry_or_dead_letter returns it directly to dead_letter and it is not redriven a second time.
+        claimed = queue.claim_due(
+            worker_id="w", lease_seconds=30.0, now=200.0, job_ids=[dl_job.job_id]
+        )[0]
+        started = queue.begin_job(claimed, lease_seconds=30.0, now=200.0)
+        status = queue.mark_retry_or_dead_letter(
+            started, error=proposer_reason, base_delay_seconds=5.0, now=201.0
+        )
+        assert status == DistillationJobStatus.DEAD_LETTER
+        assert queue.dead_letter_count() == 1
+        assert queue.redrive_extraction_unavailable_dead_letters(
+            requested_by="ctl", tenant_id="default", now=300.0
+        ) == {"redriven": [], "superseded": []}
+        assert queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=300.0
+        ) == []
+
+
 

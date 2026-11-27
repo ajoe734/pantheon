@@ -3,13 +3,14 @@
   "task_id": "AGORA-DECISION-EVIDENCE-KINDS-20261127",
   "title": "Trader decisions and rejections and deferrals and interventions become learning evidence",
   "owner": "Antigravity2",
-  "reviewer": "Claude",
+  "reviewer": "Antigravity",
   "review_independence": {
     "owner": "Antigravity2",
     "owner_family": "Antigravity",
-    "reviewer": "Claude",
-    "reviewer_family": "Claude",
-    "independent": true
+    "reviewer": "Antigravity",
+    "reviewer_family": "Antigravity",
+    "independent": false,
+    "capacity_exception": "Original reviewer Claude became terminally unavailable (quota_terminal until 2026-11-30T12:00Z); supervisor promotion-drain fallback reassigned reviewer to Antigravity when no other family had capacity (SUP-PROMOTION-DRAIN-TERMINAL-FALLBACK-20261127)."
   },
   "problem_register_class": "RC4",
   "register_row": "docs/operations/problem-register.md RC4 table, Agora row (SD_AGORA_SERVANT_CORE_2026-11-27.md §7.3, §12 T4)",

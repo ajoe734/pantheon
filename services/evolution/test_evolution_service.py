@@ -713,6 +713,218 @@ def test_cancel_from_proposed():
     assert r.json()["decision_state"] == "canceled"
 
 
+@pytest.fixture
+def pool_publication_authority(monkeypatch, tmp_path):
+    """Real strict BFF authentication and history route behind the owner HTTP seam."""
+    import base64
+    import hashlib
+    import hmac
+    import io
+    import time
+    import urllib.request
+    from types import SimpleNamespace
+    from urllib.error import HTTPError
+    from fastapi import FastAPI
+    from services.control_plane.bff.auth.policy import extract_identity
+    from services.control_plane.bff.tests import test_persona_pool_publish_route as routes
+    from services.persona.pool_publish_port import membership_digest
+
+    secret = "test-publication-authority-secret-32-characters"
+    for key, value in {"PANTHEON_BFF_AUTH_MODE": "strict", "PANTHEON_BFF_AUTH_STUB": "false",
+                       "PANTHEON_BFF_JWT_SECRET": secret, "PANTHEON_BFF_JWT_ISSUER": "test-issuer",
+                       "PANTHEON_BFF_JWT_AUDIENCE": "test-audience", "EVOLUTION_AUTH_MODE": "token",
+                       "EVOLUTION_AUTH_TOKEN": "test-evolution-shared", "EVOLUTION_AUTH_ALLOWED_TENANTS": "default",
+                       "PANTHEON_BFF_URL": "http://publication-owner.test"}.items():
+        monkeypatch.setenv(key, value)
+
+    def token(**overrides):
+        now = int(time.time())
+        claims = {"sub": "persona-pool-cycle", "roles": ["persona_pool_publisher"],
+                  "tenant_id": "default", "allowed_tenants": ["default"],
+                  "iss": "test-issuer", "aud": "test-audience", "iat": now, "nbf": now,
+                  "exp": now + 300, **overrides}
+        encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=")
+        signed = encode(b'{"alg":"HS256","typ":"JWT"}') + b"." + encode(json.dumps(claims).encode())
+        return (signed + b"." + encode(hmac.new(secret.encode(), signed, hashlib.sha256).digest())).decode()
+
+    members = [{"artifact_ref": "artifact-a", "checksum": "sha256:" + "a" * 64,
+                "stage": "active", "risk_weight": 1.0}]
+    history = {"published": {"2": {"pool_version": 2, "status": "published", "members": members,
+                "approval_decision_id": "apv-persona-pool-test-v2", "envelope_artifact_id": "artifact-v2",
+                "envelope_version": "1.2.0"}},
+               "current_envelope": {"pool_version": 2, "artifact_id": "artifact-v2", "version": "1.2.0"}}
+    read_store = routes.create_in_memory_read_surface_ports()
+    command_store = routes.CommandStore(str(tmp_path / "commands.jsonl"))
+    service = routes.PersonaService(write_owner=read_store, read_store=read_store,
+                                   ranking_write_owner=read_store, command_store=command_store)
+    bff = FastAPI()
+    bff.include_router(routes.create_personas_router(service=service, get_read_store=lambda: read_store,
+                       get_command_store=lambda: command_store, extract_identity_fn=extract_identity))
+    monkeypatch.setattr(routes.personas_lifecycle, "_pool_publisher", lambda auth: SimpleNamespace(history=lambda *a: history))
+    monkeypatch.setattr(routes.personas_lifecycle, "_ensure_persona_exists", lambda *a: None)
+    bff_client = TestClient(bff)
+    original_urlopen = urllib.request.urlopen
+    reads = []
+
+    def owner_http(request, timeout):
+        if not request.full_url.startswith("http://publication-owner.test/"):
+            return original_urlopen(request, timeout=timeout)
+        reads.append(request.full_url)
+        response = bff_client.get(request.full_url.replace("http://publication-owner.test", ""),
+                                  headers=dict(request.header_items()))
+        if response.status_code != 200:
+            raise HTTPError(request.full_url, response.status_code, "owner refused", {}, None)
+        return io.StringIO(response.text)
+
+    monkeypatch.setattr(urllib.request, "urlopen", owner_http)
+    headers = dict(client.headers)
+    client.headers.update({"Authorization": "Bearer test-evolution-shared", "X-Tenant-Id": "default",
+                          "X-Pool-Publication-Authorization": "Bearer " + token()})
+    yield SimpleNamespace(history=history, token=token, reads=reads, digest=membership_digest({"members": members}))
+    client.headers.clear()
+    client.headers.update(headers)
+
+
+def _pool_test_membership_digest():
+    from services.persona.pool_publish_port import membership_digest
+    return membership_digest({"members": [{"artifact_ref": "artifact-a", "checksum": "sha256:" + "a" * 64,
+                                           "stage": "active"}]})
+
+
+def _pending_pool_publication():
+    return propose({"target_type": "persona", "target_id": "persona-pool-test", "persona_id": "persona-pool-test",
+                    "action_type": "flag_for_review", "created_by_id": "persona-svc", "risk_level": "low",
+                    "metadata": {"decision_kind": "pool_envelope_publication", "paper_only": True,
+                                 "membership_digest": _pool_test_membership_digest()}})
+
+
+def _withdrawal_body():
+    return {"tenant_id": "default", "persona_id": "persona-pool-test",
+            "actor_role": "evolution_controller", "actor_id": "persona-svc",
+            "membership_digest": _pool_test_membership_digest(), "superseded_by": "apv-persona-pool-test-v2",
+            "note": "publication_membership_already_confirmed"}
+
+
+def test_pool_publication_superseded_is_not_pending_and_replay_preserves_record(pool_publication_authority):
+    d = _pending_pool_publication()
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"]}
+    path = f"/api/evolution/proposals/{d['decision_id']}/supersede"
+    first = client.post(path, json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["decision_state"] == "superseded"
+    assert first.json()["metadata"]["superseded_reason"] == body["note"]
+    assert client.post(path, json=body).json() == first.json()
+    pending = client.get("/api/evolution/proposals", params={"target_id": d["target_id"], "decision_state": "proposed,reviewed"})
+    assert pending.status_code == 200 and pending.json() == []
+
+
+@pytest.mark.parametrize("field,value", [("tenant_id", "foreign"), ("actor_id", "operator"),
+    ("persona_id", "foreign"), ("membership_digest", "other"), ("actor_role", "operator"),
+    ("superseded_by", "unverified"), ("note", "other")])
+def test_pool_publication_withdrawal_rejects_wrong_binding(field, value, pool_publication_authority):
+    d = _pending_pool_publication()
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"], field: value}
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=body)
+    assert out.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+def test_pool_publication_withdrawal_cannot_override_an_operator_decision(pool_publication_authority):
+    d = _pending_pool_publication()
+    advance_to_reviewed(d["decision_id"])
+    advance_to_approved(d["decision_id"])
+    body = {**_withdrawal_body(), "tenant_id": d["tenant_id"]}
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=body)
+    assert out.status_code == 409
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "approved"
+
+
+def test_pool_publication_withdrawal_cannot_supersede_other_proposal_kinds(pool_publication_authority):
+    d = propose()
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede",
+                      json={**_withdrawal_body(), "tenant_id": d["tenant_id"]})
+    assert out.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+def test_pool_publication_withdrawal_cas_preserves_concurrent_operator_approval(monkeypatch, pool_publication_authority):
+    d = _pending_pool_publication()
+    advance_to_reviewed(d["decision_id"])
+    put = evo_main.store.put
+    def operator_wins(decision):
+        if decision.decision_state == "superseded":
+            monkeypatch.setattr(evo_main.store, "put", put)
+            advance_to_approved(d["decision_id"])
+        return put(decision)
+    monkeypatch.setattr(evo_main.store, "put", operator_wins)
+    out = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede",
+                      json={**_withdrawal_body(), "tenant_id": d["tenant_id"]})
+    assert out.status_code == 422
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "approved"
+
+
+@pytest.mark.parametrize("credential", ["missing", "forged", "wrong_subject", "wrong_role", "wrong_tenant",
+                                         "expired", "wrong_issuer", "wrong_audience"])
+def test_pool_publication_actor_fields_cannot_replace_authenticated_service(credential, pool_publication_authority):
+    authority = pool_publication_authority
+    d = _pending_pool_publication()
+    claims = {"wrong_subject": {"sub": "other-service"}, "wrong_role": {"roles": ["operator"]},
+              "wrong_tenant": {"tenant_id": "foreign", "allowed_tenants": ["foreign"]},
+              "expired": {"exp": 1}, "wrong_issuer": {"iss": "foreign"},
+              "wrong_audience": {"aud": "foreign"}}
+    if credential == "missing":
+        del client.headers["X-Pool-Publication-Authorization"]
+    else:
+        value = "forged.actor.claims" if credential == "forged" else authority.token(**claims[credential])
+        client.headers["X-Pool-Publication-Authorization"] = "Bearer " + value
+    response = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=_withdrawal_body())
+    assert response.status_code == 403, response.text
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+@pytest.mark.parametrize("mode", ["permissive", "stub"])
+def test_pool_publication_authority_requires_strict_owner_auth(mode, pool_publication_authority, monkeypatch):
+    d = _pending_pool_publication()
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    if mode == "stub":
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    response = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=_withdrawal_body())
+    assert response.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+@pytest.mark.parametrize("mismatch", ["membership", "approval", "dispatched", "pointer", "newer_dispatch"])
+def test_pool_publication_withdrawal_requires_confirmed_owner_pins(mismatch, pool_publication_authority):
+    d = _pending_pool_publication()
+    history = pool_publication_authority.history
+    receipt = history["published"]["2"]
+    if mismatch == "membership":
+        receipt["members"][0]["stage"] = "trial"
+    elif mismatch == "approval":
+        receipt["approval_decision_id"] = "apv-persona-pool-other-v2"
+    elif mismatch == "dispatched":
+        receipt["status"] = "dispatched"
+    elif mismatch == "pointer":
+        history["current_envelope"]["artifact_id"] = "other"
+    else:
+        history["published"]["3"] = {**receipt, "pool_version": 3, "status": "dispatched"}
+    response = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=_withdrawal_body())
+    assert response.status_code == 403
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
+def test_pool_publication_withdrawal_owner_unavailable_preserves_pending(pool_publication_authority, monkeypatch):
+    import urllib.request
+    from urllib.error import URLError
+    d = _pending_pool_publication()
+    def unavailable(*args, **kwargs):
+        raise URLError("owner unavailable")
+    monkeypatch.setattr(urllib.request, "urlopen", unavailable)
+    response = client.post(f"/api/evolution/proposals/{d['decision_id']}/supersede", json=_withdrawal_body())
+    assert response.status_code == 503
+    assert client.get(f"/api/evolution/proposals/{d['decision_id']}").json()["decision_state"] == "proposed"
+
+
 def test_cancel_from_approved():
     d = propose()
     advance_to_reviewed(d["decision_id"])

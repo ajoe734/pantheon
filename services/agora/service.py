@@ -11,7 +11,11 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from .store import AgoraEvidenceStore, AgoraStore, DictRecord, build_agora_store
-from .write_authority import assert_authorized, is_authorized
+from .write_authority import WRITE_AUTHORITY_MATRIX, assert_authorized, is_authorized
+
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "enqueue"), ["operator", "admin", "trader"])
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "process"), ["system", "persona"])
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantSession", "purge"), ["system"])
 
 _logger = logging.getLogger(__name__)
 
@@ -182,6 +186,98 @@ class AgoraWriteService:
             payload=payload or {},
             created_at=created_at,
         )
+
+    # -------------------------------------------------------------------------
+    # Servant conversations (AGORA-SERVANT-SESSION-DURABLE-20261127)
+    # -------------------------------------------------------------------------
+    def ensure_servant_session(
+        self,
+        session_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+        operator_id: str,
+        persona_id: str,
+        actor_roles: Union[Sequence[str], str],
+        session_type: str = "interactive",
+        created_at: Optional[str] = None,
+    ) -> DictRecord:
+        assert_authorized("AgoraSession", "create", actor_roles)
+        return self.store.ensure_servant_session(
+            session_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            operator_id=operator_id,
+            persona_id=persona_id,
+            session_type=session_type,
+            created_at=created_at,
+        )
+
+    def get_servant_session(
+        self, session_id: str, *, tenant_id: str, user_id: str
+    ) -> Optional[DictRecord]:
+        """Owner-scoped read: another trader's (or tenant's) session reads as absent."""
+        session = self.store.get_servant_session(session_id)
+        if session is None:
+            return None
+        if str(session.get("tenantId")) != str(tenant_id) or str(session.get("userId")) != str(user_id):
+            return None
+        return session
+
+    def enqueue_servant_turn(
+        self, turn: Dict[str, Any], actor_roles: Union[Sequence[str], str]
+    ) -> tuple[bool, DictRecord]:
+        assert_authorized("AgoraServantTurn", "enqueue", actor_roles)
+        return self.store.enqueue_servant_turn(turn)
+
+    def list_servant_turns(
+        self, session_id: str, statuses: Sequence[str] = ("queued", "running")
+    ) -> List[DictRecord]:
+        return self.store.list_servant_turns(session_id, statuses)
+
+    def claim_servant_turn(
+        self,
+        *,
+        lease_owner: str,
+        actor_roles: Union[Sequence[str], str],
+        lease_seconds: float = 600,
+        now: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        assert_authorized("AgoraServantTurn", "process", actor_roles)
+        return self.store.claim_servant_turn(lease_owner=lease_owner, lease_seconds=lease_seconds, now=now)
+
+    def finish_servant_turn(
+        self,
+        turn: Dict[str, Any],
+        *,
+        status: str,
+        actor_roles: Union[Sequence[str], str],
+        answer_message_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        assert_authorized("AgoraServantTurn", "process", actor_roles)
+        return self.store.finish_servant_turn(
+            turn,
+            status=status,
+            answer_message_id=answer_message_id,
+            reason=reason,
+            finished_at=finished_at,
+        )
+
+    def purge_expired_servant_sessions(
+        self,
+        *,
+        actor_roles: Union[Sequence[str], str],
+        now: Optional[str] = None,
+        retention_days: Optional[int] = None,
+    ) -> Dict[str, int]:
+        """Named cleanup path: sessions untouched for 180 days (and their turns) are deleted."""
+        assert_authorized("AgoraServantSession", "purge", actor_roles)
+        kwargs: Dict[str, Any] = {"now": now}
+        if retention_days is not None:
+            kwargs["retention_days"] = retention_days
+        return self.store.purge_expired_servant_sessions(**kwargs)
 
     def submit_committee_memo(
         self,

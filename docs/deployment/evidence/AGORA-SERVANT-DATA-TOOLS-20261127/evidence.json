@@ -1,0 +1,151 @@
+{
+  "task_id": "AGORA-SERVANT-DATA-TOOLS-20261127",
+  "title": "Agora servant read-only data tools that return cited facts",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (§4.3, §10, §11; T2 in §12)",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T2)",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "base": "a4754247d (origin/dev, after AGORA-SERVANT-SESSION-DURABLE-20261127 #7943 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 #7942)",
+  "delivery_state": "source_and_tests_verified_worker_env_wired_hosted_proof_pending_deploy",
+  "design_choices": [
+    "Tool rounds run in agora-interaction-worker (AD-AG-05), in BFF code (services/control-plane/bff/agora/servant/), so a tool call is resolved by the BFF and never by the model.",
+    "Each round is one OpenClaw /structured call with SERVANT_TURN_SCHEMA (adapter-enforced keywords only; pinned by services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py). The conversation history (last 20 messages, T1) travels inside the turn packet.",
+    "The model shows a value only by writing a fact reference {{fN}}; the BFF renders value and unit from the tool result. Any other number in the model text that is not a stock code, a fact date or a number the trader wrote is replaced by 〔未引用數字〕 and recorded in metadata.tool_turn.number_guard.",
+    "broker_branch_flow reads the keyed tw_broker_top dataset through a new bounded source-ingest owner route instead of paging the tenant-wide source-records list.",
+    "If the provider fails after tools returned facts, the answer is a deterministic facts-only list (answer_mode=facts_only) so 分析分點 still returns cited rows."
+  ],
+  "acceptance_criteria": {
+    "ac1_fixed_read_only_tool_set_with_cited_facts": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/data_tools.py::ServantDataTools (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research)",
+        "fact shape: {id, tool, label, value, unit, source_id, connector_id | owner, as_of, freshness (AD-AG-07: fresh|stale|empty_fresh|unavailable|degraded|not_configured), query_hash, cited}",
+        "freshness SLAs: broker 4 days (weekend/holiday slack), MOPS 1 day, collector news 6 hours, market bars 4 days; an unconfigured source is not_configured and an owner error is unavailable, never an empty market"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_fixed_read_only_tool_set_matches_sd_4_3",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_every_fact_is_cited_with_freshness",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_stale_and_unconfigured_sources_are_never_shown_as_fresh",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_disclosure_and_news_reads_are_bounded_connector_pages"
+      ]
+    },
+    "ac2_max_four_rounds_and_no_model_number": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/tool_turn.py::run_tool_turn (MAX_TOOL_ROUNDS=4, MAX_CALLS_PER_ROUND=4; at most 5 provider calls per turn; must_answer_now after round 4)",
+        "services/control-plane/bff/agora/servant/tool_turn.py::render_answer (fact references rendered by the BFF; model numbers removed)"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_at_most_four_tool_rounds_then_the_model_must_answer",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_the_model_never_supplies_a_number_that_is_not_a_returned_fact",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_render_answer_keeps_only_fact_rendered_numbers"
+      ]
+    },
+    "ac3_broker_branch_flow_bounded_owner_read": {
+      "status": "verified_local_owner_integration",
+      "implementation": [
+        "services/source_ingestion/routers/ingest_operations.py::get_broker_branch_flow — GET /api/source-ingest/broker-branch-flow?symbols=&date_from=&date_to=&side=buy|sell|both&top= over keyed/tw_broker_top; reads only the requested session partitions; ≤20 symbols, ≤10 sessions, top ≤20 per side, ≤2000 rows; latest stored session by default; strict runtime auth (source_ingest_reader)",
+        "services/control-plane/bff/agora/servant/data_tools.py::SourceIngestToolClient — short-lived service JWT (role source_ingest_reader, turn tenant, iss/aud when configured)",
+        "the servant tool reads ≤5 symbols, top 3 per side"
+      ],
+      "tests": [
+        "services/source_ingestion/tests/test_broker_branch_flow_route.py (5 tests; the evidence repository is a tripwire, so the tenant-wide source-records list is never read)",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_broker_branch_flow_reads_keyed_dataset_through_bounded_owner_route",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_worker_jwt_passes_strict_source_ingest_auth_with_issuer_and_audience"
+      ]
+    },
+    "ac4_missing_data_never_from_memory": {
+      "status": "verified_local",
+      "implementation": [
+        "unknown tool or unconfigured/unavailable owner -> missing entry; model missing_data merged; answer ends with 「缺少的資料：…。我不會用模型記憶當作資料回答。」; memory numbers are removed by the number guard"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_uncovered_request_names_the_missing_data_and_never_answers_from_memory",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_no_tool_and_no_model_answer_still_reports_missing"
+      ]
+    },
+    "ac5_command_bar_context_same_route": {
+      "status": "verified_local",
+      "implementation": [
+        "services/control-plane/bff/agora/servant/router.py::ServantCommandContext — optional `context` {page, strategy_id, widget_id, selected_symbols ≤20, quick_task} on POST /bff/agora/servant/sessions/{session_id}/messages, stored on the trader message",
+        "services/control-plane/bff/agora/servant/data_tools.py::seeded_tool_calls — quick_task 「分析分點」/analyze_broker_branches runs broker_branch_flow on the selected symbols as the first tool round, without asking the model"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_command_bar_analyze_broker_branches_runs_broker_flow_on_selected_symbols",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_analyze_broker_branches_still_returns_rows_when_the_model_is_down",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_analyze_five_selected_symbols_fits_the_citation_budget"
+      ]
+    },
+    "ac6_default_flow_no_persona": {
+      "status": "verified_local",
+      "implementation": [
+        "no tool, schema field or provider call in the turn reaches a persona or a meeting; the free-form invoke_assistant_provider path is no longer used by the servant turn; metadata.tool_turn.persona_calls=0"
+      ],
+      "tests": [
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_default_flow_ask_with_data_makes_no_persona_or_meeting_call",
+        "services/control-plane/bff/tests/test_agora_servant_data_tools.py::test_turn_schema_has_no_persona_capability"
+      ]
+    },
+    "ac7_hosted_proof": {
+      "status": "pending_post_merge_dev_deploy",
+      "blocking_condition": "Resolved in source by PR #7968: docker-compose.yml agora-interaction-worker now sets PANTHEON_SOURCE_INGEST_API_URL (${PANTHEON_SOURCE_INGEST_API_URL:-http://source-ingest:8097}) and PANTHEON_RUNTIME_JWT_SECRET/ISSUER/AUDIENCE with the same fallback chain as the source-ingest service, plus a non-required source-ingest health dependency. The hosted proof runs after that PR is merged and Dev is redeployed.",
+      "procedure_after_deploy": [
+        "POST /bff/agora/servant/sessions/{id}/messages with content 分析分點 and context {quick_task: analyze_broker_branches, selected_symbols: [<held symbol, e.g. 2330>]}",
+        "GET /bff/agora/servant/sessions/{id}/stream: record the servant.message.completed citations (connector tw-finmind-broker-daily-report, as_of = latest stored session, source_id per row) and answer_mode",
+        "Record MOPS (tw-mops-official-disclosures) and news (collector-news-rss) freshness from the disclosures and news tool results (newest record time and freshness state)"
+      ],
+      "recorded": null,
+      "worker_env_wiring": {
+        "pr": 7968,
+        "artifact": "docker-compose.yml (agora-interaction-worker environment, depends_on)",
+        "verified": "docker compose --profile root --profile workers config renders the four variables on agora-interaction-worker; scripts/test_current_l12_compose_wiring.py, test_source_ingest_scheduler_health_compose_contract.py, test_persona_provisioning_compose_contract.py, test_dev_release_artifacts.py pass"
+      }
+    }
+  },
+  "contracts": {
+    "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml (POST /bff/agora/servant/sessions/{session_id}/messages, GET .../stream; ServantCommandContext, ServantMessageRequestV114, ServantCitedFact, ServantMessageCompletedEventData)",
+    "openapi_sha256": "see bundle_index.v1_14.json openapi.sha256 (asserted by test_v1_14_bundle_records_the_servant_data_tools_contract)",
+    "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json (routes + owner_contracts source-ingest and agora)",
+    "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json (route family agora.servant.data-tools.v1)",
+    "backend_routes_manifest": "unchanged: no new BFF path (scripts/bff_route_manifest_backend.py --check: routes match snapshot)",
+    "route_diff_baseline": "unchanged (scripts/bff_route_diff.py --check-baseline: matches)",
+    "openclaw_structured_schema": "services/control-plane/bff/agora/servant/tool_turn.py::SERVANT_TURN_SCHEMA; adapter source unchanged, contract test added"
+  },
+  "runtime_budget": {
+    "new_persistent_stores_or_tables": "none",
+    "new_recurring_jobs_or_timers": "none",
+    "writer": "the existing servant answer message (Agora owner append_session_message) now carries citations and a tool_turn summary",
+    "size": "≤30 citations per answer at ~400 B each, ≤ ~12 KB worst case (5 symbols × top 3 buy + top 3 sell = 30 facts measured at < 14 KB in test_analyze_five_selected_symbols_fits_the_citation_budget); a single-symbol 分析分點 is 6 facts ≈ 2.5 KB; a text-only answer adds ~0.5 KB of tool_turn metadata",
+    "growth_and_cap": "bounded by the T1 session cap (500 messages, so ≤250 answers per session) and 180-day session retention; no new growth path",
+    "cleanup": "existing T1 purge of servant sessions untouched for 180 days",
+    "llm_calls": "≤5 structured calls per servant turn (≤4 tool rounds + answer); 1 when no tool is needed",
+    "owner_reads_per_turn": "≤16 tool calls (4 rounds × 4); each source-records scan ≤3 pages of 200; the broker route reads ≤10 session partitions",
+    "cadence": "on demand, one turn per trader message"
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_agora_servant_sessions.py services/control-plane/bff/agora/servant/ services/control-plane/bff/agora/trading_data/ services/control-plane/bff/tests/test_agora_interaction_worker_runtime_wiring.py services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py services/source_ingestion/tests/test_broker_branch_flow_route.py services/source_ingestion/tests/test_history_availability.py services/source_ingestion/tests/test_datasets_keyed_write.py scripts/test_bff_route_diff.py scripts/test_agora_compat_manifest.py services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_package_boundary_prerequisite.py",
+      ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline"
+    ],
+    "tests_passed": 276,
+    "result": "276 passed; route manifest matches snapshot; route diff baseline matches"
+  },
+  "residual_findings": [
+    {
+      "summary": "agora-interaction-worker compose env lacked the source-ingest URL and runtime JWT secret/issuer/audience the servant tools need on hosted.",
+      "scope": "docker-compose.yml (agora-interaction-worker environment)",
+      "disposition": "resolved by PR #7968 after docker-compose.yml was added to the artifact contract; hosted confirmation is part of ac7"
+    },
+    {
+      "summary": "my_journal and institutional_facts are wired but will answer not_configured/unavailable in the worker until it has a decision-journal reader (the persona read client has no list_decision_journal_entries) and evaluation/memory owner URLs; they report the missing data instead of answering.",
+      "scope": "scripts/run_agora_interaction_worker.py owner wiring",
+      "disposition": "recorded; not required by the hosted proof"
+    },
+    {
+      "summary": "AgoraWriteService.list_decision_locks reads the whole decision-lock table and filters in process; my_decisions/my_shadow inherit that. Bounded today by the hosted lock count (0 on 2026-11-26).",
+      "scope": "services/agora/service.py",
+      "disposition": "recorded for the T4/T6 owners"
+    }
+  ]
+}
