@@ -49,8 +49,8 @@ log = logging.getLogger(__name__)
 
 _POOL_PUBLISH_RECORDS: Any = None
 
-# Host-issued least-privilege role for the persona daily pool cycle. It is accepted by the strategy-pool
-# publish route ONLY: no shared role set (read/write helpers) includes it, so every other route refuses it.
+# Host-issued least-privilege role for the persona daily pool cycle. Only the strategy-pool
+# publish and history routes accept it; shared read/write role sets exclude it.
 POOL_PUBLISH_SERVICE_ROLE = "persona_pool_publisher"
 
 
