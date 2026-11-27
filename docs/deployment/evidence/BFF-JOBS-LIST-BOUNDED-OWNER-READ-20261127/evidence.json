@@ -1,0 +1,67 @@
+{
+  "task_id": "BFF-JOBS-LIST-BOUNDED-OWNER-READ-20261127",
+  "class": "RC3 (with RC1 WP1.2 crawl instance)",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "cause": "GET /bff/jobs called JobReadPort.list_jobs_bff with neither page_size nor limit, so JobReadPort._fetch_source_records walked every source-ingest owner page up to _OWNER_MAX_PAGES (100 pages of 250; hosted holds 15,426 ingest runs across 62 pages, growing ~1,200 rows/day) just to render one 20-row BFF page. On hosted dev this took 10-18 s (stalling /management/jobs in the RC1 WP1.2 management crawl) and when one deep page timed out (e.g. page_token=12000), _fetch_source_records returned (False, records, False) and list_jobs_bff discarded all 12,000 rows already read, returning 53 jobs from other sources with source_ingestion=unreachable.",
+  "change": {
+    "ports/job_read.py": {
+      "bounded_limit": "JobReadPort.list_jobs_bff accepts limit: Optional[int] = None (clamped to >= 1) and passes it to _fetch_source_records. For bounded_list sources (source_ingestion), _fetch_source_records requests page_size = min(max(limit - len(records), 1), _OWNER_PAGE_SIZE) per owner page and stops as soon as len(records) >= limit or next_page_token is empty, slicing records[:limit]. Because each bounded owner answers newest-first, the newest (offset + page_size) rows from each source are sufficient for an exact newest-first merge across sources for the requested BFF page.",
+      "owner_total": "_fetch_source_records extracts page_info.total (int >= 0) from bounded owner responses as owner_total. list_jobs_bff computes diagnostics['total'] as the sum of max(owner_total, len(source_jobs)) for bounded sources that report a total plus len(source_jobs) for unbounded sources.",
+      "filters": "status is normalized and passed to bounded owners via the status query parameter; job_type filters self.sources so only the matching owner is queried.",
+      "partial_on_later_page_failure": "If a bounded owner fails (ok=False) after at least one owner page was already read (len(records) > 0), _fetch_source_records returns (True, records, 'partial', owner_total) instead of discarding the read rows. list_jobs_bff keeps those rows in the merged result, includes the source in healthy_sources, and sets degraded_sources[spec.name] = 'partial'. If the first owner page fails (records is empty), it returns (False, [], '', None) and reports degraded_sources[spec.name] = 'unreachable' with no fabricated rows or totals."
+    },
+    "jobs/router.py": {
+      "bounded_page_read": "GET /bff/jobs validates page_token upfront via page_slice([], page_token, page_size), computes offset = _page_offset(page_token), and calls read_store.list_jobs_bff with limit = offset + page_size and deadline_seconds = _jobs_list_deadline_seconds() (filtering kwargs via inspect.signature for backward compatibility with minimal test doubles).",
+      "total_and_next_page_token": "Uses diagnostics['total'] (bounded owners' reported totals + unbounded sources' counted rows) when present and no post-read filter narrowed raw_jobs, computing next_page_token = str(offset + page_size) if offset + page_size < total else None.",
+      "deadline_seconds": "_JOBS_LIST_DEADLINE_DEFAULT_SECONDS = 5.0 (configurable via PANTHEON_BFF_JOBS_LIST_DEADLINE_SECONDS, clamped to >= 0.1 s, and capped by remaining_management_read_budget() when a management read budget is active). Rationale: each owner GET is bounded by PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS (2.0 s) and all configured job owners are queried concurrently in JobReadPort's ThreadPoolExecutor; BFF page 1 (offset 0, page_size 20) needs 1 owner page per bounded source (<= 2.0 s) and deep pages up to offset + page_size <= 500 need at most 2 sequential owner pages (<= 4.0 s), so a 5.0 s whole-list deadline comfortably accommodates one slow owner page plus a follow-up page while cutting off a stalled source as degraded_sources[source] = 'timeout' well within the BFF's own management read budget and the RC1 WP1.2 crawl per-page render timeout (replacing the 10-18 s full 62-page walk)."
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_job_read_bounded_owner_list.py -> 13 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_job_read_bounded_owner_list.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py services/control-plane/bff/tests/test_bff_jobs_compact_rows.py services/control-plane/bff/tests/test_shell_summary_jobs_read.py services/control-plane/bff/tests/test_jobs_source_owner_contract.py services/control-plane/bff/tests/test_bff_jobs_newest_first.py services/control-plane/bff/tests/test_research_jobs_action_receipts.py -> 126 passed",
+      ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ci_test_inventory.py scripts/test_check_storage_manifest.py -> 29 passed"
+    ],
+    "covered_cases": [
+      "15,000 owner rows across 60 pages of 250: GET /bff/jobs?page_size=20 reads 1 owner page (page_size=20, no page_token), returns the 20 newest rows, and reports page_info.total=15000 with empty degraded_sources",
+      "page 3 (page_size=20&page_token=40) reads 1 owner page of 60 rows and returns rows 40..59 with next_page_token='60' and total=15000",
+      "deep page across multiple owner pages (page_size=50&page_token=500) reads 250 + 250 + 50 = 550 rows across 3 owner pages and never reads the remaining 14,450 rows",
+      "status=failed filter is forwarded to the bounded owner and total reflects the owner's filtered total",
+      "job_type=source_ingestion queries only the matching owner and reports its total; unbounded policy_learning rows (30) + bounded source_ingestion rows (15,000) merge newest-first with total=15030",
+      "failure on owner page 2 (offset 250) keeps owner page 1's 250 rows and reports degraded_sources={'source_ingestion': 'partial'} and surface status='degraded'",
+      "failure on owner page 1 (offset 0) returns no rows, total=0, and degraded_sources={'source_ingestion': 'unreachable'}",
+      "stalled owner is cut off by deadline_seconds while still blocked on an event and reported as degraded_sources={'policy_learning': 'timeout'} while healthy sources' rows and totals are returned",
+      "two bounded sources (15,000 and 9,000 rows) merge newest-first across sources with 1 owner page read per source and diagnostics['total'] == 24000"
+    ]
+  },
+  "runtime_budget": {
+    "new_writers_jobs_or_emitters": "none (0 new persistent writers, 0 recurring jobs, 0 emitters; storage-manifest unchanged)",
+    "per_request_owner_rows_read_before": "all source-ingest runs on every GET /bff/jobs request: 15,426 rows across 62 HTTP requests today, growing by ~1,200 rows (~5 owner pages) per day up to _OWNER_MAX_PAGES * _OWNER_PAGE_SIZE = 25,000 rows",
+    "per_request_owner_rows_read_after": "at most offset + page_size rows per bounded source (20 rows in 1 HTTP request for the default page 1 with page_size=20; capped by _OWNER_MAX_PAGES * _OWNER_PAGE_SIZE)"
+  },
+  "residual_findings": [
+    {
+      "domain": "Market data and source storage",
+      "owner_conversation": "cb4f6795",
+      "class": "RC3",
+      "finding": "source-ingest ingest runs (list_runs_page / ingest_runs) have no retention policy and grow by approximately 1,200 runs per day (15,426 runs across 62 pages on 2026-11-27). Bounding GET /bff/jobs removes the full-history scan from the BFF jobs page, but the underlying ingest run store in source-ingest still requires an owner retention bound under RC3."
+    }
+  ],
+  "hosted_acceptance": {
+    "status": "pending deploy",
+    "criteria": [
+      "Read-only after deploy (admin and viewer sessions): GET /bff/jobs?page_size=20 three times recording elapsed seconds, page_info.total, and meta.surfaces.job_list.degraded_sources",
+      "The next Root acceptance crawl passes /management/jobs or names a different failed read"
+    ]
+  },
+  "review_independence": {
+    "owner": "Antigravity",
+    "owner_family": "antigravity",
+    "reviewer": "Antigravity2",
+    "reviewer_family": "antigravity",
+    "exception_recorded": true,
+    "canonical_activity_event_id": "supervisor-task-reassigned-29674719d7758cc72012afeede0051cbfc023d0c62139d47a7c76d7182ccb127",
+    "reason": "Task was originally assigned to Claude (owner) / Antigravity (reviewer). After Claude lost its worker lease (lost-lease-843d4fca44bcf6030578acf3d7a42d1f7be28aeb5a3ff672dd69f189be3d0f88), supervisor reassigned owner to Antigravity and reviewer to Antigravity2 under review_independence_exception because no other model family had capacity (claude:cannot_take_task; claude2:cannot_take_task; codex:terminal_quota:codex1-1; codex1_1/codex1_2/copilot/piastra:configured_zero_capacity)."
+  }
+}

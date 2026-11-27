@@ -401,10 +401,382 @@
         "x-business-owner": "memory",
         "description": "Forwards to the existing owner. Authenticated read roles may request reads; operator/write roles are required for mutations. Memory preserves the verified caller credential and Governance authorizes retrieval/decisions. Consultation uses its already configured service credential after BFF role/tenant admission. Empty lists carry status=unavailable and a reason. Owner failures preserve unavailable/reason/fallback_used=false in the BFF error envelope. Only paper lesson candidates support quarantine; persona/institutional entry quarantine returns unavailable without a write."
       }
+    },
+    "/bff/agora/servant/paper-book": {
+      "get": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Get caller servant paper book",
+        "operationId": "get_agora_servant_paper_book_bff_agora_servant_paper_book_get",
+        "responses": {
+          "200": {
+            "description": "Caller's provisioned paper capital pool and paper RuntimeBinding with operator starting capital source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantPaperBookEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Trader servant paper book is not yet provisioned."
+          },
+          "409": {
+            "description": "Paper-only invariant conflict or owner readback failure."
+          }
+        },
+        "x-business-owner": "capital+runtime_manager",
+        "description": "PAPER-TRADER-BOOK-PROVISION-20261127: Reads the caller's single paper CapitalPool, active paper PersonaCapitalBinding, and active paper RuntimeBinding from the existing Capital and Runtime-Manager owners, including operator-configured starting capital and its source."
+      }
+    },
+    "/bff/agora/servant/paper-book/ensure": {
+      "post": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Provision or verify caller servant paper book on first paper use",
+        "operationId": "ensure_agora_servant_paper_book_bff_agora_servant_paper_book_ensure_post",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantPaperBookEnsureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Idempotent paper book provisioning receipt with single paper capital pool, paper RuntimeBinding, and operator starting capital source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantPaperBookEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "409": {
+            "description": "Non-paper stage rejected (canary/live forbidden) or owner provisioning conflict."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-business-owner": "capital+runtime_manager",
+        "description": "PAPER-TRADER-BOOK-PROVISION-20261127: On first paper use, ensures the caller's servant persona gets exactly one paper CapitalPool, one active paper PersonaCapitalBinding, and one active paper RuntimeBinding through the existing Capital and Runtime-Manager owners. Repeated calls are GET-first and idempotent. Rejects any canary or live stage before any owner write."
+      }
+    },
+    "/bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped shadow comparison",
+        "operationId": "get_shadow_comparison_bff_agora_trading_room_decision_events__decision_event_id__shadow_comparison_get",
+        "parameters": [
+          {
+            "name": "decision_event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Decision Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Four-party comparison (human_actual, private_servant, base_strategy, committee_variant), each with locked decision detail and settlement state. status ok|degraded for a decided event; status empty with comparison_state no_decision_recorded for the caller's own undecided event.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown decision or a decision the caller does not own; identical non-enumerating answer (reason decision_not_found). Operator roles are not widened here; the Management route keeps that audience."
+          },
+          "503": {
+            "description": "The composed Agora decision-lock owner is unavailable; no substitute is created (reason decision_lock_owner_unavailable)."
+          }
+        },
+        "x-business-owner": "agora-decision-lock+attribution",
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+      }
+    },
+    "/bff/agora/servant/sessions/{session_id}/messages": {
+      "post": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Queue one servant turn (command bar and conversation share this route)",
+        "operationId": "post_servant_session_message_bff_agora_servant_sessions__session_id__messages_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantMessageRequestV114"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Turn durably queued (AD-AG-05); the answer arrives on /stream."
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied or cross-user session."
+          },
+          "409": {
+            "description": "Session closed, full, or Idempotency-Key reused with a different message."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-business-owner": "agora+source-ingest",
+        "description": "AGORA-SERVANT-DATA-TOOLS-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. Uncovered requests list the missing data. No persona or meeting is called."
+      }
+    },
+    "/bff/agora/servant/sessions/{session_id}/stream": {
+      "get": {
+        "tags": [
+          "agora-servant"
+        ],
+        "summary": "Replayable servant session events",
+        "operationId": "stream_servant_session_bff_agora_servant_sessions__session_id__stream_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode).",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantMessageCompletedEventData"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied or cross-user session."
+          }
+        },
+        "x-business-owner": "agora"
+      }
     }
   },
   "components": {
     "schemas": {
+      "ServantPaperBookEnsureRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target_stage": {
+            "type": "string",
+            "default": "paper"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "allowed_deployment_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_ceiling": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtime_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capital_pool_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_gross_notional": {
+            "anyOf": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ServantPaperBookEnsureRequest"
+      },
+      "ServantPaperBookEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "object"
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "title": "ServantPaperBookEnvelope"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -551,6 +923,222 @@
           }
         },
         "description": "data contains the owner record/list. Memory review data contains entries (typed hits), lesson_candidates and owner authz. No locally generated records."
+      },
+      "ServantCommandContext": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Command-bar context (V6 §2.3). quick_task '分析分點' or 'analyze_broker_branches' with selected_symbols runs broker_branch_flow on those symbols in the first tool round.",
+        "properties": {
+          "page": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "widget_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "selected_symbols": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          },
+          "quick_task": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          }
+        }
+      },
+      "ServantMessageRequestV114": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ],
+        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127).",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "attachment_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServantCommandContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ServantCitedFact": {
+        "type": "object",
+        "required": [
+          "id",
+          "tool",
+          "label",
+          "value",
+          "unit",
+          "source_id",
+          "as_of",
+          "freshness",
+          "query_hash",
+          "cited"
+        ],
+        "description": "One fact returned by a servant read-only tool. Every number in a servant answer is one of these, rendered by the BFF.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string",
+            "enum": [
+              "market_bars",
+              "candidate_pool",
+              "candidate_ranking",
+              "broker_branch_flow",
+              "disclosures",
+              "news",
+              "my_decisions",
+              "my_journal",
+              "my_shadow",
+              "institutional_facts",
+              "propose_research"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {},
+          "unit": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale",
+              "empty_fresh",
+              "unavailable",
+              "degraded",
+              "not_configured"
+            ]
+          },
+          "query_hash": {
+            "type": "string"
+          },
+          "cited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServantMessageCompletedEventData": {
+        "type": "object",
+        "description": "data of the servant.message.completed / servant.message.degraded SSE event.",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "provider_status": {
+            "type": "string"
+          },
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {},
+          "truncated": {
+            "type": "boolean"
+          },
+          "citations": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {
+              "$ref": "#/components/schemas/ServantCitedFact"
+            }
+          },
+          "missing_data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool_rounds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "answer_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "model",
+              "facts_only",
+              "none",
+              null
+            ]
+          }
+        }
       }
     },
     "securitySchemes": {
