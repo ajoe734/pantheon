@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
+
+_logger = logging.getLogger("agora.shadow_mode")
 
 LOCK_SCHEMA = "AgoraHumanDecisionLock.v1"
 LOCK_RESOURCE = "AgoraDecisionLock"
@@ -628,11 +632,58 @@ _POLICY_LEARNING_TOKEN_ENVS = (
     "POLICY_LEARNING_SERVICE_TOKEN",
     "PANTHEON_POLICY_LEARNING_SERVICE_TOKEN",
     "POLICY_LEARNING_API_TOKEN",
+    "AGORA_HANDOFF_SERVICE_TOKEN",
 )
+POLICY_LEARNING_URL_ENVS = _POLICY_LEARNING_URL_ENVS
+POLICY_LEARNING_TOKEN_ENVS = _POLICY_LEARNING_TOKEN_ENVS
+
+_PUBLISHED_DEV_POLICY_LEARNING_TOKENS = frozenset(
+    {
+        "pantheon-local-policy-learning-service",
+        "replace-me-policy-learning-service-token",
+        "pantheon-local-agora-handoff-service-token",
+        "replace-me-agora-handoff-service-token",
+    }
+)
+_PLACEHOLDER_TOKEN_PREFIXES = (
+    "replace-me",
+    "replaceme",
+    "change-me",
+    "changeme",
+    "placeholder",
+    "example",
+    "sample",
+    "dummy",
+    "todo",
+    "your-",
+)
+
+
+def _is_enforced_deployment_posture() -> bool:
+    for env_name in ("PANTHEON_PERSISTENCE_POSTURE", "PERSISTENCE_POSTURE", "PANTHEON_ENV"):
+        raw = _clean(os.getenv(env_name)).lower()
+        if raw in {"stage", "staging", "staging-live", "prod", "production"} or raw.startswith(
+            ("staging", "prod")
+        ):
+            return True
+    return False
+
+
+def _is_published_or_placeholder_token(token: str) -> bool:
+    clean = _clean(token)
+    if not clean:
+        return False
+    if clean in _PUBLISHED_DEV_POLICY_LEARNING_TOKENS:
+        return True
+    norm = clean.lower().replace("_", "-")
+    return norm.startswith(_PLACEHOLDER_TOKEN_PREFIXES)
 
 
 class PolicyLearningImitationCandidateClient:
     """Tenant-bound client for policy-learning's /api/policy-learning/trader-imitation/candidates route."""
+
+    URL_ENVS = _POLICY_LEARNING_URL_ENVS
+    TOKEN_ENVS = _POLICY_LEARNING_TOKEN_ENVS
 
     def __init__(
         self,
@@ -657,12 +708,19 @@ class PolicyLearningImitationCandidateClient:
         return ""
 
     def _resolve_token(self) -> str:
+        enforced = _is_enforced_deployment_posture()
         if self._token is not None and _clean(self._token):
-            return _clean(self._token)
+            tok = _clean(self._token)
+            if enforced and _is_published_or_placeholder_token(tok):
+                return ""
+            return tok
         for env_name in _POLICY_LEARNING_TOKEN_ENVS:
             val = _clean(os.getenv(env_name))
-            if val:
-                return val
+            if not val:
+                continue
+            if enforced and _is_published_or_placeholder_token(val):
+                continue
+            return val
         return ""
 
     def _resolve_timeout(self) -> float:
@@ -690,7 +748,26 @@ class PolicyLearningImitationCandidateClient:
         base_url = self._resolve_base_url()
         token = self._resolve_token()
         if not base_url or not token:
-            return None
+            reason = (
+                "policy_learning_url_unconfigured"
+                if not base_url
+                else "policy_learning_token_unconfigured"
+            )
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient candidate source unconfigured (%s) for tenant=%s user=%s",
+                reason,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unconfigured",
+                "source": "unconfigured",
+                "unavailable_reason": reason,
+            }
 
         params: Dict[str, str] = {"user_id": clean_user}
         if clean_strategy:
@@ -712,14 +789,69 @@ class PolicyLearningImitationCandidateClient:
                     else str(raw_bytes or "").strip()
                 )
                 payload = json.loads(text) if text else None
-        except Exception:
-            return None
+        except urllib.error.HTTPError as exc:
+            reason = f"policy_learning_http_{exc.code}"
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient HTTP %s from %s for tenant=%s user=%s",
+                exc.code,
+                url,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": reason,
+            }
+        except Exception as exc:
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient request to %s failed for tenant=%s user=%s: %s",
+                url,
+                clean_tenant,
+                clean_user,
+                exc,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": "policy_learning_request_failed",
+            }
 
         if not isinstance(payload, Mapping):
-            return None
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient received invalid payload from %s for tenant=%s user=%s",
+                url,
+                clean_tenant,
+                clean_user,
+            )
+            return {
+                "candidate": None,
+                "candidates": [],
+                "decision_count": None,
+                "training_approved": False,
+                "state": "candidate_source_unavailable",
+                "source": "unavailable",
+                "unavailable_reason": "policy_learning_invalid_payload",
+            }
         resp_tenant = _clean(payload.get("tenant_id"))
         resp_user = _clean(payload.get("user_id"))
         if (resp_tenant and resp_tenant != clean_tenant) or (resp_user and resp_user != clean_user):
+            _logger.warning(
+                "PolicyLearningImitationCandidateClient scope mismatch from %s (expected=%s/%s got=%s/%s)",
+                url,
+                clean_tenant,
+                clean_user,
+                resp_tenant,
+                resp_user,
+            )
             return None
 
         raw_cands = payload.get("candidates")

@@ -679,7 +679,13 @@ class TradingRoomService:
                 raw = reader(clean_tenant, clean_user, clean_strategy or None)
 
         if isinstance(raw, Mapping):
-            if "candidate" in raw or "candidates" in raw or "decision_count" in raw:
+            if (
+                "candidate" in raw
+                or "candidates" in raw
+                or "decision_count" in raw
+                or "state" in raw
+                or "unavailable_reason" in raw
+            ):
                 cands_raw = raw.get("candidates")
                 cands_list = (
                     [dict(c) for c in cands_raw if isinstance(c, Mapping)]
@@ -696,7 +702,9 @@ class TradingRoomService:
                     "candidates": cands_list[:3],
                     "decision_count": raw.get("decision_count"),
                     "training_approved": bool(raw.get("training_approved", cand_obj is not None)),
-                    "source": "policy_learning",
+                    "state": str(raw.get("state") or "").strip() or None,
+                    "source": str(raw.get("source") or "policy_learning"),
+                    "unavailable_reason": str(raw.get("unavailable_reason") or "").strip() or None,
                 }
             # Direct candidate mapping
             cand_direct = dict(raw)
@@ -705,7 +713,9 @@ class TradingRoomService:
                 "candidates": [cand_direct],
                 "decision_count": cand_direct.get("decision_count"),
                 "training_approved": True,
+                "state": "ready",
                 "source": "policy_learning",
+                "unavailable_reason": None,
             }
         if isinstance(raw, (list, tuple)):
             cands_seq = [dict(c) for c in raw if isinstance(c, Mapping)]
@@ -714,14 +724,18 @@ class TradingRoomService:
                 "candidates": cands_seq[:3],
                 "decision_count": (cands_seq[0].get("decision_count") if cands_seq else None),
                 "training_approved": bool(cands_seq),
+                "state": "ready" if cands_seq else None,
                 "source": "policy_learning",
+                "unavailable_reason": None,
             }
         return {
             "candidate": None,
             "candidates": [],
             "decision_count": None,
             "training_approved": False,
+            "state": None,
             "source": "agora",
+            "unavailable_reason": None,
         }
 
     def _write_shadow_lock(
@@ -1078,21 +1092,28 @@ class TradingRoomService:
             decision_count=int(explicit_decision_count or 0),
             minimum_decisions_required=MIN_TRADER_DECISIONS_FOR_IMITATION,
             training_approved=bool(imitation_state.get("training_approved", False) or candidate is not None),
+            candidate_source_state=imitation_state.get("state"),
+            candidate_source_unavailable_reason=imitation_state.get("unavailable_reason"),
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
             strategy_id=clean_strategy,
         )
         comparison["snapshot_at"] = self.utc_now()
-        is_empty = comparison.get("comparison_state") in {
+        comp_state = comparison.get("comparison_state")
+        is_degraded = comp_state in {
+            "candidate_source_unconfigured",
+            "candidate_source_unavailable",
+        }
+        is_empty = comp_state in {
             "not_enough_decisions",
             "awaiting_training_approval",
             "pending_candidate_training",
         }
         return {
-            "status": "empty" if is_empty else "ok",
+            "status": "degraded" if is_degraded else ("empty" if is_empty else "ok"),
             "empty": is_empty,
             "owner": "agora",
-            "comparison_state": comparison.get("comparison_state"),
+            "comparison_state": comp_state,
             "data": comparison,
             "meta": {
                 "sources": {

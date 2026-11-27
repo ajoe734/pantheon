@@ -552,6 +552,8 @@ def compare_trader_imitation(
     decision_count: Optional[int] = None,
     minimum_decisions_required: int = MIN_TRADER_DECISIONS_FOR_IMITATION,
     training_approved: Optional[bool] = None,
+    candidate_source_state: Optional[str] = None,
+    candidate_source_unavailable_reason: Optional[str] = None,
     tenant_id: str = "",
     user_id: str = "",
     strategy_id: str = "",
@@ -622,6 +624,61 @@ def compare_trader_imitation(
         if training_approved is not None
         else (active_candidate is not None)
     )
+    clean_source_state = _clean(candidate_source_state)
+    clean_unavailable_reason = _clean(candidate_source_unavailable_reason) or None
+
+    if clean_source_state in {"candidate_source_unconfigured", "candidate_source_unavailable"} and active_candidate is None:
+        empty_agreement = bootstrap_luck_interval(
+            [],
+            resamples=resamples,
+            confidence_level=confidence_level,
+            seed=seed,
+            seed_key=f"{seed_prefix}|agreement",
+        )
+        empty_gap = bootstrap_luck_interval(
+            [],
+            resamples=resamples,
+            confidence_level=confidence_level,
+            seed=seed,
+            seed_key=f"{seed_prefix}|outcome_gap",
+        )
+        label_zh = (
+            "候選來源未設定（缺少 policy-learning 服務位址或認證權杖）"
+            if clean_source_state == "candidate_source_unconfigured"
+            else "候選來源暫時無法連線（policy-learning 服務無回應或拒絕請求）"
+        )
+        return {
+            "comparison_state": clean_source_state,
+            "status_label_zh": label_zh,
+            "unavailable_reason": clean_unavailable_reason or clean_source_state,
+            "tenant_id": _clean(tenant_id) or None,
+            "user_id": _clean(user_id) or None,
+            "strategy_id": clean_strategy or None,
+            "decision_count": effective_decision_count,
+            "minimum_decisions_required": min_req,
+            "remaining_decisions_needed": max(0, min_req - effective_decision_count),
+            "training_approved": False,
+            "compared_decision_count": 0,
+            "settled_comparison_count": 0,
+            "agreement_rate": None,
+            "agreement_count": 0,
+            "disagreement_count": 0,
+            "agreement_interval": empty_agreement,
+            "agreement_label": empty_agreement["label"],
+            "agreement_label_zh": empty_agreement["label_zh"],
+            "outcome_gap": None,
+            "outcome_gap_interval": empty_gap,
+            "outcome_gap_label": empty_gap["label"],
+            "outcome_gap_label_zh": empty_gap["label_zh"],
+            "finding_stated": False,
+            "differences": [],
+            "decisions": [],
+            "candidate": None,
+            "candidates": [],
+            "candidate_count": 0,
+            "max_candidates_kept": MAX_CANDIDATES_PER_TRADER_STRATEGY,
+            "computation_mode": NO_LANGUAGE_MODEL_PROOF,
+        }
 
     if effective_decision_count < min_req and active_candidate is None:
         empty_agreement = bootstrap_luck_interval(
