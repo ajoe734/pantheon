@@ -6378,6 +6378,29 @@
     "file": "services/registry/pg_store.py",
     "contains": "SUMMARY_INDEX_MAX_TENANT_VIEWS = 16"
    }
+  },
+  {
+   "name": "registry.entries stored lineage_index / summary_rev columns, partial index entries_lineage_index_idx, and stamp-validated incremental lineage adjacency cache",
+   "owner": "registry-svc schema and in-process lineage adjacency cache (services/registry/pg_store.py PostgresRegistryStore._ensure_lineage_index, backfill_lineage_index, list_lineage_rows; services/registry/storage.py _CompiledLineageGraphIndex, _CompiledLineageRowList, build_lineage_graph)",
+   "writer": "ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE SEQUENCE/FUNCTION/TRIGGER/INDEX IF NOT EXISTS + idempotent bounded batched backfill (LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED) at store bootstrap; reuses the BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn -> pantheon_registry_lineage_index_build + nextval('pantheon_registry_summary_rev_seq')) on every registry.entries write; in-process cache populated on read and updated incrementally in O(degree) time by summary_rev > max_rev delta query after writes",
+   "task": "REGISTRY-LINEAGE-READ-NO-FULL-SCAN-20261127",
+   "register_class": "RC1",
+   "cadence": "DDL and idempotent batched backfill run once at store bootstrap (10 batches x 1,000 rows = 7.56 s total, max single-batch lock 0.854 s on 9,944 hosted-shape rows; subsequent bootstrap check is 1 batch / 0 rows updated in 22.7 ms); shared trigger entries_strategy_summary_index_tg fires once per registry.entries INSERT or UPDATE OF payload (hosted ~300 rows/day); in-process lineage adjacency cache checked on every GET /api/registry/lineage read by one cheap aggregate query (count, max(summary_rev), sum(summary_rev) WHERE lineage_index IS NOT NULL, 4.8 ms measured) and refreshed via 1-row indexed delta read (0.10 ms / 6 buffers) on write",
+   "count_at_hosted_scale": "9,944 registry.entries rows (9,418 strategy_spec, 344 execution_bundle, 182 alpha_template); in-process cache holds 1 canonical by-id map of 9,944 compiled lineage rows plus at most LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 tenant-filtered views and their compiled adjacency indexes per registry-svc worker",
+   "size": "measured on Postgres 16 with 9,944 recorded-shape rows (9,418 strategy_spec, 344 execution_bundle, 182 alpha_template): lineage_index column = 4,081,370 B (3.89 MiB, 410.4 B avg/row, 646 B max/row; 409.9 B avg for strategy_spec, 472.8 B avg for execution_bundle, 320.3 B avg for alpha_template); summary_rev column = 79,552 B (8 B x 9,944 rows, shared with REGISTRY-SUMMARY-PAGE-NO-RESCAN-20261127); partial index entries_lineage_index_idx = 417,792 B (408 KiB); in-process lineage cache + 8 concurrent cold reads peak RSS (VmHWM) = 216.19-216.71 MiB (+126.81-127.33 MiB delta over 89.38 MiB idle, down from 460.61-541.42 MiB / +371.24-452.08 MiB before; Python tracemalloc peak delta 51.69 MiB vs 103.76-155.87 MiB before)",
+   "size_per_day": "about 300 new rows/day x (410.4 B lineage_index + ~24 B partial index tuple; summary_rev already shared with summary_index) = about 130 KB/day (~0.13 MB/day); in-place row updates replace lineage_index and summary_rev in the existing row (0 net logical growth after vacuum)",
+   "growth_per_day": "about 130 KB/day (~47 MB/year) in Postgres linear with new registry.entries rows; 0 B/day net in-process cache growth beyond the existing entry set and LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 eviction cap",
+   "growth": "about 130 KB/day (~47 MB/year) in Postgres; initial backfill on 9,944 rows took 7,558.9 ms across 10 batches of 1,000 rows (per-batch lock times 606.2-854.1 ms, max single-batch lock 854.1 ms < 1 s) and left updated_at unchanged",
+   "cap": "1 lineage_index JSONB (~410 B) and 1 shared summary_rev BIGINT (8 B) per object row in registry.entries; backfill bounded per call by LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000 and LINEAGE_INDEX_BACKFILL_MAX_BATCHES = 50; in-process lineage tenant view + adjacency cache bounded to LINEAGE_INDEX_MAX_TENANT_VIEWS = 16 with FIFO eviction",
+   "cleanup": "stored columns and partial index tuples follow registry.entries lifecycle (reclaimed by PostgreSQL VACUUM when rows are updated or deleted; non-object rows are set to NULL by trigger); in-process cache evicts oldest tenant view when len(_lineage_index_tenant_views) > LINEAGE_INDEX_MAX_TENANT_VIEWS (16), updates existing adjacency views incrementally on stamp change or evicts stale views on delete/retire, and supports full eviction via invalidate_lineage_index_cache(full=True)",
+   "readers": [
+    "services/registry/pg_store.py",
+    "services/registry/storage.py"
+   ],
+   "bound_proof": {
+    "file": "services/registry/storage.py",
+    "contains": "LINEAGE_INDEX_MAX_TENANT_VIEWS = 16"
+   }
   }
  ]
 }
