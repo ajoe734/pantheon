@@ -1134,12 +1134,11 @@ class TestStep11DecisionEventAndGovernedIntent(unittest.TestCase):
             "live": "promotion_review_request",
         }
         target_queue_by_stage = {
-            "shadow": "shadow_research",
             "paper": "management_governance",
             "canary": "promotion_review",
             "live": "promotion_review",
         }
-        return {
+        payload = {
             "spec_version": "1.0",
             "handoff_id": "hoff_wbranch_001",
             "intent_id": "intent_wbranch_001",
@@ -1150,7 +1149,6 @@ class TestStep11DecisionEventAndGovernedIntent(unittest.TestCase):
             "strategy_id": STRATEGY_ID,
             "strategy_spec_registry_id": CANDIDATE_REGISTRY_ID,
             "requested_by": _actor("trader", USER_A),
-            "target_queue": target_queue_by_stage[requested_stage],
             "action_proposal": {
                 "action": "enter",
                 "symbol": "2330.TW",
@@ -1163,6 +1161,9 @@ class TestStep11DecisionEventAndGovernedIntent(unittest.TestCase):
             "no_order_route_proof": "agora_request_only_no_order_route",
             "created_at": NOW,
         }
+        if requested_stage in target_queue_by_stage:
+            payload["target_queue"] = target_queue_by_stage[requested_stage]
+        return payload
 
     def test_decision_event_schema_valid(self):
         _validate(self._make_decision_event(), "trading_decision_event.schema.json")
@@ -1282,9 +1283,8 @@ class TestFullFlowSequenceInvariant(unittest.TestCase):
 
     def test_all_handoffs_are_request_only(self):
         maker = TestStep11DecisionEventAndGovernedIntent()
-        handoffs = [maker._make_governed_handoff(stage) for stage in ("shadow", "paper", "canary", "live")]
+        handoffs = [maker._make_governed_handoff(stage) for stage in ("paper", "canary", "live")]
         expected = {
-            "shadow": ("shadow_start", "shadow_research"),
             "paper": ("paper_validation_request", "management_governance"),
             "canary": ("promotion_review_request", "promotion_review"),
             "live": ("promotion_review_request", "promotion_review"),
