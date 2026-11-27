@@ -169,15 +169,6 @@ def test_summary_reports_windows_totals_cards_and_llm_calls(tmp_path):
     assert out["bounds"]["elapsed_ms"] >= 0
 
 
-def test_llm_calls_report_distinct_sources_and_calls_per_source(tmp_path):
-    queue = _queue_with_jobs(tmp_path)
-    _, ledger = _ledger(tmp_path, {})
-    for source_id, digest in (("a", "v1"), ("a", "v2"), ("b", "v1")):
-        assert ledger.reserve_attempt(source_id, digest) == "reserved"
-    llm = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
-    assert (llm["calls"], llm["distinct_sources"], llm["calls_per_source"]) == (3, 2, 1.5)
-
-
 def test_llm_cap_comes_from_the_writer_ledger(tmp_path):
     queue = _queue_with_jobs(tmp_path)
     _, ledger = _ledger(tmp_path, {}, calls=2, cap=250)

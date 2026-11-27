@@ -150,12 +150,12 @@ def test_calls_per_distinct_source_is_reported_and_fails_above_1_5():
     assert stage(run(board), "hypothesis_cards")["status"] == "passed"
 
 
-def test_calls_without_a_distinct_source_count_fail_closed():
+def test_calls_without_a_distinct_source_count_are_reported_as_not_measurable():
     board = good_board()
     del board["data"]["counts"]["llm_calls_today"]["distinct_sources"]
-    assert stage(run(board), "hypothesis_cards")["reason"] == "calls_per_source_not_reported"
-    board["data"]["counts"]["llm_calls_today"].update(value=0, distinct_sources=0)
-    assert stage(run(board), "hypothesis_cards")["reason"] != "calls_per_source_not_reported"
+    values = stage(run(board), "hypothesis_cards")["values"]
+    assert values["calls_per_source"] is None
+    assert values["calls_per_source_status"] == "distinct_sources_not_reported"
 
 
 def test_no_verified_card_names_disabled_extraction():

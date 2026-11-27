@@ -870,8 +870,7 @@ def _summary(tenant: str = "tenant-dev", **sections: Any) -> Dict[str, Any]:
             "unattributed_terminal_rows": 0,
         },
         "llm_calls": {"status": "ok", "source": "source_ingestion.l2_extraction_ledger", "scope": "service",
-                      "utc_day": "2026-11-21", "calls": 37, "distinct_sources": 30, "daily_cap": 400,
-                      "cap_source": "ledger"},
+                      "utc_day": "2026-11-21", "calls": 37, "daily_cap": 400, "cap_source": "ledger"},
         "hypothesis_cards": {
             "status": "ok", "source": "source_ingestion.distillation_queue", "today": 2, "total": 41,
             "newest": [
@@ -915,8 +914,7 @@ def test_discovered_lane_lists_open_demands_and_hypothesis_cards(monkeypatch) ->
     assert counts["collected_text_records"] == {"value": 120, "status": "ok"}
     assert counts["closed_text_records"] == {"value": 90, "status": "ok"}
     assert counts["dropped_irrelevant"] == {"value": 70, "status": "ok"}
-    assert counts["llm_calls_today"] == {"value": 37, "status": "ok", "cap": 400, "scope": "service",
-                                         "distinct_sources": 30}
+    assert counts["llm_calls_today"] == {"value": 37, "status": "ok", "cap": 400, "scope": "service"}
     summary = body["data"]["discovery_summary"]
     assert summary["closed_total"]["by_reason"]["l2_irrelevant"] == 8000
     assert summary["collected_by_source_family"] == {"news": 100, "paper": 20}

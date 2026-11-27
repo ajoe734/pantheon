@@ -802,7 +802,6 @@ def create_alpha_factory_router(
         if llm_count["status"] == "ok":
             llm_count["cap"] = _int_at(llm, "daily_cap")
             llm_count["scope"] = llm.get("scope")
-            llm_count["distinct_sources"] = _int_at(llm, "distinct_sources")
         counts = {
             "collected_text_records": _count(_int_at(records, "last_24h", "total"), records_surface),
             "closed_text_records": _count(_int_at(closed, "last_24h", "total"), closed_surface),

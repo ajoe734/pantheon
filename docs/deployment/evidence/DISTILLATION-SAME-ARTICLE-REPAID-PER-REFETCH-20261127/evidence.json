@@ -26,16 +26,7 @@
  "acceptance_1_hosted_measurement": {
   "status": "not_taken_by_this_worker",
   "why": "The auto worker environment has no hosted SSH credentials (no DEV_DEPLOY_SSH_* variables, no key or known_hosts) and gcloud does not start, so no hosted read was possible. Nothing in this file is a hosted measurement.",
-  "how_to_take_it": "python3 scripts/measure_refetch_version_diff.py /data/source-ingest/distill_job_queue.jsonl --prefix collector:collector-news-rss: --min-versions 3 --min-sources 20 (opens the SQLite mode=ro with query_only, prints counts and key names only, no article text, exit 1 when fewer than 20 sources qualify). Run through scripts/dev_vm_ssh.sh exec on a copy or read-only mount.",
-  "reports": [
-   "sources_measured",
-   "consecutive_pairs",
-   "pairs_extraction_text_changed",
-   "pairs_input_digest_changed",
-   "differing_field_counts (top:* and metadata:* keys)",
-   "sources_with_any_input_change"
-  ],
-  "tested_on": "synthetic queue of 21 sources x 3 versions (scripts/test_measure_refetch_version_diff.py): collector-only fields differing leaves extraction input digest unchanged; one body revision changes it"
+  "how_to_take_it": "Not in this delivery: the read-only script (opens the outbox SQLite mode=ro with query_only; for sources with >=3 versions compares consecutive distillation_source_versions payloads and prints counts and key names only: top-level and metadata keys that differ, extraction text changed, extraction_input_digest changed) is outside this task's artifact contract and exists only in commit a498a0e59 on the PR branch history (scripts/measure_refetch_version_diff.py with scripts/test_measure_refetch_version_diff.py, 2 tests passed). A follow-up task should land it and run it on hosted via scripts/dev_vm_ssh.sh."
  },
  "acceptance_4_residual_finding": {
   "owner": "market data and source storage owner (cb4f6795)",
@@ -48,7 +39,7 @@
   "acceptance_2_limits_per_source": "record_attempts rows are summed per source (reads sum every row of the source; new calls write the digest '' row). Existing per-digest rows keep counting until the 30-day prune. Limits stay 3 a day and 6 in total, now per source. ExtractionLedger.reserve_attempt/can_attempt/record_attempts keep their signatures; digest is ignored.",
   "acceptance_2_defect_reattempt": "A row stamped defect_reattempted=1 is extracted with reuse_answers=False, so its one call is made even when an answer for the same input exists; it still counts against the per-source limits and daily cap.",
   "acceptance_3_supersede": "On admission of a new version (inside the insert transaction) older versions of the source in pending or retry_wait are closed skipped 'superseded_by_newer_version: <newer job id>' and never called. Backlog admitted before the switch is closed the same way by claim_due. A version leased by another worker is closed by begin_job (before the attempt is counted and before any call) with DistillationSupersededError; a version already started finishes and its answer is reused by the newer one. The newest version is the only eligible one.",
-  "acceptance_5_probe": "The ledger calls row gains a sources column (distinct sources with a first call today); discovery_summary.llm_calls and the BFF alpha_factory llm_calls_today carry distinct_sources; acceptance/discovery_pipeline_day.py hypothesis_cards stage reports calls_per_source and fails above 1.5 (llm_calls_per_source_over_limit), and fails closed when calls exist but distinct_sources is not reported."
+  "acceptance_5_probe": "The ledger calls row gains a sources column (distinct sources with a first call today) and summary() reports distinct_sources and calls_per_source (also in the controller tick's extraction summary). acceptance/discovery_pipeline_day.py hypothesis_cards stage reports distinct_sources and calls_per_source and fails above 1.5 (llm_calls_per_source_over_limit) when the BFF board carries llm_calls_today.distinct_sources; when it does not, the stage reports calls_per_source_status=distinct_sources_not_reported and does not fail on it. Plumbing the ledger value through discovery_summary.llm_calls and the BFF alpha_factory llm_calls_today (one additive key each) is outside the artifact contract and is a follow-up (commit cbb236784 holds a tested version)."
  },
  "runtime_budget": {
   "scale_source": "hosted 24 h figures above",
@@ -62,17 +53,17 @@
  },
  "expected_effect": "Hosted day of 11/27: 78 sources took 211 paid answers (2.7 per source) and 55 sources queue 7-14 versions. After the change each source costs one call per distinct extraction input; waiting versions per source are at most one.",
  "tests": {
-  "focused": "services/source_ingestion/tests/test_hypothesis_extraction.py (unchanged input, changed input, failed never reused, digest tracks text/prompt/schema, per-source limits incl. legacy rows, defect re-attempt, reuse flag, newest version only), test_distillation_worker.py TestNewerVersionSupersedesOlder (ordering, retry_wait, concurrent lease, started version, pre-switch backlog), test_discovery_summary.py, test_bff_alpha_factory_contract.py, acceptance/test_discovery_pipeline_day.py, scripts/test_measure_refetch_version_diff.py",
-  "result": "295 passed (source_ingestion distillation worker/extraction/controller/discovery summary, measurement script, discovery probe) plus 45 passed (BFF alpha factory contract and discovery summary)"
+  "focused": "test_hypothesis_extraction.py (unchanged input, changed input, failed never reused, digest tracks text/prompt/schema, per-source limits incl. legacy rows, defect re-attempt, reuse flag, newest version only), test_distillation_worker.py TestNewerVersionSupersedesOlder (ordering, retry_wait, concurrent lease, started version, pre-switch backlog), acceptance/test_discovery_pipeline_day.py",
+  "result": "source_ingestion distillation worker/extraction/controller and discovery probe suites pass (see PR)"
  },
  "hosted_proof_pending": [
   "24 h after deploy, read-only: answered L2 events per distinct news source <= 1.2 (ledger events table, news sources), and at most one pending or retry_wait version per source (outbox)",
-  "discovery-pipeline release probe reports calls_per_source and does not fail above 1.5; on the switch day the ledger sources column undercounts sources that were already called before the switch, so judge the first full UTC day after deploy",
-  "hosted acceptance 1 measurement with scripts/measure_refetch_version_diff.py"
+  "probe calls_per_source gate needs the follow-up plumbing of distinct_sources into the BFF board; until then read ledger calls.sources / calls.n directly; on the switch day sources undercounts sources already called before the switch, so judge the first full UTC day",
+  "hosted acceptance 1 measurement (follow-up script)"
  ],
  "residual_findings": [
-  "Hosted measurement (acceptance 1) and the cb4f6795 collector decision (acceptance 4) are open: no hosted credentials in the worker environment.",
-  "Scope extension: discovery_summary.py and the BFF alpha_factory.py llm_calls_today gained one additive key (distinct_sources) because the probe reads the BFF board; neither is in the declared artifact list.",
+  "Hosted measurement (acceptance 1) and the cb4f6795 collector decision (acceptance 4) are open: the worker has no hosted credentials, and the measurement script is outside the artifact contract (commit a498a0e59).",
+  "Follow-up task needed (outside artifact contract): plumb distinct_sources from the ledger through services/source_ingestion/discovery_summary.py and services/control-plane/bff/console_gap/alpha_factory.py (tested in commit cbb236784) so the release probe gate on calls per source is live.",
   "pipeline.py and the collector bundle hash are unchanged by design."
  ]
 }
