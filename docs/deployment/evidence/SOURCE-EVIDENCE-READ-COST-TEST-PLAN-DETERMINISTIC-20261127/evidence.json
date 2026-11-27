@@ -270,6 +270,24 @@
       "container_auto_remove": true
     }
   },
+  "integration_refresh": {
+    "base_sha": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+    "sync_commit": "2f080af013860b42c3951b269504724ea3a709f2",
+    "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_evidence_read_cost.py",
+    "exit_status": 0,
+    "terminal_output": "...........                                                              [100%]\n=============================== warnings summary ===============================\n../../../../home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e470f33558462c32/lib/python3.12/site-packages/fastapi/testclient.py:1\n  /home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/e470f33558462c32/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n11 passed, 1 warning in 16.94s\n",
+    "elapsed_seconds": 18.001,
+    "test_file_sha256": "367d45e0df7d634dd5d016f2a58827b943c219efeb8daf209097b700c08d713f",
+    "schema_cleanup": {
+      "exit_status": 0,
+      "remaining_schema_count": 0
+    },
+    "container_stop_exit_status": 0,
+    "reason": "PR #7977 reopened for problem-register conflict after PR #7954 merged; synchronized current dev by merge to preserve the published history and permit a normal non-force push.",
+    "conflict_resolution": "Kept the source-evidence RC2 incident and the incoming aggregate-budget incident. All 20 other incoming files match dev exactly; only the three declared task artifacts differ from base.",
+    "previous_validation": "Original 20 consecutive real-PostgreSQL runs retained unchanged; test source hash is unchanged. This is one additional post-sync full-file run.",
+    "residual_findings": []
+  },
   "runtime_budget": "No recurring job, emitter, cache or hosted persistent writer added or changed. Optional measurement sink already existed; the counted repeat validation writes 20 task-scoped measurement/log pairs under /tmp (plus bounded baseline/candidate diagnostics), with no daily growth. Existing test schemas are dropped in finalizers; disposable PostgreSQL --rm container is stopped after validation. The checked-in manifest is a single static task artifact.",
   "delivery_boundary": "Source/test review only. This evidence makes no hosted deployment or hosted acceptance claim. Independent reviewer and canonical supervisor integration remain required.",
   "residual_findings": []
