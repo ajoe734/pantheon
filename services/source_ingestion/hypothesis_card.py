@@ -11,6 +11,7 @@ and every cited span must be an exact substring of the stored record text.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -214,6 +215,32 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
     )
 
 
+# Version of the extraction-input digest projection below. Bump it when the
+# digest must stop matching answers recorded under the previous projection.
+EXTRACTION_INPUT_DIGEST_VERSION = "l2_extraction_input.v1"
+
+
+def extraction_input_digest(text: str, *, source_record_id: str, origin: str) -> str:
+    """Digest of exactly what one paid HYPOTHESIS_CARD call sends to the model.
+
+    The model sees the prompt ``build_hypothesis_prompt`` renders from the
+    (already truncated) record text, the source record id and the origin, and is
+    held to ``hypothesis_card_model_schema()``. Hashing the rendered prompt
+    instead of the text alone means a prompt wording change, a schema change or
+    a schema version bump each yields a new digest, so an answer is only reused
+    for an identical request. Run-local fields (fetch time, collector run,
+    bundle hash, raw archive path) never reach the model and are not part of it.
+    """
+    payload = {
+        "v": EXTRACTION_INPUT_DIGEST_VERSION,
+        "schema_version": HYPOTHESIS_CARD_SCHEMA_VERSION,
+        "model_schema": hypothesis_card_model_schema(),
+        "prompt": build_hypothesis_prompt(text, source_record_id=source_record_id, origin=origin),
+    }
+    canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -345,9 +372,19 @@ def daily_cap_from_env(default: int = DEFAULT_DAILY_CALL_CAP) -> int:
         return default
 
 
-# Per record version: at most this many model calls a UTC day and in total.
+# Per source (summed over every version of it): at most this many model calls a
+# UTC day and in total. Each collector run admits a new version of an unchanged
+# article, so a per-version count would reset every hour.
 MAX_RECORD_ATTEMPTS_PER_DAY = 3
 MAX_RECORD_ATTEMPTS_TOTAL = 6
+# Ledger outcomes of a paid call that are reused for the same source and an
+# identical extraction input (the worker closes them as ``card``,
+# ``no_hypothesis`` and ``hypothesis_rejected``). ``failed`` is never reused, so
+# a fixed-defect re-attempt still gets its call. ``irrelevant`` is decided
+# before any call from title and metadata as well as the text; it costs nothing
+# to decide again and is never reused across versions.
+REUSABLE_ANSWER_STATUSES = ("card", "no_hypothesis", "rejected")
+INPUT_REUSED_EVENT = "input_reused"
 # Attempt rows of records untouched this long are pruned (the record has long
 # been closed or carded by then: 6 attempts at 3 a day take 2 days).
 RECORD_ATTEMPT_RETENTION_DAYS = 30
@@ -363,9 +400,11 @@ class ExtractionLedger:
 
     Every model call is counted against the daily cap, including a retry of the
     same record on the same day (a failing provider must not spend past the
-    cap). A record version is called at most 3 times a UTC day and 6 times in
-    total; the ledger also counts calls that ended in a timeout or a
-    billing-only provider failure.
+    cap). A source is called at most 3 times a UTC day and 6 times in total,
+    summed over all its versions; the ledger also counts calls that ended in a
+    timeout or a billing-only provider failure. ``input_answers`` keeps the
+    terminal answer of each (source, extraction input digest) so an unchanged
+    version reuses it instead of paying again.
     """
 
     def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
@@ -387,6 +426,10 @@ class ExtractionLedger:
                 # The cap in force when the day's last call was reserved, so a
                 # reader in another process reports the writer's cap.
                 c.execute("ALTER TABLE calls ADD COLUMN cap INTEGER")
+            if "sources" not in cols:
+                # Distinct sources that got their first call of the day: with
+                # ``n`` this gives calls per distinct source in one point read.
+                c.execute("ALTER TABLE calls ADD COLUMN sources INTEGER NOT NULL DEFAULT 0")
             c.execute(
                 "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
                 " source_id TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT NOT NULL)"
@@ -402,11 +445,20 @@ class ExtractionLedger:
             # The former "one free reservation per record and day" table let a
             # failing provider retry the same record without counting it.
             c.execute("DROP TABLE IF EXISTS reservations")
+            # Rows written before per-source counting are keyed by version
+            # digest; new calls go to the digest '' row of the source and every
+            # read sums all rows of the source (a PK prefix range).
             c.execute(
                 "CREATE TABLE IF NOT EXISTS record_attempts (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " total INTEGER NOT NULL, day TEXT NOT NULL, day_n INTEGER NOT NULL,"
                 " last_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, digest))"
             )
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS input_answers (source_id TEXT NOT NULL, input_digest TEXT NOT NULL,"
+                " outcome TEXT NOT NULL, detail TEXT NOT NULL, event_id INTEGER, card TEXT,"
+                " day TEXT NOT NULL, PRIMARY KEY(source_id, input_digest))"
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS input_answers_day_idx ON input_answers(day)")
 
     @property
     def daily_cap(self) -> int:
@@ -429,40 +481,40 @@ class ExtractionLedger:
         """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
         Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
-        record version already had 3 calls today) and ``record_total_limit``
-        (6 calls in total). A refusal consumes nothing.
+        source already had 3 calls today, over all its versions) and
+        ``record_total_limit`` (6 calls in total). A refusal consumes nothing.
+        ``digest`` is accepted for callers that pass the version digest; the
+        limits no longer depend on it.
         """
+        del digest
         with self._lock, self._conn() as c:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
             day = _today()
-            row = None
+            today_n = 0
             if source_id:
-                row = c.execute(
-                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
-                    (source_id, digest),
-                ).fetchone()
-                if row is not None:
-                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
-                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
-                        return RECORD_TOTAL_LIMIT
-                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
-                        return RECORD_DAILY_LIMIT
+                total, today_n = self._source_attempts(c, source_id, day)
+                if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                    return RECORD_TOTAL_LIMIT
+                if today_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                    return RECORD_DAILY_LIMIT
             used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             if (used_row[0] if used_row else 0) >= self._daily_cap:
                 return DAILY_CAP_REACHED
+            first_today = 1 if source_id and today_n == 0 else 0
             c.execute(
-                "INSERT INTO calls(day, n, cap) VALUES(?, 1, ?)"
-                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap",
-                (day, self._daily_cap),
+                "INSERT INTO calls(day, n, cap, sources) VALUES(?, 1, ?, ?)"
+                " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap,"
+                " sources = sources + excluded.sources",
+                (day, self._daily_cap, first_today),
             )
             if source_id:
                 c.execute(
-                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,?,1,?,1)"
+                    "INSERT INTO record_attempts(source_id, digest, total, day, day_n) VALUES(?,'',1,?,1)"
                     " ON CONFLICT(source_id, digest) DO UPDATE SET total = total + 1,"
                     " day_n = CASE WHEN day = excluded.day THEN day_n + 1 ELSE 1 END, day = excluded.day",
-                    (source_id, digest, day),
+                    (source_id, day),
                 )
                 cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
                 c.execute("DELETE FROM record_attempts WHERE day < ?", (cutoff,))
@@ -472,21 +524,27 @@ class ExtractionLedger:
         """Consume one call; False when the cap or a per-record limit refuses."""
         return self.reserve_attempt(source_id, digest) == RESERVED
 
+    @staticmethod
+    def _source_attempts(c: sqlite3.Connection, source_id: str, day: str) -> tuple[int, int]:
+        """(calls in total, calls today) of one source, summed over all its version rows."""
+        row = c.execute(
+            "SELECT COALESCE(SUM(total), 0), COALESCE(SUM(CASE WHEN day = ? THEN day_n ELSE 0 END), 0)"
+            " FROM record_attempts WHERE source_id=?",
+            (day, source_id),
+        ).fetchone()
+        return int(row[0] or 0), int(row[1] or 0)
+
     def can_attempt(self, source_id: str = "", digest: str = "") -> str:
-        """Read-only check whether one call may be reserved now for (source_id, digest)."""
+        """Read-only check whether one call may be reserved now for this source (any version)."""
+        del digest
         with self._lock, self._conn() as c:
             day = _today()
             if source_id:
-                row = c.execute(
-                    "SELECT total, day, day_n FROM record_attempts WHERE source_id=? AND digest=?",
-                    (source_id, digest),
-                ).fetchone()
-                if row is not None:
-                    total, row_day, day_n = int(row[0]), str(row[1]), int(row[2])
-                    if total >= MAX_RECORD_ATTEMPTS_TOTAL:
-                        return RECORD_TOTAL_LIMIT
-                    if row_day == day and day_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
-                        return RECORD_DAILY_LIMIT
+                total, today_n = self._source_attempts(c, source_id, day)
+                if total >= MAX_RECORD_ATTEMPTS_TOTAL:
+                    return RECORD_TOTAL_LIMIT
+                if today_n >= MAX_RECORD_ATTEMPTS_PER_DAY:
+                    return RECORD_DAILY_LIMIT
             used_row = c.execute("SELECT n FROM calls WHERE day=?", (day,)).fetchone()
             if (used_row[0] if used_row else 0) >= self._daily_cap:
                 return DAILY_CAP_REACHED
@@ -507,31 +565,74 @@ class ExtractionLedger:
             )
             if source_id:
                 c.execute(
-                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=?",
-                    (reason[:500], source_id, digest),
+                    "UPDATE record_attempts SET last_reason=? WHERE source_id=? AND digest=''",
+                    (reason[:500], source_id),
                 )
 
     def record_attempts(self, source_id: str, digest: str = "") -> dict[str, Any]:
+        """Calls of one source summed over its versions (``digest`` is ignored)."""
+        del digest
+        day = _today()
+        with self._conn() as c:
+            total, today_n = self._source_attempts(c, source_id, day)
+            reason_row = c.execute(
+                "SELECT last_reason FROM record_attempts WHERE source_id=? AND last_reason <> ''"
+                " ORDER BY day DESC, digest = '' DESC LIMIT 1",
+                (source_id,),
+            ).fetchone()
+        return {"total": total, "today": today_n, "last_reason": str(reason_row[0]) if reason_row else ""}
+
+    def input_answer(self, source_id: str, input_digest: str) -> Optional[dict[str, Any]]:
+        """The terminal answer already recorded for this source and extraction input, if any."""
+        if not source_id or not input_digest:
+            return None
         with self._conn() as c:
             row = c.execute(
-                "SELECT total, day, day_n, last_reason FROM record_attempts WHERE source_id=? AND digest=?",
-                (source_id, digest),
+                "SELECT outcome, detail, event_id, card FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
             ).fetchone()
         if row is None:
-            return {"total": 0, "today": 0, "last_reason": ""}
+            return None
         return {
-            "total": int(row[0]),
-            "today": int(row[2]) if row[1] == _today() else 0,
-            "last_reason": str(row[3] or ""),
+            "outcome": str(row[0]),
+            "detail": str(row[1] or ""),
+            "event_id": int(row[2]) if row[2] is not None else None,
+            "card": json.loads(row[3]) if row[3] else None,
         }
+
+    def put_input_answer(
+        self, source_id: str, input_digest: str, *, outcome: str, detail: str,
+        event_id: Optional[int], card: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Keep the first terminal answer per (source, input); prune answers unused for 30 days."""
+        if not source_id or not input_digest or outcome not in REUSABLE_ANSWER_STATUSES:
+            return
+        day = _today()
+        with self._lock, self._conn() as c:
+            c.execute(
+                "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
+                " VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id, input_digest) DO NOTHING",
+                (source_id, input_digest, outcome, detail[:500], event_id,
+                 json.dumps(dict(card), sort_keys=True) if card is not None else None, day),
+            )
+            cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
+            c.execute("DELETE FROM input_answers WHERE day < ?", (cutoff,))
+
+    def touch_input_answer(self, source_id: str, input_digest: str) -> None:
+        """A reuse keeps the answer alive while versions of the source keep arriving."""
+        with self._lock, self._conn() as c:
+            c.execute(
+                "UPDATE input_answers SET day=? WHERE source_id=? AND input_digest=?",
+                (_today(), source_id, input_digest),
+            )
 
     def summary(self) -> dict[str, Any]:
         """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT n, timeouts, billing, unavailable FROM calls WHERE day=?", (_today(),)
+                "SELECT n, timeouts, billing, unavailable, sources FROM calls WHERE day=?", (_today(),)
             ).fetchone()
-        n, timeouts, billing, unavailable = (int(v or 0) for v in (row or (0, 0, 0, 0)))
+        n, timeouts, billing, unavailable, sources = (int(v or 0) for v in (row or (0, 0, 0, 0, 0)))
         return {
             "day": _today(),
             "calls": n,
@@ -539,6 +640,8 @@ class ExtractionLedger:
             "timeout_calls": timeouts,
             "billing_failed_calls": billing,
             "unavailable_calls": unavailable,
+            "distinct_sources": sources,
+            "calls_per_source": round(n / sources, 3) if sources else None,
         }
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:
@@ -561,13 +664,15 @@ class ExtractionLedger:
     def record(
         self, source_id: str, outcome: str, detail: str = "",
         usage: Optional[Mapping[str, Any]] = None,
-    ) -> None:
+    ) -> Optional[int]:
+        """Append one outcome event; returns its event id."""
         usage_json = json.dumps(dict(usage), sort_keys=True) if usage is not None else None
         with self._lock, self._conn() as c:
-            c.execute(
+            cursor = c.execute(
                 "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
                 (datetime.now(timezone.utc).isoformat(), source_id, outcome, detail[:500], usage_json),
             )
+            return int(cursor.lastrowid) if cursor.lastrowid is not None else None
 
     def events(self, source_id: str | None = None) -> list[dict[str, Any]]:
         with self._conn() as c:
@@ -767,18 +872,63 @@ class HypothesisExtractor:
         value = getattr(self._client, "hypothesis_deadline_seconds", None)
         return float(value) if isinstance(value, (int, float)) else hypothesis_card_deadline_seconds()
 
-    def extract(self, source: Any, *, digest: str = "") -> ExtractionOutcome:
-        """Extract (or replay the cached card for) one source version."""
+    def extract(self, source: Any, *, digest: str = "", reuse_answers: bool = True) -> ExtractionOutcome:
+        """Extract (or replay the cached card for) one source version.
+
+        ``reuse_answers=False`` (a fixed-defect re-attempt) skips the reuse of an
+        earlier answer for the same extraction input and always makes the call,
+        within the per-source attempt limits and the daily cap.
+        """
         if digest:
             cached = self._ledger.get_card(source.source_id, digest)
             if cached is not None:
                 return ExtractionOutcome("card", card=cached, detail="cached")
-        outcome = self._extract(source, digest)
+        outcome = self._extract(source, digest, reuse_answers=reuse_answers)
         if digest and outcome.card is not None:
+            # Also for a reused card: the discovery summary reads the card of
+            # the version it reports.
             self._ledger.put_card(source.source_id, digest, outcome.card)
         return outcome
 
-    def _extract(self, source: Any, digest: str = "") -> ExtractionOutcome:
+    def _reuse_answer(self, sid: str, input_digest: str) -> Optional[ExtractionOutcome]:
+        """The earlier terminal answer for this exact input, as this version's outcome."""
+        prior = self._ledger.input_answer(sid, input_digest)
+        if prior is None or prior["outcome"] not in REUSABLE_ANSWER_STATUSES:
+            return None
+        if prior["outcome"] == "card" and not isinstance(prior["card"], dict):
+            return None
+        event_id = prior["event_id"]
+        self._ledger.touch_input_answer(sid, input_digest)
+        self._ledger.record(
+            sid, INPUT_REUSED_EVENT,
+            json.dumps({"reused_event_id": event_id, "outcome": prior["outcome"], "input_digest": input_digest},
+                       sort_keys=True),
+        )
+        detail = f"reused L2 event {event_id}, extraction input unchanged"
+        if prior["detail"]:
+            detail += f"; {prior['detail']}"
+        return ExtractionOutcome(
+            prior["outcome"], card=prior["card"] if prior["outcome"] == "card" else None, detail=detail,
+            extra={"reused_event_id": event_id, "input_digest": input_digest},
+        )
+
+    def _answered(
+        self, sid: str, input_digest: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
+        *, usage: Optional[Mapping[str, Any]] = None, card: Optional[Mapping[str, Any]] = None,
+    ) -> ExtractionOutcome:
+        """Record the answer of a paid call and keep it for an unchanged later version."""
+        event_id = self._ledger.record(sid, status, card["testability"] if card is not None else detail, usage=usage)
+        self._ledger.put_input_answer(
+            sid, input_digest, outcome=status, detail=detail, event_id=event_id, card=card,
+        )
+        merged = dict(extra or {})
+        merged["event_id"] = event_id
+        merged["input_digest"] = input_digest
+        if card is not None:
+            return ExtractionOutcome("card", card=dict(card), detail=detail, extra=merged)
+        return ExtractionOutcome(status, detail=detail, extra=merged)
+
+    def _extract(self, source: Any, digest: str = "", *, reuse_answers: bool = True) -> ExtractionOutcome:
         from services.source_ingestion.semantic_extraction import (
             ExtractionTaskType,
             SemanticExtractionAdmission,
@@ -826,6 +976,13 @@ class HypothesisExtractor:
                 sid, "admission_denied", json.dumps(explanation, sort_keys=True, ensure_ascii=False),
                 {"reason": admission.denial_reason, "code": admission.denial_code},
             )
+        # One paid call per source and unchanged extraction input: a later
+        # version whose prompt input is identical reuses the terminal answer.
+        input_digest = extraction_input_digest(prompt_text, source_record_id=sid, origin=origin)
+        if reuse_answers:
+            reused = self._reuse_answer(sid, input_digest)
+            if reused is not None:
+                return reused
         reservation = self._ledger.reserve_attempt(sid, digest)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
@@ -854,7 +1011,9 @@ class HypothesisExtractor:
                 return self._done(sid, "unavailable", detail, usage=usage)
             return self._done(sid, "failed", detail, usage=usage)
         if result.is_abstained or result.hypothesis_card is None:
-            return self._done(sid, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage)
+            return self._answered(
+                sid, input_digest, "no_hypothesis", result.abstention_reason or "model_abstained", usage=usage,
+            )
         try:
             prediction_rejections: list[dict[str, Any]] = []
             card = finalize_card(
@@ -865,13 +1024,14 @@ class HypothesisExtractor:
                 prediction_rejections=prediction_rejections,
             )
         except CardRejected as exc:
-            return self._done(sid, "rejected", str(exc), {"code": exc.code}, usage=usage)
+            return self._answered(sid, input_digest, "rejected", str(exc), {"code": exc.code}, usage=usage)
         for rejection in prediction_rejections:
             self._ledger.record(sid, "prediction_dropped", json.dumps(rejection, sort_keys=True))
         if card["testability"] == "not_testable":
-            return self._done(sid, "no_hypothesis", "not_testable", usage=usage)
-        self._ledger.record(sid, "card", card["testability"], usage=usage)
-        return ExtractionOutcome("card", card=card, extra={"prediction_rejections": prediction_rejections})
+            return self._answered(sid, input_digest, "no_hypothesis", "not_testable", usage=usage)
+        return self._answered(
+            sid, input_digest, "card", "", {"prediction_rejections": prediction_rejections}, usage=usage, card=card,
+        )
 
     def _done(
         self, sid: str, status: str, detail: str, extra: Optional[dict[str, Any]] = None,
@@ -913,6 +1073,7 @@ __all__ = [
     "CardRejected",
     "DAILY_CAP_REACHED",
     "DEFAULT_DAILY_CALL_CAP",
+    "EXTRACTION_INPUT_DIGEST_VERSION",
     "ExtractionLedger",
     "ExtractionOutcome",
     "FIXED_DEFECT_REATTEMPT_OUTCOMES",
@@ -921,12 +1082,15 @@ __all__ = [
     "HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS",
     "HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS",
     "HypothesisExtractor",
+    "INPUT_REUSED_EVENT",
     "MAX_RECORD_ATTEMPTS_PER_DAY",
     "MAX_RECORD_ATTEMPTS_TOTAL",
     "RECORD_DAILY_LIMIT",
     "RECORD_TOTAL_LIMIT",
     "RESERVED",
+    "REUSABLE_ANSWER_STATUSES",
     "card_to_strategy_seed_metadata",
+    "extraction_input_digest",
     "extractor_from_env",
     "finalize_card",
     "fixed_defect_for_skip_reason",
