@@ -515,25 +515,10 @@ def _transport_supports_paper_risk_gate(
             env_names = owner_envs.get(owner) or ()
             if not any(str(env_map.get(name) or "").strip() for name in env_names):
                 return False
-        return (
-            any(
-                str(env_map.get(name) or "").strip()
-                for name in (
-                    "CAPITAL_GOVERNANCE_BASE_URL",
-                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_ID",
-                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN",
-                    "PANTHEON_PERSONA_ENROLLMENT_PROPOSER_TOKEN_FILE",
-                    "OPENCLAW_GATEWAY_URL",
-                )
-            )
-            or getattr(coordinator, "risk_policy_drafter", None) is not None
-        )
+        return True
     owners = getattr(transport, "owners", None)
     if isinstance(owners, (Mapping, set, frozenset, list, tuple)):
-        return (
-            all(owner in owners for owner in ("capital", "governance"))
-            and getattr(coordinator, "risk_policy_drafter", None) is not None
-        )
+        return all(owner in owners for owner in ("capital", "governance"))
     return False
 
 

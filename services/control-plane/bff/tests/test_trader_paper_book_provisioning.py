@@ -166,8 +166,18 @@ def owner_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     capital_dir.mkdir(parents=True, exist_ok=True)
     rm_store_path = tmp_path / "runtime_manager" / "bindings.json"
     rm_store_path.parent.mkdir(parents=True, exist_ok=True)
+    from scripts import issue_dev_paper_principals as issuer
+    from services.governance.paper_approval_scope import DEV_PAPER_PROVISIONER_SUBJECT
+
+    grant_file = tmp_path / "dev-paper-grant.json"
+    grant_file.write_text(issuer.GOVERNANCE_GRANT_CONTENT, encoding="utf-8")
+    grant_file.chmod(0o600)
 
     for name, value in {
+        "PANTHEON_ENV": "dev",
+        "GOVERNANCE_DEV_PAPER_APPROVAL_ENABLED": "true",
+        "GOVERNANCE_DEV_PAPER_GRANT_FILE": str(grant_file),
+        "CAPITAL_RISK_POLICY_DIR": str(tmp_path / "no-policies"),
         "PANTHEON_BFF_AUTH_MODE": "strict",
         "PANTHEON_BFF_JWT_SECRET": JWT_SECRET,
         "PANTHEON_BFF_JWT_ISSUER": "pantheon-bff",
@@ -235,8 +245,13 @@ def owner_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         FakeOwnerTransport,
     )
 
+    from services.governance.paper_approval_scope import (
+        DEV_PAPER_AUTHORIZATION_SCOPE,
+        DEV_PAPER_PROVISIONER_SUBJECT,
+    )
+    proposer_actor_id = "pantheon-dev-persona-enrollment-proposer"
     authority_transport = FakeOwnerTransport(
-        governance_subject=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_subject=DEV_PAPER_PROVISIONER_SUBJECT,
     )
 
     class _CompositeTraderPaperBookOwnerTransport:
@@ -259,23 +274,94 @@ def owner_stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         def post(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
             if owner == "capital":
                 return self._capital.post(owner, path, payload)
-            return self._authority.post(owner, path, payload)
+            prev_subject = self._authority.governance_subject
+            if (
+                owner == "governance"
+                and path == "/api/governance/approvals"
+                and payload.get("owner_user_id") == proposer_actor_id
+            ):
+                self._authority.governance_subject = proposer_actor_id
+            try:
+                res = self._authority.post(owner, path, payload)
+            finally:
+                self._authority.governance_subject = prev_subject
+            if owner == "governance" and path == "/api/governance/approvals":
+                decision_path = f"/api/governance/approvals/{payload['decision_id']}"
+                stored = self._authority.objects.get(("governance", decision_path))
+                if isinstance(stored, dict):
+                    stored["authorization_scope"] = json.loads(
+                        json.dumps(DEV_PAPER_AUTHORIZATION_SCOPE)
+                    )
+                    res = json.loads(json.dumps(stored))
+            elif owner == "governance" and path.endswith("/decide"):
+                decision_path = path.rsplit("/", 1)[0]
+                stored = self._authority.objects.get(("governance", decision_path))
+                if (
+                    isinstance(stored, dict)
+                    and stored.get("target_type") == "capital_pool_activation"
+                    and payload.get("outcome") == "approved"
+                ):
+                    meta = dict(stored.get("metadata") or {})
+                    meta["approvals"] = [
+                        {
+                            "actor_id": payload["actor_id"],
+                            "actor_role": payload["actor_role"],
+                        }
+                    ]
+                    stored["metadata"] = meta
+                    stored["authorization_scope"] = json.loads(
+                        json.dumps(DEV_PAPER_AUTHORIZATION_SCOPE)
+                    )
+                    res = json.loads(json.dumps(stored))
+            return res
 
         def patch(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
             if owner == "capital":
                 return self._capital.patch(owner, path, payload)
             return self._authority.patch(owner, path, payload)
 
+    def _draft_paper_book_policy(inputs: Any) -> Any:
+        from services.persona.risk_policy_draft import DraftResult
+
+        return DraftResult(
+            True,
+            policy={
+                "risk_policy_id": inputs.policy_id,
+                "version": inputs.version,
+                "status": "active",
+                "allowed_stages": ["paper"],
+                "allowed_asset_classes": ["equity", "future"],
+                "gross_limit": 0.25,
+                "net_limit": 0.25,
+                "max_leverage": 0.25,
+                "max_single_name_weight": 0.10,
+                "min_cash_reserve_pct": 0.50,
+            },
+            provenance={
+                "source": "risk_officer_draft",
+                "risk_persona_id": "persona-risk-officer",
+                "input_digest": inputs.input_digest,
+            },
+        )
+
     def _coordinator_for_tenant(tenant_id: str) -> PersonaProvisioningCoordinator:
+        tx = _CompositeTraderPaperBookOwnerTransport(tenant_id=tenant_id)
         return PersonaProvisioningCoordinator(
             store=provisioning_store,
-            transport=_CompositeTraderPaperBookOwnerTransport(tenant_id=tenant_id),
+            transport=tx,
             schedule_registrar=lambda *_a, **_kw: {},
             lease_owner="trader-paper-book-test-worker",
             actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
-            governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+            governance_actor_id=DEV_PAPER_PROVISIONER_SUBJECT,
+            governance_proposer=tx,
+            governance_proposer_actor_id=proposer_actor_id,
+            risk_policy_drafter=_draft_paper_book_policy,
         )
 
+    monkeypatch.setattr(
+        "services.capital.capital_guard.configured_approval_reader",
+        lambda _service_name="capital": _coordinator_for_tenant(TENANT_ID)._governance_approval_reader(),
+    )
     monkeypatch.setattr(personas_service, "_chain_paper_capital_coordinator", _coordinator_for_tenant)
     monkeypatch.setattr(personas_service, "_runtime_manager_client", lambda: rm_client)
 
@@ -1530,41 +1616,70 @@ def test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_d
     assert transition_calls == []
     assert "object_store" not in (rm_service.get_binding(legacy_rb_id).metadata or {})
 
-    # Owner returning a draft DeploymentPlan after coordination -> fails closed with zero transitions.
+    # Unresolved P-4 risk policy mapping on repair (drafter unavailable) -> fails closed with zero transitions.
+    no_drafter_coord = PersonaProvisioningCoordinator(
+        store=MemoryPersonaProvisioningStore(),
+        transport=base_coord.transport,
+        schedule_registrar=lambda *_a, **_kw: {},
+        lease_owner="no-drafter-repair-worker",
+        actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        risk_policy_drafter=None,
+    )
+    with pytest.raises(PersonaProvisioningCoordinationError) as unresolved_policy_repair_exc:
+        ensure_trader_paper_book(
+            TENANT_ID,
+            legacy_persona,
+            requested_by="trader-draft-authority",
+            coordinator=no_drafter_coord,
+            runtime_client=rm_client,
+        )
+    assert unresolved_policy_repair_exc.value.reason_code == "risk_officer_draft_unavailable"
+    assert deploy_calls == []
+    assert transition_calls == []
+    assert "object_store" not in (rm_service.get_binding(legacy_rb_id).metadata or {})
+
+    # Resolve P-4 risk policy on the legacy pool, then verify existing-approved-mapping replay without a drafter
+    # reaches _resolve_paper_book_execution_projection and fails closed when DeploymentPlan is draft.
+    from services.control_plane.bff.personas.trader_paper_book import _ensure_paper_book_risk_policy
+
+    legacy_pool = base_coord._owner_get("capital", f"/api/capital-pools/{legacy_ids.capital_pool_id}")
+    assert isinstance(legacy_pool, dict)
+    approved_legacy_pool, legacy_resolution = _ensure_paper_book_risk_policy(
+        base_coord,
+        tenant_id=TENANT_ID,
+        persona_id=legacy_persona,
+        ids=legacy_ids,
+        requested_by="trader-draft-authority",
+        capital_pool=legacy_pool,
+    )
+    assert isinstance(legacy_resolution, dict) and legacy_resolution["resolved"] is True
+
+    # Owner returning a draft DeploymentPlan after coordination (with risk_policy_drafter=None replaying
+    # the existing approved risk policy mapping) -> fails closed with zero transitions.
     class _DraftPlanTransport:
         owners = ("capital", "registry", "governance", "deployment")
 
         def __init__(self) -> None:
-            self._cap = _PersonaOwnerHttpTransport(tenant_id=TENANT_ID)
-            self._auth = FakeOwnerTransport(
-                governance_subject=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID
-            )
+            self._delegate = base_coord.transport
 
         def get(self, owner: str, path: str) -> Any:
-            if owner == "capital":
-                return self._cap.get(owner, path)
-            res = self._auth.get(owner, path)
+            res = self._delegate.get(owner, path)
             if owner == "deployment" and isinstance(res, dict):
                 res = {**res, "status": "draft"}
             return res
 
         def list(self, owner: str, path: str) -> Any:
-            if owner == "capital":
-                return self._cap.list(owner, path)
-            return self._auth.list(owner, path)
+            return self._delegate.list(owner, path)
 
         def post(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
-            if owner == "capital":
-                return self._cap.post(owner, path, payload)
-            res = self._auth.post(owner, path, payload)
+            res = self._delegate.post(owner, path, payload)
             if owner == "deployment" and isinstance(res, dict):
                 res = {**res, "status": "draft"}
             return res
 
         def patch(self, owner: str, path: str, payload: Dict[str, Any]) -> Any:
-            if owner == "capital":
-                return self._cap.patch(owner, path, payload)
-            return self._auth.patch(owner, path, payload)
+            return self._delegate.patch(owner, path, payload)
 
     draft_plan_coord = PersonaProvisioningCoordinator(
         store=MemoryPersonaProvisioningStore(),
@@ -1572,9 +1687,10 @@ def test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_d
         schedule_registrar=lambda *_a, **_kw: {},
         lease_owner="draft-plan-worker",
         actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
-        governance_actor_id=personas_service.PERSONA_OWNER_SERVICE_ACTOR_ID,
+        governance_actor_id=base_coord.governance_actor_id,
+        risk_policy_drafter=None,
     )
-    with pytest.raises(PersonaProvisioningCoordinationError):
+    with pytest.raises(PersonaProvisioningCoordinationError) as draft_plan_exc:
         ensure_trader_paper_book(
             TENANT_ID,
             legacy_persona,
@@ -1582,6 +1698,7 @@ def test_missing_owner_missing_receipt_and_draft_receipt_fail_closed_with_zero_d
             coordinator=draft_plan_coord,
             runtime_client=rm_client,
         )
+    assert "DeploymentPlan" in str(draft_plan_exc.value)
     assert deploy_calls == []
     assert transition_calls == []
     assert "object_store" not in (rm_service.get_binding(legacy_rb_id).metadata or {})

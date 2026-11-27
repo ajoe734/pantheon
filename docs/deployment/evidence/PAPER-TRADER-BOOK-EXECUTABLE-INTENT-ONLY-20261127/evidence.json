@@ -25,7 +25,7 @@
     },
     {
       "path": "services/control-plane/bff/personas/trader_paper_book.py",
-      "summary": "Updated ensure_trader_paper_book to resolve the approved artifact projection from real Registry and Deployment owner receipts (failing closed with reason_code='deploy_authorities_unavailable' when Registry/Governance/Deployment owners are unconfigured or when receipts are absent/unapproved), attach the StagePlanner.build_execution_projection metadata on new RuntimeBinding creation, and repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
+      "summary": "Updated ensure_trader_paper_book to resolve the approved artifact projection from real Registry and Deployment owner receipts (failing closed with reason_code='deploy_authorities_unavailable' when Registry/Governance/Deployment owners are unconfigured or when receipts are absent/unapproved), attach the StagePlanner.build_execution_projection metadata on new RuntimeBinding creation, and repair existing active bindings lacking the projection (such as hosted rb-77d962be4e324032808324109f2c154e) in place on the same binding_id via RuntimeManagerClient.transition without creating a second pool, capital binding, or RuntimeBinding. Preserved the P-4 paper risk policy gate in _transport_supports_paper_risk_gate independently of drafter/proposer availability whenever Capital and Governance owners are configured (accepting an existing valid approved capital_pool_activation mapping without a drafter, and otherwise failing closed before any RuntimeBinding deploy or transition when drafting or approval cannot resolve). Kept read_trader_paper_book (GET /bff/agora/servant/paper-book) strictly read-only with zero Runtime-Manager transitions or owner writes, and preserved deliberately paused bindings (failing closed with reason_code='runtime_binding_not_active' and zero transitions)."
     },
     {
       "path": "services/execution/lean_runtime/paper_signal_producer.py",
@@ -45,7 +45,7 @@
     },
     {
       "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
-      "summary": "Wired servant_paper_world with Registry and Deployment authority endpoints backed by real Governance approval decisions so ensure_trader_paper_book resolves real approved authority receipts."
+      "summary": "Wired servant_paper_world with Registry and Deployment authority endpoints backed by real Governance approval decisions so ensure_trader_paper_book resolves real approved authority receipts, and added test_p4_risk_policy_gate_enforced_without_drafter_and_replays_existing_approved_mapping proving configured-owner P-4 validation independently of drafter/proposer availability (new-book and in-place-repair fail closed with zero deploy/transition calls on unresolved mapping; existing approved mapping replays and repairs in place without a drafter)."
     },
     {
       "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
@@ -78,7 +78,8 @@
       "tests": [
         "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id",
         "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_read_trader_paper_book_are_strictly_read_only_on_legacy_active_binding",
-        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions"
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_get_and_ensure_preserve_deliberately_paused_legacy_binding_with_zero_transitions",
+        "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_p4_risk_policy_gate_enforced_without_drafter_and_replays_existing_approved_mapping"
       ]
     },
     "AC3_zero_strategy_decisions_or_signals_for_trader_servant_paper_book": {
