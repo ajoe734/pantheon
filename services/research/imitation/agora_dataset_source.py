@@ -348,9 +348,22 @@ def _observation_from_snapshot(content: Mapping[str, Any], snapshot: Mapping[str
     return [conf_val, prob_val, net_val, down_val, action_code]
 
 
+_NON_ACTION_VERDICTS = frozenset({"approve", "approved", "confirm", "confirmed", "decision"})
+
+_EVENT_KIND_ACTION_MAP: dict[str, str] = {
+    "entry": "enter",
+    "enter": "enter",
+    "add": "add",
+    "reduce": "reduce",
+    "exit": "exit",
+    "review": "hold",
+    "hold": "hold",
+}
+
+
 def _action_from_decision_content(version: AgoraDatasetVersion, content: Mapping[str, Any], snapshot: Mapping[str, Any]) -> str:
     explicit = _text(content.get("action"))
-    if explicit:
+    if explicit and explicit.lower() not in _NON_ACTION_VERDICTS:
         return explicit
     kind = version.interaction_kind or _text(content.get("evidence_kind"))
     if kind == "rejection":
@@ -360,17 +373,26 @@ def _action_from_decision_content(version: AgoraDatasetVersion, content: Mapping
     mods = content.get("modifications") or content.get("raw_modifications")
     if isinstance(mods, Mapping):
         mod_action = _text(mods.get("action") or mods.get("direction"))
-        if mod_action:
+        if mod_action and mod_action.lower() not in _NON_ACTION_VERDICTS:
             return mod_action
     if kind == "intervention":
         return "intervene"
     arms = content.get("arms") if isinstance(content.get("arms"), Mapping) else {}
     human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
-    for candidate in (human_arm.get("action"), content.get("decision"), snapshot.get("suggested_action")):
+    for candidate in (
+        human_arm.get("action"),
+        content.get("decision"),
+        content.get("verdict"),
+        content.get("trading_room_verdict"),
+        snapshot.get("suggested_action"),
+    ):
         cleaned = _text(candidate)
-        if cleaned and cleaned not in {"approve", "approved"}:
+        if cleaned and cleaned.lower() not in _NON_ACTION_VERDICTS:
             return cleaned
-    return "enter" if _text(snapshot.get("event_kind")).lower() == "entry" else "approve"
+    event_kind = _text(snapshot.get("event_kind") or content.get("event_kind")).lower()
+    if event_kind in _EVENT_KIND_ACTION_MAP:
+        return _EVENT_KIND_ACTION_MAP[event_kind]
+    return ""
 
 
 def _sessions_from_content(version: AgoraDatasetVersion, *, fallback_strategy_id: str = "") -> list[dict[str, Any]]:
@@ -445,9 +467,16 @@ def _sessions_from_content(version: AgoraDatasetVersion, *, fallback_strategy_id
         ]
 
     if "observation" in content and "action" in content:
+        resolved_action = (
+            _action_from_decision_content(version, content, snapshot)
+            if is_decision_kind
+            else _text(content.get("action"))
+        )
+        if not resolved_action:
+            return []
         step: dict[str, Any] = {
             "observation": content["observation"],
-            "action": content["action"],
+            "action": resolved_action,
             "feedback_event_id": version.evidence_id,
         }
         if content.get("reward") is not None:
@@ -461,8 +490,10 @@ def _sessions_from_content(version: AgoraDatasetVersion, *, fallback_strategy_id
         ]
 
     if is_decision_kind:
-        derived_obs = _observation_from_snapshot(content, snapshot)
         derived_action = _action_from_decision_content(version, content, snapshot)
+        if not derived_action:
+            return []
+        derived_obs = _observation_from_snapshot(content, snapshot)
         step = {
             "observation": derived_obs,
             "action": derived_action,

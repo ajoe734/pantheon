@@ -107,8 +107,8 @@ class AgoraWriteService:
             )
 
             ensure_journal_evidence_emission_wired()
-        except Exception:
-            pass
+        except Exception as exc:
+            _logger.warning("Failed to wire Agora journal evidence emission: %s", exc)
 
     def create_session(
         self,

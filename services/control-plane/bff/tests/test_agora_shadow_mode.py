@@ -452,13 +452,36 @@ def test_journal_write_path_emits_four_learning_evidence_kinds_and_survives_data
 
     assert len(ds_store.list_by_dataset(DatasetKind.LEARN, tenant_id="tenant-001", user_id="user-001")) == 4
 
-    # Verify dataset store failure does not block journal creation
+    # Plain journal note without decision signal produces no learn evidence
+    res_plain = agora_svc.create_journal_entry(
+        payload={
+            "id": "dje-plain-note",
+            "title": "Lunch",
+            "body": "Market felt slow, read about semis.",
+            "visibility": "private",
+        },
+        identity=identity,
+        idempotency_key="jrnl-k-plain",
+        tenant_id="tenant-001",
+        user_id="user-001",
+    )
+    assert res_plain["data"]["id"] == "dje-plain-note"
+    assert ds_store.get("ev-journal-dje-plain-note", tenant_id="tenant-001", user_id="user-001") is None
+    assert len(ds_store.list_by_dataset(DatasetKind.LEARN, tenant_id="tenant-001", user_id="user-001")) == 4
+
+    # Verify dataset store failure does not block journal creation even when decision signal is present
     broken_ds = mock.MagicMock()
     broken_ds.add_to_inbox.side_effect = RuntimeError("dataset store down")
     journal_owner.dataset_store = broken_ds
     agora_svc.dataset_store = broken_ds
     res_ok = agora_svc.create_journal_entry(
-        payload={"id": "dje-ev-5", "title": "Still succeeds", "body": "Journal write succeeds", "visibility": "private"},
+        payload={
+            "id": "dje-ev-5",
+            "title": "Still succeeds",
+            "body": "Journal write succeeds",
+            "decision": "approve",
+            "visibility": "private",
+        },
         identity=identity,
         idempotency_key="jrnl-k5",
         tenant_id="tenant-001",

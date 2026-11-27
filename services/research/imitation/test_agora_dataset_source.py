@@ -350,3 +350,24 @@ def test_single_decision_evidence_version_translates_and_preserves_two_action_bc
     assert lineage["interaction_kinds"] == ["decision"]
     with pytest.raises(BCTrainerError, match="requires at least two observed action labels"):
         train(payload)
+
+
+def test_decision_version_without_action_signal_does_not_invent_approve_label() -> None:
+    unlabelled = AgoraDatasetVersion.from_record(
+        {
+            **_record(
+                "dsv-plain-journal",
+                evidence_id="ev-journal-j1",
+                content={
+                    "source_kind": "decision_journal",
+                    "evidence_kind": "decision",
+                    "title": "Lunch",
+                    "rationale": "Market felt slow, read about semis.",
+                    "decision_time_snapshot": {},
+                },
+            ),
+            "interaction_kind": "decision",
+        }
+    )
+    with pytest.raises(AgoraDatasetRejected, match="carry no governed trajectory content"):
+        build_dataset_payload([unlabelled])

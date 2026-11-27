@@ -1230,7 +1230,9 @@ class TestDecisionLockAndJournalEvidenceExtraction:
 
         for entry, expected_kind, expected_action in journal_cases:
             assert classify_decision_evidence_kind(entry) == expected_kind
-            rec, is_new = extract_journal_entry_evidence(entry, store=store)
+            extracted = extract_journal_entry_evidence(entry, store=store)
+            assert extracted is not None
+            rec, is_new = extracted
             assert is_new is True
             assert rec.evidence_id == f"ev-journal-{entry['entry_id']}"
             assert rec.dataset_kind == DatasetKind.LEARN
@@ -1242,7 +1244,9 @@ class TestDecisionLockAndJournalEvidenceExtraction:
             assert rec.content["decision_time_snapshot"]["symbol"] == entry["symbol"]
             assert rec.content["decision_time_snapshot"]["available_data_cutoff"] == entry["data_cutoff"]
 
-            dup_rec, dup_new = extract_journal_entry_evidence(entry, store=store)
+            dup_extracted = extract_journal_entry_evidence(entry, store=store)
+            assert dup_extracted is not None
+            dup_rec, dup_new = dup_extracted
             assert dup_new is False
             assert dup_rec.idempotent is True
             assert dup_rec.dataset_version_id == rec.dataset_version_id
@@ -1259,6 +1263,45 @@ class TestDecisionLockAndJournalEvidenceExtraction:
             InteractionKind.DEFERRAL,
             InteractionKind.INTERVENTION,
         }
+
+    def test_plain_journal_note_without_decision_signal_produces_no_learn_evidence(self) -> None:
+        from services.control_plane.bff.agora.dataset_extraction.extractor import (
+            build_journal_entry_evidence_request,
+        )
+
+        store = AgoraDatasetStore(backend="memory")
+        plain_note = {
+            "id": "j1",
+            "tenant_id": "t",
+            "user_id": "u",
+            "title": "Lunch",
+            "body": "Market felt slow, read about semis.",
+            "tags": ["semis", "market_notes"],
+        }
+        assert classify_decision_evidence_kind(plain_note) is None
+        assert build_journal_entry_evidence_request(plain_note) is None
+        assert extract_journal_entry_evidence(plain_note, store=store) is None
+        assert store.list_by_dataset(DatasetKind.LEARN, tenant_id="t", user_id="u") == []
+        assert store.list_handoffs(tenant_id="t", user_id="u") == []
+
+        # A journal entry linked to a decision_id or tagged with decision does emit learn evidence
+        linked_entry = {
+            "id": "j2",
+            "tenant_id": "t",
+            "user_id": "u",
+            "title": "Post-lock journal linked to decision",
+            "body": "Linked to lock hdl-01",
+            "decision_id": "hdl-01",
+            "symbol": "2330.TW",
+            "event_kind": "entry",
+        }
+        assert classify_decision_evidence_kind(linked_entry) == InteractionKind.DECISION
+        extracted = extract_journal_entry_evidence(linked_entry, store=store)
+        assert extracted is not None
+        rec, is_new = extracted
+        assert is_new is True
+        assert rec.interaction_kind == InteractionKind.DECISION
+        assert rec.content["action"] == "enter"
 
     def test_retention_and_growth_budget_stated(self) -> None:
         assert DEFAULT_DATASET_RETENTION_DAYS == 30
