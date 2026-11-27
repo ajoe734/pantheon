@@ -21,6 +21,7 @@ Covers:
 """
 from __future__ import annotations
 
+import copy
 import email.message
 import importlib
 import importlib.util
@@ -221,6 +222,185 @@ def test_pool_publish_refusals_retain_at_most_20_entries() -> None:
     ]
     assert all(r["count"] == 1 for r in refusals)
     assert all(r["previous_envelope_kept"] is None for r in refusals)
+
+
+def _legacy_full_envelope(pool_version: int, digest: str) -> Dict[str, Any]:
+    """Build a ~32-KiB pre-change full envelope snapshot for a given historical pool_version."""
+    padding = f"member-payload-v{pool_version}-" + ("x" * 32_768)
+    return {
+        "artifact_id": f"artifact-persona-pool-v{pool_version}",
+        "version": f"1.{pool_version}.0",
+        "pool_version": pool_version,
+        "parameters": {
+            "pool_version": pool_version,
+            "pool_digest": digest,
+            "symbols": ["2330.TW"],
+        },
+        "strategy_logic": {
+            "kind": "persona_portfolio_v1",
+            "members": [
+                {
+                    "member_id": f"m-{pool_version}",
+                    "risk_weight": 1.0,
+                    "embedded_blob": padding,
+                }
+            ],
+        },
+    }
+
+
+def test_legacy_full_envelope_refusals_are_compacted_preserving_historical_identity_on_distinct_and_same_reason_retries() -> None:
+    """Regression for PR #7967 P2 review:
+    1. Seed 20 pre-change refusals each holding a 32-KiB full envelope in previous_envelope_kept
+       with distinct historical version/digest, then trigger _refuse with a distinct reason:
+       all 19 retained legacy entries normalize previous_envelope_kept to their own historical
+       {version, digest} (never overwritten by current_envelope) and total refusals JSON is <=10 KB.
+    2. Seed 20 pre-change refusals each holding a 32-KiB full envelope in previous_envelope_kept
+       and trigger repeated same-reason retries (which update only the newest entry in place and
+       never slice out older entries): all 19 older entries are still compacted to their own
+       historical {version, digest} on the first CAS mutation and remain stable across retries.
+    """
+    # --- Part 1: distinct reason after 20 seeded 32-KiB legacy refusals ---
+    records_distinct = InMemoryPublishRecords()
+    published_map: Dict[str, Dict[str, Any]] = {}
+    legacy_refusals_distinct: List[Dict[str, Any]] = []
+    for idx in range(1, 21):
+        hist_digest = f"sha256:{idx:064x}"
+        published_map[str(idx)] = {
+            "pool_version": idx,
+            "pool_digest": hist_digest,
+            "envelope_artifact_id": f"artifact-persona-pool-v{idx}",
+            "envelope_version": f"1.{idx}.0",
+            "status": "published",
+        }
+        legacy_refusals_distinct.append(
+            {
+                "at": f"2026-11-27T09:{idx:02d}:00Z",
+                "pool_version": idx,
+                "step": "member",
+                "reason": f"legacy refusal reason {idx}",
+                "previous_envelope_kept": _legacy_full_envelope(idx, hist_digest),
+            }
+        )
+    current_digest = f"sha256:{21:064x}"
+    published_map["21"] = {
+        "pool_version": 21,
+        "pool_digest": current_digest,
+        "envelope_artifact_id": "artifact-persona-pool-v21",
+        "envelope_version": "1.21.0",
+        "status": "published",
+    }
+    seeded_record_distinct = {
+        "tenant_id": TENANT,
+        "persona_id": SERVANT_PERSONA,
+        "published": copy.deepcopy(published_map),
+        "refusals": legacy_refusals_distinct,
+        "current_envelope": _legacy_full_envelope(21, current_digest),
+    }
+    assert len(json.dumps(seeded_record_distinct["refusals"])) > 640_000
+    records_distinct.compare_and_set(f"{TENANT}:{SERVANT_PERSONA}", None, seeded_record_distinct)
+
+    publisher_distinct = PersonaPoolPublisher(
+        coordinator=_NoCoordinator(),  # type: ignore[arg-type]
+        pool_store=_MissingPoolStore(),
+        records=records_distinct,
+        now=lambda: "2026-11-27T10:30:00Z",
+    )
+    with pytest.raises(PoolPublishRefused):
+        publisher_distinct.publish(
+            tenant_id=TENANT,
+            persona_id=SERVANT_PERSONA,
+            requested_by="pantheon-persona-owner-bff",
+        )
+
+    compacted_distinct = publisher_distinct.history(TENANT, SERVANT_PERSONA)["refusals"]
+    assert len(compacted_distinct) == 20
+    # Entries 0..18 correspond to historical pool versions 2..20 and preserve their own version/digest.
+    for pos, hist_version in enumerate(range(2, 21)):
+        item = compacted_distinct[pos]
+        assert item["reason"] == f"legacy refusal reason {hist_version}"
+        assert item["previous_envelope_kept"] == {
+            "version": f"1.{hist_version}.0",
+            "digest": f"sha256:{hist_version:064x}",
+        }
+    # Entry 19 is the newly appended refusal and carries current_envelope's version/digest.
+    assert compacted_distinct[19]["step"] == "pool"
+    assert compacted_distinct[19]["count"] == 1
+    assert compacted_distinct[19]["previous_envelope_kept"] == {
+        "version": "1.21.0",
+        "digest": current_digest,
+    }
+    serialized_distinct = json.dumps(compacted_distinct)
+    assert "embedded_blob" not in serialized_distinct
+    assert len(serialized_distinct) <= 10_000
+
+    # --- Part 2: repeated same-reason retries on 20 seeded 32-KiB legacy refusals ---
+    records_same = InMemoryPublishRecords()
+    same_reason = f"no strategy pool for persona {SERVANT_PERSONA!r}"
+    legacy_refusals_same: List[Dict[str, Any]] = []
+    for idx in range(1, 21):
+        hist_digest = f"sha256:{idx:064x}"
+        # Even without a published[idx] entry, _envelope_summary extracts parameters.pool_digest
+        # or canonical_digest from each legacy full envelope itself.
+        legacy_refusals_same.append(
+            {
+                "at": f"2026-11-27T09:{idx:02d}:00Z",
+                "pool_version": idx,
+                "step": "pool" if idx == 20 else "member",
+                "reason": same_reason if idx == 20 else f"older legacy refusal {idx}",
+                "previous_envelope_kept": _legacy_full_envelope(idx, hist_digest),
+            }
+        )
+    records_same.compare_and_set(
+        f"{TENANT}:{SERVANT_PERSONA}",
+        None,
+        {
+            "tenant_id": TENANT,
+            "persona_id": SERVANT_PERSONA,
+            "published": {},
+            "refusals": legacy_refusals_same,
+            "current_envelope": _legacy_full_envelope(21, current_digest),
+        },
+    )
+
+    retry_clock = iter([f"2026-11-27T11:{i:02d}:00Z" for i in range(1, 40)])
+    publisher_same = PersonaPoolPublisher(
+        coordinator=_NoCoordinator(),  # type: ignore[arg-type]
+        pool_store=_MissingPoolStore(),
+        records=records_same,
+        now=lambda: next(retry_clock),
+    )
+    for _ in range(25):
+        with pytest.raises(PoolPublishRefused):
+            publisher_same.publish(
+                tenant_id=TENANT,
+                persona_id=SERVANT_PERSONA,
+                requested_by="pantheon-persona-owner-bff",
+            )
+
+    compacted_same = publisher_same.history(TENANT, SERVANT_PERSONA)["refusals"]
+    assert len(compacted_same) == 20
+    # Older entries 0..18 never aged out by slicing, yet were compacted in place to their own historical version/digest.
+    for pos, hist_version in enumerate(range(1, 20)):
+        item = compacted_same[pos]
+        assert item["reason"] == f"older legacy refusal {hist_version}"
+        assert item["previous_envelope_kept"] == {
+            "version": f"1.{hist_version}.0",
+            "digest": f"sha256:{hist_version:064x}",
+        }
+    # Entry 19 updated in place 25 times (1 legacy + 25 retries = 26).
+    newest = compacted_same[19]
+    assert newest["reason"] == same_reason
+    assert newest["at"] == "2026-11-27T09:20:00Z"
+    assert newest["last_at"] == "2026-11-27T11:25:00Z"
+    assert newest["count"] == 26
+    assert newest["previous_envelope_kept"] == {
+        "version": "1.21.0",
+        "digest": current_digest,
+    }
+    serialized_same = json.dumps(compacted_same)
+    assert "embedded_blob" not in serialized_same
+    assert len(serialized_same) <= 10_000
 
 
 # ---------------------------------------------------------------------------

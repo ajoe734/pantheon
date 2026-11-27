@@ -1,7 +1,7 @@
 {
   "task_id": "PAPER-TRADER-BOOK-ENROLLMENT-SKIP-20261127",
   "title": "Trader servant paper book is retried as a trading persona and its pool publish refusals grow without a cap",
-  "generated_at": "2026-11-27T12:54:00Z",
+  "generated_at": "2026-11-27T13:26:00Z",
   "delivery_state": "open",
   "owner": {
     "agent": "Antigravity",
@@ -104,12 +104,14 @@
     "bounding_contract": {
       "max_entries_per_record": 20,
       "deduplication_rule": "When the newest entry in refusals has the same step and reason (and artifact_ref in persona.strategy_pools), count is incremented in place and last_at is updated to the current timestamp instead of appending a new row.",
-      "kept_envelope_compaction": "PersonaPoolPublisher._refuse stores only {'version': <envelope_version>, 'digest': <pool_or_envelope_digest>} in previous_envelope_kept (or null when no envelope is running), never a full envelope copy.",
-      "scope_isolation": "In services/control-plane/bff/persona_pool_publisher.py, only _refuse (and _kept_envelope_summary / MAX_REFUSALS) was modified; publish(), _load(), history(), published[*].status, and current_envelope are untouched to compose cleanly with POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127."
+      "kept_envelope_compaction": "PersonaPoolPublisher._refuse stores only {'version': <envelope_version>, 'digest': <pool_or_envelope_digest>} in previous_envelope_kept (or null when no envelope is running), never a full envelope copy, and normalizes every retained legacy refusal entry's previous_envelope_kept to its own historical {'version', 'digest'} within the same _refuse CAS mutation (preserving historical identity whether a distinct reason appends or a repeated same-reason retry updates the newest entry in place).",
+      "cleanup_and_rollout_budget": "Compaction and the 20-entry cap execute in place inside the refusal CAS write path (PersonaPoolPublisher._refuse and PersonaStrategyPoolStore._record_refusal) while leaving publish(), _load(), and history() untouched so this change composes cleanly with POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127 and adds 0 read-path writers or background jobs. On rollout: (1) any record that receives a subsequent refusal immediately trims refusals to <=20 entries and normalizes all retained legacy previous_envelope_kept entries in place to <=10 KB total (~0.3-0.5 KB/entry); (2) the hosted servant record tenant-default:agora-servant-799a3ce8c021b91cbb54 accumulated pre-deploy refusals at step='pool' with current_envelope=null / previous_envelope_kept=null (~180 B/entry, <4 KB total inside the 65,536-byte bff.persona_pool_publish_records table) and stops receiving refusals once AC1 deploys (0/day); (3) quiescent records that never hit a refusal write again retain their existing persisted rows until their next refusal CAS mutation (or an explicit operator maintenance trim if a quiescent pre-existing record ever exceeded 20 entries).",
+      "scope_isolation": "In services/control-plane/bff/persona_pool_publisher.py, only _refuse (and _envelope_summary / _kept_envelope_summary / _normalize_refusal_entry / MAX_REFUSALS) was modified; publish(), _load(), history(), published[*].status, and current_envelope are untouched to compose cleanly with POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127."
     },
     "test_proofs": [
       "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_144_identical_pool_publish_refusals_collapse_to_one_entry_with_count_144_and_compact_kept_envelope",
       "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_pool_publish_refusals_retain_at_most_20_entries",
+      "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_legacy_full_envelope_refusals_are_compacted_preserving_historical_identity_on_distinct_and_same_reason_retries",
       "services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py::test_144_identical_strategy_pool_refusals_collapse_to_one_entry_with_count_144",
       "services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py::test_strategy_pool_refusals_retain_at_most_20_distinct_entries"
     ]
@@ -170,7 +172,7 @@
     "servant_refusal_cadence_before": "~144 refusals/day (1 refusal every 600 s per trader servant paper book record)",
     "servant_refusal_cadence_after": "0 refusals/day (trader servant paper book records are skipped before pool enrollment/publish)",
     "publish_record_refusal_cap": "At most 20 refusal entries per persona record in bff.persona_pool_publish_records and persona.strategy_pools; consecutive identical (step, reason) refusals increment count and update last_at in place",
-    "refusal_entry_size_bytes": "~300-500 bytes (0.3-0.5 KB) per entry with compact previous_envelope_kept={'version', 'digest'}; <=10 KB total refusals payload per persona record",
+    "refusal_entry_size_bytes": "~300-500 bytes (0.3-0.5 KB) per entry with compact previous_envelope_kept={'version', 'digest'}; <=10 KB total refusals payload per persona record after refusal-write compaction (every retained legacy previous_envelope_kept in the record is normalized to its own historical {'version', 'digest'} during the _refuse CAS mutation; quiescent records that never hit a refusal write again retain their existing persisted rows without read-path mutation, while the hosted servant record had previous_envelope_kept=null inside the 65,536-byte bff.persona_pool_publish_records table and stops growing at 0 refusals/day after deploy)",
     "problem_register_updated": {
       "file": "docs/operations/problem-register.md",
       "rc3_wp3_1_row_added": true,
@@ -183,8 +185,8 @@
       "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py"
     ],
     "results": [
-      "42 passed in 46.46s (exit code 0)",
-      "117 passed in 124.44s (exit code 0)"
+      "43 passed in 17.51s (exit code 0)",
+      "117 passed in 103.21s (exit code 0)"
     ]
   },
   "residual_findings": []

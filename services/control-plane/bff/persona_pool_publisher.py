@@ -175,37 +175,87 @@ class PersonaPoolPublisher:
     MAX_REFUSALS = 20
 
     @staticmethod
-    def _kept_envelope_summary(record: Mapping[str, Any]) -> dict[str, Any] | None:
-        current = record.get("current_envelope")
-        if not isinstance(current, Mapping):
+    def _envelope_summary(
+        envelope: Any,
+        published: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(envelope, Mapping):
             return None
-        pool_version = current.get("pool_version")
-        if pool_version is None and isinstance(current.get("parameters"), Mapping):
-            pool_version = current["parameters"].get("pool_version")
+        if (
+            set(envelope.keys()) <= {"version", "digest"}
+            and isinstance(envelope.get("digest"), str)
+            and envelope.get("digest")
+        ):
+            raw_version = envelope.get("version")
+            return {
+                "version": str(raw_version) if raw_version is not None else None,
+                "digest": str(envelope["digest"]),
+            }
+        pool_version = envelope.get("pool_version")
+        if pool_version is None and isinstance(envelope.get("parameters"), Mapping):
+            pool_version = envelope["parameters"].get("pool_version")
         version = (
-            current.get("version")
-            or current.get("envelope_version")
+            envelope.get("version")
+            or envelope.get("envelope_version")
             or (f"1.{int(pool_version)}.0" if pool_version is not None else None)
         )
-        published = record.get("published") if isinstance(record.get("published"), Mapping) else {}
-        published_entry = published.get(str(pool_version)) if pool_version is not None else None
+        published_map = published if isinstance(published, Mapping) else {}
+        published_entry = published_map.get(str(pool_version)) if pool_version is not None else None
+        if published_entry is None and published_map:
+            artifact_id = envelope.get("artifact_id") or envelope.get("envelope_artifact_id")
+            for candidate in published_map.values():
+                if not isinstance(candidate, Mapping):
+                    continue
+                if artifact_id and candidate.get("envelope_artifact_id") == artifact_id:
+                    published_entry = candidate
+                    break
+                if version is not None and candidate.get("envelope_version") == str(version):
+                    published_entry = candidate
+                    break
+        if (
+            version is None
+            and isinstance(published_entry, Mapping)
+            and published_entry.get("envelope_version") is not None
+        ):
+            version = published_entry.get("envelope_version")
         digest = (
-            current.get("digest")
-            or current.get("pool_digest")
-            or current.get("checksum")
-            or (current["parameters"].get("pool_digest") if isinstance(current.get("parameters"), Mapping) else None)
+            envelope.get("digest")
+            or envelope.get("pool_digest")
+            or envelope.get("checksum")
+            or (envelope["parameters"].get("pool_digest") if isinstance(envelope.get("parameters"), Mapping) else None)
             or (published_entry.get("pool_digest") if isinstance(published_entry, Mapping) else None)
-            or canonical_digest(dict(current))
+            or canonical_digest(dict(envelope))
         )
         return {
             "version": str(version) if version is not None else None,
             "digest": str(digest),
         }
 
+    @classmethod
+    def _kept_envelope_summary(cls, record: Mapping[str, Any]) -> dict[str, Any] | None:
+        published = record.get("published") if isinstance(record.get("published"), Mapping) else None
+        return cls._envelope_summary(record.get("current_envelope"), published)
+
+    @classmethod
+    def _normalize_refusal_entry(
+        cls,
+        entry: Any,
+        published: Mapping[str, Any] | None = None,
+    ) -> Any:
+        if not isinstance(entry, Mapping):
+            return entry
+        normalized = dict(entry)
+        normalized["previous_envelope_kept"] = cls._envelope_summary(
+            entry.get("previous_envelope_kept"),
+            published,
+        )
+        return normalized
+
     def _refuse(self, tenant_id, persona_id, pool_version, reason, *, status_code, step):
         def mutate(record):
             ts = self.now()
-            kept = self._kept_envelope_summary(record)
+            published = record.get("published") if isinstance(record.get("published"), Mapping) else None
+            kept = self._envelope_summary(record.get("current_envelope"), published)
             refusals = list(record.get("refusals") or [])
             if (
                 refusals
@@ -232,7 +282,10 @@ class PersonaPoolPublisher:
                         "previous_envelope_kept": kept,
                     }
                 )
-            record["refusals"] = refusals[-self.MAX_REFUSALS :]
+            record["refusals"] = [
+                self._normalize_refusal_entry(entry, published)
+                for entry in refusals[-self.MAX_REFUSALS :]
+            ]
 
         self._save(tenant_id, persona_id, mutate)
         raise PoolPublishRefused(reason, status_code=status_code, step=step)
