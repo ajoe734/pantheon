@@ -741,21 +741,47 @@ class ExtractionLedger:
             "card": json.loads(row[3]) if row[3] else None,
         }
 
+    def retire_input_answer(self, source_id: str, input_digest: str) -> bool:
+        """Remove a cached input answer when it is retired (e.g. a fixed-defect answer)."""
+        if not source_id or not input_digest:
+            return False
+        with self._lock, self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            )
+            return (cur.rowcount or 0) > 0
+
     def put_input_answer(
         self, source_id: str, input_digest: str, *, outcome: str, detail: str,
         event_id: Optional[int], card: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        """Keep the first terminal answer per (source, input); prune answers unused for 30 days."""
+        """Keep the first non-defective terminal answer per (source, input); prune answers unused for 30 days."""
         if not source_id or not input_digest or outcome not in REUSABLE_ANSWER_STATUSES:
             return
         day = _today()
+        trimmed_detail = detail[:500]
+        card_json = json.dumps(dict(card), sort_keys=True) if card is not None else None
         with self._lock, self._conn() as c:
-            c.execute(
-                "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
-                " VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id, input_digest) DO NOTHING",
-                (source_id, input_digest, outcome, detail[:500], event_id,
-                 json.dumps(dict(card), sort_keys=True) if card is not None else None, day),
-            )
+            existing = c.execute(
+                "SELECT outcome, detail, card FROM input_answers WHERE source_id=? AND input_digest=?",
+                (source_id, input_digest),
+            ).fetchone()
+            if existing is None:
+                c.execute(
+                    "INSERT INTO input_answers(source_id, input_digest, outcome, detail, event_id, card, day)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    (source_id, input_digest, outcome, trimmed_detail, event_id, card_json, day),
+                )
+            elif not is_fixed_defect_input_answer(outcome, trimmed_detail) and (
+                is_fixed_defect_input_answer(str(existing[0] or ""), str(existing[1] or ""))
+                or (str(existing[0] or "") == "card" and not existing[2])
+            ):
+                c.execute(
+                    "UPDATE input_answers SET outcome=?, detail=?, event_id=?, card=?, day=?"
+                    " WHERE source_id=? AND input_digest=?",
+                    (outcome, trimmed_detail, event_id, card_json, day, source_id, input_digest),
+                )
             cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
             c.execute("DELETE FROM input_answers WHERE day < ?", (cutoff,))
             c.execute(
@@ -1073,6 +1099,20 @@ def fixed_defect_for_skip_reason(skip_reason: str | None) -> Optional[FixedDefec
     return None
 
 
+def is_fixed_defect_input_answer(outcome: str | None, detail: str | None) -> bool:
+    """True when a cached ``input_answers`` row carries a fixed defect (e.g. first-run ritual)."""
+    status = str(outcome or "").strip()
+    if not status or status == "card":
+        return False
+    prefix = {
+        "rejected": "hypothesis_rejected",
+        "failed": "hypothesis_extraction_failed",
+    }.get(status, status)
+    text = str(detail or "").strip()
+    skip_reason = f"{prefix}: {text}" if text else prefix
+    return fixed_defect_for_skip_reason(skip_reason) is not None
+
+
 def call_usage(result: Any) -> Optional[dict[str, Optional[int]]]:
     """Input/output tokens the provider reported for this call (None: unknown)."""
     usage = getattr(result, "usage", None)
@@ -1174,7 +1214,11 @@ class HypothesisExtractor:
         prior = self._ledger.input_answer(sid, input_digest)
         if prior is None or prior["outcome"] not in REUSABLE_ANSWER_STATUSES:
             return None
+        if is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+            self._ledger.retire_input_answer(sid, input_digest)
+            return None
         if prior["outcome"] == "card" and not isinstance(prior["card"], dict):
+            self._ledger.retire_input_answer(sid, input_digest)
             return None
         event_id = prior["event_id"]
         # No ledger event per reuse: ``events`` has no retention and an unchanged
@@ -1260,6 +1304,10 @@ class HypothesisExtractor:
             reused = self._reuse_answer(sid, input_digest)
             if reused is not None:
                 return reused
+        else:
+            prior = self._ledger.input_answer(sid, input_digest)
+            if prior is not None and is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
+                self._ledger.retire_input_answer(sid, input_digest)
         reservation = self._ledger.reserve_attempt(sid, digest)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
@@ -1384,6 +1432,7 @@ __all__ = [
     "has_first_run_ritual_marker",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
+    "is_fixed_defect_input_answer",
     "sync_release_switch_row",
     "valid_deployment_sha",
     "verify_cited_spans",

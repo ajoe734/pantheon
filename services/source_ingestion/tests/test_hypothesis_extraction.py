@@ -1241,15 +1241,25 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
         "no_hypothesis: The article describes cybersecurity requirements "
         "but does not link them to a testable market outcome."
     )
+    seeded_jobs: dict[str, Any] = {}
+    seeded_digests: dict[str, str] = {}
     for sid, skip_reason, ts in (
         ("ritual-en", seed_closed_en, 100.0),
         ("ritual-zh", seed_closed_zh, 110.0),
         ("genuine-abstained", genuine_skip, 120.0),
     ):
         job = queue.enqueue_source_record(_source(sid, body=BODY), enqueued_at=ts)
-        # Seed the historical ledger attempt and no_hypothesis outcome as written on 2026-11-26.
+        seeded_jobs[sid] = job
+        detail_text = skip_reason.removeprefix("no_hypothesis: ")
+        input_digest = hypothesis_card.extraction_input_digest(BODY, source_record_id=sid, origin="news")
+        seeded_digests[sid] = input_digest
+        # Seed the historical ledger attempt, no_hypothesis outcome, and cached input_answers row.
         assert ledger.reserve_attempt(sid, job.source_digest) == hypothesis_card.RESERVED
-        ledger.record(sid, "no_hypothesis", skip_reason.removeprefix("no_hypothesis: "))
+        seed_event_id = ledger.record(sid, "no_hypothesis", detail_text)
+        ledger.put_input_answer(
+            sid, input_digest, outcome="no_hypothesis", detail=detail_text, event_id=seed_event_id
+        )
+        assert ledger.input_answer(sid, input_digest)["outcome"] == "no_hypothesis"
         assert ledger.can_attempt(sid, job.source_digest) == hypothesis_card.RESERVED
         claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=ts, job_ids=[job.job_id])[0]
         started = queue.begin_job(claimed, lease_seconds=30, now=ts)
@@ -1263,8 +1273,33 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
     assert queue.get("ritual-zh").status == "done"
     assert queue.get("genuine-abstained").status == "skipped"
     assert queue.get("genuine-abstained").skip_reason == genuine_skip
+    assert ledger.input_answer("ritual-en", seeded_digests["ritual-en"])["outcome"] == "card"
+    assert ledger.input_answer("ritual-zh", seeded_digests["ritual-zh"])["outcome"] == "card"
+    assert ledger.input_answer("genuine-abstained", seeded_digests["genuine-abstained"])["outcome"] == "no_hypothesis"
 
     # Second run_pending never re-attempts again.
+    assert worker.run_pending().processed == 0
+    assert called_ids == ["ritual-en", "ritual-zh"]
+
+    # Hourly unchanged collector refetch after repair reuses the corrected card (and preserves
+    # the genuine abstention) without reclosure as ritual no_hypothesis or another paid call.
+    refetch_jobs = {
+        sid: worker.enqueue_from_source_record(_refetch(2, sid=sid))
+        for sid in ("ritual-en", "ritual-zh", "genuine-abstained")
+    }
+    refetch_result = worker.run_pending()
+    assert refetch_result.processed == 3 and refetch_result.skipped == 3 and refetch_result.defect_reattempted == 0
+    assert called_ids == ["ritual-en", "ritual-zh"]
+    for sid in ("ritual-en", "ritual-zh"):
+        v2_row = queue.get(sid, refetch_jobs[sid].source_digest)
+        assert v2_row.status == "skipped"
+        assert v2_row.skip_reason.startswith("hypothesis_card_reused: L2 event ")
+        assert seeded_jobs[sid].job_id in v2_row.skip_reason
+        assert not hypothesis_card.has_first_run_ritual_marker(v2_row.skip_reason)
+    genuine_v2 = queue.get("genuine-abstained", refetch_jobs["genuine-abstained"].source_digest)
+    assert genuine_v2.status == "skipped"
+    assert genuine_v2.skip_reason.startswith("no_hypothesis: reused L2 event ")
+    assert "cybersecurity requirements" in genuine_v2.skip_reason
     assert worker.run_pending().processed == 0
     assert called_ids == ["ritual-en", "ritual-zh"]
 
@@ -1292,6 +1327,114 @@ def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_
     outcome = extractor.extract(_source("genuine-first-run-exp", body=BODY), digest="d1")
     assert outcome.status == "no_hypothesis"
     assert outcome.detail == genuine_reason
+
+
+def test_historical_ritual_input_answer_cache_replaced_on_repair_and_reused_on_unchanged_refetch(tmp_path):
+    """Regression for AC4: when a historical first-run ritual no_hypothesis is already in
+    input_answers, a single repair call replaces the defective cached answer (or _reuse_answer
+    retires it), so a subsequent unchanged _refetch reuses the corrected result without
+    replaying the ritual text or making another paid call, while genuine abstentions remain
+    cached and untouched."""
+    calls: list[str] = []
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        prompt = payload["prompt"]
+        for sid in ("src-card", "src-abstain", "src-direct-reuse", "src-genuine"):
+            if f"source_record_id={sid!r}" in prompt:
+                calls.append(sid)
+                if sid == "src-abstain":
+                    return {
+                        "output": {
+                            "structured_data": {
+                                "is_abstained": True,
+                                "abstention_reason": "no_testable_mechanism",
+                                "hypothesis_card": None,
+                            },
+                            "usage": {"input_tokens": 8800, "output_tokens": 60},
+                        }
+                    }
+                return {
+                    "output": {
+                        "structured_data": {
+                            "is_abstained": False,
+                            "abstention_reason": None,
+                            "hypothesis_card": _card(sid=sid),
+                        },
+                        "usage": {"input_tokens": 8800, "output_tokens": 1350},
+                    }
+                }
+        raise AssertionError(f"unexpected prompt: {prompt[:200]}")
+
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=20)
+    extractor = HypothesisExtractor(SemanticExtractionClient(transport_fn=transport), ledger)
+
+    ritual_detail = "BOOTSTRAP.md pending; first-run setup is still open — what should I call you?"
+    genuine_detail = "The article reports quarterly earnings without stating a testable market mechanism."
+
+    # 1. Historical ritual cache -> repair with reuse_answers=False -> card -> normal refetch v2 reuses card.
+    d_card = hypothesis_card.extraction_input_digest(BODY, source_record_id="src-card", origin="news")
+    ev1 = ledger.record("src-card", "no_hypothesis", ritual_detail)
+    ledger.put_input_answer("src-card", d_card, outcome="no_hypothesis", detail=ritual_detail, event_id=ev1)
+    assert ledger.input_answer("src-card", d_card)["outcome"] == "no_hypothesis"
+
+    repaired_card = extractor.extract(_refetch(1, sid="src-card"), digest="v1", reuse_answers=False)
+    assert repaired_card.status == "card" and repaired_card.card is not None
+    assert calls == ["src-card"]
+    cached_card = ledger.input_answer("src-card", d_card)
+    assert cached_card is not None and cached_card["outcome"] == "card"
+    assert cached_card["event_id"] == repaired_card.extra["event_id"] != ev1
+
+    refetched_card = extractor.extract(_refetch(2, sid="src-card"), digest="v2")
+    assert refetched_card.status == "card" and refetched_card.card is not None
+    assert refetched_card.extra["reused_event_id"] == repaired_card.extra["event_id"]
+    assert "BOOTSTRAP.md" not in refetched_card.detail
+    assert calls == ["src-card"]  # still 1 paid call
+
+    # 2. Historical ritual cache -> repair with reuse_answers=False -> genuine abstention -> refetch v2 reuses genuine abstention.
+    d_abstain = hypothesis_card.extraction_input_digest(BODY, source_record_id="src-abstain", origin="news")
+    ev2 = ledger.record("src-abstain", "no_hypothesis", ritual_detail)
+    ledger.put_input_answer("src-abstain", d_abstain, outcome="no_hypothesis", detail=ritual_detail, event_id=ev2)
+
+    repaired_abstain = extractor.extract(_refetch(1, sid="src-abstain"), digest="v1", reuse_answers=False)
+    assert repaired_abstain.status == "no_hypothesis"
+    assert repaired_abstain.detail == "no_testable_mechanism"
+    assert calls == ["src-card", "src-abstain"]
+    cached_abstain = ledger.input_answer("src-abstain", d_abstain)
+    assert cached_abstain is not None and cached_abstain["detail"] == "no_testable_mechanism"
+
+    refetched_abstain = extractor.extract(_refetch(2, sid="src-abstain"), digest="v2")
+    assert refetched_abstain.status == "no_hypothesis"
+    assert refetched_abstain.extra["reused_event_id"] == repaired_abstain.extra["event_id"]
+    assert "no_testable_mechanism" in refetched_abstain.detail
+    assert "BOOTSTRAP.md" not in refetched_abstain.detail
+    assert hypothesis_card.fixed_defect_for_skip_reason(f"no_hypothesis: {refetched_abstain.detail}") is None
+    assert calls == ["src-card", "src-abstain"]
+
+    # 3. Historical ritual cache encountered directly by normal extract (reuse_answers=True) is retired,
+    # repaired in one call, and reused on the next refetch.
+    d_direct = hypothesis_card.extraction_input_digest(BODY, source_record_id="src-direct-reuse", origin="news")
+    ev3 = ledger.record("src-direct-reuse", "no_hypothesis", ritual_detail)
+    ledger.put_input_answer("src-direct-reuse", d_direct, outcome="no_hypothesis", detail=ritual_detail, event_id=ev3)
+
+    direct_repair = extractor.extract(_refetch(1, sid="src-direct-reuse"), digest="v1")
+    assert direct_repair.status == "card" and direct_repair.card is not None
+    assert "reused_event_id" not in direct_repair.extra
+    assert calls == ["src-card", "src-abstain", "src-direct-reuse"]
+    direct_refetch = extractor.extract(_refetch(2, sid="src-direct-reuse"), digest="v2")
+    assert direct_refetch.status == "card"
+    assert direct_refetch.extra["reused_event_id"] == direct_repair.extra["event_id"]
+    assert calls == ["src-card", "src-abstain", "src-direct-reuse"]
+
+    # 4. Genuine cached abstention is preserved and reused without any model call.
+    d_genuine = hypothesis_card.extraction_input_digest(BODY, source_record_id="src-genuine", origin="news")
+    ev4 = ledger.record("src-genuine", "no_hypothesis", genuine_detail)
+    ledger.put_input_answer("src-genuine", d_genuine, outcome="no_hypothesis", detail=genuine_detail, event_id=ev4)
+
+    reused_genuine = extractor.extract(_refetch(1, sid="src-genuine"), digest="v1")
+    assert reused_genuine.status == "no_hypothesis"
+    assert reused_genuine.extra["reused_event_id"] == ev4
+    assert genuine_detail in reused_genuine.detail
+    assert calls == ["src-card", "src-abstain", "src-direct-reuse"]
 
 
 def test_defect_closed_record_failing_with_defect_again_is_not_reattempted_twice(tmp_path):
@@ -1973,11 +2116,14 @@ def test_hypothesis_card_ritual_markers_and_reattempt_match_under_clean_stdlib_i
         "import sys; "
         f"sys.path.insert(0, {str(repo_root)!r}); "
         "from services.source_ingestion.hypothesis_card import ("
-        "FIRST_RUN_RITUAL_MARKERS, fixed_defect_for_skip_reason, has_first_run_ritual_marker"
+        "FIRST_RUN_RITUAL_MARKERS, fixed_defect_for_skip_reason, has_first_run_ritual_marker, "
+        "is_fixed_defect_input_answer"
         "); "
         "assert 'jsonschema' not in sys.modules; "
         "assert has_first_run_ritual_marker('請問該怎麼稱呼你？'); "
         "assert not has_first_run_ritual_marker('Quarterly revenue report with no testable mechanism.'); "
+        "assert is_fixed_defect_input_answer('no_hypothesis', 'BOOTSTRAP.md pending; what should I call you?'); "
+        "assert not is_fixed_defect_input_answer('no_hypothesis', 'Quarterly revenue report with no testable mechanism.'); "
         "m = fixed_defect_for_skip_reason('no_hypothesis: First-run setup is pending; what should I call you?'); "
         "assert m is not None and m.code == 'openclaw_workspace_first_run_ritual'; "
         "assert len(FIRST_RUN_RITUAL_MARKERS) > 10"

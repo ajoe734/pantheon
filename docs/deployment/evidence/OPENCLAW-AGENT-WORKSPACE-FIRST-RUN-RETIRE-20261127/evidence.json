@@ -4,7 +4,7 @@
   "class": "RC2",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at_utc": "2026-11-27T17:52:00Z",
+  "recorded_at_utc": "2026-11-27T19:39:00Z",
   "ac1_skip_bootstrap_and_gateway_source_citations": {
     "config_entry": {
       "path": "agents.defaults.skipBootstrap",
@@ -153,7 +153,7 @@
       "just came online",
       "i'd go by"
     ],
-    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%' OR skip_reason LIKE 'hypothesis_compiler_failed:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, and HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual)."
+    "extractor_matcher_and_sql_scan_behavior": "services/source_ingestion/hypothesis_card.py :: FIXED_DEFECT_REATTEMPT_OUTCOMES matches both no_hypothesis: and hypothesis_extraction_failed: ritual skip reasons via fixed_defect_for_skip_reason (after normalizing curly apostrophes and excluding bare 'first run', 'who are you', 'who am i', 'user.md'), DistillationJobQueue.reattempt_fixed_defect_records and distillation_outbox_defect_reattempt_idx in services/source_ingestion/distillation_worker.py include (skip_reason LIKE 'hypothesis_extraction_failed:%' OR skip_reason LIKE 'no_hypothesis:%' OR skip_reason LIKE 'hypothesis_compiler_failed:%') with ExtractionLedger.can_attempt returning RESERVED for historical no_hypothesis outcomes, HypothesisExtractor._extract classifies any ritual-marked abstention as failed (openclaw_workspace_first_run_ritual), and is_fixed_defect_input_answer / ExtractionLedger.retire_input_answer / put_input_answer / HypothesisExtractor._reuse_answer retire and replace any historical fixed-defect ritual no_hypothesis in input_answers so a repaired outcome (card or genuine abstention) is cached and reused by subsequent unchanged refetches without replaying ritual text or making another paid call while preserving genuine abstentions."
   },
   "ac5_discovery_pipeline_release_probe": {
     "probe_file": "acceptance/discovery_pipeline_day.py",
@@ -192,7 +192,7 @@
     ],
     "results": {
       "clean_interpreter_probe": "exit 77 (skipped: missing ACCEPTANCE_BFF_URL, ACCEPTANCE_VIEWER_CLIENT_ID, ACCEPTANCE_VIEWER_CLIENT_SECRET)",
-      "focused_suite": "275 passed",
+      "focused_suite": "289 passed",
       "storage_manifest_check": "passed: true, failures: []"
     }
   }
