@@ -3,10 +3,10 @@
   "extends": {
     "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
     "bundle_version": "1.12",
-    "bundle_index_sha256": "f5e9c29dfe7ca6b026bb6607a668e26e32be41cea75c0838e803c14b5ac16f49"
+    "bundle_index_sha256": "10a2405af608446e7fe722198568c7be73be39a0e738b300d2a61b4c16c3a0e9"
   },
   "files": {
-    "specs/agora/v14/capability_manifest_v1_13.json": "6f9701fdf5a3302c4fd9f5ccd19a89dcbf0cfe8c76fb6627e45c7a1a96bd0bf8"
+    "specs/agora/v14/capability_manifest_v1_13.json": "9275d6a2fbcaa06cce334a9619cb33bcb5dbcadb38e9f3ada0ddb29bc70a867d"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
@@ -15,7 +15,7 @@
   "source_contracts": [
     {
       "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
-      "bundle_sha256": "8dd06ad663378a31ed854f53433f6feea3fbe877eed481d623444eb11f03bdfb",
+      "bundle_sha256": "cb0ae488539ca3b71255bad3fe56cafc5809afe8091789a005f8dc8e529e19d2",
       "manifest_path": "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json",
       "manifest_sha256": "504a30b33a992f0a02bd2feadf35ce2ab29911c7284e64907f704dcab8b2d25e",
       "openapi_path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
@@ -23,7 +23,7 @@
     },
     {
       "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
-      "bundle_sha256": "286a46b2b42d6b2b2c1044ae8192d14dc7ba69164c085f0e1ac1ccd43de30859",
+      "bundle_sha256": "d5db87f356478e189bcb099d4f9a4c1f76b782cf516bc6fd5825037cb336f9c8",
       "manifest_path": "services/control-plane/specs/agora/v12/capability_manifest_v1_11.json",
       "manifest_sha256": "dcbe26ba0e3f3529d9ce38590aca16b8c6ae34ff614547b1be1d69894da37a61",
       "openapi_path": "services/control-plane/openapi/agora_v1_11.openapi.yaml",
@@ -31,7 +31,7 @@
     },
     {
       "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
-      "bundle_sha256": "f5e9c29dfe7ca6b026bb6607a668e26e32be41cea75c0838e803c14b5ac16f49",
+      "bundle_sha256": "10a2405af608446e7fe722198568c7be73be39a0e738b300d2a61b4c16c3a0e9",
       "manifest_path": "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json",
       "manifest_sha256": "d35999b82e6b606f22de5baf4e6d260f03ce85d0cc871f5c1aa68145a0543188",
       "openapi_path": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
