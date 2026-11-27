@@ -45,6 +45,7 @@ PROD_CADDY_CONTAINER="${PROD_CADDY_CONTAINER:-pantheon-caddy}"
 PROD_CADDY_DEFAULT_IMAGE="${PROD_CADDY_DEFAULT_IMAGE:-caddy:2.8.4@sha256:63c1eabfc22aae3fb9b8fbcefd7be7be9ec4eb9a409cb02821922e4f161dc697}"
 PROD_TARGET_MACHINE_TYPE="${PROD_TARGET_MACHINE_TYPE:-e2-standard-8}"
 PROD_MIN_BOOT_DISK_GB="${PROD_MIN_BOOT_DISK_GB:-150}"
+PROD_BOOT_DISK_TYPE="${PROD_BOOT_DISK_TYPE:-pd-standard}"
 PROD_DEFAULT_TEMPLATE_NAME="${PROD_DEFAULT_TEMPLATE_NAME:-pantheon-prod-control-template-e2s8-v3}"
 PROD_SSH_WAIT_TRIES="${PROD_SSH_WAIT_TRIES:-48}"
 PROD_SSH_WAIT_INTERVAL="${PROD_SSH_WAIT_INTERVAL:-5}"
@@ -61,6 +62,8 @@ OLD_BOOT_RO_DEVICE="pantheon-old-boot-ro"
 
 [[ "$PROD_MIN_BOOT_DISK_GB" =~ ^[0-9]+$ ]] && (( PROD_MIN_BOOT_DISK_GB > 0 )) \
   || refuse INVALID_BOOT_DISK_SIZE "PROD_MIN_BOOT_DISK_GB must be a positive integer"
+[[ "$PROD_BOOT_DISK_TYPE" =~ ^(pd-standard|pd-balanced|pd-ssd)$ ]] \
+  || refuse INVALID_BOOT_DISK_TYPE "PROD_BOOT_DISK_TYPE must be pd-standard, pd-balanced, or pd-ssd"
 
 python3 -I "${SCRIPT_DIR}/prod_preflight.py" vm-size --machine-type "$PROD_TARGET_MACHINE_TYPE" >/dev/null 2>&1 \
   || refuse TARGET_VM_SIZE_BELOW_GATE "target machine type ${PROD_TARGET_MACHINE_TYPE} is below e2-standard-8"
@@ -529,13 +532,14 @@ fi
 template_is_compatible() {
   local tpl_file="$1"
   python3 -I "${SCRIPT_DIR}/prod_preflight.py" vm-size --instance-template "$tpl_file" >/dev/null 2>&1 || return 1
-  python3 -I - "$tpl_file" "$VM_METADATA" "$PROD_MIN_BOOT_DISK_GB" <<'PY' >/dev/null 2>&1 || return 1
+  python3 -I - "$tpl_file" "$VM_METADATA" "$PROD_MIN_BOOT_DISK_GB" "$PROD_BOOT_DISK_TYPE" <<'PY' >/dev/null 2>&1 || return 1
 import json, sys
 from pathlib import Path
 
 tpl = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 want_meta_str = sys.argv[2]
 min_boot_gb = int(sys.argv[3])
+want_disk_type = sys.argv[4].strip()
 tracked = ("enable-oslogin", "block-project-ssh-keys", "serial-port-enable")
 
 def parse_meta(s: str) -> dict[str, str]:
@@ -571,6 +575,10 @@ if isinstance(disks, list):
             continue
         init_params = d.get("initializeParams")
         if isinstance(init_params, dict):
+            if "sourceImage" in init_params:
+                raw_dtype = str(init_params.get("diskType") or "").strip().rstrip("/").rsplit("/", 1)[-1] or "pd-standard"
+                if raw_dtype != want_disk_type:
+                    raise SystemExit(1)
             raw_size = init_params.get("diskSizeGb")
             if raw_size is None and "sourceImage" in init_params:
                 raw_size = 10
@@ -628,7 +636,7 @@ if [[ "$TEMPLATE_READY" != "true" ]]; then
       --image-family=debian-12 \
       --image-project=debian-cloud \
       --boot-disk-size="${TARGET_BOOT_SIZE_GB}GB" \
-      --boot-disk-type=pd-balanced \
+      --boot-disk-type="${PROD_BOOT_DISK_TYPE}" \
       --boot-disk-auto-delete \
       --shielded-vtpm \
       --shielded-integrity-monitoring \
