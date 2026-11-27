@@ -971,27 +971,45 @@ ABSTENTION_MAXLEN_SKIP_REASON = (
     "hypothesis_extraction_failed: invalid_schema: "
     "Model structured data violated schema: abstention_reason is too long (maxLength 200)"
 )
+FIRST_RUN_RITUAL_SKIP_REASON = (
+    "no_hypothesis: First-run setup is pending, so I haven't extracted the document yet. "
+    "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+)
 
 
 def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
     from services.source_ingestion.hypothesis_card import (
+        FIRST_RUN_RITUAL_MARKERS,
         FIXED_DEFECT_REATTEMPT_OUTCOMES,
         HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG,
         HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS,
         HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS,
         fixed_defect_for_skip_reason,
+        has_first_run_ritual_marker,
     )
 
-    assert len(FIXED_DEFECT_REATTEMPT_OUTCOMES) >= 2
+    assert len(FIXED_DEFECT_REATTEMPT_OUTCOMES) >= 4
+    assert isinstance(FIRST_RUN_RITUAL_MARKERS, tuple) and len(FIRST_RUN_RITUAL_MARKERS) >= 10
     codes = {item.code: item for item in FIXED_DEFECT_REATTEMPT_OUTCOMES}
     assert "adapter_anyof_schema_mismatch" in codes
     assert "#7896" in codes["adapter_anyof_schema_mismatch"].fix
     assert "client_interactive_token_budget_breach" in codes
     assert "#7908" in codes["client_interactive_token_budget_breach"].fix
+    assert "openclaw_workspace_first_run_ritual" in codes
+    assert "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127" in codes["openclaw_workspace_first_run_ritual"].fix
 
     assert fixed_defect_for_skip_reason(ANYOF_SKIP_REASON) == codes["adapter_anyof_schema_mismatch"]
     assert fixed_defect_for_skip_reason(BUDGET_BREACH_SKIP_REASON) == codes["client_interactive_token_budget_breach"]
     assert fixed_defect_for_skip_reason(ABSTENTION_MAXLEN_SKIP_REASON) == codes["prompt_unstated_abstention_max_length"]
+    for ritual_reason in (
+        FIRST_RUN_RITUAL_SKIP_REASON,
+        "no_hypothesis: 本次工作階段無法安全完成 BOOTSTRAP.md",
+        "no_hypothesis: 請問該怎麼稱呼你？",
+        "no_hypothesis: Hey. I just came online. Who am I? Who are you?",
+        "no_hypothesis: Please update IDENTITY.md and USER.md before extraction.",
+    ):
+        assert has_first_run_ritual_marker(ritual_reason), ritual_reason
+        assert fixed_defect_for_skip_reason(ritual_reason) == codes["openclaw_workspace_first_run_ritual"], ritual_reason
 
     for non_eligible in (
         None,
@@ -1003,6 +1021,8 @@ def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
         "no_hypothesis: insufficient_evidence",
         "no_hypothesis: not_testable",
         "no_hypothesis: no_text",
+        "no_hypothesis: The article reports quarterly earnings without stating a testable market mechanism.",
+        "no_hypothesis: 純粹法說會日期與股利公告，未提出可檢驗的市場假說或因果機制。",
         "hypothesis_rejected: citation_unverifiable: span 0 offsets out of range",
         "hypothesis_extraction_failed: invalid_schema: Additional properties are not allowed ('route' was unexpected)",
         "hypothesis_extraction_failed: invalid_schema: OPENCLAW_TOOL_ARGS_INVALID_JSON",
@@ -1124,6 +1144,63 @@ def test_defect_closed_newest_versions_reattempted_once_behind_fresh_work_within
     assert queue.get("irrel-closed").skip_reason == "l2_irrelevant: no_finance_signal"
     assert queue.get("redacted-closed").skip_reason.startswith("l2_admission_denied")
     assert queue.get("abstained-closed").skip_reason == "no_hypothesis: model_abstained"
+
+
+def test_first_run_ritual_no_hypothesis_reattempted_once_and_genuine_abstention_stays_closed(
+    tmp_path, monkeypatch
+):
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    called_ids: list[str] = []
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        prompt = payload["prompt"]
+        for sid in ("ritual-en", "ritual-zh", "genuine-abstained"):
+            if f"source_record_id={sid!r}" in prompt:
+                called_ids.append(sid)
+                return {
+                    "output": {
+                        "structured_data": {
+                            "is_abstained": False,
+                            "abstention_reason": None,
+                            "hypothesis_card": _card(sid=sid),
+                        },
+                        "usage": {"input_tokens": 8900, "output_tokens": 1400},
+                    }
+                }
+        raise AssertionError(f"unexpected prompt: {prompt[:200]}")
+
+    worker, queue, ledger, _ = _queue_worker(tmp_path, transport, cap=10, clock=clock)
+
+    def seed_closed(sid: str, skip_reason: str, enqueued_at: float):
+        src = _source(sid, body=BODY)
+        job = queue.enqueue_source_record(src, enqueued_at=enqueued_at)
+        claimed = queue.claim_due(worker_id="seed", lease_seconds=30, now=enqueued_at, job_ids=[job.job_id])[0]
+        started = queue.begin_job(claimed, lease_seconds=30, now=enqueued_at)
+        queue.mark_skipped(started.job_id, reason=skip_reason, processed_at=enqueued_at, claim_token=started.lease_token)
+        return job
+
+    seed_closed("ritual-en", FIRST_RUN_RITUAL_SKIP_REASON, 100.0)
+    seed_closed("ritual-zh", "no_hypothesis: 請問該怎麼稱呼你？尚未萃取文章。", 110.0)
+    seed_closed(
+        "genuine-abstained",
+        "no_hypothesis: The article reports quarterly revenue without stating a testable mechanism.",
+        120.0,
+    )
+
+    result = worker.run_pending()
+    assert called_ids == ["ritual-en", "ritual-zh"]
+    assert result.defect_reattempted == 2 and result.created == 2
+    assert queue.get("ritual-en").status == "done"
+    assert queue.get("ritual-zh").status == "done"
+    assert queue.get("genuine-abstained").status == "skipped"
+    assert "without stating a testable mechanism" in (queue.get("genuine-abstained").skip_reason or "")
+
+    # Second run_pending never re-attempts again.
+    assert worker.run_pending().processed == 0
+    assert called_ids == ["ritual-en", "ritual-zh"]
 
 
 def test_defect_closed_record_failing_with_defect_again_is_not_reattempted_twice(tmp_path):

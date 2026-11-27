@@ -28,9 +28,11 @@ def _model_pool_batch(source: str) -> list[dict[str, object]]:
 def test_script_names_no_model_and_static_batch_has_no_chain() -> None:
     source = CONFIGURE_SCRIPT.read_text(encoding="utf-8")
     assert not MODEL_NAME_RE.search(source)
-    paths = {item["path"] for item in _model_pool_batch(source)}
+    batch = _model_pool_batch(source)
+    paths = {item["path"] for item in batch}
     assert not any(p.startswith("agents.defaults.model") for p in paths)
     assert "gateway.http.endpoints.responses.enabled" in paths
+    assert {"path": "agents.defaults.skipBootstrap", "value": True} in batch
 
 
 def test_chain_is_written_as_primary_and_fallbacks_with_native_runtime(tmp_path) -> None:
@@ -237,27 +239,34 @@ def test_toolsearch_override_matches_adapter_admission_and_keeps_defaults() -> N
 def _run_model_pool_script(
     tmp_path, *, token_present: bool, workspace_present: bool = False,
     reject_binding: bool = False, agents=None, get_fail: bool = False, raw_state=None,
-    extra_env=None, config=None,
+    extra_env=None, config=None, state_dir=None,
 ):
     config_store = tmp_path / "gateway-config.json"
     config_store.write_text(json.dumps(
-        {"models": dict(REGISTERED), "providers": {}, "cliBackends": {}, "model": None}
-        if config is None else {"models": {}, "providers": {}, "cliBackends": {}, "model": None, **config}
+        {"models": dict(REGISTERED), "providers": {}, "cliBackends": {}, "model": None, "skipBootstrap": None}
+        if config is None else {"models": {}, "providers": {}, "cliBackends": {}, "model": None, "skipBootstrap": None, **config}
     ))
+    openclaw_state_dir = Path(state_dir) if state_dir is not None else (tmp_path / "openclaw-state")
+    openclaw_state_dir.mkdir(parents=True, exist_ok=True)
     state = tmp_path / "agents-state.json"
     state.write_text(raw_state if raw_state is not None else json.dumps(agents) if agents is not None else "")
     command_log = tmp_path / "docker-commands.jsonl"
     fake_docker = tmp_path / "docker"
     fake_docker.write_text(
         f"#!{sys.executable}\n" + r'''
-import json, os, sys
+import json, os, subprocess, sys
 args = sys.argv[1:]
 if "exec" in args and "-T" in args:
     sys.stdin.read()  # like docker compose exec: forwards and consumes stdin
 with open(os.environ["TEST_DOCKER_LOG"], "a") as stream:
     stream.write(json.dumps(args) + "\n")
 if "-e" in args:
-    expr = args[args.index("-e") + 1]
+    e_idx = args.index("-e")
+    expr = args[e_idx + 1]
+    if "RETIRE_STOCK_FIRST_RUN" in expr:
+        env = {**os.environ, "OPENCLAW_STATE_DIR": os.environ["TEST_OPENCLAW_STATE_DIR"]}
+        proc = subprocess.run(["node", "-e", expr, *args[e_idx + 2:]], env=env, text=True)
+        sys.exit(proc.returncode)
     if "ANTHROPIC_WORKSPACE_ID" in expr:
         sys.exit(0)
     if "process.argv[1]" in expr:
@@ -280,6 +289,8 @@ elif cli[:2] == ["config", "set"]:
         pth = op["path"]
         if pth.startswith("models.providers."):
             store["providers"][pth[len("models.providers."):]] = op["value"]
+        elif pth == "agents.defaults.skipBootstrap":
+            store["skipBootstrap"] = op["value"]
         elif pth == "agents.defaults.model.primary":
             store["model"] = {**(store["model"] if isinstance(store["model"], dict) else {}), "primary": op["value"]}
         elif pth == "agents.defaults.model.fallbacks":
@@ -304,6 +315,8 @@ elif cli[:2] == ["config", "get"]:
         print(json.dumps(store["providers"]))
     elif path == "agents.defaults.cliBackends":
         print(json.dumps(store["cliBackends"]))
+    elif path == "agents.defaults.skipBootstrap":
+        print(json.dumps(store.get("skipBootstrap")))
     elif path == "agents.defaults.model":
         if store["model"] is None:
             sys.exit(1)
@@ -337,6 +350,7 @@ elif cli[:2] == ["config", "get"]:
             "TEST_REJECT_BINDING": "1" if reject_binding else "0",
             "TEST_STATE": str(state),
             "TEST_CONFIG": str(config_store),
+            "TEST_OPENCLAW_STATE_DIR": str(openclaw_state_dir),
             "OPENCLAW_MODEL_CHAIN": ",".join(CHAIN),
             "TEST_AGENTS_GET_FAIL": "1" if get_fail else "0",
             "CLAUDE_CODE_OAUTH_TOKEN": "test-secret-never-in-argv-or-output",
@@ -503,3 +517,146 @@ def test_agents_read_failure_or_bad_shape_fails_closed(tmp_path) -> None:
         )
         assert not any("restart" in a for a in calls)
         assert (case_dir / "agents-state.json").read_text() == original
+
+
+STOCK_BOOTSTRAP_MD = (
+    "# BOOTSTRAP.md - Hello, World\n\n"
+    "_You just woke up. Time to figure out who you are._\n"
+)
+STOCK_IDENTITY_MD = "# IDENTITY.md - Who Am I?\n\n_Fill this in during your first conversation._\n"
+STOCK_USER_MD = "# USER.md - About Your Human\n\n_Learn about the person you're helping._\n"
+STOCK_SOUL_MD = "# SOUL.md - Who You Are\n\n_You're not a chatbot. You're becoming someone._\n"
+STOCK_HEARTBEAT_MD = (
+    "<!-- Heartbeat template; comments-only content prevents scheduled heartbeat API calls. -->\n\n"
+    "# Keep this file empty (or with only comments) to skip heartbeat API calls.\n"
+)
+STOCK_AGENTS_MD = (
+    "# AGENTS.md - Your Workspace\n\n"
+    "If `BOOTSTRAP.md` exists, that's your birth certificate.\n"
+)
+
+
+def test_skip_bootstrap_readback_and_isolated_bootstrap_parity(tmp_path) -> None:
+    import hashlib
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import openclaw_isolated_model_bootstrap as isolated_bootstrap
+
+    result, calls = _run_model_pool_script(tmp_path, token_present=False, extra_env=CHAIN_ENV)
+    assert result.returncode == 0, result.stderr
+    assert result.final_config["skipBootstrap"] is True
+    assert any(args[-4:] == ["dist/index.js", "config", "get", "agents.defaults.skipBootstrap"] or
+               args[-5:] == ["dist/index.js", "config", "get", "agents.defaults.skipBootstrap", "--json"]
+               for args in calls)
+
+    iso_batch = isolated_bootstrap.render_batch({
+        isolated_bootstrap.API_KEY_SOURCE_ENV: "k",
+        isolated_bootstrap.WORKSPACE_SOURCE_ENV: "w",
+        isolated_bootstrap.OPENAI_OAUTH_TOKEN_SOURCE_ENV: "oauth-tok",
+        "OPENCLAW_MODEL_CHAIN": ",".join(CHAIN),
+    })
+    iso_values = {str(item["path"]): item["value"] for item in iso_batch}
+    assert iso_values["agents.defaults.skipBootstrap"] is True
+    assert hashlib.sha256(STOCK_BOOTSTRAP_MD.encode()).hexdigest() != ""
+
+
+def test_retires_stock_first_run_files_installs_service_agents_and_is_idempotent(tmp_path) -> None:
+    import hashlib
+
+    state_dir = tmp_path / "gateway-state"
+    ws_structured = state_dir / "workspace-structured-extraction"
+    ws_memory = state_dir / "workspace-memory-index"
+    ws_custom = state_dir / "workspace-operator-custom"
+    ws_consult = state_dir / "workspaces" / "consult-9903f889006b-persona-risk-officer"
+    ws_agora = state_dir / "workspaces" / "agora-servant-1"
+    ws_persona = state_dir / "workspaces" / "persona-2448c7053e33ea48da47"
+
+    for d in (ws_structured, ws_memory, ws_custom, ws_consult, ws_agora, ws_persona):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # 1. structured-extraction and memory-index have full stock templates.
+    for ws in (ws_structured, ws_memory):
+        (ws / "BOOTSTRAP.md").write_text(STOCK_BOOTSTRAP_MD, encoding="utf-8")
+        (ws / "IDENTITY.md").write_text(STOCK_IDENTITY_MD, encoding="utf-8")
+        (ws / "USER.md").write_text(STOCK_USER_MD, encoding="utf-8")
+        (ws / "SOUL.md").write_text(STOCK_SOUL_MD, encoding="utf-8")
+        (ws / "HEARTBEAT.md").write_text(STOCK_HEARTBEAT_MD, encoding="utf-8")
+        (ws / "AGENTS.md").write_text(STOCK_AGENTS_MD, encoding="utf-8")
+        (ws / "TOOLS.md").write_text("# TOOLS.md - Local Notes\n", encoding="utf-8")
+
+    # 2. consult panel has stock BOOTSTRAP.md and stock SOUL.md (only BOOTSTRAP.md is retired here).
+    (ws_consult / "BOOTSTRAP.md").write_text(STOCK_BOOTSTRAP_MD, encoding="utf-8")
+    (ws_consult / "SOUL.md").write_text(STOCK_SOUL_MD, encoding="utf-8")
+
+    # 3. agora-servant and trading persona have Pantheon-rendered SOUL.md and MEMORY.md.
+    pantheon_soul = "# SOUL.md — 青禾 (`persona-2448c7053e33ea48da47`)\n\nYou are 青禾.\n"
+    pantheon_memory = "# MEMORY.md\n\n- Canonical memory entry pmem-1\n"
+    (ws_agora / "BOOTSTRAP.md").write_text(STOCK_BOOTSTRAP_MD, encoding="utf-8")
+    (ws_agora / "SOUL.md").write_text("# SOUL.md — Agora Servant (`agora-servant-1`)\n", encoding="utf-8")
+    (ws_persona / "SOUL.md").write_text(pantheon_soul, encoding="utf-8")
+    (ws_persona / "MEMORY.md").write_text(pantheon_memory, encoding="utf-8")
+
+    # 4. operator-authored non-stock BOOTSTRAP.md (same filename, non-stock content) must be left alone.
+    operator_bootstrap = "# Operator Custom Notes\n\nDo not move this file.\n"
+    (ws_custom / "BOOTSTRAP.md").write_text(operator_bootstrap, encoding="utf-8")
+
+    result1, _ = _run_model_pool_script(
+        tmp_path, token_present=False, state_dir=state_dir, extra_env=CHAIN_ENV,
+    )
+    assert result1.returncode == 0, result1.stderr
+    assert result1.final_config["skipBootstrap"] is True
+
+    # Stock BOOTSTRAP.md retired from structured-extraction, memory-index, consult, agora-servant.
+    for ws in (ws_structured, ws_memory, ws_consult, ws_agora):
+        assert not (ws / "BOOTSTRAP.md").exists(), ws
+    # Non-stock BOOTSTRAP.md kept untouched.
+    assert (ws_custom / "BOOTSTRAP.md").read_text(encoding="utf-8") == operator_bootstrap
+    # Pantheon-rendered SOUL.md and MEMORY.md untouched; consult SOUL.md untouched.
+    assert (ws_persona / "SOUL.md").read_text(encoding="utf-8") == pantheon_soul
+    assert (ws_persona / "MEMORY.md").read_text(encoding="utf-8") == pantheon_memory
+    assert (ws_agora / "SOUL.md").read_text(encoding="utf-8") == "# SOUL.md — Agora Servant (`agora-servant-1`)\n"
+    assert (ws_consult / "SOUL.md").read_text(encoding="utf-8") == STOCK_SOUL_MD
+
+    # Service agents: stock IDENTITY, USER, SOUL, HEARTBEAT retired; Pantheon-authored AGENTS.md installed.
+    expected_structured_agents = (
+        REPO_ROOT / "integrations" / "openclaw" / "service_agents" / "structured-extraction" / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    expected_memory_agents = (
+        REPO_ROOT / "integrations" / "openclaw" / "service_agents" / "memory-index" / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    for ws, expected_agents in ((ws_structured, expected_structured_agents), (ws_memory, expected_memory_agents)):
+        for retired_name in ("BOOTSTRAP.md", "IDENTITY.md", "USER.md", "SOUL.md", "HEARTBEAT.md"):
+            assert not (ws / retired_name).exists(), (ws, retired_name)
+        installed = (ws / "AGENTS.md").read_text(encoding="utf-8")
+        assert installed == expected_agents
+        assert "no first-run ritual" in installed.lower()
+        assert "never ask the caller a question" in installed.lower()
+        assert "structured output" in installed.lower()
+
+    # Archive directory outside every workspace holds all retired files and one receipt line per file.
+    archive_root = state_dir / "retired-stock-bootstrap"
+    assert archive_root.is_dir()
+    receipts_file = archive_root / "receipts.jsonl"
+    receipts = [json.loads(line) for line in receipts_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # 6 stock files in workspace-structured-extraction + 6 in workspace-memory-index + 1 in consult + 1 in agora = 14
+    assert len(receipts) == 14
+    expected_bootstrap_sha = hashlib.sha256(STOCK_BOOTSTRAP_MD.encode("utf-8")).hexdigest()
+    for receipt in receipts:
+        assert set(receipt) >= {"workspace", "file", "sha256", "time", "archive_path"}
+        archived_file = state_dir / receipt["archive_path"]
+        assert archived_file.is_file()
+        assert hashlib.sha256(archived_file.read_bytes()).hexdigest() == receipt["sha256"]
+        if receipt["file"] == "BOOTSTRAP.md":
+            assert receipt["sha256"] == expected_bootstrap_sha
+
+    # Second run is idempotent: moves nothing, writes no new receipts.
+    run2_dir = tmp_path / "run2"
+    run2_dir.mkdir()
+    result2, _ = _run_model_pool_script(
+        run2_dir, token_present=False, state_dir=state_dir, extra_env=CHAIN_ENV,
+    )
+    assert result2.returncode == 0, result2.stderr
+    assert "RETIRED_STOCK_WORKSPACE_FILE" not in result2.stdout
+    receipts_after = [
+        json.loads(line) for line in receipts_file.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    assert receipts_after == receipts

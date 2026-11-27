@@ -98,6 +98,8 @@ def test_working_pipeline_passes_and_says_no_strategy_passed():
     assert gate["status"] == "passed" and gate["values"]["by_reason"] == {"survivorship_limited": 1}
     assert stage(report, "governed_market_dataset")["values"] == {"snapshot_id": "gmd-abc123", "day": "2026-11-27"}
     assert stage(report, "hypothesis_cards")["values"]["cap"] == 400
+    assert stage(report, "hypothesis_cards")["values"]["ritual_events_since_switch"] == 0
+    assert report["ritual_events_since_switch"] == 0
 
 
 def test_hosted_2026_11_25_fixture_fails_naming_every_broken_stage():
@@ -150,6 +152,58 @@ def test_old_card_does_not_count_as_new():
     board["data"]["discovered"][0]["since"] = "2026-11-20T08:00:00Z"
     assert stage(run(board), "hypothesis_cards")["status"] == "failed"
     assert stage(run(board), "no_fallback_drafts")["status"] == "passed"  # zero NEW drafts
+
+
+def test_ritual_marked_events_since_release_switch_must_be_zero():
+    switched_at = "2026-11-28T06:00:00Z"
+    pre_switch_and_genuine = [
+        {
+            "ts": "2026-11-27T05:15:00Z",
+            "outcome": "no_hypothesis",
+            "detail": (
+                "First-run setup is pending, so I haven't extracted the document yet. "
+                "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+            ),
+        },
+        {
+            "ts": "2026-11-28T07:00:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "The article reports quarterly earnings with no testable market mechanism.",
+        },
+    ]
+    assert dpd.count_ritual_events_since_switch(pre_switch_and_genuine, switched_at) == 0
+    passing = dpd.judge(good_board(), good_health(), NOW, ledger_events=pre_switch_and_genuine, switched_at=switched_at)
+    assert passing["verdict"] == "passed"
+    assert passing["ritual_events_since_switch"] == 0
+    assert stage(passing, "hypothesis_cards")["values"]["ritual_events_since_switch"] == 0
+
+    post_switch_ritual = [
+        *pre_switch_and_genuine,
+        {
+            "ts": "2026-11-28T07:30:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "First-run setup is pending; what should I call you?",
+        },
+        {
+            "ts": "2026-11-28T08:10:00Z",
+            "outcome": "no_hypothesis",
+            "detail": "請問該怎麼稱呼你？本次工作階段無法安全完成 BOOTSTRAP.md",
+        },
+    ]
+    assert dpd.count_ritual_events_since_switch(post_switch_ritual, switched_at) == 2
+    failing = dpd.judge(good_board(), good_health(), NOW, ledger_events=post_switch_ritual, switched_at=switched_at)
+    assert failing["verdict"] == "failed" and failing["failed_stages"] == ["hypothesis_cards"]
+    assert failing["ritual_events_since_switch"] == 2
+    hc = stage(failing, "hypothesis_cards")
+    assert hc["status"] == "failed" and hc["reason"] == "ritual_marked_events_since_switch:2"
+    assert hc["values"]["ritual_events_since_switch"] == 2
+
+    board_with_summary_events = good_board()
+    board_with_summary_events["data"]["discovery_summary"]["switched_at"] = switched_at
+    board_with_summary_events["data"]["discovery_summary"]["events"] = post_switch_ritual
+    from_board = run(board_with_summary_events)
+    assert from_board["verdict"] == "failed"
+    assert stage(from_board, "hypothesis_cards")["reason"] == "ritual_marked_events_since_switch:2"
 
 
 @pytest.mark.parametrize("card", [

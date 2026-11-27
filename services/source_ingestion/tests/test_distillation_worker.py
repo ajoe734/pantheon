@@ -1625,4 +1625,48 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         assert [j.source_id for j in claimed] == ["src-fresh-new"]
         assert fresh_job.job_id == claimed[0].job_id
 
+    def test_reattempt_fixed_defect_records_reopens_ritual_no_hypothesis_once_and_keeps_genuine_abstentions_closed(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        ritual_reason = (
+            "no_hypothesis: First-run setup is pending, so I haven't extracted the document yet. "
+            "I'd go by Finch, a calm, direct AI assistant 🐦. Does that work for you, and what should I call you?"
+        )
+        genuine_reason = "no_hypothesis: The document summarizes earnings dates with no testable hypothesis."
+        ritual_job = queue.enqueue_source_record(
+            _normalized_source("src-ritual-closed", tenant_id="default"), enqueued_at=100.0
+        )
+        genuine_job = queue.enqueue_source_record(
+            _normalized_source("src-genuine-closed", tenant_id="default"), enqueued_at=110.0
+        )
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=100.0 WHERE job_id=?",
+                (ritual_reason, ritual_job.job_id),
+            )
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=110.0 WHERE job_id=?",
+                (genuine_reason, genuine_job.job_id),
+            )
+
+        reopened = queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert reopened == [ritual_job.job_id]
+        assert queue.get("src-ritual-closed").status == DistillationJobStatus.PENDING
+        assert queue.get("src-genuine-closed").status == DistillationJobStatus.SKIPPED
+        assert queue.get("src-genuine-closed").skip_reason == genuine_reason
+
+        # Even if closed again with ritual text, defect_reattempted=1 prevents a second re-open.
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
+                (ritual_reason, ritual_job.job_id),
+            )
+        assert queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=300.0
+        ) == []
+
+
 

@@ -32,7 +32,12 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+
+from services.source_ingestion.hypothesis_card import (
+    FIRST_RUN_RITUAL_MARKERS,
+    has_first_run_ritual_marker,
+)
 
 OWNER = "DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125"
 REQUIRED = ("ACCEPTANCE_BFF_URL", "ACCEPTANCE_VIEWER_CLIENT_ID", "ACCEPTANCE_VIEWER_CLIENT_SECRET")
@@ -166,7 +171,89 @@ def _closed_reasons(board: Dict[str, Any]) -> Dict[str, Any]:
     return _dict(_dict(summary.get("closed_last_24h")).get("by_reason"))
 
 
-def stage_hypothesis_cards(board: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+def count_ritual_events_since_switch(
+    events: Iterable[Any], switched_at: Any = None
+) -> int:
+    """Count L2 ledger events at or after ``switched_at`` that carry first-run ritual markers."""
+    cutoff = switched_at if isinstance(switched_at, datetime) else _parse_time(switched_at)
+    matched = 0
+    for item in events or ():
+        if not isinstance(item, Mapping):
+            continue
+        ts = _parse_time(item.get("ts") or item.get("at") or item.get("since") or item.get("created_at"))
+        if cutoff is not None and ts is not None and ts < cutoff:
+            continue
+        text = " ".join(
+            str(item.get(k) or "")
+            for k in ("detail", "abstention_reason", "reason", "skip_reason", "claim", "title")
+            if item.get(k)
+        )
+        if has_first_run_ritual_marker(text):
+            matched += 1
+    return matched
+
+
+def _ritual_events_since_switch(
+    board: Dict[str, Any],
+    *,
+    ledger_events: Optional[Iterable[Any]] = None,
+    switched_at: Any = None,
+) -> int:
+    data = _dict(board.get("data"))
+    summary = _dict(data.get("discovery_summary"))
+    llm_calls = _dict(summary.get("llm_calls"))
+    meta = _dict(board.get("meta"))
+    cutoff = (
+        switched_at
+        if switched_at is not None
+        else (
+            summary.get("release_switched_at")
+            or summary.get("switched_at")
+            or llm_calls.get("release_switched_at")
+            or llm_calls.get("switched_at")
+            or meta.get("release_switched_at")
+            or meta.get("switched_at")
+            or meta.get("deployed_at")
+            or os.environ.get("ACCEPTANCE_RELEASE_SWITCHED_AT")
+        )
+    )
+    total = 0
+    explicit_count, _ = _count(board, "ritual_events_since_switch")
+    if explicit_count is not None and explicit_count > 0:
+        total = max(total, explicit_count)
+    for container in (summary, llm_calls):
+        val = _int(container.get("ritual_events_since_switch"))
+        if val is not None and val > 0:
+            total = max(total, val)
+    for event_list in (
+        summary.get("events"),
+        summary.get("l2_events"),
+        summary.get("events_since_switch"),
+        llm_calls.get("events"),
+        llm_calls.get("recent_events"),
+        llm_calls.get("events_since_switch"),
+        ledger_events,
+    ):
+        if isinstance(event_list, Iterable) and not isinstance(event_list, (str, bytes, Mapping)):
+            total += count_ritual_events_since_switch(event_list, cutoff)
+    closed = _closed_reasons(board)
+    for reason_key, count_val in closed.items():
+        n = _int(count_val)
+        if n and n > 0 and (
+            reason_key == "openclaw_workspace_first_run_ritual"
+            or has_first_run_ritual_marker(reason_key)
+        ):
+            total = max(total, n)
+    return total
+
+
+def stage_hypothesis_cards(
+    board: Dict[str, Any],
+    now: datetime,
+    *,
+    ledger_events: Optional[Iterable[Any]] = None,
+    switched_at: Any = None,
+) -> Dict[str, Any]:
     name = "hypothesis_cards"
     reason = _surface(board, "alpha_factory_hypothesis_cards")
     if reason:
@@ -184,8 +271,20 @@ def stage_hypothesis_cards(board: Dict[str, Any], now: datetime) -> Dict[str, An
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
     today, _ = _count(board, "hypothesis_cards_today")
-    values = {"verified_last_24h": len(verified), "drafts_last_24h": len(recent), "cards_today": today,
-              "calls_today": calls, "cap": cap, "closed_last_24h_by_reason": closed}
+    ritual_events = _ritual_events_since_switch(
+        board, ledger_events=ledger_events, switched_at=switched_at
+    )
+    values = {
+        "verified_last_24h": len(verified),
+        "drafts_last_24h": len(recent),
+        "cards_today": today,
+        "calls_today": calls,
+        "cap": cap,
+        "ritual_events_since_switch": ritual_events,
+        "closed_last_24h_by_reason": closed,
+    }
+    if ritual_events != 0:
+        return _failed(name, f"ritual_marked_events_since_switch:{ritual_events}", **values)
     if not verified:
         why = "no_verified_hypothesis_card_last_24h"
         disabled = _int(closed.get("l2_extraction_disabled"))
@@ -402,7 +501,14 @@ BOARD_STAGES: Tuple[Callable[[Dict[str, Any], datetime], Dict[str, Any]], ...] =
 )
 
 
-def judge(board: Any, health: Any, now: datetime) -> Dict[str, Any]:
+def judge(
+    board: Any,
+    health: Any,
+    now: datetime,
+    *,
+    ledger_events: Optional[Iterable[Any]] = None,
+    switched_at: Any = None,
+) -> Dict[str, Any]:
     """Judge every stage. ``board``/``health`` are the parsed bodies, or a ReadFailed for an unread route."""
     stages: List[Dict[str, Any]] = []
     for fn in BOARD_STAGES:
@@ -414,7 +520,10 @@ def judge(board: Any, health: Any, now: datetime) -> Dict[str, Any]:
         if board_reason:
             stages.append(_failed(stage_name, board_reason))
             continue
-        stages.append(fn(board, now))
+        if fn is stage_hypothesis_cards:
+            stages.append(fn(board, now, ledger_events=ledger_events, switched_at=switched_at))
+        else:
+            stages.append(fn(board, now))
     if isinstance(health, ReadFailed):
         stages.append(_failed("distillation_dead_letters", f"unreadable:loop_health:{health}"))
     elif not isinstance(health, dict):
@@ -423,12 +532,15 @@ def judge(board: Any, health: Any, now: datetime) -> Dict[str, Any]:
         stages.append(stage_distillation_dead_letters(health, now))
     failed = [s["stage"] for s in stages if s["status"] == "failed"]
     gate = next(s for s in stages if s["stage"] == "gate_attempts")
+    cards_stage = next(s for s in stages if s["stage"] == "hypothesis_cards")
     passes = _dict(gate.get("values")).get("passes")
+    ritual_events = _dict(cards_stage.get("values")).get("ritual_events_since_switch")
     return {
         "owner": OWNER,
         "judged_at": _iso(now),
         "verdict": "failed" if failed else "passed",
         "failed_stages": failed,
+        "ritual_events_since_switch": ritual_events if isinstance(ritual_events, int) else None,
         "strategies_passed": passes if isinstance(passes, int) else None,
         "strategy_verdict": "no strategy passed" if not passes else f"{passes} strategy(ies) passed",
         "stages": stages,

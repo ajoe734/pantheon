@@ -596,6 +596,50 @@ class ExtractionLedger:
 UNAVAILABLE_FAILURE_CODES = frozenset({"timeout", "transport_error", "provider_billing"})
 
 
+# Checked-in first-run ritual markers (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
+# Matched case-insensitively against no_hypothesis abstention reasons and L2 ledger
+# event details so the 52 sources closed by OpenClaw's stock BOOTSTRAP.md ritual
+# since 2026-11-26 12:51Z are re-attempted once while genuine abstentions stay closed.
+FIRST_RUN_RITUAL_MARKERS: tuple[str, ...] = (
+    "bootstrap.md",
+    "identity.md",
+    "user.md",
+    "soul.md",
+    "first-run",
+    "first run",
+    "bootstrap is still pending",
+    "bootstrap is pending",
+    "bootstrap pending",
+    "bootstrap setup",
+    "bootstrap ritual",
+    "what should i call you",
+    "what to call you",
+    "how should i address you",
+    "how to address you",
+    "who am i",
+    "who are you",
+    "just came online",
+    "just woke up",
+    "i'd go by",
+    "怎麼稱呼",
+    "如何稱呼",
+    "稱呼你",
+    "稱呼您",
+    "初次啟動",
+    "初次設定",
+    "首次啟動",
+    "首次設定",
+)
+
+
+def has_first_run_ritual_marker(text: str | None) -> bool:
+    """True when ``text`` carries any OpenClaw stock first-run ritual marker."""
+    haystack = str(text or "").strip().lower()
+    if not haystack:
+        return False
+    return any(marker in haystack for marker in FIRST_RUN_RITUAL_MARKERS)
+
+
 @dataclass(frozen=True)
 class FixedDefectOutcome:
     """A terminal extraction failure caused by our own defect that a deployed fix removed.
@@ -609,19 +653,37 @@ class FixedDefectOutcome:
     code: str
     fix: str
     description: str
-    required_substrings: tuple[str, ...]
+    required_substrings: tuple[str, ...] = ()
     any_substrings: tuple[str, ...] = ()
     excluded_substrings: tuple[str, ...] = ()
+    skip_reason_prefix: str = "hypothesis_extraction_failed:"
+    case_insensitive: bool = False
 
     def matches(self, skip_reason: str | None) -> bool:
         text = str(skip_reason or "").strip()
-        if not text.startswith("hypothesis_extraction_failed:"):
+        if not text.startswith(self.skip_reason_prefix):
             return False
-        if not all(needle in text for needle in self.required_substrings):
+        haystack = text.lower() if self.case_insensitive else text
+        req = (
+            tuple(needle.lower() for needle in self.required_substrings)
+            if self.case_insensitive
+            else self.required_substrings
+        )
+        any_s = (
+            tuple(needle.lower() for needle in self.any_substrings)
+            if self.case_insensitive
+            else self.any_substrings
+        )
+        excl = (
+            tuple(needle.lower() for needle in self.excluded_substrings)
+            if self.case_insensitive
+            else self.excluded_substrings
+        )
+        if not all(needle in haystack for needle in req):
             return False
-        if self.any_substrings and not any(needle in text for needle in self.any_substrings):
+        if any_s and not any(needle in haystack for needle in any_s):
             return False
-        if any(needle in text for needle in self.excluded_substrings):
+        if any(needle in haystack for needle in excl):
             return False
         return True
 
@@ -634,6 +696,8 @@ class FixedDefectOutcome:
 # fresh relevant records (or 1-2 days if fresh relevant volume exceeds 270
 # calls on day 1, or up to 390 calls on day 1 / 650 calls over 2 days if
 # transient provider timeouts trigger per-record retries up to 3/day, 6/total).
+# Plus 52 distinct sources closed no_hypothesis with first-run ritual text
+# between 2026-11-26 12:51Z and 2026-11-27 05:30Z (OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127).
 HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG = 130
 HOSTED_DEFECT_REATTEMPT_EXPECTED_CALLS = 130
 HOSTED_DEFECT_REATTEMPT_EXPECTED_DAYS = 1
@@ -673,6 +737,18 @@ FIXED_DEFECT_REATTEMPT_OUTCOMES: tuple[FixedDefectOutcome, ...] = (
         required_substrings=("budget_breach",),
         excluded_substrings=("no model call made", "> 3072"),
     ),
+    FixedDefectOutcome(
+        code="openclaw_workspace_first_run_ritual",
+        fix="OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127",
+        description=(
+            "OpenClaw stock first-run ritual (BOOTSTRAP.md plus stock IDENTITY/USER/SOUL) "
+            "was injected into workspace-structured-extraction before skipBootstrap and "
+            "workspace retirement, closing 52 sources as no_hypothesis with ritual text"
+        ),
+        skip_reason_prefix="no_hypothesis:",
+        any_substrings=FIRST_RUN_RITUAL_MARKERS,
+        case_insensitive=True,
+    ),
 )
 
 
@@ -680,8 +756,9 @@ def fixed_defect_for_skip_reason(skip_reason: str | None) -> Optional[FixedDefec
     """Return the FixedDefectOutcome that matches ``skip_reason``, or None.
 
     Irrelevant (``l2_irrelevant``), admission-denied (``l2_admission_denied``),
-    model-abstained (``no_hypothesis``), citation-rejected (``hypothesis_rejected``)
-    and unfixed schema/JSON failures never match.
+    genuine model-abstained (``no_hypothesis`` without first-run ritual markers),
+    citation-rejected (``hypothesis_rejected``) and unfixed schema/JSON failures
+    never match.
     """
     for outcome in FIXED_DEFECT_REATTEMPT_OUTCOMES:
         if outcome.matches(skip_reason):
@@ -915,6 +992,7 @@ __all__ = [
     "DEFAULT_DAILY_CALL_CAP",
     "ExtractionLedger",
     "ExtractionOutcome",
+    "FIRST_RUN_RITUAL_MARKERS",
     "FIXED_DEFECT_REATTEMPT_OUTCOMES",
     "FixedDefectOutcome",
     "HOSTED_DEFECT_CLOSED_SOURCE_BACKLOG",
@@ -930,6 +1008,7 @@ __all__ = [
     "extractor_from_env",
     "finalize_card",
     "fixed_defect_for_skip_reason",
+    "has_first_run_ritual_marker",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
     "verify_cited_spans",
