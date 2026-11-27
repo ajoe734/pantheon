@@ -1,0 +1,1127 @@
+"""Trader servant paper book provisioning through Capital and Runtime-Manager owners.
+
+Task: PAPER-TRADER-BOOK-PROVISION-20261127 (RC4 / SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T7).
+On first paper use, the trader's servant persona gets:
+- one paper CapitalPool and one paper PersonaCapitalBinding through the Capital owner
+- one paper RuntimeBinding through the Runtime-Manager owner (using the dynamic
+  runtime-manager bearer auth from PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125)
+
+Repeated calls are GET-first and idempotent. No canary or live binding can be
+created from this path. The starting capital comes from an operator setting
+(default TWD 10,000,000 notional, paper only) and is returned with its source.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+import os
+import re
+from typing import Any, Callable, Dict, List, Mapping, Optional
+
+from services.control_plane.bff.persona_provisioning import ProvisioningRecord
+from services.control_plane.bff.persona_provisioning_coordinator import (
+    PersonaProvisioningCoordinationError,
+    PersonaProvisioningCoordinator,
+    ProvisioningIds,
+    TERMINAL_RUNTIME_BINDING_STATUSES,
+    deterministic_provisioning_ids,
+)
+from services.runtime_auth import RuntimeManagerAuthConfig, resolve_runtime_manager_auth
+
+DEFAULT_TRADER_PAPER_STARTING_CAPITAL = 10_000_000.0
+DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY = "TWD"
+
+TRADER_PAPER_STARTING_CAPITAL_ENV = "PANTHEON_TRADER_PAPER_STARTING_CAPITAL"
+TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV = "PANTHEON_TRADER_PAPER_STARTING_CAPITAL_CURRENCY"
+
+TRADER_PAPER_STARTING_CAPITAL_ENV_KEYS: tuple[str, ...] = (
+    TRADER_PAPER_STARTING_CAPITAL_ENV,
+    "PANTHEON_AGORA_TRADER_PAPER_STARTING_CAPITAL",
+)
+TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV_KEYS: tuple[str, ...] = (
+    TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV,
+    "PANTHEON_AGORA_TRADER_PAPER_CURRENCY",
+)
+
+_CURRENCY_RE = re.compile(r"^[A-Z]{3,8}$")
+_STAGE_FIELD_NAMES: tuple[str, ...] = (
+    "target_stage",
+    "stage",
+    "deployment_stage",
+    "deployment_mode",
+    "execution_mode",
+    "allowed_deployment_scope",
+    "environment",
+    "environment_ceiling",
+    "capital_mode",
+)
+
+
+def _utc_now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _clean_env(env_map: Mapping[str, str], keys: tuple[str, ...]) -> tuple[str, str]:
+    for key in keys:
+        raw = str(env_map.get(key) or "").strip()
+        if raw and not (raw.startswith("${") and raw.endswith("}")):
+            return key, raw
+    return keys[0], ""
+
+
+def resolve_trader_paper_starting_capital(
+    env: Optional[Mapping[str, str]] = None,
+    *,
+    as_of: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Resolve the operator setting for a trader's paper book starting capital.
+
+    Never invokes a language model. Returns the numeric notional amount,
+    currency, setting name, and provenance source.
+    """
+    env_map = os.environ if env is None else env
+    resolved_as_of = str(as_of or "").strip() or _utc_now_iso()
+
+    amount_key, raw_amount = _clean_env(env_map, TRADER_PAPER_STARTING_CAPITAL_ENV_KEYS)
+    if raw_amount:
+        try:
+            parsed_amount = float(raw_amount.replace(",", "_"))
+        except (TypeError, ValueError) as exc:
+            raise PersonaProvisioningCoordinationError(
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital in "
+                f"{amount_key}={raw_amount!r}: must be a positive number",
+                reason_code="starting_capital_setting_invalid",
+            ) from exc
+        if not math.isfinite(parsed_amount) or parsed_amount <= 0.0:
+            raise PersonaProvisioningCoordinationError(
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital in "
+                f"{amount_key}={raw_amount!r}: must be finite and > 0",
+                reason_code="starting_capital_setting_invalid",
+            )
+        amount = float(parsed_amount)
+        amount_configured = True
+        amount_source = "operator_env"
+        amount_source_ref = f"env:{amount_key}"
+    else:
+        amount = DEFAULT_TRADER_PAPER_STARTING_CAPITAL
+        amount_configured = False
+        amount_source = "operator_setting_default"
+        amount_source_ref = f"default:{amount_key}"
+
+    currency_key, raw_currency = _clean_env(
+        env_map, TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV_KEYS
+    )
+    if raw_currency:
+        normalized_currency = raw_currency.upper()
+        if raw_currency != normalized_currency or not _CURRENCY_RE.fullmatch(normalized_currency):
+            raise PersonaProvisioningCoordinationError(
+                f"INVALID_TRADER_PAPER_STARTING_CAPITAL: Invalid operator starting capital currency in "
+                f"{currency_key}={raw_currency!r}: must be an uppercase 3-8 letter currency code",
+                reason_code="starting_capital_currency_invalid",
+            )
+        currency = normalized_currency
+        currency_configured = True
+        currency_source = "operator_env"
+        currency_source_ref = f"env:{currency_key}"
+    else:
+        currency = DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY
+        currency_configured = False
+        currency_source = "operator_setting_default"
+        currency_source_ref = f"default:{currency_key}"
+
+    return {
+        "amount": amount,
+        "currency": currency,
+        "notional_only": True,
+        "execution_context": "paper",
+        "source": amount_source,
+        "source_ref": amount_source_ref,
+        "setting_name": amount_key,
+        "configured": amount_configured,
+        "currency_source": currency_source,
+        "currency_source_ref": currency_source_ref,
+        "currency_setting_name": currency_key,
+        "currency_configured": currency_configured,
+        "as_of": resolved_as_of,
+    }
+
+
+def validate_paper_only_stage(**stage_fields: Any) -> None:
+    """Reject any request or parameter that attempts to target canary, live, or non-paper."""
+    for field_name, raw_value in stage_fields.items():
+        if raw_value is None:
+            continue
+        if isinstance(raw_value, bool) or not isinstance(raw_value, str):
+            raise PersonaProvisioningCoordinationError(
+                f"PAPER_ONLY_TRADER_BOOK_STAGE_VIOLATION: Trader paper book {field_name} must be 'paper'; "
+                f"got {raw_value!r}",
+                reason_code="non_paper_stage_forbidden",
+            )
+        cleaned = raw_value.strip().lower()
+        if not cleaned or cleaned != "paper":
+            raise PersonaProvisioningCoordinationError(
+                f"PAPER_ONLY_TRADER_BOOK_STAGE_VIOLATION: Trader paper book provisioning is paper-only; "
+                f"{field_name}={raw_value!r} cannot create canary or live bindings on this path",
+                reason_code="non_paper_stage_forbidden",
+            )
+
+
+def validate_servant_persona_paper_ceiling(
+    persona: Optional[Mapping[str, Any]],
+    *,
+    tenant_id: Optional[str] = None,
+    persona_id: Optional[str] = None,
+) -> None:
+    """Fail closed if a persona record carries non-paper ceiling, live authority, or foreign tenant."""
+    if not isinstance(persona, Mapping):
+        return
+    meta = persona.get("metadata")
+    meta_map = meta if isinstance(meta, Mapping) else {}
+
+    rec_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+    expected_persona = str(persona_id or rec_id or "").strip()
+    if rec_id and expected_persona and rec_id != expected_persona:
+        raise PersonaProvisioningCoordinationError(
+            f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona record identity {rec_id!r} "
+            f"does not match requested {expected_persona!r}",
+            reason_code="persona_identity_mismatch",
+        )
+
+    expected_tenant = str(tenant_id or "").strip()
+    if expected_tenant:
+        for tenant_val in (
+            persona.get("tenant_id"),
+            persona.get("tenantId"),
+            meta_map.get("tenant_id"),
+            meta_map.get("tenantId"),
+        ):
+            if tenant_val not in (None, "") and str(tenant_val).strip() != expected_tenant:
+                raise PersonaProvisioningCoordinationError(
+                    f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} "
+                    f"does not belong to tenant {expected_tenant!r}",
+                    reason_code="persona_tenant_mismatch",
+                )
+
+    for field_name in _STAGE_FIELD_NAMES:
+        for container in (persona, meta_map):
+            val = container.get(field_name)
+            if val not in (None, ""):
+                try:
+                    validate_paper_only_stage(**{field_name: str(val)})
+                except PersonaProvisioningCoordinationError as exc:
+                    raise PersonaProvisioningCoordinationError(
+                        f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: {exc}",
+                        reason_code="persona_ceiling_not_paper",
+                    ) from exc
+
+    for live_flag in (
+        "live_capital_enabled",
+        "live_write_enabled",
+        "canary_execution_enabled",
+        "live_broker_enabled",
+    ):
+        if persona.get(live_flag) is True or meta_map.get(live_flag) is True:
+            raise PersonaProvisioningCoordinationError(
+                f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} has "
+                f"{live_flag}=True; refusing trader paper book provisioning",
+                reason_code="persona_ceiling_not_paper",
+            )
+
+    for auth_container in (
+        persona,
+        meta_map,
+        meta_map.get("policy") if isinstance(meta_map.get("policy"), Mapping) else {},
+    ):
+        if not isinstance(auth_container, Mapping):
+            continue
+        exec_auth = auth_container.get("execution_authority")
+        if exec_auth not in (None, "") and str(exec_auth).strip().lower() not in {"none", "paper"}:
+            raise PersonaProvisioningCoordinationError(
+                f"PAPER_ONLY_SERVANT_CEILING_VIOLATION: Persona {expected_persona!r} has "
+                f"execution_authority={exec_auth!r}; trader paper book requires paper ceiling "
+                "with no live/canary authority",
+                reason_code="persona_ceiling_not_paper",
+            )
+
+
+def trader_paper_book_provisioning_record(
+    tenant_id: str,
+    persona_id: str,
+    *,
+    requested_by: str,
+    starting_capital: Mapping[str, Any],
+    created_at: Optional[str] = None,
+) -> ProvisioningRecord:
+    """Deterministic ProvisioningRecord for a trader servant persona's paper book."""
+    clean_tenant = str(tenant_id or "").strip()
+    clean_persona = str(persona_id or "").strip()
+    clean_requester = str(requested_by or "").strip() or "control-plane-bff"
+    payload = {
+        "name": f"{clean_persona} trader paper book",
+        "mandate": "user_private_agora_servant_paper_book",
+        "risk": "low",
+        "currency": str(starting_capital.get("currency") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL_CURRENCY),
+        "budget": float(starting_capital.get("amount") or DEFAULT_TRADER_PAPER_STARTING_CAPITAL),
+        "requested_by": clean_requester,
+        "execution_context": "paper",
+        "environment_ceiling": "paper",
+    }
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {"tenant_id": clean_tenant, "persona_id": clean_persona, "scope": "trader_paper_book"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    ts = str(created_at or "").strip() or "2026-11-27T00:00:00Z"
+    return ProvisioningRecord(
+        tenant_id=clean_tenant,
+        idempotency_key=f"trader-paper-book:{clean_tenant}:{clean_persona}",
+        request_hash=request_hash,
+        normalized_name=f"agora-servant-{clean_persona}",
+        persona_id=clean_persona,
+        request_payload=payload,
+        created_at=ts,
+        updated_at=ts,
+    )
+
+
+def trader_paper_book_ids(tenant_id: str, persona_id: str) -> ProvisioningIds:
+    """Derive deterministic owner IDs for `(tenant_id, persona_id)`."""
+    dummy = ProvisioningRecord(
+        tenant_id=str(tenant_id or "").strip(),
+        idempotency_key=f"trader-paper-book:{tenant_id}:{persona_id}",
+        request_hash="0" * 64,
+        normalized_name=f"agora-servant-{persona_id}",
+        persona_id=str(persona_id or "").strip(),
+        request_payload={},
+    )
+    return deterministic_provisioning_ids(dummy)
+
+
+def trader_paper_runtime_id(ids: ProvisioningIds) -> str:
+    return f"rt-persona-paper-{ids.token}"
+
+
+def _resolve_dynamic_runtime_manager_auth(
+    *,
+    tenant_id: str,
+    actor_id: str,
+    env: Optional[Mapping[str, str]] = None,
+) -> RuntimeManagerAuthConfig:
+    """Resolve dynamic runtime-manager bearer auth (PAPER-RUNTIME-MANAGER-DYNAMIC-BEARER-20261125)."""
+    env_map = os.environ if env is None else env
+    auth = resolve_runtime_manager_auth(env=env_map)
+    # When runtime-manager runs in strict JWT mode and shares PANTHEON_BFF_JWT_SECRET
+    # without a separate PANTHEON_RUNTIME_JWT_SECRET variable exported into the BFF,
+    # mint fresh short-lived HS256 JWTs dynamically on each request.
+    if (
+        auth.source == "default"
+        or (
+            auth.source == "env"
+            and auth._static_token == "runtime-control-internal"
+            and str(env_map.get("PANTHEON_RUNTIME_AUTH_MODE") or "").strip().lower() == "strict"
+        )
+    ):
+        bff_secret = str(
+            env_map.get("PANTHEON_RUNTIME_MANAGER_JWT_SECRET")
+            or env_map.get("PANTHEON_RUNTIME_JWT_SECRET")
+            or env_map.get("PANTHEON_BFF_JWT_SECRET")
+            or env_map.get("PANTHEON_DEV_BFF_JWT_SECRET")
+            or ""
+        ).strip()
+        if bff_secret and str(env_map.get("PANTHEON_RUNTIME_AUTH_MODE") or "").strip().lower() == "strict":
+            return RuntimeManagerAuthConfig(
+                token="",
+                source="jwt_mint",
+                used_default=False,
+                jwt_secret=bff_secret,
+                jwt_issuer=str(env_map.get("PANTHEON_BFF_JWT_ISSUER") or "").strip() or None,
+                jwt_audience=str(env_map.get("PANTHEON_BFF_JWT_AUDIENCE") or "").strip() or None,
+                actor_id=actor_id,
+                roles=("operator", "admin", "service"),
+                tenant_id=tenant_id,
+            )
+    return auth
+
+
+def _build_runtime_manager_client(
+    *,
+    tenant_id: str,
+    actor_id: str,
+    explicit_client: Optional[Any] = None,
+    client_factory: Optional[Callable[[], Any]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Any:
+    if explicit_client is not None:
+        return explicit_client
+    auth = _resolve_dynamic_runtime_manager_auth(
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        env=env,
+    )
+    if client_factory is not None:
+        client = client_factory()
+        if hasattr(client, "_auth"):
+            try:
+                client._bearer_token = auth
+            except Exception:
+                pass
+        return client
+    from . import service as personas_service
+
+    client = personas_service._runtime_manager_client()
+    if hasattr(client, "_auth"):
+        try:
+            client._bearer_token = auth
+        except Exception:
+            pass
+    return client
+
+
+def _list_pool_runtime_bindings(runtime_client: Any, capital_pool_id: str) -> List[Dict[str, Any]]:
+    list_by_pool = getattr(runtime_client, "list_by_pool", None)
+    if callable(list_by_pool):
+        items = list_by_pool(capital_pool_id) or []
+        return [dict(item) for item in items if isinstance(item, Mapping)]
+    get_active = getattr(runtime_client, "get_active_for_pool", None)
+    if callable(get_active):
+        active = get_active(capital_pool_id)
+        return [dict(active)] if isinstance(active, Mapping) else []
+    raise PersonaProvisioningCoordinationError(
+        "Runtime-Manager client does not support list_by_pool or get_active_for_pool",
+        reason_code="runtime_manager_unavailable",
+    )
+
+
+def _validate_runtime_binding_readback(
+    binding: Mapping[str, Any],
+    *,
+    tenant_id: str,
+    persona_id: str,
+    capital_pool_id: str,
+    persona_capital_binding_id: str,
+) -> Dict[str, Any]:
+    binding_id = str(
+        binding.get("binding_id")
+        or binding.get("runtime_binding_id")
+        or binding.get("id")
+        or ""
+    ).strip()
+    if not binding_id:
+        raise PersonaProvisioningCoordinationError(
+            "RuntimeBinding readback has no binding_id",
+            reason_code="runtime_binding_invalid",
+        )
+    if str(binding.get("capital_pool_id") or "").strip() != capital_pool_id:
+        raise PersonaProvisioningCoordinationError(
+            f"RuntimeBinding {binding_id} capital_pool_id does not match {capital_pool_id!r}",
+            reason_code="runtime_binding_pool_mismatch",
+        )
+    pcb_id = str(binding.get("persona_capital_binding_id") or "").strip()
+    if pcb_id and pcb_id != persona_capital_binding_id:
+        raise PersonaProvisioningCoordinationError(
+            f"RuntimeBinding {binding_id} persona_capital_binding_id {pcb_id!r} "
+            f"does not match {persona_capital_binding_id!r}",
+            reason_code="runtime_binding_capital_binding_mismatch",
+        )
+    for stage_key in ("deployment_mode", "execution_mode", "target_stage", "deployment_stage"):
+        stage_val = binding.get(stage_key)
+        if stage_val not in (None, "") and str(stage_val).strip().lower() != "paper":
+            raise PersonaProvisioningCoordinationError(
+                f"RuntimeBinding {binding_id} has {stage_key}={stage_val!r}; "
+                "trader paper book forbids canary and live bindings",
+                reason_code="non_paper_runtime_binding",
+            )
+    status = str(binding.get("status") or binding.get("state") or "").strip().lower()
+    if status != "active":
+        raise PersonaProvisioningCoordinationError(
+            f"RuntimeBinding {binding_id} status is {status!r}, expected 'active'",
+            reason_code="runtime_binding_not_active",
+        )
+    meta = binding.get("metadata")
+    meta_map = meta if isinstance(meta, Mapping) else {}
+    binding_tenant = str(meta_map.get("tenant_id") or binding.get("tenant_id") or "").strip()
+    if binding_tenant and binding_tenant != tenant_id:
+        raise PersonaProvisioningCoordinationError(
+            f"RuntimeBinding {binding_id} belongs to tenant {binding_tenant!r}, expected {tenant_id!r}",
+            reason_code="runtime_binding_tenant_mismatch",
+        )
+    for persona_key in ("persona_id", "sponsor_persona_id"):
+        recorded_persona = str(meta_map.get(persona_key) or binding.get(persona_key) or "").strip()
+        if recorded_persona and recorded_persona != persona_id:
+            raise PersonaProvisioningCoordinationError(
+                f"RuntimeBinding {binding_id} belongs to persona {recorded_persona!r}, expected {persona_id!r}",
+                reason_code="runtime_binding_persona_mismatch",
+            )
+    normalized = deepcopy(dict(binding))
+    normalized["binding_id"] = binding_id
+    return normalized
+
+
+def _transport_supports_deploy_authorities(
+    coordinator: PersonaProvisioningCoordinator,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """True when Registry, Governance, and Deployment owners are configured for plan admission."""
+    transport = getattr(coordinator, "transport", None)
+    if transport is None:
+        return False
+    env_map = os.environ if env is None else env
+    owner_envs = getattr(transport, "_OWNER_ENVIRONMENTS", None)
+    if isinstance(owner_envs, Mapping):
+        for owner in ("registry", "governance", "deployment"):
+            env_names = owner_envs.get(owner) or ()
+            if not any(str(env_map.get(name) or "").strip() for name in env_names):
+                return False
+        return True
+    # Custom test transport injected directly into PersonaProvisioningCoordinator.
+    owners = getattr(transport, "owners", None)
+    if isinstance(owners, Mapping):
+        return all(owner in owners for owner in ("registry", "governance", "deployment"))
+    return False
+
+
+def _coordinate_paper_book_deploy_authorities(
+    coordinator: PersonaProvisioningCoordinator,
+    record: ProvisioningRecord,
+    ids: ProvisioningIds,
+) -> ProvisioningRecord:
+    """Ensure the paper-only StrategySpec, StrategyArtifact, ApprovalDecision, and DeploymentPlan exist."""
+    active, _ = coordinator.store.reserve(
+        tenant_id=record.tenant_id,
+        idempotency_key=record.idempotency_key,
+        request_hash=record.request_hash,
+        normalized_name=record.normalized_name,
+        persona_id=record.persona_id,
+        request_payload=record.request_payload,
+    )
+    leased = coordinator.store.acquire(
+        active.tenant_id,
+        active.idempotency_key,
+        lease_owner=coordinator.lease_owner,
+        lease_seconds=coordinator.lease_seconds,
+    )
+    if leased is None:
+        raise PersonaProvisioningCoordinationError(
+            "Trader paper book provisioning record is leased by another coordinator",
+            reason_code="provisioning_lease_busy",
+        )
+    try:
+        leased = coordinator._coordinate_strategy_spec(leased, ids, baseline=True)
+        leased = coordinator._coordinate_approval_proposal(leased, ids, baseline=True)
+        leased = coordinator._coordinate_approval_review(leased, ids, baseline=True)
+        leased = coordinator._coordinate_approval_decision(leased, ids, baseline=True)
+        leased = coordinator._coordinate_registry_approval(leased, ids, baseline=True)
+        leased = coordinator._coordinate_strategy_artifact(leased, ids, baseline=True)
+        leased = coordinator._coordinate_approval_proposal(
+            leased, ids, baseline=True, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_approval_review(
+            leased, ids, baseline=True, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_approval_decision(
+            leased, ids, baseline=True, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_registry_approval(
+            leased, ids, baseline=True, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_strategy_spec(leased, ids)
+        leased = coordinator._coordinate_approval_proposal(leased, ids)
+        leased = coordinator._coordinate_approval_review(leased, ids)
+        leased = coordinator._coordinate_approval_decision(leased, ids)
+        leased = coordinator._coordinate_registry_approval(leased, ids)
+        leased = coordinator._coordinate_strategy_artifact(leased, ids)
+        leased = coordinator._coordinate_approval_proposal(
+            leased, ids, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_approval_review(
+            leased, ids, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_approval_decision(
+            leased, ids, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_registry_approval(
+            leased, ids, strategy_artifact=True
+        )
+        leased = coordinator._coordinate_deployment_plan(leased, ids)
+        return leased
+    finally:
+        try:
+            coordinator.store.release(
+                leased,
+                lease_owner=coordinator.lease_owner,
+                lease_seconds=coordinator.lease_seconds,
+            )
+        except Exception:
+            pass
+
+
+def _effective_starting_capital(
+    configured: Mapping[str, Any],
+    capital_pool: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Combine the operator starting capital setting with the CapitalPool readback."""
+    result = deepcopy(dict(configured))
+    pool_budget = capital_pool.get("budget")
+    if isinstance(pool_budget, (int, float)) and not isinstance(pool_budget, bool) and pool_budget > 0:
+        result["amount"] = float(pool_budget)
+    pool_currency = str(capital_pool.get("currency") or "").strip().upper()
+    if pool_currency:
+        result["currency"] = pool_currency
+    result["capital_pool_id"] = str(capital_pool.get("pool_id") or "")
+    result["owner_readback_verified"] = True
+    return result
+
+
+def ensure_trader_paper_book(
+    tenant_id: str,
+    persona_id: str,
+    *,
+    requested_by: str,
+    agora_user_id: Optional[str] = None,
+    persona_record: Optional[Mapping[str, Any]] = None,
+    coordinator: Optional[PersonaProvisioningCoordinator] = None,
+    runtime_client: Optional[Any] = None,
+    runtime_manager_client: Optional[Any] = None,
+    persona_write_owner: Optional[Any] = None,
+    env: Optional[Mapping[str, str]] = None,
+    **stage_kwargs: Any,
+) -> Dict[str, Any]:
+    """Idempotently ensure one paper CapitalPool and one paper RuntimeBinding for a trader's servant.
+
+    All writes go through the existing Capital and Runtime-Manager owners (plus
+    Registry/Governance/Deployment when configured for Runtime-Manager authority
+    verification). Repeated calls perform GET-first readbacks and never create
+    duplicate pools or bindings. Canary and live stages are unconditionally
+    rejected before any owner write.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    clean_persona = str(persona_id or "").strip()
+    clean_requester = str(requested_by or "").strip()
+    for label, value in (
+        ("tenant_id", clean_tenant),
+        ("persona_id", clean_persona),
+        ("requested_by", clean_requester),
+    ):
+        if not value:
+            raise PersonaProvisioningCoordinationError(f"{label} is required")
+
+    validate_paper_only_stage(**stage_kwargs)
+    validate_servant_persona_paper_ceiling(
+        persona_record,
+        tenant_id=clean_tenant,
+        persona_id=clean_persona,
+    )
+
+    now = _utc_now_iso()
+    starting_capital = resolve_trader_paper_starting_capital(env, as_of=now)
+    record = trader_paper_book_provisioning_record(
+        clean_tenant,
+        clean_persona,
+        requested_by=clean_requester,
+        starting_capital=starting_capital,
+    )
+    ids = deterministic_provisioning_ids(record)
+    runtime_id = trader_paper_runtime_id(ids)
+
+    from . import service as personas_service
+
+    active_coordinator = coordinator or personas_service._chain_paper_capital_coordinator(
+        clean_tenant
+    )
+    active_runtime_client = _build_runtime_manager_client(
+        tenant_id=clean_tenant,
+        actor_id=active_coordinator.actor_id,
+        explicit_client=runtime_client if runtime_client is not None else runtime_manager_client,
+        env=env,
+    )
+
+    pool_path = f"/api/capital-pools/{ids.capital_pool_id}"
+    binding_path = f"/api/bindings/{ids.persona_capital_binding_id}"
+    existing_pool = active_coordinator._owner_get("capital", pool_path)
+    existing_pcb = active_coordinator._owner_get("capital", binding_path)
+    pool_existed = bool(
+        isinstance(existing_pool, Mapping)
+        and existing_pool.get("pool_id") == ids.capital_pool_id
+        and existing_pool.get("status") == "active"
+    )
+    pcb_existed = bool(
+        isinstance(existing_pcb, Mapping)
+        and existing_pcb.get("binding_id") == ids.persona_capital_binding_id
+        and existing_pcb.get("status") == "active"
+    )
+    capital_existed = bool(pool_existed and pcb_existed)
+
+    capital_receipt = active_coordinator.ensure_chain_paper_capital(
+        tenant_id=clean_tenant,
+        persona_id=clean_persona,
+        capital_pool_id=ids.capital_pool_id,
+        binding_id=ids.persona_capital_binding_id,
+        requested_by=clean_requester,
+        currency=starting_capital["currency"],
+        name=f"{clean_persona} trader paper pool",
+        budget=starting_capital["amount"],
+        mandate="user_private_agora_servant_paper_book",
+        labels={
+            "task_id": "PAPER-TRADER-BOOK-PROVISION-20261127",
+            "paper_only": True,
+            "starting_capital_source": starting_capital["source"],
+            "starting_capital_source_ref": starting_capital["source_ref"],
+        },
+    )
+    capital_pool = deepcopy(dict(capital_receipt["capital_pool"]))
+    capital_pool.setdefault("stage", "paper")
+    capital_pool.setdefault("notional_only", True)
+    capital_pool["created"] = not pool_existed
+    persona_capital_binding = deepcopy(dict(capital_receipt["persona_capital_binding"]))
+    persona_capital_binding.setdefault("stage", "paper")
+    persona_capital_binding.setdefault("notional_only", True)
+    persona_capital_binding["created"] = not pcb_existed
+
+    pool_meta = capital_pool.get("metadata")
+    pool_meta_map = pool_meta if isinstance(pool_meta, Mapping) else {}
+    validate_paper_only_stage(
+        execution_context=str(pool_meta_map.get("execution_context") or ""),
+        allowed_deployment_scope=str(persona_capital_binding.get("allowed_deployment_scope") or ""),
+    )
+
+    try:
+        pool_bindings = _list_pool_runtime_bindings(active_runtime_client, ids.capital_pool_id)
+    except PersonaProvisioningCoordinationError:
+        raise
+    except Exception as exc:
+        raise PersonaProvisioningCoordinationError(
+            f"Runtime-Manager owner read failed for pool {ids.capital_pool_id}: {exc}",
+            reason_code="runtime_manager_unavailable",
+        ) from exc
+
+    non_terminal = [
+        b
+        for b in pool_bindings
+        if str(b.get("status") or b.get("state") or "").strip().lower()
+        not in TERMINAL_RUNTIME_BINDING_STATUSES
+    ]
+    for candidate in non_terminal:
+        _validate_runtime_binding_readback(
+            candidate,
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+        )
+    if len(non_terminal) > 1:
+        raise PersonaProvisioningCoordinationError(
+            f"CapitalPool {ids.capital_pool_id} has {len(non_terminal)} non-terminal RuntimeBindings; "
+            "single-runtime paper book invariant violated",
+            reason_code="multiple_runtime_bindings",
+        )
+
+    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
+    runtime_binding_existed = len(non_terminal) == 1
+    if runtime_binding_existed:
+        runtime_binding = non_terminal[0]
+        getter = getattr(active_runtime_client, "get", None)
+        if callable(getter):
+            latest = getter(runtime_binding["binding_id"])
+            if isinstance(latest, Mapping):
+                runtime_binding = _validate_runtime_binding_readback(
+                    latest,
+                    tenant_id=clean_tenant,
+                    persona_id=clean_persona,
+                    capital_pool_id=ids.capital_pool_id,
+                    persona_capital_binding_id=ids.persona_capital_binding_id,
+                )
+    else:
+        if _transport_supports_deploy_authorities(active_coordinator, env=env):
+            _coordinate_paper_book_deploy_authorities(active_coordinator, record, ids)
+
+        deploy_request: Dict[str, Any] = {
+            "plan_id": ids.deployment_plan_id,
+            "plan_status": "approved",
+            "target_stage": "paper",
+            "execution_mode": "paper",
+            "artifact_id": ids.strategy_artifact_id,
+            "artifact_version": ids.version,
+            "strategy_id": ids.strategy_id,
+            "approval_decision_id": ids.strategy_artifact_approval_decision_id,
+            "sponsor_persona_id": clean_persona,
+            "capital_pool_id": ids.capital_pool_id,
+            "persona_capital_binding_id": ids.persona_capital_binding_id,
+            "persona_capital_binding_status": "active",
+            "allowed_deployment_scope": "paper",
+            "loader_checks_passed": True,
+            "runtime_id": runtime_id,
+            "metadata": {
+                "tenant_id": clean_tenant,
+                "persona_id": clean_persona,
+                "sponsor_persona_id": clean_persona,
+                "strategy_id": ids.strategy_id,
+                "execution_context": "paper",
+                "paper_only": True,
+                "book_kind": "trader_servant_paper_book",
+                "requested_by": clean_requester,
+                "starting_capital": deepcopy(effective_starting),
+                **(
+                    {"agora_user_id": str(agora_user_id).strip()}
+                    if agora_user_id and str(agora_user_id).strip()
+                    else {}
+                ),
+            },
+        }
+        deployer = getattr(active_runtime_client, "deploy", None)
+        if not callable(deployer):
+            raise PersonaProvisioningCoordinationError(
+                "Runtime-Manager client does not support deploy",
+                reason_code="runtime_manager_unavailable",
+            )
+        deployed: Optional[Mapping[str, Any]] = None
+        try:
+            raw_deployed = deployer(deploy_request)
+            if isinstance(raw_deployed, Mapping):
+                deployed = raw_deployed
+        except Exception as exc:
+            # Reconcile concurrent single-runtime creation or response loss via GET readback.
+            after_bindings = [
+                b
+                for b in _list_pool_runtime_bindings(active_runtime_client, ids.capital_pool_id)
+                if str(b.get("status") or b.get("state") or "").strip().lower()
+                not in TERMINAL_RUNTIME_BINDING_STATUSES
+            ]
+            if len(after_bindings) == 1:
+                deployed = after_bindings[0]
+                runtime_binding_existed = True
+            else:
+                raise PersonaProvisioningCoordinationError(
+                    f"Runtime-Manager failed to deploy paper RuntimeBinding for pool "
+                    f"{ids.capital_pool_id}: {exc}",
+                    reason_code="runtime_binding_deploy_failed",
+                ) from exc
+
+        deployed_id = str(
+            (deployed or {}).get("binding_id")
+            or (deployed or {}).get("runtime_binding_id")
+            or (deployed or {}).get("id")
+            or ""
+        ).strip()
+        readback: Optional[Mapping[str, Any]] = None
+        getter = getattr(active_runtime_client, "get", None)
+        if deployed_id and callable(getter):
+            fetched = getter(deployed_id)
+            if isinstance(fetched, Mapping):
+                readback = fetched
+        if readback is None:
+            after_bindings = [
+                b
+                for b in _list_pool_runtime_bindings(active_runtime_client, ids.capital_pool_id)
+                if str(b.get("status") or b.get("state") or "").strip().lower()
+                not in TERMINAL_RUNTIME_BINDING_STATUSES
+            ]
+            if len(after_bindings) == 1:
+                readback = after_bindings[0]
+            elif deployed is not None:
+                readback = deployed
+        if not isinstance(readback, Mapping):
+            raise PersonaProvisioningCoordinationError(
+                f"Runtime-Manager did not persist a readable RuntimeBinding for pool {ids.capital_pool_id}",
+                reason_code="runtime_binding_readback_missing",
+            )
+        runtime_binding = _validate_runtime_binding_readback(
+            readback,
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+        )
+
+    runtime_binding = dict(runtime_binding)
+    runtime_binding.setdefault("allowed_deployment_scope", "paper")
+    runtime_binding.setdefault(
+        "execution_mode",
+        str(runtime_binding.get("deployment_mode") or "paper"),
+    )
+    runtime_binding["created"] = not runtime_binding_existed
+
+    resolved_user_id = str(
+        agora_user_id
+        or ((persona_record or {}).get("metadata") or {}).get("agora_user_id")
+        or (persona_record or {}).get("agora_user_id")
+        or ""
+    ).strip() or None
+
+    book_summary: Dict[str, Any] = {
+        "status": "provisioned",
+        "tenant_id": clean_tenant,
+        "agora_user_id": resolved_user_id,
+        "persona_id": clean_persona,
+        "book_kind": "trader_servant_paper_book",
+        "stage": "paper",
+        "deployment_stage": "paper",
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+        "notional_only": True,
+        "capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "runtime_binding_id": runtime_binding["binding_id"],
+        "runtime_id": str(runtime_binding.get("runtime_id") or runtime_id),
+        "plan_id": str(runtime_binding.get("plan_id") or ids.deployment_plan_id),
+        "strategy_id": ids.strategy_id,
+        "strategy_artifact_id": str(runtime_binding.get("artifact_id") or ids.strategy_artifact_id),
+        "strategy_artifact_version": str(runtime_binding.get("artifact_version") or ids.version),
+        "starting_capital": effective_starting,
+        "capital_pool": capital_pool,
+        "persona_capital_binding": persona_capital_binding,
+        "runtime_binding": runtime_binding,
+        "idempotent_replay": bool(capital_existed and runtime_binding_existed),
+        "created_capital_pool": not capital_existed,
+        "created_runtime_binding": not runtime_binding_existed,
+        "writer_actor_id": active_coordinator.actor_id,
+        "requested_by": clean_requester,
+        "provisioned_at": now,
+    }
+
+    if persona_write_owner is not None:
+        _persist_paper_book_metadata_on_persona(
+            persona_write_owner,
+            persona_id=clean_persona,
+            persona_record=persona_record,
+            book_summary=book_summary,
+            actor_id=clean_requester,
+            now=now,
+        )
+
+    return book_summary
+
+
+def read_trader_paper_book(
+    tenant_id: str,
+    persona_id: str,
+    *,
+    agora_user_id: Optional[str] = None,
+    persona_record: Optional[Mapping[str, Any]] = None,
+    coordinator: Optional[PersonaProvisioningCoordinator] = None,
+    runtime_client: Optional[Any] = None,
+    runtime_manager_client: Optional[Any] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Read-only lookup of a trader servant persona's paper book from Capital and Runtime-Manager.
+
+    Returns ``None`` if either the CapitalPool, PersonaCapitalBinding, or active
+    paper RuntimeBinding has not been provisioned yet.
+    """
+    clean_tenant = str(tenant_id or "").strip()
+    clean_persona = str(persona_id or "").strip()
+    if not clean_tenant or not clean_persona:
+        raise PersonaProvisioningCoordinationError("tenant_id and persona_id are required")
+
+    validate_servant_persona_paper_ceiling(
+        persona_record,
+        tenant_id=clean_tenant,
+        persona_id=clean_persona,
+    )
+
+    now = _utc_now_iso()
+    starting_capital = resolve_trader_paper_starting_capital(env, as_of=now)
+    ids = trader_paper_book_ids(clean_tenant, clean_persona)
+    runtime_id = trader_paper_runtime_id(ids)
+
+    from . import service as personas_service
+
+    active_coordinator = coordinator or personas_service._chain_paper_capital_coordinator(
+        clean_tenant
+    )
+    active_runtime_client = _build_runtime_manager_client(
+        tenant_id=clean_tenant,
+        actor_id=active_coordinator.actor_id,
+        explicit_client=runtime_client if runtime_client is not None else runtime_manager_client,
+        env=env,
+    )
+
+    capital_pool = active_coordinator._owner_get(
+        "capital", f"/api/capital-pools/{ids.capital_pool_id}"
+    )
+    if not isinstance(capital_pool, Mapping):
+        return None
+    if (
+        capital_pool.get("pool_id") != ids.capital_pool_id
+        or not active_coordinator._formal_tenant_matches(capital_pool, clean_tenant)
+        or capital_pool.get("status") != "active"
+        or capital_pool.get("single_runtime_enforced") is not True
+        or (capital_pool.get("metadata") or {}).get("execution_context") != "paper"
+        or not active_coordinator._pool_owned_by_chain(
+            capital_pool.get("metadata") or {},
+            persona_id=clean_persona,
+            chain_id=None,
+        )
+    ):
+        raise PersonaProvisioningCoordinationError(
+            "CapitalPool readback is not an active tenant-owned paper pool for this servant persona",
+            reason_code="capital_pool_invalid",
+        )
+
+    persona_capital_binding = active_coordinator._owner_get(
+        "capital", f"/api/bindings/{ids.persona_capital_binding_id}"
+    )
+    if not isinstance(persona_capital_binding, Mapping):
+        return None
+    active_coordinator._check_binding_identity(
+        persona_capital_binding,
+        persona_id=clean_persona,
+        pool_id=ids.capital_pool_id,
+        binding_id=ids.persona_capital_binding_id,
+    )
+    if persona_capital_binding.get("status") != "active":
+        return None
+
+    pool_bindings = [
+        b
+        for b in _list_pool_runtime_bindings(active_runtime_client, ids.capital_pool_id)
+        if str(b.get("status") or b.get("state") or "").strip().lower()
+        not in TERMINAL_RUNTIME_BINDING_STATUSES
+    ]
+    if not pool_bindings:
+        return None
+    for candidate in pool_bindings:
+        _validate_runtime_binding_readback(
+            candidate,
+            tenant_id=clean_tenant,
+            persona_id=clean_persona,
+            capital_pool_id=ids.capital_pool_id,
+            persona_capital_binding_id=ids.persona_capital_binding_id,
+        )
+    if len(pool_bindings) > 1:
+        raise PersonaProvisioningCoordinationError(
+            f"CapitalPool {ids.capital_pool_id} has {len(pool_bindings)} non-terminal RuntimeBindings",
+            reason_code="multiple_runtime_bindings",
+        )
+    runtime_binding = dict(pool_bindings[0])
+    runtime_binding.setdefault("allowed_deployment_scope", "paper")
+    runtime_binding.setdefault(
+        "execution_mode",
+        str(runtime_binding.get("deployment_mode") or "paper"),
+    )
+    runtime_binding["created"] = False
+    effective_starting = _effective_starting_capital(starting_capital, capital_pool)
+    resolved_user_id = str(
+        agora_user_id
+        or ((persona_record or {}).get("metadata") or {}).get("agora_user_id")
+        or (persona_record or {}).get("agora_user_id")
+        or ""
+    ).strip() or None
+
+    pool_copy = deepcopy(dict(capital_pool))
+    pool_copy.setdefault("stage", "paper")
+    pool_copy.setdefault("notional_only", True)
+    pool_copy["created"] = False
+    pcb_copy = deepcopy(dict(persona_capital_binding))
+    pcb_copy.setdefault("stage", "paper")
+    pcb_copy.setdefault("notional_only", True)
+    pcb_copy["created"] = False
+
+    return {
+        "status": "provisioned",
+        "tenant_id": clean_tenant,
+        "agora_user_id": resolved_user_id,
+        "persona_id": clean_persona,
+        "book_kind": "trader_servant_paper_book",
+        "stage": "paper",
+        "deployment_stage": "paper",
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+        "notional_only": True,
+        "capital_pool_id": ids.capital_pool_id,
+        "persona_capital_binding_id": ids.persona_capital_binding_id,
+        "runtime_binding_id": runtime_binding["binding_id"],
+        "runtime_id": str(runtime_binding.get("runtime_id") or runtime_id),
+        "plan_id": str(runtime_binding.get("plan_id") or ids.deployment_plan_id),
+        "strategy_id": ids.strategy_id,
+        "strategy_artifact_id": str(runtime_binding.get("artifact_id") or ids.strategy_artifact_id),
+        "strategy_artifact_version": str(runtime_binding.get("artifact_version") or ids.version),
+        "starting_capital": effective_starting,
+        "capital_pool": pool_copy,
+        "persona_capital_binding": pcb_copy,
+        "runtime_binding": runtime_binding,
+        "idempotent_replay": True,
+        "created_capital_pool": False,
+        "created_runtime_binding": False,
+        "writer_actor_id": active_coordinator.actor_id,
+        "observed_at": now,
+    }
+
+
+def _persist_paper_book_metadata_on_persona(
+    write_owner: Any,
+    *,
+    persona_id: str,
+    persona_record: Optional[Mapping[str, Any]],
+    book_summary: Mapping[str, Any],
+    actor_id: str,
+    now: str,
+) -> None:
+    updater = getattr(write_owner, "update_persona", None)
+    if not callable(updater):
+        return
+    existing = dict(persona_record) if isinstance(persona_record, Mapping) else None
+    if existing is None:
+        getter = getattr(write_owner, "get_persona", None)
+        if callable(getter):
+            try:
+                found = getter(persona_id)
+                if isinstance(found, Mapping):
+                    existing = dict(found)
+            except Exception:
+                existing = None
+    if existing is None:
+        return
+    meta = dict(existing.get("metadata") or {}) if isinstance(existing.get("metadata"), Mapping) else {}
+    compact_book = {
+        "book_kind": "trader_servant_paper_book",
+        "deployment_stage": "paper",
+        "environment_ceiling": "paper",
+        "execution_authority": "none",
+        "capital_pool_id": book_summary["capital_pool_id"],
+        "persona_capital_binding_id": book_summary["persona_capital_binding_id"],
+        "runtime_binding_id": book_summary["runtime_binding_id"],
+        "runtime_id": book_summary["runtime_id"],
+        "plan_id": book_summary["plan_id"],
+        "strategy_id": book_summary["strategy_id"],
+        "strategy_artifact_id": book_summary["strategy_artifact_id"],
+        "strategy_artifact_version": book_summary["strategy_artifact_version"],
+        "starting_capital": deepcopy(dict(book_summary["starting_capital"])),
+    }
+    if (
+        meta.get("paper_book") == compact_book
+        and meta.get("capital_pool_id") == book_summary["capital_pool_id"]
+        and meta.get("persona_capital_binding_id") == book_summary["persona_capital_binding_id"]
+        and meta.get("runtime_binding_id") == book_summary["runtime_binding_id"]
+        and meta.get("runtime_id") == book_summary["runtime_id"]
+    ):
+        return
+    meta["paper_book"] = compact_book
+    meta["capital_pool_id"] = book_summary["capital_pool_id"]
+    meta["persona_capital_binding_id"] = book_summary["persona_capital_binding_id"]
+    meta["runtime_binding_id"] = book_summary["runtime_binding_id"]
+    meta["runtime_id"] = book_summary["runtime_id"]
+    meta["starting_capital"] = deepcopy(dict(book_summary["starting_capital"]))
+    try:
+        updater(
+            persona_id,
+            name=str(existing.get("name") or "Agora Servant"),
+            actor_id=actor_id,
+            updated_at=now,
+            archetype=None,
+            lifecycle_state=None,
+            risk_level=str(meta.get("risk_level") or existing.get("risk_level") or "low"),
+            metadata=meta,
+        )
+    except Exception:
+        pass

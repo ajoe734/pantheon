@@ -31,6 +31,14 @@ from ..models import (
     ServantProfile,
 )
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.personas.trader_paper_book import (
+    PersonaProvisioningCoordinationError,
+    ensure_trader_paper_book,
+    read_trader_paper_book,
+    resolve_trader_paper_starting_capital,
+    validate_paper_only_stage,
+    validate_servant_persona_paper_ceiling,
+)
 from services.control_plane.bff.ports.persona_write_owner import (
     PersonaWriteConflict,
     PersonaWriteOwnerUnavailable,
@@ -75,6 +83,21 @@ class ServantMessageRequest(BaseModel):
 
     content: str = Field(min_length=1, max_length=_SERVANT_MESSAGE_MAX_CHARS)
     attachment_refs: list[str] = Field(default_factory=list)
+
+
+class ServantPaperBookEnsureRequest(BaseModel):
+    """Request payload for POST /bff/agora/servant/paper-book/ensure."""
+
+    model_config = {"extra": "forbid"}
+
+    target_stage: str = "paper"
+    stage: Optional[str] = None
+    deployment_stage: Optional[str] = None
+    deployment_mode: Optional[str] = None
+    allowed_deployment_scope: Optional[str] = None
+    environment: Optional[str] = None
+    environment_ceiling: Optional[str] = None
+    execution_mode: Optional[str] = None
 
 
 def _json_clone(value: Any) -> Any:
@@ -361,6 +384,7 @@ def _base_servant_metadata(
     sync_result: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     metadata = _metadata(existing or {})
+    starting_capital = resolve_trader_paper_starting_capital(as_of=now)
     metadata.update(
         {
             "tenant_id": scope.tenant_id,
@@ -379,6 +403,7 @@ def _base_servant_metadata(
             "capability_summary": capability_summary.model_dump(),
             "policy": policy.model_dump(),
             "policy_refs": list(_SERVANT_POLICY_REFS),
+            "starting_capital": starting_capital,
             "last_reconciled_at": now,
             "provisioned_by": "POST /bff/agora/servant/ensure",
         }
@@ -572,6 +597,20 @@ def _profile_from_persona(
     policy: AgoraServantPolicy,
 ) -> ServantProfile:
     metadata = _metadata(record)
+    profile_metadata: Dict[str, Any] = {
+        "identity_key": {
+            "tenant_id": scope.tenant_id,
+            "agora_user_id": scope.user_id,
+            "persona_class": "agora_servant",
+        },
+        "openclaw_agent": _json_clone(metadata.get("openclaw_agent") or {}),
+        "policy_refs": list(metadata.get("policy_refs") or _SERVANT_POLICY_REFS),
+        "starting_capital": _json_clone(
+            metadata.get("starting_capital") or resolve_trader_paper_starting_capital()
+        ),
+    }
+    if isinstance(metadata.get("paper_book"), Mapping):
+        profile_metadata["paper_book"] = _json_clone(dict(metadata["paper_book"]))
     return ServantProfile(
         persona_id=str(record.get("persona_id") or record.get("id") or ""),
         display_name=str(record.get("name") or "Agora Servant"),
@@ -583,15 +622,7 @@ def _profile_from_persona(
         description=metadata.get("description"),
         avatar_ref=metadata.get("avatar_ref") or metadata.get("avatarRef"),
         last_active_at=metadata.get("last_active_at") or metadata.get("lastActiveAt"),
-        metadata={
-            "identity_key": {
-                "tenant_id": scope.tenant_id,
-                "agora_user_id": scope.user_id,
-                "persona_class": "agora_servant",
-            },
-            "openclaw_agent": _json_clone(metadata.get("openclaw_agent") or {}),
-            "policy_refs": list(metadata.get("policy_refs") or _SERVANT_POLICY_REFS),
-        },
+        metadata=profile_metadata,
     )
 
 
@@ -871,6 +902,8 @@ def create_servant_router(
     trading_room_store: Optional[Any] = None,
     institutional_knowledge_reader: Optional[InstitutionalKnowledgeReader] = None,
     servant_session_owner: Any = _UNSET_SERVANT_OWNER,
+    ensure_paper_book: Optional[Callable[..., Mapping[str, Any]]] = None,
+    read_paper_book: Optional[Callable[..., Optional[Mapping[str, Any]]]] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
     knowledge_reader = institutional_knowledge_reader or InstitutionalKnowledgeReader()
@@ -942,60 +975,12 @@ def create_servant_router(
         except ServantSessionConflictError:
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
 
-    @router.get("/bff/agora/servant")
-    def get_agora_servant(
-        authorization: Optional[str] = Header(default=None),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    ) -> Dict[str, Any]:
-        """Return the provisioned servant profile scoped to the caller."""
-        scope = _scope_for_servant_session(
-            extract_identity=extract_identity,
-            require_read_role=require_read_role,
-            bff_error=bff_error,
-            utc_now=utc_now,
-            authorization=authorization,
-            x_tenant_id=x_tenant_id,
-            x_pantheon_tenant=x_pantheon_tenant,
-        )
-        profile = _servant_profile_for_scope(
-            read_store=get_read_store(),
-            scope=scope,
-            bff_error=bff_error,
-        )
-        return AgoraEnvelope(
-            data=profile.model_dump(),
-            meta=AgoraMeta(
-                snapshot_at=utc_now(),
-                capability=_SERVANT_CAPABILITY,
-                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
-            ),
-        ).model_dump()
-
-    @router.post("/bff/agora/servant/ensure")
-    def agora_servant_ensure(
-        authorization: Optional[str] = Header(default=None),
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
-        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
-    ) -> Dict[str, Any]:
-        """Provision or reconcile the user-private Agora servant persona."""
-        identity = extract_identity(authorization)
-        require_read_role(identity)
-        require_write_role(identity)
-        _require_header(idempotency_key, "Idempotency-Key", bff_error)
-        request_id = _require_header(x_request_id, "X-Request-Id", bff_error)
-        try:
-            scope = resolve_agora_user_scope(
-                identity,
-                utc_now=utc_now,
-                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
-            )
-        except AgoraScopeResolutionError as exc:
-            _raise_scope_error(exc, bff_error)
-
-        now = utc_now()
+    def _reconcile_servant_persona_for_scope(
+        *,
+        scope: Any,
+        idempotency_key: str,
+        now: str,
+    ) -> tuple[Any, str, Dict[str, Any], ServantCapabilitySummary, AgoraServantPolicy]:
         write_owner = _persona_owner_call(
             lambda: get_persona_write_owner() if get_persona_write_owner else None,
             dependency="persona_registry_write_owner",
@@ -1097,14 +1082,15 @@ def create_servant_router(
                 dependency="persona_capability_write_owner",
                 bff_error=bff_error,
             )
+        resolved_persona_id = str(persona.get("persona_id") or persona.get("id") or persona_id)
         _persona_owner_call(
             lambda: upsert_capability_snapshot(
                 snapshot_id=capability_snapshot_id,
-                persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
+                persona_id=resolved_persona_id,
                 capabilities=[_PERSONA_OPINION_CAPABILITY],
                 generated_at=now,
                 source_refs=[
-                    f"persona:{persona.get('persona_id') or persona.get('id') or persona_id}",
+                    f"persona:{resolved_persona_id}",
                     "policy:agora-servant-paper-opinion",
                 ],
                 metadata={
@@ -1131,7 +1117,7 @@ def create_servant_router(
         persona = _persona_owner_call(
             lambda: _update_servant_persona(
                 write_owner,
-                persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
+                persona_id=resolved_persona_id,
                 scope=scope,
                 now=now,
                 existing=persona,
@@ -1141,6 +1127,95 @@ def create_servant_router(
             dependency="persona_registry_write_owner",
             bff_error=bff_error,
         )
+        return write_owner, resolved_persona_id, persona, capability_summary, policy
+
+    @router.get("/bff/agora/servant")
+    def get_agora_servant(
+        authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        """Return the provisioned servant profile scoped to the caller."""
+        scope = _scope_for_servant_session(
+            extract_identity=extract_identity,
+            require_read_role=require_read_role,
+            bff_error=bff_error,
+            utc_now=utc_now,
+            authorization=authorization,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+        )
+        profile = _servant_profile_for_scope(
+            read_store=get_read_store(),
+            scope=scope,
+            bff_error=bff_error,
+        )
+        return AgoraEnvelope(
+            data=profile.model_dump(),
+            meta=AgoraMeta(
+                snapshot_at=utc_now(),
+                capability=_SERVANT_CAPABILITY,
+                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            ),
+        ).model_dump()
+
+    @router.post("/bff/agora/servant/ensure")
+    def agora_servant_ensure(
+        authorization: Optional[str] = Header(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        """Provision or reconcile the user-private Agora servant persona."""
+        identity = extract_identity(authorization)
+        require_read_role(identity)
+        require_write_role(identity)
+        _require_header(idempotency_key, "Idempotency-Key", bff_error)
+        request_id = _require_header(x_request_id, "X-Request-Id", bff_error)
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+
+        now = utc_now()
+        write_owner, persona_id, persona, capability_summary, policy = _reconcile_servant_persona_for_scope(
+            scope=scope,
+            idempotency_key=str(idempotency_key),
+            now=now,
+        )
+        if callable(ensure_paper_book):
+            try:
+                paper_book = ensure_paper_book(
+                    tenant_id=scope.tenant_id,
+                    persona_id=persona_id,
+                    requested_by=scope.operator_id,
+                    agora_user_id=scope.user_id,
+                    target_stage="paper",
+                    persona_record=persona,
+                    persona_write_owner=write_owner,
+                )
+            except PersonaProvisioningCoordinationError as exc:
+                from services.control_plane.bff.models import ErrorCode
+
+                raise bff_error(
+                    409,
+                    ErrorCode.PRECONDITION_FAILED,
+                    "Trader servant paper book provisioning failed",
+                    str(exc)[:300],
+                    precondition_failed="paper_book_provisioning",
+                ) from exc
+            if isinstance(paper_book, Mapping):
+                persona_meta = _metadata(persona)
+                persona_meta["paper_book"] = _json_clone(dict(paper_book))
+                if isinstance(paper_book.get("starting_capital"), Mapping):
+                    persona_meta["starting_capital"] = _json_clone(dict(paper_book["starting_capital"]))
+                persona = dict(persona)
+                persona["metadata"] = persona_meta
         profile = _profile_from_persona(
             persona,
             scope=scope,
@@ -1159,6 +1234,197 @@ def create_servant_router(
         payload["meta"]["request_id"] = request_id
         payload["meta"]["idempotency_key"] = idempotency_key
         return payload
+
+    @router.post("/bff/agora/servant/paper-book/ensure")
+    def ensure_agora_servant_paper_book(
+        body: Optional[ServantPaperBookEnsureRequest] = Body(default=None),
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        """Provision or verify the caller's single paper capital pool and paper RuntimeBinding on first paper use."""
+        from services.control_plane.bff.models import ErrorCode
+
+        identity = _extract_caller_identity(extract_identity, authorization, pantheon_session)
+        require_read_role(identity)
+        require_write_role(identity)
+        eff_idempotency = str(idempotency_key or "").strip() or _new_prefixed_id("idem-paper-book")
+        request_id = _request_id(x_request_id)
+        try:
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
+        except AgoraScopeResolutionError as exc:
+            _raise_scope_error(exc, bff_error)
+
+        request = body or ServantPaperBookEnsureRequest()
+        try:
+            validate_paper_only_stage(
+                target_stage=request.target_stage,
+                stage=request.stage,
+                deployment_stage=request.deployment_stage,
+                deployment_mode=request.deployment_mode,
+                allowed_deployment_scope=request.allowed_deployment_scope,
+                environment=request.environment,
+                environment_ceiling=request.environment_ceiling,
+                execution_mode=request.execution_mode,
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Trader servant paper book only supports paper stage",
+                str(exc)[:300],
+                precondition_failed="paper_only_stage",
+                details_extra={"error": str(exc)[:300]},
+            ) from exc
+
+        now = utc_now()
+        expected_persona_id = _stable_servant_persona_id(
+            tenant_id=scope.tenant_id,
+            agora_user_id=scope.user_id,
+        )
+        write_owner = get_persona_write_owner() if callable(get_persona_write_owner) else None
+        read_store = get_read_store()
+        persona: Optional[Dict[str, Any]] = None
+        if write_owner is not None:
+            persona = _find_servant_persona(
+                write_owner,
+                tenant_id=scope.tenant_id,
+                agora_user_id=scope.user_id,
+                expected_persona_id=expected_persona_id,
+            )
+        if persona is None and read_store is not None:
+            persona = _find_servant_persona(
+                read_store,
+                tenant_id=scope.tenant_id,
+                agora_user_id=scope.user_id,
+                expected_persona_id=expected_persona_id,
+            )
+        if persona is None and write_owner is not None:
+            write_owner, persona_id, persona, _cap, _pol = _reconcile_servant_persona_for_scope(
+                scope=scope,
+                idempotency_key=eff_idempotency,
+                now=now,
+            )
+        else:
+            persona_id = (
+                str(persona.get("persona_id") or persona.get("id") or expected_persona_id)
+                if isinstance(persona, Mapping)
+                else expected_persona_id
+            )
+        try:
+            validate_servant_persona_paper_ceiling(
+                persona,
+                tenant_id=scope.tenant_id,
+                persona_id=persona_id,
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Trader servant persona violates paper-only ceiling",
+                str(exc)[:300],
+                precondition_failed="servant_paper_ceiling",
+                details_extra={"error": str(exc)[:300]},
+            ) from exc
+
+        provision_fn = ensure_paper_book or ensure_trader_paper_book
+        try:
+            book = provision_fn(
+                tenant_id=scope.tenant_id,
+                persona_id=persona_id,
+                requested_by=scope.operator_id,
+                agora_user_id=scope.user_id,
+                target_stage=request.target_stage,
+                stage=request.stage,
+                deployment_stage=request.deployment_stage,
+                deployment_mode=request.deployment_mode,
+                allowed_deployment_scope=request.allowed_deployment_scope,
+                environment=request.environment,
+                environment_ceiling=request.environment_ceiling,
+                execution_mode=request.execution_mode,
+                persona_record=persona,
+                persona_write_owner=write_owner,
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Trader servant paper book provisioning failed",
+                str(exc)[:300],
+                precondition_failed="paper_book_provisioning",
+                details_extra={"error": str(exc)[:300]},
+            ) from exc
+
+        envelope = AgoraEnvelope(
+            data=_json_clone(dict(book)),
+            meta=AgoraMeta(
+                snapshot_at=now,
+                capability=_SERVANT_CAPABILITY,
+                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            ),
+        )
+        payload = envelope.model_dump()
+        payload["meta"]["request_id"] = request_id
+        payload["meta"]["idempotency_key"] = eff_idempotency
+        payload["meta"]["environment_ceiling"] = "paper"
+        return payload
+
+    @router.get("/bff/agora/servant/paper-book")
+    def get_agora_servant_paper_book(
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
+    ) -> Dict[str, Any]:
+        """Return the caller's provisioned paper capital pool and paper RuntimeBinding."""
+        from services.control_plane.bff.models import ErrorCode
+
+        identity, scope, servant_persona_id, _eff_auth = _resolve_knowledge_caller(
+            authorization,
+            pantheon_session,
+            x_tenant_id,
+            x_pantheon_tenant,
+        )
+        _ = identity
+        read_fn = read_paper_book or read_trader_paper_book
+        try:
+            book = read_fn(
+                tenant_id=scope.tenant_id,
+                persona_id=servant_persona_id,
+                agora_user_id=scope.user_id,
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Trader servant paper book readback failed",
+                str(exc)[:300],
+                precondition_failed="paper_book_readback",
+                details_extra={"error": str(exc)[:300]},
+            ) from exc
+        if book is None:
+            raise bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Trader servant paper book is not provisioned",
+                "Call POST /bff/agora/servant/paper-book/ensure on first paper use",
+                precondition_failed="paper_book",
+            )
+        return AgoraEnvelope(
+            data=_json_clone(dict(book)),
+            meta=AgoraMeta(
+                snapshot_at=utc_now(),
+                capability=_SERVANT_CAPABILITY,
+                audience=f"tenant:{scope.tenant_id}:user:{scope.user_id}",
+            ),
+        ).model_dump()
 
     @router.post("/bff/agora/servant/sessions", status_code=201)
     def create_servant_session(

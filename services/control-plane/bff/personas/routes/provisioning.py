@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,7 +14,10 @@ from ..service import (
     PersonaAdvisoryAdmissionError,
     PersonaProvisioningCoordinationError,
     ensure_chain_paper_capital,
+    ensure_trader_paper_book,
+    read_trader_paper_book,
     repair_paper_pool_risk_policy,
+    resolve_trader_paper_starting_capital,
     retire_chain_paper_capital,
     _bff_me_tenant_payload,
     _evaluate_persona_provisioning_status,
@@ -69,6 +72,21 @@ class PaperPoolRiskPolicyRepairRequest(BaseModel):
     approval_decision_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
     require_approved_profile_mapping: bool = True
     dry_run: bool = False
+
+
+class TraderPaperBookRequest(BaseModel):
+    """Paper-only stage assertions; caller never supplies actors, tenant, or capital amounts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_stage: Optional[str] = Field(default=None, max_length=32)
+    stage: Optional[str] = Field(default=None, max_length=32)
+    deployment_stage: Optional[str] = Field(default=None, max_length=32)
+    deployment_mode: Optional[str] = Field(default=None, max_length=32)
+    execution_mode: Optional[str] = Field(default=None, max_length=32)
+    allowed_deployment_scope: Optional[str] = Field(default=None, max_length=32)
+    environment: Optional[str] = Field(default=None, max_length=32)
+
 
 
 def _failed_governance_proposal(data: Any) -> Optional[Dict[str, Any]]:
@@ -196,8 +214,8 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
             ) from exc
         return {"data": data, "meta": {"snapshot_at": utc_now()}}
 
-    def _chain_capital_persona(identity: Any, persona_id: str) -> str:
-        """Caller tenant for a Persona the caller's tenant owns; 404 otherwise."""
+    def _chain_capital_persona_record(identity: Any, persona_id: str) -> tuple[str, Dict[str, Any]]:
+        """Caller tenant and raw Persona record for a Persona the caller's tenant owns; 404 otherwise."""
 
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
         directory = _get_persona_directory_snapshot(caller_tenant)
@@ -209,6 +227,12 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
+        return caller_tenant, raw
+
+    def _chain_capital_persona(identity: Any, persona_id: str) -> str:
+        """Caller tenant for a Persona the caller's tenant owns; 404 otherwise."""
+
+        caller_tenant, _ = _chain_capital_persona_record(identity, persona_id)
         return caller_tenant
 
     def _chain_capital_failure(exc: Exception):
@@ -218,6 +242,31 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
             "Paper capital precondition failed",
             str(exc) or exc.__class__.__name__,
         )
+
+    @router.post("/bff/personas/{persona_id}/provisioning/paper-book")
+    async def bff_ensure_persona_trader_paper_book(
+        persona_id: str,
+        body: Optional[TraderPaperBookRequest] = Body(default=None),
+        authorization: Optional[str] = Header(default=None),
+    ):
+        """Idempotent trader servant paper book ensure: one paper CapitalPool and one paper RuntimeBinding."""
+
+        identity = _extract_identity(authorization)
+        _require_operator_role(identity)
+        tenant_id, raw_persona = _chain_capital_persona_record(identity, persona_id)
+        req_body = body or TraderPaperBookRequest()
+        try:
+            data = await asyncio.to_thread(
+                ensure_trader_paper_book,
+                tenant_id,
+                persona_id,
+                requested_by=str(identity.operator_id),
+                persona_record=raw_persona,
+                **req_body.model_dump(exclude_none=True),
+            )
+        except PersonaProvisioningCoordinationError as exc:
+            raise _chain_capital_failure(exc) from exc
+        return {"data": data, "meta": {"snapshot_at": utc_now()}}
 
     @router.post("/bff/personas/{persona_id}/provisioning/paper-capital")
     async def bff_ensure_persona_chain_paper_capital(

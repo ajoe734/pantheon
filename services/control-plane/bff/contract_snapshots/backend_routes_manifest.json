@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-13",
+    "snapshot_date": "2026-11-27",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 640,
+    "total_routes": 683,
     "status_values": [
       "implemented",
       "alias",
@@ -87,6 +87,48 @@
     {
       "method": "GET",
       "path": "/bff/agora/capabilities",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/catalogue",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/meetings",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/meetings/catalogue",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/meetings/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/meetings/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/meetings/{param}/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/committee/proposals",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -254,6 +296,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/platform-source/records",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/postmortems",
       "family": "agora-core",
       "status": "implemented"
@@ -332,6 +380,18 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/servant/institutional-knowledge",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/paper-book",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/servant/sessions/{param}",
       "family": "agora-core",
       "status": "implemented"
@@ -392,6 +452,18 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{param}/decision-lock",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/decision-events/{param}/system-suggestions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/trading-room/performance-attribution/by-strategy",
       "family": "agora-core",
       "status": "implemented"
@@ -417,6 +489,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/stream",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/system-suggestions",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -554,6 +632,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/committee/meetings/{param}/proposals/{param}/candidates",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/committee/sessions/{param}/memos/{param}/publish",
       "family": "agora-core",
       "status": "implemented"
@@ -608,6 +692,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/interactions/meetings",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/interactions/participants:eligible",
       "family": "agora-core",
       "status": "implemented"
@@ -639,6 +729,24 @@
     {
       "method": "POST",
       "path": "/bff/agora/management/consult-bundle",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/meetings",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/meetings/{param}/candidate-decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/meetings/{param}/proposals/{param}/candidates",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -759,6 +867,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/servant/ensure",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/paper-book/ensure",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -885,6 +999,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/workshops/{param}/consultations",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/meetings",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -2902,6 +3022,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/personas/{param}/strategy-pool/publish-history",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/personas/{param}/tools",
       "family": "strategy-persona",
       "status": "implemented"
@@ -3016,6 +3142,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/paper-book",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/personas/{param}/provisioning/paper-capital",
       "family": "strategy-persona",
       "status": "implemented"
@@ -3023,6 +3155,12 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/provisioning/paper-capital/retire",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/provisioning/paper-capital/risk-policy",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -3262,6 +3400,30 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/attribution/outliers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/attribution/records",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/attribution/records/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/attribution/shadow/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/board-pack",
       "family": "unknown",
       "status": "implemented"
@@ -3347,6 +3509,30 @@
     {
       "method": "GET",
       "path": "/bff/management/loop-throughput",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/meetings",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/meetings/catalogue",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/meetings/proposals",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/meetings/{param}",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3653,6 +3839,30 @@
     },
     {
       "method": "GET",
+      "path": "/bff/meetings",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/meetings/catalogue",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/meetings/proposals",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/meetings/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/persona-league",
       "family": "unknown",
       "status": "implemented"
@@ -3696,6 +3906,18 @@
     {
       "method": "GET",
       "path": "/internal/agora/dataset-handoffs",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/agora/platform-source",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/internal/agora/platform-source/records",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3791,6 +4013,24 @@
     },
     {
       "method": "POST",
+      "path": "/bff/management/meetings",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/meetings/convene",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/meetings/{param}/review",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/management/nl/ask",
       "family": "unknown",
       "status": "implemented"
@@ -3847,6 +4087,24 @@
     {
       "method": "POST",
       "path": "/bff/management/trade-journeys/{param}/actions",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/meetings",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/meetings/convene",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/meetings/{param}/review",
       "family": "unknown",
       "status": "implemented"
     },

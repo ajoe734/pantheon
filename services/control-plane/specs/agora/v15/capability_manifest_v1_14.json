@@ -33,9 +33,24 @@
       "method": "POST",
       "path": "/bff/agora/memory/{memory_id}/actions/quarantine",
       "owner": "memory"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/servant/paper-book",
+      "owner": "capital+runtime_manager"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/servant/paper-book/ensure",
+      "owner": "capital+runtime_manager"
     }
   ],
   "owner_contracts": {
+    "capital": [
+      "/api/capital/pools",
+      "/api/capital/pools/{pool_id}",
+      "/api/capital/bindings"
+    ],
     "consultation": [
       "/api/consult/requests",
       "/api/consult/memos",
@@ -45,6 +60,10 @@
       "/api/memory/retrieve",
       "/api/memory/trade-lessons",
       "/api/memory/trade-lessons/{candidate_id}/decide"
+    ],
+    "runtime_manager": [
+      "/api/runtime-manager/runtime-bindings",
+      "/api/runtime-manager/runtime-bindings/{runtime_binding_id}"
     ]
   },
   "limitations": [
