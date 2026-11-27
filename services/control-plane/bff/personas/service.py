@@ -6008,12 +6008,78 @@ def _persona_owner_supports_paper_enrollment(owner: Any) -> bool:
     )
 
 
+def _is_non_trading_paper_enrollment_record(
+    record: ProvisioningRecord,
+    *,
+    persona_owner: Any = None,
+) -> bool:
+    """True when a provisioning record belongs to a non-trading persona or trader servant paper book.
+
+    Reuses ``fleet_classification.is_non_trading_persona`` (``persona_class`` ``agora_servant``)
+    and ``book_kind`` ``trader_servant_paper_book`` without introducing a second list of
+    non-trading persona classes.
+    """
+    raw_payload = getattr(record, "request_payload", None)
+    payload = raw_payload if isinstance(raw_payload, Mapping) else {}
+    raw_result = getattr(record, "result", None)
+    result = raw_result if isinstance(raw_result, Mapping) else {}
+    raw_references = getattr(record, "references", None)
+    references = raw_references if isinstance(raw_references, Mapping) else {}
+    to_dict = getattr(record, "to_dict", None)
+    record_dict = to_dict() if callable(to_dict) else {}
+    if _fleet_cls.is_non_trading_persona(payload) or (
+        isinstance(record_dict, Mapping) and _fleet_cls.is_non_trading_persona(record_dict)
+    ):
+        return True
+    for container in (
+        payload,
+        payload.get("paper_book") if isinstance(payload.get("paper_book"), Mapping) else {},
+        result,
+        references,
+    ):
+        if str(container.get("book_kind") or "").strip().lower() == "trader_servant_paper_book":
+            return True
+    if (
+        str(getattr(record, "idempotency_key", None) or "").strip().startswith("trader-paper-book:")
+        or str(payload.get("mandate") or "").strip().lower() == "user_private_agora_servant_paper_book"
+    ):
+        return True
+    owner = persona_owner
+    if owner is None:
+        try:
+            owner = _get_active_write_owner()
+        except Exception:
+            owner = None
+    getter = getattr(owner, "get_persona", None) if owner is not None else None
+    persona_id = str(getattr(record, "persona_id", None) or "").strip()
+    if callable(getter) and persona_id:
+        try:
+            persona = getter(persona_id)
+        except Exception:
+            persona = None
+        if isinstance(persona, Mapping):
+            if _fleet_cls.is_non_trading_persona(persona):
+                return True
+            meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+            paper_book = meta.get("paper_book") if isinstance(meta.get("paper_book"), Mapping) else {}
+            if (
+                str(meta.get("book_kind") or paper_book.get("book_kind") or "").strip().lower()
+                == "trader_servant_paper_book"
+            ):
+                return True
+    return False
+
+
 def _is_paper_enrollment_record_actionable(
     record: ProvisioningRecord,
     now: datetime,
     retry_seconds: int,
+    *,
+    persona_owner: Any = None,
 ) -> bool:
     if record.state not in {"provisioning", "succeeded"}:
+        return False
+    if _is_non_trading_paper_enrollment_record(record, persona_owner=persona_owner):
         return False
     existing = (record.references or {}).get("paper_enrollment")
     if enrollment_settled(existing):
@@ -6063,7 +6129,8 @@ def _reconcile_paper_enrollment_once() -> int:
     and concurrent replicas.  Failures stay a readable readback on the record.
     """
 
-    if not _persona_owner_supports_paper_enrollment(_get_active_write_owner()):
+    owner = _get_active_write_owner()
+    if not _persona_owner_supports_paper_enrollment(owner):
         return 0
     enrolled = 0
     try:
@@ -6076,7 +6143,9 @@ def _reconcile_paper_enrollment_once() -> int:
         0, int(os.getenv("PANTHEON_PERSONA_ENROLLMENT_RETRY_SECONDS", "600"))
     )
     for record in records:
-        if not _is_paper_enrollment_record_actionable(record, now, retry_seconds):
+        if not _is_paper_enrollment_record_actionable(
+            record, now, retry_seconds, persona_owner=owner
+        ):
             continue
         try:
             coordinator = PersonaProvisioningCoordinator(

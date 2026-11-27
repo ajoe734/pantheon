@@ -971,6 +971,9 @@ ABSTENTION_MAXLEN_SKIP_REASON = (
     "hypothesis_extraction_failed: invalid_schema: "
     "Model structured data violated schema: abstention_reason is too long (maxLength 200)"
 )
+PROPOSER_15S_DEADLINE_REASON = (
+    "hypothesis_compiler_failed: proposer_failed:SemanticExtractionClientError"
+)
 
 
 def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
@@ -988,10 +991,20 @@ def test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget():
     assert "#7896" in codes["adapter_anyof_schema_mismatch"].fix
     assert "client_interactive_token_budget_breach" in codes
     assert "#7908" in codes["client_interactive_token_budget_breach"].fix
+    assert "compiler_proposer_15s_deadline_timeout" in codes
+    assert "L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127" in (
+        codes["compiler_proposer_15s_deadline_timeout"].fix
+    )
 
     assert fixed_defect_for_skip_reason(ANYOF_SKIP_REASON) == codes["adapter_anyof_schema_mismatch"]
     assert fixed_defect_for_skip_reason(BUDGET_BREACH_SKIP_REASON) == codes["client_interactive_token_budget_breach"]
     assert fixed_defect_for_skip_reason(ABSTENTION_MAXLEN_SKIP_REASON) == codes["prompt_unstated_abstention_max_length"]
+    assert fixed_defect_for_skip_reason(PROPOSER_15S_DEADLINE_REASON) == (
+        codes["compiler_proposer_15s_deadline_timeout"]
+    )
+    assert fixed_defect_for_skip_reason("hypothesis_compiler_failed: proposer_failed") == (
+        codes["compiler_proposer_15s_deadline_timeout"]
+    )
 
     for non_eligible in (
         None,
@@ -1423,3 +1436,371 @@ def test_input_answers_hard_row_cap_holds_even_when_reuse_touches_old_rows(tmp_p
     # ... but the bound holds: the least recently used rows were evicted, not the touched one.
     assert ledger.input_answer("s0", "sha256:a") is not None
     assert ledger.input_answer("s1", "sha256:a") is None
+
+
+# --- L2-HYPOTHESIS-COMPILER-PROPOSER-DEADLINE-20261127 -----------------------
+
+
+def _compiler_queue_worker(
+    tmp_path,
+    transport,
+    *,
+    cap=400,
+    clock=None,
+    lease_seconds=30.0,
+    client_kw=None,
+):
+    from services.source_ingestion.hypothesis_compiler import (
+        CompilerStore,
+        HypothesisCompiler,
+        client_proposer,
+    )
+
+    clock = clock if clock is not None else [START]
+    queue = DistillationJobQueue(tmp_path / "q.sqlite", now=lambda: clock[0])
+    store = StrategySpecSeedStore(tmp_path / "s.jsonl")
+    ledger = ExtractionLedger(tmp_path / "l.sqlite", daily_cap=cap)
+    client = SemanticExtractionClient(transport_fn=transport, **(client_kw or {}))
+    extractor = HypothesisExtractor(client, ledger)
+    compiler = HypothesisCompiler(
+        client_proposer(client),
+        CompilerStore(tmp_path / "compiler.sqlite"),
+    )
+    worker = DistillationWorker(
+        queue,
+        store,
+        hypothesis_extractor=extractor,
+        hypothesis_compiler=compiler,
+        lease_seconds=lease_seconds,
+        retry_base_seconds=5.0,
+    )
+    return worker, queue, store, ledger, compiler, clock
+
+
+def test_cap_exhausted_proposer_defers_without_repaying_cached_card(tmp_path, monkeypatch):
+    """Acceptance 2: when the daily cap is reached after the card call, the proposer is
+    deferred as budget_exhausted without materializing an uncompiled seed; on the next UTC
+    day the cached card is replayed (0 card calls) and the proposer compiles in 1 call."""
+    from services.source_ingestion.tests.test_hypothesis_compiler import _proposal
+
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    counts = {"extract": 0, "propose": 0}
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload["prompt"].startswith("Propose a factor_rule_v1"):
+            counts["propose"] += 1
+            return {
+                "output": {
+                    "structured_data": _proposal(),
+                    "usage": {"input_tokens": 2300, "output_tokens": 896},
+                }
+            }
+        counts["extract"] += 1
+        return {
+            "output": {
+                "structured_data": {
+                    "is_abstained": False,
+                    "abstention_reason": None,
+                    "hypothesis_card": _card(testability="testable"),
+                },
+                "usage": {"input_tokens": 1400, "output_tokens": 1650},
+            }
+        }
+
+    # Cap = 1: Day 1 has room for the card call (1/1) but 0 left for the proposer call.
+    worker, queue, store, ledger, compiler, _ = _compiler_queue_worker(
+        tmp_path, transport, cap=1, clock=clock
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+
+    day1 = worker.run_pending()
+    assert (day1.created, day1.deferred, day1.failed, day1.skipped) == (0, 1, 0, 0)
+    assert counts == {"extract": 1, "propose": 0}
+    assert ledger.calls_today() == 1
+    assert [e["outcome"] for e in ledger.events("src-1")] == ["card", "budget_exhausted"]
+    assert ledger.events("src-1")[0]["usage"] == {"input_tokens": 1400, "output_tokens": 1650}
+    assert "usage" not in ledger.events("src-1")[1]
+    job = queue.get("src-1")
+    assert job.status == "retry_wait" and job.error == "budget_exhausted"
+    assert job.next_attempt_at.endswith("T00:00:00Z")
+    assert ledger.get_card("src-1", job.source_digest) is not None
+    assert list(store.list_all()) == []
+
+    # Day 2: cached card is replayed (extract stays 1), proposer reserves 1 call and compiles.
+    clock[0] += 86400
+    day2 = worker.run_pending()
+    assert (day2.created, day2.deferred, day2.failed) == (1, 0, 0)
+    assert counts == {"extract": 1, "propose": 1}
+    assert ledger.calls_today() == 1
+    assert [e["outcome"] for e in ledger.events("src-1")] == [
+        "card",
+        "budget_exhausted",
+        "compiled",
+    ]
+    assert ledger.events("src-1")[2]["usage"] == {"input_tokens": 2300, "output_tokens": 896}
+    assert queue.get("src-1").status == "done"
+    assert len(list(store.list_all())) == 1
+
+
+def test_proposer_timeout_and_cached_card_retry_under_per_record_limits(
+    tmp_path, monkeypatch, fake_monotonic
+):
+    """Acceptance 2: a proposer timeout is counted in calls and timeout_calls, recorded
+    as an event, retried under the 3/day and 6/total per-record limits, and never re-pays
+    the cached card."""
+    from services.source_ingestion.tests.test_hypothesis_compiler import _proposal
+
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    state = {"propose_delay": 95.0, "extract_calls": 0, "propose_calls": 0, "current_sid": "src-1"}
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload["prompt"].startswith("Propose a factor_rule_v1"):
+            state["propose_calls"] += 1
+            fake_monotonic[0] += state["propose_delay"]
+            return {
+                "output": {
+                    "structured_data": _proposal(),
+                    "usage": {"input_tokens": 2400, "output_tokens": 896},
+                }
+            }
+        state["extract_calls"] += 1
+        fake_monotonic[0] += 35.0
+        return {
+            "output": {
+                "structured_data": {
+                    "is_abstained": False,
+                    "abstention_reason": None,
+                    "hypothesis_card": _card(sid=state["current_sid"], testability="testable"),
+                },
+                "usage": {"input_tokens": 1500, "output_tokens": 1720},
+            }
+        }
+
+    worker, queue, store, ledger, compiler, _ = _compiler_queue_worker(
+        tmp_path, transport, cap=400, clock=clock
+    )
+    worker.enqueue_from_source_record(_source("src-1"))
+
+    # Attempt 1: card succeeds after 35s (< 90s), proposer times out after 95s (>= 90s).
+    first = worker.run_pending()
+    assert (first.created, first.extraction_retried, first.retried, first.failed) == (0, 1, 1, 0)
+    assert state["extract_calls"] == 1 and state["propose_calls"] == 1
+    assert ledger.calls_today() == 2
+    assert ledger.summary()["timeout_calls"] == 1
+    assert [e["outcome"] for e in ledger.events("src-1")] == ["card", "proposer_failed"]
+    assert "timeout" in ledger.events("src-1")[1]["detail"]
+    assert queue.metrics()["extraction_retry"] == 1
+    assert list(store.list_all()) == []
+
+    # Attempt 2 (after retry backoff, same day): cached card replayed (extract_calls stays 1),
+    # proposer answers in 40s (well past the old 15s deadline, within the 90s deadline).
+    state["propose_delay"] = 40.0
+    job = queue.get("src-1")
+    clock[0] = max(clock[0] + 1, _epoch(job.next_attempt_at))
+    second = worker.run_pending()
+    assert second.created == 1 and second.failed == 0
+    assert state["extract_calls"] == 1 and state["propose_calls"] == 2
+    assert ledger.calls_today() == 3
+    assert ledger.summary()["timeout_calls"] == 1
+    assert [e["outcome"] for e in ledger.events("src-1")] == [
+        "card",
+        "proposer_failed",
+        "compiled",
+    ]
+    assert ledger.events("src-1")[2]["usage"] == {"input_tokens": 2400, "output_tokens": 896}
+    assert queue.get("src-1").status == "done"
+
+    # Second source record where proposer always times out: 1 card call + 2 proposer calls
+    # on Day 1 (3 calls today -> attempts_deferred), then 3 proposer calls on Day 2 (6 total ->
+    # closed l2_extraction_attempts_exhausted), never re-paying the cached card.
+    state["propose_delay"] = 95.0
+    state["extract_calls"] = 0
+    state["propose_calls"] = 0
+    state["current_sid"] = "src-timeout"
+    worker.enqueue_from_source_record(_source("src-timeout"))
+    for _ in range(40):
+        worker.run_pending()
+        j = queue.get("src-timeout")
+        if j.status not in ("retry_wait", "pending"):
+            break
+        due = _epoch(j.next_attempt_at) if j.next_attempt_at else clock[0]
+        clock[0] = max(clock[0] + 1, due)
+
+    j = queue.get("src-timeout")
+    assert j.status == "skipped"
+    assert j.skip_reason.startswith("l2_extraction_attempts_exhausted: 6 calls; last: timeout")
+    assert state["extract_calls"] == 1
+    assert state["propose_calls"] == 5
+    assert state["extract_calls"] + state["propose_calls"] == MAX_RECORD_ATTEMPTS_TOTAL == 6
+    assert ledger.record_attempts("src-timeout", j.source_digest)["total"] == 6
+
+
+def test_hosted_5_testable_cards_failed_under_old_15s_deadline_compile_after_deploy(
+    tmp_path, monkeypatch
+):
+    """Acceptance 3 & 4: the 5 hosted testable cards that failed under the old 15 s
+    proposer deadline (in retry_wait or dead_letter with
+    hypothesis_compiler_failed: proposer_failed:SemanticExtractionClientError) are
+    retried/redriven once after deploy without re-paying their cached cards, compile into
+    rule drafts with claim_status == ok, and pass stage_hypothesis_cards."""
+    import datetime as dt
+    import sqlite3
+
+    from acceptance.discovery_pipeline_day import stage_hypothesis_cards
+    from services.source_ingestion.discovery_summary import read_discovery_summary
+    from services.source_ingestion.tests.test_hypothesis_compiler import _proposal
+
+    clock = [START]
+    monkeypatch.setattr(
+        hypothesis_card, "_today", lambda: time.strftime("%Y-%m-%d", time.gmtime(clock[0]))
+    )
+    hosted_ids = (
+        "news-udn-9904299",
+        "news-udn-9904341",
+        "news-udn-9904092",
+        "news-cna-202611260231",
+        "news-cna-202611260159",
+    )
+    counts = {"extract": 0, "propose": 0}
+
+    def transport(payload: dict[str, Any]) -> dict[str, Any]:
+        if payload["prompt"].startswith("Propose a factor_rule_v1"):
+            counts["propose"] += 1
+            return {
+                "output": {
+                    "structured_data": _proposal(),
+                    "usage": {"input_tokens": 2400, "output_tokens": 896},
+                }
+            }
+        counts["extract"] += 1
+        raise AssertionError("cached cards must not re-call card extraction")
+
+    worker, queue, store, ledger, compiler, _ = _compiler_queue_worker(
+        tmp_path, transport, cap=400, clock=clock
+    )
+
+    for idx, sid in enumerate(hosted_ids):
+        src = _source(sid, tenant_id="default")
+        job = queue.enqueue_source_record(src, enqueued_at=clock[0] - 600 + idx)
+        # Pre-deploy state: card call succeeded (1 call in ledger, card cached in ledger.cards).
+        assert ledger.reserve_attempt(sid, job.source_digest) == "reserved"
+        card = _card(sid=sid, testability="testable", claim=f"Testable claim for {sid}")
+        card["origin"] = "news"
+        ledger.put_card(sid, job.source_digest, card)
+        ledger.record(
+            sid, "card", "testable", usage={"input_tokens": 1500, "output_tokens": 1700}
+        )
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (job.job_id,)
+            ).fetchone()[0]
+            if idx < 3:
+                # First 3 are still in retry_wait (attempts 1/3) when the fix deploys.
+                conn.execute(
+                    "UPDATE distillation_outbox SET status='retry_wait', attempts=1,"
+                    " available_at=?, last_error=? WHERE job_id=?",
+                    (clock[0] - 10, PROPOSER_15S_DEADLINE_REASON, job.job_id),
+                )
+            else:
+                # Last 2 exhausted 3 attempts under the old 15s deadline and reached dead_letter.
+                conn.execute(
+                    "UPDATE distillation_outbox SET status='dead_letter', attempts=3,"
+                    " processed_at=?, last_error=? WHERE job_id=?",
+                    (clock[0] - 10, PROPOSER_15S_DEADLINE_REASON, job.job_id),
+                )
+                conn.execute(
+                    "INSERT INTO distillation_dead_letters (job_id, event_id, source_id,"
+                    " source_digest, payload_json, attempts, reason, created_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        job.job_id,
+                        event_id,
+                        sid,
+                        job.source_digest,
+                        "{}",
+                        3,
+                        PROPOSER_15S_DEADLINE_REASON,
+                        clock[0] - 10,
+                    ),
+                )
+
+    assert queue.dead_letter_count() == 2
+    assert ledger.calls_today() == 5
+
+    res = worker.run_pending(tenant_id="default")
+    assert res.processed == 5
+    # First unique rule creates a draft; the other 4 cards with the same rule fingerprint
+    # record hypothesis_rule_support_added (or compile if distinct).
+    assert res.created == 1 and res.skipped == 4
+    assert res.extraction_dead_letters_redriven == 2
+    assert queue.dead_letter_count() == 0
+    assert counts == {"extract": 0, "propose": 5}
+    assert ledger.calls_today() == 10  # 5 pre-deploy card calls + 5 post-deploy proposer calls
+
+    for idx, sid in enumerate(hosted_ids):
+        j = queue.get(sid)
+        events = ledger.events(sid)
+        assert [e["outcome"] for e in events] == [
+            "card",
+            "compiled" if idx == 0 else "support_added",
+        ]
+        assert events[1]["usage"] == {"input_tokens": 2400, "output_tokens": 896}
+        if idx == 0:
+            assert j.status == "done"
+        else:
+            assert j.status == "skipped"
+            assert j.skip_reason.startswith("hypothesis_rule_support_added:")
+
+    # Discovery summary and probe stage_hypothesis_cards now see the verified compiled card draft.
+    summary = read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="default",
+        ledger_path=tmp_path / "l.sqlite",
+        now=clock[0],
+    )
+    newest_cards = summary["hypothesis_cards"]["newest"]
+    assert len(newest_cards) == 1
+    assert newest_cards[0]["source_id"] == hosted_ids[0]
+    assert newest_cards[0]["claim_status"] == "ok"
+    board = {
+        "meta": {"surfaces": {"alpha_factory_hypothesis_cards": {"status": "ok"}}},
+        "data": {
+            "counts": {
+                "llm_calls_today": {
+                    "value": summary["llm_calls"]["calls"],
+                    "cap": summary["llm_calls"]["daily_cap"],
+                    "status": "ok",
+                },
+                "hypothesis_cards_today": {
+                    "value": summary["hypothesis_cards"]["today"],
+                    "status": "ok",
+                },
+            },
+            "discovery_summary": {
+                "closed_last_24h": summary["closed_text_records"]["last_24h"],
+            },
+            "discovered": [
+                {
+                    "kind": "hypothesis_card",
+                    "source_id": c["source_id"],
+                    "claim": c["claim"],
+                    "claim_status": c["claim_status"],
+                    "since": c["carded_at"],
+                }
+                for c in newest_cards
+            ],
+        },
+    }
+    stage = stage_hypothesis_cards(
+        board, dt.datetime.fromtimestamp(clock[0], tz=dt.timezone.utc)
+    )
+    assert stage["status"] == "passed"
+    assert stage["values"]["verified_last_24h"] == 1
+
+

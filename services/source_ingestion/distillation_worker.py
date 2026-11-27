@@ -2086,15 +2086,16 @@ class DistillationJobQueue:
                 ):
                     raise DistillationLeaseError(f"stale distillation lease failure: {job.job_id}")
                 attempts = int(row["attempts"])
-                # Unavailable model/adapter uses the long schedule of auth outages.
-                auth_failure = is_auth_registry_failure(error) or error.startswith(
-                    EXTRACTION_UNAVAILABLE_MARKER
+                # Unavailable model/adapter (card or compiler proposer) uses the long schedule of auth outages.
+                extraction_failure = error.startswith(
+                    (EXTRACTION_UNAVAILABLE_MARKER, COMPILER_FAILED_MARKER)
                 )
+                auth_failure = is_auth_registry_failure(error) or extraction_failure
                 attempt_limit = int(row["max_attempts"])
                 if auth_failure:
                     attempt_limit = max(attempt_limit, AUTH_RETRY_MAX_ATTEMPTS)
                 was_extraction_dead_letter = False
-                if error.startswith(EXTRACTION_UNAVAILABLE_MARKER):
+                if extraction_failure:
                     dl_row = connection.execute(
                         "SELECT redrive_count FROM distillation_dead_letters WHERE job_id = ?",
                         (job.job_id,),
@@ -2518,19 +2519,37 @@ class DistillationJobQueue:
         requested_by: str,
         note: str,
         now: float,
+        defect_reattempted: bool = False,
+        priority_reason: str | None = None,
     ) -> bool:
-        changed = connection.execute(
-            """
-            UPDATE distillation_outbox
-               SET status = 'pending', available_at = ?,
-                   processed_at = NULL, attempts = 0,
-                   lease_owner = NULL, lease_token = NULL,
-                   lease_expires_at = NULL, lease_expiries = 0,
-                   lease_started = 0, updated_at = ?
-             WHERE job_id = ? AND status = 'dead_letter'
-            """,
-            (now, now, job_id),
-        ).rowcount
+        if defect_reattempted:
+            changed = connection.execute(
+                """
+                UPDATE distillation_outbox
+                   SET status = 'pending', available_at = ?,
+                       processed_at = NULL, attempts = 0,
+                       lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, lease_expiries = 0,
+                       lease_started = 0, defect_reattempted = 1,
+                       priority_reason = COALESCE(?, priority_reason),
+                       updated_at = ?
+                 WHERE job_id = ? AND status = 'dead_letter'
+                """,
+                (now, priority_reason, now, job_id),
+            ).rowcount
+        else:
+            changed = connection.execute(
+                """
+                UPDATE distillation_outbox
+                   SET status = 'pending', available_at = ?,
+                       processed_at = NULL, attempts = 0,
+                       lease_owner = NULL, lease_token = NULL,
+                       lease_expires_at = NULL, lease_expiries = 0,
+                       lease_started = 0, updated_at = ?
+                 WHERE job_id = ? AND status = 'dead_letter'
+                """,
+                (now, now, job_id),
+            ).rowcount
         if changed != 1:
             return False
         connection.execute(
@@ -2800,7 +2819,10 @@ class DistillationJobQueue:
                     params,
                 ).fetchall()
                 for row in rows:
-                    if not is_extraction_unavailable_failure(str(row["reason"])):
+                    reason_text = str(row["reason"])
+                    is_unavail = is_extraction_unavailable_failure(reason_text)
+                    defect = None if is_unavail else fixed_defect_for_skip_reason(reason_text)
+                    if not is_unavail and defect is None:
                         continue
                     job_id = str(row["job_id"])
                     source_id = str(row["source_id"])
@@ -2822,7 +2844,7 @@ class DistillationJobQueue:
                         continue
                     latest = connection.execute(
                         """
-                        SELECT job_id, source_digest
+                        SELECT job_id, source_digest, defect_reattempted
                           FROM distillation_outbox
                          WHERE source_id = ?
                          ORDER BY enqueued_at DESC, rowid DESC
@@ -2832,19 +2854,29 @@ class DistillationJobQueue:
                     ).fetchone()
                     if latest is None or str(latest["job_id"]) != job_id:
                         continue
-                    if len(redriven) >= cap or int(row["redrive_count"]) >= budget:
+                    row_budget = min(budget, 1) if defect is not None else budget
+                    if len(redriven) >= cap or int(row["redrive_count"]) >= row_budget:
+                        continue
+                    if defect is not None and int(latest["defect_reattempted"] or 0) > 0:
                         continue
                     if remaining_daily is not None and len(redriven) >= remaining_daily:
                         continue
                     digest = str(latest["source_digest"] or row["source_digest"] or "")
                     if callable(can_attempt_fn) and can_attempt_fn(source_id, digest) != RESERVED:
                         continue
+                    redrive_note = (
+                        f"fixed_defect_reattempt:{defect.code}:{requested_by}"
+                        if defect is not None
+                        else note
+                    )
                     if self._redrive_dead_letter_row(
                         connection,
                         job_id,
                         requested_by=requested_by,
-                        note=note,
+                        note=redrive_note,
                         now=effective_now,
+                        defect_reattempted=(defect is not None),
+                        priority_reason=redrive_note if defect is not None else None,
                     ):
                         redriven.append(job_id)
                 connection.execute("COMMIT")
@@ -2909,7 +2941,8 @@ class DistillationJobQueue:
                      WHERE status = 'skipped'
                        AND defect_reattempted = 0
                        AND pruned_at IS NULL
-                       AND skip_reason LIKE 'hypothesis_extraction_failed:%'
+                       AND (skip_reason LIKE 'hypothesis_extraction_failed:%'
+                            OR skip_reason LIKE 'hypothesis_compiler_failed:%')
                        {tenant_clause}
                        AND NOT EXISTS (
                            SELECT 1
@@ -3271,8 +3304,13 @@ class DistillationJobQueue:
             # or adapter did not answer, the Registry was never called.
             metrics["extraction_retry"] = int(connection.execute(
                 """SELECT COUNT(*) FROM distillation_outbox WHERE status = 'retry_wait'
-                   AND substr(last_error, 1, ?) = ?""",
-                (len(EXTRACTION_UNAVAILABLE_MARKER), EXTRACTION_UNAVAILABLE_MARKER),
+                   AND (substr(last_error, 1, ?) = ? OR substr(last_error, 1, ?) = ?)""",
+                (
+                    len(EXTRACTION_UNAVAILABLE_MARKER),
+                    EXTRACTION_UNAVAILABLE_MARKER,
+                    len(COMPILER_FAILED_MARKER),
+                    COMPILER_FAILED_MARKER,
+                ),
             ).fetchone()[0])
         for row in rows:
             metrics[str(row["status"])] = int(row["count"])
@@ -3528,6 +3566,7 @@ _EXTERNAL_TEXT_TYPES: frozenset[SourceType] = frozenset(
 IRRELEVANT_REASON = "l2_irrelevant"
 EXTRACTION_DISABLED_REASON = "l2_extraction_disabled"
 EXTRACTION_UNAVAILABLE_MARKER = "hypothesis_extraction_unavailable"
+COMPILER_FAILED_MARKER = "hypothesis_compiler_failed"
 # ``_distill_one`` outcome for a job sent back to retry_wait because the
 # extraction model/adapter did not answer (never a Registry call).
 EXTRACTION_RETRY_OUTCOME = "extraction_retry"
@@ -3602,6 +3641,13 @@ class DistillationWorker:
     ) -> None:
         self._hypothesis_extractor = hypothesis_extractor
         self._hypothesis_compiler = hypothesis_compiler
+        if (
+            self._hypothesis_compiler is not None
+            and self._hypothesis_extractor is not None
+            and getattr(self._hypothesis_compiler, "ledger", None) is None
+            and hasattr(self._hypothesis_compiler, "bind_ledger")
+        ):
+            self._hypothesis_compiler.bind_ledger(self._hypothesis_extractor.ledger)
         self._demand_reader = demand_reader
         self._queue = job_queue or DistillationJobQueue()
         self._seed_store = seed_store or StrategySpecSeedStore()
@@ -4065,7 +4111,7 @@ class DistillationWorker:
                     self._tick_extraction_seconds += time.monotonic() - started
                 if outcome.status == "unavailable":
                     self._tick_extractor_unavailable = True
-                elif outcome.status in ("card", "no_hypothesis", "rejected", "failed"):
+                elif outcome.status in ("card", "no_hypothesis", "rejected", "failed") and outcome.detail != "cached":
                     self._tick_extractor_answered = True
                 if outcome.card is None:
                     if outcome.status in (DEFERRAL_BUDGET_EXHAUSTED, DEFERRAL_ATTEMPTS_DEFERRED):
@@ -4123,22 +4169,46 @@ class DistillationWorker:
                             claim_token=job.lease_token,
                         )
                         return "skipped", CARD_REUSED_REASON
-                self._queue.clear_budget_deferral(
-                    job, now=_timestamp(now) if now is not None else self._queue._now(),
-                )
                 if self._hypothesis_compiler is not None:
-                    compiled = self._hypothesis_compiler.compile(outcome.card)
+                    compile_started = time.monotonic()
+                    try:
+                        compiled = self._hypothesis_compiler.compile(
+                            outcome.card,
+                            source_id=source.source_id,
+                            digest=version_key or "",
+                        )
+                    finally:
+                        self._tick_extraction_seconds += time.monotonic() - compile_started
+                    if compiled.status in (DEFERRAL_BUDGET_EXHAUSTED, DEFERRAL_ATTEMPTS_DEFERRED):
+                        self._queue.defer_budget(
+                            job,
+                            now=_timestamp(now) if now is not None else self._queue._now(),
+                            reason=compiled.status,
+                        )
+                        return "deferred", compiled.status
+                    if compiled.status == "attempts_exhausted":
+                        reason = f"{EXTRACTION_ATTEMPTS_EXHAUSTED_REASON}: {compiled.reason}"
+                        self._queue.mark_skipped(
+                            job.job_id, reason=reason, processed_at=now, claim_token=job.lease_token,
+                        )
+                        return "skipped", EXTRACTION_ATTEMPTS_EXHAUSTED_REASON
                     if compiled.status == SKIPPED_COMPILE and str(compiled.reason).startswith("proposer_failed"):
+                        self._tick_extractor_unavailable = True
                         # Transport/compiler failure is not a delivered outcome:
                         # retry durably instead of materializing an uncompiled seed.
                         failure_status = self._queue.mark_retry_or_dead_letter(
                             job,
-                            error=f"hypothesis_compiler_failed: {compiled.reason}",
+                            error=f"{COMPILER_FAILED_MARKER}: {compiled.reason}",
                             base_delay_seconds=self._retry_base_seconds,
                             now=now,
                         )
-                        return "failed", failure_status.value
+                        return EXTRACTION_RETRY_OUTCOME, failure_status.value
+                    if not compiled.extra.get("cached"):
+                        self._tick_extractor_answered = True
                     if compiled.status in {NOT_EXPRESSIBLE, NEEDS_DATA, SUPPORT_ADDED}:
+                        self._queue.clear_budget_deferral(
+                            job, now=_timestamp(now) if now is not None else self._queue._now(),
+                        )
                         # No new draft: refusal is recorded, or an existing
                         # draft's support_count was incremented instead.
                         reason = {
@@ -4160,6 +4230,9 @@ class DistillationWorker:
                             **card,
                             "factor_rule_v1": {**compiled.artifact, "rule_fingerprint": compiled.fingerprint},
                         }
+                self._queue.clear_budget_deferral(
+                    job, now=_timestamp(now) if now is not None else self._queue._now(),
+                )
                 source = _with_hypothesis_card(source, card)
 
         try:

@@ -36,6 +36,7 @@ from services.control_plane.cron.persona_cron_registrar import PersonaCronRegist
 from services.control_plane.cron.workflows import PERSONA_DAILY_CYCLE_WORKFLOW_ID as WORKFLOW_ID
 from services.control_plane.ooda.jsonl_store import OodaJsonlAppendStore
 from services.control_plane.ooda.ooda_loop_packet import OodaLoopPacket
+from services.control_plane.persona.persona_policy_resolver import non_trading_identity_source
 from services.knowledge import case_file as case_files
 from services.memory import mental_models
 from services.persona.consult_triggers import macro_regime_shift_requirement
@@ -112,7 +113,9 @@ def _action_case_file(case, observe):
 
 
 def is_daily_cycle_persona(persona: Mapping[str, Any]) -> bool:
-    return persona.get("lifecycle_state") in DAILY_CYCLE_STATES and persona.get("status", "active") == "active"
+    return (not non_trading_identity_source(persona)
+            and persona.get("lifecycle_state") in DAILY_CYCLE_STATES
+            and persona.get("status", "active") == "active")
 
 
 # Proposal kind -> case-file decision type. harness_patch and no_action have no
@@ -479,6 +482,8 @@ class PersonaCycleController:
         self._consumed_watermarks: dict[str, tuple[Any, Any]] = {}  # job_id -> (lastRunAtMs, lastRunStatus)
 
     def consume_run(self, persona: dict[str, Any], job_id: str, run: dict[str, Any]) -> dict[str, Any]:
+        if non_trading_identity_source(persona):
+            raise ValueError("persona_not_enrolled_for_daily_execution")
         if persona.get("lifecycle_state") not in ELIGIBLE_STATES or not persona.get("tenant_id"):
             raise ValueError("persona is not eligible or has no authoritative tenant")
         if run.get("status") not in {"ok", "error", "skipped"}:
@@ -948,6 +953,9 @@ class PersonaCycleController:
 
     def reconcile_once(self) -> dict[str, Any]:
         personas = self.owners.personas()  # fail closed before any cron deletion
+        excluded = [{"persona_id": p["persona_id"], "reason": "persona_not_enrolled_for_daily_execution"}
+                    for p in personas if non_trading_identity_source(p)]
+        personas = [p for p in personas if not non_trading_identity_source(p)]
         real_runtime = self.registrar._get_runtime()
         caching = _ListCachingRuntime(real_runtime)
         swappable = hasattr(self.registrar, "_runtime")
@@ -960,6 +968,7 @@ class PersonaCycleController:
             if swappable:
                 self.registrar._runtime = saved
         # The final cron.list of the pass carries the job state we gate on.
+        report["excluded"] = excluded
         job_states = {}
         for pid, job_id in report["jobs"].items():
             job = next((j for j in (caching.last_jobs or []) if isinstance(j, dict) and j.get("id") == job_id), None)
