@@ -134,6 +134,17 @@
         "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
         "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
       ]
+    },
+    "dev_sync_revalidation_2": {
+      "merged_dev": "ba06998bf",
+      "conflict": "docs/operations/problem-register.md Agora servant row: kept dev's #7967 note and PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 instance, and this task's T8 instance and status",
+      "incoming_dev_overlap": "services/execution/lean_runtime/paper_signal_producer.py auto-merged: dev's _is_trader_servant_paper_book_binding gate stops produce/settle_pending_intraday/_produce_current for trader servant paper books; the Agora consumer enqueues through DecisionSignalProducer directly and is not gated, so trader books execute trader intents only",
+      "results": [
+        "pytest paper-intent execution + consumer + trading_room + lean_runtime producer/signal suites + trader paper book provisioning/enrollment-skip + runtime-manager fleet desired state: 430 passed, 3 skipped",
+        "pytest services/control-plane/tests/agora (excluding Postgres-only test_cross_user_isolation.py) + architecture/router/bundle/compat/storage/compose tests: 307 passed",
+        "pytest scripts/test_deploy_nonprod_vm.py -k 'agora_paper or dry_run_execution or compose or workflow': 15 passed",
+        "check_storage_manifest.py, bff_route_manifest_backend.py --check, bff_route_diff.py --check-baseline: passed"
+      ]
     }
   },
   "residuals": [

@@ -2049,6 +2049,20 @@ def _binding_dict_from_obj(binding: Any) -> dict[str, Any]:
     }
 
 
+TRADER_SERVANT_PAPER_BOOK_KIND = "trader_servant_paper_book"
+
+
+def _is_trader_servant_paper_book_binding(binding: Any) -> bool:
+    """True when the binding is a trader servant paper book (executes trader intents only)."""
+    b_dict = _binding_dict_from_obj(binding)
+    metadata = b_dict.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    return (
+        str(metadata.get("book_kind") or "").strip() == TRADER_SERVANT_PAPER_BOOK_KIND
+    )
+
+
 def _paper_signal_identity(
     signal: dict[str, Any],
     binding: Mapping[str, Any],
@@ -2705,6 +2719,9 @@ class PaperSignalProducer:
         """
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
+        if _is_trader_servant_paper_book_binding(binding):
+            self._degraded_by_binding.pop(binding_id, None)
+            return 0
         store = self._store_for(binding)
         getter = getattr(store, "get_decision_record", None)
         if not callable(getter) or not callable(getattr(store, "put_decision_record", None)):
@@ -2809,6 +2826,8 @@ class PaperSignalProducer:
         b_dict = _binding_dict_from_obj(binding)
         binding_id = b_dict["binding_id"]
         self._degraded_by_binding.pop(binding_id, None)
+        if _is_trader_servant_paper_book_binding(binding):
+            return 0
         try:
             released = self.settle_pending_intraday(binding, now_iso)
         except Exception as exc:  # noqa: BLE001 - a settlement-index fault must not block daily production
@@ -2817,6 +2836,9 @@ class PaperSignalProducer:
         return released + self._produce_current(binding, binding_id, now_iso)
 
     def _produce_current(self, binding: Any, binding_id: str, now_iso: str) -> int:
+        if _is_trader_servant_paper_book_binding(binding):
+            self._degraded_by_binding.pop(binding_id, None)
+            return 0
 
         # Generate strategy output
         try:
