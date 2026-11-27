@@ -123,7 +123,7 @@ def _news_refetch_records(tmp_path):
         adapter = adapter_for(
             files, [entry], tmp_path / run, source_id="collector-news-rss", source_type="news",
         )
-        result = adapter.pull_bundles(trace_id=f"trace-{run}")
+        result = adapter.pull(trace_id=f"trace-{run}")
         payload = result.records[0].to_dict()
         payload["created_at"] = finished
         payload["metadata"].update(

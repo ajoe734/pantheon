@@ -1070,8 +1070,13 @@ class TestCollectorRunIdentity:
     ):
         from services.source_ingestion.tests.test_collector_bundle_connector import _news_refetch_records
         from services.source_ingestion.distillation_controller import _build_registry_payload
+        from services.source_ingestion.strategy_seed_builder import StrategySpecSeedBuilder
+        from services.source_ingestion.hypothesis_card import ExtractionLedger, extraction_input_digest
 
         first, later = _news_refetch_records(tmp_path)
+        # Model the same already-extracted seed enrichment on both snapshots.
+        for source in (first, later):
+            source.metadata["strategy_seed"] = {"hypothesis": "Revenue momentum predicts returns"}
         first.metadata["raw_storage_refs"] = [{"raw_blob_path": "raw/first.json"}]
         later.metadata["raw_storage_refs"] = [{"raw_blob_path": "raw/later.json"}]
         # Independent historical projections, including both raw-refs generations.
@@ -1094,24 +1099,43 @@ class TestCollectorRunIdentity:
         admitted = queue.enqueue_source_record(later)
         assert admitted.job_id == old_job.job_id
         assert admitted.source_digest == old_digest != source_version_digest(later)
-        assert admitted.event_id == old_job.event_id
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (admitted.job_id,),
+            ).fetchone()[0]
+        assert event_id == f"source-normalized:{first.source_id}:{old_digest}"
         assert admitted.idempotency_key == old_job.idempotency_key
         assert queue.get(first.source_id, source_version_digest(later)).job_id == old_job.job_id
         assert queue.version_count(first.source_id) == queue.count() == 1
         assert queue.source_for_job(admitted).metadata["pit"] == first.metadata["pit"]
-        writes = []
+        stored = queue.source_for_job(admitted)
+        item = _synthesize_evidence_item(stored, old_digest)
+        bundle = _synthesize_evidence_bundle(stored, item, old_digest)
+        seed = StrategySpecSeedBuilder().build_seed(bundle, source_records=[stored], evidence_items=[item])
+        request = RegistrySyncRequest(stored, seed, admitted, item, bundle, old_digest)
+        payload = _build_registry_payload(request=request, registry_id="reg-test")
+        assert payload["source_digest"] == old_digest
 
-        def sync(request):
-            payload = _build_registry_payload(request=request, registry_id="reg-test")
-            assert request.version_key == request.job.source_digest == old_digest
-            assert payload["source_digest"] == old_digest
-            writes.append(payload)
-
-        worker = DistillationWorker(queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"), registry_sync=sync)
+        # input_answers is keyed by extraction input, not the source-version
+        # digest. Its cached card and event retain their historical references.
+        ledger = ExtractionLedger(tmp_path / "ledger.sqlite3")
+        event_id = ledger.record(first.source_id, "card", old_digest)
+        input_digest = extraction_input_digest(
+            first.metadata["body"], source_record_id=first.source_id, origin="news",
+        )
+        ledger.put_input_answer(
+            first.source_id, input_digest, outcome="card", detail="original answer",
+            event_id=event_id, card={"source_digest": old_digest},
+        )
+        answer = ledger.input_answer(first.source_id, input_digest)
+        events = ledger.events(first.source_id)
+        worker = DistillationWorker(queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"))
         result = worker.catch_up([later], tenant_id="tenant-dev")
         assert result.failed == result.enqueued == 0
-        assert result.processed == len(writes) == (0 if terminal else 1)
+        assert result.processed == (0 if terminal else 1)
         assert worker.catch_up([later], tenant_id="tenant-dev").processed == 0
+        assert ledger.input_answer(first.source_id, input_digest) == answer
+        assert ledger.events(first.source_id) == events
 
 
 def _tw_market_source(
