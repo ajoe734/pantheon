@@ -305,7 +305,7 @@
         "exit_code": 0,
         "terminal_result": "8 passed in 45.83s"
       },
-      "current_base": "2a87d33e407b4fc0bd69cfe73debf83af0451e96",
+      "current_base": "8af0cd5452cc73257c9811193ef2bcc465473579",
       "composition": "Merged current dev (Agora reconstruction source/evidence and register) without rewriting published history. Upstream refresh workflow, deploy script and all related tests unchanged. Full YAML equality after only unchanged refresh mapping relocation: PASS. Current-dev ordering regression: expected AssertionError; task regression: PASS (exit 0).",
       "diff_check": {
         "command": "git diff --check",
@@ -315,7 +315,8 @@
         "scripts/test_deploy_nonprod_vm.py",
         "scripts/test_dev_tw_market_refresh.py",
         "scripts/test_source_ingest_deploy_diagnostics_contract.py"
-      ]
+      ],
+      "admission_refresh": "First new-head handoff rejected without transition because dev advanced from 2a87d33e4 to 8af0cd545 during admission. The only upstream change is a problem-register row; merged unchanged. Workflow, deploy script and all tests are byte-identical to the verified source. No old-head approval is reused."
     }
   },
   "acceptance_5_runtime_budget": {
