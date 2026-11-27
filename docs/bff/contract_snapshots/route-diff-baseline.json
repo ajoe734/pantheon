@@ -3329,6 +3329,13 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/workshops/{param}/decisions",
+        "method": "POST",
+        "path": "/bff/agora/workshops/{param}/decisions",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/workshops/{param}/meetings",
         "method": "POST",
         "path": "/bff/agora/workshops/{param}/meetings",
@@ -3932,17 +3939,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 686,
-    "failure_count": 555,
+    "backend_routes": 687,
+    "failure_count": 556,
     "failures": {
-      "backend_missing_frontend": 554,
+      "backend_missing_frontend": 555,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 555,
+    "mode_failure_count": 556,
     "status": "fail",
     "warning_count": 0,
     "warnings": {

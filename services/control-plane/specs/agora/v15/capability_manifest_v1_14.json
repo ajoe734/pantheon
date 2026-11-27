@@ -61,6 +61,21 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/decisions",
+      "owner": "agora"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/servant/habits",
       "owner": "agora+memory"
     },
@@ -103,6 +118,8 @@
       "agora.servant_sessions",
       "agora.servant_turns",
       "agora.decision_locks",
+      "agora.strategy_completeness_snapshot",
+      "agora.strategy_workshop_event",
       "agora.habit_profiles"
     ]
   },
