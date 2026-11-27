@@ -42,6 +42,7 @@ _EXPECTED_ROUTES = {
     ("GET", "/bff/agora/workshops/{workshop_id}/events"),
     ("GET", "/bff/agora/workshops/{workshop_id}/completeness"),
     ("POST", "/bff/agora/workshops/{workshop_id}/completeness"),
+    ("POST", "/bff/agora/workshops/{workshop_id}/decisions"),
     ("GET", "/bff/agora/workshops/{workshop_id}/cards"),
     ("GET", "/bff/agora/workshops/{workshop_id}/readiness"),
     ("POST", "/bff/agora/workshops/{workshop_id}/readiness/reassess"),

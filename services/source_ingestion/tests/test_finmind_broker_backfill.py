@@ -66,21 +66,32 @@ def test_no_token_records_reason_and_fetches_nothing(tmp_path) -> None:
 
 
 def test_backfill_writes_governed_datasets_with_times_and_licence(tmp_path) -> None:
+    from services.source_ingestion.daily_bars_store import keyed_dataset_store
+
     fetcher = FakeFetcher()
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
                           fetcher=fetcher, sleep=lambda s: None)
     assert result.status == "ok" and result.completed == ["2026-06-08"]
-    top = [json.loads(l) for l in (tmp_path / "tw_broker_top/date=2026-06-08/records.jsonl").read_text().splitlines()]
-    detail = [json.loads(l) for l in (tmp_path / "tw_broker_branch_detail/date=2026-06-08/records.jsonl").read_text().splitlines()]
-    assert top and len(detail) == 3  # 2330 x2 branches + 2317 x1
-    for rec in top + detail:
+    assert result.detail_records == 0 and result.branch_detail_written is False
+    # Writes into governed keyed/tw_broker_top, NOT a side directory.
+    assert not (tmp_path / "tw_broker_top").exists()
+    assert not (tmp_path / "tw_broker_branch_detail").exists()
+    assert not (tmp_path / "manifest").exists()
+    store = keyed_dataset_store(tmp_path, "tw_broker_top")
+    assert store is not None
+    top = store.records("2026-06-08")
+    assert len(top) == 3  # 2330 buy #1 + 2330 sell #1 + 2317 buy #1
+    for rec in top:
         md = rec["metadata"]
-        assert md["event_time"] == "2026-06-08" and md["available_time"]
+        nrow = md["normalized_row"]
+        assert md["event_time"] == "2026-06-08" and nrow["trade_date"] == "2026-06-08"
+        assert md["available_time"]
         assert md["license_scope"] == "vendor_research"
         assert md["redistribution_allowed"] is False
-    assert {r["metadata"]["dataset"] for r in top} == {"tw_broker_top"}
-    assert {r["metadata"]["dataset"] for r in detail} == {"tw_broker_branch_detail"}
-    assert "SECRET" not in "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
+        assert rec["dataset"] == "tw_broker_top" and md["dataset"] == "tw_broker_top"
+        # Compact rows: no raw price-level rows or duplicated body.
+        assert "raw_rows" not in json.dumps(rec, ensure_ascii=False) and "body" not in md
+    assert "SECRET" not in "".join(json.dumps(r) for r in top)
 
 
 def test_resume_does_not_refetch_completed_dates(tmp_path) -> None:
@@ -151,6 +162,8 @@ class _Resp:
 
 
 def test_real_parquet_body_through_fetch_decode_path(tmp_path, monkeypatch) -> None:
+    import gzip
+
     body = _parquet_bytes()
     assert body[:4] == b"PAR1"
     seen: list[str] = []
@@ -164,9 +177,11 @@ def test_real_parquet_body_through_fetch_decode_path(tmp_path, monkeypatch) -> N
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
                           sleep=lambda s: None)
     assert result.status == "ok" and result.completed == ["2026-06-08"]
-    assert result.top_records > 0 and result.detail_records == 3
+    assert result.top_records == 3 and result.detail_records == 0
     assert "tok-SECRET-123" not in "".join(seen)
-    assert "tok-SECRET-123" not in "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
+    assert "tok-SECRET-123" not in "".join(
+        gzip.open(p, "rt", encoding="utf-8").read() for p in tmp_path.rglob("*.jsonl.gz")
+    )
 
 
 def test_cli_main_with_parquet_body(tmp_path, monkeypatch, capsys) -> None:
@@ -174,9 +189,9 @@ def test_cli_main_with_parquet_body(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(ft, "open_external_url", lambda request, **kw: _Resp(body))
     monkeypatch.setenv("FINMIND_API_TOKEN", "tok-SECRET-123")
     rc = fbb.main(["--output-dir", str(tmp_path), "--start", "2026-06-08", "--end", "2026-06-08",
-                   "--min-interval-seconds", "0"])
+                   "--min-interval-seconds", "1.0"])
     out = capsys.readouterr().out
-    assert rc == 0 and '"detail_records": 3' in out and "tok-SECRET" not in out
+    assert rc == 0 and '"top_records": 3' in out and '"detail_records": 0' in out and "tok-SECRET" not in out
 
 
 def test_missing_pyarrow_fails_before_any_fetch(tmp_path, monkeypatch) -> None:
@@ -262,3 +277,214 @@ def test_json_manifest_body_is_rejected_not_loaded(tmp_path) -> None:
     result = run_backfill(output_dir=tmp_path, start=date(2026, 6, 8), end=date(2026, 6, 8),
                           fetcher=FakeFetcher(body=body), sleep=lambda s: None)
     assert result.status == "partial" and "2026-06-08" in result.failed
+
+
+def test_bounded_window_max_requests_and_wall_seconds_resume_without_refetching(tmp_path) -> None:
+    first = FakeFetcher()
+    r1 = run_backfill(
+        output_dir=tmp_path,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 12),
+        fetcher=first,
+        sleep=lambda s: None,
+        max_requests=2,
+    )
+    assert r1.status == "ok"
+    assert r1.stopped_reason == "max_requests_reached"
+    assert r1.completed == ["2026-06-08", "2026-06-09"]
+    assert r1.remaining_dates_count == 3
+    assert first.calls == ["2026-06-08", "2026-06-09"]
+
+    # Second dispatch bounded by max_wall_seconds stops after one more request.
+    now = [0.0]
+    second = FakeFetcher()
+    r2 = run_backfill(
+        output_dir=tmp_path,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 12),
+        fetcher=second,
+        min_interval_seconds=1.5,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
+        clock=lambda: (now.__setitem__(0, now[0] + 10.0), now[0])[1],
+        max_wall_seconds=15.0,
+    )
+    assert r2.status == "ok"
+    assert r2.stopped_reason == "max_wall_seconds_reached"
+    assert r2.skipped_completed == ["2026-06-08", "2026-06-09"]
+    assert r2.completed == ["2026-06-10"]
+    assert r2.remaining_dates_count == 2
+    assert second.calls == ["2026-06-10"]
+
+    # Third dispatch finishes the window.
+    third = FakeFetcher()
+    r3 = run_backfill(
+        output_dir=tmp_path,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 12),
+        fetcher=third,
+        sleep=lambda s: None,
+    )
+    assert r3.status == "ok"
+    assert r3.stopped_reason is None
+    assert r3.remaining_dates_count == 0
+    assert r3.skipped_completed == ["2026-06-08", "2026-06-09", "2026-06-10"]
+    assert r3.completed == ["2026-06-11", "2026-06-12"]
+    assert third.calls == ["2026-06-11", "2026-06-12"]
+    assert r3.total_stored_sessions == 5
+
+
+def test_backfill_stops_when_stated_cap_would_be_exceeded(tmp_path) -> None:
+    from services.source_ingestion.daily_bars_store import keyed_dataset_store
+
+    # 1. Total bytes cap: first date fits, second date would exceed max_total_bytes -> rolled back & stops.
+    dir_bytes = tmp_path / "bytes_cap"
+    f1 = FakeFetcher()
+    first = run_backfill(
+        output_dir=dir_bytes,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 8),
+        fetcher=f1,
+        sleep=lambda s: None,
+    )
+    assert first.status == "ok" and first.bytes_written > 0
+    one_day_bytes = first.bytes_written
+
+    f2 = FakeFetcher()
+    exceeded = run_backfill(
+        output_dir=dir_bytes,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 10),
+        fetcher=f2,
+        sleep=lambda s: None,
+        max_total_bytes=one_day_bytes + 10,
+    )
+    assert exceeded.status == "cap_exceeded"
+    assert "total_bytes_cap_exceeded on 2026-06-09" in (exceeded.reason or "")
+    assert f2.calls == ["2026-06-09"]  # Stopped immediately; 2026-06-10 was never fetched.
+    store = keyed_dataset_store(dir_bytes, "tw_broker_top")
+    assert store is not None
+    assert store.partitions() == ["2026-06-08"]
+    assert exceeded.total_stored_bytes == one_day_bytes <= one_day_bytes + 10
+
+    # 2. Total rows cap: stops before writing the partition that would exceed max_total_rows.
+    dir_rows = tmp_path / "rows_cap"
+    f_rows = FakeFetcher()
+    r_rows = run_backfill(
+        output_dir=dir_rows,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 9),
+        fetcher=f_rows,
+        sleep=lambda s: None,
+        max_total_rows=4,  # 3 rows per day -> day 1 fits (3 <= 4), day 2 would be 6 > 4.
+    )
+    assert r_rows.status == "cap_exceeded"
+    assert "total_rows_cap_exceeded on 2026-06-09" in (r_rows.reason or "")
+    assert r_rows.completed == ["2026-06-08"]
+    assert r_rows.total_stored_rows == 3
+
+    # 3. Hourly request cap: refuses a configuration that would exceed FINMIND_PLAN_HOURLY_CAP (6000/h).
+    dir_rate = tmp_path / "rate_cap"
+    f_rate = FakeFetcher()
+    r_rate = run_backfill(
+        output_dir=dir_rate,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 9),
+        fetcher=f_rate,
+        sleep=lambda s: None,
+        min_interval_seconds=0.2,  # 18,000/h > 6,000/h
+    )
+    assert r_rate.status == "cap_exceeded"
+    assert "plan_hourly_cap" in (r_rate.reason or "")
+    assert f_rate.calls == []
+
+
+def test_backfill_skips_session_already_completed_by_whole_market_daily(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(fbb, "MIN_STORED_SYMBOLS", 1)
+    # 2026-06-08 has both buy and sell sides for 2330; add a sell row for 2317 so both symbols are two-sided.
+    two_sided_rows = ROWS + [
+        {"date": "2026-06-08", "stock_id": "2317", "securities_trader_id": "1440",
+         "securities_trader": "美林", "price": 199.0, "buy": 1, "sell": 50},
+    ]
+    import io
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(two_sided_rows), buf)
+    body = buf.getvalue()
+
+    daily_fetcher = FakeFetcher(body=body)
+    receipt = fbb.run_whole_market_session(
+        market_data_root=tmp_path,
+        trade_date="2026-06-08",
+        fetcher=daily_fetcher,
+        expected_symbols={"2330", "2317"},
+    )
+    assert receipt["status"] == "complete"
+
+    backfill_fetcher = FakeFetcher(body=body)
+    result = run_backfill(
+        output_dir=tmp_path,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 9),
+        fetcher=backfill_fetcher,
+        sleep=lambda s: None,
+    )
+    assert result.status == "ok"
+    assert result.skipped_completed == ["2026-06-08"]
+    assert result.completed == ["2026-06-09"]
+    assert backfill_fetcher.calls == ["2026-06-09"]
+
+
+def test_verify_two_year_backfill_coverage_is_read_only_and_checks_480_sessions(tmp_path) -> None:
+    # Missing directory: read-only failure without creating any directory or file.
+    missing_root = tmp_path / "does_not_exist"
+    rep_missing = fbb.verify_two_year_backfill_coverage(missing_root, min_sessions=2)
+    assert rep_missing["passed"] is False and rep_missing["status"] == "fail"
+    assert not missing_root.exists()
+
+    # Build two valid two-sided sessions.
+    two_sided_rows = ROWS + [
+        {"date": "2026-06-08", "stock_id": "2317", "securities_trader_id": "1440",
+         "securities_trader": "美林", "price": 199.0, "buy": 1, "sell": 50},
+    ]
+    import io
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(two_sided_rows), buf)
+    body = buf.getvalue()
+
+    store_root = tmp_path / "mds"
+    res = run_backfill(
+        output_dir=store_root,
+        start=date(2026, 6, 8),
+        end=date(2026, 6, 9),
+        fetcher=FakeFetcher(body=body),
+        sleep=lambda s: None,
+    )
+    assert res.status == "ok"
+
+    before_snapshot = {
+        p.relative_to(store_root).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in store_root.rglob("*")
+        if p.is_file()
+    }
+    proof_ok = fbb.verify_two_year_backfill_coverage(
+        store_root, min_sessions=2, min_symbols_per_session=2
+    )
+    after_snapshot = {
+        p.relative_to(store_root).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+        for p in store_root.rglob("*")
+        if p.is_file()
+    }
+    assert before_snapshot == after_snapshot
+    assert proof_ok["passed"] is True and proof_ok["status"] == "pass"
+    assert proof_ok["two_sided_sessions_count"] == 2
+    assert proof_ok["per_session_symbol_counts"] == {"2026-06-08": 2, "2026-06-09": 2}
+    assert proof_ok["deficient_sessions"] == []
+
+    # Requiring 480 sessions when only 2 are stored fails closed.
+    proof_short = fbb.verify_two_year_backfill_coverage(store_root, min_sessions=480, min_symbols_per_session=2)
+    assert proof_short["passed"] is False and "480" in (proof_short["reason"] or "")

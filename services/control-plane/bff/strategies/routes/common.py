@@ -12,6 +12,7 @@ from services.control_plane.bff.personas.fleet_classification import (
     classify_persona_data_scope,
 )
 from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+from services.control_plane.persona.persona_policy_resolver import non_trading_identity_source
 from ..service import (
     ROLE_ROLLBACK_BASELINE,
     ROLE_TRADING,
@@ -76,6 +77,9 @@ class PersonaStateLookup:
     # Personas whose data_scope classifies as test (classify_persona_data_scope),
     # taken from the same single directory read as ``states_by_id``.
     test_persona_ids: FrozenSet[str] = frozenset()
+    # Explicit advisory identities, from that same request snapshot. Unknown
+    # metadata remains visible; paper ownership never implies trading identity.
+    non_trading_persona_ids: FrozenSet[str] = frozenset()
     # Persona display names from the same single directory read.
     display_names_by_id: Mapping[str, str] = field(default_factory=dict)
     # The records of that same single directory read, reused (not re-read) to
@@ -94,6 +98,16 @@ class PersonaStateLookup:
         if not self.available or not ids or not self.test_persona_ids:
             return False
         return all(pid in self.test_persona_ids for pid in ids)
+
+    @property
+    def management_hidden_persona_ids(self) -> FrozenSet[str]:
+        return self.test_persona_ids | self.non_trading_persona_ids
+
+    def is_management_excluded(self, persona_ids: Iterable[str]) -> bool:
+        ids = list(persona_ids)
+        return bool(self.available and ids) and all(
+            pid in self.test_persona_ids or pid in self.non_trading_persona_ids for pid in ids
+        )
 
     def persona_states(self, persona_ids: Iterable[str]) -> List[Dict[str, str]]:
         rows: List[Dict[str, str]] = []
@@ -165,6 +179,11 @@ def read_persona_state_lookup(
             for persona_id, record in directory.records_by_id.items()
             if isinstance(record, Mapping) and (label := _persona_label(record))
         }
+        non_trading_ids = frozenset(
+            str(persona_id)
+            for persona_id, record in directory.records_by_id.items()
+            if isinstance(record, Mapping) and non_trading_identity_source(record)
+        )
     except Exception as exc:  # noqa: BLE001 - any owner failure degrades, never hides rows
         log.warning("strategy persona state read failed: %s", exc)
         return unavailable_lookup(f"persona directory read failed: {type(exc).__name__}")
@@ -173,6 +192,7 @@ def read_persona_state_lookup(
         states_by_id=states,
         operational_states=frozenset(str(s) for s in operational_states),
         test_persona_ids=test_ids,
+        non_trading_persona_ids=non_trading_ids,
         display_names_by_id=names,
         records=tuple(r for r in directory.records_by_id.values() if isinstance(r, Mapping)),
     )
@@ -224,7 +244,9 @@ def strategy_stub_reason(
     ).lower()
     if scope in _TEST_DATA_SCOPES:
         return STUB_TEST_PERSONA_PROBE
-    if persona_lookup is not None and persona_lookup.is_test_scoped(ids):
+    # The existing Registry exclusion reason covers the caller-supplied persona
+    # cohort. Keep its wire value for compatibility with older Registry owners.
+    if persona_lookup is not None and persona_lookup.is_management_excluded(ids):
         return STUB_TEST_PERSONA_PROBE
     sid = _row_text(row, "strategy_id", "id")
     title = _row_text(row, "title", "name")

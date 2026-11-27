@@ -1,6 +1,7 @@
 """Unit and contract tests for Strategy Reconstruction engine & worker."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 import pytest
@@ -260,3 +261,414 @@ def test_failed_job_card_and_api_carry_the_typed_reason(monkeypatch):
     assert details["adapter_error_code"] == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
     assert "$defs" not in api.text and "$defs" not in str(failed)
     assert len(calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127: twelve V10 blocks,       #
+# branch vs non-branch naming, 5 states, notes, citations, next decision,     #
+# and POST /bff/agora/workshops/{id}/decisions -> next reconstruction.        #
+# --------------------------------------------------------------------------- #
+_EXPECTED_V10_BLOCK_ORDER = [
+    "market_scope",
+    "insider_branch_mapping",
+    "winner_branch_scoring",
+    "migration_reverse_flow",
+    "event_lead",
+    "signal_formation",
+    "entry_holding",
+    "add_reduce_exit",
+    "sizing_leverage",
+    "cost_liquidity_capacity",
+    "validation_backtest_refutation",
+    "monitoring_update",
+]
+
+_EXPECTED_BRANCH_TITLES_ZH = [
+    "研究對象與市場範圍",
+    "關係人與分點映射",
+    "贏家分點評分",
+    "分點遷移與反向流",
+    "事件領先關聯",
+    "信號形成",
+    "進場與持有週期",
+    "加碼、減碼與出場",
+    "部位與槓桿",
+    "成本、流動性與容量",
+    "驗證、回測與反證",
+    "監控與策略更新",
+]
+
+
+def test_branch_vs_non_branch_twelve_blocks_and_five_states(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import OpenClawOpsClient
+    from services.control_plane.bff.tests import test_agora_strategy_workshop as harness
+
+    branch_draft = {
+        "strategy_map": {
+            "universe": {
+                "status": "confirmed",
+                "summary": "台股上市櫃高流動性股票，聚焦有關係人持股與活躍券商分點之標的",
+                "details": {"message_numbers": [1]},
+            },
+            "data_requirements": {
+                "status": "partial",
+                "summary": "以關係人持股變化與分點逐日買賣建立機率映射",
+            },
+            "hypothesis": {
+                "status": "confirmed",
+                "summary": "識別具備持續獲利能力的贏家分點作為選股核心",
+                "details": {"message_numbers": [1]},
+            },
+            "regime_invalidation": {
+                "status": "partial",
+                "summary": "分點買入後若另一分點突然大量賣出需降權",
+                "details": {"missing_definitions": ["跨分點轉倉降權門檻"]},
+            },
+            "risk_controls": {
+                "status": "partial",
+                "summary": "使用公告後才可見的財報資料作為事前領先信號",
+                "details": {"conflict": True},
+            },
+            "signal_definition": {
+                "status": "missing",
+                "summary": None,
+            },
+        },
+        "explicit_facts": ["台股贏家分點與關係人持股策略"],
+        "inferences": ["分點群組以歷史共現與同券商關係建立"],
+        "assumptions": [],
+        "contradictions": ["risk_controls: 若使用公告後可見資料，不能宣稱是事前領先訊號"],
+        "strategy_spec": None,
+        "next_best_question": {
+            "question_id": "define_winner_branch_signal",
+            "text": "請裁示贏家分點異動轉化為進場信號的確認條件：",
+            "resolves": ["signal_definition"],
+            "why_now": "信號形成目前尚缺，確認後才能建立候選池與回測",
+        },
+    }
+
+    non_branch_draft = {
+        "strategy_map": {
+            "universe": {
+                "status": "confirmed",
+                "summary": "AAPL、MSFT、NVDA、2330.TW 等大型科技龍頭，日頻資料",
+                "details": {"message_numbers": [1]},
+            },
+            "hypothesis": {
+                "status": "confirmed",
+                "summary": "60 日截面動能在大型科技股具 20 日延續性",
+                "details": {"message_numbers": [1]},
+            },
+            "signal_definition": {
+                "status": "partial",
+                "summary": "60d/20d 報酬 0.7/0.3 加權排名取前 3 名",
+                "details": {"missing_definitions": ["VIX 過濾門檻"]},
+            },
+            "entry_rules": {
+                "status": "partial",
+                "summary": "週一開盤限價進場，持有 20～40 個交易日",
+            },
+        },
+        "explicit_facts": ["跨市場大型科技股截面動能輪動"],
+        "inferences": ["以每週為再平衡節奏"],
+        "assumptions": [],
+        "contradictions": [],
+        "strategy_spec": None,
+        "next_best_question": {
+            "question_id": "nbq_momentum_signal",
+            "text": "VIX 過濾門檻要固定在 30 還是以歷史分位數動態調整？",
+            "resolves": ["signal_definition"],
+            "why_now": "確認波動過濾條件後即可產生第一版可回測草稿",
+        },
+    }
+
+    current_payload = {"data": branch_draft}
+    monkeypatch.setattr(
+        OpenClawOpsClient,
+        "_request",
+        lambda self, *a, **kw: {
+            "status": "ok",
+            "data": {
+                "provider": "openclaw",
+                "status": "completed",
+                "output": {"structured_data": current_payload["data"]},
+            },
+        },
+    )
+    client = harness._workshop_client(monkeypatch)
+
+    # 1. Branch-based strategy workshop
+    created_branch = client.post(
+        "/bff/agora/workshops",
+        headers={"Authorization": harness._OPERATOR_AUTH, "Idempotency-Key": "twelve-branch-create"},
+        json={"initial_message": "從關係人持股與券商分點進出建立贏家分點評分與分點遷移模型。"},
+    )
+    assert created_branch.status_code == 201, created_branch.text
+    branch_ws_id = created_branch.json()["data"]["workshop_id"]
+
+    recon_branch = client.post(
+        f"/bff/agora/workshops/{branch_ws_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert recon_branch.status_code == 200, recon_branch.text
+
+    comp_branch_resp = client.get(
+        f"/bff/agora/workshops/{branch_ws_id}/completeness",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert comp_branch_resp.status_code == 200, comp_branch_resp.text
+    comp_branch = comp_branch_resp.json()["data"]
+    assert comp_branch is not None
+    assert comp_branch["is_branch_strategy"] is True
+    assert comp_branch["strategy_family"] == "winner_branch"
+
+    blocks = comp_branch["blocks"]
+    assert len(blocks) == 12
+    assert [b["order"] for b in blocks] == list(range(1, 13))
+    assert [b["v10_block_id"] for b in blocks] == _EXPECTED_V10_BLOCK_ORDER
+    assert [b["block_id"] for b in blocks] == _EXPECTED_V10_BLOCK_ORDER
+    assert [b["name"] for b in blocks] == _EXPECTED_BRANCH_TITLES_ZH
+
+    by_v10 = {b["v10_block_id"]: b for b in blocks}
+    assert by_v10["market_scope"]["state"] == "confirmed"
+    assert by_v10["market_scope"]["state_label_zh"] == "已確認"
+    assert by_v10["market_scope"]["source_citations"], "confirmed block must carry source citations"
+    assert by_v10["insider_branch_mapping"]["state"] == "inferred"
+    assert by_v10["insider_branch_mapping"]["state_label_zh"] == "助理推定"
+    assert by_v10["migration_reverse_flow"]["state"] == "weak"
+    assert by_v10["migration_reverse_flow"]["state_label_zh"] == "薄弱"
+    assert by_v10["event_lead"]["state"] == "conflict"
+    assert by_v10["event_lead"]["state_label_zh"] == "衝突"
+    assert by_v10["signal_formation"]["state"] == "missing"
+    assert by_v10["signal_formation"]["state_label_zh"] == "尚缺"
+    for b in blocks:
+        assert b["state"] in {"confirmed", "inferred", "missing", "weak", "conflict"}
+        assert isinstance(b["note"], str) and b["note"].strip() and "\n" not in b["note"]
+        assert isinstance(b["source_citations"], list)
+
+    # completeness_update card carries the same 12 blocks and next_decision
+    cards_branch = client.get(
+        f"/bff/agora/workshops/{branch_ws_id}/cards",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    ).json()["data"]
+    comp_card = next(c for c in cards_branch if c["card_type"] == "completeness_update")
+    assert [b["v10_block_id"] for b in comp_card["payload"]["blocks"]] == _EXPECTED_V10_BLOCK_ORDER
+    assert comp_card["payload"]["next_decision"]["decision_id"] == "define_winner_branch_signal"
+    assert 2 <= len(comp_card["payload"]["next_decision"]["options"]) <= 4
+    assert comp_card["payload"]["next_decision"]["servant_default"]["option_id"]
+
+    # 2. Non-branch strategy workshop: generic names, zero branch terms
+    current_payload["data"] = non_branch_draft
+    created_generic = client.post(
+        "/bff/agora/workshops",
+        headers={"Authorization": harness._OPERATOR_AUTH, "Idempotency-Key": "twelve-generic-create"},
+        json={"initial_message": "跨市場大型科技股 60 日與 20 日動能輪動策略，每週再平衡。"},
+    )
+    assert created_generic.status_code == 201, created_generic.text
+    generic_ws_id = created_generic.json()["data"]["workshop_id"]
+
+    recon_generic = client.post(
+        f"/bff/agora/workshops/{generic_ws_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert recon_generic.status_code == 200, recon_generic.text
+
+    comp_generic = client.get(
+        f"/bff/agora/workshops/{generic_ws_id}/completeness",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    ).json()["data"]
+    assert comp_generic is not None
+    assert comp_generic["is_branch_strategy"] is False
+    assert comp_generic["strategy_family"] == "generic"
+    generic_blocks = comp_generic["blocks"]
+    assert len(generic_blocks) == 12
+    assert [b["order"] for b in generic_blocks] == list(range(1, 13))
+    assert [b["v10_block_id"] for b in generic_blocks] == _EXPECTED_V10_BLOCK_ORDER
+    for b in generic_blocks:
+        assert "分點" not in b["name"] and "關係人" not in b["name"]
+        assert "branch" not in b["label_en"].lower()
+        assert "branch" not in b["block_id"].lower()
+
+
+def test_answering_next_decision_records_event_and_updates_next_reconstruction(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    from services.control_plane.bff.agora.strategy_workshop.semantic_provider import OpenClawOpsClient
+    from services.control_plane.bff.tests import test_agora_strategy_workshop as harness
+
+    monkeypatch.setattr(OpenClawOpsClient, "_request", lambda self, *a, **kw: _envelope())
+    client = harness._workshop_client(monkeypatch)
+    created = client.post(
+        "/bff/agora/workshops",
+        headers={"Authorization": harness._OPERATOR_AUTH, "Idempotency-Key": "decision-flow-create"},
+        json={"initial_message": "從關係人持股與贏家分點買賣超建立波段策略。"},
+    )
+    assert created.status_code == 201, created.text
+    workshop_id = created.json()["data"]["workshop_id"]
+
+    first_recon = client.post(
+        f"/bff/agora/workshops/{workshop_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert first_recon.status_code == 200, first_recon.text
+    first_recon_data = first_recon.json()["data"]
+
+    comp_before = client.get(
+        f"/bff/agora/workshops/{workshop_id}/completeness",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    ).json()["data"]
+    assert comp_before is not None
+    next_decision = comp_before["next_decision"]
+    assert next_decision["decision_id"] == "q1"
+    assert 2 <= len(next_decision["options"]) <= 4
+    assert next_decision["servant_default"] is not None
+    signal_block_before = next(b for b in comp_before["blocks"] if b["v10_block_id"] == "signal_formation")
+    assert signal_block_before["state"] == "missing"
+
+    # Missing If-Match -> 428; missing Idempotency-Key -> 400
+    etag = harness._get_current_etag(client, workshop_id)
+    chosen_opt = next_decision["options"][0]
+    no_if_match = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "Idempotency-Key": "dec-missing-if"},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"]},
+    )
+    assert no_if_match.status_code == 428
+
+    no_idem = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"]},
+    )
+    assert no_idem.status_code == 400
+
+    # Unknown option_id (alone or combined with option_label) and unknown option_label -> 422 without burning idempotency key
+    bad_opt = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": "nonexistent_option_999"},
+    )
+    assert bad_opt.status_code == 422
+
+    bad_opt_with_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": "nonexistent_zzz", "option_label": "x"},
+    )
+    assert bad_opt_with_label.status_code == 422
+
+    bad_unmatched_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_label": "UNMATCHED_FREE_TEXT_LABEL"},
+    )
+    assert bad_unmatched_label.status_code == 422
+
+    bad_mismatched_label = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"], "option_label": "wrong label"},
+    )
+    assert bad_mismatched_label.status_code == 422
+
+    # Valid decision write -> 201 and records 1 workshop event
+    dec_resp = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"]},
+    )
+    assert dec_resp.status_code == 201, dec_resp.text
+    dec_data = dec_resp.json()["data"]
+    assert dec_data["decision_id"] == "q1"
+    assert dec_data["response_kind"] == "option"
+    assert dec_data["option_id"] == chosen_opt["option_id"]
+    assert dec_data["option_label"] == chosen_opt["label"]
+    assert dec_data["sequence_no"] == 2
+
+    # Stored event payload_refs_json carries only IDs (never option_label or free text)
+    events_after_opt = client.get(
+        f"/bff/agora/workshops/{workshop_id}/events",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert events_after_opt.status_code == 200
+    opt_event = next(e for e in events_after_opt.json()["data"] if e["event_id"] == dec_data["event_id"])
+    assert opt_event["private_content_ref"]
+    assert not any(str(r).startswith("option_label:") for r in (opt_event["payload_refs_json"] or []))
+    assert chosen_opt["label"] not in json.dumps(opt_event, ensure_ascii=False)
+
+    # Duplicate Idempotency-Key with fresh ETag -> 409 IDEMPOTENCY_CONFLICT
+    fresh_etag = dec_resp.headers["etag"]
+    dup = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": fresh_etag, "Idempotency-Key": "dec-1"},
+        json={"decision_id": next_decision["decision_id"], "option_id": chosen_opt["option_id"]},
+    )
+    assert dup.status_code == 409
+
+    # Next reconstruction reads the recorded decision event and updates the strategy
+    second_recon = client.post(
+        f"/bff/agora/workshops/{workshop_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert second_recon.status_code == 200, second_recon.text
+    second_recon_data = second_recon.json()["data"]
+    assert second_recon_data["based_on_sequence_no"] == 2
+    assert second_recon_data["reconstruction_id"] != first_recon_data["reconstruction_id"]
+    assert second_recon_data["strategy_map"]["signal_definition"]["status"] == "confirmed"
+    assert chosen_opt["label"] in second_recon_data["strategy_map"]["signal_definition"]["summary"]
+
+    comp_after = client.get(
+        f"/bff/agora/workshops/{workshop_id}/completeness",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    ).json()["data"]
+    signal_block_after = next(b for b in comp_after["blocks"] if b["v10_block_id"] == "signal_formation")
+    assert signal_block_after["state"] == "confirmed"
+    assert chosen_opt["label"] in signal_block_after["note"]
+    assert any(c.get("ref_id") == dec_data["event_id"] for c in signal_block_after["source_citations"])
+    # Next high-value decision advanced past the answered question
+    assert comp_after["next_decision"]["decision_id"] != "q1"
+
+    # Freeform custom_response routes as explicit freeform kind stored ONLY in encrypted private content
+    from services.control_plane.bff.agora.strategy_workshop.events import _workshop_sse_buffers, ws_replay_after
+
+    second_decision = comp_after["next_decision"]
+    secret_freeform = "SECRET_PRIVATE_THESIS buy 2330 only when unified cluster net flow > 5000 lots"
+    freeform_resp = client.post(
+        f"/bff/agora/workshops/{workshop_id}/decisions",
+        headers={"Authorization": harness._OPERATOR_AUTH, "If-Match": fresh_etag, "Idempotency-Key": "dec-freeform-2"},
+        json={"decision_id": second_decision["decision_id"], "custom_response": secret_freeform},
+    )
+    assert freeform_resp.status_code == 201, freeform_resp.text
+    assert secret_freeform not in freeform_resp.text
+    freeform_data = freeform_resp.json()["data"]
+    assert freeform_data["response_kind"] == "freeform"
+    assert freeform_data["option_id"] == "freeform"
+
+    events_after_freeform = client.get(
+        f"/bff/agora/workshops/{workshop_id}/events",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert events_after_freeform.status_code == 200
+    assert "SECRET_PRIVATE_THESIS" not in events_after_freeform.text
+    ff_event = next(e for e in events_after_freeform.json()["data"] if e["event_id"] == freeform_data["event_id"])
+    assert "kind:workshop_decision_freeform" in ff_event["payload_refs_json"]
+    assert "option_id:freeform" in ff_event["payload_refs_json"]
+    assert not any(str(r).startswith("option_label:") for r in ff_event["payload_refs_json"])
+
+    # Force DB fallback SSE replay and verify free text never leaks into replayed events
+    _workshop_sse_buffers.pop(workshop_id, None)
+    first_event_id = events_after_freeform.json()["data"][0]["event_id"]
+    replayed = ws_replay_after(workshop_id, first_event_id, store=client.app_instance.workshop_store)
+    assert replayed
+    assert "SECRET_PRIVATE_THESIS" not in json.dumps(replayed, ensure_ascii=False)
+
+    # Next reconstruction decrypts the freeform decision from private content and folds it into strategy_map
+    third_recon = client.post(
+        f"/bff/agora/workshops/{workshop_id}/reconstruct",
+        headers={"Authorization": harness._OPERATOR_AUTH},
+    )
+    assert third_recon.status_code == 200, third_recon.text
+    third_recon_data = third_recon.json()["data"]
+    assert third_recon_data["based_on_sequence_no"] == 3
+    assert any("SECRET_PRIVATE_THESIS" in fact for fact in third_recon_data["explicit_facts"])
+
