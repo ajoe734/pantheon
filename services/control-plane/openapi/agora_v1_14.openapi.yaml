@@ -526,7 +526,7 @@
           }
         },
         "x-business-owner": "agora-decision-lock+attribution",
-        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/messages": {
