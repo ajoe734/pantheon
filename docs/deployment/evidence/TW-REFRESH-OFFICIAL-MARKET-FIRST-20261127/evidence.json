@@ -5,8 +5,8 @@
   "problem_class": "RC2",
   "domain_owner": "market data and source storage / cb4f6795",
   "delivery_state": "source_ready_for_review; not merged, deployed or accepted",
-  "baseline": "origin/dev 396a4ae589592ce7fe92592a3e60e3d2d2cfe255",
-  "implementation_anchor": "d76d8b8a0",
+  "baseline": "Initial regression baseline 396a4ae589592ce7fe92592a3e60e3d2d2cfe255; source rebased before review onto origin/dev 98e496b99f5505fce0f65ede38b7f49a1be94cd3",
+  "implementation_anchor": "32b4758ff (rebased from initial anchor d76d8b8a0)",
   "acceptance_1_reproduction": {
     "run_id": 45917069646,
     "job_id": 140238760916,
@@ -197,7 +197,15 @@
       "per-run maximum record budget",
       "failure visibility",
       "lease quarantine/re-arm and steady restore"
-    ]
+    ],
+    "post_rebase": {
+      "base_sha": "98e496b99f5505fce0f65ede38b7f49a1be94cd3",
+      "workflow_and_test_changes_in_base_since_full_suite": false,
+      "yaml_relocation_comparison_exit_code": 0,
+      "focused_command": "/tmp/tw-official-first-venv/bin/python -m pytest scripts/test_dev_tw_market_refresh_workflow.py -q -k \"official_market_runs_first or every_profile_of_the_workflow\"",
+      "result": "2 passed, 45 deselected in 46.57s",
+      "exit_code": 0
+    }
   },
   "acceptance_5_runtime_budget": {
     "new_recurring_jobs": 0,
