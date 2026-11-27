@@ -9,11 +9,18 @@ from .common import (
     TradingRoomRouteContext,
     GovernedIntentHandoffRequest,
 )
+from .paper_execution import build_paper_execution_router
 
 
 def build_intents_router(ctx: TradingRoomRouteContext) -> APIRouter:
-    """Trading-room trading intents, governed handoffs, and withdrawal subrouter."""
+    """Trading-room trading intents, governed handoffs, and withdrawal subrouter.
+
+    Also mounts the service-only paper execution boundary
+    (AGORA-PAPER-INTENT-EXECUTION-20261127): the paper execution lane drains
+    ``paper_execution`` handoffs and writes their state back through it.
+    """
     router = APIRouter()
+    router.routes.extend(build_paper_execution_router(ctx).routes)
 
     # ------------------------------------------------------------------
     # GET /bff/agora/trading-intents/{intent_id}

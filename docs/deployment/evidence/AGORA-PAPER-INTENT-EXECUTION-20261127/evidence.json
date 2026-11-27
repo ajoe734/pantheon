@@ -91,7 +91,7 @@
     "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json and docs/bff/contract_snapshots/route-diff-baseline.json: two service-only routes under /internal/agora/paper-execution (+2 routes)"
   ],
   "scope_notes": [
-    "Files outside the declared artifacts that the change needs: services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json (the v4 file is digest-frozen by bundle v1.3), docker-compose.yml and .env.example (service credentials and URLs for the new boundary), services/control-plane/bff/tests/test_bff_test_architecture.py (route file count 26 -> 27), services/execution/lean_runtime/agora_paper_intent_consumer.py and its test (inside the declared services/execution/lean_runtime/ directory)."
+    "Files outside the declared artifacts that the change needs (artifact-contract revision is Human/Ops only and pre-dispatch): services/control-plane/bff/agora/trading_room/store.py (durable handoff drain and state writeback; the Postgres wrapper only persists methods it lists), services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json (the declared v4 file is digest-frozen by bundle v1.3, so the superseding schema ships in the v1.14 bundle), docker-compose.yml (AGORA_PAPER_EXECUTION_* and PANTHEON_AGORA_BFF_INTERNAL_URL on operator-bff and paper-signal-producer). In stage and prod posture the BFF refuses the local default token, so AGORA_PAPER_EXECUTION_SERVICE_TOKEN and AGORA_PAPER_EXECUTION_SERVICE_TENANTS must be set in the deployment environment; .env.example does not list them because it is outside the contract."
   ],
   "verification": {
     "commands": [
