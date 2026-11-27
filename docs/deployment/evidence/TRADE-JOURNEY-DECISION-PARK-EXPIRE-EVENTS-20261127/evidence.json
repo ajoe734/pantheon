@@ -8,9 +8,14 @@
   },
   "validation": [
     {
-      "command": "python -m pytest services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_intraday_settlement.py services/execution/lean_runtime/test_daily_settlement_integration.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py -q",
+      "command": ".venv-pantheon/bin/python -m pytest services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_intraday_settlement.py services/execution/lean_runtime/test_daily_settlement_integration.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py -q",
       "exit_code": 0,
-      "result": "338 passed, 15 subtests passed, 42.03 seconds; includes new real PostgreSQL projector -> BFF list/detail/timeline/attention roundtrip and existing telemetry JSON schema validation."
+      "result": "338 passed, 15 subtests passed, 3 pre-existing deprecation warnings, 67.74 seconds; includes real PostgreSQL projector -> BFF roundtrip and telemetry JSON schema validation.",
+      "tested_head": "3869dcee7",
+      "full_output": {
+        "path": "/tmp/park-expire-repair-scoped-pytest.log",
+        "sha256": "d5344679ea9f68bb78e446bba4632a93e67bb4e01a63e1b50c2189b8d8c5aec7"
+      }
     },
     {
       "command": "python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/trade_journey/test_materializer.py services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_migration.py -q",
@@ -30,6 +35,17 @@
     {
       "command": "git diff --check",
       "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base 8af0cd545 --head 3869dcee7",
+      "exit_code": 0,
+      "result": "production +334/-4 (net +330); test +1371/-0; docs/evidence +145/-0. Evidence summary 122 lines at tested head, below 400-line cap."
+    },
+    {
+      "check": "verbatim_fixture_integrity",
+      "exit_code": 0,
+      "method": "Extract the fixture constant with ast.literal_eval; compare exact JSON bytes to git show a586a9436:evidence.json hosted_signal_store_records; verify original evidence, fixture and both canonical per-record SHA-256 values.",
+      "result": "Both hosted documents are byte-identical to original committed evidence."
     }
   ],
   "residual_findings": [
@@ -59,7 +75,7 @@
     ],
     "test_setup_note": "Existing counterfactual replay helper now supplies its fixture capital pool and recorded signal clock; no existing assertions edited."
   },
-  "validation_environment": "Existing /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python; foreground bounded batches, all outputs and exit statuses collected.",
+  "validation_environment": "Checkout-scoped .venv-pantheon/bin/python, provisioned by python3 scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON; foreign-cwd import verification passed. Bounded foreground suite exit status 0 collected.",
   "runtime_budget": {
     "task": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
     "owner": "execution.paper-signal-producer",
@@ -117,6 +133,6 @@
   "reviewer_repair": {
     "request": "Claude2 reopen of a586a9436: evidence adds 1140 lines over the 400-line cap.",
     "change": "Move both verbatim hosted records to a fixture constant in the already-scoped producer test; retain source and per-record digests in this summary. No production or settlement changes.",
-    "verification": "Pending final bounded validation."
+    "verification": "338 tests and 15 subtests passed in checkout-scoped interpreter; fixture bytes/digests, storage manifest, diff budget and git diff --check passed. Re-review required on new head; no merged, deployed or accepted claim."
   }
 }
