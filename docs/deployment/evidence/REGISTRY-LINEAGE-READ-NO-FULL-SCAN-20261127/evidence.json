@@ -38,7 +38,7 @@
     "ac2_identical_answers_and_immediate_write_visibility": {
       "status": "passed",
       "test_lineage_read_vectors": "8 passed in services/registry/test_lineage_read.py (7 original vectors unchanged for registry id, strategy id, persona id, capital pool id, no root, depth, limit, has_more, tenant visibility, and non-ScanningStore proof + 1 new write-visibility and unknown-root test)",
-      "test_lineage_graph_index_vectors": "7 passed in services/registry/test_lineage_graph_index.py (SQL/DDL verification, full parity across all root types and large_corpus, real-Postgres stamp/delta/adjacency cache verification across all 5 write kinds, idempotent bounded backfill + rollback/roll-forward repair, and 8 concurrent cold reads)",
+      "test_lineage_graph_index_vectors": "8 passed in services/registry/test_lineage_graph_index.py (SQL/DDL verification, full parity across all root types and large_corpus, real-Postgres stamp/delta/adjacency cache verification across all 5 write kinds, idempotent bounded backfill + rollback/roll-forward repair, 8 concurrent cold reads, and deterministic concurrency test with 20k execution_bundle rows + 4 reader threads querying during 3k delta updates + copy-on-write immutable published view proof)",
       "tested_write_transitions_visible_on_next_read": [
         "new_entry: registering strategy_spec strat_write_vis v1.0.0 is immediately visible on root_id=strat_write_vis_v100 or strat_write_vis (delta_loaded=1, adjacency_delta_updates=1)",
         "new_version: registering v1.1.0 with parent_registry_ids=[strat_write_vis_v100] immediately adds node strat_write_vis_v110 and edge strat_write_vis_v100 -> strat_write_vis_v110 (parent)",
@@ -136,7 +136,7 @@
     {
       "command": "TEST_DATABASE_URL=\"postgresql://postgres:postgres@127.0.0.1:41525/postgres\" .venv-pantheon/bin/python3 -m pytest -q services/registry/test_lineage_read.py services/registry/test_lineage_graph_index.py services/registry/test_strategy_summary_page_index.py services/registry/test_strategy_summary_page_bounded.py services/registry/test_pg_store_artifact_type_index.py services/registry/test_service.py",
       "exit_code": 0,
-      "summary": "166 passed (8 lineage_read + 7 lineage_graph_index + 7 strategy_summary_page_index + 31 strategy_summary_page_bounded + pg_store_artifact_type_index + test_service)"
+      "summary": "167 passed (8 lineage_read + 8 lineage_graph_index + 7 strategy_summary_page_index + 31 strategy_summary_page_bounded + pg_store_artifact_type_index + test_service)"
     },
     {
       "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",

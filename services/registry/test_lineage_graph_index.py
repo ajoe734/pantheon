@@ -10,6 +10,7 @@ import concurrent.futures
 import copy
 import json
 import os
+import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -41,7 +42,9 @@ from .split_api import RegistryService
 from .storage import (
     RegistryStore,
     _CompiledLineageGraphIndex,
+    _CompiledLineageRow,
     _CompiledLineageRowList,
+    _compile_lineage_row,
     build_lineage_graph,
     build_lineage_index_payload,
     lineage_row,
@@ -294,6 +297,7 @@ def test_postgres_lineage_cache_hit_and_incremental_delta_update_without_payload
     assert store.lineage_adjacency_cache_hits == 1
 
     # 3. Simulate a write (new version v1.0.2 + persona/pool change on existing artifact)
+    pre_write_view = store._lineage_index_tenant_views[visible]
     rev_counter += 1
     new_v3 = _entry(
         f"reg-strategy-spec-persona-v3-{FD}",
@@ -312,6 +316,11 @@ def test_postgres_lineage_cache_hit_and_incremental_delta_update_without_payload
     db_rows[new_v3.registry_id] = (rev_counter, build_lineage_index_payload(new_v3.to_dict()))
 
     g_after = svc.lineage_graph(visible_tenants=visible, root_id=f"strategy-persona-{FD}", depth=3, limit=200)
+    assert store._lineage_index_tenant_views[visible] is not pre_write_view
+    assert (
+        build_lineage_graph(pre_write_view, root_id=f"strategy-persona-{FD}", depth=3, limit=200)
+        == g1
+    )
     assert store.lineage_index_sql_reads == 1
     assert store.lineage_index_delta_reads == 1
     assert store.lineage_index_rows_fetched == 1
@@ -732,3 +741,226 @@ def test_real_pg_parity_and_8_concurrent_cold_reads(pg_lineage_registry):
     assert fresh_store.lineage_index_cache_hits == 7
     assert fresh_store.lineage_adjacency_builds == 1
     assert fresh_store.lineage_adjacency_cache_hits == 7
+
+
+def test_concurrent_lineage_readers_during_delta_updates_and_immutable_published_views():
+    """Thread-safety & AC2 parity under concurrent read+write:
+    1) 20,000 ``execution_bundle`` rows with 4 reader threads looping ``idx.query(limit=5)``
+       (no root) and ``idx.query(root_id='art-00000', depth=1)`` while 1 writer thread applies
+       3,000 ``apply_delta_records`` updates never raises ``RuntimeError('dictionary changed
+       size during iteration')`` and never exposes a half-applied delta (edges or node template
+       removed but not yet reinserted).
+    2) Published ``_CompiledLineageRowList`` views returned by ``PostgresRegistryStore.list_lineage_rows``
+       and ``RegistryStore.list_lineage_rows`` are copy-on-write immutable snapshots: a reader
+       holding a previously returned view sees its original rows and graph index unchanged even
+       after subsequent writes and delta updates publish a new view.
+    """
+    def _make_compiled_bundle(
+        rid: str,
+        *,
+        strat_idx: int,
+        ver: str,
+        created_at: str,
+        parent: str,
+        run_id: str,
+        persona: str,
+        pool: str,
+        risk: str,
+    ) -> _CompiledLineageRow:
+        data = {
+            "registry_id": rid,
+            "artifact_type": "execution_bundle",
+            "artifact_state": "approved",
+            "strategy_id": f"strat-{strat_idx:04d}",
+            "version": ver,
+            "owner_tenant": "tenant-a",
+            "created_at": created_at,
+            "parent_registry_ids": [parent],
+            "source_run_ids": [run_id],
+            "source_dataset_refs": [],
+            "source_strategy_spec_id": parent,
+            "persona_id": persona,
+            "capital_pool_id": pool,
+            "risk_level": risk,
+        }
+        row = _CompiledLineageRow(data, owner_tenant="tenant-a")
+        row._compiled_lineage = _compile_lineage_row(row)
+        return row
+
+    rows: dict[str, tuple[int, _CompiledLineageRow]] = {}
+    for i in range(20000):
+        rid = f"art-{i:05d}"
+        sidx = i % 1000
+        rows[rid] = (
+            i + 1,
+            _make_compiled_bundle(
+                rid,
+                strat_idx=sidx,
+                ver="1.0.0",
+                created_at=f"2026-11-{(i % 28) + 1:02d}T00:00:00Z",
+                parent=f"spec-{sidx:04d}",
+                run_id=f"run-{i:05d}",
+                persona=f"persona-{i % 10}",
+                pool=f"pool-{i % 5}",
+                risk="low",
+            ),
+        )
+
+    view = _CompiledLineageRowList.from_record_map(rows, None)
+    idx = view.get_or_build_graph_index()
+
+    valid_art0_states = (
+        (
+            "1.0.0",
+            "low",
+            {
+                ("spec-0000", "art-00000", "parent"),
+                ("spec-0000", "art-00000", "source_strategy_spec"),
+                ("run-00000", "art-00000", "source_run"),
+                ("art-00000", "persona-0", "persona"),
+                ("art-00000", "pool-0", "capital_pool"),
+            },
+        ),
+        (
+            "1.0.1",
+            "medium",
+            {
+                ("spec-alt-0000", "art-00000", "parent"),
+                ("spec-alt-0000", "art-00000", "source_strategy_spec"),
+                ("run-new-00000", "art-00000", "source_run"),
+                ("art-00000", "persona-1", "persona"),
+                ("art-00000", "pool-1", "capital_pool"),
+            },
+        ),
+    )
+
+    deltas: list[tuple[str, _CompiledLineageRow]] = []
+    for j in range(3000):
+        if j % 3 == 0:
+            toggle = (j // 3) % 2 == 0
+            deltas.append(
+                (
+                    "art-00000",
+                    _make_compiled_bundle(
+                        "art-00000",
+                        strat_idx=0,
+                        ver="1.0.1" if toggle else "1.0.0",
+                        created_at="2026-11-29T00:00:00Z" if toggle else "2026-11-01T00:00:00Z",
+                        parent="spec-alt-0000" if toggle else "spec-0000",
+                        run_id="run-new-00000" if toggle else "run-00000",
+                        persona="persona-1" if toggle else "persona-0",
+                        pool="pool-1" if toggle else "pool-0",
+                        risk="medium" if toggle else "low",
+                    ),
+                )
+            )
+        else:
+            rid = f"art-new-{j:05d}" if j % 2 == 0 else f"art-{j:05d}"
+            sidx = j % 1000
+            deltas.append(
+                (
+                    rid,
+                    _make_compiled_bundle(
+                        rid,
+                        strat_idx=sidx,
+                        ver="1.0.1",
+                        created_at="2026-11-29T00:00:00Z",
+                        parent=f"spec-{sidx:04d}",
+                        run_id=f"run-new-{j:05d}",
+                        persona=f"persona-{(j + 1) % 10}",
+                        pool=f"pool-{(j + 1) % 5}",
+                        risk="medium",
+                    ),
+                )
+            )
+
+    ready = threading.Barrier(5)
+    stop = threading.Event()
+    errors: list[Any] = []
+    reader_counts = [0, 0, 0, 0]
+
+    def _reader(tid: int) -> None:
+        ready.wait()
+        while not stop.is_set():
+            try:
+                g_no_root = idx.query(limit=5)
+                if len(g_no_root["edges"]) != 5 or not g_no_root["has_more"]:
+                    errors.append(("no_root_invalid", g_no_root))
+                    stop.set()
+                    break
+                g_art0 = idx.query(root_id="art-00000", depth=1, limit=200)
+                art0_edges = _edge_set(g_art0)
+                art0_node = next((n for n in g_art0["nodes"] if n["id"] == "art-00000"), None)
+                if art0_node is None or art0_node.get("type") != "Artifact":
+                    errors.append(("art0_node_torn", art0_node))
+                    stop.set()
+                    break
+                matched_state = (art0_node.get("version"), art0_node.get("risk"), art0_edges)
+                if matched_state not in valid_art0_states:
+                    errors.append(("art0_half_applied_delta", matched_state))
+                    stop.set()
+                    break
+                reader_counts[tid] += 1
+            except Exception as exc:
+                errors.append(("reader_exception", repr(exc)))
+                stop.set()
+                break
+
+    threads = [threading.Thread(target=_reader, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    ready.wait()
+    for rec in deltas:
+        if stop.is_set():
+            break
+        view.apply_delta_records([rec])
+    stop.set()
+    for t in threads:
+        t.join(timeout=10.0)
+
+    assert errors == [], f"Concurrent reader/delta race detected: {errors[:3]}"
+    assert all(c > 0 for c in reader_counts), f"All reader threads must execute queries: {reader_counts}"
+
+    # Verify final state parity against reference build_lineage_graph on plain dicts
+    plain_final = [dict(r) for r in view]
+    for check_root in (None, "art-00000", "strat-0000", "persona-0", "pool-0"):
+        assert idx.query(root_id=check_root, depth=2, limit=25) == build_lineage_graph(
+            plain_final, root_id=check_root, depth=2, limit=25
+        )
+
+    # 2) Verify copy-on-write immutability of published views in RegistryStore and PostgresRegistryStore
+    mem_store = RegistryStore()
+    for e in persona_family_entries("tenant-a"):
+        mem_store.put(e)
+    vis = frozenset({"tenant-a", BUILTIN_TENANT})
+    mem_view_before = mem_store.list_lineage_rows(visible_tenants=vis)
+    mem_snap_rows_before = [dict(r) for r in mem_view_before]
+    mem_graph_before = build_lineage_graph(mem_view_before, root_id=f"strategy-persona-{FD}", depth=3, limit=200)
+
+    added_entry = _entry(
+        f"reg-cow-new-{FD}",
+        "strategy_spec",
+        f"strategy-persona-{FD}",
+        lineage={"parent_registry_ids": [f"reg-strategy-spec-persona-{FD}"]},
+        metadata={"persona_id": f"persona-cow-{FD}", "capital_pool_id": f"pool-cow-{FD}"},
+        state="candidate",
+        tenant="tenant-a",
+        version="2.0.0",
+    )
+    mem_store.put(added_entry)
+    mem_view_after = mem_store.list_lineage_rows(visible_tenants=vis)
+
+    assert mem_view_after is not mem_view_before
+    assert mem_view_after.get_or_build_graph_index() is not mem_view_before.get_or_build_graph_index()
+    assert [dict(r) for r in mem_view_before] == mem_snap_rows_before
+    assert (
+        build_lineage_graph(mem_view_before, root_id=f"strategy-persona-{FD}", depth=3, limit=200)
+        == mem_graph_before
+    )
+    assert f"reg-cow-new-{FD}" in {
+        n["id"]
+        for n in build_lineage_graph(
+            mem_view_after, root_id=f"strategy-persona-{FD}", depth=3, limit=200
+        )["nodes"]
+    }
+

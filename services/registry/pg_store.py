@@ -1519,8 +1519,8 @@ class PostgresRegistryStore:
                                     by_id.pop(rec_key, None)
                                     by_id[rec_key] = (int(rev_val or 0), decoded_row)
                                     delta_records.append((rec_key, decoded_row))
-                                for view in self._lineage_index_tenant_views.values():
-                                    view.apply_delta_records(delta_records)
+                                for tk, view in list(self._lineage_index_tenant_views.items()):
+                                    self._lineage_index_tenant_views[tk] = view.with_delta_records(delta_records)
                                 self._lineage_index_stamp = stamp
                                 self.lineage_index_delta_reads += 1
                                 self.lineage_index_rows_fetched = len(delta_raw)
