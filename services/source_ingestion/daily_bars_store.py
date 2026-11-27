@@ -298,6 +298,12 @@ class DailyBarsStore:
         }
         self.last_error: str | None = None
         self.last_rejections: dict[str, int] = {}
+        self.last_broker_top_keyed_repair: dict[str, Any] | None = None
+        if declaration.dataset == DAILY_BARS.dataset and fault is None:
+            try:
+                self.last_broker_top_keyed_repair = _repair_keyed_broker_top_if_needed(self.root)
+            except Exception as exc:  # noqa: BLE001 - startup repair must not block store creation
+                self.record_dual_write_error(exc)
 
     # -- record extraction -------------------------------------------------------------------
     def extract_rows(
@@ -1086,7 +1092,8 @@ KEYED_DATASETS: dict[str, DatasetKeyDeclaration] = {d.dataset: d for d in (
     _decl("tw_margin_short_balance", ("symbol", "trade_date"), (("market",) + _SYMBOL_ALIASES, _DATE_ALIASES),
           optional=("symbol",), budget=int(0.2 * _MB),
           readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
-    _decl("tw_broker_top", ("symbol", "trade_date", "rank"), (_SYMBOL_ALIASES, _DATE_ALIASES, ("rank", "broker_rank", "broker_id")),
+    _decl("tw_broker_top", ("symbol", "trade_date", "side", "rank"),
+          (_SYMBOL_ALIASES, _DATE_ALIASES, ("side", "direction"), ("rank", "broker_rank", "broker_id")),
           retention=750, budget=int(0.2 * _MB), readers=("services/data-plane/taiwan_reference.py",)),
     _decl("tw_broker_branch_detail", ("symbol", "trade_date", "broker_id", "branch_id"),
           (_SYMBOL_ALIASES, _DATE_ALIASES, ("broker_id", "securities_trader_id"), ("branch_id", "branch", "securities_trader")),
@@ -1148,7 +1155,11 @@ class KeyedDatasetStore:
     def _sources(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         meta = record.get("metadata") if isinstance(record.get("metadata"), Mapping) else {}
         nrow = meta.get("normalized_row") if isinstance(meta.get("normalized_row"), Mapping) else {}
-        return [nrow, meta, record]
+        sources: list[Mapping[str, Any]] = [nrow, meta, record]
+        raw_row = meta.get("raw_row")
+        if isinstance(raw_row, Mapping):
+            sources.append(raw_row)
+        return sources
 
     def key_of(self, record: Mapping[str, Any]) -> tuple[tuple[str, ...], str] | None:
         """Return (key parts, partition) or None when a required key part is missing."""
@@ -1182,7 +1193,19 @@ class KeyedDatasetStore:
     def content_hash(record: Mapping[str, Any]) -> str:
         sources = KeyedDatasetStore._sources(record)
         nrow = sources[0] or sources[1]
-        return _sha({k: v for k, v in nrow.items() if k not in KEYED_VOLATILE_FIELDS})
+        cleaned = {k: v for k, v in nrow.items() if k not in KEYED_VOLATILE_FIELDS}
+        raw_row = cleaned.get("raw_row")
+        if isinstance(raw_row, Mapping):
+            cleaned["raw_row"] = {k: v for k, v in raw_row.items() if k not in KEYED_VOLATILE_FIELDS}
+        body = cleaned.get("body")
+        if isinstance(body, str) and body.startswith("{") and any(f'"{k}"' in body for k in KEYED_VOLATILE_FIELDS):
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, Mapping):
+                cleaned["body"] = {k: v for k, v in parsed.items() if k not in KEYED_VOLATILE_FIELDS}
+        return _sha(cleaned)
 
     # -- files -------------------------------------------------------------------------------
     def _manifest_path(self, partition: str) -> Path:
@@ -1199,6 +1222,7 @@ class KeyedDatasetStore:
     def _read_partition(self, manifest: Mapping[str, Any]) -> dict[tuple[str, ...], dict[str, Any]]:
         import gzip
 
+        same_key_fields = manifest.get("key_fields") == list(self.declaration.key_fields)
         out: dict[tuple[str, ...], dict[str, Any]] = {}
         for entry in manifest.get("files", ()):
             path = self.base / entry["path"]
@@ -1210,6 +1234,8 @@ class KeyedDatasetStore:
                         item = json.loads(line)
                         keyed = self.key_of(item)
                         if keyed is None:
+                            if not same_key_fields:
+                                continue
                             raise KeyedDatasetError(f"{self.declaration.dataset} file {entry['path']} holds a record without a key")
                         item["_hash"] = self.content_hash(item)  # recomputed, not stored (bytes)
                         out[keyed[0]] = item
@@ -1236,6 +1262,8 @@ class KeyedDatasetStore:
             return {"partition": partition, "verified": False, "reason": str(exc), "keys": set()}
         if manifest is None:
             return {"partition": partition, "verified": False, "reason": "no_manifest", "keys": set()}
+        if manifest.get("key_fields") != list(self.declaration.key_fields):
+            return {"partition": partition, "verified": False, "reason": "key_fields_mismatch", "keys": set()}
         try:
             merged = self._read_partition(manifest)
         except (KeyedDatasetError, OSError, ValueError) as exc:
@@ -1283,7 +1311,7 @@ class KeyedDatasetStore:
                     if old is None or old["_hash"] != item["_hash"]:
                         merged[key] = item
                 digest = _sha(sorted([list(k), v["_hash"]] for k, v in merged.items()))
-                if manifest and manifest.get("content_digest") == digest:
+                if manifest and manifest.get("content_digest") == digest and manifest.get("key_fields") == list(decl.key_fields):
                     self.counters["days_unchanged"] += 1
                     return False
                 generation = int(manifest.get("generation", 0)) + 1 if manifest else 1
@@ -1375,6 +1403,21 @@ class DailyBudgetError(KeyedDatasetError):
         super().__init__(f"{dataset} partition {partition} is {size} bytes, over the section 6A budget of {limit} bytes; nothing was published")
 
 
+def _repair_keyed_broker_top_if_needed(root: str | Path) -> dict[str, Any] | None:
+    """SOURCE-BROKER-TOP-KEYED-SIDE-20261127: idempotent repair of keyed tw_broker_top partitions that were
+    written with the old 3-field key (symbol, trade_date, rank) without side."""
+    from scripts.rebuild_keyed_broker_top import repair_keyed_broker_top_if_needed
+
+    return repair_keyed_broker_top_if_needed(root)
+
+
 def keyed_dataset_store(root: str | Path, dataset: str) -> KeyedDatasetStore | None:
     decl = KEYED_DATASETS.get(dataset)
-    return KeyedDatasetStore(root, decl) if decl else None
+    if decl is None:
+        return None
+    if dataset == "tw_broker_top":
+        try:
+            _repair_keyed_broker_top_if_needed(root)
+        except Exception:  # noqa: BLE001 - caller's write path handles store errors directly
+            pass
+    return KeyedDatasetStore(root, decl)
