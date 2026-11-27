@@ -128,6 +128,54 @@ jobs:
           [[ "${HAS_FINMIND_TOKEN}" == "true" ]] && plan_args+=(--finmind-token-present)
           python3 scripts/tw_refresh_outcome_summary.py "${plan_args[@]}" | tee -a "${GITHUB_OUTPUT}"
 
+      - name: Execute bounded Taiwan market refresh
+        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
+        id: refresh
+        continue-on-error: true
+        env:
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.tpex.org.tw
+          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
+          SOURCE_INGEST_BOUNDED_DATASET: tw_price_daily
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
+          REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
+          FORCE_REFRESH: ${{ inputs.force || false }}
+          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
+          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
+          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+        run: |
+          rc_file="${RUNNER_TEMP}/refresh-step-rc.txt"
+          rm -f "${rc_file}"
+          export RC_FILE="${rc_file}"
+          # The guarded command always exits 0: any non-zero guarded exit is recorded by the guard as
+          # guarded_command_failed (heartbeat stopped, later steps refused with exit 75). The refresh's
+          # own exit code is reported by this step after the guard returns.
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            bash -c '
+              force_arg=()
+              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
+              rc=0
+              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
+              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
+              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" "${run_args[@]}" --output "${REFRESH_OUTPUT_PATH}" || rc=$?
+              echo "${rc}" > "${RC_FILE}"
+              exit 0
+            '
+          refresh_rc="$(tr -d '[:space:]' < "${rc_file}" 2>/dev/null || true)"
+          if [[ "${refresh_rc}" != "0" ]]; then
+            echo "::error::bounded Taiwan market refresh exit ${refresh_rc:-unknown}"
+            exit "${refresh_rc:-1}"
+          fi
+
       - name: Execute bounded TAIFEX contract refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
         id: taifex_refresh
@@ -222,54 +270,6 @@ jobs:
               ./scripts/deploy_nonprod_vm.sh --refresh-only --non-blocking "${force_arg[@]}" "${run_args[@]}" --connector-id tw-finmind-broker-daily-report --allowed-hosts api.finmindtrade.com,storage.googleapis.com --dataset tw_broker_top --output "${REFRESH_OUTPUT_PATH}" || exit 0
             ' || refresh_rc=$?
           echo "FinMind broker refresh rc=${refresh_rc}"
-
-      - name: Execute bounded Taiwan market refresh
-        if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}
-        id: refresh
-        continue-on-error: true
-        env:
-          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
-          TARGET_ENV: dev
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
-          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
-          PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: openapi.twse.com.tw,www.tpex.org.tw
-          SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-twse-tpex-official-market
-          SOURCE_INGEST_BOUNDED_DATASET: tw_price_daily
-          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
-          PANTHEON_COLLECTOR_BUNDLE_TOKEN: ${{ secrets.PANTHEON_COLLECTOR_BUNDLE_TOKEN }}
-          REFRESH_OUTPUT_PATH: ${{ runner.temp }}/tw-refresh-outcome.json
-          FORCE_REFRESH: ${{ inputs.force || false }}
-          PANTHEON_RUN_HOSTS: ${{ steps.plan.outputs.hosts }}
-          PANTHEON_RUN_FINMIND: ${{ steps.plan.outputs.finmind }}
-          PANTHEON_RUN_MAX_RECORDS: ${{ steps.plan.outputs.max_records }}
-          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
-        run: |
-          rc_file="${RUNNER_TEMP}/refresh-step-rc.txt"
-          rm -f "${rc_file}"
-          export RC_FILE="${rc_file}"
-          # The guarded command always exits 0: any non-zero guarded exit is recorded by the guard as
-          # guarded_command_failed (heartbeat stopped, later steps refused with exit 75). The refresh's
-          # own exit code is reported by this step after the guard returns.
-          .lease-controller/scripts/run_with_dev_environment_lease.sh \
-            bash -c '
-              force_arg=()
-              [[ "${FORCE_REFRESH}" == "true" ]] && force_arg=(--force)
-              rc=0
-              run_args=(--bounded-runtime-run --run-hosts "${PANTHEON_RUN_HOSTS}" --run-max-records "${PANTHEON_RUN_MAX_RECORDS}")
-              [[ "${PANTHEON_RUN_FINMIND}" == "true" ]] && run_args+=(--run-finmind)
-              ./scripts/deploy_nonprod_vm.sh --refresh-only "${force_arg[@]}" "${run_args[@]}" --output "${REFRESH_OUTPUT_PATH}" || rc=$?
-              echo "${rc}" > "${RC_FILE}"
-              exit 0
-            '
-          refresh_rc="$(tr -d '[:space:]' < "${rc_file}" 2>/dev/null || true)"
-          if [[ "${refresh_rc}" != "0" ]]; then
-            echo "::error::bounded Taiwan market refresh exit ${refresh_rc:-unknown}"
-            exit "${refresh_rc:-1}"
-          fi
 
       - name: Execute bounded Taiwan chip refresh
         if: ${{ github.event.schedule != '30 10 * * 1-5' && github.event.schedule != '30 12 * * 1-5' }}

@@ -19,6 +19,18 @@ def _load_workflow() -> dict[str, Any]:
     return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
 
+def test_official_market_runs_first_and_steady_check_follows_every_refresh() -> None:
+    # Run 45917069646: TAIFEX + broker delayed the 00:30Z backup's
+    # official open until 00:39:29Z, past the 00:35Z last-start guard.
+    steps = _load_workflow()["jobs"]["refresh"]["steps"]
+    positions = {step.get("id"): i for i, step in enumerate(steps) if step.get("id")}
+    execute = [i for i, step in enumerate(steps) if step.get("name", "").startswith("Execute ")]
+    assert positions["plan"] + 1 == positions["refresh"]
+    assert execute[0] == positions["refresh"]
+    assert all(positions["refresh"] < i for i in execute[1:])
+    assert all(i < positions["steady_check"] for i in execute)
+
+
 def test_workflow_declares_environment_dev() -> None:
     wf = _load_workflow()
     jobs = wf.get("jobs", {})
