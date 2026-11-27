@@ -2504,7 +2504,7 @@ def test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_conne
     assert "taifex_refresh" in by_id, "Missing TAIFEX refresh step id=taifex_refresh"
     twse_idx, twse_step = by_id["refresh"]
     taifex_idx, taifex_step = by_id["taifex_refresh"]
-    assert taifex_idx < twse_idx, "TAIFEX contract refresh must run before TWSE market refresh"
+    assert twse_idx < taifex_idx, "Official market refresh must run first to deliver opens before the guard"
     twse_if = twse_step.get("if") or ""
     # Only the post-publication FinMind polling crons may skip TWSE; never a prior-step outcome.
     assert "steps." not in twse_if and "failure()" not in twse_if, "TWSE market refresh must never be prevented by a TAIFEX failure"
@@ -3068,7 +3068,7 @@ def test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe(
     assert "${#FINMIND_API_TOKEN}" in step["run"]
     assert 'echo "${FINMIND_API_TOKEN}"' not in step["run"]
     twse_idx = next(i for i, s in enumerate(steps) if s.get("id") == "refresh")
-    assert steps.index(step) < twse_idx
+    assert twse_idx < steps.index(step)
 
 
 def test_finmind_token_flows_through_compose_and_deploy_script():

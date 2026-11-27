@@ -233,7 +233,7 @@
       "failing_check": "Run baseline stage-0 gate",
       "ci_terminal_result": "1 failed, 233 passed, 2 skipped in 214.18s",
       "diagnosis": "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs still asserted TAIFEX before official market (7 < 6). The task-specific workflow suite did not include this stage-0 assertion.",
-      "repair": "Align only the existing stage-0 ordering assertion with the official-first task contract; retain every connector, dataset, egress and deployment-order assertion. No runtime or CI gate changes.",
+      "repair": "Align the three existing stage-0 ordering assertions with the official-first task contract: one in scripts/test_deploy_nonprod_vm.py and TAIFEX/FinMind assertions in scripts/test_dev_tw_market_refresh.py. Retain all connector, dataset, egress, secret, failure and deployment-order assertions. No runtime or CI gate changes.",
       "focused_command": "timeout 60 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
       "red": {
         "exit_code": 1,
@@ -243,8 +243,29 @@
         "exit_code": 0,
         "result": "1 passed in 1.83s"
       },
-      "broader_validation": "Pending; anchor before bounded foreground suite.",
-      "delivery": "Prior approval does not apply to the changed head. Requires new exact-head handoff to Antigravity and canonical supervisor merge; hosted acceptance remains pending."
+      "broader_validation": "Governed 415-test batch still collecting terminal output; it loaded the two additional stale assertions before repair. Not yet counted as passed.",
+      "delivery": "Prior approval does not apply to the changed head. Requires new exact-head handoff to Antigravity and canonical supervisor merge; hosted acceptance remains pending.",
+      "additional_stale_assertions": {
+        "tests": [
+          "test_workflow_dispatches_taifex_ssf_contracts_after_twse_with_separate_connector_and_hosts",
+          "test_workflow_finmind_broker_refresh_is_bounded_nonblocking_and_secret_safe"
+        ],
+        "red": {
+          "exit_code": 1,
+          "result": "2 failed in 0.78s; assert 7 < 6 and 8 < 6"
+        },
+        "green": {
+          "exit_code": 0,
+          "result": "2 passed in 0.51s"
+        },
+        "interpreter": ".venv-pantheon/bin/python3, provisioned using scripts/dev/provision_python_distribution.py; checkout bin directory prepended to PATH"
+      },
+      "inherited_venv_attempt": {
+        "command": "timeout 480 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py scripts/test_dev_tw_market_refresh_workflow.py",
+        "exit_code": 2,
+        "result": "3 failed, 227 passed, 2 skipped in 421.12s; interrupted, not a passed batch",
+        "cause": "Inherited temporary venv lacked fastapi for three source-ingest auth-boundary tests. Replaced by the governed checkout provision without changing product dependencies."
+      }
     }
   },
   "acceptance_5_runtime_budget": {
