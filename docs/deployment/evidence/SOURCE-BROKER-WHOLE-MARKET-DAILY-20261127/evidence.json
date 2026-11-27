@@ -105,7 +105,7 @@
     "7_hosted_proof": {
       "status": "pending_deploy",
       "check": "read-only after deploy: keyed/tw_broker_top/_manifest/date=<latest session>.json row_count / bytes and the receipt receipts/tw_broker_whole_market/date=<session>.json on volume pantheon_source-ingest-data; expect >= 1000 symbols with both sides and bytes <= 6 MB (expected 2.2-2.7 MB)",
-      "probe_python": "import gzip, json, sys\nfrom collections import defaultdict\nfrom pathlib import Path\nfrom services.source_ingestion.daily_bars_store import KEYED_DATASETS, keyed_dataset_store\nfrom services.source_ingestion.finmind_broker_backfill import read_whole_market_receipt, traded_share_symbols\nfrom services.source_ingestion.routers.ingest_operations import _broker_flow_row\nroot, day = Path(sys.argv[1]), sys.argv[2]\nstore = keyed_dataset_store(root, \"tw_broker_top\")\nreceipt = read_whole_market_receipt(root, day)\nassert receipt and receipt[\"status\"] == \"complete\" and receipt[\"fresh\"] is True, \"no complete receipt\"\nverified = store.verify_partition(day)\nassert verified[\"verified\"], verified.get(\"reason\")\ndel verified\nmanifest = store.read_manifest(day)\nsides = defaultdict(set)\nrows = uncompressed = compressed = compact_rows = 0\nfor entry in manifest[\"files\"]:\n    path = store.base / entry[\"path\"]\n    compressed += path.stat().st_size\n    with gzip.open(path, \"rb\") as handle:\n        for line in handle:\n            uncompressed += len(line)\n            if not line.strip():\n                continue\n            rec = json.loads(line)\n            row = _broker_flow_row(rec)\n            assert row and row[\"date\"] == day and 1 <= row[\"rank\"] <= 20, \"unreadable broker row\"\n            meta = rec[\"metadata\"]\n            assert meta[\"license_scope\"] == \"vendor_research\" and meta[\"redistribution_allowed\"] is False\n            compact_rows += isinstance(meta.get(\"normalized_row\"), dict)\n            sides[row[\"symbol\"]].add(row[\"side\"])\n            rows += 1\nassert len(sides) >= 1000 and all(s == {\"buy\", \"sell\"} for s in sides.values()), \"insufficient two-sided coverage\"\nexpected = traded_share_symbols(root, day)\nassert expected, \"missing governed traded-share daily bars\"\nmissing = expected - set(sides)\nassert len(missing) / len(expected) <= 0.02, \"partial coverage\"\nassert compact_rows > 0 and rows == manifest[\"row_count\"]\nassert compressed == manifest[\"bytes\"] == receipt[\"bytes_compressed\"] <= KEYED_DATASETS[\"tw_broker_top\"].day_budget_bytes\nassert 0 <= receipt[\"requests_made\"] <= 1 <= receipt[\"plan_hourly_cap\"]\nassert store.read_manifest(day) == manifest, \"partition changed during probe; retry after refresh\"\nprint(json.dumps({\"trade_date\": day, \"symbols_with_both_sides\": len(sides), \"expected_traded_shares\": len(expected), \"missing\": len(missing), \"rows\": rows, \"compact_rows\": compact_rows, \"bytes_compressed\": compressed, \"bytes_uncompressed\": uncompressed, \"receipt_bytes_uncompressed\": receipt[\"bytes_uncompressed\"], \"requests_made\": receipt[\"requests_made\"], \"keyed_retention_sessions\": KEYED_DATASETS[\"tw_broker_top\"].retention_sessions, \"result\": \"pass\"}, sort_keys=True))\n",
+      "probe_python": "import gzip, json, sys\nfrom collections import defaultdict\nfrom pathlib import Path\nfrom services.source_ingestion.daily_bars_store import KEYED_DATASETS, keyed_dataset_store\nfrom services.source_ingestion.finmind_broker_backfill import read_whole_market_receipt, traded_share_symbols\nfrom services.source_ingestion.routers.ingest_operations import _broker_flow_row\nroot, day = Path(sys.argv[1]), sys.argv[2]\nstore = keyed_dataset_store(root, \"tw_broker_top\")\nassert store.declaration.retention_sessions == 750 and store.declaration.retention_days is None, \"session retention not deployed\"\nreceipt = read_whole_market_receipt(root, day)\nassert receipt and receipt[\"status\"] == \"complete\" and receipt[\"fresh\"] is True, \"no complete receipt\"\nverified = store.verify_partition(day)\nassert verified[\"verified\"], verified.get(\"reason\")\ndel verified\nmanifest = store.read_manifest(day)\nsides = defaultdict(set)\nrows = uncompressed = compressed = compact_rows = 0\nfor entry in manifest[\"files\"]:\n    path = store.base / entry[\"path\"]\n    compressed += path.stat().st_size\n    with gzip.open(path, \"rb\") as handle:\n        for line in handle:\n            uncompressed += len(line)\n            if not line.strip():\n                continue\n            rec = json.loads(line)\n            row = _broker_flow_row(rec)\n            assert row and row[\"date\"] == day and 1 <= row[\"rank\"] <= 20, \"unreadable broker row\"\n            meta = rec[\"metadata\"]\n            assert meta[\"license_scope\"] == \"vendor_research\" and meta[\"redistribution_allowed\"] is False\n            compact_rows += isinstance(meta.get(\"normalized_row\"), dict)\n            sides[row[\"symbol\"]].add(row[\"side\"])\n            rows += 1\nassert len(sides) >= 1000 and all(s == {\"buy\", \"sell\"} for s in sides.values()), \"insufficient two-sided coverage\"\nexpected = traded_share_symbols(root, day)\nassert expected, \"missing governed traded-share daily bars\"\nmissing = expected - set(sides)\nassert len(missing) / len(expected) <= 0.02, \"partial coverage\"\nassert compact_rows > 0 and rows == manifest[\"row_count\"]\nassert compressed == manifest[\"bytes\"] == receipt[\"bytes_compressed\"] <= KEYED_DATASETS[\"tw_broker_top\"].day_budget_bytes\nassert 0 <= receipt[\"requests_made\"] <= 1 <= receipt[\"plan_hourly_cap\"]\nassert store.read_manifest(day) == manifest, \"partition changed during probe; retry after refresh\"\nprint(json.dumps({\"trade_date\": day, \"symbols_with_both_sides\": len(sides), \"expected_traded_shares\": len(expected), \"missing\": len(missing), \"rows\": rows, \"compact_rows\": compact_rows, \"bytes_compressed\": compressed, \"bytes_uncompressed\": uncompressed, \"receipt_bytes_uncompressed\": receipt[\"bytes_uncompressed\"], \"requests_made\": receipt[\"requests_made\"], \"keyed_retention_sessions\": KEYED_DATASETS[\"tw_broker_top\"].retention_sessions, \"result\": \"pass\"}, sort_keys=True))\n",
       "read_only_probe_command": "python3 -c 'import json,subprocess,sys; e=json.load(open(sys.argv[1])); subprocess.run([\"docker\",\"exec\",\"-e\",\"PYTHONDONTWRITEBYTECODE=1\",sys.argv[2],\"python\",\"-c\",e[\"acceptance\"][\"7_hosted_proof\"][\"probe_python\"],sys.argv[3],sys.argv[4]],check=True)' docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json \"$SOURCE_INGEST_CONTAINER\" \"$MARKET_DATA_STORAGE_ROOT\" \"$TRADE_DATE\"",
       "probe_inputs": "After exact-version deployment and refresh, set SOURCE_INGEST_CONTAINER to the current hosted source-ingest container, MARKET_DATA_STORAGE_ROOT to its mounted market_data_store path, and TRADE_DATE to the published session. Run from the checkout containing this committed evidence manifest. No provider call, task mutation or data write; output must be recorded with deployed identities before claiming acceptance. This checks coverage/bytes and reports the deployed session-retention declaration; source cleanup behaviour is tested separately. Hosted sweep activation and outcome still need deployed evidence.",
       "local_probe_validation": "Validated with a synthetic 1000-symbol two-sided fixture only; complete passes, missing store and partial receipt fail, no bytes/mtimes changed and no missing root created. Hosted status remains pending_deploy."
@@ -146,7 +146,8 @@
     "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
     "the two-year SponsorPro backfill still has not been run on hosted",
     "Validation limitation: the expanded 242-test refresh/storage/retention batch and all four 180-second shards timed out. No expanded-batch pass is claimed. Focused broker/route, whole-market deploy and budget validation are recorded separately; required repository CI remains authoritative for its full suites.",
-    "Retention steady-state size excludes evidence-pinned out-of-window sessions; the existing sweep report exposes pinned count/sample. With dry-run, unresolved pins or the existing 20% deletion refusal, cleanup requires the existing market-data/Ops procedure. No evidence is auto-deleted to meet the normal 4.5 GB budget."
+    "Retention steady-state size excludes evidence-pinned out-of-window sessions; the existing sweep report exposes pinned count/sample. With dry-run, unresolved pins or the existing 20% deletion refusal, cleanup requires the existing market-data/Ops procedure. No evidence is auto-deleted to meet the normal 4.5 GB budget.",
+    "Current validation limitation: the complete existing test_retention.py suite exceeded its 180-second foreground bound (exit 124); no full-suite pass is claimed. New session-retention and existing keyed-write suites pass; independent review/CI must assess the broader suite."
   ],
   "verification": {
     "previous_owner_commands": [
@@ -281,22 +282,22 @@
         "exit_status": 0
       }
     ],
-    "p2_blocker": {
+    "prior_p2_scope_hold": {
       "required_actor": "Human/Ops",
       "classification": "external scope/governance hold; declared SOURCE-BROKER-TOP-KEYED-SIDE-20261127 is already done and satisfied",
       "missing_artifact": "services/source_ingestion/retention.py",
       "governance_source": "scripts/ai_status.py command_artifact_contract: Only Human/Ops can revise task artifact contracts; only todo/blocked tasks may be revised. No canonical state or command runtime edited by this worker.",
       "existing_owner_package": "RC3 WP3.1 market-data owner cb4f6795; SOURCE-RETENTION-SWEEPER-20261118-R2 is archived done, existing session-retention obligation remains on this task",
-      "required_continuation": "Human/Ops adds the missing artifact through artifact-contract while blocked and reopens this same task. Implement a retention_sessions=750 declaration in daily_bars_store.py, make the existing _plan_keyed sweeper retain the latest 750 stored session partitions (with existing pin protection), and add focused real-store dry-run/delete tests across 751 sessions spanning more than 750 calendar days, pinned old sessions and unchanged calendar-retention datasets. Reconcile cap/manifest/design/evidence, then refresh dev and hand off the new exact head to the assigned independent reviewer. Proposed continuation only: no retention implementation or cleanup-test pass is claimed.",
-      "acceptance_3": "still fails until implementation and independent review; no operator acceptance revision inferred",
       "acceptance_7": "pending deploy and real hosted read-only proof",
-      "disposition": "Resolved by governed Human/Ops artifact-contract addition 2026-11-27T12:35:22Z and reopen 12:35:59Z; retained here as prior-review history, superseded by retention_repair_20261127."
+      "disposition": "Resolved by governed Human/Ops artifact-contract addition 2026-11-27T12:35:22Z and reopen 12:35:59Z; retained here as prior-review history, superseded by retention_repair_20261127.",
+      "acceptance_3_at_hold": "still fails until implementation and independent review; no operator acceptance revision inferred",
+      "required_continuation_at_hold": "Human/Ops adds the missing artifact through artifact-contract while blocked and reopens this same task. Implement a retention_sessions=750 declaration in daily_bars_store.py, make the existing _plan_keyed sweeper retain the latest 750 stored session partitions (with existing pin protection), and add focused real-store dry-run/delete tests across 751 sessions spanning more than 750 calendar days, pinned old sessions and unchanged calendar-retention datasets. Reconcile cap/manifest/design/evidence, then refresh dev and hand off the new exact head to the assigned independent reviewer. Proposed continuation only: no retention implementation or cleanup-test pass is claimed."
     }
   },
   "continuation_20261127": {
     "prior_owner": "Claude",
     "prior_reviewer": "Antigravity",
-    "canonical_assignment": "Governed show at dispatch assigns Codex / Codex2; handoff follows the current canonical reviewer rather than the older next-message naming Antigravity.",
+    "canonical_assignment": "Prior dispatch used Codex / Codex2. Current governed dispatch 2026-11-27 assigns Codex / Antigravity2; exact-head handoff uses Antigravity2 as the independent cross-family reviewer.",
     "base_sha": "d8dd4db14a47a688b6737fe1b582e57721d7151d",
     "base_sync": "Merged current dev without rewriting the published PR history; f71a168ca preserves both independently appended storage-manifest entries.",
     "reader_anchor": "a7fa56799",
@@ -309,7 +310,39 @@
     "change": "KEYED_DATASETS.tw_broker_top declares retention_sessions=750, retention_days=None. Existing RetentionSweeper._plan_keyed keeps the newest 750 valid stored session dates through today, including any pins inside that window; older pinned sessions are retained in addition. Weekends, holidays and missing collections do not consume stored sessions. Future or invalid date partitions cannot displace history. Receipts independently retain the newest 750 session files.",
     "runtime_budget": "6 MB per session partition x 750 stored sessions <=4.5 GB after successful delete-mode sweep, plus evidence-pinned partitions outside the window (<=6 MB each, separately reported). Receipts retain 750 session files (~0.75 MB). Dry-run, unresolved pins or the 20% delete-share refusal do not enforce this steady-state cap.",
     "cadence_and_writers": "Existing sweeper at most once per trading day; one replaced <=64 KiB report, no new writer or per-row evidence. Existing one partition + one ~1 KB receipt per published session.",
-    "validation": [],
-    "hosted": "pending deploy and the committed read-only probe; no hosted claim"
+    "validation": [
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_session_retention.py services/source_ingestion/tests/test_datasets_keyed_write.py",
+        "result": "52 passed in 31.03s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
+        "result": "85 passed in 30.27s; one existing Starlette/httpx deprecation warning",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top && timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && git diff --check",
+        "result": "2 byte-budget checks passed (2,623,088 compressed bytes <=6,000,000), storage manifest passed (378 entries, zero failures), diff check passed",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py",
+        "exit_status": 124,
+        "result": "Timed out after 180 seconds without a terminal pytest summary; not counted as passed. Session/keyed tests and focused existing keyed-retention regression are recorded separately."
+      },
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "result": "1 passed in 30.58s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py",
+        "result": "Local synthetic fixture only: read-only probe passed with keyed_retention_sessions=750, 1000 symbols / both sides, 2000 compact rows, 15873 gzip bytes; missing-store and partial receipts rejected. File bytes/mtimes unchanged and missing root not created. No hosted proof claimed.",
+        "exit_status": 0
+      }
+    ],
+    "hosted": "pending deploy and the committed read-only probe; no hosted claim",
+    "passed_focused_unique_tests": 138
   }
 }
