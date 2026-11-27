@@ -4,7 +4,7 @@
   "reviewer": "Antigravity2",
   "review_independence": "Codex versus Antigravity model families; assigned canonical reviewer, no self-approval.",
   "root_cause_class": "RC2 / WP2.3: explicit advisory persona selected as an institutional trading persona after T7 paper book provisioning",
-  "implementation_status": "source_validated_pending_independent_review",
+  "implementation_status": "source_validated_handoff_blocked_by_artifact_contract",
   "source_base": "50a65493c596eb00567e5ae34e5fe804559e77ad",
   "anchors": [
     "8bb212957",
@@ -423,5 +423,15 @@
   "base_refresh": {
     "merge_commit": "355c913bf",
     "reason": "Canonical handoff rejected the old head because it lacked six current-dev commits; merged current dev cleanly before repeating handoff. No canonical review was admitted for the stale head. Upstream Agora shadow repair and both problem-register entries preserved."
+  },
+  "review_admission_blocker": {
+    "failed_step": "Governed handoff into independent review",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7982",
+    "rejected_head": "cf19432e143d2f7d7fe892c010bf7ed5116e6b17",
+    "reason": "changed file 'services/control-plane/bff/agora/performance/service.py' is outside the task artifact contract for repository 'pantheon'",
+    "required_actor": "Human/Ops",
+    "required_correction": "Revise the existing task artifact contract to include pantheon:services/control-plane/bff/agora/performance/service.py under the governed pre-dispatch lifecycle, retaining Codex2/Antigravity2, then redispatch the existing task for exact-head handoff. The task acceptance already requires repairing Management attribution implemented there. Do not create a replacement task or bypass admission.",
+    "task_contract_changed_by_worker": false,
+    "review_admitted": false
   }
 }
