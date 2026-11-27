@@ -1,0 +1,2540 @@
+{
+  "task_id": "AGORA-WORKSHOP-TWELVE-BLOCK-COMPLETENESS-20261127",
+  "class": "RC4",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "review_independence": {
+    "owner_family": "Antigravity",
+    "reviewer_family": "Claude",
+    "cross_family": true
+  },
+  "summary": "Workshop completeness responses (GET/POST /bff/agora/workshops/{id}/completeness) and completeness_update cards (GET /bff/agora/workshops/{id}/cards) expose the twelve V10 strategy blocks in V10 order with the five V10 states (confirmed, inferred, missing, weak, conflict), one-line notes, source citations, branch vs non-branch generic naming, and the next high-value decision with 2 to 4 selectable options and an optional servant default (V10 §4, §4.1). Adds POST /bff/agora/workshops/{id}/decisions under existing workshop write admission and idempotency to record the trader choice as one workshop event that the next reconstruction folds into the strategy map.",
+  "acceptance_coverage": {
+    "ac1_twelve_blocks_and_seven_readiness_dimensions": {
+      "v10_order": [
+        "market_scope",
+        "insider_branch_mapping",
+        "winner_branch_scoring",
+        "migration_reverse_flow",
+        "event_lead",
+        "signal_formation",
+        "entry_holding",
+        "add_reduce_exit",
+        "sizing_leverage",
+        "cost_liquidity_capacity",
+        "validation_backtest_refutation",
+        "monitoring_update"
+      ],
+      "states": [
+        "confirmed",
+        "inferred",
+        "missing",
+        "weak",
+        "conflict"
+      ],
+      "state_labels_zh": {
+        "confirmed": "已確認",
+        "inferred": "助理推定",
+        "missing": "尚缺",
+        "weak": "薄弱",
+        "conflict": "衝突"
+      },
+      "block_fields": [
+        "order",
+        "block_id",
+        "block_key",
+        "block_name",
+        "v10_block_id",
+        "strategy_map_key",
+        "mapped_dimension",
+        "name",
+        "title",
+        "label_en",
+        "state",
+        "state_label_zh",
+        "note",
+        "summary",
+        "missing_definitions",
+        "source_citations",
+        "citations"
+      ],
+      "backward_compatibility": "Existing 7 readiness dimensions (market_scope, data_dependencies, hypothesis, evaluation_plan, risk_constraints, execution_profile, governance) and 3 readiness gates (preliminary_research, full_validation, trading_room) remain intact."
+    },
+    "ac2_branch_vs_non_branch_naming": {
+      "branch_strategy": {
+        "strategy_family": "winner_branch",
+        "is_branch_strategy": true,
+        "titles_zh": [
+          "研究對象與市場範圍",
+          "關係人與分點映射",
+          "贏家分點評分",
+          "分點遷移與反向流",
+          "事件領先關聯",
+          "信號形成",
+          "進場與持有週期",
+          "加碼、減碼與出場",
+          "部位與槓桿",
+          "成本、流動性與容量",
+          "驗證、回測與反證",
+          "監控與策略更新"
+        ]
+      },
+      "non_branch_strategy": {
+        "strategy_family": "generic",
+        "is_branch_strategy": false,
+        "titles_zh": [
+          "研究對象與市場範圍",
+          "資料需求與來源映射",
+          "核心假說與因子評分",
+          "市場狀態遷移與失效條件",
+          "事件領先與風險過濾",
+          "信號形成",
+          "進場與持有週期",
+          "加碼、減碼與出場",
+          "部位與槓桿",
+          "成本、流動性與容量",
+          "驗證、回測與反證",
+          "監控與策略更新"
+        ],
+        "branch_terms_absent": true
+      }
+    },
+    "ac3_next_decision_and_writeback_route": {
+      "route": "POST /bff/agora/workshops/{workshop_id}/decisions",
+      "admission": "Uses _scope(write=True), mandatory If-Match (428 missing, 409 mismatch), mandatory Idempotency-Key (400 missing, 409 duplicate), cross-user 403, unknown workshop 404, invalid option 422.",
+      "persistence": "Records one encrypted private-content workshop message event via store.append_event_cas with payload_refs_json tagging kind:workshop_decision, decision_id, option_id, option_label, and resolves targets.",
+      "reconstruction_integration": "reconstruct_strategy_from_events reads answered decision events, marks resolved strategy_map blocks confirmed with the trader choice summary and message citation, updates reconstruction_id, and advances next_decision to the next unresolved block."
+    },
+    "ac4_contract_artifacts": {
+      "openapi": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+      "capability_manifest": "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+      "bundle_index": "services/control-plane/specs/agora/bundle_index.v1_14.json",
+      "backend_routes_manifest": "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+    },
+    "ac5_hosted_proof_status": {
+      "status": "pending_post_merge_dev_deploy",
+      "note": "Functional source and contract tests complete; hosted walkthrough workshop proof (twelve blocks with states and one next decision in API, answering it changes the next reconstruction) runs after merge and dev deploy."
+    },
+    "ac6_runtime_budget": {
+      "new_recurring_jobs": 0,
+      "events_per_answered_decision": 1,
+      "event_size_bytes_approx": 512,
+      "store_tables_added": 0,
+      "retention": "Existing strategy_workshop_event and agora_private_content_object retention (workshop_default)",
+      "problem_register_row": "RC4 WP4.4 in docs/operations/problem-register.md"
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/strategy_workshop services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/tests/test_agora_route_ownership.py services/control-plane/bff/tests/test_agora_servant_data_tools.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_bff_test_architecture.py scripts/test_bff_route_diff.py",
+      ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline"
+    ],
+    "result": "258 passed, 5 skipped"
+  },
+  "residual_findings": [],
+  "walkthrough_bodies": {
+    "completeness_before_decision": {
+      "data": {
+        "snapshot_id": "snap_rjob_604fafd89b9a491fb1f942a10396ae15",
+        "workshop_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+        "strategy_version_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+        "state_map_json": {
+          "hypothesis": {
+            "status": "confirmed",
+            "summary": "Momentum alpha",
+            "missing_definitions": []
+          },
+          "universe": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "data_requirements": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "signal_definition": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "entry_rules": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "exit_rules": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "position_sizing": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "risk_controls": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "cost_liquidity_capacity": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "validation_plan": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "regime_invalidation": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "governance_constraints": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          }
+        },
+        "blocking_items_json": [
+          {
+            "field": "completeness",
+            "reason": "Unconfirmed strategy dimensions: universe, data_requirements, signal_definition, entry_rules, exit_rules, position_sizing, risk_controls, cost_liquidity_capacity, validation_plan, regime_invalidation, governance_constraints",
+            "source": "reconstruction_blocker"
+          },
+          {
+            "field": "completeness",
+            "reason": "No valid executable StrategySpec provided or reconstructed",
+            "source": "reconstruction_blocker"
+          }
+        ],
+        "next_question_json": {
+          "question_id": "q1",
+          "text": "Which signal?",
+          "resolves": [
+            "signal_formation"
+          ],
+          "why_now": "Signal is missing",
+          "decision_id": "q1",
+          "question": "Which signal?",
+          "why_it_matters": "Signal is missing",
+          "target_blocks": [
+            "signal_formation"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+              "text": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+              "description": "在贏家分點剛開始異常建倉、價格尚未反映時切入。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+              "text": "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+              "description": "要求分點群組流向一致且無反向出貨跡象才形成信號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+              "text": "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+              "description": "以機率校準後之成本後正期望值作為最終信號門檻。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+              "text": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+              "description": "一次產生多個可比較策略變體（V1～V5）進行回測評斷。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+            "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+            "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+            "summary": "我先以核心評分加上反向流/短期過熱過濾建立基準信號，並保留變體供回測對照。",
+            "provisional_assumption": "我先以核心評分加上反向流/短期過熱過濾建立基準信號，並保留變體供回測對照。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        },
+        "created_at": "2026-11-27T16:56:18Z",
+        "strategy_family": "generic",
+        "is_branch_strategy": false,
+        "overall_grade": "incomplete",
+        "research_ready": false,
+        "dimensions": [
+          {
+            "dimension": "market_scope",
+            "grade": "missing",
+            "gaps": [
+              "market_scope is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "data_dependencies",
+            "grade": "missing",
+            "gaps": [
+              "data_dependencies is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "hypothesis",
+            "grade": "partial",
+            "gaps": [
+              "hypothesis is partial"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "evaluation_plan",
+            "grade": "missing",
+            "gaps": [
+              "evaluation_plan is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "risk_constraints",
+            "grade": "missing",
+            "gaps": [
+              "risk_constraints is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "execution_profile",
+            "grade": "missing",
+            "gaps": [
+              "execution_profile is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "governance",
+            "grade": "missing",
+            "gaps": [
+              "governance is missing"
+            ],
+            "required_actions": []
+          }
+        ],
+        "blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "data_requirements",
+            "block_key": "data_requirements",
+            "block_name": "data_requirements",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "資料需求與來源映射",
+            "title": "資料需求與來源映射",
+            "label_en": "Data requirements and source mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義資料需求與來源映射。",
+            "summary": "尚未定義資料需求與來源映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "hypothesis_scoring",
+            "block_key": "hypothesis_scoring",
+            "block_name": "hypothesis_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "核心假說與因子評分",
+            "title": "核心假說與因子評分",
+            "label_en": "Core hypothesis and factor scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "regime_invalidation",
+            "block_key": "regime_invalidation",
+            "block_name": "regime_invalidation",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "市場狀態遷移與失效條件",
+            "title": "市場狀態遷移與失效條件",
+            "label_en": "Regime transition and invalidation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義市場狀態遷移與失效條件。",
+            "summary": "尚未定義市場狀態遷移與失效條件。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先與風險過濾",
+            "title": "事件領先與風險過濾",
+            "label_en": "Event lead and risk filters",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先與風險過濾。",
+            "summary": "尚未定義事件領先與風險過濾。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義信號形成。",
+            "summary": "尚未定義信號形成。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "twelve_blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "data_requirements",
+            "block_key": "data_requirements",
+            "block_name": "data_requirements",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "資料需求與來源映射",
+            "title": "資料需求與來源映射",
+            "label_en": "Data requirements and source mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義資料需求與來源映射。",
+            "summary": "尚未定義資料需求與來源映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "hypothesis_scoring",
+            "block_key": "hypothesis_scoring",
+            "block_name": "hypothesis_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "核心假說與因子評分",
+            "title": "核心假說與因子評分",
+            "label_en": "Core hypothesis and factor scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "regime_invalidation",
+            "block_key": "regime_invalidation",
+            "block_name": "regime_invalidation",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "市場狀態遷移與失效條件",
+            "title": "市場狀態遷移與失效條件",
+            "label_en": "Regime transition and invalidation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義市場狀態遷移與失效條件。",
+            "summary": "尚未定義市場狀態遷移與失效條件。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先與風險過濾",
+            "title": "事件領先與風險過濾",
+            "label_en": "Event lead and risk filters",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先與風險過濾。",
+            "summary": "尚未定義事件領先與風險過濾。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義信號形成。",
+            "summary": "尚未定義信號形成。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "next_decision": {
+          "decision_id": "q1",
+          "question_id": "q1",
+          "question": "Which signal?",
+          "text": "Which signal?",
+          "why_now": "Signal is missing",
+          "why_it_matters": "Signal is missing",
+          "resolves": [
+            "signal_formation"
+          ],
+          "target_blocks": [
+            "signal_formation"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+              "text": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+              "description": "在贏家分點剛開始異常建倉、價格尚未反映時切入。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+              "text": "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+              "description": "要求分點群組流向一致且無反向出貨跡象才形成信號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+              "text": "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+              "description": "以機率校準後之成本後正期望值作為最終信號門檻。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+              "text": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+              "description": "一次產生多個可比較策略變體（V1～V5）進行回測評斷。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "B. 贏家分點買超 + Cluster 統一淨流量為正 + 關係人對應支持",
+            "C. 綜合評分排名前段且成本後 20d 期望值（EV）大於門檻",
+            "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人同時建立直接分點信號、Cluster 調整信號與綜合 Ensemble 對照（預設）",
+            "summary": "我先以核心評分加上反向流/短期過熱過濾建立基準信號，並保留變體供回測對照。",
+            "provisional_assumption": "我先以核心評分加上反向流/短期過熱過濾建立基準信號，並保留變體供回測對照。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        }
+      },
+      "meta": {
+        "snapshot_at": "2026-11-27T16:56:18.874823Z",
+        "capability": "agora.workshop.v1",
+        "audience": "tenant:pantheon-dev:user:agora-test-user"
+      }
+    },
+    "decision_post_response": {
+      "data": {
+        "event_id": "92cef85f-c11f-476f-b857-d156878c3551",
+        "sequence_no": 2,
+        "decision_id": "q1",
+        "question_id": "q1",
+        "question": "Which signal?",
+        "option_id": "opt_a",
+        "option_label": "A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+        "used_servant_default": false,
+        "resolves": [
+          "signal_formation",
+          "signal_definition"
+        ],
+        "target_blocks": [
+          "signal_formation"
+        ]
+      },
+      "meta": {
+        "snapshot_at": "2026-11-27T16:56:18.890431Z",
+        "capability": "agora.workshop.v1",
+        "audience": "tenant:pantheon-dev:user:agora-test-user",
+        "etag": "W/\"workshop:7eb33747-75e1-41a8-a288-a635356653cf:v2\""
+      }
+    },
+    "reconstruction_after_decision": {
+      "data": {
+        "reconstruction_id": "recon-e65c22925b839b0d1de6",
+        "workshop_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+        "based_on_sequence_no": 2,
+        "strategy_map": {
+          "hypothesis": {
+            "status": "confirmed",
+            "summary": "Momentum alpha",
+            "details": {
+              "message_numbers": [
+                1
+              ]
+            }
+          },
+          "universe": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "data_requirements": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "signal_definition": {
+            "status": "confirmed",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "details": {
+              "message_numbers": [
+                2
+              ],
+              "decision_id": "q1",
+              "selected_option_id": "opt_a"
+            }
+          },
+          "entry_rules": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "exit_rules": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "position_sizing": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "risk_controls": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "cost_liquidity_capacity": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "validation_plan": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "regime_invalidation": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          },
+          "governance_constraints": {
+            "status": "missing",
+            "summary": null,
+            "details": {}
+          }
+        },
+        "explicit_facts": [
+          "Momentum alpha",
+          "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+        ],
+        "inferences": [],
+        "assumptions": [],
+        "contradictions": [],
+        "evidence_refs": [
+          {
+            "ref_type": "conversation_sequence",
+            "ref_id": "seq-2",
+            "summary": "Messages up to sequence 2"
+          },
+          {
+            "ref_type": "workshop_decision",
+            "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+            "summary": "Decision q1 -> opt_a"
+          }
+        ],
+        "completeness": {
+          "grade": "insufficient",
+          "blockers": [
+            "Unconfirmed strategy dimensions: universe, data_requirements, entry_rules, exit_rules, position_sizing, risk_controls, cost_liquidity_capacity, validation_plan, regime_invalidation, governance_constraints",
+            "No valid executable StrategySpec provided or reconstructed"
+          ],
+          "confirmed_fields": [
+            "hypothesis",
+            "signal_definition"
+          ],
+          "unconfirmed_fields": [
+            "universe",
+            "data_requirements",
+            "entry_rules",
+            "exit_rules",
+            "position_sizing",
+            "risk_controls",
+            "cost_liquidity_capacity",
+            "validation_plan",
+            "regime_invalidation",
+            "governance_constraints"
+          ]
+        },
+        "next_best_question": {
+          "question_id": "decision_migration_reverse_flow",
+          "text": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "resolves": [
+            "migration_reverse_flow",
+            "regime_invalidation"
+          ],
+          "why_now": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "decision_id": "decision_migration_reverse_flow",
+          "question": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "why_it_matters": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "target_blocks": [
+            "migration_reverse_flow"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "text": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "description": "嚴格防範 A 分點買進、匯撥至 B 分點出貨的假買盤訊號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "text": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "description": "若群組統一淨流量低於原始買超 50%，自動調降贏家分點信賴值。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "text": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "description": "以單一分點歷史獨立進出績效為主，不合併其他分點流量。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "text": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "description": "同時保留單點原始分數與 Cluster 調整後分數，於回測中直接對照差異。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+            "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+            "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+            "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+            "summary": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。",
+            "provisional_assumption": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        },
+        "blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "insider_branch_mapping",
+            "block_key": "insider_branch_mapping",
+            "block_name": "insider_branch_mapping",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "關係人與分點映射",
+            "title": "關係人與分點映射",
+            "label_en": "Related-party and branch mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義關係人與分點映射。",
+            "summary": "尚未定義關係人與分點映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "winner_branch_scoring",
+            "block_key": "winner_branch_scoring",
+            "block_name": "winner_branch_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "贏家分點評分",
+            "title": "贏家分點評分",
+            "label_en": "Winner-branch scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "migration_reverse_flow",
+            "block_key": "migration_reverse_flow",
+            "block_name": "migration_reverse_flow",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "分點遷移與反向流",
+            "title": "分點遷移與反向流",
+            "label_en": "Branch migration and reverse flow",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義分點遷移與反向流。",
+            "summary": "尚未定義分點遷移與反向流。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先關聯",
+            "title": "事件領先關聯",
+            "label_en": "Event lead",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先關聯。",
+            "summary": "尚未定義事件領先關聯。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ]
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "twelve_blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "insider_branch_mapping",
+            "block_key": "insider_branch_mapping",
+            "block_name": "insider_branch_mapping",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "關係人與分點映射",
+            "title": "關係人與分點映射",
+            "label_en": "Related-party and branch mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義關係人與分點映射。",
+            "summary": "尚未定義關係人與分點映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "winner_branch_scoring",
+            "block_key": "winner_branch_scoring",
+            "block_name": "winner_branch_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "贏家分點評分",
+            "title": "贏家分點評分",
+            "label_en": "Winner-branch scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "migration_reverse_flow",
+            "block_key": "migration_reverse_flow",
+            "block_name": "migration_reverse_flow",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "分點遷移與反向流",
+            "title": "分點遷移與反向流",
+            "label_en": "Branch migration and reverse flow",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義分點遷移與反向流。",
+            "summary": "尚未定義分點遷移與反向流。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先關聯",
+            "title": "事件領先關聯",
+            "label_en": "Event lead",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先關聯。",
+            "summary": "尚未定義事件領先關聯。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ]
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "next_decision": {
+          "decision_id": "decision_migration_reverse_flow",
+          "question_id": "decision_migration_reverse_flow",
+          "question": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "text": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "why_now": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "why_it_matters": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "resolves": [
+            "migration_reverse_flow",
+            "regime_invalidation"
+          ],
+          "target_blocks": [
+            "migration_reverse_flow"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "text": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "description": "嚴格防範 A 分點買進、匯撥至 B 分點出貨的假買盤訊號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "text": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "description": "若群組統一淨流量低於原始買超 50%，自動調降贏家分點信賴值。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "text": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "description": "以單一分點歷史獨立進出績效為主，不合併其他分點流量。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "text": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "description": "同時保留單點原始分數與 Cluster 調整後分數，於回測中直接對照差異。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+            "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+            "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+            "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+            "summary": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。",
+            "provisional_assumption": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        },
+        "strategy_family": "winner_branch",
+        "is_branch_strategy": true,
+        "draft_proposal": null,
+        "provider_lineage": {
+          "engine": "workshop-semantic-v2",
+          "provider": "openclaw",
+          "trace_id": "ws-recon-850042897c9c1a5ac411ad82",
+          "input_sha256": "6c269b365e82dce1c1598f0749bb46057a9ef8b7546474b1cf8513a49cbcac26"
+        },
+        "created_at": "2026-11-27T16:56:18Z"
+      },
+      "meta": {
+        "snapshot_at": "2026-11-27T16:56:18.902642Z",
+        "capability": "agora.workshop.v1",
+        "audience": "tenant:pantheon-dev:user:agora-test-user",
+        "job_status": "completed",
+        "job_id": "rjob_985f88d28b234177bb26420116576619",
+        "registry_draft_ref": null
+      }
+    },
+    "completeness_after_decision": {
+      "data": {
+        "snapshot_id": "snap_rjob_985f88d28b234177bb26420116576619",
+        "workshop_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+        "strategy_version_id": "7eb33747-75e1-41a8-a288-a635356653cf",
+        "state_map_json": {
+          "hypothesis": {
+            "status": "confirmed",
+            "summary": "Momentum alpha",
+            "missing_definitions": []
+          },
+          "universe": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "data_requirements": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "signal_definition": {
+            "status": "confirmed",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "missing_definitions": []
+          },
+          "entry_rules": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "exit_rules": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "position_sizing": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "risk_controls": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "cost_liquidity_capacity": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "validation_plan": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "regime_invalidation": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          },
+          "governance_constraints": {
+            "status": "missing",
+            "summary": null,
+            "missing_definitions": []
+          }
+        },
+        "blocking_items_json": [
+          {
+            "field": "completeness",
+            "reason": "Unconfirmed strategy dimensions: universe, data_requirements, entry_rules, exit_rules, position_sizing, risk_controls, cost_liquidity_capacity, validation_plan, regime_invalidation, governance_constraints",
+            "source": "reconstruction_blocker"
+          },
+          {
+            "field": "completeness",
+            "reason": "No valid executable StrategySpec provided or reconstructed",
+            "source": "reconstruction_blocker"
+          }
+        ],
+        "next_question_json": {
+          "question_id": "decision_migration_reverse_flow",
+          "text": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "resolves": [
+            "migration_reverse_flow"
+          ],
+          "why_now": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "decision_id": "decision_migration_reverse_flow",
+          "question": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "why_it_matters": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "target_blocks": [
+            "migration_reverse_flow"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "text": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "description": "嚴格防範 A 分點買進、匯撥至 B 分點出貨的假買盤訊號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "text": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "description": "若群組統一淨流量低於原始買超 50%，自動調降贏家分點信賴值。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "text": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "description": "以單一分點歷史獨立進出績效為主，不合併其他分點流量。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "text": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "description": "同時保留單點原始分數與 Cluster 調整後分數，於回測中直接對照差異。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+            "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+            "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+            "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+            "summary": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。",
+            "provisional_assumption": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        },
+        "created_at": "2026-11-27T16:56:18Z",
+        "strategy_family": "winner_branch",
+        "is_branch_strategy": true,
+        "overall_grade": "incomplete",
+        "research_ready": false,
+        "dimensions": [
+          {
+            "dimension": "market_scope",
+            "grade": "missing",
+            "gaps": [
+              "market_scope is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "data_dependencies",
+            "grade": "missing",
+            "gaps": [
+              "data_dependencies is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "hypothesis",
+            "grade": "complete",
+            "gaps": [],
+            "required_actions": []
+          },
+          {
+            "dimension": "evaluation_plan",
+            "grade": "missing",
+            "gaps": [
+              "evaluation_plan is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "risk_constraints",
+            "grade": "missing",
+            "gaps": [
+              "risk_constraints is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "execution_profile",
+            "grade": "missing",
+            "gaps": [
+              "execution_profile is missing"
+            ],
+            "required_actions": []
+          },
+          {
+            "dimension": "governance",
+            "grade": "missing",
+            "gaps": [
+              "governance is missing"
+            ],
+            "required_actions": []
+          }
+        ],
+        "blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "insider_branch_mapping",
+            "block_key": "insider_branch_mapping",
+            "block_name": "insider_branch_mapping",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "關係人與分點映射",
+            "title": "關係人與分點映射",
+            "label_en": "Related-party and branch mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義關係人與分點映射。",
+            "summary": "尚未定義關係人與分點映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "winner_branch_scoring",
+            "block_key": "winner_branch_scoring",
+            "block_name": "winner_branch_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "贏家分點評分",
+            "title": "贏家分點評分",
+            "label_en": "Winner-branch scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "migration_reverse_flow",
+            "block_key": "migration_reverse_flow",
+            "block_name": "migration_reverse_flow",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "分點遷移與反向流",
+            "title": "分點遷移與反向流",
+            "label_en": "Branch migration and reverse flow",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義分點遷移與反向流。",
+            "summary": "尚未定義分點遷移與反向流。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先關聯",
+            "title": "事件領先關聯",
+            "label_en": "Event lead",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先關聯。",
+            "summary": "尚未定義事件領先關聯。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ]
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "twelve_blocks": [
+          {
+            "order": 1,
+            "block_id": "market_scope",
+            "block_key": "market_scope",
+            "block_name": "market_scope",
+            "v10_block_id": "market_scope",
+            "strategy_map_key": "universe",
+            "mapped_dimension": "market_scope",
+            "name": "研究對象與市場範圍",
+            "title": "研究對象與市場範圍",
+            "label_en": "Market scope",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義研究對象與市場範圍。",
+            "summary": "尚未定義研究對象與市場範圍。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 2,
+            "block_id": "insider_branch_mapping",
+            "block_key": "insider_branch_mapping",
+            "block_name": "insider_branch_mapping",
+            "v10_block_id": "insider_branch_mapping",
+            "strategy_map_key": "data_requirements",
+            "mapped_dimension": "data_dependencies",
+            "name": "關係人與分點映射",
+            "title": "關係人與分點映射",
+            "label_en": "Related-party and branch mapping",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義關係人與分點映射。",
+            "summary": "尚未定義關係人與分點映射。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 3,
+            "block_id": "winner_branch_scoring",
+            "block_key": "winner_branch_scoring",
+            "block_name": "winner_branch_scoring",
+            "v10_block_id": "winner_branch_scoring",
+            "strategy_map_key": "hypothesis",
+            "mapped_dimension": "data_dependencies",
+            "name": "贏家分點評分",
+            "title": "贏家分點評分",
+            "label_en": "Winner-branch scoring",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "Momentum alpha",
+            "summary": "Momentum alpha",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_event",
+                "ref_id": "4fd9d590-59ab-45f9-9ca2-a838185d89a3",
+                "message_number": 1,
+                "sequence_no": 1,
+                "summary": "Private workshop message"
+              }
+            ]
+          },
+          {
+            "order": 4,
+            "block_id": "migration_reverse_flow",
+            "block_key": "migration_reverse_flow",
+            "block_name": "migration_reverse_flow",
+            "v10_block_id": "migration_reverse_flow",
+            "strategy_map_key": "regime_invalidation",
+            "mapped_dimension": "data_dependencies",
+            "name": "分點遷移與反向流",
+            "title": "分點遷移與反向流",
+            "label_en": "Branch migration and reverse flow",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義分點遷移與反向流。",
+            "summary": "尚未定義分點遷移與反向流。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 5,
+            "block_id": "event_lead",
+            "block_key": "event_lead",
+            "block_name": "event_lead",
+            "v10_block_id": "event_lead",
+            "strategy_map_key": "risk_controls",
+            "mapped_dimension": "hypothesis",
+            "name": "事件領先關聯",
+            "title": "事件領先關聯",
+            "label_en": "Event lead",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義事件領先關聯。",
+            "summary": "尚未定義事件領先關聯。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 6,
+            "block_id": "signal_formation",
+            "block_key": "signal_formation",
+            "block_name": "signal_formation",
+            "v10_block_id": "signal_formation",
+            "strategy_map_key": "signal_definition",
+            "mapped_dimension": "hypothesis",
+            "name": "信號形成",
+            "title": "信號形成",
+            "label_en": "Signal formation",
+            "state": "confirmed",
+            "state_label_zh": "已確認",
+            "note": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "summary": "交易員裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離；已裁示（opt_a）：A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離",
+            "missing_definitions": [],
+            "source_citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ],
+            "citations": [
+              {
+                "ref_type": "workshop_decision",
+                "ref_id": "92cef85f-c11f-476f-b857-d156878c3551",
+                "message_number": 2,
+                "sequence_no": 2,
+                "decision_id": "q1",
+                "option_id": "opt_a",
+                "summary": "交易員裁示 (opt_a): A. 高分贏家分點單日或連日異常買超且股價尚未大幅乖離"
+              }
+            ]
+          },
+          {
+            "order": 7,
+            "block_id": "entry_holding",
+            "block_key": "entry_holding",
+            "block_name": "entry_holding",
+            "v10_block_id": "entry_holding",
+            "strategy_map_key": "entry_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "進場與持有週期",
+            "title": "進場與持有週期",
+            "label_en": "Entry and holding",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義進場與持有週期。",
+            "summary": "尚未定義進場與持有週期。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 8,
+            "block_id": "add_reduce_exit",
+            "block_key": "add_reduce_exit",
+            "block_name": "add_reduce_exit",
+            "v10_block_id": "add_reduce_exit",
+            "strategy_map_key": "exit_rules",
+            "mapped_dimension": "evaluation_plan",
+            "name": "加碼、減碼與出場",
+            "title": "加碼、減碼與出場",
+            "label_en": "Add, reduce, and exit",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義加碼、減碼與出場。",
+            "summary": "尚未定義加碼、減碼與出場。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 9,
+            "block_id": "sizing_leverage",
+            "block_key": "sizing_leverage",
+            "block_name": "sizing_leverage",
+            "v10_block_id": "sizing_leverage",
+            "strategy_map_key": "position_sizing",
+            "mapped_dimension": "risk_constraints",
+            "name": "部位與槓桿",
+            "title": "部位與槓桿",
+            "label_en": "Sizing and leverage",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義部位與槓桿。",
+            "summary": "尚未定義部位與槓桿。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 10,
+            "block_id": "cost_liquidity_capacity",
+            "block_key": "cost_liquidity_capacity",
+            "block_name": "cost_liquidity_capacity",
+            "v10_block_id": "cost_liquidity_capacity",
+            "strategy_map_key": "cost_liquidity_capacity",
+            "mapped_dimension": "execution_profile",
+            "name": "成本、流動性與容量",
+            "title": "成本、流動性與容量",
+            "label_en": "Cost, liquidity, and capacity",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義成本、流動性與容量。",
+            "summary": "尚未定義成本、流動性與容量。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 11,
+            "block_id": "validation_backtest_refutation",
+            "block_key": "validation_backtest_refutation",
+            "block_name": "validation_backtest_refutation",
+            "v10_block_id": "validation_backtest_refutation",
+            "strategy_map_key": "validation_plan",
+            "mapped_dimension": "execution_profile",
+            "name": "驗證、回測與反證",
+            "title": "驗證、回測與反證",
+            "label_en": "Validation, backtest, and refutation",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義驗證、回測與反證。",
+            "summary": "尚未定義驗證、回測與反證。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          },
+          {
+            "order": 12,
+            "block_id": "monitoring_update",
+            "block_key": "monitoring_update",
+            "block_name": "monitoring_update",
+            "v10_block_id": "monitoring_update",
+            "strategy_map_key": "governance_constraints",
+            "mapped_dimension": "governance",
+            "name": "監控與策略更新",
+            "title": "監控與策略更新",
+            "label_en": "Monitoring and update",
+            "state": "missing",
+            "state_label_zh": "尚缺",
+            "note": "尚未定義監控與策略更新。",
+            "summary": "尚未定義監控與策略更新。",
+            "missing_definitions": [],
+            "source_citations": [],
+            "citations": []
+          }
+        ],
+        "next_decision": {
+          "decision_id": "decision_migration_reverse_flow",
+          "question_id": "decision_migration_reverse_flow",
+          "question": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "text": "請裁示「分點遷移與反向流（跨分點匯撥/出貨）」的辨識與過濾規則：",
+          "why_now": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "why_it_matters": "遷移與失效規則決定何時應調降單點訊號信賴度或暫停策略。",
+          "resolves": [
+            "migration_reverse_flow"
+          ],
+          "target_blocks": [
+            "migration_reverse_flow"
+          ],
+          "options": [
+            {
+              "option_id": "opt_a",
+              "id": "opt_a",
+              "label": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "text": "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+              "description": "嚴格防範 A 分點買進、匯撥至 B 分點出貨的假買盤訊號。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_b",
+              "id": "opt_b",
+              "label": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "text": "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+              "description": "若群組統一淨流量低於原始買超 50%，自動調降贏家分點信賴值。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_c",
+              "id": "opt_c",
+              "label": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "text": "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+              "description": "以單一分點歷史獨立進出績效為主，不合併其他分點流量。",
+              "is_default": false
+            },
+            {
+              "option_id": "opt_d",
+              "id": "opt_d",
+              "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "text": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+              "description": "同時保留單點原始分數與 Cluster 調整後分數，於回測中直接對照差異。",
+              "is_default": true
+            }
+          ],
+          "answer_options": [
+            "A. 買入後無買進紀錄之其他分點突然大量賣出即視為疑似轉倉並剔除",
+            "B. 建立同券商/共現分點 Cluster，以統一淨流量（Net Unified Flow）折算分數",
+            "C. 僅追蹤單一分點完整買進與賣出回合（Round-trip）",
+            "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）"
+          ],
+          "default_option_id": "opt_d",
+          "servant_default": {
+            "option_id": "opt_d",
+            "label": "D. 由僕人建立分點 Flow Graph 並以 Cluster-adjusted 分數併行比較（預設）",
+            "summary": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。",
+            "provisional_assumption": "我先建立調整前與調整後雙版本規則，將異常反向流與高波動狀態納入風險折減。"
+          },
+          "score_total": 85.0,
+          "freeform_allowed": true,
+          "defer_allowed": true
+        }
+      },
+      "meta": {
+        "snapshot_at": "2026-11-27T16:56:18.910251Z",
+        "capability": "agora.workshop.v1",
+        "audience": "tenant:pantheon-dev:user:agora-test-user"
+      }
+    }
+  }
+}

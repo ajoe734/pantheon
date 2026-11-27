@@ -58,6 +58,21 @@
       "method": "GET",
       "path": "/bff/agora/servant/sessions/{session_id}/stream",
       "owner": "agora"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/completeness",
+      "owner": "agora"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{workshop_id}/decisions",
+      "owner": "agora"
     }
   ],
   "owner_contracts": {
@@ -91,7 +106,9 @@
     "agora": [
       "agora.servant_sessions",
       "agora.servant_turns",
-      "agora.decision_locks"
+      "agora.decision_locks",
+      "agora.strategy_completeness_snapshot",
+      "agora.strategy_workshop_event"
     ]
   },
   "limitations": [

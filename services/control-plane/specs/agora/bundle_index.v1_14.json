@@ -6,11 +6,11 @@
     "bundle_index_sha256": "36cce833c8b34fb128750576435a93d40e1271d0cba6b89104898d5d68eda336"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "dba83245c515525fb563f9bed51c350ae0c9e554c08e339b7f94de9521ef9c4d"
+    "specs/agora/v15/capability_manifest_v1_14.json": "6de23372c06e688016324c6b952ea0655a4019ff5f0e49fdb3348b22b7915bed"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "82c3c5ba7fdc8f8eda12a68575ec39fbcfd76743c338bbc8df88c2ef232bf40a"
+    "sha256": "463103f4d19ae32679a549cc8886eac74e0b14046df834ccd3094799a9640465"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -31,6 +31,11 @@
     "agora.servant.data-tools.v1": [
       "POST /bff/agora/servant/sessions/{session_id}/messages",
       "GET /bff/agora/servant/sessions/{session_id}/stream"
+    ],
+    "agora.workshop.twelve-block-completeness.v1": [
+      "GET /bff/agora/workshops/{workshop_id}/completeness",
+      "POST /bff/agora/workshops/{workshop_id}/completeness",
+      "POST /bff/agora/workshops/{workshop_id}/decisions"
     ]
   },
   "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."
