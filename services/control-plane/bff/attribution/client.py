@@ -12,7 +12,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from services.control_plane.bff.core.owner_reads import remaining_management_read_budget
 
@@ -21,6 +21,14 @@ _ENV_TOKENS = ("EVALUATION_SERVICE_TOKEN", "EVALUATION_API_TOKEN")
 SUBJECT_KINDS = ("trader", "persona", "pool_member")
 DIRECTIONS = ("outstanding", "underperform", "disagreement")
 SHADOW_ARMS = ("trader", "base_strategy", "private_servant", "institutional_view")
+# Arm names settled by the attribution owner (services/evaluation C3). The Agora
+# owner-scoped comparison speaks these names; the lock records the human and
+# institutional arms as ``trader`` and ``institutional_view``.
+CANONICAL_SHADOW_ARMS = ("human_actual", "private_servant", "base_strategy", "committee_variant")
+CANONICAL_ARM_ALIASES: Mapping[str, tuple] = {
+    "human_actual": ("trader",),
+    "committee_variant": ("institutional_view",),
+}
 _IDENTITY_KEYS = frozenset({"subject_id", "trader_id", "agora_user_id", "user_id", "account_id", "broker_ids"})
 
 
@@ -205,10 +213,12 @@ def shape_record_detail(
     }
 
 
-def _lock_arm(lock: Optional[Mapping[str, Any]], arm: str) -> Dict[str, Any]:
+def _lock_arm(
+    lock: Optional[Mapping[str, Any]], arm: str, aliases: Sequence[str] = ()
+) -> Dict[str, Any]:
     if lock is None:
         return {"available": False, "unavailable_reason": "agora_lock_unavailable"}
-    if arm == "trader":
+    if arm == "trader" or "trader" in aliases:
         return {
             "available": True,
             "decision": lock.get("decision"),
@@ -220,6 +230,9 @@ def _lock_arm(lock: Optional[Mapping[str, Any]], arm: str) -> Dict[str, Any]:
         }
     arms = lock.get("arms") if isinstance(lock.get("arms"), Mapping) else {}
     value = arms.get(arm)
+    for alias in aliases:
+        if not isinstance(value, Mapping):
+            value = arms.get(alias)
     return dict(value) if isinstance(value, Mapping) else {"available": False, "unavailable_reason": f"{arm}_arm_not_recorded"}
 
 
@@ -232,17 +245,29 @@ def shape_shadow(
     lock_unavailable_reason: Optional[str],
     is_operator: bool,
     snapshot_at: str,
+    arm_names: Sequence[str] = SHADOW_ARMS,
+    arm_aliases: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
-    """Four arms, each with lock detail (Agora owner) and settlement (attribution owner)."""
+    """Four arms, each with lock detail (Agora owner) and settlement (attribution owner).
+
+    ``arm_names``/``arm_aliases`` let the Agora owner-scoped route speak the
+    attribution owner's canonical arm names; the Management route keeps the
+    defaults and therefore its existing contract.
+    """
+    aliases = dict(arm_aliases or {})
     owner_arms: Dict[str, Mapping[str, Any]] = {}
     if attribution is not None:
         for a in attribution.get("arms") or []:
             if isinstance(a, Mapping) and _text(a.get("arm")):
                 owner_arms[_text(a["arm"])] = a
-    names = list(SHADOW_ARMS) + [n for n in owner_arms if n not in SHADOW_ARMS]
+    consumed = set(arm_names) | {alias for n in arm_names for alias in aliases.get(n, ())}
+    names = list(arm_names) + [n for n in owner_arms if n not in consumed]
     arms: List[Dict[str, Any]] = []
     for name in names:
         settle = owner_arms.get(name)
+        for alias in aliases.get(name, ()):
+            if settle is None:
+                settle = owner_arms.get(alias)
         if settle is not None:
             settlement = {
                 "settlement_source": settle.get("settlement_source"),
@@ -257,7 +282,7 @@ def shape_shadow(
                 "settled_at": None,
                 "unavailable_reason": attribution_unavailable_reason or "arm_not_reported_by_attribution_owner",
             }
-        arm_lock = _lock_arm(lock, name)
+        arm_lock = _lock_arm(lock, name, tuple(aliases.get(name, ())))
         if lock is None and lock_unavailable_reason:
             arm_lock["unavailable_reason"] = lock_unavailable_reason
         arms.append({"arm": name, "decision_detail": arm_lock, **settlement})
