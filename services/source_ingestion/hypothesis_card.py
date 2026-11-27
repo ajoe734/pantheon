@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 import jsonschema
 
@@ -357,6 +357,107 @@ DAILY_CAP_REACHED = "daily_cap"
 RECORD_DAILY_LIMIT = "record_daily_limit"
 RECORD_TOTAL_LIMIT = "record_total_limit"
 
+RELEASE_SWITCH_TABLE = "release_switch"
+INVALID_DEPLOYMENT_SHAS = frozenset({"", "unknown", "unresolved", "local-dev"})
+DEPLOYMENT_SHA_ENVS = ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT")
+RELEASE_SWITCHED_AT_ENVS = ("PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT")
+
+
+def valid_deployment_sha(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if not text or text.lower() in INVALID_DEPLOYMENT_SHAS:
+        return None
+    return text
+
+
+def active_deployment_sha(env: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    effective_env = env if env is not None else os.environ
+    for key in DEPLOYMENT_SHA_ENVS:
+        sha = valid_deployment_sha(effective_env.get(key))
+        if sha is not None:
+            return sha
+    return None
+
+
+def _switch_iso(value: Any) -> Optional[str]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        if val != val or val <= 0:
+            return None
+        return datetime.fromtimestamp(val, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10:
+            parsed = datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def sync_release_switch_row(
+    connection: sqlite3.Connection,
+    *,
+    now_epoch: float,
+    deployment_sha: Optional[str] = None,
+    switched_at: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Optional[dict[str, str]]:
+    """Record the initial switch timestamp of a deployed release identity once per release SHA.
+
+    A same-release restart preserves the existing ``switched_at`` recorded when
+    ``deployment_sha`` first activated. When neither a valid deployment SHA nor an
+    explicit switch timestamp is present, nothing is written or guessed.
+    """
+    connection.execute(
+        f"""CREATE TABLE IF NOT EXISTS {RELEASE_SWITCH_TABLE} (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            deployment_sha TEXT NOT NULL,
+            switched_at TEXT NOT NULL
+        )"""
+    )
+    effective_env = env if env is not None else os.environ
+    effective_sha = valid_deployment_sha(deployment_sha) or active_deployment_sha(effective_env)
+    explicit_iso: Optional[str] = None
+    if switched_at is not None:
+        explicit_iso = _switch_iso(switched_at)
+        if explicit_iso is None:
+            raise ValueError("release_switch_time_invalid")
+    else:
+        for key in RELEASE_SWITCHED_AT_ENVS:
+            if key in effective_env:
+                raw = str(effective_env.get(key) or "").strip()
+                if raw:
+                    explicit_iso = _switch_iso(raw)
+                break
+    existing = connection.execute(
+        f"SELECT deployment_sha, switched_at FROM {RELEASE_SWITCH_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    if effective_sha is None and explicit_iso is None:
+        if existing is None:
+            return None
+        return {"deployment_sha": str(existing[0]), "switched_at": str(existing[1])}
+    if existing is not None:
+        existing_sha = str(existing[0] or "").strip()
+        existing_switched = str(existing[1] or "").strip()
+        if effective_sha is not None and existing_sha == effective_sha and explicit_iso is None:
+            return {"deployment_sha": existing_sha, "switched_at": existing_switched}
+    new_sha = effective_sha or (str(existing[0]).strip() if existing and str(existing[0]).strip() else "explicit-switch")
+    new_switched = explicit_iso or _switch_iso(now_epoch) or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    connection.execute(
+        f"INSERT OR REPLACE INTO {RELEASE_SWITCH_TABLE}(singleton, deployment_sha, switched_at) VALUES (1, ?, ?)",
+        (new_sha, new_switched),
+    )
+    return {"deployment_sha": new_sha, "switched_at": new_switched}
+
 
 class ExtractionLedger:
     """SQLite-backed daily call counter, per-record attempts and outcome record.
@@ -368,9 +469,16 @@ class ExtractionLedger:
     billing-only provider failure.
     """
 
-    def __init__(self, path: str | Path | None = None, *, daily_cap: int | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        daily_cap: int | None = None,
+        now: Callable[[], Any] | None = None,
+    ) -> None:
         self._path = str(path) if path else ":memory:"
         self._daily_cap = DEFAULT_DAILY_CALL_CAP if daily_cap is None else max(0, int(daily_cap))
+        self._now = now
         self._lock = threading.Lock()
         self._keeper: Optional[sqlite3.Connection] = None
         if self._path == ":memory:":
@@ -406,6 +514,35 @@ class ExtractionLedger:
                 "CREATE TABLE IF NOT EXISTS record_attempts (source_id TEXT NOT NULL, digest TEXT NOT NULL,"
                 " total INTEGER NOT NULL, day TEXT NOT NULL, day_n INTEGER NOT NULL,"
                 " last_reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(source_id, digest))"
+            )
+            sync_release_switch_row(c, now_epoch=self._now_epoch())
+
+    def _now_epoch(self) -> float:
+        if callable(self._now):
+            val = self._now()
+            if isinstance(val, datetime):
+                return (val if val.tzinfo else val.replace(tzinfo=timezone.utc)).timestamp()
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return float(val)
+            iso = _switch_iso(val)
+            if iso is not None:
+                return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+        return datetime.now(timezone.utc).timestamp()
+
+    def record_release_switch(
+        self,
+        *,
+        deployment_sha: Optional[str] = None,
+        switched_at: Any = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> Optional[dict[str, str]]:
+        with self._lock, self._conn() as c:
+            return sync_release_switch_row(
+                c,
+                now_epoch=self._now_epoch(),
+                deployment_sha=deployment_sha,
+                switched_at=switched_at,
+                env=env,
             )
 
     @property
@@ -1048,7 +1185,9 @@ __all__ = [
     "MAX_RECORD_ATTEMPTS_TOTAL",
     "RECORD_DAILY_LIMIT",
     "RECORD_TOTAL_LIMIT",
+    "RELEASE_SWITCH_TABLE",
     "RESERVED",
+    "active_deployment_sha",
     "card_to_strategy_seed_metadata",
     "extractor_from_env",
     "finalize_card",
@@ -1056,5 +1195,7 @@ __all__ = [
     "has_first_run_ritual_marker",
     "hypothesis_card_contract_schema",
     "hypothesis_card_model_schema",
+    "sync_release_switch_row",
+    "valid_deployment_sha",
     "verify_cited_spans",
 ]

@@ -72,6 +72,8 @@ def good_board():
                     "ritual_events_since_switch": 0,
                     "events_examined_since_switch": 3,
                     "ritual_events_truncated": False,
+                    "ritual_events_scan_hit_cap": False,
+                    "ritual_events_oldest_scanned_at": "2026-11-28T05:00:00Z",
                     "ritual_events": [],
                     "ritual_events_sample_truncated": False,
                 },
@@ -284,6 +286,92 @@ def test_missing_unreadable_or_incomplete_ritual_observation_or_switch_time_fail
     )
 
 
+def test_bounded_scan_earlier_switch_override_requires_proven_coverage(tmp_path, monkeypatch):
+    import sqlite3
+    from services.source_ingestion import discovery_summary as ds
+    from services.source_ingestion.distillation_worker import DistillationJobQueue
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
+
+    now_epoch = NOW.timestamp()
+    queue = DistillationJobQueue(tmp_path / "distill_job_queue.jsonl", now=lambda: now_epoch)
+    ledger_path = tmp_path / "l2_extraction_ledger.sqlite"
+    ledger = ExtractionLedger(ledger_path, daily_cap=400, now=lambda: now_epoch)
+    assert ledger.reserve_call("s1", "d1")
+
+    with sqlite3.connect(ledger_path) as conn:
+        for ts, sid, detail in (
+            ("2026-11-28T07:00:00Z", "s-bad-07", "First-run setup is pending; what should I call you?"),
+            ("2026-11-28T08:00:00Z", "s-ok-08", "Quarterly revenue report with no testable mechanism."),
+            ("2026-11-28T09:00:00Z", "s-ok-09", "Monthly sales summary with no testable mechanism."),
+            ("2026-11-28T10:00:00Z", "s-ok-10", "Earnings call transcript with no testable mechanism."),
+        ):
+            conn.execute(
+                "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+                (ts, sid, "no_hypothesis", detail, None),
+            )
+
+    monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 2)
+    summary_bounded = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at="2026-11-28T11:00:00Z",
+    )
+    llm_bounded = summary_bounded["llm_calls"]
+    assert llm_bounded["ritual_events"] == []
+    assert llm_bounded["ritual_events_truncated"] is False
+    assert llm_bounded["ritual_events_scan_hit_cap"] is True
+    assert llm_bounded["ritual_events_oldest_scanned_at"] == "2026-11-28T09:00:00Z"
+
+    board_bounded = good_board()
+    board_bounded["data"]["discovery_summary"]["llm_calls"] = llm_bounded
+
+    # Producer cutoff 11:00 is covered (oldest scanned 09:00 < 11:00) and passes.
+    rep_11 = dpd.judge(board_bounded, good_health(), NOW)
+    assert rep_11["verdict"] == "passed"
+    assert rep_11["ritual_events_since_switch"] == 0
+
+    # Overriding cutoff to 06:00 (earlier than oldest scanned 09:00 when scan hit cap=2) must fail unavailable,
+    # never falsely pass with count=0.
+    rep_06 = dpd.judge(board_bounded, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_06["verdict"] == "failed"
+    assert rep_06["ritual_events_since_switch"] is None
+    assert stage(rep_06, "hypothesis_cards")["reason"] == "unreadable:ritual_events_since_switch:observation_truncated"
+
+    # Without ritual_events_scan_hit_cap metadata, an earlier switch override also fails closed.
+    board_no_cap_meta = copy.deepcopy(board_bounded)
+    del board_no_cap_meta["data"]["discovery_summary"]["llm_calls"]["ritual_events_scan_hit_cap"]
+    rep_no_meta = dpd.judge(board_no_cap_meta, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_no_meta["verdict"] == "failed"
+    assert rep_no_meta["ritual_events_since_switch"] is None
+    assert (
+        stage(rep_no_meta, "hypothesis_cards")["reason"]
+        == "unreadable:ritual_events_since_switch:observation_missing_for_switch_override"
+    )
+
+    # With scan cap >= total rows (scan_hit_cap=False), overriding cutoff to 06:00 has proven full-ledger
+    # coverage and catches the 07:00 ritual event.
+    monkeypatch.setattr(ds, "LEDGER_EVENT_SCAN_CAP", 10)
+    summary_full = ds.read_discovery_summary(
+        queue_path=queue.path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+        release_switched_at="2026-11-28T11:00:00Z",
+    )
+    board_full = good_board()
+    board_full["data"]["discovery_summary"]["llm_calls"] = summary_full["llm_calls"]
+    rep_full_06 = dpd.judge(board_full, good_health(), NOW, switched_at="2026-11-28T06:00:00Z")
+    assert rep_full_06["verdict"] == "failed"
+    assert rep_full_06["ritual_events_since_switch"] == 1
+    assert stage(rep_full_06, "hypothesis_cards")["reason"] == "ritual_marked_events_since_switch:1"
+
+
 def test_e2e_check_and_main_with_real_queue_ledger_and_discovery_summary(tmp_path, server, monkeypatch, capsys):
     import sqlite3
     from services.source_ingestion.connectors.base import SourceRecord
@@ -432,6 +520,53 @@ def test_e2e_check_and_main_with_real_queue_ledger_and_discovery_summary(tmp_pat
     assert "VERDICT failed failed=hypothesis_cards" in out_contaminated
     assert "reason=ritual_marked_events_since_switch:1" in out_contaminated
     assert '"ritual_events_since_switch": 1' in out_contaminated
+
+    # 3. Missing release switch input (even with controller started_at present after the 08:30Z event)
+    #    must fail closed with release_switch_time_missing rather than guessing started_at or import time.
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
+    (tmp_path / "distill_controller_state.json").write_text(
+        json.dumps({"started_at": "2026-11-28T10:00:00Z"}), encoding="utf-8"
+    )
+    summary_no_switch = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+    )
+    assert summary_no_switch["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert summary_no_switch["llm_calls"]["ritual_events_reason"] == "release_switch_time_missing"
+    Handler.board = project_board_from_summary(summary_no_switch)
+    assert dpd.main(now=NOW) == 1
+    out_no_switch = capsys.readouterr().out
+    assert "VERDICT failed failed=hypothesis_cards" in out_no_switch
+    assert "reason=unreadable:ritual_events_since_switch:release_switch_time_missing" in out_no_switch
+
+    # 4. Same-release restart: release SHA switched at 06:00Z, restarted at 10:00Z on the same SHA.
+    release_sha = "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    queue.record_release_switch(deployment_sha=release_sha, switched_at=switch_iso)
+    ledger.record_release_switch(deployment_sha=release_sha, switched_at=switch_iso)
+    (tmp_path / "distill_controller_state.json").write_text(
+        json.dumps({"deployment": {"git_sha": release_sha}, "started_at": "2026-11-28T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_SHA", release_sha)
+    DistillationJobQueue(queue_path, now=lambda: now_epoch)
+    ExtractionLedger(ledger_path, daily_cap=400, now=lambda: now_epoch)
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    summary_restarted = read_discovery_summary(
+        queue_path=queue_path,
+        tenant_id="tenant-dev",
+        ledger_path=ledger_path,
+        now=now_epoch,
+    )
+    assert summary_restarted["llm_calls"]["release_switched_at"] == switch_iso
+    assert summary_restarted["llm_calls"]["ritual_events_since_switch"] == 1
+    Handler.board = project_board_from_summary(summary_restarted)
+    assert dpd.main(now=NOW) == 1
+    out_restarted = capsys.readouterr().out
+    assert "reason=ritual_marked_events_since_switch:1" in out_restarted
 
 
 @pytest.mark.parametrize("card", [

@@ -64,6 +64,7 @@ from services.source_ingestion.hypothesis_card import (
     extractor_from_env,
     fixed_defect_for_skip_reason,
     l2_extraction_tick_budget_seconds,
+    sync_release_switch_row,
 )
 from services.source_ingestion.hypothesis_compiler import (
     COMPILED,
@@ -886,6 +887,30 @@ class DistillationJobQueue:
                ON distillation_dead_letters(resolved_at) WHERE resolved_at IS NOT NULL""",
         ):
             connection.execute(statement)
+        sync_release_switch_row(connection, now_epoch=float(self._now()))
+
+    def record_release_switch(
+        self,
+        *,
+        deployment_sha: str | None = None,
+        switched_at: Any = None,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, str] | None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                out = sync_release_switch_row(
+                    connection,
+                    now_epoch=float(self._now()),
+                    deployment_sha=deployment_sha,
+                    switched_at=switched_at,
+                    env=env,
+                )
+                connection.execute("COMMIT")
+                return out
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
 
     @staticmethod
     def _migrate_terminal_counts(connection: sqlite3.Connection) -> None:

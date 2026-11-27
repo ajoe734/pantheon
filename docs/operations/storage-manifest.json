@@ -3083,6 +3083,26 @@
    "task": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125"
   },
   {
+   "bound_proof": {
+    "contains": "singleton INTEGER PRIMARY KEY CHECK (singleton = 1)",
+    "file": "services/source_ingestion/hypothesis_card.py"
+   },
+   "bound_status": "bounded",
+   "cap": "at most 1 row (singleton INTEGER PRIMARY KEY CHECK (singleton = 1)), overwritten in place only when a new deployed GIT_SHA activates (~100 bytes total)",
+   "cleanup": "singleton row is replaced in place on release switch; no history is appended",
+   "growth_driver": "one singleton row per SQLite database (l2_extraction_ledger.sqlite and distill_job_queue.jsonl) recording the active deployment_sha and initial switched_at timestamp",
+   "growth_per_day": "0 rows/day (1 row maximum, ~100 bytes)",
+   "kind": "table",
+   "name": "services/source_ingestion/hypothesis_card.py::{RELEASE_SWITCH_TABLE}",
+   "owner": "source_ingestion",
+   "readers": [
+    "services/source_ingestion/discovery_summary.py",
+    "services/source_ingestion/distillation_worker.py",
+    "services/source_ingestion/hypothesis_card.py"
+   ],
+   "task": "OPENCLAW-AGENT-WORKSPACE-FIRST-RUN-RETIRE-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",

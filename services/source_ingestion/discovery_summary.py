@@ -27,7 +27,7 @@ import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from services.source_ingestion.distillation_worker import (
     TERMINAL_COUNTS_TABLE,
@@ -35,8 +35,11 @@ from services.source_ingestion.distillation_worker import (
 )
 from services.source_ingestion.hypothesis_card import (
     BUDGET_PATH_ENV,
+    RELEASE_SWITCH_TABLE,
+    active_deployment_sha,
     daily_cap_from_env,
     has_first_run_ritual_marker,
+    valid_deployment_sha,
 )
 
 SUMMARY_SOURCE = "source_ingestion.distillation_queue"
@@ -65,8 +68,6 @@ READ_TIME_BUDGET_SECONDS = 2.0
 # Worst case: 50 cards x (title 200 + claim 400 + 2 ids x 200 chars, <= 3 bytes
 # each, + keys) plus 2 x 6 families x 41 reasons; tested against this bound.
 MAX_RESPONSE_BYTES = 256 * 1024
-
-_PROCESS_STARTED_EPOCH = float(int(time.time()))
 
 EXTERNAL_TEXT_FAMILIES = tuple(sorted(t.value for t in _EXTERNAL_TEXT_TYPES))
 _FAMILY_SQL = ", ".join(f"'{family}'" for family in EXTERNAL_TEXT_FAMILIES)
@@ -108,43 +109,113 @@ def _parse_epoch(value: Any) -> Optional[float]:
     return parsed.timestamp()
 
 
+def _read_db_release_switch(
+    connection: "_BoundedConnection", tables: set[str]
+) -> Optional[tuple[str, str]]:
+    if RELEASE_SWITCH_TABLE not in tables:
+        return None
+    row = connection.execute(
+        f"SELECT deployment_sha, switched_at FROM {RELEASE_SWITCH_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row[0] or "").strip(), str(row[1] or "").strip()
+
+
 def _resolve_release_switched_at(
     queue_path: Path,
-    effective_now: float,
     release_switched_at: Any = None,
     env: Optional[Mapping[str, str]] = None,
-) -> tuple[Optional[float], Optional[str]]:
+    *,
+    db_switch_rows: Sequence[tuple[str, str]] = (),
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
+    """Resolve an authoritative release switch timestamp; never guess or fall back to started_at."""
+    effective_env = env if env is not None else os.environ
+    env_sha = active_deployment_sha(effective_env)
     if release_switched_at is not None:
+        if isinstance(release_switched_at, str) and not release_switched_at.strip():
+            return None, None, "release_switch_time_missing"
         epoch = _parse_epoch(release_switched_at)
         if epoch is None:
-            return None, "release_switch_time_invalid"
-        return epoch, None
-    effective_env = env if env is not None else os.environ
+            return None, None, "release_switch_time_invalid"
+        return epoch, env_sha, None
     for key in (RELEASE_SWITCHED_AT_ENV, ACCEPTANCE_SWITCHED_AT_ENV):
         if key in effective_env:
             raw = str(effective_env.get(key) or "").strip()
             if not raw:
-                return None, "release_switch_time_missing"
+                return None, None, "release_switch_time_missing"
             epoch = _parse_epoch(raw)
             if epoch is None:
-                return None, "release_switch_time_invalid"
-            return epoch, None
+                return None, None, "release_switch_time_invalid"
+            return epoch, env_sha, None
+
+    state_shas: list[str] = []
+    state_has_invalid_sha = False
+    explicit_state_switch: Optional[tuple[float, Optional[str]]] = None
     for state_name in ("distill_controller_state.json", "controller_state.json"):
         candidate = queue_path.with_name(state_name)
         try:
-            if candidate.is_file() and candidate.stat().st_size <= 65_536:
-                payload = json.loads(candidate.read_text(encoding="utf-8"))
-                if isinstance(payload, dict) and payload.get("started_at") is not None:
-                    started_epoch = _parse_epoch(payload.get("started_at"))
-                    if started_epoch is None:
-                        return None, "release_switch_time_invalid"
-                    if started_epoch <= effective_now + 300:
-                        return started_epoch, None
+            if not candidate.is_file():
+                continue
+            if candidate.stat().st_size > 65_536:
+                return None, None, "release_switch_time_unreadable"
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None, "release_switch_time_unreadable"
-    if effective_now >= _PROCESS_STARTED_EPOCH:
-        return _PROCESS_STARTED_EPOCH, None
-    return float(int(effective_now - WINDOW_SECONDS)), None
+            return None, None, "release_switch_time_unreadable"
+        if not isinstance(payload, dict):
+            return None, None, "release_switch_time_unreadable"
+        deployment = payload.get("deployment")
+        file_sha: Optional[str] = None
+        if isinstance(deployment, Mapping) and "git_sha" in deployment:
+            file_sha = valid_deployment_sha(deployment.get("git_sha"))
+            if file_sha is None:
+                state_has_invalid_sha = True
+            else:
+                state_shas.append(file_sha)
+        # Only explicit release_switched_at fields qualify; controller started_at
+        # is reset on every container restart and is never release switch truth.
+        raw_switch = payload.get("release_switched_at")
+        if raw_switch is None and isinstance(deployment, Mapping):
+            raw_switch = deployment.get("release_switched_at")
+        if raw_switch is not None:
+            if isinstance(raw_switch, str) and not raw_switch.strip():
+                return None, None, "release_switch_time_missing"
+            parsed_switch = _parse_epoch(raw_switch)
+            if parsed_switch is None:
+                return None, None, "release_switch_time_invalid"
+            if explicit_state_switch is None:
+                explicit_state_switch = (parsed_switch, file_sha or env_sha)
+
+    if len(set(state_shas)) > 1:
+        return None, None, "release_switch_deployment_mismatch"
+    if env_sha is not None and state_shas and state_shas[0] != env_sha:
+        return None, None, "release_switch_deployment_mismatch"
+
+    if explicit_state_switch is not None:
+        return explicit_state_switch[0], explicit_state_switch[1], None
+
+    if db_switch_rows:
+        if state_has_invalid_sha and env_sha is None:
+            return None, None, "release_switch_deployment_mismatch"
+        expected_sha = env_sha or (state_shas[0] if state_shas else None)
+        valid_rows: list[tuple[str, float]] = []
+        for raw_sha, raw_ts in db_switch_rows:
+            epoch = _parse_epoch(raw_ts)
+            if epoch is None:
+                return None, None, "release_switch_time_invalid"
+            if raw_sha != "explicit-switch" and valid_deployment_sha(raw_sha) is None:
+                return None, None, "release_switch_time_invalid"
+            if expected_sha is not None and raw_sha != "explicit-switch" and raw_sha != expected_sha:
+                return None, None, "release_switch_deployment_mismatch"
+            valid_rows.append((raw_sha, epoch))
+        distinct_shas = {sha for sha, _ in valid_rows if sha != "explicit-switch"}
+        if len(distinct_shas) > 1:
+            return None, None, "release_switch_deployment_mismatch"
+        chosen_epoch = min(ep for _, ep in valid_rows)
+        chosen_sha = next(iter(distinct_shas), expected_sha)
+        return chosen_epoch, chosen_sha, None
+
+    return None, None, "release_switch_time_missing"
 
 
 def _clip(value: Any, limit: int) -> Optional[str]:
@@ -230,16 +301,16 @@ def _reason_block(rows: list[tuple[str, str, int]]) -> dict[str, Any]:
     }
 
 
-def _schema_ready(connection: _BoundedConnection) -> Optional[str]:
+def _schema_ready(connection: _BoundedConnection) -> tuple[Optional[str], set[str]]:
     tables = {
         str(r[0]) for r in connection.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')")
     }
     if "distillation_outbox" not in tables:
-        return "distillation_queue_not_initialized"
+        return "distillation_queue_not_initialized", tables
     needed = {TERMINAL_COUNTS_TABLE, "distillation_outbox_tenant_enqueued_idx", "distillation_outbox_tenant_terminal_idx"}
     if not needed <= tables:
-        return "distillation_queue_not_migrated"
-    return None
+        return "distillation_queue_not_migrated", tables
+    return None, tables
 
 
 def _window_rows(
@@ -367,8 +438,9 @@ def _read_ledger(
     deadline: float,
     default_cap: int,
     *,
-    switch_epoch: Optional[float] = None,
-    switch_error: Optional[str] = None,
+    queue_path: Path,
+    release_switched_at: Any = None,
+    queue_switch_row: Optional[tuple[str, str]] = None,
 ) -> dict[str, Any]:
     """LLM calls today, the claim of each newest card, and bounded post-switch ritual observation."""
     day = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -403,9 +475,17 @@ def _read_ledger(
                 except (ValueError, AttributeError):
                     claim = None
                 card.update(claim=_clip(claim, MAX_CLAIM_CHARS), claim_status="ok" if claim else "claim_missing")
+            ledger_switch_row = _read_db_release_switch(connection, tables)
+            db_switch_rows = [r for r in (ledger_switch_row, queue_switch_row) if r is not None]
+            switch_epoch, switch_sha, switch_error = _resolve_release_switched_at(
+                queue_path,
+                release_switched_at=release_switched_at,
+                db_switch_rows=db_switch_rows,
+            )
             if switch_error is not None or switch_epoch is None:
                 ritual_obs = {
                     "release_switched_at": None,
+                    "release_deployment_sha": switch_sha,
                     "ritual_events_status": "unavailable",
                     "ritual_events_reason": switch_error or "release_switch_time_missing",
                     "ritual_events_since_switch": None,
@@ -413,6 +493,7 @@ def _read_ledger(
             elif "events" not in tables:
                 ritual_obs = {
                     "release_switched_at": _iso(switch_epoch),
+                    "release_deployment_sha": switch_sha,
                     "ritual_events_status": "unavailable",
                     "ritual_events_reason": "extraction_ledger_events_missing",
                     "ritual_events_since_switch": None,
@@ -459,12 +540,14 @@ def _read_ledger(
                                 }
                             )
                 scan_hit_cap = len(event_rows) > LEDGER_EVENT_SCAN_CAP
+                oldest_scanned_iso = _iso(oldest_scanned_epoch) if oldest_scanned_epoch is not None else None
                 truncated = bool(
                     scan_hit_cap and (oldest_scanned_epoch is None or oldest_scanned_epoch >= switch_epoch)
                 )
                 if invalid_ts:
                     ritual_obs = {
                         "release_switched_at": _iso(switch_epoch),
+                        "release_deployment_sha": switch_sha,
                         "ritual_events_status": "unavailable",
                         "ritual_events_reason": "ledger_event_timestamp_invalid",
                         "ritual_events_since_switch": None,
@@ -472,19 +555,25 @@ def _read_ledger(
                 elif truncated:
                     ritual_obs = {
                         "release_switched_at": _iso(switch_epoch),
+                        "release_deployment_sha": switch_sha,
                         "ritual_events_status": "unavailable",
                         "ritual_events_reason": "observation_truncated",
                         "ritual_events_since_switch": None,
                         "ritual_events_truncated": True,
+                        "ritual_events_scan_hit_cap": True,
+                        "ritual_events_oldest_scanned_at": oldest_scanned_iso,
                         "events_examined_since_switch": examined_since_switch,
                     }
                 else:
                     ritual_obs = {
                         "release_switched_at": _iso(switch_epoch),
+                        "release_deployment_sha": switch_sha,
                         "ritual_events_status": "ok",
                         "ritual_events_since_switch": ritual_since_switch,
                         "events_examined_since_switch": examined_since_switch,
                         "ritual_events_truncated": False,
+                        "ritual_events_scan_hit_cap": bool(scan_hit_cap),
+                        "ritual_events_oldest_scanned_at": oldest_scanned_iso,
                         "ritual_events": ritual_samples,
                         "ritual_events_sample_truncated": total_ritual_scanned > MAX_RITUAL_EVENT_SAMPLES,
                     }
@@ -523,9 +612,7 @@ def read_discovery_summary(
     queue_path = Path(queue_path)
     ledger = Path(ledger_path) if ledger_path is not None else resolve_ledger_path(queue_path)
     tenant = str(tenant_id or "").strip()
-    switch_epoch, switch_error = _resolve_release_switched_at(
-        queue_path, effective_now, release_switched_at=release_switched_at
-    )
+    queue_switch_row: Optional[tuple[str, str]] = None
 
     sections: dict[str, Any]
     if not tenant:
@@ -537,7 +624,8 @@ def read_discovery_summary(
     else:
         try:
             with closing(_open_read_only(queue_path, deadline)) as connection:
-                not_ready = _schema_ready(connection)
+                not_ready, queue_tables = _schema_ready(connection)
+                queue_switch_row = _read_db_release_switch(connection, queue_tables)
                 if not_ready:
                     reason = _unavailable(SUMMARY_SOURCE, not_ready)
                     sections = {"collected": reason, "closed": reason, "cards": dict(reason, newest=[])}
@@ -553,8 +641,9 @@ def read_discovery_summary(
         effective_now,
         deadline,
         daily_cap if daily_cap is not None else daily_cap_from_env(),
-        switch_epoch=switch_epoch,
-        switch_error=switch_error,
+        queue_path=queue_path,
+        release_switched_at=release_switched_at,
+        queue_switch_row=queue_switch_row,
     )
     return {
         "tenant_id": tenant or None,

@@ -310,31 +310,85 @@ def _ritual_events_since_switch(
         if candidate_list is not None:
             event_lists.append((label, candidate_list))
 
-    list_counts: List[int] = []
+    covered_list_counts: List[int] = []
+    positive_observed_counts: List[int] = []
+    ritual_scan_truncated = False
+    ritual_sample_truncated = False
+
+    scan_hit_cap = llm_calls.get("ritual_events_scan_hit_cap")
+    oldest_scanned_raw = llm_calls.get("ritual_events_oldest_scanned_at")
+    oldest_scanned: Optional[datetime] = None
+    if oldest_scanned_raw is not None:
+        oldest_scanned = (
+            oldest_scanned_raw
+            if isinstance(oldest_scanned_raw, datetime)
+            else _parse_time(oldest_scanned_raw)
+        )
+        if oldest_scanned is None:
+            return None, "unreadable:ritual_events_since_switch:ledger_event_timestamp_invalid", cutoff_iso
+    if scan_hit_cap is True and (oldest_scanned is None or oldest_scanned >= cutoff):
+        ritual_scan_truncated = True
+
     for label, event_list in event_lists:
-        if label == "llm_calls.ritual_events" and llm_calls.get("ritual_events_sample_truncated") is True:
-            if cutoff_overridden:
-                return None, "unreadable:ritual_events_since_switch:observation_truncated", cutoff_iso
-            continue
         try:
-            list_counts.append(count_ritual_events_since_switch(event_list, cutoff))
+            c = count_ritual_events_since_switch(event_list, cutoff)
         except ValueError as exc:
             return None, f"unreadable:ritual_events_since_switch:{exc}", cutoff_iso
+        if c > 0:
+            positive_observed_counts.append(c)
+
+        if label == "llm_calls.ritual_events":
+            if llm_calls.get("ritual_events_sample_truncated") is True:
+                ritual_sample_truncated = True
+                continue
+            if ritual_scan_truncated:
+                continue
+            if scan_hit_cap is False and llm_calls.get("ritual_events_truncated") is False:
+                covered_list_counts.append(c)
+            elif (
+                scan_hit_cap is True
+                and oldest_scanned is not None
+                and oldest_scanned < cutoff
+                and llm_calls.get("ritual_events_truncated") is False
+            ):
+                covered_list_counts.append(c)
+            elif (
+                scan_hit_cap is None
+                and board_cutoff is not None
+                and cutoff >= board_cutoff
+                and llm_calls.get("ritual_events_truncated") is False
+            ):
+                covered_list_counts.append(c)
+            continue
+
+        if label in ("llm_calls.events_since_switch", "discovery_summary.events_since_switch"):
+            if board_cutoff is not None and cutoff >= board_cutoff:
+                covered_list_counts.append(c)
+            continue
+
+        covered_list_counts.append(c)
+
+    if not covered_list_counts:
+        if ritual_scan_truncated or (ritual_sample_truncated and cutoff_overridden):
+            return None, "unreadable:ritual_events_since_switch:observation_truncated", cutoff_iso
+        if cutoff_overridden:
+            fallback_positive = list(positive_observed_counts)
+            if explicit_counts and max(explicit_counts) > 0 and board_cutoff is not None and cutoff <= board_cutoff:
+                fallback_positive.append(max(explicit_counts))
+            if fallback_positive:
+                return max(fallback_positive), None, cutoff_iso
+            return None, "unreadable:ritual_events_since_switch:observation_missing_for_switch_override", cutoff_iso
+        if not explicit_counts and not positive_observed_counts:
+            return None, "unreadable:ritual_events_since_switch:observation_missing", cutoff_iso
+        return max([*explicit_counts, *positive_observed_counts]), None, cutoff_iso
 
     if cutoff_overridden:
-        if not list_counts:
-            if explicit_counts and max(explicit_counts) > 0 and board_cutoff is not None and cutoff <= board_cutoff:
-                return max(explicit_counts), None, cutoff_iso
-            return None, "unreadable:ritual_events_since_switch:observation_missing_for_switch_override", cutoff_iso
-        total = max(list_counts)
+        total = max([*covered_list_counts, *positive_observed_counts])
         if explicit_counts and board_cutoff is not None and cutoff <= board_cutoff:
             total = max(total, max(explicit_counts))
         return total, None, cutoff_iso
 
-    if not explicit_counts and not list_counts:
-        return None, "unreadable:ritual_events_since_switch:observation_missing", cutoff_iso
-
-    total = max([*explicit_counts, *list_counts])
+    total = max([*explicit_counts, *covered_list_counts, *positive_observed_counts])
     return total, None, cutoff_iso
 
 

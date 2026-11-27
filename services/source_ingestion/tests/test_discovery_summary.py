@@ -169,17 +169,24 @@ def test_summary_reports_windows_totals_cards_and_llm_calls(tmp_path):
     assert out["bounds"]["elapsed_ms"] >= 0
 
 
-def test_llm_cap_comes_from_the_writer_ledger(tmp_path):
+def test_llm_cap_comes_from_the_writer_ledger(tmp_path, monkeypatch):
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
     queue = _queue_with_jobs(tmp_path)
     _, ledger = _ledger(tmp_path, {}, calls=2, cap=250)
     out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", daily_cap=999)
     assert out["llm_calls"]["calls"] == 2
     assert (out["llm_calls"]["daily_cap"], out["llm_calls"]["cap_source"]) == (250, "ledger")
-    assert out["llm_calls"]["ritual_events_status"] == "ok"
-    assert out["llm_calls"]["ritual_events_since_switch"] == 0
+    assert out["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out["llm_calls"]["ritual_events_reason"] == "release_switch_time_missing"
+    assert out["llm_calls"]["ritual_events_since_switch"] is None
 
 
 def test_ledger_ritual_observation_tracks_post_switch_and_excludes_pre_switch(tmp_path, monkeypatch):
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
     queue = _queue_with_jobs(tmp_path)
     ledger_path, _ = _ledger(tmp_path, {}, calls=2, cap=400)
     switch_iso = "2026-11-25T08:00:00Z"
@@ -206,6 +213,8 @@ def test_ledger_ritual_observation_tracks_post_switch_and_excludes_pre_switch(tm
     assert llm_clean["ritual_events_since_switch"] == 0
     assert llm_clean["events_examined_since_switch"] == 1
     assert llm_clean["ritual_events_truncated"] is False
+    assert llm_clean["ritual_events_scan_hit_cap"] is False
+    assert llm_clean["ritual_events_oldest_scanned_at"] == "2026-11-25T07:00:00Z"
 
     with sqlite3.connect(ledger_path) as conn:
         conn.execute(
@@ -213,16 +222,17 @@ def test_ledger_ritual_observation_tracks_post_switch_and_excludes_pre_switch(tm
             ("2026-11-25T10:00:00Z", "s-post-ritual", "failed", "openclaw_workspace_first_run_ritual: 請問該怎麼稱呼你？", None),
         )
 
-    # Also verify reading release switch time from sibling distill_controller_state.json when not passed explicitly.
+    # Controller started_at is process restart time, never release switch truth: without an
+    # authoritative switch input it must return unavailable (release_switch_time_missing).
     (tmp_path / "distill_controller_state.json").write_text(
-        json.dumps({"started_at": switch_iso}), encoding="utf-8"
+        json.dumps({"started_at": "2026-11-25T11:00:00Z"}), encoding="utf-8"
     )
-    out_dirty = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", now=NOW)
-    llm_dirty = out_dirty["llm_calls"]
-    assert llm_dirty["release_switched_at"] == switch_iso
-    assert llm_dirty["ritual_events_status"] == "ok"
-    assert llm_dirty["ritual_events_since_switch"] == 1
-    assert llm_dirty["events_examined_since_switch"] == 2
+    out_no_switch = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", now=NOW)
+    assert out_no_switch["llm_calls"]["release_switched_at"] is None
+    assert out_no_switch["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out_no_switch["llm_calls"]["ritual_events_reason"] == "release_switch_time_missing"
+    assert out_no_switch["llm_calls"]["ritual_events_since_switch"] is None
+    (tmp_path / "distill_controller_state.json").unlink()
 
     # Invalid switch time or truncated scan fails closed with unavailable status, never zero.
     out_bad_switch = ds.read_discovery_summary(
@@ -245,7 +255,85 @@ def test_ledger_ritual_observation_tracks_post_switch_and_excludes_pre_switch(tm
     assert out_trunc["llm_calls"]["ritual_events_status"] == "unavailable"
     assert out_trunc["llm_calls"]["ritual_events_reason"] == "observation_truncated"
     assert out_trunc["llm_calls"]["ritual_events_truncated"] is True
+    assert out_trunc["llm_calls"]["ritual_events_scan_hit_cap"] is True
+    assert out_trunc["llm_calls"]["ritual_events_oldest_scanned_at"] == "2026-11-25T10:00:00Z"
     assert out_trunc["llm_calls"]["ritual_events_since_switch"] is None
+
+
+def test_missing_switch_input_and_same_release_restart_regressions(tmp_path, monkeypatch):
+    for key in ("GIT_SHA", "PANTHEON_DEPLOYMENT_SHA", "PANTHEON_DEPLOY_SHA", "BFF_COMMIT",
+                "PANTHEON_RELEASE_SWITCHED_AT", "ACCEPTANCE_RELEASE_SWITCHED_AT"):
+        monkeypatch.delenv(key, raising=False)
+
+    t_switch = datetime(2026, 11, 27, 11, 38, tzinfo=timezone.utc).timestamp()
+    t_ritual_iso = "2026-11-27T12:38:00Z"
+    t_restart = datetime(2026, 11, 27, 13, 38, tzinfo=timezone.utc).timestamp()
+
+    # 1. Missing-input regression (actual switch 11:38Z, ritual event 12:38Z, process import/read 13:38Z,
+    #    no switch env or release-switch record): must be unavailable, never guessed from 13:38Z or started_at.
+    missing_dir = tmp_path / "missing"
+    missing_dir.mkdir()
+    q_missing = DistillationJobQueue(missing_dir / "distill_job_queue.jsonl", now=lambda: t_switch)
+    l_missing = ExtractionLedger(missing_dir / "l2_extraction_ledger.sqlite", daily_cap=400, now=lambda: t_switch)
+    assert l_missing.reserve_call("s-ritual", "d-ritual")
+    with sqlite3.connect(missing_dir / "l2_extraction_ledger.sqlite") as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (t_ritual_iso, "s-ritual", "no_hypothesis", "First-run setup is pending; what should I call you?", None),
+        )
+    out_missing = ds.read_discovery_summary(queue_path=q_missing.path, tenant_id="tenant-dev", now=t_restart)
+    assert out_missing["llm_calls"]["release_switched_at"] is None
+    assert out_missing["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out_missing["llm_calls"]["ritual_events_reason"] == "release_switch_time_missing"
+    assert out_missing["llm_calls"]["ritual_events_since_switch"] is None
+
+    # 2. Same-release restart regression: release SHA switches at 11:38Z, ritual event occurs at 12:38Z,
+    #    then controller & worker restart on the same release SHA at 13:38Z (resetting controller started_at
+    #    to 13:38Z). The recorded release switch remains 11:38Z and the 12:38Z ritual event is still caught.
+    restart_dir = tmp_path / "restart"
+    restart_dir.mkdir()
+    release_sha = "7a9674ea259bbac883e42f3ee217b3e8f68170fe"
+    monkeypatch.setenv("GIT_SHA", release_sha)
+    q_restart = DistillationJobQueue(restart_dir / "distill_job_queue.jsonl", now=lambda: t_switch)
+    l_restart = ExtractionLedger(restart_dir / "l2_extraction_ledger.sqlite", daily_cap=400, now=lambda: t_switch)
+    assert l_restart.reserve_call("s-ritual", "d-ritual")
+    with sqlite3.connect(restart_dir / "l2_extraction_ledger.sqlite") as conn:
+        conn.execute(
+            "INSERT INTO events(ts, source_id, outcome, detail, usage) VALUES(?,?,?,?,?)",
+            (t_ritual_iso, "s-ritual", "no_hypothesis", "First-run setup is pending; what should I call you?", None),
+        )
+
+    # Same-release restart at 13:38Z resets started_at in both controller state files and re-opens queue/ledger.
+    for state_name in ("distill_controller_state.json", "controller_state.json"):
+        (restart_dir / state_name).write_text(
+            json.dumps({"deployment": {"git_sha": release_sha}, "started_at": "2026-11-27T13:38:00Z"}),
+            encoding="utf-8",
+        )
+    DistillationJobQueue(restart_dir / "distill_job_queue.jsonl", now=lambda: t_restart)
+    ExtractionLedger(restart_dir / "l2_extraction_ledger.sqlite", daily_cap=400, now=lambda: t_restart)
+
+    # Even if the reader process (source-ingest) does not carry GIT_SHA in its own env,
+    # it reads the deployment-bound switch record and verifies it against the controller state SHA.
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    out_restarted = ds.read_discovery_summary(queue_path=q_restart.path, tenant_id="tenant-dev", now=t_restart)
+    llm_restarted = out_restarted["llm_calls"]
+    assert llm_restarted["release_switched_at"] == "2026-11-27T11:38:00Z"
+    assert llm_restarted["release_deployment_sha"] == release_sha
+    assert llm_restarted["ritual_events_status"] == "ok"
+    assert llm_restarted["ritual_events_since_switch"] == 1
+    assert llm_restarted["events_examined_since_switch"] == 1
+
+    # If the controller state advances to a newer release SHA before the queue/ledger records it,
+    # the stale switch record fails closed with release_switch_deployment_mismatch.
+    (restart_dir / "distill_controller_state.json").write_text(
+        json.dumps({"deployment": {"git_sha": "b" * 40}, "started_at": "2026-11-27T13:38:00Z"}),
+        encoding="utf-8",
+    )
+    out_mismatch = ds.read_discovery_summary(queue_path=q_restart.path, tenant_id="tenant-dev", now=t_restart)
+    assert out_mismatch["llm_calls"]["release_switched_at"] is None
+    assert out_mismatch["llm_calls"]["ritual_events_status"] == "unavailable"
+    assert out_mismatch["llm_calls"]["ritual_events_reason"] == "release_switch_deployment_mismatch"
+    assert out_mismatch["llm_calls"]["ritual_events_since_switch"] is None
 
 
 def test_other_tenant_sees_only_its_rows(tmp_path):

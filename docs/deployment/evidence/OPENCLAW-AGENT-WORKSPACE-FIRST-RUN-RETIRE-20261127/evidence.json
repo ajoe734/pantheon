@@ -4,7 +4,7 @@
   "class": "RC2",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at_utc": "2026-11-27T13:11:00Z",
+  "recorded_at_utc": "2026-11-27T14:15:00Z",
   "ac1_skip_bootstrap_and_gateway_source_citations": {
     "config_entry": {
       "path": "agents.defaults.skipBootstrap",
@@ -159,11 +159,11 @@
     "probe_file": "acceptance/discovery_pipeline_day.py",
     "owner_summary_file": "services/source_ingestion/discovery_summary.py",
     "field": "hypothesis_cards.ritual_events_since_switch",
-    "judge_invariant": "read_discovery_summary._read_ledger reads events newest-first (bounded by LEDGER_EVENT_SCAN_CAP = 5000 and the 2.0 s read time budget) and publishes release_switched_at, ritual_events_status, ritual_events_since_switch, events_examined_since_switch, ritual_events_truncated, and ritual_events in summary.llm_calls (forwarded by GET /bff/alpha-factory in data.discovery_summary.llm_calls). stage_hypothesis_cards in acceptance/discovery_pipeline_day.py requires a valid release switch timestamp and an ok non-truncated observation with ritual_events_since_switch == 0; missing, unreadable, or truncated observations or missing/invalid switch times fail closed and never default to 0."
+    "judge_invariant": "read_discovery_summary._read_ledger reads events newest-first (bounded by LEDGER_EVENT_SCAN_CAP = 5000 and the 2.0 s read time budget) using an authoritative release switch input (explicit parameter/env or the deployment-SHA-bound release_switch singleton row recorded once per deployed GIT_SHA in the distillation queue and extraction ledger and preserved across same-release restarts, never substituting controller started_at, process import time, or now - 24h, and returning unavailable when missing or mismatched) and publishes release_switched_at, release_deployment_sha, ritual_events_status, ritual_events_since_switch, events_examined_since_switch, ritual_events_truncated, ritual_events_scan_hit_cap, ritual_events_oldest_scanned_at, and ritual_events in summary.llm_calls (forwarded by GET /bff/alpha-factory in data.discovery_summary.llm_calls). stage_hypothesis_cards in acceptance/discovery_pipeline_day.py requires a valid release switch timestamp, proven scan coverage back to the requested cutoff (including earlier switch overrides), and an ok non-truncated observation with ritual_events_since_switch == 0; missing, unreadable, or truncated observations or missing/invalid switch times fail closed and never default to 0."
   },
   "ac6_runtime_budget_and_residual_findings": {
     "runtime_budget": {
-      "storage_manifest_registration": "docs/operations/storage-manifest.json :: runtime_budgets (OpenClaw retired stock first-run workspace archive and receipts)",
+      "storage_manifest_registration": "docs/operations/storage-manifest.json :: runtime_budgets (OpenClaw retired stock first-run workspace archive and receipts) and entries (services/source_ingestion/hypothesis_card.py::{RELEASE_SWITCH_TABLE}, singleton 1-row table, ~100 B, 0 B/day)",
       "writer": "<stateDir>/retired-stock-bootstrap/<workspace>/<file> and <stateDir>/retired-stock-bootstrap/receipts.jsonl (scripts/openclaw-configure-shared-model-pool.sh)",
       "cadence": "One-time migration during openclaw-configure-shared-model-pool.sh; idempotent no-op on subsequent runs",
       "hosted_scale_count_and_size": "At most ~60 files across existing workspaces, <= 8 KB each, total <= 480 KB archive plus <= ~60 lines in receipts.jsonl (<= 16 KB) on existing openclaw-data volume",
@@ -189,7 +189,7 @@
       ".venv-pantheon/bin/python3 scripts/git/diff_budget.py --base origin/dev"
     ],
     "results": {
-      "focused_suite": "265 passed, 1 deselected in 95.02s",
+      "focused_suite": "267 passed, 1 deselected in 97.29s",
       "storage_manifest_check": "passed: true, failures: []"
     }
   }
