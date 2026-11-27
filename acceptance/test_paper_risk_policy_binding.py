@@ -521,3 +521,119 @@ def test_revoked_or_superseded_previous_approval_next_to_valid_renewal_passes_wi
     report = check(payload)
     assert report["passed"], report
     assert report["personas"]["fixture-persona"]["profile_mapping_approval"] == "apv-risk-renew-next"
+
+
+def session_paused(binding, reason="market_input_stale", resumed_at=None, binding_id="paused-binding"):
+    """Hosted paper fleet reconciler shape at the 05:30Z close (stale_patch in paper_fleet_reconciler)."""
+    paused = copy.deepcopy(binding)
+    paused["binding_id"] = binding_id
+    paused["status"] = "paused"
+    paused["metadata"]["session_admission"] = {
+        "reason_code": reason, "source_snapshot_id": "snap-us-2026-11-25",
+        "source_event_time": "2026-11-25T21:00:00Z", "observed_at": "2026-11-27T05:30:04Z",
+        "max_age_seconds": 86400, "pause_command_ref": "cmd-stale-pause-" + binding_id + "-0a1b2c3d",
+        "resume_snapshot_id": None, "resumed_at": resumed_at}
+    return paused
+
+
+def _bindings(payload):
+    return payload["/api/v1/runtime-bindings?deployment_mode=paper"]["data"]
+
+
+def test_active_binding_reports_active_status_without_session_admission():
+    row = check(evidence())["personas"]["fixture-persona"]
+    assert row["binding_status"] == "active" and "session_admission" not in row
+
+
+def test_session_paused_binding_for_stale_market_input_is_checked_and_reported():
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings[:] = [session_paused(bindings[0])]
+    report = check(payload)
+    assert report["passed"] and report["checked"] == 1, report["failed"]
+    row = report["personas"]["fixture-persona"]
+    assert row["binding_id"] == "paused-binding" and row["binding_status"] == "paused"
+    assert row["session_admission"] == {"reason_code": "market_input_stale", "observed_at": "2026-11-27T05:30:04Z",
+                                        "source_event_time": "2026-11-25T21:00:00Z"}
+    assert row["profile_mapping_approval"] == "fixture-owner-approval"
+
+
+def test_session_paused_binding_still_runs_every_other_check():
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings[:] = [session_paused(bindings[0])]
+    payload["/api/v1/approval-decisions"]["data"][0]["expires_at"] = "2026-11-20T12:00:00Z"
+    payload["/bff/capital-pools/fixture-pool"]["data"]["metadata"]["risk_policy"]["gross_limit"] = None
+    report = check(payload)
+    assert not report["passed"] and report["checked"] == 1
+    assert "fixture-persona:required_profile_mapping_unresolved" in report["failed"]
+    assert "fixture-persona:policy_gross_limit_missing" in report["failed"]
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings[:] = [session_paused(bindings[0])]
+    payload["/bff/capital-pools/fixture-pool"]["data"]["status"] = "paused"
+    report = check(payload)
+    assert report["checked"] == 0 and "fixture-persona:pool_owner_identity_or_status_invalid" in report["failed"]
+
+
+@pytest.mark.parametrize("reason,resumed_at,code", [
+    ("operator_requested_pause", None, "binding_paused:operator_requested_pause"),
+    ("market_input_missing", None, "binding_paused:market_input_missing"),
+    (None, None, "binding_paused:unknown"),
+    ("market_input_stale", "2026-11-27T07:00:00Z", "binding_paused:market_input_stale"),
+])
+def test_binding_paused_for_another_reason_fails(reason, resumed_at, code):
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings[:] = [session_paused(bindings[0], reason=reason, resumed_at=resumed_at)]
+    report = check(payload)
+    assert not report["passed"] and report["checked"] == 0
+    assert report["failed"] == ["fixture-persona:" + code, "no_expected_personas_checked"]
+
+
+def test_paused_without_session_admission_fails_unknown():
+    payload = evidence()
+    bindings = _bindings(payload)
+    paused = session_paused(bindings[0])
+    del paused["metadata"]["session_admission"]
+    bindings[:] = [paused]
+    assert "fixture-persona:binding_paused:unknown" in check(payload)["failed"]
+
+
+def test_active_plus_session_paused_for_same_persona_is_ambiguous():
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings.append(session_paused(bindings[0]))
+    report = check(payload)
+    assert report["checked"] == 0
+    assert "fixture-persona:active_tenant_binding_ambiguous" in report["failed"]
+
+
+def test_active_next_to_operator_paused_still_selects_the_active_binding():
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings.append(session_paused(bindings[0], reason="operator_requested_pause"))
+    report = check(payload)
+    assert report["passed"], report["failed"]
+    assert report["personas"]["fixture-persona"]["binding_id"] == "active-binding"
+
+
+@pytest.mark.parametrize("statuses", [["retired"], ["failed"], ["retired", "failed"], []])
+def test_only_retired_or_failed_bindings_are_missing(statuses):
+    payload = evidence()
+    bindings = _bindings(payload)
+    template = bindings[0]
+    bindings[:] = [dict(copy.deepcopy(template), status=s, binding_id="b-" + s) for s in statuses]
+    report = check(payload)
+    assert report["checked"] == 0
+    assert report["failed"] == ["fixture-persona:active_tenant_binding_missing", "no_expected_personas_checked"]
+
+
+def test_duplicate_active_bindings_are_ambiguous_and_foreign_tenant_is_missing():
+    payload = evidence()
+    bindings = _bindings(payload)
+    bindings.append(dict(copy.deepcopy(bindings[0]), binding_id="other-active"))
+    assert "fixture-persona:active_tenant_binding_ambiguous" in check(payload)["failed"]
+    payload = evidence()
+    _bindings(payload)[0]["metadata"]["tenant_id"] = "other-tenant"
+    assert "fixture-persona:active_tenant_binding_missing" in check(payload)["failed"]
