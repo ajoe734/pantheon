@@ -8569,9 +8569,37 @@ class PaperRuntimeService:
 
         return self._member_virtual_books.snapshot(baseline_resolver=resolve, **scope)
 
+    def _import_parked_decision(self, parked_event: Any, signal_metadata: Mapping[str, Any]) -> None:
+        try:
+            if isinstance(parked_event, Mapping):
+                # Admit the exact upstream park into the existing outbox before
+                # continuing its chain. Ingest collapses the exact duplicate.
+                envelope = validate_envelope(parked_event.get("correlation_envelope"))
+                journey_id = str(envelope["journey_id"])
+                if (
+                    parked_event.get("event_type") != "trade_decision"
+                    or parked_event.get("sequence_no") != 1
+                    or (parked_event.get("metadata") or {}).get("decision_status") != "pending_settlement"
+                    or journey_id != signal_metadata.get("journey_id")
+                    or parked_event.get("signal_id") != signal_metadata.get("signal_id")
+                    or parked_event.get("run_id") != signal_metadata.get("run_id")
+                ):
+                    raise LifecycleTelemetryOutboxError("invalid upstream park event")
+                if journey_id not in self._lifecycle_chains:
+                    checkpoint = {"sequence_no": 1, "event_id": parked_event["event_id"],
+                                  "correlation_envelope": dict(envelope)}
+                    self._lifecycle_outbox.admit(
+                        payload=parked_event, journey_id=journey_id, checkpoint=checkpoint,
+                    )
+                    self._lifecycle_chains[journey_id] = checkpoint
+                    self._flush_lifecycle_outbox()
+        except (CorrelationEnvelopeError, ValueError, TypeError) as exc:
+            raise LifecycleTelemetryOutboxError("invalid upstream park event") from exc
+
     def _handle_order_event(self, event: OrderEvent, *, replay: bool = False) -> None:
         if event.event_type == "signal_generation":
             signal_metadata = self._signal_lifecycle_metadata(event.metadata)
+            parked_event = signal_metadata.pop("parked_decision_event", None)
             member_views = signal_metadata.get("portfolio_member_views")
             if isinstance(member_views, dict) and member_views:
                 mark = signal_metadata.get("market_data") or {}
@@ -8603,6 +8631,7 @@ class PaperRuntimeService:
             )
             signal_metadata.pop("instrument_counterfactual_rows", None)
             try:
+                self._import_parked_decision(parked_event, signal_metadata)
                 signal_payload = self._emit_lifecycle_telemetry(
                     "signal_generation",
                     {

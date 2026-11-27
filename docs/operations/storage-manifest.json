@@ -6390,6 +6390,29 @@
    }
   },
   {
+   "task": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
+   "owner": "execution.paper-signal-producer",
+   "writers": [
+    "Redis decision_id#journey",
+    "Redis decision_id#lifecycle-sent:pending_settlement",
+    "Redis decision_id#lifecycle-sent:expired_no_price",
+    "existing telemetry_events lifecycle ingest and existing paper lifecycle outbox"
+   ],
+   "cadence": "existing producer tick (60 seconds), no new job; 4-5 hosted bindings, at most one parked decision per binding per session",
+   "growth_per_day": "At most 5 immutable journey records + 10 sent markers + 10 distinct incremental lifecycle events per trading day. Recorded hosted fixtures measured 6359 / 6371 bytes per journey and 3804-3858 bytes per lifecycle event; sent marker <100 bytes. About 32 KB/day Redis journey data + <1 KB/day markers + <39 KB/day incremental telemetry; no market lineage copied into park metadata.",
+   "cap": "at most 15 new Redis keys per trading day, approximately 450 keys / 30 days and about 1 MB; bounded by hosted binding count, not a new fleet-wide admission cap; no marker on failed delivery; repeated sends preserve event identity and ingest deduplicates them",
+   "cleanup": "existing put_decision_record SET NX with 30-day TTL; expiry is never extended by reads/retries; telemetry uses existing lifecycle retention; imported park reuses the runtime lifecycle outbox and existing 35-day chain cleanup, no separate file or queue",
+   "readers": [
+    "services/execution/lean_runtime/paper_signal_producer.py",
+    "services/execution/lean_runtime/paper_runtime.py",
+    "services/trade_journey/lifecycle_projector.py"
+   ],
+   "bound_proof": {
+    "file": "services/execution/lean_runtime/paper_signal_producer.py",
+    "contains": "DECISION_SENT_SUFFIX = \"#lifecycle-sent:\""
+   }
+  },
+  {
    "name": "registry.entries stored lineage_index / summary_rev columns, partial index entries_lineage_index_idx, and stamp-validated incremental lineage adjacency cache",
    "owner": "registry-svc schema and in-process lineage adjacency cache (services/registry/pg_store.py PostgresRegistryStore._ensure_lineage_index, backfill_lineage_index, list_lineage_rows; services/registry/storage.py _CompiledLineageGraphIndex, _CompiledLineageRowList, build_lineage_graph)",
    "writer": "ALTER TABLE ADD COLUMN IF NOT EXISTS + CREATE SEQUENCE/FUNCTION/TRIGGER/INDEX IF NOT EXISTS + idempotent bounded batched backfill (LINEAGE_INDEX_BACKFILL_BATCH_SIZE = 1000, FOR UPDATE SKIP LOCKED) at store bootstrap; reuses the BEFORE INSERT OR UPDATE OF payload trigger entries_strategy_summary_index_tg (pantheon_registry_summary_index_tg_fn -> pantheon_registry_lineage_index_build + nextval('pantheon_registry_summary_rev_seq')) on every registry.entries write; in-process cache populated on read and updated incrementally in O(degree) time by summary_rev > max_rev delta query after writes",

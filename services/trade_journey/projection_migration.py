@@ -1353,6 +1353,7 @@ WITH candidates AS (
     FROM trade_journey_projection.journeys
     WHERE status = 'open'
       AND NOT (stage_coverage ? 'reconciliation')
+      AND COALESCE(stage_coverage -> 'trade_decision' ->> 'status', '') <> 'pending_settlement'
       AND (
           stage_coverage -> 'order_submission' ->> 'status' = 'skipped'
           OR last_occurred_at < %(as_of)s::timestamptz - make_interval(secs => %(deadline_seconds)s)

@@ -284,6 +284,8 @@ class JourneyMaterializer:
             return "completed" if corrections else "completed_with_variance"
         if statuses.get("reconciliation") == "succeeded":
             return "completed"
+        if statuses.get("trade_decision") == "expired" and "order_submission" not in stages:
+            return "expired"
         if statuses.get("fill_management") == "partially_succeeded":
             return "partially_filled"
         if statuses.get("order_submission") == "succeeded" and statuses.get("fill_management") == "active":
@@ -442,6 +444,8 @@ class JourneyMaterializer:
         never reached order submission has nothing to reconcile (``no_order``);
         one with an order but no reconciliation is ``unreconciled``.
         """
+        if stages.get("trade_decision", {}).get("status") == "pending_settlement":
+            return None  # the settlement owner alone can expire a parked decision
         if (as_of - last_occurred).total_seconds() <= deadline_seconds:
             return None
         if "reconciliation" in stages:
