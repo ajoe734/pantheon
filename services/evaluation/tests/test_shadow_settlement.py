@@ -315,3 +315,49 @@ def test_shadow_route_returns_settled_arms_and_404_when_unknown() -> None:
     missing = client.get("/api/attribution/shadow/unknown-decision-999", headers=headers)
     assert missing.status_code == 404
     assert client.get("/api/attribution/shadow/dec-route-01").status_code == 401
+
+
+def test_a4_built_shadow_decision_lock_settles_all_four_arms() -> None:
+    """An A4 decision lock created by 送 Shadow (declared_no_trade) settles all 4 arms."""
+    from services.agora.shadow_mode import build_decision_lock
+
+    market_rows = load_recorded_twse_rows()
+    event = {
+        "decision_event_id": "evt-shadow-01",
+        "event_kind": "entry",
+        "strategy_id": "strat-twse-1",
+        "strategy_version_id": "sv-1",
+        "subject": {"symbol": "2330.TW"},
+        "suggested_action": "enter",
+        "data_cutoff": "2024-10-01T05:30:00Z",
+        "servant_suggestion": {"action": "enter", "persona_id": "servant-lin"},
+        "institutional_view": {"persona_id": "inst-1", "stance": "exit"},
+    }
+    lock = build_decision_lock(
+        human_decision_id="hdl-shadow-01",
+        decision_record_id="rec-shadow-01",
+        event=event,
+        decision_event_id="evt-shadow-01",
+        tenant_id="tenant-alpha",
+        user_id="trader-lin",
+        body_decision="shadow",
+        rationale="Track without placing order",
+        modifications=None,
+        decision_time="2024-10-01T06:00:00Z",
+        execution_observation_kind="declared_no_trade",
+        actor_roles=["trader"],
+    )
+    assert lock["execution_observation_kind"] == "declared_no_trade"
+    assert lock["arms"]["human_actual"]["execution_observation_kind"] == "declared_no_trade"
+
+    settled = settle_decision_lock(lock, market_rows=market_rows, observation_window="5d").to_dict()
+    arms = {a["arm"]: a for a in settled["arms"]}
+    assert set(arms.keys()) == {"human_actual", "private_servant", "base_strategy", "committee_variant"}
+    assert arms["human_actual"]["settlement_source"] == "declared_no_trade"
+    assert arms["human_actual"]["outcome"]["action"] == "no_trade"
+    assert arms["human_actual"]["outcome"]["return_pct"] == 0.0
+    assert arms["human_actual"]["outcome"]["cost_pct"] == 0.0
+    for arm_name in ("private_servant", "base_strategy", "committee_variant"):
+        assert arms[arm_name]["settlement_source"] == "pantheon_paper_proxy"
+        assert arms[arm_name]["outcome"] is not None
+        assert arms[arm_name]["outcome"]["return_pct"] != 0.0
