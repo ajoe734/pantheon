@@ -33,6 +33,7 @@ AGORA_DATASET_AUTHORITY = "agora.dataset.v1"
 LEARN_DATASET_KIND = "learn"
 OBSERVE_DATASET_KIND = "observe"
 DATASET_URI_SCHEME = "agora://dataset-version"
+DECISION_EVIDENCE_KINDS = frozenset({"decision", "rejection", "deferral", "intervention"})
 
 # Default identifiers used when an Agora record carries governed trajectory
 # content but no explicit strategy binding.  These are labels for research
@@ -263,29 +264,158 @@ class AgoraDatasetVersion:
         )
 
 
-def _session_target(content: Mapping[str, Any]) -> dict[str, Any]:
+_ACTION_CODE_MAP: dict[str, float] = {
+    "enter": 1.0,
+    "entry": 1.0,
+    "buy": 1.0,
+    "add": 0.5,
+    "increase": 0.5,
+    "hold": 0.0,
+    "review": 0.0,
+    "defer": -0.25,
+    "reduce": -0.5,
+    "trim": -0.5,
+    "exit": -1.0,
+    "sell": -1.0,
+    "reject": -1.0,
+}
+
+
+def _session_target(content: Mapping[str, Any], *, fallback_strategy_id: str = "") -> dict[str, Any]:
     target = content.get("target")
     if isinstance(target, Mapping) and target:
-        return dict(target)
+        resolved = dict(target)
+        if fallback_strategy_id and not _text(resolved.get("strategy_id")):
+            resolved["strategy_id"] = fallback_strategy_id
+        return resolved
+    snap = content.get("decision_time_snapshot") if isinstance(content.get("decision_time_snapshot"), Mapping) else {}
     return {
-        "registry_id": _text(content.get("registry_id")) or "agora-observed",
-        "strategy_id": _text(content.get("strategy_id")) or DEFAULT_STRATEGY_ID,
-        "artifact_version": _text(content.get("artifact_version")) or "0.0.0",
+        "registry_id": _text(content.get("registry_id") or snap.get("strategy_spec_registry_id")) or "agora-observed",
+        "strategy_id": _text(content.get("strategy_id") or snap.get("strategy_id")) or fallback_strategy_id or DEFAULT_STRATEGY_ID,
+        "artifact_version": _text(content.get("artifact_version") or snap.get("strategy_version_id")) or "0.0.0",
         "artifact_type": "strategy_spec",
         "promotion_state": _text(content.get("promotion_state")) or "candidate",
     }
 
 
-def _sessions_from_content(version: AgoraDatasetVersion) -> list[dict[str, Any]]:
+def _normalize_session_actor_role(raw_role: str) -> str:
+    if raw_role in {"operator", "approver"}:
+        return raw_role
+    return "operator"
+
+
+def _normalize_session_decision(raw_decision: str, interaction_kind: str) -> str:
+    lowered = raw_decision.lower()
+    if interaction_kind == "intervention" or lowered in {"edit", "edited", "modify", "modified", "intervention"}:
+        return "edit"
+    return "approve"
+
+
+def _observation_from_snapshot(content: Mapping[str, Any], snapshot: Mapping[str, Any]) -> list[float]:
+    for candidate in (content.get("observation"), snapshot.get("observation")):
+        if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)) and candidate:
+            if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in candidate):
+                return [float(x) for x in candidate]
+
+    conf = snapshot.get("confidence") if snapshot.get("confidence") is not None else content.get("confidence")
+    if isinstance(conf, Mapping) and isinstance(conf.get("value"), (int, float)) and not isinstance(conf.get("value"), bool):
+        conf_val = float(conf["value"])
+    elif isinstance(conf, (int, float)) and not isinstance(conf, bool):
+        conf_val = float(conf)
+    else:
+        conf_val = 0.75
+
+    prob = snapshot.get("probability") if snapshot.get("probability") is not None else content.get("probability")
+    if isinstance(prob, Mapping) and isinstance(prob.get("value"), (int, float)) and not isinstance(prob.get("value"), bool):
+        prob_val = float(prob["value"])
+    elif isinstance(prob, (int, float)) and not isinstance(prob, bool):
+        prob_val = float(prob)
+    else:
+        prob_val = 0.5
+
+    ev = snapshot.get("expected_value") if snapshot.get("expected_value") is not None else content.get("expected_value")
+    if isinstance(ev, Mapping):
+        net_raw = ev.get("net")
+        down_raw = ev.get("downside")
+        net_val = float(net_raw) if isinstance(net_raw, (int, float)) and not isinstance(net_raw, bool) else 0.0
+        down_val = float(down_raw) if isinstance(down_raw, (int, float)) and not isinstance(down_raw, bool) else 0.0
+    else:
+        net_val = 0.0
+        down_val = 0.0
+
+    action_token = _text(snapshot.get("suggested_action") or snapshot.get("event_kind") or content.get("suggested_action")).lower()
+    action_code = _ACTION_CODE_MAP.get(action_token, 0.0)
+    return [conf_val, prob_val, net_val, down_val, action_code]
+
+
+_NON_ACTION_VERDICTS = frozenset({"approve", "approved", "confirm", "confirmed", "decision"})
+
+_EVENT_KIND_ACTION_MAP: dict[str, str] = {
+    "entry": "enter",
+    "enter": "enter",
+    "add": "add",
+    "reduce": "reduce",
+    "exit": "exit",
+    "review": "hold",
+    "hold": "hold",
+}
+
+
+def _action_from_decision_content(version: AgoraDatasetVersion, content: Mapping[str, Any], snapshot: Mapping[str, Any]) -> str:
+    explicit = _text(content.get("action"))
+    if explicit and explicit.lower() not in _NON_ACTION_VERDICTS:
+        return explicit
+    kind = version.interaction_kind or _text(content.get("evidence_kind"))
+    if kind == "rejection":
+        return "reject"
+    if kind == "deferral":
+        return "defer"
+    mods = content.get("modifications") or content.get("raw_modifications")
+    if isinstance(mods, Mapping):
+        mod_action = _text(mods.get("action") or mods.get("direction"))
+        if mod_action and mod_action.lower() not in _NON_ACTION_VERDICTS:
+            return mod_action
+    if kind == "intervention":
+        return "intervene"
+    arms = content.get("arms") if isinstance(content.get("arms"), Mapping) else {}
+    human_arm = arms.get("human_actual") if isinstance(arms.get("human_actual"), Mapping) else {}
+    for candidate in (
+        human_arm.get("action"),
+        content.get("decision"),
+        content.get("verdict"),
+        content.get("trading_room_verdict"),
+        snapshot.get("suggested_action"),
+    ):
+        cleaned = _text(candidate)
+        if cleaned and cleaned.lower() not in _NON_ACTION_VERDICTS:
+            return cleaned
+    event_kind = _text(snapshot.get("event_kind") or content.get("event_kind")).lower()
+    if event_kind in _EVENT_KIND_ACTION_MAP:
+        return _EVENT_KIND_ACTION_MAP[event_kind]
+    return ""
+
+
+def _sessions_from_content(version: AgoraDatasetVersion, *, fallback_strategy_id: str = "") -> list[dict[str, Any]]:
     """Normalize an Agora record's content into IMT-003 trajectory sessions.
 
-    Three governed content shapes are accepted, in priority order:
+    Four governed content shapes are accepted, in priority order:
       1. ``{"sessions": [...]}``  — already IMT-003 shaped
       2. ``{"steps": [...]}``     — a single trajectory
       3. ``{"observation": ..., "action": ...}`` — a single step
+      4. decision/rejection/deferral/intervention evidence carrying ``decision_time_snapshot``
     """
 
     content = version.content
+    is_decision_kind = (
+        version.interaction_kind in DECISION_EVIDENCE_KINDS
+        or _text(content.get("evidence_kind")) in DECISION_EVIDENCE_KINDS
+        or isinstance(content.get("decision_time_snapshot"), Mapping)
+    )
+    snapshot = (
+        dict(content["decision_time_snapshot"])
+        if isinstance(content.get("decision_time_snapshot"), Mapping)
+        else {}
+    )
     sessions_value = content.get("sessions") or content.get("trajectories")
     if isinstance(sessions_value, Sequence) and not isinstance(sessions_value, (str, bytes)):
         sessions = []
@@ -293,21 +423,38 @@ def _sessions_from_content(version: AgoraDatasetVersion) -> list[dict[str, Any]]
             if isinstance(session, Mapping) and session.get("steps"):
                 sess_dict = dict(session)
                 if not sess_dict.get("target"):
-                    sess_dict["target"] = _session_target(content)
+                    sess_dict["target"] = _session_target(content, fallback_strategy_id=fallback_strategy_id)
                 if not sess_dict.get("actor_role"):
                     sess_dict["actor_role"] = _text(content.get("actor_role")) or "operator"
+                elif is_decision_kind:
+                    sess_dict["actor_role"] = _normalize_session_actor_role(_text(sess_dict.get("actor_role")))
                 if not sess_dict.get("decision"):
                     sess_dict["decision"] = _text(content.get("decision")) or "approve"
+                elif is_decision_kind:
+                    sess_dict["decision"] = _normalize_session_decision(
+                        _text(sess_dict.get("decision")),
+                        version.interaction_kind,
+                    )
+                if is_decision_kind:
+                    sess_dict.setdefault("evidence_kind", _text(content.get("evidence_kind")) or version.interaction_kind)
+                    if snapshot:
+                        sess_dict.setdefault("decision_time_snapshot", snapshot)
                 sessions.append(sess_dict)
         if sessions:
             return sessions
 
-    base = {
-        "actor_id": _text(content.get("actor_id")) or version.persona_id or "agora-actor",
-        "actor_role": _text(content.get("actor_role")) or "operator",
-        "decision": _text(content.get("decision")) or "approve",
-        "target": _session_target(content),
+    raw_role = _text(content.get("actor_role"))
+    raw_decision = _text(content.get("decision") or content.get("trader_verdict"))
+    base: dict[str, Any] = {
+        "actor_id": _text(content.get("actor_id")) or version.user_id or version.persona_id or "agora-actor",
+        "actor_role": _normalize_session_actor_role(raw_role) if is_decision_kind else (raw_role or "operator"),
+        "decision": _normalize_session_decision(raw_decision, version.interaction_kind) if is_decision_kind else (raw_decision or "approve"),
+        "target": _session_target(content, fallback_strategy_id=fallback_strategy_id),
     }
+    if is_decision_kind:
+        base["evidence_kind"] = _text(content.get("evidence_kind")) or version.interaction_kind
+        if snapshot:
+            base["decision_time_snapshot"] = snapshot
 
     steps_value = content.get("steps")
     if isinstance(steps_value, Sequence) and not isinstance(steps_value, (str, bytes)) and steps_value:
@@ -320,9 +467,36 @@ def _sessions_from_content(version: AgoraDatasetVersion) -> list[dict[str, Any]]
         ]
 
     if "observation" in content and "action" in content:
+        resolved_action = (
+            _action_from_decision_content(version, content, snapshot)
+            if is_decision_kind
+            else _text(content.get("action"))
+        )
+        if not resolved_action:
+            return []
         step: dict[str, Any] = {
             "observation": content["observation"],
-            "action": content["action"],
+            "action": resolved_action,
+            "feedback_event_id": version.evidence_id,
+        }
+        if content.get("reward") is not None:
+            step["reward"] = content["reward"]
+        return [
+            {
+                **base,
+                "trajectory_id": _text(content.get("trajectory_id")) or f"traj-{version.evidence_id}",
+                "steps": [step],
+            }
+        ]
+
+    if is_decision_kind:
+        derived_action = _action_from_decision_content(version, content, snapshot)
+        if not derived_action:
+            return []
+        derived_obs = _observation_from_snapshot(content, snapshot)
+        step = {
+            "observation": derived_obs,
+            "action": derived_action,
             "feedback_event_id": version.evidence_id,
         }
         if content.get("reward") is not None:
@@ -400,15 +574,19 @@ def build_dataset_payload(
     strategy_id = ""
     strategy_spec_id = ""
     for version in usable:
-        version_sessions = _sessions_from_content(version)
+        snap = version.content.get("decision_time_snapshot") if isinstance(version.content.get("decision_time_snapshot"), Mapping) else {}
+        strategy_id = strategy_id or _text(version.content.get("strategy_id") or snap.get("strategy_id"))
+        strategy_spec_id = strategy_spec_id or _text(version.content.get("source_strategy_spec_id") or snap.get("strategy_spec_registry_id"))
+
+    resolved_strategy_id = strategy_id or DEFAULT_STRATEGY_ID
+    for version in usable:
+        version_sessions = _sessions_from_content(version, fallback_strategy_id=resolved_strategy_id)
         if not version_sessions:
             continue
         sessions.extend(version_sessions)
         source_refs.append(version.dataset_uri)
         source_refs.append(version.evidence_uri)
         source_refs.extend(version.source_refs)
-        strategy_id = strategy_id or _text(version.content.get("strategy_id"))
-        strategy_spec_id = strategy_spec_id or _text(version.content.get("source_strategy_spec_id"))
 
     if not sessions:
         raise AgoraDatasetRejected(
@@ -419,7 +597,7 @@ def build_dataset_payload(
     resolved_dataset_id = _text(dataset_id) or usable[0].dataset_version_id
     return {
         "dataset_id": resolved_dataset_id,
-        "strategy_id": strategy_id or DEFAULT_STRATEGY_ID,
+        "strategy_id": resolved_strategy_id,
         "source_dataset_refs": _dedupe(source_refs),
         "source_strategy_spec_id": strategy_spec_id or DEFAULT_STRATEGY_SPEC_ID,
         "sessions": sessions,
@@ -449,6 +627,7 @@ def build_dataset_lineage(
         "dataset_version_ids": _dedupe(version.dataset_version_id for version in usable),
         "dataset_uris": _dedupe(version.dataset_uri for version in usable),
         "dataset_kinds": _dedupe(version.dataset_kind for version in usable),
+        "interaction_kinds": _dedupe(version.interaction_kind for version in usable),
         "tenant_id": tenant_id,
         "user_id": user_id,
         "evidence_ids": _dedupe(version.evidence_id for version in usable),
@@ -532,6 +711,7 @@ __all__ = [
     "AgoraDatasetUnavailable",
     "AgoraDatasetVersion",
     "AgoraTenantScopeError",
+    "DECISION_EVIDENCE_KINDS",
     "LEARN_DATASET_KIND",
     "OBSERVE_DATASET_KIND",
     "attach_step_probabilities",

@@ -655,6 +655,15 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE_REFRESH=true; shift ;;
     --preflight-only) PREFLIGHT_ONLY=true; shift ;;
     --steady-check) STEADY_CHECK=true; shift ;;
+    --broker-backfill) export BROKER_BACKFILL=true; shift ;;
+    --broker-backfill-verify) export BROKER_BACKFILL=true; export BROKER_BACKFILL_VERIFY_ONLY=true; shift ;;
+    --backfill-start) export BROKER_BACKFILL_START_DATE="${2:-}"; shift 2 ;;
+    --backfill-end) export BROKER_BACKFILL_END_DATE="${2:-}"; shift 2 ;;
+    --backfill-max-requests) export BROKER_BACKFILL_MAX_REQUESTS="${2:-}"; shift 2 ;;
+    --backfill-max-wall-seconds) export BROKER_BACKFILL_MAX_WALL_SECONDS="${2:-}"; shift 2 ;;
+    --backfill-min-interval-seconds) export BROKER_BACKFILL_MIN_INTERVAL_SECONDS="${2:-}"; shift 2 ;;
+    --backfill-max-total-bytes) export BROKER_BACKFILL_MAX_TOTAL_BYTES="${2:-}"; shift 2 ;;
+    --backfill-max-total-rows) export BROKER_BACKFILL_MAX_TOTAL_ROWS="${2:-}"; shift 2 ;;
     # One bounded runtime per run: every profile call of the run passes the same union of hosts.
     --bounded-runtime-run) export PANTHEON_BOUNDED_RUNTIME_RUN=true; shift ;;
     --run-hosts) export PANTHEON_BOUNDED_RUNTIME_HOSTS="${2:-}"; shift 2 ;;
@@ -1032,6 +1041,15 @@ ssh_bash() {
     command_prefix+=" PANTHEON_BOUNDED_RUNTIME_HOSTS=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}")"
     command_prefix+=" PANTHEON_BOUNDED_RUNTIME_FINMIND=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}")"
     command_prefix+=" PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS=$(shell_quote "${PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS:-}")"
+    command_prefix+=" BROKER_BACKFILL=$(shell_quote "${BROKER_BACKFILL:-false}")"
+    command_prefix+=" BROKER_BACKFILL_VERIFY_ONLY=$(shell_quote "${BROKER_BACKFILL_VERIFY_ONLY:-false}")"
+    command_prefix+=" BROKER_BACKFILL_START_DATE=$(shell_quote "${BROKER_BACKFILL_START_DATE:-}")"
+    command_prefix+=" BROKER_BACKFILL_END_DATE=$(shell_quote "${BROKER_BACKFILL_END_DATE:-}")"
+    command_prefix+=" BROKER_BACKFILL_MAX_REQUESTS=$(shell_quote "${BROKER_BACKFILL_MAX_REQUESTS:-}")"
+    command_prefix+=" BROKER_BACKFILL_MAX_WALL_SECONDS=$(shell_quote "${BROKER_BACKFILL_MAX_WALL_SECONDS:-}")"
+    command_prefix+=" BROKER_BACKFILL_MIN_INTERVAL_SECONDS=$(shell_quote "${BROKER_BACKFILL_MIN_INTERVAL_SECONDS:-}")"
+    command_prefix+=" BROKER_BACKFILL_MAX_TOTAL_BYTES=$(shell_quote "${BROKER_BACKFILL_MAX_TOTAL_BYTES:-}")"
+    command_prefix+=" BROKER_BACKFILL_MAX_TOTAL_ROWS=$(shell_quote "${BROKER_BACKFILL_MAX_TOTAL_ROWS:-}")"
     command_prefix+=" bash -s"
   else
     command_prefix="PANTHEON_DEPLOY_ENV=$(shell_quote "$DEPLOY_ENV")"
@@ -1234,6 +1252,15 @@ ssh_bash() {
       PANTHEON_BOUNDED_RUNTIME_HOSTS="${PANTHEON_BOUNDED_RUNTIME_HOSTS:-}" \
       PANTHEON_BOUNDED_RUNTIME_FINMIND="${PANTHEON_BOUNDED_RUNTIME_FINMIND:-false}" \
       PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS="${PANTHEON_BOUNDED_RUNTIME_MAX_RECORDS:-}" \
+      BROKER_BACKFILL="${BROKER_BACKFILL:-false}" \
+      BROKER_BACKFILL_VERIFY_ONLY="${BROKER_BACKFILL_VERIFY_ONLY:-false}" \
+      BROKER_BACKFILL_START_DATE="${BROKER_BACKFILL_START_DATE:-}" \
+      BROKER_BACKFILL_END_DATE="${BROKER_BACKFILL_END_DATE:-}" \
+      BROKER_BACKFILL_MAX_REQUESTS="${BROKER_BACKFILL_MAX_REQUESTS:-}" \
+      BROKER_BACKFILL_MAX_WALL_SECONDS="${BROKER_BACKFILL_MAX_WALL_SECONDS:-}" \
+      BROKER_BACKFILL_MIN_INTERVAL_SECONDS="${BROKER_BACKFILL_MIN_INTERVAL_SECONDS:-}" \
+      BROKER_BACKFILL_MAX_TOTAL_BYTES="${BROKER_BACKFILL_MAX_TOTAL_BYTES:-}" \
+      BROKER_BACKFILL_MAX_TOTAL_ROWS="${BROKER_BACKFILL_MAX_TOTAL_ROWS:-}" \
       bash -s
       return $?
     fi
@@ -2676,6 +2703,72 @@ print(json.dumps({"source_records": records}))
 FINMIND_RECORDS_PY
 }
 
+# SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: tw_broker_top for the WHOLE market from one FinMind
+# SponsorPro whole-day parquet per published session (services/source_ingestion/finmind_broker_backfill.py
+# run_whole_market_session, the same bulk parquet adapter as the two-year backfill). It runs inside the
+# running source-ingest container against its own market_data_store; the token is passed by name from
+# this environment (docker exec -e NAME, never a value on a command line) and is never printed.
+# Sets BROKER_WHOLE_MARKET_JSON to the run receipt (counts, requests, bytes, coverage, status).
+run_finmind_broker_whole_market() {
+  local cid="" out="" rc=0
+  BROKER_WHOLE_MARKET_JSON=""
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  if [[ -z "${cid}" ]]; then
+    BROKER_WHOLE_MARKET_JSON='{"status": "failed", "reason": "source_ingest_container_missing", "fallback_required": true, "requests_made": 0}'
+    return 0
+  fi
+  out="$(docker exec -i \
+    -e FINMIND_API_TOKEN \
+    -e PANTHEON_EXTERNAL_EGRESS=allowlist \
+    -e PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=api.finmindtrade.com,storage.googleapis.com \
+    -e SOURCE_INGEST_BOUNDED_TRADE_DATE="${SOURCE_INGEST_BOUNDED_TRADE_DATE:-}" \
+    -e SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT="${SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT:-}" \
+    -e PANTHEON_REFRESH_RUN_ID="${PANTHEON_REFRESH_RUN_ID:-}" \
+    "${cid}" python3 - 2>/dev/null <<'BROKER_WHOLE_MARKET_PY'
+import json, os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+from services.source_ingestion.finmind_broker_backfill import run_whole_market_session
+
+
+def session_day(day):
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+
+now = datetime.now(timezone.utc)
+selected = os.environ.get("SOURCE_INGEST_BOUNDED_SESSION_SELECTED_AT", "").strip()
+if selected:
+    parsed = datetime.fromisoformat(selected.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None and parsed <= now:
+        now = parsed
+trade_date = latest_published_broker_session(now, is_session_day=session_day).isoformat()
+explicit = os.environ.get("SOURCE_INGEST_BOUNDED_TRADE_DATE", "").strip()
+if explicit:
+    if explicit > trade_date:
+        print(json.dumps({"status": "failed", "reason": f"requested trade date {explicit} not yet published (latest {trade_date})",
+                          "fallback_required": False, "requests_made": 0}))
+        raise SystemExit(0)
+    trade_date = explicit
+data_dir = Path(os.environ.get("SOURCE_INGEST_DATA_DIR") or "/data/source-ingest")
+root = Path(os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT") or (data_dir / "market_data_store"))
+run_id = "broker-whole-market-" + (os.environ.get("PANTHEON_REFRESH_RUN_ID") or now.strftime("%Y%m%dT%H%M%SZ"))
+print(json.dumps(run_whole_market_session(market_data_root=root, trade_date=trade_date, run_id=run_id),
+                 ensure_ascii=False, sort_keys=True))
+BROKER_WHOLE_MARKET_PY
+  )" || rc=$?
+  out="$(printf '%s\n' "${out}" | tail -n1)"
+  if [[ -z "${out}" ]] || ! python3 -c 'import json,sys; json.loads(sys.argv[1])' "${out}" >/dev/null 2>&1; then
+    BROKER_WHOLE_MARKET_JSON="{\"status\": \"failed\", \"reason\": \"whole_market_run_no_receipt_rc_${rc}\", \"fallback_required\": true, \"requests_made\": 0}"
+    return 0
+  fi
+  BROKER_WHOLE_MARKET_JSON="${out}"
+  return 0
+}
+
 check_taiwan_refresh_preflight() {
   local force="${1:-false}" finmind_records_file=""
   if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" ]]; then
@@ -3833,6 +3926,169 @@ execute_taiwan_refresh_preflight_only() {
   return 0
 }
 
+# SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127: resumable two-year FinMind broker-branch backfill
+# into governed keyed/tw_broker_top (compact top-20 buy/sell rows per symbol, no side directory).
+# Runs inside the running source-ingest container against its market_data_store; the token is passed
+# by name only (docker exec -e FINMIND_API_TOKEN) and is never printed. Also supports read-only
+# two-year coverage verification (BROKER_BACKFILL_VERIFY_ONLY=true, egress=deny, no token).
+run_finmind_broker_backfill() {
+  local output_path="${1:-}" cid="" out="" rc=0 verify_only="${BROKER_BACKFILL_VERIFY_ONLY:-false}"
+  local allowed_hosts="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-api.finmindtrade.com,storage.googleapis.com}"
+  BROKER_BACKFILL_JSON=""
+  if [[ "${verify_only}" != "true" ]]; then
+    if [[ "${allowed_hosts}" != "api.finmindtrade.com,storage.googleapis.com" && "${allowed_hosts}" != "storage.googleapis.com,api.finmindtrade.com" ]]; then
+      BROKER_BACKFILL_JSON='{"connector_id": "tw-finmind-broker-daily-report", "dataset": "tw_broker_top", "mode": "two_year_backfill", "reason": "invalid_egress_host_allowlist", "requests_made": 0, "status": "failed"}'
+      if [[ -n "${output_path}" ]]; then printf '%s\n' "${BROKER_BACKFILL_JSON}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
+      return 1
+    fi
+    if [[ -z "${FINMIND_API_TOKEN:-}" ]]; then
+      BROKER_BACKFILL_JSON='{"connector_id": "tw-finmind-broker-daily-report", "dataset": "tw_broker_top", "mode": "two_year_backfill", "reason": "missing_credential", "requests_made": 0, "status": "credential_unavailable"}'
+      if [[ -n "${output_path}" ]]; then printf '%s\n' "${BROKER_BACKFILL_JSON}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
+      return 1
+    fi
+  fi
+  cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+  if [[ -z "${cid}" ]]; then
+    BROKER_BACKFILL_JSON='{"connector_id": "tw-finmind-broker-daily-report", "dataset": "tw_broker_top", "mode": "two_year_backfill", "reason": "source_ingest_container_missing", "requests_made": 0, "status": "failed"}'
+    if [[ -n "${output_path}" ]]; then printf '%s\n' "${BROKER_BACKFILL_JSON}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
+    return 1
+  fi
+  local -a exec_env=(
+    -e "BROKER_BACKFILL_VERIFY_ONLY=${verify_only}"
+    -e "BROKER_BACKFILL_START_DATE=${BROKER_BACKFILL_START_DATE:-}"
+    -e "BROKER_BACKFILL_END_DATE=${BROKER_BACKFILL_END_DATE:-}"
+    -e "BROKER_BACKFILL_MAX_REQUESTS=${BROKER_BACKFILL_MAX_REQUESTS:-}"
+    -e "BROKER_BACKFILL_MAX_WALL_SECONDS=${BROKER_BACKFILL_MAX_WALL_SECONDS:-}"
+    -e "BROKER_BACKFILL_MIN_INTERVAL_SECONDS=${BROKER_BACKFILL_MIN_INTERVAL_SECONDS:-}"
+    -e "BROKER_BACKFILL_MAX_TOTAL_BYTES=${BROKER_BACKFILL_MAX_TOTAL_BYTES:-}"
+    -e "BROKER_BACKFILL_MAX_TOTAL_ROWS=${BROKER_BACKFILL_MAX_TOTAL_ROWS:-}"
+    -e "PANTHEON_REFRESH_RUN_ID=${PANTHEON_REFRESH_RUN_ID:-}"
+  )
+  if [[ "${verify_only}" == "true" ]]; then
+    exec_env+=(-e PANTHEON_EXTERNAL_EGRESS=deny -e PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=)
+  else
+    exec_env+=(
+      -e FINMIND_API_TOKEN
+      -e PANTHEON_EXTERNAL_EGRESS=allowlist
+      -e PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=api.finmindtrade.com,storage.googleapis.com
+    )
+  fi
+  out="$(docker exec -i "${exec_env[@]}" "${cid}" python3 - 2>/dev/null <<'BROKER_BACKFILL_PY'
+import json, os
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+from services.source_ingestion.connectors.finmind_taiwan import latest_published_broker_session
+from services.source_ingestion.connectors.taiwan_official import governed_taiwan_calendar_evidence
+from services.source_ingestion.finmind_broker_backfill import (
+    BACKFILL_DEFAULT_MAX_REQUESTS,
+    BACKFILL_DEFAULT_MAX_WALL_SECONDS,
+    BACKFILL_MAX_TOTAL_BYTES,
+    BACKFILL_MAX_TOTAL_ROWS,
+    BACKFILL_YEARS,
+    DEFAULT_MIN_INTERVAL_SECONDS,
+    run_backfill,
+    verify_two_year_backfill_coverage,
+)
+
+
+def session_day(day):
+    evidence = governed_taiwan_calendar_evidence(venue="TWSE", trade_date=day.isoformat())
+    return not evidence or day.isoformat() not in (evidence.get("holidays") or {})
+
+
+now = datetime.now(timezone.utc)
+latest_session = latest_published_broker_session(now, is_session_day=session_day)
+data_dir = Path(os.environ.get("SOURCE_INGEST_DATA_DIR") or "/data/source-ingest")
+root = Path(os.environ.get("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT") or (data_dir / "market_data_store"))
+verify_only = os.environ.get("BROKER_BACKFILL_VERIFY_ONLY", "false").strip().lower() == "true"
+
+if verify_only:
+    coverage = verify_two_year_backfill_coverage(root)
+    print(json.dumps({
+        "connector_id": "tw-finmind-broker-daily-report",
+        "dataset": "tw_broker_top",
+        "mode": "two_year_backfill_verify",
+        "status": "ok" if coverage.get("passed") else "failed",
+        "reason": coverage.get("reason"),
+        "requests_made": 0,
+        "coverage": coverage,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0 if coverage.get("passed") else 1)
+
+raw_end = os.environ.get("BROKER_BACKFILL_END_DATE", "").strip()
+end_date = date.fromisoformat(raw_end) if raw_end else latest_session
+if end_date > latest_session:
+    print(json.dumps({
+        "connector_id": "tw-finmind-broker-daily-report",
+        "dataset": "tw_broker_top",
+        "mode": "two_year_backfill",
+        "status": "failed",
+        "reason": f"requested end_date {end_date.isoformat()} not yet published (latest {latest_session.isoformat()})",
+        "requests_made": 0,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+raw_start = os.environ.get("BROKER_BACKFILL_START_DATE", "").strip()
+start_date = date.fromisoformat(raw_start) if raw_start else (end_date - timedelta(days=365 * BACKFILL_YEARS))
+if start_date > end_date:
+    print(json.dumps({
+        "connector_id": "tw-finmind-broker-daily-report",
+        "dataset": "tw_broker_top",
+        "mode": "two_year_backfill",
+        "status": "failed",
+        "reason": f"start_date {start_date.isoformat()} is after end_date {end_date.isoformat()}",
+        "requests_made": 0,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+raw_max_req = os.environ.get("BROKER_BACKFILL_MAX_REQUESTS", "").strip()
+max_requests = int(raw_max_req) if raw_max_req else BACKFILL_DEFAULT_MAX_REQUESTS
+raw_max_wall = os.environ.get("BROKER_BACKFILL_MAX_WALL_SECONDS", "").strip()
+max_wall_seconds = float(raw_max_wall) if raw_max_wall else BACKFILL_DEFAULT_MAX_WALL_SECONDS
+raw_interval = os.environ.get("BROKER_BACKFILL_MIN_INTERVAL_SECONDS", "").strip()
+min_interval_seconds = float(raw_interval) if raw_interval else DEFAULT_MIN_INTERVAL_SECONDS
+raw_max_bytes = os.environ.get("BROKER_BACKFILL_MAX_TOTAL_BYTES", "").strip()
+max_total_bytes = int(raw_max_bytes) if raw_max_bytes else BACKFILL_MAX_TOTAL_BYTES
+raw_max_rows = os.environ.get("BROKER_BACKFILL_MAX_TOTAL_ROWS", "").strip()
+max_total_rows = int(raw_max_rows) if raw_max_rows else BACKFILL_MAX_TOTAL_ROWS
+run_id = "broker-backfill-" + (os.environ.get("PANTHEON_REFRESH_RUN_ID") or now.strftime("%Y%m%dT%H%M%SZ"))
+
+result = run_backfill(
+    output_dir=root,
+    start=start_date,
+    end=end_date,
+    min_interval_seconds=min_interval_seconds,
+    max_requests=max_requests,
+    max_wall_seconds=max_wall_seconds,
+    max_total_bytes=max_total_bytes,
+    max_total_rows=max_total_rows,
+    run_id=run_id,
+)
+payload = {
+    "connector_id": "tw-finmind-broker-daily-report",
+    "dataset": "tw_broker_top",
+    "mode": "two_year_backfill",
+    **result.to_dict(),
+    "coverage": verify_two_year_backfill_coverage(root),
+}
+print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+raise SystemExit(0 if result.status == "ok" else 1)
+BROKER_BACKFILL_PY
+  )" || rc=$?
+  out="$(printf '%s\n' "${out}" | tail -n1)"
+  if [[ -z "${out}" ]] || ! python3 -c 'import json,sys; json.loads(sys.argv[1])' "${out}" >/dev/null 2>&1; then
+    BROKER_BACKFILL_JSON="{\"connector_id\": \"tw-finmind-broker-daily-report\", \"dataset\": \"tw_broker_top\", \"mode\": \"two_year_backfill\", \"reason\": \"broker_backfill_no_receipt_rc_${rc}\", \"requests_made\": 0, \"status\": \"failed\"}"
+    if [[ -n "${output_path}" ]]; then printf '%s\n' "${BROKER_BACKFILL_JSON}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
+    return 1
+  fi
+  BROKER_BACKFILL_JSON="${out}"
+  if [[ -n "${output_path}" ]]; then printf '%s\n' "${BROKER_BACKFILL_JSON}" > "${output_path}"; stamp_refresh_call_id "${output_path}"; fi
+  local status
+  status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "failed")' "${BROKER_BACKFILL_JSON}")"
+  [[ "${status}" == "ok" ]]
+}
+
 # Compose services of the source-ingest family. Exactly one container must exist
 # for each after a restore.
 source_ingest_family_services() {
@@ -4270,6 +4526,16 @@ if dataset and "dataset" not in payload:
     payload["dataset"] = dataset
 if os.environ.get("PANTHEON_REFRESH_CALL_ID"):
     payload["call_id"] = os.environ["PANTHEON_REFRESH_CALL_ID"]
+if os.environ.get("BROKER_WHOLE_MARKET_JSON") and connector_id == "tw-finmind-broker-daily-report":
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: the whole-market run receipt (counts, requests, bytes, coverage).
+    try:
+        wm = json.loads(os.environ["BROKER_WHOLE_MARKET_JSON"])
+    except ValueError:
+        wm = {"status": "failed", "reason": "unreadable whole-market receipt"}
+    payload["broker_whole_market"] = wm
+    if wm.get("fallback_required") or wm.get("status") == "failed":
+        payload["coordinator_notice"] = ("FinMind whole-day broker file not stored (" + str(wm.get("status")) + ": "
+                                         + str(wm.get("reason") or "") + "); per-symbol fallback for the active symbols")
 if os.environ.get("PREVIOUS_PROFILE_ACTION", "none") != "none":
     payload["previous_profile_process"] = {"action": os.environ["PREVIOUS_PROFILE_ACTION"], "pids": os.environ.get("PREVIOUS_PROFILE_PIDS", ""), "seconds": int(os.environ.get("PREVIOUS_PROFILE_SECONDS") or 0)}
 pathlib.Path(out_path).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
@@ -4329,6 +4595,30 @@ OUTCOME_PY
   curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5 \
     || error "source-ingest /readyz did not become ready before bounded refresh preflight"
   resolve_bounded_source_refresh_active_symbols
+  if [[ "${SOURCE_INGEST_BOUNDED_CONNECTOR_ID:-}" == "tw-finmind-broker-daily-report" && "${BROKER_WHOLE_MARKET_DISABLED:-false}" != "true" ]]; then
+    # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market first, from one whole-day file. Only a
+    # provider refusal (or a run that produced no receipt) falls back to the per-symbol path below.
+    BROKER_WHOLE_MARKET_JSON=""
+    run_finmind_broker_whole_market || true
+    [[ -n "${BROKER_WHOLE_MARKET_JSON:-}" ]] || BROKER_WHOLE_MARKET_JSON='{"status": "failed", "reason": "whole_market_run_no_receipt", "fallback_required": true, "requests_made": 0}'
+    export BROKER_WHOLE_MARKET_JSON
+    local wm_status wm_fallback
+    wm_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "failed")' "${BROKER_WHOLE_MARKET_JSON}")"
+    wm_fallback="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print("true" if d.get("fallback_required") or d.get("status") == "failed" else "false")' "${BROKER_WHOLE_MARKET_JSON}")"
+    info "FinMind broker whole-market run: status=${wm_status} fallback=${wm_fallback}"
+    if [[ "${wm_fallback}" != "true" ]]; then
+      local wm_outcome_status="partial" wm_reason
+      [[ "${wm_status}" == "complete" || "${wm_status}" == "already_complete" ]] && wm_outcome_status="completed"
+      wm_reason="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("reason") or ("whole_market_" + str(d.get("status"))))' "${BROKER_WHOLE_MARKET_JSON}")"
+      write_bounded_refresh_outcome "${wm_outcome_status}" "${wm_reason}" '{"connector_id": "tw-finmind-broker-daily-report", "dataset": "tw_broker_top", "path": "whole_market_bulk_parquet"}'
+      trap - EXIT INT TERM
+      rm -f "${BOUNDED_REFRESH_CAPTURED_LOG_FILE:-}"
+      return 0
+    fi
+    # Coordinator notice: the plan refused (or the run failed before) the whole-day file. The reason is the
+    # provider's own (token-free); the active symbols keep the per-symbol path so they are not left stale.
+    info "COORDINATOR NOTICE: FinMind whole-day broker file not stored (status=${wm_status}); falling back to the per-symbol path for the active symbols"
+  fi
   preflight_output="$(check_taiwan_refresh_preflight "${force}")" || error "preflight execution failed: ${preflight_output}"
   preflight_status="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status") or "")' "${preflight_output}")"
 
@@ -8138,6 +8428,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       execute_steady_posture_check "${REFRESH_OUTPUT_PATH:-}"
     elif [[ "${PREFLIGHT_ONLY:-false}" == "true" ]]; then
       execute_taiwan_refresh_preflight_only "${REFRESH_OUTPUT_PATH:-}"
+    elif [[ "${BROKER_BACKFILL:-false}" == "true" ]]; then
+      run_finmind_broker_backfill "${REFRESH_OUTPUT_PATH:-}"
     else
       execute_bounded_source_refresh_entrypoint "${FORCE_REFRESH:-false}" "${REFRESH_OUTPUT_PATH:-}"
     fi

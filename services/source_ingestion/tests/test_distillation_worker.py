@@ -1625,4 +1625,264 @@ class TestHostedShapeSupersededDeadLettersAndDefectReattempt:
         assert [j.source_id for j in claimed] == ["src-fresh-new"]
         assert fresh_job.job_id == claimed[0].job_id
 
+    def test_reattempt_fixed_defect_records_reopens_ritual_defect_once_and_keeps_genuine_abstentions_closed(
+        self, tmp_path: Path
+    ) -> None:
+        from services.source_ingestion.hypothesis_card import (
+            RESERVED,
+            ExtractionLedger,
+            fixed_defect_for_skip_reason,
+        )
 
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        ledger = ExtractionLedger(tmp_path / "ledger.sqlite3", daily_cap=400)
+        ritual_no_hyp_reason = (
+            "no_hypothesis: Workspace setup is still open — I\u2019d go by Finch, "
+            "a calm, direct AI assistant \U0001f426. What should we call each other?"
+        )
+        ritual_failed_reason = (
+            "hypothesis_extraction_failed: openclaw_workspace_first_run_ritual: "
+            "First-time setup is pending, so I haven't extracted the document yet. "
+            "You can call me Finch; what should I call you?"
+        )
+        genuine_reason = (
+            "no_hypothesis: The article describes cybersecurity requirements "
+            "but does not link them to a testable market outcome."
+        )
+        genuine_first_run_reason = (
+            "no_hypothesis: The paper reports the experiment's first run without a testable market hypothesis."
+        )
+        assert fixed_defect_for_skip_reason(ritual_no_hyp_reason) is not None
+        assert fixed_defect_for_skip_reason(ritual_no_hyp_reason).code == "openclaw_workspace_first_run_ritual"
+        assert fixed_defect_for_skip_reason(ritual_failed_reason) is not None
+        assert fixed_defect_for_skip_reason(ritual_failed_reason).code == "openclaw_workspace_first_run_ritual"
+        assert fixed_defect_for_skip_reason(genuine_reason) is None
+        assert fixed_defect_for_skip_reason(genuine_first_run_reason) is None
+
+        ritual_no_hyp_job = queue.enqueue_source_record(
+            _normalized_source("src-ritual-no-hyp", tenant_id="default"), enqueued_at=100.0
+        )
+        ritual_failed_job = queue.enqueue_source_record(
+            _normalized_source("src-ritual-failed", tenant_id="default"), enqueued_at=105.0
+        )
+        genuine_job = queue.enqueue_source_record(
+            _normalized_source("src-genuine-closed", tenant_id="default"), enqueued_at=110.0
+        )
+        genuine_first_run_job = queue.enqueue_source_record(
+            _normalized_source("src-genuine-first-run", tenant_id="default"), enqueued_at=115.0
+        )
+        # Seed historical ledger outcome = no_hypothesis after 1 attempt, and confirm can_attempt == RESERVED.
+        assert ledger.reserve_attempt("src-ritual-no-hyp", ritual_no_hyp_job.source_digest) == RESERVED
+        ledger.record("src-ritual-no-hyp", "no_hypothesis", ritual_no_hyp_reason.removeprefix("no_hypothesis: "))
+        assert ledger.can_attempt("src-ritual-no-hyp", ritual_no_hyp_job.source_digest) == RESERVED
+
+        with sqlite3.connect(queue.path) as conn:
+            idx_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name='distillation_outbox_defect_reattempt_idx'"
+            ).fetchone()[0]
+            assert "no_hypothesis:%" in idx_sql
+            assert "hypothesis_compiler_failed:%" in idx_sql
+            for job, reason, ts in (
+                (ritual_no_hyp_job, ritual_no_hyp_reason, 100.0),
+                (ritual_failed_job, ritual_failed_reason, 105.0),
+                (genuine_job, genuine_reason, 110.0),
+                (genuine_first_run_job, genuine_first_run_reason, 115.0),
+            ):
+                conn.execute(
+                    "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=? WHERE job_id=?",
+                    (reason, ts, job.job_id),
+                )
+
+        reopened = queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=200.0, ledger=ledger
+        )
+        assert reopened == [ritual_no_hyp_job.job_id, ritual_failed_job.job_id]
+        assert queue.get("src-ritual-no-hyp").status == DistillationJobStatus.PENDING
+        assert queue.get("src-ritual-failed").status == DistillationJobStatus.PENDING
+        assert queue.get("src-genuine-closed").status == DistillationJobStatus.SKIPPED
+        assert queue.get("src-genuine-closed").skip_reason == genuine_reason
+        assert queue.get("src-genuine-first-run").status == DistillationJobStatus.SKIPPED
+        assert queue.get("src-genuine-first-run").skip_reason == genuine_first_run_reason
+
+        # Even if closed again with ritual text, defect_reattempted=1 prevents a second re-open.
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
+                (ritual_no_hyp_reason, ritual_no_hyp_job.job_id),
+            )
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=250.0 WHERE job_id=?",
+                (ritual_failed_reason, ritual_failed_job.job_id),
+            )
+        assert queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=300.0, ledger=ledger
+        ) == []
+
+    def test_proposer_failed_dead_letter_and_skipped_row_redriven_at_most_once(
+        self, tmp_path: Path
+    ) -> None:
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        proposer_reason = (
+            "hypothesis_compiler_failed: proposer_failed:SemanticExtractionClientError"
+        )
+        dl_job = queue.enqueue_source_record(
+            _normalized_source("src-proposer-dl", tenant_id="default"), enqueued_at=100.0
+        )
+        _force_dead_letter(queue, dl_job, reason=proposer_reason)
+
+        skipped_job = queue.enqueue_source_record(
+            _normalized_source("src-proposer-skip", tenant_id="default"), enqueued_at=110.0
+        )
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='skipped', skip_reason=?, processed_at=110.0 WHERE job_id=?",
+                (proposer_reason, skipped_job.job_id),
+            )
+
+        out = queue.redrive_extraction_unavailable_dead_letters(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert out == {"redriven": [dl_job.job_id], "superseded": []}
+        assert queue.dead_letter_count() == 0
+
+        reopened = queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=200.0
+        )
+        assert reopened == [skipped_job.job_id]
+
+        # If the redriven dead letter is claimed and fails with proposer_failed again,
+        # mark_retry_or_dead_letter returns it directly to dead_letter and it is not redriven a second time.
+        claimed = queue.claim_due(
+            worker_id="w", lease_seconds=30.0, now=200.0, job_ids=[dl_job.job_id]
+        )[0]
+        started = queue.begin_job(claimed, lease_seconds=30.0, now=200.0)
+        status = queue.mark_retry_or_dead_letter(
+            started, error=proposer_reason, base_delay_seconds=5.0, now=201.0
+        )
+        assert status == DistillationJobStatus.DEAD_LETTER
+        assert queue.dead_letter_count() == 1
+        assert queue.redrive_extraction_unavailable_dead_letters(
+            requested_by="ctl", tenant_id="default", now=300.0
+        ) == {"redriven": [], "superseded": []}
+        assert queue.reattempt_fixed_defect_records(
+            requested_by="ctl", tenant_id="default", now=300.0
+        ) == []
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127: a newer version of a
+# source supersedes its older waiting versions; only the newest is eligible.
+# ---------------------------------------------------------------------------
+
+def _version(n: int, source_id: str = "src-refetch") -> SourceRecord:
+    return _normalized_source(source_id, content_sha256=f"sha256:{n:064x}")
+
+
+def _superseded_reason(job) -> str:
+    return f"superseded_by_newer_version: {job.job_id}"
+
+
+class TestNewerVersionSupersedesOlder:
+    def test_older_pending_and_retry_wait_versions_closed_in_admission_order(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        assert queue.get(v1.source_id, v1.source_digest).skip_reason == _superseded_reason(v2)
+        _force_status(queue, v2, "retry_wait")
+        v3 = queue.enqueue_source_record(_version(3), enqueued_at=300.0)
+        assert queue.get(v2.source_id, v2.source_digest).status == "skipped"
+        assert queue.get(v2.source_id, v2.source_digest).skip_reason == _superseded_reason(v3)
+        # Re-admitting an existing older version does not supersede the newer one.
+        again = queue.enqueue_source_record(_version(2), enqueued_at=400.0)
+        assert again.job_id == v2.job_id
+        assert queue.get(v3.source_id, v3.source_digest).status == "pending"
+        # Another source is untouched.
+        other = queue.enqueue_source_record(_version(1, "src-other"), enqueued_at=150.0)
+        assert queue.get(other.source_id).status == "pending"
+        waiting = [j for j in queue.list_all() if j.status in ("pending", "retry_wait")]
+        assert sorted(j.job_id for j in waiting) == sorted([v3.job_id, other.job_id])
+
+    def test_concurrent_lease_on_older_version_is_closed_at_start_without_a_call(self, tmp_path: Path) -> None:
+        from services.source_ingestion.distillation_worker import DistillationSupersededError
+
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        # The newer version arrives while another worker holds the older one.
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=120.0)
+        assert queue.get(v1.source_id, v1.source_digest).status == "leased"
+        with pytest.raises(DistillationSupersededError):
+            queue.begin_job(claimed, lease_seconds=60, now=125.0)
+        closed = queue.get(v1.source_id, v1.source_digest)
+        assert closed.status == "skipped" and closed.skip_reason == _superseded_reason(v2)
+        assert closed.attempts == 0
+        with sqlite3.connect(queue.path) as conn:
+            inbox = conn.execute(
+                "SELECT status, lease_token FROM distillation_inbox WHERE job_id=?", (v1.job_id,)
+            ).fetchone()
+        assert inbox == ("skipped", None)
+        (next_job,) = queue.claim_due(worker_id="w2", lease_seconds=60, now=130.0)
+        assert next_job.job_id == v2.job_id
+
+    def test_started_older_version_finishes_and_newer_stays_eligible(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        started = queue.begin_job(claimed, lease_seconds=60, now=111.0)
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=120.0)
+        queue.mark_skipped(started.job_id, reason="no_hypothesis: x", processed_at=130.0,
+                           claim_token=started.lease_token)
+        assert queue.get(v1.source_id, v1.source_digest).skip_reason == "no_hypothesis: x"
+        assert queue.get(v2.source_id, v2.source_digest).status == "pending"
+
+    def test_claim_skips_older_versions_left_from_before_the_switch(self, tmp_path: Path) -> None:
+        worker, queue, _ = _make_worker(tmp_path)
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        # Backlog admitted before this change: both versions still pending.
+        with sqlite3.connect(queue.path) as conn:
+            conn.execute(
+                "UPDATE distillation_outbox SET status='pending', skip_reason=NULL, processed_at=NULL WHERE job_id=?",
+                (v1.job_id,),
+            )
+            conn.execute("UPDATE distillation_inbox SET status='pending' WHERE job_id=?", (v1.job_id,))
+        result = worker.run_pending()
+        assert result.superseded_versions == 1
+        assert result.to_dict()["superseded_versions"] == 1
+        assert result.processed == 1
+        assert queue.get(v1.source_id, v1.source_digest).skip_reason == _superseded_reason(v2)
+        assert queue.get(v2.source_id, v2.source_digest).status == "done"
+
+
+class TestCommittedReplayIsNotSuperseded:
+    """A retry_wait row whose seed is committed (Registry replay pending) is lineage, not a paid call."""
+
+    def test_registry_failed_retry_keeps_committed_seed_and_survives_newer_version(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        started = queue.begin_job(claimed, lease_seconds=60, now=111.0)
+        status = queue.mark_retry_or_dead_letter(
+            started, error="registry_sync_failed: RuntimeError: outage",
+            base_delay_seconds=0, now=112.0, committed_seed_id="seed-committed-1",
+        )
+        assert status.value == "retry_wait"
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        old = queue.get(v1.source_id, v1.source_digest)
+        assert old.status == "retry_wait" and old.seed_id == "seed-committed-1"
+        # The replay is still claimable and begins without being superseded.
+        claimed_ids = {j.job_id for j in queue.claim_due(worker_id="w2", lease_seconds=60, now=210.0)}
+        assert claimed_ids == {v1.job_id, v2.job_id}
+
+    def test_retry_without_committed_seed_is_still_superseded(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        started = queue.begin_job(claimed, lease_seconds=60, now=111.0)
+        queue.mark_retry_or_dead_letter(started, error="l2 timeout", base_delay_seconds=0, now=112.0)
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        old = queue.get(v1.source_id, v1.source_digest)
+        assert old.status == "skipped" and old.skip_reason == _superseded_reason(v2)

@@ -1,0 +1,235 @@
+{
+  "task_id": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
+  "status": "ready_for_independent_review",
+  "source_records": {
+    "path": "/home/chloe_ong_dev_cctech_support_com/claude-evidence/trade-journey-readable-20261120/parked-expired-20261127/signal_store_decision_records_20261127T1453Z.json",
+    "sha256": "f1f83fd8bef3398739234fbfa3e6d23c65d18f74c5ad5614d44082f7e44caa86",
+    "captured_at": "2026-11-27T14:53:00Z"
+  },
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python -m pytest services/execution/lean_runtime/test_paper_signal_producer.py services/execution/lean_runtime/test_intraday_settlement.py services/execution/lean_runtime/test_daily_settlement_integration.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py -q",
+      "exit_code": 0,
+      "result": "338 passed, 15 subtests passed, 3 pre-existing deprecation warnings, 67.74 seconds; includes real PostgreSQL projector -> BFF roundtrip and telemetry JSON schema validation.",
+      "tested_head": "3869dcee7",
+      "full_output": {
+        "path": "/tmp/park-expire-repair-scoped-pytest.log",
+        "sha256": "d5344679ea9f68bb78e446bba4632a93e67bb4e01a63e1b50c2189b8d8c5aec7"
+      }
+    },
+    {
+      "command": "python -m pytest services/execution/lean_runtime/test_paper_runtime.py services/trade_journey/test_materializer.py services/trade_journey/test_lifecycle_projector.py services/trade_journey/test_projection_migration.py -q",
+      "exit_code": 0,
+      "result": "375 passed, 35 skipped, 38 subtests passed, 45.53 seconds. Run before the final expiry payload derivation adjustment, covered by the 338-test final batch."
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_code": 0,
+      "result": "passed; 378 entries, 4 waivers, no failures"
+    },
+    {
+      "command": "python3 acceptance/probes/trade-journey-parked-expired",
+      "exit_code": 77,
+      "result": "missing hosted configuration in worker; no hosted acceptance claimed; probe check() covered for no-sample skip, park pass, expire pass and wrong expiry failure"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base 8af0cd545 --head 3869dcee7",
+      "exit_code": 0,
+      "result": "production +334/-4 (net +330); test +1371/-0; docs/evidence +145/-0. Evidence summary 122 lines at tested head, below 400-line cap."
+    },
+    {
+      "check": "verbatim_fixture_integrity",
+      "exit_code": 0,
+      "method": "Extract the fixture constant with ast.literal_eval; compare exact JSON bytes to git show a586a9436:evidence.json hosted_signal_store_records; verify original evidence, fixture and both canonical per-record SHA-256 values.",
+      "result": "Both hosted documents are byte-identical to original committed evidence."
+    }
+  ],
+  "residual_findings": [
+    {
+      "finding": "Target-session opening data may arrive after settlement expiry. This task does not change source refresh ordering.",
+      "disposition": "Existing market-data owner work, composes with TW-REFRESH-OFFICIAL-MARKET-FIRST-20261127; already declared outside this task in its brief.",
+      "register_class": "RC6 trade-journey observability composes with market-data chain."
+    }
+  ],
+  "delivery": {
+    "merged": false,
+    "deployed": false,
+    "accepted": false
+  },
+  "implementation": {
+    "owned_layer": "Decision observability and read projections; settlement module, expiry cutoff, prices and enqueue eligibility unchanged.",
+    "identity": "Write-once decision_id#journey written before pending, use put_decision_record winner, deterministic fallback on write error. Never rewrite pending. Existing already-enqueued legacy orders are not given a second journey.",
+    "events": "Existing RuntimeTelemetryEmitter schema/transport; frozen park payload, deterministic per-decision-state event UUID, sent marker after acceptance; expiry derived from frozen park payload, using settlement expired_at.",
+    "runtime_continuity": "Released signal carries exact park payload; runtime admits it via existing lifecycle outbox at sequence 1 and continues at sequence 2, preserving idempotency and retry/requeue rules.",
+    "read_path": "Shared materializer, relational projector, loop terminal status, BFF outcome and attention SQL; stale-open SQL sweep excludes pending settlement. Timeline retains park after release.",
+    "supporting_files_beyond_initial_artifact_list": [
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/trade_journey/materializer.py",
+      "services/trade_journey/incremental_materializer.py",
+      "services/trade_journey/projection_migration.py",
+      "services/control-plane/bff/trade_journey_projection_store.py"
+    ],
+    "test_setup_note": "Existing counterfactual replay helper now supplies its fixture capital pool and recorded signal clock; no existing assertions edited."
+  },
+  "validation_environment": "Checkout-scoped .venv-pantheon/bin/python, provisioned by python3 scripts/dev/provision_python_distribution.py using supervisor PANTHEON_DEPENDENCY_PYTHON; foreign-cwd import verification passed. Bounded foreground suite exit status 0 collected.",
+  "runtime_budget": {
+    "task": "TRADE-JOURNEY-DECISION-PARK-EXPIRE-EVENTS-20261127",
+    "owner": "execution.paper-signal-producer",
+    "writers": [
+      "Redis decision_id#journey",
+      "Redis decision_id#lifecycle-sent:pending_settlement",
+      "Redis decision_id#lifecycle-sent:expired_no_price",
+      "existing telemetry_events lifecycle ingest and existing paper lifecycle outbox"
+    ],
+    "cadence": "existing producer tick (60 seconds), no new job; 4-5 hosted bindings, at most one parked decision per binding per session",
+    "growth_per_day": "At most 5 immutable journey records + 10 sent markers + 10 distinct incremental lifecycle events per trading day. Recorded hosted fixtures measured 6359 / 6371 bytes per journey and 3804-3858 bytes per lifecycle event; sent marker <100 bytes. About 32 KB/day Redis journey data + <1 KB/day markers + <39 KB/day incremental telemetry; no market lineage copied into park metadata.",
+    "cap": "at most 15 new Redis keys per trading day, approximately 450 keys / 30 days and about 1 MB; bounded by hosted binding count, not a new fleet-wide admission cap; no marker on failed delivery; repeated sends preserve event identity and ingest deduplicates them",
+    "cleanup": "existing put_decision_record SET NX with 30-day TTL; expiry is never extended by reads/retries; telemetry uses existing lifecycle retention; imported park reuses the runtime lifecycle outbox and existing 35-day chain cleanup, no separate file or queue",
+    "readers": [
+      "services/execution/lean_runtime/paper_signal_producer.py",
+      "services/execution/lean_runtime/paper_runtime.py",
+      "services/trade_journey/lifecycle_projector.py"
+    ],
+    "bound_proof": {
+      "file": "services/execution/lean_runtime/paper_signal_producer.py",
+      "contains": "DECISION_SENT_SUFFIX = \"#lifecycle-sent:\""
+    }
+  },
+  "acceptance_probe": {
+    "path": "acceptance/probes/trade-journey-parked-expired",
+    "read_only": "GET only after existing viewer client credentials login",
+    "deployment_cutoff": "Pantheon frontend /deployment.json deployedAt",
+    "configuration": [
+      "ACCEPTANCE_BFF_URL",
+      "ACCEPTANCE_FE_URL",
+      "ACCEPTANCE_VIEWER_CLIENT_ID",
+      "ACCEPTANCE_VIEWER_CLIENT_SECRET"
+    ],
+    "bounds": "At most 20 journey pages and 5 timeline pages per journey, 200 items/page; bound overflow and repeated tokens fail. New journey samples only; no post-deploy parked decision returns 77.",
+    "hosted_status": "pending deployment and fresh decision sample"
+  },
+  "recorded_test_fixture": {
+    "path": "services/execution/lean_runtime/test_paper_signal_producer.py",
+    "constant": "_RECORDED_HOSTED_DECISIONS_JSON",
+    "original_evidence_commit": "a586a9436cd0eae5f18273d231f2ef0575bf924f",
+    "original_evidence_sha256": "3112f3aa3d67c12df159838b17f62b11ccd167cba68c572bf9a703836b5b26c7",
+    "verbatim_json_sha256": "800aae3e8329a737b48aa0ff20db7aebdebaa231830a0bfb4a56388f0860539c",
+    "records": {
+      "expired_2330_D20261125": {
+        "decision_id": "dec-rb-23c9d71a91c5420dae77ca14eea9f988-551a31efd91419400e8d3184",
+        "canonical_json_sha256": "60332c1839fc7b4fb70ae2eec37415fd8aea7c5676e8d58dc2596a1b244e07a6"
+      },
+      "pending_2317_long46_D20261126": {
+        "decision_id": "dec-rb-a2cb762c5aeb42ebbcf8f2e6894a1bc4-0279d62d7b1d7abc9ec9dc15",
+        "canonical_json_sha256": "a4d5c52e7f1b7c1d489af00c03033f5d3263c2f1b52d8bae883fc9715533fc74"
+      }
+    },
+    "integrity": "Copied the exact hosted_signal_store_records JSON bytes from the original committed evidence. No recorded fields, values or whitespace changed; tests parse a fresh copy for each use."
+  },
+  "reviewer_repair": {
+    "request": "Claude2 reopen of a586a9436: evidence adds 1140 lines over the 400-line cap.",
+    "change": "Move both verbatim hosted records to a fixture constant in the already-scoped producer test; retain source and per-record digests in this summary. No production or settlement changes.",
+    "verification": "338 tests and 15 subtests passed in checkout-scoped interpreter; fixture bytes/digests, storage manifest, diff budget and git diff --check passed. Re-review required on new head; no merged, deployed or accepted claim."
+  },
+  "release_probe_ci_repair": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46041736973/job/140667561467",
+    "failed_head": "4bd72f298bfa0dddc0ed968e4c708cdc9e22b485",
+    "root_cause": "The release-stage replay test enumerates repository probes explicitly; this task added trade-journey-parked-expired without adding it to that expected list.",
+    "change": "Add the task's release probe to the expected discovery list and assert skipped/exit 77 without hosted credentials. No release-stage implementation, deployment gate, settlement or runtime change.",
+    "supporting_test": "scripts/test_dev_acceptance_stage.py",
+    "reproduction": "The exact failing test reproduced locally with exit 1: index 13 contains probe:trade-journey-parked-expired, absent from the expected list.",
+    "validation": [
+      {
+        "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+        "exit_code": 0,
+        "result": "34 passed in 3.29s; bounded foreground command terminal status collected."
+      },
+      {
+        "command": "timeout 600 .venv-pantheon/bin/python scripts/ci_test_inventory.py run-shard --shard 11 --of 12 --jobs 3 --timeout 300",
+        "exit_code": 0,
+        "result": "56 test files passed, 0 failed, wall 161 seconds",
+        "tested_head": "03dcb0ee9c158498b8923ab142957302f329c472",
+        "full_output": {
+          "path": "/tmp/park-expire-shard11-repair.log",
+          "sha256": "b0414cacc00c1eaaecf03e5a41e96f395185278cb2a50fdb04a09b69424e1648"
+        }
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+        "exit_code": 0,
+        "result": "205 passed, 10 subtests passed, 3 deprecation warnings in 38.86 seconds",
+        "tested_head": "03dcb0ee9c158498b8923ab142957302f329c472",
+        "full_output": {
+          "path": "/tmp/park-expire-source-recheck.log",
+          "sha256": "2055f4fe6ddcbf6ef6fe45aa4f56f3d322b1edb74c281d2624e7b7cba2c72c5f"
+        }
+      }
+    ],
+    "review": "New head requires fresh independent review by Claude2; no merged, deployed or accepted claim.",
+    "residual_findings": "No new out-of-scope defects. Existing market-data refresh residual remains recorded above.",
+    "final_base_refresh": {
+      "base_sha": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
+      "tested_head": "fe49b0b346ef9ad0bf19c588791f38c9efb464f5",
+      "composition": "Only upstream source-ingestion test/evidence and problem-register updates changed after the full shard batch. Task runtime, journey read path and acceptance-stage files match the tested tree. All upstream storage-manifest list entries retained, plus this task budget.",
+      "command": "timeout 60 .venv-pantheon/bin/python -m pytest -q scripts/test_dev_acceptance_stage.py",
+      "exit_code": 0,
+      "result": "34 passed in 5.14 seconds"
+    },
+    "checks": "Storage manifest passed (379 entries, 4 waivers, no failures); diff budget passed; auto-classified commit trailers and git diff --check passed. All foreground batches reached terminal exit 0 before publication and review handoff."
+  },
+  "ci_repair": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46035160872/job/140635789098",
+    "failed_head": "105366ee4d4666895c0d017aef76b60c8fa8e3ea",
+    "root_cause": "The futures mark-once fixture deep-copied a released signal into a different decision but retained the original immutable parked_decision_event. Runtime correctly rejected the mismatched signal_id.",
+    "change": "Repair only the synthetic later-signal fixture: remove the inherited park payload and mint a distinct envelope/journey with the canonical helper. Existing assertions, production validation and settlement behavior are unchanged.",
+    "supporting_test": "services/execution/lean_runtime/test_futures_session_inputs.py",
+    "reproduction": "Original failing test reproduced locally: 1 failed, AssertionError 2 != 3, invalid upstream park event.",
+    "focused_validation": {
+      "command": ".venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py",
+      "exit_code": 0,
+      "result": "13 passed, 10 subtests passed, 1 deprecation warning in 7.85s"
+    },
+    "review": "Prior approval invalidated; new exact-head review by Claude2 required.",
+    "tested_head": "bfd41b4d837d1cb4ce0d05faa6ca2fb332ee3b08",
+    "base_sha": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+    "assertion_integrity": "All 168 existing futures-session assertion call ASTs are identical to failed head 105366ee4.",
+    "validation": [
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/execution",
+        "exit_code": 0,
+        "result": "948 passed, 13 skipped, 105 subtests passed, 103 warnings in 256.79s",
+        "full_output": {
+          "path": "/tmp/park-expire-execution-ci-repair.log",
+          "sha256": "0d3dfd627ee1a9171e847412a030bd87af4939103772d8a919724eaad7462471"
+        }
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+        "exit_code": 0,
+        "result": "192 passed, 3 deprecation warnings in 29.07s",
+        "full_output": {
+          "path": "/tmp/park-expire-read-ci-repair.log",
+          "sha256": "62aeeca9fda494d9cae2db4c29b538262fb54021cd298879b552fd9e617848fd"
+        }
+      }
+    ],
+    "checks": "Checkout-scoped interpreter foreign-cwd verification, storage manifest (378 entries, no failures), diff budget and git diff --check passed. All bounded command terminal exit statuses collected.",
+    "residual_findings": "No new findings outside scope; existing official-market refresh residual remains assigned as recorded above.",
+    "final_base_refresh": {
+      "base_sha": "50a65493c596eb00567e5ae34e5fe804559e77ad",
+      "tested_head": "2f077d6f2781ceeb6b78a05eedfbae499b29472f",
+      "reason": "Dev advanced with unrelated Agora/shadow-settlement changes during publication; composed before exact-head review. git diff --quiet bfd41b4d8 HEAD -- services/execution passed: full execution tested content unchanged.",
+      "command": ".venv-pantheon/bin/python -m pytest -q services/execution/lean_runtime/test_futures_session_inputs.py services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/trade_journey/test_lifecycle_projector.py",
+      "exit_code": 0,
+      "result": "205 passed, 10 subtests passed, 3 deprecation warnings in 30.82s",
+      "full_output": {
+        "path": "/tmp/park-expire-final-base.log",
+        "sha256": "4b3abe73a9a04d701d364c3830c155b885608d2a35f1d27a01eeae62acca9ff2"
+      }
+    }
+  }
+}

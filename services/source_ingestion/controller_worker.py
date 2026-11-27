@@ -847,6 +847,66 @@ def scoped_unresolved_dlq_by_connector(
     return result
 
 
+def _trusted_dlq_connector_counts(actual: Mapping[str, Any]) -> bool:
+    """Only consistent, attributed counts may be subtracted from terminal DLQ counts."""
+    if _trusted_unresolved_dlq_count(actual) is None:
+        return False
+    by_connector = actual.get("dlq_status_counts_by_connector")
+    status_counts = actual["dlq_status_counts"]
+    known_connector_ids = {
+        item.get("connector_id")
+        for item in actual.get("connectors") or []
+        if isinstance(item, Mapping) and item.get("configured") is True
+    }
+    return isinstance(by_connector, Mapping) and not (
+        any(
+            not isinstance(connector_id, str)
+            or not connector_id.strip()
+            or connector_id not in known_connector_ids
+            or not isinstance(counts, Mapping)
+            or set(counts) != set(status_counts)
+            or any(type(count) is not int or count < 0 for count in counts.values())
+            or sum(counts.values()) < 1
+            for connector_id, counts in by_connector.items()
+        )
+        or any(
+            sum(counts[status] for counts in by_connector.values()) != status_counts[status]
+            for status in status_counts
+        )
+    )
+
+
+def preexisting_dlq_backlog(
+    pre_actual: Mapping[str, Any], connector_ids: Sequence[str]
+) -> dict[str, Any]:
+    """Unresolved backlog that existed before this tick, per selected connector, with its oldest age.
+
+    One entry per selected connector that has a backlog, so the readback added per run is bounded
+    by the selected scope. The age is measured at the pre-tick readback; it is None when the source
+    readback does not carry the oldest rejection time.
+    """
+    counts = scoped_unresolved_dlq_by_connector(pre_actual, connector_ids)
+    oldest_map = pre_actual.get("dlq_oldest_unresolved_at_by_connector")
+    oldest_map = oldest_map if isinstance(oldest_map, Mapping) else {}
+    captured_at = parse_utc(str(pre_actual.get("captured_at") or ""))
+    by_connector: dict[str, dict[str, Any]] = {}
+    for connector_id, count in counts.items():
+        if not count:
+            continue
+        oldest_raw = oldest_map.get(connector_id)
+        oldest = parse_utc(oldest_raw) if isinstance(oldest_raw, str) else None
+        by_connector[connector_id] = {
+            "unresolved_count": count,
+            "oldest_rejected_at": oldest_raw if oldest is not None else None,
+            "oldest_age_seconds": (
+                max(0, int((captured_at - oldest).total_seconds()))
+                if oldest is not None and captured_at is not None
+                else None
+            ),
+        }
+    return {"count": sum(item["unresolved_count"] for item in by_connector.values()), "by_connector": by_connector}
+
+
 def _validate_terminal_readback(
     *,
     reconcile: Mapping[str, Any],
@@ -985,28 +1045,7 @@ def _validate_terminal_readback(
                 actual_readback=actual,
             )
         by_connector = actual.get("dlq_status_counts_by_connector")
-        known_connector_ids = {
-            item.get("connector_id")
-            for item in actual.get("connectors") or []
-            if isinstance(item, Mapping) and item.get("configured") is True
-        }
-        if (
-            not isinstance(by_connector, Mapping)
-            or any(
-                not isinstance(connector_id, str)
-                or not connector_id.strip()
-                or connector_id not in known_connector_ids
-                or not isinstance(counts, Mapping)
-                or set(counts) != expected_dlq_statuses
-                or any(type(count) is not int or count < 0 for count in counts.values())
-                or sum(counts.values()) < 1
-                for connector_id, counts in by_connector.items()
-            )
-            or any(
-                sum(counts[status] for counts in by_connector.values()) != dlq_status_counts[status]
-                for status in expected_dlq_statuses
-            )
-        ):
+        if not _trusted_dlq_connector_counts(actual):
             raise ControllerTickError(
                 "actual_readback",
                 "authoritative source readback has missing, unknown or contradictory scoped dead-letter counts",
@@ -1022,7 +1061,8 @@ def _validate_terminal_readback(
         )
     new_unresolved_dlq_count = validated_unresolved_dlq_count
     if exclusive_connector_ids and pre_unresolved_dlq_by_connector is not None:
-        # Steady pull: only entries this tick added fail it; older backlog is reported, not fatal.
+        # Steady pull and bounded refresh: only entries this tick added fail it; the older
+        # backlog is reported in the accepted readback, not fatal.
         post_by_connector = scoped_unresolved_dlq_by_connector(actual, exclusive_connector_ids)
         new_unresolved_dlq_count = sum(
             max(0, count - int(pre_unresolved_dlq_by_connector.get(connector_id, 0)))
@@ -2285,8 +2325,13 @@ def run_controller_tick(
         else:
             steady = config.mode == COLLECTOR_STEADY_PULL_MODE
             exclusive_connector_ids = steady_pull_ids if steady else sorted(set(config.exclusive_connector_ids))
-            pre_steady_dlq = scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
-            pre_steady_dlq_trusted = isinstance(pre_actual.get("dlq_status_counts_by_connector"), Mapping)
+            # The pre/post rule needs a pre-tick map that agrees with the pre-tick totals; otherwise
+            # every unresolved entry in scope fails the tick, as before.
+            pre_steady_dlq_trusted = _trusted_dlq_connector_counts(pre_actual)
+            pre_steady_dlq = (
+                scoped_unresolved_dlq_by_connector(pre_actual, exclusive_connector_ids)
+                if pre_steady_dlq_trusted else {}
+            )
             frontier_recovery = recover_explicit_frontier(
                 api_url=config.api_url,
                 recovery_connector_ids=config.frontier_recovery_connector_ids,
@@ -2324,9 +2369,7 @@ def run_controller_tick(
                 expected_exclusive_connector_ids=exclusive_connector_ids,
                 collector_connector_ids=steady_pull_ids if steady else (),
                 session_selected_at=None if steady else config.session_selected_at,
-                pre_unresolved_dlq_by_connector=(
-                    pre_steady_dlq if steady and pre_steady_dlq_trusted else None
-                ),
+                pre_unresolved_dlq_by_connector=pre_steady_dlq if pre_steady_dlq_trusted else None,
                 frontier_items=(
                     read_frontier_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)
                     if exclusive_connector_ids
@@ -2350,11 +2393,14 @@ def run_controller_tick(
         accepted_actual = summarize_actual_readback(actual)
         accepted_actual["pre_captured_at"] = pre_actual.get("captured_at")
         accepted_actual["validated_frontier_backlog"] = validated_frontier_backlog
-        if config.mode == COLLECTOR_STEADY_PULL_MODE and steady_pull_ids:
+        if provider_egress_attempted:
             accepted_actual["pre_existing_unresolved_dlq_by_connector"] = {
                 k: v for k, v in pre_steady_dlq.items() if v
             }
             accepted_actual["pre_existing_unresolved_dlq_count"] = sum(pre_steady_dlq.values())
+            accepted_actual["pre_existing_unresolved_dlq_backlog"] = preexisting_dlq_backlog(
+                pre_actual if pre_steady_dlq_trusted else {}, exclusive_connector_ids
+            )
         accepted_actual["validated_frontier_connector_ids"] = sorted(
             set(config.exclusive_connector_ids) | set(steady_pull_ids)
         )
@@ -2430,6 +2476,12 @@ def run_controller_tick(
             continuation_pending = bool(select_collector_pull_connectors(continuation_actual, reconcile))
         return {
             "status": "ok",
+            # Older unresolved dead letters of the selected scope: reported, not fatal (bounded per scope).
+            **(
+                {"pre_existing_unresolved_dlq_backlog": accepted_actual["pre_existing_unresolved_dlq_backlog"]}
+                if "pre_existing_unresolved_dlq_backlog" in accepted_actual
+                else {}
+            ),
             "continuation_pending": continuation_pending,
             "controller_mode": config.mode,
             "provider_egress_attempted": provider_egress_attempted,

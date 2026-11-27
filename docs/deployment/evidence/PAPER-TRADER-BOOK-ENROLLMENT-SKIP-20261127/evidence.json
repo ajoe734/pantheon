@@ -1,0 +1,195 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-ENROLLMENT-SKIP-20261127",
+  "title": "Trader servant paper book is retried as a trading persona and its pool publish refusals grow without a cap",
+  "generated_at": "2026-11-27T13:40:00Z",
+  "delivery_state": "open",
+  "owner": {
+    "agent": "Antigravity",
+    "model_family": "antigravity"
+  },
+  "reviewer": {
+    "agent": "Codex",
+    "model_family": "codex",
+    "cross_family_verified": true
+  },
+  "root_cause_classes": [
+    "RC3 WP3.1 (unbounded refusal growth in bff.persona_pool_publish_records and persona.strategy_pools)",
+    "RC4 Agora servant paper book (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T7 follow-through)"
+  ],
+  "incident_summary": {
+    "hosted_record_key": "trader-paper-book:tenant-default:agora-servant-799a3ce8c021b91cbb54",
+    "persona_id": "agora-servant-799a3ce8c021b91cbb54",
+    "capital_pool_id": "pool-persona-paper-3ca8da543bef6ede0a07",
+    "persona_capital_binding_id": "pcb-persona-paper-3ca8da543bef6ede0a07",
+    "runtime_binding_id": "rb-77d962be4e324032808324109f2c154e",
+    "provisioned_at": "2026-11-27T09:42:00Z",
+    "observed_symptom": "After PAPER-TRADER-BOOK-PROVISION-20261127 provisioned the trader servant paper book at 2026-11-27 09:42Z, _reconcile_paper_enrollment_once in services/control-plane/bff/personas/service.py picked up trader-paper-book:tenant-default:agora-servant-799a3ce8c021b91cbb54 every 600 s as a trading persona and attempted to seed and publish a strategy pool, appending 16 'no strategy pool for persona agora-servant-799a3ce8c021b91cbb54' refusals in 2.6 hours (~144/day) into bff.persona_pool_publish_records without deduplication or cap."
+  },
+  "ac1_enrollment_skip": {
+    "code_changes": [
+      "services/control-plane/bff/personas/service.py: added _is_non_trading_paper_enrollment_record(record, persona_owner=...) and guarded _is_paper_enrollment_record_actionable and _reconcile_paper_enrollment_once so trader servant paper book and non-trading persona records are never acted on.",
+      "services/control-plane/bff/persona_provisioning_coordinator.py: added _is_non_trading_paper_enrollment_record(record) and guarded _enroll_in_place and reconcile_paper_enrollment so direct coordinator enrollment calls also skip trader servant paper book and non-trading persona records without acquiring a lease or invoking PersonaPaperEnrollment.",
+      "services/control-plane/bff/personas/trader_paper_book.py: included persona_class='agora_servant' and book_kind='trader_servant_paper_book' in trader_paper_book_provisioning_record request_payload while keeping request_hash unchanged."
+    ],
+    "rule_reuse": "Delegates non-trading persona classification to services/control-plane/bff/personas/fleet_classification.py::is_non_trading_persona (persona_class == 'agora_servant' / advisory purpose) and checks book_kind == 'trader_servant_paper_book' (plus trader-paper-book: idempotency_key / user_private_agora_servant_paper_book mandate for the already-persisted 09:42Z hosted record) with no second list of non-trading persona classes.",
+    "test_proof": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_paper_enrollment_reconcile_never_acts_on_trader_servant_paper_book_record"
+  },
+  "ac2_and_ac3_refusal_bounds": {
+    "refusals_readers_inventory": {
+      "bff_persona_pool_publish_records": [
+        {
+          "reader": "GET /bff/personas/{persona_id}/strategy-pool/publish-history",
+          "file": "services/control-plane/bff/personas/routes/lifecycle.py:538-553",
+          "reads_fields": "Returns publisher.history(tenant_id, persona_id) containing published, refusals, current_envelope"
+        },
+        {
+          "reader": "PoolPublishPort.publication_state -> last_published",
+          "file": "services/persona/pool_publish_port.py:47-49, services/control-plane/persona/pool_policy.py:195-198",
+          "reads_fields": "Reads only history['published']; does not read history['refusals']"
+        },
+        {
+          "reader": "execute-plans frontend",
+          "file": "ajoe734/execute-plans src/",
+          "reads_fields": "0 readers of publish-history refusals[*]"
+        }
+      ],
+      "persona_strategy_pools": [
+        {
+          "reader": "GET /api/personas/{persona_id}/strategy-pool/versions",
+          "file": "services/control-plane/persona/main.py:818-831",
+          "reads_fields": "Returns {'versions': store.versions(...), 'refusals': store.refusals(...)}"
+        },
+        {
+          "reader": "PersonaPoolViewsPort.read",
+          "file": "services/control-plane/bff/ports/persona_pool.py:83-88",
+          "reads_fields": "Reads only payload['versions']; ignores payload['refusals']"
+        },
+        {
+          "reader": "CaseFileBuilder._history",
+          "file": "services/knowledge/case_file.py:873-878",
+          "reads_fields": "Iterates versions.get('refusals') or [] and attaches each refusal dict to similar_history entries"
+        },
+        {
+          "reader": "execute-plans frontend",
+          "file": "ajoe734/execute-plans src/",
+          "reads_fields": "0 readers of strategy-pool/versions refusals[*]"
+        }
+      ]
+    },
+    "hosted_read_only_sizes": {
+      "source_workflow": ".github/workflows/dev-storage-budget.yml",
+      "workflow_run_id": 45997373457,
+      "artifact_id": 15196034234,
+      "artifact_name": "hosted-storage-report",
+      "collected_at": 1795781925,
+      "collected_at_iso": "2026-11-27T12:18:45+00:00",
+      "previous_collected_at": 1795696338,
+      "measurements": {
+        "schema_table:persona.strategy_pools": {
+          "bytes": 163840,
+          "growth_per_day": 24809,
+          "files": 0,
+          "lines": 0,
+          "rows": 0
+        },
+        "schema_table:bff.persona_pool_publish_records": {
+          "bytes": 65536,
+          "growth_per_day": 0,
+          "files": 0,
+          "lines": 0,
+          "rows": 0
+        }
+      }
+    },
+    "bounding_contract": {
+      "max_entries_per_record": 20,
+      "deduplication_rule": "When the newest entry in refusals has the same step and reason (and artifact_ref in persona.strategy_pools), count is incremented in place and last_at is updated to the current timestamp instead of appending a new row.",
+      "kept_envelope_compaction": "PersonaPoolPublisher._refuse stores only {'version': <envelope_version>, 'digest': <pool_or_envelope_digest>} in previous_envelope_kept (or null when no envelope is running), never a full envelope copy, and normalizes every retained legacy refusal entry's previous_envelope_kept to its own historical {'version', 'digest'} within the same _refuse CAS mutation (preserving historical identity whether a distinct reason appends or a repeated same-reason retry updates the newest entry in place).",
+      "cleanup_and_rollout_budget": "Compaction and the 20-entry cap execute in place inside the refusal CAS write path (PersonaPoolPublisher._refuse and PersonaStrategyPoolStore._record_refusal) while leaving publish(), _load(), and history() untouched so this change composes cleanly with POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127 and adds 0 read-path writers or background jobs. On rollout: (1) any record that receives a subsequent refusal immediately trims refusals to <=20 entries and normalizes all retained legacy previous_envelope_kept entries in place to <=10 KB total (~0.3-0.5 KB/entry); (2) the hosted servant record tenant-default:agora-servant-799a3ce8c021b91cbb54 accumulated pre-deploy refusals at step='pool' with current_envelope=null / previous_envelope_kept=null (~180 B/entry, <4 KB total inside the 65,536-byte bff.persona_pool_publish_records table) and stops receiving refusals once AC1 deploys (0/day); (3) quiescent records that never hit a refusal write again retain their existing persisted rows until their next refusal CAS mutation (or an explicit operator maintenance trim if a quiescent pre-existing record ever exceeded 20 entries).",
+      "scope_isolation": "In services/control-plane/bff/persona_pool_publisher.py, only _refuse (and _envelope_summary / _kept_envelope_summary / _normalize_refusal_entry / MAX_REFUSALS) was modified; publish(), _load(), history(), published[*].status, and current_envelope are untouched to compose cleanly with POOL-PUBLICATION-CONFIRM-DISPATCHED-ENVELOPE-20261127."
+    },
+    "test_proofs": [
+      "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_144_identical_pool_publish_refusals_collapse_to_one_entry_with_count_144_and_compact_kept_envelope",
+      "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_pool_publish_refusals_retain_at_most_20_entries",
+      "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_legacy_full_envelope_refusals_are_compacted_preserving_historical_identity_on_distinct_and_same_reason_retries",
+      "services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py::test_144_identical_strategy_pool_refusals_collapse_to_one_entry_with_count_144",
+      "services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py::test_strategy_pool_refusals_retain_at_most_20_distinct_entries"
+    ]
+  },
+  "ac4_order_time_risk_policy": {
+    "requires_approved_risk_policy_profile_mapping": true,
+    "code_references": [
+      {
+        "file": "services/execution/lean_runtime/agora_paper_intent_consumer.py:488-558",
+        "symbol": "AgoraPaperIntentConsumer._enqueue",
+        "role": "Enqueues confirmed trader paper intents onto the servant's paper RuntimeBinding queue via DecisionSignalProducer.produce with metadata.capital_pool_id = plan['capital_pool_id']."
+      },
+      {
+        "file": "services/execution/lean_runtime/paper_runtime.py:7754-7766, 3982, 4048",
+        "symbol": "PaperRuntimeService.__init__ / _drain_binding_signals",
+        "role": "Instantiates PaperExecutionAlgorithm with risk_policy=None and risk_policy_id=None, drains signals from the binding queue, and evaluates every paper order through EvaluateOrderRiskGate."
+      },
+      {
+        "file": "services/execution/lean_runtime/paper_runtime.py:1490-1517, 1591-1664",
+        "symbol": "PaperExecutionAlgorithm._resolve_active_risk_policy / EvaluateOrderRiskGate",
+        "role": "Calls resolve_bound_pool_risk_policy(capital_pool_id=self._capital_pool_id, ...); if no active RiskPolicy with an approved profile mapping is bound on the CapitalPool, raises RiskPolicyError and rejects the paper order with reason='risk_policy_unavailable'."
+      },
+      {
+        "file": "services/capital/risk_policy.py:3560-4688",
+        "symbol": "resolve_pool_risk_policy_binding / resolve_bound_pool_risk_policy",
+        "role": "Resolves CapitalPool.metadata.risk_policy and verifies CapitalPool.metadata.profile_mapping_approval_id against Governance target_type='capital_pool_activation' decisions; fails closed with risk_policy_missing (lines 3830-3835) or risk_policy_profile_mapping_unapproved (lines 4499-4560) when absent."
+      },
+      {
+        "file": "services/runtime-manager/deploy_authority.py:495-527, services/runtime-manager/fleet_desired_state.py:340-417",
+        "symbol": "verify_deploy_authority / verify_pool_risk_policy",
+        "role": "Runtime-Manager authority verification also checks pool risk policy bindings via resolve_pool_risk_policy_binding."
+      }
+    ],
+    "ensure_trader_paper_book_integration": {
+      "file": "services/control-plane/bff/personas/trader_paper_book.py:497-641, 854-864",
+      "symbol": "_ensure_paper_book_risk_policy / ensure_trader_paper_book",
+      "mechanism": "When Capital and Governance are configured on the coordinator transport (_transport_supports_paper_risk_gate), ensure_trader_paper_book first performs a GET-first check via resolve_pool_risk_policy_binding (0 POST/PATCH calls when already resolved). When not yet resolved, it calls coordinator.repair_paper_pool_risk_policy (Pass 1 drafts the policy via the risk-officer drafter with no hardcoded limits, proposes capital_pool_activation to Governance, and decides it via the P-4 automated paper risk gate with actor_role='automated_gate' and no human approval; Pass 2 discovers the gate-approved decision and binds metadata.risk_policy and metadata.profile_mapping_approval_id onto the servant's CapitalPool)."
+    },
+    "test_proof": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py::test_ensure_trader_paper_book_obtains_p4_automated_gate_risk_policy_and_order_risk_gate_passes"
+  },
+  "ac5_hosted_post_deploy_verification_plan": {
+    "status": "pending_deploy",
+    "coordinator_session": "70b5f70f",
+    "target_persona_id": "agora-servant-799a3ce8c021b91cbb54",
+    "expected_capital_pool_id": "pool-persona-paper-3ca8da543bef6ede0a07",
+    "expected_runtime_binding_id": "rb-77d962be4e324032808324109f2c154e",
+    "observation_window_minutes": 30,
+    "checks": [
+      "Over 30 minutes after dev deploy switch, 0 new refusals are appended for agora-servant-799a3ce8c021b91cbb54 in bff.persona_pool_publish_records (GET /bff/personas/agora-servant-799a3ce8c021b91cbb54/strategy-pool/publish-history).",
+      "GET /bff/agora/servant/paper-book returns capital_pool_id='pool-persona-paper-3ca8da543bef6ede0a07' and runtime_binding_id='rb-77d962be4e324032808324109f2c154e' unchanged.",
+      "Coordinator 70b5f70f records the hosted observation outcome."
+    ]
+  },
+  "ac6_runtime_budget": {
+    "new_writers": 0,
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "servant_refusal_cadence_before": "~144 refusals/day (1 refusal every 600 s per trader servant paper book record)",
+    "servant_refusal_cadence_after": "0 refusals/day (trader servant paper book records are skipped before pool enrollment/publish)",
+    "publish_record_refusal_cap": "At most 20 refusal entries per persona record in bff.persona_pool_publish_records and persona.strategy_pools; consecutive identical (step, reason) refusals increment count and update last_at in place",
+    "refusal_entry_size_bytes": "~300-500 bytes (0.3-0.5 KB) per entry with compact previous_envelope_kept={'version', 'digest'}; <=10 KB total refusals payload per persona record after refusal-write compaction (every retained legacy previous_envelope_kept in the record is normalized to its own historical {'version', 'digest'} during the _refuse CAS mutation; quiescent records that never hit a refusal write again retain their existing persisted rows without read-path mutation, while the hosted servant record had previous_envelope_kept=null inside the 65,536-byte bff.persona_pool_publish_records table and stops growing at 0 refusals/day after deploy)",
+    "problem_register_updated": {
+      "file": "docs/operations/problem-register.md",
+      "rc3_wp3_1_row_added": true,
+      "rc4_agora_servant_row_updated": true
+    }
+  },
+  "validation": {
+    "commands": [
+      "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/persona/tests/test_persona_strategy_pool_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_paper_risk_policy_gate_real_chain.py",
+      "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_enrollment_proposer_principal.py services/control-plane/bff/tests/test_persona_enrollment_seed_integration.py services/control-plane/bff/tests/test_persona_paper_enrollment.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py",
+      "./.venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_pool_publisher.py services/control-plane/bff/tests/test_persona_pool_publish_route.py services/control-plane/persona/test_persona_strategy_pool.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py"
+    ],
+    "results": [
+      "43 passed in 17.67s (exit code 0)",
+      "86 passed in 34.61s (exit code 0; includes test_enrolled_readback_is_never_replaced_by_a_failed_pass)",
+      "117 passed in 103.21s (exit code 0)"
+    ]
+  },
+  "residual_findings": []
+}

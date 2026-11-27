@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from acceptance import persona_day as pd
 
 PID = "persona-a"
@@ -254,3 +256,65 @@ def test_row_without_owner_lifecycle_field_is_not_selected_by_projection():
     r = {"id": "x", "state": "paper_running", "lifecycleStatus": "paper_owner", "tenantId": "t"}
     judged, left = pd.partition_personas([r])
     assert judged == [] and left[0]["reason"] == "owner_lifecycle_state_not_daily_cycle:None"
+
+
+@pytest.mark.parametrize("identity", [
+    {"persona_class": "consult_panel"}, {"persona_class": "agora_servant"},
+    {"persona_class": "agora_advisor"}, {"origin": "private_servant"},
+    {"origin": "agora_advisor"}, {"owner_scope": "user_private"},
+    {"consult_policy_id": "consult-panel.non-trading"},
+    {"agora_user_id": "u", "execution_authority": "none"},
+])
+@pytest.mark.parametrize("lifecycle", ["paper_owner", "paper_running"])
+def test_controller_probe_and_bff_projection_agree(identity, lifecycle):
+    from services.persona.persona_cycle_controller import is_daily_cycle_persona
+    from services.control_plane.bff.personas.fleet_classification import persona_classification
+    owner = {"metadata": identity, "lifecycle_state": lifecycle, "status": "active", "tenant_id": "tenant-dev"}
+    assert not is_daily_cycle_persona(owner)
+    raw = row("assistant", lifecycle, metadata=identity)
+    projected = row("assistant", lifecycle, **persona_classification(owner))
+    for p in (raw, projected):
+        assert pd.partition_personas([p]) == ([], [{"persona_id": "assistant",
+            "reason": "persona_not_enrolled_for_daily_execution"}])
+
+
+@pytest.mark.parametrize("purpose_field", ["personaPurpose", "persona_purpose"])
+def test_hosted_1127_three_traders_pass_with_servant_paper_book_excluded(purpose_field):
+    now = datetime(2026, 11, 27, 11, 30, tzinfo=timezone.utc)
+    personas = [row(pid, "paper_owner") for pid in TRADING]
+    seen = []
+
+    def fetch(path):
+        seen.append(path)
+        if path.startswith("/bff/personas?"):
+            return {"items": personas}
+        pid = path.rsplit("/", 1)[1]
+        assert pid in TRADING
+        pkt = packet()
+        pkt["persona_ids"] = [pid]
+        pkt["producer"]["cron_run_at_ms"] = int(datetime(2026, 11, 27, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        result = pd.evaluate_persona_day(pid, lifecycle_state="paper_owner", cron_jobs=1, packets=[pkt], now=now)
+        return {"data": {"personaCycle": {"dayStatus": result}}}
+
+    control = pd.run(fetch, now)
+    servant = "agora-servant-799a3ce8c021b91cbb54"
+    personas.append(row(servant, "paper_owner", **{purpose_field: "advisory_assistant"}))
+    seen.clear()
+    report = pd.run(fetch, now)
+    assert control["verdict"] == report["verdict"] == "passed"
+    assert report["personas"] == control["personas"]
+    assert all(len(r["preconditions"]) == 7 for r in report["personas"])
+    assert report["left_out"] == [{"persona_id": servant, "reason": "persona_not_enrolled_for_daily_execution"}]
+    assert not any(servant in path for path in seen)
+
+
+def test_isolated_stdlib_probe_loads_shared_owner_rule(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")}
+    result = subprocess.run([sys.executable, "-I", "-S", str(Path(pd.__file__).resolve())],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 77, result.stderr
+    assert result.stdout.strip() == "skipped: ACCEPTANCE_BFF_URL not set"

@@ -3913,7 +3913,41 @@ def cancel_session(session_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-def _lifecycle_upstream_factory() -> Optional[OpenClawUpstreamClient]:
+class _LifecycleUpstreamClient:
+    """Adapt the optional collection API for Pantheon-owned lifecycle records."""
+
+    def __init__(self, upstream: OpenClawUpstreamClient) -> None:
+        self._upstream = upstream
+
+    def create_session(self, req: Any) -> Dict[str, Any]:
+        try:
+            return self._upstream.create_session(req)
+        except UpstreamClientError as exc:
+            degraded = _degraded_session_collection_route_error(exc)
+            if degraded is exc:
+                raise
+            # Only a missing collection route gets one bounded health probe.
+            # Auth and other upstream rejections retain their original meaning.
+            if not _probe_upstream().get("reachable"):
+                raise degraded from exc
+            return {
+                "mode": "pantheon_owned",
+                "compatibility": "gateway_without_session_collection",
+                "upstream_session_id": None,
+                "route": "/api/sessions",
+            }
+
+    def get_session(self, session_id: str) -> Dict[str, Any]:
+        return self._upstream.get_session(session_id)
+
+    def cancel_session(self, session_id: str) -> Dict[str, Any]:
+        return self._upstream.cancel_session(session_id)
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        return self._upstream.list_sessions()
+
+
+def _lifecycle_upstream_factory() -> Optional[_LifecycleUpstreamClient]:
     """Hand the lifecycle a configured upstream client when one exists.
 
     Returning None signals to the lifecycle that no upstream channel is
@@ -3924,7 +3958,7 @@ def _lifecycle_upstream_factory() -> Optional[OpenClawUpstreamClient]:
     """
     if not OPENCLAW_GATEWAY_URL:
         return None
-    return _client()
+    return _LifecycleUpstreamClient(_client())
 
 
 _LIFECYCLE_STORE = SessionLifecycleStore(upstream_factory=_lifecycle_upstream_factory)

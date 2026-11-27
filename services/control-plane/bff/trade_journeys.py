@@ -1339,6 +1339,15 @@ def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]])
         info = stages.get(name)
         return info.get("status") if isinstance(info, Mapping) else None
 
+    decision = next((event for event in reversed(timeline) if event.get("stage") == "trade_decision"), {})
+    if stage_status("trade_decision") in {"pending_settlement", "expired"} and "order_submission" not in stages:
+        expired = stage_status("trade_decision") == "expired"
+        return {
+            "kind": "expired" if expired else "open",
+            "reason_code": "target_session_not_reconciled_by_expiry" if expired else "pending_settlement",
+            "reason_detail": decision.get("reason_detail"),
+        }
+
     order_event = _event_for_stage(timeline, "order_submission")
     if status == "no_order" or (
         order_event is not None
@@ -1408,6 +1417,8 @@ def _next_step(
 ) -> Optional[Dict[str, Any]]:
     """A link for an operator, never an action: the governed action route is separate."""
     kind = outcome.get("kind")
+    if kind == "expired" and outcome.get("reason_code") == "target_session_not_reconciled_by_expiry":
+        return {"action_needed": "review_market_data_refresh", "href": "/data-sources"}
     if kind not in {"rejected", "variance"}:
         return None
     incident_id = open_incident_ids.get(str(binding_id)) if binding_id else None
@@ -1663,6 +1674,7 @@ def _evidence(projection: JourneyProjection) -> Dict[str, Any]:
 _TIMELINE_FIELDS = (
     "event_id", "journey_id", "stage", "event_type", "stage_status", "status", "occurred_at", "recorded_at",
     "actor", "summary", "reason_code", "reason_detail", "expression_reason_code",
+    "decision_status", "decision_day", "target_day", "expires_at", "execution_target_bar_start",
     "submitted_to_broker", "order_status", "risk_status", "risk_gate_evaluated",
     "canonical_event_id", "source_event_id", "missing_evidence",
     "input_refs", "output_refs", "evidence_refs", "policy_refs",
@@ -1859,6 +1871,8 @@ def _attention_item(projection: JourneyProjection, *, now: datetime) -> Optional
     snapshot, eff_diagnostics = _effective_snapshot_and_diagnostics(
         projection.snapshot, projection.diagnostics, projection.timeline
     )
+    if (snapshot.get("stages") or {}).get("trade_decision", {}).get("status") == "pending_settlement":
+        return None
     if snapshot.get("status") in TERMINAL_STATUSES:
         return None
     stages = snapshot.get("stages") or {}

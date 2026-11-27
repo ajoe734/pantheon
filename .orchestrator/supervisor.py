@@ -13523,7 +13523,12 @@ def worker_recovery_assignment_pair(
             config, state, status, task, owner=owner, reviewer=reviewer, target_agent=target,
         ):
             return owner, reviewer
-        return None
+        if not assignment_terminal_unavailability(config, state, target):
+            return None
+        # A drain continues on its pair, but a lane that became durably
+        # unavailable (quota_terminal, zero capacity) would hold the receipt
+        # forever while Human/Ops reassignment refuses active recovery; fall
+        # through to the configured fallbacks (2026-10-07 PiAstra, 2026-11-27 Claude).
     finalize_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("finalize_statuses"),
         ["review_approved"],

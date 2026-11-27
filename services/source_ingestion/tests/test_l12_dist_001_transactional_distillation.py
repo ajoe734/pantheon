@@ -690,13 +690,23 @@ class TestConcurrentWorkers:
             "src-snapshot-versions",
             title="Committed snapshot v2",
         )
+        # v1 is committed before v2 is admitted: a newer version admitted
+        # while v1 is still pending would supersede it (same-article refetch
+        # contract), so each snapshot is replayed only once it is the newest.
         original_job = worker.enqueue_from_source_record(original)
+
+        # The caller already holds the newer revision; the v1 job must still
+        # replay its own committed snapshot, not the caller's map entry.
+        first = worker.run_pending({revised.source_id: revised})
+        assert first.processed == 1
+        assert first.registry_synced == 1
+
         revised_job = worker.enqueue_from_source_record(revised)
+        second = worker.run_pending({revised.source_id: revised})
 
-        result = worker.run_pending({revised.source_id: revised})
-
-        assert result.processed == 2
-        assert result.registry_synced == 2
+        assert second.processed == 1
+        assert second.registry_synced == 1
+        assert second.superseded_versions == 0
         assert deliveries == [
             (
                 original_job.source_digest,

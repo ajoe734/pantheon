@@ -102,11 +102,21 @@ def closeout_reports_only(backend, base_sha, head_sha):
 
 
 # ---- quiet windows (DEV-DEPLOY-QUIET-WINDOWS-20261118) ----
-# No release is dispatched while a window is open, nor when its backend switch would land in
-# one. Measured: backend containers are recreated about 17 minutes after dispatch and a
-# rollback follows about 12 minutes later (29 minutes after dispatch); only the switch lead
-# is held, a rollback is not predicted. A running release is never cancelled (busy() wins).
-BACKEND_SWITCH_LEAD_MINUTES = 17
+# No release is dispatched while a window is open, nor when any part of the Root that can
+# recreate, restart or rebuild hosted dev services or switch the served FE/BFF would land in one.
+# A running release is never cancelled (busy() wins).
+# The protected span runs from dispatch to the end of the Root's last such step
+# (DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127). On 11/27 containers were recreated
+# 42-62 min after dispatch (runner queue up to 21 min) and Admit/acceptance ran until about
+# 2h45m, so the old 17-minute switch lead only covered the start. Those steps sit in all three
+# Root jobs (deploy-dev, coordinate-dev-release, dev-acceptance-stage: its qualification lease
+# is the last possible mutation), so a completed Root's created_at -> updated_at (queue time
+# included) bounds the span from above; see the task evidence for the step list.
+BACKEND_SWITCH_LEAD_MINUTES = 17  # legacy default lead for direct quiet_window_hold() callers
+ROOT_SPAN_RECORDS = 10  # N: slowest of the last N completed dev Roots
+# No record: 2h45m observed on 11/27 rounded up to 3h; the job timeouts (6h + 6h + 2h) would
+# leave no weekday dispatch slot at all, so they are not used as the fallback.
+ROOT_SPAN_FALLBACK_MINUTES = 180
 DEFAULT_QUIET_WINDOWS = "mon-fri 00:30-05:30; daily 09:05-10:45"  # UTC: Taiwan session; persona daily cycle
 QUIET_WINDOWS_VARIABLE = "DEV_DEPLOY_QUIET_WINDOWS"
 _DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -177,12 +187,58 @@ def _open_window(windows, instant):
     return None
 
 
-def quiet_window_hold(windows, now, lead_minutes=BACKEND_SWITCH_LEAD_MINUTES):
-    """None when a dispatch at `now` is allowed; else why it is held and the first allowed minute."""
+def _parse_instant(text):
+    if not isinstance(text, str) or not text:
+        raise ValueError("missing timestamp")
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def root_span(backend, records=ROOT_SPAN_RECORDS, fallback=ROOT_SPAN_FALLBACK_MINUTES):
+    """(minutes, source) of the slowest of the last `records` completed first-attempt dev Roots,
+    measured dispatch (created_at, so runner queue time counts) to completion (updated_at).
+    One GitHub read. No completed record -> fallback. Records whose timestamps cannot be read
+    are skipped and counted in the source; when none is readable, or the list itself is
+    unreadable, -> (None, 'unavailable: ...'), which holds fail-closed."""
+    try:
+        listed = runs(backend, DEPLOY, event="workflow_dispatch")
+        if not isinstance(listed, list):
+            raise ValueError("workflow_runs is not a list")
+    except Exception as exc:
+        return None, f"unavailable: {exc}"
+    roots = [run for run in listed if isinstance(run, dict)
+             and str(run.get("display_title", "")).startswith("Dev release ")
+             and run.get("status") == "completed" and run.get("run_attempt", 1) == 1
+             and type(run.get("id")) is int]
+    roots = sorted(roots, key=lambda run: run["id"], reverse=True)[:records]
+    if not roots:
+        return fallback, f"fallback: no completed dev Root record ({fallback} min)"
+    spans, unreadable = [], 0
+    for run in roots:
+        try:
+            minutes = (_parse_instant(run.get("updated_at")) - _parse_instant(run.get("created_at"))).total_seconds() / 60
+            if minutes < 0:
+                raise ValueError("negative span")
+            spans.append((-(-int(minutes * 60) // 60), run["id"]))
+        except (ValueError, TypeError, OverflowError):
+            unreadable += 1
+    if not spans:
+        return None, f"unavailable: none of the last {len(roots)} completed dev Roots has readable timestamps"
+    minutes, run_id = max(spans, key=lambda item: item[0])
+    note = f"; {unreadable} record(s) with unreadable timestamps skipped" if unreadable else ""
+    return minutes, f"recorded: slowest of last {len(roots)} completed dev Roots (run {run_id}){note}"
+
+
+def quiet_window_hold(windows, now, lead_minutes=BACKEND_SWITCH_LEAD_MINUTES, span_source=None):
+    """None when a dispatch at `now` is allowed; else why it is held and the first allowed minute.
+    Every minute from dispatch to dispatch + lead_minutes must be outside windows. With
+    span_source (the Root span from root_span()) the decision names the span and its source;
+    a span of None holds fail-closed."""
     now = now.astimezone(timezone.utc).replace(second=0, microsecond=0) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    if lead_minutes is None:
+        return {"reason": "root_span_unavailable", "window": None, "window_ends_at": None,
+                "dispatch_allowed_from": None, "root_span_minutes": None, "root_span_source": span_source}
 
     def blocking(at):
-        # Dispatch instant, and every minute up to the backend switch, must be outside windows.
         for offset in range(lead_minutes + 1):
             hit = _open_window(windows, at + timedelta(minutes=offset))
             if hit:
@@ -193,17 +249,26 @@ def quiet_window_hold(windows, now, lead_minutes=BACKEND_SWITCH_LEAD_MINUTES):
     if not first:
         return None
     offset, (label, ends) = first
-    resume = now
-    for _ in range(8 * 24 * 60):
-        resume += timedelta(minutes=1)
-        if not blocking(resume):
-            break
-    return {
-        "reason": "dispatch_inside_window" if offset == 0 else "backend_switch_inside_window",
-        "window": label, "window_ends_at": ends.strftime("%Y-%m-%dT%H:%MZ"),
-        "dispatch_allowed_from": resume.strftime("%Y-%m-%dT%H:%MZ"),
-        "backend_switch_lead_minutes": lead_minutes,
+    # Every dispatch before the end of a window the span hits still reaches into that window
+    # (it starts before the end, and its span ends no earlier than the hit minute), so the next
+    # candidate is that end. Each jump passes one window instance; 8 days bounds the search.
+    resume, hit, limit = now, first, now + timedelta(days=8)
+    while hit and resume <= limit:
+        resume = hit[1][1]
+        hit = blocking(resume)
+    if offset == 0:
+        reason = "dispatch_inside_window"
+    else:
+        reason = "backend_switch_inside_window" if span_source is None else "root_span_inside_window"
+    decision = {
+        "reason": reason, "window": label, "window_ends_at": ends.strftime("%Y-%m-%dT%H:%MZ"),
+        "dispatch_allowed_from": None if hit else resume.strftime("%Y-%m-%dT%H:%MZ"),
     }
+    if span_source is None:
+        decision["backend_switch_lead_minutes"] = lead_minutes
+    else:
+        decision.update(root_span_minutes=lead_minutes, root_span_source=span_source)
+    return decision
 
 
 def pair_title(backend_sha, frontend_sha):
@@ -398,7 +463,11 @@ def reconcile(backend, frontend, *, fe_url, bff_url, apply=False, fetch=fetch_ur
     if result["state"] != "ready" or not apply:
         return result
     if quiet_windows:
-        hold = quiet_window_hold(quiet_windows, now or datetime.now(timezone.utc))
+        # The one extra GitHub read for the hold: the recorded Root span.
+        span, span_source = root_span(backend)
+        result.update(root_span_minutes=span, root_span_source=span_source)
+        hold = quiet_window_hold(quiet_windows, now or datetime.now(timezone.utc),
+                                 lead_minutes=span, span_source=span_source)
         if hold:
             # Nothing is queued: the next trigger or the fallback cron re-selects the newest green pair.
             return {**result, "state": "held_quiet_window", **hold}
@@ -440,6 +509,14 @@ def summary_lines(result):
         return (f"- skipped: no release build input changed ({result.get('changed_file_count')} file(s) between "
                 f"served {result.get('served_backend_sha')} and {result.get('backend_sha')}); "
                 "the commits stay merged and ride the next release that changes a build input\n")
+    if result.get("state") == "held_quiet_window" and result.get("reason") == "root_span_unavailable":
+        return (f"- held: Root span unknown ({result.get('root_span_source')}); no release dispatched (fail closed); "
+                "the next trigger or hourly fallback retries; this is not a broken trigger\n")
+    if result.get("state") == "held_quiet_window" and "root_span_minutes" in result:
+        return (f"- held: quiet window `{result.get('window')}` ({result.get('reason')}); no release dispatched, "
+                f"window ends {result.get('window_ends_at')}, dispatch allowed from {result.get('dispatch_allowed_from')} "
+                f"(Root span {result.get('root_span_minutes')} min, {result.get('root_span_source')}); "
+                "the next trigger or hourly fallback dispatches the newest green commit; this is not a broken trigger\n")
     if result.get("state") == "held_quiet_window":
         return (f"- held: quiet window `{result.get('window')}` ({result.get('reason')}); no release dispatched, "
                 f"window ends {result.get('window_ends_at')}, dispatch allowed from {result.get('dispatch_allowed_from')} "

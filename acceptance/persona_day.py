@@ -32,6 +32,17 @@ def _controller_eligible_states() -> frozenset:
 DAILY_CYCLE_STATES = _controller_eligible_states() - {"consultable"}
 
 
+def _owner_identity_rule():
+    """Load the stdlib-only owner rule from its trusted repo path under python -I."""
+    from pathlib import Path
+    from runpy import run_path
+    path = Path(__file__).resolve().parent.parent / "services" / "control-plane" / "persona" / "persona_policy_resolver.py"
+    return run_path(str(path))["non_trading_identity_source"]
+
+
+non_trading_identity_source = _owner_identity_rule()
+
+
 _NOT_ACTIVE_PROJECTED_STATES = frozenset({"archived", "suspended", "retired"})
 _TEST_SCOPES = frozenset({"test", "acceptance", "fixture", "synthetic"})
 _TEST_FLAGS = ("is_test", "test_data", "acceptance_run", "is_acceptance", "is_probe", "release_probe", "acceptance_probe")
@@ -64,6 +75,9 @@ def _left_out_reason(p: Mapping[str, Any]) -> Optional[str]:
     paper_running while the owner lifecycle_state is not; the owner value is the row's ``ownerLifecycleState`` (owner_lifecycle_state), returned verbatim by the BFF."""
     if is_probe_or_test_row(p):
         return "probe_or_test_persona"
+    if (non_trading_identity_source(p)
+            or _first(p, "persona_purpose", "personaPurpose") == "advisory_assistant"):
+        return "persona_not_enrolled_for_daily_execution"
     owner_state = _first(p, "owner_lifecycle_state", "ownerLifecycleState")
     if owner_state not in DAILY_CYCLE_STATES:
         return f"owner_lifecycle_state_not_daily_cycle:{owner_state}"

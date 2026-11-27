@@ -4,7 +4,7 @@
   "owner": "Claude2",
   "reviewer": "Antigravity2",
   "branch": "task/AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127",
-  "review_status": "pending_independent_review",
+  "review_status": "source_approved_merged",
   "route": "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
   "scoped_artifacts": [
     "services/control-plane/bff/agora/trading_room/routes/decisions.py",
@@ -27,7 +27,12 @@
     "non_enumeration": "foreign lock, other tenant, operator and unknown id all answer 404 reason decision_not_found; attribution owner is not called",
     "empty_state": "caller's own event with no lock answers 200 status empty, comparison_state no_decision_recorded",
     "settlement_key": "lock.human_decision_id (the key services/evaluation settles under)",
-    "arms": ["human_actual", "private_servant", "base_strategy", "committee_variant"],
+    "arms": [
+      "human_actual",
+      "private_servant",
+      "base_strategy",
+      "committee_variant"
+    ],
     "management_route": "unchanged; shape_shadow defaults keep trader/institutional_view naming and operator audience",
     "runtime_budget": "reads only: one lock read, one attribution GET; no writes, no new store"
   },
@@ -37,18 +42,115 @@
       "scripts/bff_route_manifest_backend.py (regenerated snapshot: 41 previously unlisted routes added, 0 removed, including this route)",
       "scripts/bff_route_diff.py --write-baseline, then pytest scripts/test_bff_route_diff.py scripts/test_agora_compat_manifest.py (pass)"
     ],
-    "tests_cover": ["owner reads four arms with settlement", "pending settlement", "attribution outage degrades without fabrication", "other trader 404", "operator 404", "unknown id same 404", "own undecided event typed empty", "unconfigured owner 503", "GET only", "composed app shares one owner and Management route unchanged"]
+    "tests_cover": [
+      "owner reads four arms with settlement",
+      "pending settlement",
+      "attribution outage degrades without fabrication",
+      "other trader 404",
+      "operator 404",
+      "unknown id same 404",
+      "own undecided event typed empty",
+      "unconfigured owner 503",
+      "GET only",
+      "composed app shares one owner and Management route unchanged"
+    ]
   },
   "hosted_proof": {
-    "status": "pending_deploy",
+    "status": "verified",
+    "verified_at": "2026-11-27T12:39:14Z",
+    "verified_by": "Human/Ops (read-only hosted Dev capture)",
+    "environment": "dev",
+    "base_url": "https://api.dev.mvl-cap.tw",
+    "accepted_pair": {
+      "bff": "3291296e85e7a4b7a6317abef20e1199cb3c24a7",
+      "fe": "fb2c4f1bfc18b115f95449b2d3a7445f5b7a3bfe"
+    },
+    "receipt_sha256": "ae8c3edf74081a9f7f2a662a2b53d5fe5705d264623973e5afefefc573a127cf",
+    "store_state": {
+      "agora.decision_locks": 0,
+      "agora.trading_room_store_state": []
+    },
     "required": [
       "foreign decision id answers 404 decision_not_found",
       "trader without decisions answers typed empty state / 404 for any id (bodies recorded here)"
     ],
-    "bodies": null
+    "bodies": [
+      {
+        "case": "foreign_decision_id",
+        "caller": "operator_b",
+        "request": "GET /bff/agora/trading-room/decision-events/evt-foreign-001/shadow-comparison",
+        "http_status": 404,
+        "body": {
+          "error": {
+            "code": "RESOURCE_NOT_FOUND",
+            "i18nKey": "errors.RESOURCE_NOT_FOUND",
+            "message": "Decision 'evt-foreign-001' was not found",
+            "retryable": false,
+            "userActionable": true,
+            "details": {
+              "reason": "decision_not_found",
+              "precondition_failed": null,
+              "suggestion": null
+            }
+          },
+          "meta": {
+            "correlationId": "fb447816-d9b6-4c03-b4cc-d8bc23a95212"
+          }
+        }
+      },
+      {
+        "case": "trader_without_decisions_list",
+        "caller": "admintest",
+        "request": "GET /bff/agora/trading-room/decision-events",
+        "http_status": 200,
+        "body": {
+          "items": [],
+          "page_info": {
+            "next_page_token": null,
+            "page_size": 0,
+            "has_more": false
+          },
+          "meta": {
+            "snapshot_at": "2026-11-27T12:39:14Z",
+            "capability": "agora.trading.v1"
+          }
+        }
+      },
+      {
+        "case": "trader_without_decisions_shadow_comparison",
+        "caller": "admintest",
+        "request": "GET /bff/agora/trading-room/decision-events/evt-no-decisions-001/shadow-comparison",
+        "http_status": 404,
+        "body": {
+          "error": {
+            "code": "RESOURCE_NOT_FOUND",
+            "i18nKey": "errors.RESOURCE_NOT_FOUND",
+            "message": "Decision 'evt-no-decisions-001' was not found",
+            "retryable": false,
+            "userActionable": true,
+            "details": {
+              "reason": "decision_not_found",
+              "precondition_failed": null,
+              "suggestion": null
+            }
+          },
+          "meta": {
+            "correlationId": "0864a19b-136d-416c-8600-7b5e10741be3"
+          }
+        }
+      }
+    ],
+    "result": "AC4 satisfied: foreign id answers non-enumerating 404 decision_not_found; a trader with no decisions gets the typed empty decision-event list and 404 decision_not_found for any shadow-comparison id. Read-only; no writes."
   },
   "known_residuals": [
     "Management GET /bff/management/attribution/shadow/{id} forwards the decision-event id to the attribution owner, which keys by human_decision_id; not changed here (contract preserved)",
     "frontend ShadowComparisonPanel still calls the Management route; switch to this route in execute-plans (no task yet)"
-  ]
+  ],
+  "source_delivery": {
+    "pr": 7935,
+    "approved_head": "b5b5fbd853b4ad1db22a8c3654ec37d8b2206726",
+    "merge_commit": "20dbdff8423d5ec10153dd8a6e4c1694a141ddf9",
+    "target_branch": "dev",
+    "reviewer": "Antigravity2"
+  }
 }

@@ -710,12 +710,11 @@ class TestStep11GovernedIntent(unittest.TestCase):
             "live": "promotion_review_request",
         }
         _queue_by_stage = {
-            "shadow": "shadow_research",
             "paper": "management_governance",
             "canary": "promotion_review",
             "live": "promotion_review",
         }
-        return {
+        payload = {
             "spec_version": "1.0",
             "handoff_id": f"hoff_wbranch_{requested_stage}_001",
             "intent_id": "intent_wbranch_2330_001",
@@ -726,7 +725,6 @@ class TestStep11GovernedIntent(unittest.TestCase):
             "strategy_id": STRATEGY_ID,
             "strategy_spec_registry_id": CANDIDATE_REGISTRY_ID,
             "requested_by": {"actor_type": "trader", "actor_ref": USER_A},
-            "target_queue": _queue_by_stage[requested_stage],
             "action_proposal": {
                 "action": "enter",
                 "symbol": "2330.TW",
@@ -741,6 +739,9 @@ class TestStep11GovernedIntent(unittest.TestCase):
             "no_order_route_proof": "agora_request_only_no_order_route",
             "created_at": NOW,
         }
+        if requested_stage in _queue_by_stage:
+            payload["target_queue"] = _queue_by_stage[requested_stage]
+        return payload
 
     def test_trading_event_schema_valid(self) -> None:
         _validate(
@@ -860,7 +861,7 @@ class TestStep11GovernedIntent(unittest.TestCase):
         handoff = self._make_governed_handoff("shadow")
         self.assertEqual(handoff["requested_stage"], "shadow")
         self.assertEqual(handoff["no_order_route_proof"], "agora_request_only_no_order_route")
-        self.assertEqual(handoff["target_queue"], "shadow_research")
+        self.assertNotIn("target_queue", handoff)
 
     def test_paper_handoff_goes_to_management_governance(self) -> None:
         handoff = self._make_governed_handoff("paper")

@@ -288,6 +288,44 @@ class TestCreateSession(unittest.TestCase):
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0].session_id, record.session_id)
 
+    def test_pantheon_owned_session_survives_reload_replay_read_and_cancel(self) -> None:
+        upstream = _FakeUpstream()
+        upstream.create_response = {
+            "mode": "pantheon_owned",
+            "compatibility": "gateway_without_session_collection",
+            "upstream_session_id": None,
+            "route": "/api/sessions",
+        }
+        store = _build_store(self.tmp, upstream)
+        request = dict(
+            agent_id="agent-x", session_type="interactive",
+            operator_id="alice", idempotency_key="key-pantheon-owned",
+        )
+        created, replayed = store.create_session(**request)
+        self.assertFalse(replayed)
+        self.assertEqual(created.state, "active")
+        self.assertIsNone(created.upstream_session_id)
+        self.assertIsNone(created.last_error)
+        self.assertEqual(created.last_upstream_payload, upstream.create_response)
+        self.assertEqual(created.audit_log[-1]["detail"]["mode"], "pantheon_owned")
+        self.assertEqual(
+            created.audit_log[-1]["detail"]["compatibility"],
+            "gateway_without_session_collection",
+        )
+
+        restored = _build_store(self.tmp, upstream)
+        self.assertEqual(restored.get_session(created.session_id).to_dict(), created.to_dict())
+        replay, replayed = restored.create_session(**request)
+        self.assertTrue(replayed)
+        self.assertEqual(replay.to_dict(), created.to_dict())
+        self.assertEqual(len(upstream.create_calls), 1)
+        self.assertEqual(upstream.get_calls, [])
+        canceled = restored.cancel_session(created.session_id, operator_id="alice")
+        self.assertEqual(canceled.state, "canceled")
+        self.assertEqual(canceled.canceled_by, "alice")
+        self.assertEqual(upstream.cancel_calls, [])
+        self.assertEqual(restored.cancel_session(created.session_id, operator_id="alice"), canceled)
+
     def test_create_requires_operator_id(self) -> None:
         store = _build_store(self.tmp, _FakeUpstream())
         with self.assertRaises(lifecycle.LifecycleError) as ctx:

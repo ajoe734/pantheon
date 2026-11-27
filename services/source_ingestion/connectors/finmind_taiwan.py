@@ -529,12 +529,15 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                         {"data_id": row_symbol, "date": row_date},
                     ),
                     "source_dataset": FINMIND_BROKER_REPORT_DATASET,
-                    "raw_rows": [],
+                    "price_levels": 0,
                 },
             )
             bucket["buy_qty"] += _int(_first(row, "buy", "buy_qty", "買進"))
             bucket["sell_qty"] += _int(_first(row, "sell", "sell_qty", "賣出"))
-            bucket["raw_rows"].append(dict(row))
+            # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: compact rows. The raw price-level rows are
+            # no longer embedded (about 10 KB per row); only their count is kept. A pre-aggregated
+            # row (whole-market path) carries its own ``price_levels``.
+            bucket["price_levels"] += _int(row.get("price_levels")) or 1
 
         aggregates = []
         for row in grouped.values():
@@ -618,8 +621,8 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                         "sell_qty": row["sell_qty"],
                         "net_qty": row["net_qty"],
                         "source_url": row["source_url"],
+                        "price_levels": row["price_levels"],
                         **({"api_endpoint": request_endpoint} if request_endpoint else {}),
-                        "raw_rows": [dict(raw) for raw in row.get("raw_rows", [])],
                         "body": json.dumps(row, ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
@@ -632,6 +635,47 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                 )
             )
         return tuple(records)
+
+    def compact_keyed_records(
+        self,
+        top_rows: Sequence[Mapping[str, Any]],
+        *,
+        run_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: the keyed ``tw_broker_top`` record of the whole-market
+        daily run. One small record per (symbol, trade_date, side, rank): the ranked aggregate and the licence,
+        no raw price-level rows and no duplicated JSON body. ``parse_tw_broker_top_record`` reads it."""
+        out: list[dict[str, Any]] = []
+        for row in top_rows:
+            normalized = {
+                "symbol": row["symbol"],
+                "trade_date": row["date"],
+                "side": row["side"],
+                "rank": int(row["rank"]),
+                "broker": row["broker"],
+                "broker_id": row.get("broker_id"),
+                "buy_qty": int(row["buy_qty"]),
+                "sell_qty": int(row["sell_qty"]),
+                "net_qty": int(row["net_qty"]),
+                "price_levels": int(row.get("price_levels") or 0),
+            }
+            out.append({
+                "source_id": f"finmind-broker-top:{row['symbol']}:{row['date']}:{row['side']}:{int(row['rank'])}",
+                "connector_id": self.connector_id,
+                "dataset": "tw_broker_top",
+                "metadata": {
+                    "normalized_row": normalized,
+                    "available_time": row.get("available_time"),
+                    "source": "FinMind TaiwanStockTradingDailyReport",
+                    "source_dataset": FINMIND_BROKER_REPORT_DATASET,
+                    "source_profile": "broker_top20_whole_market_daily",
+                    "license_scope": "vendor_research",
+                    "redistribution_allowed": False,
+                    "schema_hash": BROKER_TOP_SCHEMA_HASH,
+                    **({"ingest_run_id": run_id} if run_id else {}),
+                },
+            })
+        return out
 
     def branch_detail_records_from_payload(
         self,
