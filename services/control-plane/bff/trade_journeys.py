@@ -527,6 +527,20 @@ def _effective_snapshot_and_diagnostics(
     diag_list: List[Dict[str, Any]] = [
         dict(item) for item in diagnostics if isinstance(item, Mapping)
     ]
+    # The producer emits signal_generation only when the parked decision releases.
+    if set(stages) == {"trade_decision"} and stages["trade_decision"].get("status") in {"pending_settlement", "expired"}:
+        completeness = dict(snapshot.get("completeness") or {})
+        missing = [name for name in completeness.get("missing_stages", []) if name != "signal_generation"]
+        completeness.update(missing_stages=missing, complete=not missing)
+        normalized = []
+        for item in diag_list:
+            if item.get("code") == "missing_stages":
+                remaining = [name for name in item.get("stages", []) if name != "signal_generation"]
+                if remaining:
+                    normalized.append({**item, "stages": remaining})
+            else:
+                normalized.append(item)
+        return {**snapshot, "stages": stages, "completeness": completeness}, normalized
     if (
         ("reconciliation" in stages and (stages.get("reconciliation") or {}).get("status") in {"failed", "completed_with_variance"})
         or (snapshot.get("status") == "completed_with_variance" and _event_for_stage(timeline, "reconciliation") is not None)
@@ -747,10 +761,17 @@ def _severity(snapshot: Mapping[str, Any], diagnostics: Sequence[Mapping[str, An
     return "info"
 
 
-def _is_stalled(snapshot: Mapping[str, Any], now: datetime) -> bool:
+def _is_stalled(snapshot: Mapping[str, Any], now: datetime, timeline: Sequence[Mapping[str, Any]] = ()) -> bool:
     if snapshot.get("status") in TERMINAL_STATUSES:
         return False
     updated = _parse_iso(snapshot.get("updated_at"))
+    decision = (snapshot.get("stages") or {}).get("trade_decision") or {}
+    if decision.get("status") == "pending_settlement":
+        event = _event_for_stage(timeline, "trade_decision") or decision
+        detail = event.get("reason_detail")
+        expires = _parse_iso((detail.get("expires_at") if isinstance(detail, Mapping) else None) or event.get("expires_at"))
+        if expires is not None:
+            updated = max(updated, expires) if updated else expires
     if updated is None:
         return False
     return (now - updated).total_seconds() > _STALLED_AFTER_SECONDS
@@ -1345,7 +1366,10 @@ def _outcome(snapshot: Mapping[str, Any], timeline: Sequence[Mapping[str, Any]])
         return {
             "kind": "expired" if expired else "open",
             "reason_code": "target_session_not_reconciled_by_expiry" if expired else "pending_settlement",
-            "reason_detail": decision.get("reason_detail"),
+            "reason_detail": {
+                **(decision.get("reason_detail") or {}),
+                "decision_action": str((decision.get("reason_detail") or {}).get("decision_action") or decision.get("side") or "").strip().lower() or None,
+            },
         }
 
     order_event = _event_for_stage(timeline, "order_submission")
@@ -1418,6 +1442,8 @@ def _next_step(
     """A link for an operator, never an action: the governed action route is separate."""
     kind = outcome.get("kind")
     if kind == "expired" and outcome.get("reason_code") == "target_session_not_reconciled_by_expiry":
+        if (outcome.get("reason_detail") or {}).get("decision_action") == "hold":
+            return None
         return {"action_needed": "review_market_data_refresh", "href": "/data-sources"}
     if kind not in {"rejected", "variance"}:
         return None
@@ -1458,11 +1484,14 @@ def _list_row(
     created_dt = _parse_iso(snapshot.get("created_at"))
     status = snapshot.get("status")
     flags = _flags(snapshot, diagnostics)
-    flags["stalled"] = _is_stalled(snapshot, now)
+    flags["stalled"] = _is_stalled(snapshot, now, projection.timeline)
     quantity, filled_quantity = _order_quantities(projection.timeline, summary.get("quantity"))
     summary["quantity"] = quantity
     persona = (personas or {}).get(str(summary.get("persona_id") or "")) or {}
     outcome = _outcome(snapshot, projection.timeline)
+    reason_detail = outcome.get("reason_detail")
+    if str(summary.get("side") or "").strip().lower() == "hold" or (isinstance(reason_detail, Mapping) and reason_detail.get("decision_action") == "hold"):
+        summary["side"] = None
     next_step = _next_step(outcome, summary.get("persona_id"), _first_identifier(snapshot, "binding_id"), open_incident_ids or {})
     return {
         "journey_id": projection.journey_id,
@@ -1764,7 +1793,7 @@ def _metrics(projections: Sequence[JourneyProjection], *, now: datetime) -> Dict
         for item in projection.diagnostics:
             code = item.get("code", "unknown")
             diagnostics_counts[code] = diagnostics_counts.get(code, 0) + 1
-        if _is_stalled(snapshot, now):
+        if _is_stalled(snapshot, now, projection.timeline):
             stalled_count += 1
         for event in projection.timeline:
             stage_name = event.get("stage")

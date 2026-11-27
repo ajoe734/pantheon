@@ -217,6 +217,28 @@ class TradeJourneyProjectionStore:
     def _cursor_scope(self, *, tenant_id: str, environment: str, sort: str, filters: Mapping[str, Any], kind: str) -> dict[str, Any]:
         return {"v": 1, "kind": kind, "tenant_id": tenant_id, "environment": environment, "sort": sort, "filters": _canonical(filters)}
 
+    def _decision_fields_sql(self) -> str:
+        return (
+            f"(SELECT decision.contract_fields FROM {self.schema}.journey_stages decision "
+            f"WHERE decision.tenant_id={self.schema}.journeys.tenant_id "
+            f"AND decision.environment={self.schema}.journeys.environment "
+            f"AND decision.journey_id={self.schema}.journeys.journey_id "
+            "AND decision.stage_name='trade_decision' "
+            "ORDER BY decision.stage_ordinal DESC, decision.event_sequence DESC, "
+            "decision.source_ingested_seq DESC, decision.source_event_id DESC LIMIT 1)"
+        )
+
+    def _stalled_sql(self) -> str:
+        decision = self._decision_fields_sql()
+        # A still-parked decision's expiry extends the last-event timer.
+        reference = (
+            "CASE WHEN stage_coverage -> 'trade_decision' ->> 'status' = 'pending_settlement' "
+            f"THEN GREATEST(last_occurred_at, NULLIF(COALESCE({decision} -> 'reason_detail' ->> 'expires_at', "
+            f"{decision} ->> 'expires_at'), '')::timestamptz) ELSE last_occurred_at END"
+        )
+        terminal = ', '.join("'" + status + "'" for status in sorted(TERMINAL_STATUSES))
+        return f"(status NOT IN ({terminal}) AND {reference} < statement_timestamp() - interval '900 seconds')"
+
     def _journey_where(self, *, tenant_id: str, environment: str, filters: Mapping[str, Any]) -> tuple[list[str], list[Any]]:
         clauses = ["tenant_id=%s", "environment=%s"]
         params: list[Any] = [tenant_id, environment]
@@ -289,7 +311,12 @@ class TradeJourneyProjectionStore:
             elif attention == "risk_reject":
                 clauses.append(f"(status='failed' AND NOT COALESCE({broker_failed}, false))")
             elif attention == "attention":
-                clauses.append(f"((status IN ('failed', 'partially_filled', 'expired')) OR (status='completed_with_variance' AND NOT {deferred}))")
+                decision = self._decision_fields_sql()
+                expired_hold = (
+                    "stage_coverage -> 'trade_decision' ->> 'status' = 'expired' AND "
+                    f"lower(btrim(COALESCE({decision} -> 'reason_detail' ->> 'decision_action', {decision} ->> 'side', ''))) = 'hold'"
+                )
+                clauses.append(f"((status IN ('failed', 'partially_filled')) OR (status='expired' AND NOT COALESCE(({expired_hold}), false)) OR (status='completed_with_variance' AND NOT {deferred}))")
             else:
                 raise ValueError("unsupported attention filter")
         if "waiting_human" in filters:
@@ -300,13 +327,8 @@ class TradeJourneyProjectionStore:
                 clauses.append(f"(status<>%s AND NOT {waiting_stage})")
             params.append("waiting_human")
         if "stalled" in filters:
-            terminal_placeholders = ", ".join("%s" for _ in TERMINAL_STATUSES)
-            terminal_params = tuple(sorted(TERMINAL_STATUSES))
-            if bool(filters["stalled"]):
-                clauses.append(f"(status NOT IN ({terminal_placeholders}) AND last_occurred_at < clock_timestamp() - interval '900 seconds')")
-            else:
-                clauses.append(f"(status IN ({terminal_placeholders}) OR last_occurred_at >= clock_timestamp() - interval '900 seconds')")
-            params.extend(terminal_params)
+            stalled = self._stalled_sql()
+            clauses.append(stalled if bool(filters["stalled"]) else f"NOT {stalled}")
         for key, identifier_type in tuple((name, name) for name in sorted(SHARED_IDENTIFIER_TYPES)) + (("decision_id", "decision_id"), ("order_id", "order_id"), ("broker_order_id", "broker_order_id")):
             if filters.get(key):
                 link_match = f"EXISTS (SELECT 1 FROM {self.schema}.identity_links link WHERE link.tenant_id={self.schema}.journeys.tenant_id AND link.environment={self.schema}.journeys.environment AND link.journey_id={self.schema}.journeys.journey_id AND link.identifier_type=%s AND link.identifier_value=%s)"
@@ -468,13 +490,13 @@ class TradeJourneyProjectionStore:
 
     def metrics(self, *, tenant_id: str, environment: str) -> dict[str, Any]:
         self._require_scope(tenant_id, environment)
-        status_rows = self._rows(f"SELECT status, COUNT(*) AS count FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s GROUP BY status", (tenant_id, environment))
+        status_rows = self._rows(f"SELECT status, COUNT(*) AS count, COUNT(*) FILTER (WHERE {self._stalled_sql()}) AS stalled_count FROM {self.schema}.journeys WHERE tenant_id=%s AND environment=%s GROUP BY status", (tenant_id, environment))
         stage_rows = self._rows(f"SELECT COALESCE(stage_name, 'none') AS stage_name, COUNT(*) AS count FROM (SELECT DISTINCT ON (journey_id) journey_id, stage_name FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s ORDER BY journey_id, stage_ordinal DESC, event_sequence DESC, source_ingested_seq DESC) current_stage GROUP BY stage_name", (tenant_id, environment))
         latency_rows = self._rows(f"SELECT stage_name, COUNT(*) AS sample_count, percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (recorded_at - occurred_at)) * 1000) AS p50_ms, percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (recorded_at - occurred_at)) * 1000) AS p95_ms FROM {self.schema}.journey_stages WHERE tenant_id=%s AND environment=%s AND recorded_at IS NOT NULL GROUP BY stage_name", (tenant_id, environment))
         by_status = {str(row.get("status") or "unknown"): int(row.get("count") or 0) for row in status_rows}
         by_stage = {str(row.get("stage_name") or "none"): int(row.get("count") or 0) for row in stage_rows}
         total = sum(by_status.values())
-        return {"total_journeys": total, "by_status": by_status, "by_current_stage": by_stage, "stalled_count": 0, "diagnostics_counts": {}, "diagnostics_rate": {}, "stage_latency_ms": {str(row.get("stage_name")): {"p50_ms": float(row["p50_ms"]) if row.get("p50_ms") is not None else None, "p95_ms": float(row["p95_ms"]) if row.get("p95_ms") is not None else None, "sample_count": int(row.get("sample_count") or 0)} for row in latency_rows}}
+        return {"total_journeys": total, "by_status": by_status, "by_current_stage": by_stage, "stalled_count": sum(int(row.get("stalled_count") or 0) for row in status_rows), "diagnostics_counts": {}, "diagnostics_rate": {}, "stage_latency_ms": {str(row.get("stage_name")): {"p50_ms": float(row["p50_ms"]) if row.get("p50_ms") is not None else None, "p95_ms": float(row["p95_ms"]) if row.get("p95_ms") is not None else None, "sample_count": int(row.get("sample_count") or 0)} for row in latency_rows}}
 
     def controller_freshness(self, *, tenant_id: str, environment: str, controller_id: str = DEFAULT_CONTROLLER_ID) -> Optional[dict[str, Any]]:
         self._require_scope(tenant_id, environment)
