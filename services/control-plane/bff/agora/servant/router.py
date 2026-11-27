@@ -17,6 +17,7 @@ from fastapi import APIRouter, Body, Cookie, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from .data_tools import normalize_command_context
 from .institutional_knowledge import (
     InstitutionalKnowledgeReader,
     InstitutionalKnowledgeUnavailableError,
@@ -76,13 +77,30 @@ class ServantSessionCreateRequest(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ServantCommandContext(BaseModel):
+    """Command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127, SD §4.3).
+
+    The command bar and the conversation share one route; 「分析分點」 sends
+    ``quick_task=analyze_broker_branches`` with the selected symbols.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    page: Optional[str] = Field(default=None, max_length=80)
+    strategy_id: Optional[str] = Field(default=None, max_length=120)
+    widget_id: Optional[str] = Field(default=None, max_length=120)
+    selected_symbols: list[str] = Field(default_factory=list, max_length=20)
+    quick_task: Optional[str] = Field(default=None, max_length=64)
+
+
 class ServantMessageRequest(BaseModel):
-    """v1/v1.2 ServantMessageRequest."""
+    """v1/v1.2 ServantMessageRequest (v1.14 adds the optional command-bar ``context``)."""
 
     model_config = {"extra": "forbid"}
 
     content: str = Field(min_length=1, max_length=_SERVANT_MESSAGE_MAX_CHARS)
     attachment_refs: list[str] = Field(default_factory=list)
+    context: Optional[ServantCommandContext] = None
 
 
 class ServantPaperBookEnsureRequest(BaseModel):
@@ -179,6 +197,7 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
         "audit": metadata.get("audit") or {},
     }
     if message.get("role") == "assistant":
+        tool_turn = metadata.get("tool_turn") if isinstance(metadata.get("tool_turn"), dict) else {}
         status = str(metadata.get("provider_status") or "completed")
         degraded = status == "degraded"
         return {
@@ -192,6 +211,11 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
                 "answer": None if degraded else message.get("content"),
                 "error": metadata.get("error"),
                 "truncated": bool(message.get("truncated")),
+                # AGORA-SERVANT-DATA-TOOLS-20261127: every number shown is one of these cited facts.
+                "citations": list(message.get("citations") or []),
+                "missing_data": list(tool_turn.get("missing_data") or []),
+                "tool_rounds": int(tool_turn.get("tool_rounds") or 0),
+                "answer_mode": tool_turn.get("answer_mode"),
             },
         }
     return {
@@ -204,6 +228,7 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
             "attachment_refs": [
                 a.get("ref") if isinstance(a, dict) else a for a in message.get("attachments") or []
             ],
+            "context": metadata.get("command_context") or None,
         },
     }
 
@@ -1661,6 +1686,9 @@ def create_servant_router(
         # agora-interaction-worker; the answer reaches the trader over /stream.
         digest = _stable_digest(scope.tenant_id, scope.user_id, session_id, str(idempotency_key))
         message_id = f"servant-msg-{digest}"
+        command_context = normalize_command_context(
+            body.context.model_dump(exclude_none=True) if body.context is not None else None
+        )
         turn_id = f"servant-turn-{digest}"
         from services.agora.store import ServantSessionMessageCapError
 
@@ -1675,7 +1703,14 @@ def create_servant_router(
                     "role": "user",
                     "sender": {"type": "trader", "id": scope.user_id},
                     "attachments": [{"ref": ref} for ref in body.attachment_refs],
-                    "metadata": {"audit": audit},
+                    "metadata": {
+                        "audit": audit,
+                        **(
+                            {"command_context": command_context}
+                            if command_context
+                            else {}
+                        ),
+                    },
                 },
                 created_at=utc_now(),
             )
