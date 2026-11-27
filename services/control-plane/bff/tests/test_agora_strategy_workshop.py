@@ -988,6 +988,36 @@ class TestWorkshopRouterEndpoints:
         # governance (monitoring_update) -> missing
         assert dim_updates["governance"]["current_grade"] == "missing"
 
+        # Twelve V10 blocks and next high-value decision are also present
+        assert len(payload["snapshot"]["blocks"]) == 12
+        assert len(comp_card["payload"]["blocks"]) == 12
+        assert [b["v10_block_id"] for b in comp_card["payload"]["blocks"]] == list(winner_state_map.keys())
+        assert payload["snapshot"]["next_decision"]["question"]
+        assert 2 <= len(payload["snapshot"]["next_decision"]["options"]) <= 4
+        assert payload["snapshot"]["next_decision"]["servant_default"]["option_id"]
+
+        # Accepting servant default via POST /decisions records event and updates completeness
+        etag_after_snap = create_snapshot.headers["etag"]
+        decision_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/decisions",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-winner-branch-decision-001",
+                "If-Match": etag_after_snap,
+                "Content-Type": "application/json",
+            },
+            json={"use_servant_default": True},
+        )
+        assert decision_resp.status_code == 201, decision_resp.text
+        assert decision_resp.json()["data"]["used_servant_default"] is True
+        comp_after_dec = client.get(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        ).json()["data"]
+        sizing_block = next(b for b in comp_after_dec["blocks"] if b["v10_block_id"] == "sizing_leverage")
+        assert sizing_block["state"] == "confirmed"
+        assert sizing_block["source_citations"]
+
         client = _workshop_client(monkeypatch)
         workshop_id = _create_workshop(
             client,

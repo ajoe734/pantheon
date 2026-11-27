@@ -1,0 +1,293 @@
+{
+  "task_id": "MGMT-ATTRIBUTION-READERS-EXCLUDE-NON-TRADING-20261127",
+  "owner": "Codex2",
+  "reviewer": "Antigravity2",
+  "review_independence": "Codex versus Antigravity model families; assigned canonical reviewer, no self-approval.",
+  "root_cause_class": "RC2 / WP2.3: explicit advisory persona selected as an institutional trading persona after T7 paper book provisioning",
+  "implementation_status": "source_validated_ready_for_independent_review",
+  "source_base": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
+  "anchors": [
+    "8bb212957",
+    "79bf07588"
+  ],
+  "policy": "services/control-plane/persona/persona_policy_resolver.py:non_trading_identity_source; no new class list, id prefix or name heuristic",
+  "scope_note": "The Management PM-12 response is implemented in agora/performance/service.py despite its historical module placement; only the Management response changes there. Human/Ops admitted this implementation path to the canonical artifact contract on 2026-11-27 at 17:40:18Z and reopened this existing task for exact-head handoff at 17:40:28Z. Review evidence is under the declared task evidence path.",
+  "management_read_surface_inventory": [
+    {
+      "file": "services/control-plane/bff/strategies/routes/common.py",
+      "functions": ["read_persona_state_lookup", "PersonaStateLookup.is_management_excluded", "strategy_stub_reason"],
+      "surface": "Management strategy cohort",
+      "disposition": "fixed_here",
+      "behavior": "Canonical non_trading_identity_source from the same directory snapshot as test_persona_ids. Only an all-excluded nonempty persona set is hidden; mixed trading/unknown and unbound strategies remain subject to existing stub rules."
+    },
+    {
+      "file": "services/control-plane/bff/strategies/routes/collection.py",
+      "functions": ["bff_list_strategies", "_list_strategies_page"],
+      "surface": "GET /bff/strategies, default Management strategies view",
+      "disposition": "fixed_here",
+      "behavior": "Registry receives the union of test and non-trading ids before selecting/counting/paging. Older owner fallback uses the same predicate. Explicit include_test/include_test_personas keeps the pre-existing all-strategies diagnostic view. With advisory identities present, hidden_persona_strategy_count reports the combined owner count; test-only count is null rather than mislabelling advisory rows."
+    },
+    {
+      "file": "services/control-plane/bff/strategies/routes/detail.py",
+      "functions": ["bff_get_strategy", "bff_list_strategy_specs", "bff_list_strategy_experiments", "bff_list_strategy_artifacts", "bff_get_strategy_lineage", "bff_get_strategy_audit", "bff_list_strategy_ooda_packets"],
+      "surface": "Explicit strategy detail/spec/experiment/deployment history",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Explicit identity lookups remain readable, including the servant book artifact; they do not construct an institutional cohort. Runtime metrics call shared read_strategy_runtime_truth, composed with the Trading Pulse task."
+    },
+    {
+      "file": "services/control-plane/bff/strategies/routes/seeds.py",
+      "functions": ["_load_persona_strategy_profiles", "_strategy_seed_persona_suggestions", "_strategy_seed_similar_existing_strategies", "bff_list_strategy_seed_inbox", "bff_get_strategy_seed_card"],
+      "surface": "Management research StrategySpecSeed inbox, suggestions and lineage",
+      "disposition": "research_provenance_unchanged",
+      "behavior": "Lists source-owned research seeds, not active institutional strategy/performance rows. Existing candidate profiles and explicit similar-strategy lineage are preserved; no change to seed adoption or research governance. See residual findings for the unfiltered candidate-profile selector."
+    },
+    {
+      "file": "services/control-plane/bff/personas/service.py",
+      "functions": ["_pm12_persona_league_rows", "_pm12_persona_league_rows_shared", "_pm12_quarterly_ranking_items"],
+      "surface": "Shared league and quarterly institutional cohort",
+      "disposition": "already_canonical",
+      "behavior": "Filters raw records through fleet_classification.is_non_trading_persona (which calls non_trading_identity_source) before metadata is projected away. Unknown records remain. include_advisory is explicit per-persona operations/readiness use, not institutional rankings."
+    },
+    {
+      "file": "services/control-plane/bff/personas/service.py",
+      "functions": ["get_persona_league", "get_persona_league_rankings", "get_persona_league_movers", "get_persona_league_tiers", "get_persona_league_heatmap", "get_quarterly_ranking", "get_quarterly_ranking_drilldown", "get_quarterly_ranking_recommendations", "get_promotion_reviews", "get_promotion_review_detail"],
+      "surface": "Management league/table/rankings/movers/tiers/heatmap, quarterly ranking/drilldown/recommendations/promotion reviews",
+      "disposition": "already_canonical",
+      "behavior": "All consume the shared filtered league cohort. No new directory read or rank-snapshot writer introduced."
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/ranking.py",
+      "functions": ["bff_persona_league", "bff_persona_league_detail"],
+      "surface": "Legacy /bff/persona-league list and explicit historical entry",
+      "disposition": "historical_records_unchanged",
+      "behavior": "Legacy list/detail reads saved league entries, not a fresh persona cohort or performance computation. Historical records retain their identity; current Management league/ranking routes use the canonical cohort above."
+    },
+    {
+      "file": "services/control-plane/bff/personas/service.py",
+      "functions": ["_persona_fleet_slim_list_payload", "_persona_fleet_record_visible_to", "_persona_fleet_strip_trading_facts"],
+      "surface": "Management persona fleet and /bff/personas inventory",
+      "disposition": "already_canonical",
+      "behavior": "Canonical purpose classification; owner-private records scoped to the viewer and advisory rows have trading/rank/runtime/capital fields stripped. Fleet purpose filters may explicitly include advisory assistants; this is an identity inventory, not a performance leaderboard."
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/collection.py",
+      "functions": ["list_personas", "bff_list_personas", "bff_management_persona_fleet", "bff_management_persona_intent"],
+      "surface": "Persona directory/fleet/intent selection",
+      "disposition": "already_canonical",
+      "behavior": "Current fleet projection delegates to canonical purpose/list-scope classification. Raw directory and explicit intent reads remain identity/administration views rather than trading cohorts."
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "functions": ["get_persona_detail", "get_persona_management", "bff_get_persona", "bff_get_persona_route_policy", "bff_get_persona_runtime_profile", "bff_get_persona_activity", "bff_get_persona_evaluations", "bff_get_persona_memory", "bff_get_persona_audit", "bff_get_persona_tools"],
+      "surface": "Explicit persona operations and evidence drilldowns",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Caller-tenant and explicit persona identity remain authoritative. Advisory diagnostic records are still inspectable; no list/ranking cohort is generated."
+    },
+    {
+      "file": "services/control-plane/bff/agora/performance/service.py",
+      "functions": ["pm12_performance_attribution_sources", "pm12_performance_attribution_response"],
+      "surface": "Management PM-12 attribution: all/persona/strategy/pool/asset/broker/runtime/regime",
+      "disposition": "fixed_here",
+      "behavior": "Management-only response filters canonical non-trading personas before common filters/grouping/totals/paging, including include_test diagnostics. Counterfactual instrument grades exclude known excluded runtimes, preserving metadata-free legacy telemetry. Sources and the general fact builder remain unmodified for other domains."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/ranking_router.py",
+      "functions": ["bff_management_performance_attribution", "bff_management_performance_attribution_by_strategy", "bff_management_performance_attribution_by_persona", "bff_management_performance_attribution_by_pool"],
+      "surface": "Four mounted Management attribution routes",
+      "disposition": "fixed_here_via_shared_response",
+      "behavior": "All four delegate to the fixed PM-12 response; route regression asserts scoped totals, source call count, learning input and immutable source records."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/ranking_router.py",
+      "functions": ["bff_list_rankings", "bff_get_ranking", "bff_list_ranking_formulas", "bff_get_ranking_formula"],
+      "surface": "Stored ranking snapshot/formula long tail",
+      "disposition": "historical_records_unchanged",
+      "behavior": "Reads saved owner records/formulas; does not select current personas or recompute scores. Canonical live ranking cohorts are filtered before snapshots are built. Historical audit snapshots are not rewritten."
+    },
+    {
+      "file": "services/control-plane/bff/strategies/routes/common.py",
+      "functions": ["_build_ranking_strategy_index", "_project_strategy_ranking_metrics", "StrategyRouteContext.project_strategy_dto", "StrategyRouteContext.read_strategy_runtime_truth"],
+      "surface": "Strategy metrics and runtime joins",
+      "disposition": "already_canonical_or_composed",
+      "behavior": "Metrics consume canonical generated ranking snapshots. Runtime metrics use read_strategy_runtime_truth and its _pulse_operator_scope; non-trading binding selection belongs to the Trading Pulse task below. This task does not alter those functions."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "functions": ["_pulse_operator_scope", "get_trading_pulse", "get_trading_pulse_rankings", "read_strategy_runtime_truth"],
+      "surface": "Trading Pulse, Pulse rankings, shared strategy runtime attribution",
+      "disposition": "owned_by_TRADING-PULSE-EXCLUDE-NON-TRADING-IDENTITIES-20261127",
+      "behavior": "Codex owns the shared binding cohort and Pulse operator probe. No edits here. The task that merges second must compose current dev and preserve both repairs."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "functions": ["get_operator_home", "get_management_cockpit", "compose_management_cockpit_sections"],
+      "surface": "Operator home/cockpit trading summaries",
+      "disposition": "owned_by_TRADING-PULSE-EXCLUDE-NON-TRADING-IDENTITIES-20261127",
+      "behavior": "Trading summary sections delegate to Trading Pulse; other sections remain operational diagnostics. No duplicate classifier added."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "functions": ["get_operator_health_status", "get_operator_alerts", "get_management_anomalies", "get_risk_radar", "get_operations_read_model", "build_shell_summary_counts", "get_shell_summary"],
+      "surface": "Health/alerts/anomalies/risk radar/per-persona operations/shell inventory",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Owner runtime/capital/persona inventory, risk and diagnostic state deliberately include actual bindings. No institutional performance leaderboard is built; removing a private book from risk/runtime oversight would hide infrastructure truth."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "functions": ["get_context_runtime_bindings", "get_context_personas", "get_context_bindings_for_persona", "get_context_sessions_for_persona", "get_context_strategies_for_persona", "get_context_teaching_sessions_for_persona", "get_context_telemetry_summary", "get_context_telemetry_summaries_for_runtimes", "get_context_monitoring_session", "get_context_monitoring_sessions_for_bindings"],
+      "surface": "Read-only Management diagnostics context",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Typed owner observations and explicit persona/runtime binding lookups retain their provenance and tenant boundaries; advisory identity remains inspectable."
+    },
+    {
+      "file": "services/control-plane/bff/management_read_models/service.py",
+      "functions": ["_bounded_persona_readiness_rows", "get_human_inbox", "get_human_inbox_detail", "get_hiq_backlog", "get_loop_throughput", "get_incident_timeline", "get_evidence"],
+      "surface": "Human inbox/readiness/throughput/incidents/evidence",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Operational and governance evidence, not a trading cohort; existing readiness owner rules, tenant filtering and explicit evidence references preserved."
+    },
+    {
+      "file": "services/control-plane/bff/runtime/router.py",
+      "functions": ["list_bindings", "list_runtime_bindings", "get_runtime_status", "get_runtime_binding", "get_binding", "get_runtime_rollbacks", "list_operator_runtime_state", "bff_list_runtimes", "bff_get_runtime", "bff_v5_execution_persona_health", "bff_v5_execution_strategy_health", "bff_list_runtime_ooda_packets"],
+      "surface": "Runtime inventory/health/state/OODA and explicit runtime drilldowns",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "All actual RuntimeBindings stay visible according to existing lifecycle/tenant/status filters. Servant pool/binding/strategy is not deleted or relabelled."
+    },
+    {
+      "file": "services/control-plane/bff/capital/router.py",
+      "functions": ["list_capital_pools", "get_capital_pool", "bff_list_capital_pools", "bff_get_capital_pool", "bff_list_rebalances", "bff_get_rebalance", "bff_management_strategy_allocation", "bff_management_capital_flow", "bff_management_portfolio_book", "bff_management_portfolio_book_pools", "bff_management_portfolio_book_exposure", "bff_management_portfolio_book_holdings", "bff_management_portfolio_book_positions", "bff_management_cost_attribution", "bff_management_board_pack"],
+      "surface": "Capital pool/rebalance/allocation/portfolio/exposure/holdings/cost/board reads",
+      "disposition": "infrastructure_unchanged",
+      "behavior": "Capital and accounting projections stay owner-scoped to actual pools/bindings/holdings, including the trader paper ledger. No change to allocation, risk, capital or execution authority."
+    },
+    {
+      "file": "services/control-plane/bff/attribution/router.py",
+      "functions": ["list_records", "list_outliers", "get_record", "get_shadow"],
+      "surface": "Management agent-attribution records/outliers/detail and Agora shadow diagnostic",
+      "disposition": "owner_records_unchanged",
+      "behavior": "Reads canonical attribution-owner records and explicit decision/meeting provenance, not personas or runtime-derived institutional PnL. Existing operator/private audience and owner filters remain. The known shadow key residual belongs to AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, already in the register."
+    },
+    {
+      "file": "services/control-plane/bff/agora/performance/attribution.py",
+      "functions": ["project_agora_performance_attribution_by_strategy"],
+      "surface": "Agora trader performance",
+      "disposition": "agora_owner_scope_unchanged",
+      "behavior": "Filters to the authenticated trader workshop strategies and never calls the Management PM-12 response. No institutional cohort filtering injected here."
+    },
+    {
+      "file": "services/control-plane/bff/agora/performance/service.py",
+      "functions": ["PerformanceProjectionService", "pm12_performance_attribution_facts"],
+      "surface": "Agora projections and reusable unscoped facts",
+      "disposition": "agora_owner_scope_unchanged",
+      "behavior": "The Agora projection service and reusable fact builder keep their original scope. Test asserts the servant fact remains accessible to other readers and source data is not mutated."
+    },
+    {
+      "file": "services/control-plane/bff/personas/trader_paper_book.py",
+      "functions": ["ensure_trader_paper_book"],
+      "surface": "T7 trader book provisioning and Agora book reads",
+      "disposition": "agora_owner_scope_unchanged",
+      "behavior": "No edits to provisioning, StrategySpec, pool, ledger, RuntimeBinding, broker or write authority. Executable binding intent is owned by PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127."
+    }
+  ],
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_persistent_writers": 0,
+    "new_owner_reads_per_request": 0,
+    "strategy_directory_reads_per_request": 1,
+    "hosted_count": "Current expected institutional cohort: three personas/strategies; the fourth servant record is retained in owner infrastructure.",
+    "transient_size_and_count": "One non-trading-id frozenset bounded by the existing request directory (O(P)); attribution filters existing facts/telemetry (O(F+R)). No second directory list or new owner call. No global cache.",
+    "cadence": "Request-only; no timer, background emitter or durable application write.",
+    "growth_per_day_bytes": 0,
+    "persistent_cap_bytes": 0,
+    "cleanup": "Request-local collections released with response; existing owner data untouched. Browser probe creates no evidence/storage/screenshot files; Playwright temporary profile is cleaned when browser closes."
+  },
+  "validation": [
+    {
+      "command": "timeout 180 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_period_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/tests/test_bff_b3_trading_pulse.py acceptance/test_trading_pulse_operator.py",
+      "exit_code": 0,
+      "result": "225 passed, 3 dependency deprecation warnings in 47.44s after composing dev d8b3be86c including Trading Pulse #7980; terminal output collected. Test inventory, probe CLI/compilation and git diff --check also passed."
+    },
+    {
+      "command": "timeout 240 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_retired_runtime_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_period_scope.py services/control-plane/bff/tests/test_bff_pm12_attribution_strategy_labels.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/agora/performance/test_performance.py",
+      "exit_code": 0,
+      "result": "143 passed in 24.64s; before adding the older-Registry fallback case, covered by the boundary batch"
+    },
+    {
+      "command": "timeout 120 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py::test_advisory_record_never_enters_league_rows services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py::test_advisory_servant_has_no_nested_trading_facts_and_is_owner_private services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/personas/test_fleet_classification.py services/control-plane/bff/tests/test_agora_performance_transport_and_isolated_store.py",
+      "exit_code": 0,
+      "result": "97 passed in 17.27s; includes older Registry fallback and canonical ranking/private book boundary"
+    },
+    {
+      "command": "timeout 240 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_strategy_operational_status.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/tests/test_strategy_metrics_truth.py services/control-plane/bff/tests/test_management_read_budget.py services/control-plane/bff/tests/test_bff_pm12_persona_league.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/agora/performance/test_performance.py services/control-plane/bff/agora/performance/test_agora_projections_performance_widgets.py",
+      "exit_code": 0,
+      "result": "226 passed in 93.97s; terminal output collected"
+    },
+    {
+      "command": "python3 services/control-plane/bff/tests/probe_management_strategy_cohort.py --help; python3 -m py_compile services/control-plane/bff/tests/probe_management_strategy_cohort.py; git diff --check",
+      "exit_code": 0,
+      "result": "CLI/compilation/whitespace checks passed; hosted browser probe intentionally pending deployment, not counted as passed"
+    },
+    {
+      "command": "timeout 180 /tmp/agy2venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py services/control-plane/bff/tests/test_agora_shadow_mode.py",
+      "exit_code": 0,
+      "result": "89 passed in 21.69s after composing current dev 50a65493c; terminal output collected"
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check; git diff --check origin/dev...HEAD",
+      "exit_code": 0,
+      "result": "test inventory ok; no whitespace errors"
+    }
+  ],
+  "hosted_acceptance": {
+    "status": "pending_merge_deployment_and_browser_proof",
+    "observed_before_change_from_dispatch": {
+      "bff": "1a1d3ce1f",
+      "frontend": "9b0df6622",
+      "user": "admintest",
+      "strategy_total": 4,
+      "unwanted_title": "agora-servant-799a3ce8c021b91cbb54 trader paper book"
+    },
+    "probe": "services/control-plane/bff/tests/probe_management_strategy_cohort.py",
+    "command": "python services/control-plane/bff/tests/probe_management_strategy_cohort.py --frontend-url https://app.dev.mvl-cap.tw --storage-state /secure/admintest.json --expected-persona-id <persona-1> --expected-persona-id <persona-2> --expected-persona-id <persona-3>",
+    "requirements": [
+      "After canonical independent review and merge, verify hosted manifest exact FE/BFF identities and all expected services healthy.",
+      "Use an existing admintest browser storage state; the probe refuses browser writes and does not log in.",
+      "Default Management strategies request is hide_retired_personas=true and exclude_state=draft; exactly three rendered trading strategies, no servant paper book, correct page total and persona ids.",
+      "Record actual deployed manifest and browser probe output before claiming accepted; API/local source success is insufficient."
+    ],
+    "proof": null
+  },
+  "residual_findings": [
+    {
+      "surface": "services/control-plane/bff/strategies/routes/seeds.py:_load_persona_strategy_profiles",
+      "finding": "Research seed candidate suggestions build profiles for all directory personas and do not explicitly apply the non-trading predicate. This is a research/adoption suggestion selector rather than an institutional strategy/performance list; no hosted advisory suggestion was reproduced in this task.",
+      "disposition": "Recorded for the WP2.3 coordinator to classify against research/adoption ownership; preserve source research provenance and do not silently broaden this task into adoption behavior."
+    },
+    {
+      "surface": "Hosted Management strategies acceptance",
+      "finding": "Source review cannot satisfy acceptance item 6; this task branch is not served by hosted dev.",
+      "disposition": "Keep pending until canonical integration, dev deployment and admintest browser probe; no acceptance claim."
+    }
+  ],
+  "initial_source_base": "ce6552d387f9791f09c47600a7b9ee1bbad15045",
+  "base_refresh": {
+    "base_sha": "d8b3be86c84be52edcd06dc41b1dcc6de830e1ee",
+    "previous_reviewed_head": "b9d21963eea8048b65207c2feab105d48ad0fb71",
+    "reason": "Owner redispatched after #7979/#7980 moved dev and conflicted in the WP2.3 register row. Preserved current-dev cycle/Pulse/Agora history and task-specific Management scope/residual findings. All 25 other incoming dev files are byte-for-byte identical to dev; no product code resolution was needed. Fresh exact-head independent review required; hosted proof remains pending."
+  },
+  "review_admission_blocker": {
+    "failed_step": "Governed handoff into independent review",
+    "pr": "https://github.com/ajoe734/pantheon/pull/7982",
+    "rejected_head": "cf19432e143d2f7d7fe892c010bf7ed5116e6b17",
+    "reason": "changed file 'services/control-plane/bff/agora/performance/service.py' is outside the task artifact contract for repository 'pantheon'",
+    "required_actor": "Human/Ops",
+    "required_correction": "Revise the existing task artifact contract to include pantheon:services/control-plane/bff/agora/performance/service.py under the governed pre-dispatch lifecycle, retaining Codex2/Antigravity2, then redispatch the existing task for exact-head handoff. The task acceptance already requires repairing Management attribution implemented there. Do not create a replacement task or bypass admission.",
+    "task_contract_changed_by_worker": false,
+    "status": "resolved_by_operator_contract_revision",
+    "resolved_by": "Human/Ops",
+    "resolved_at": "2026-11-27T17:40:18Z",
+    "resolution": "Canonical governed show confirms pantheon:services/control-plane/bff/agora/performance/service.py is admitted; owner/reviewer and acceptance unchanged. Operator reopened the existing task for a fresh exact-head handoff. No governance guard was modified or bypassed.",
+    "review_admitted": false
+  }
+}
