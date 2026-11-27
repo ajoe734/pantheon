@@ -4408,6 +4408,14 @@ PY
         exit 255
       fi
     fi
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" ]]; then
+      scp_att="$(( $(cat "$S/new_vm_scp_attempts" 2>/dev/null || echo 0) + 1 ))"
+      echo "$scp_att" > "$S/new_vm_scp_attempts"
+      if (( ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} > 0 && scp_att <= ${FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS:-0} )); then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     src="${@: -2:1}"
     dst_spec="${@: -1}"
     dst="${dst_spec#*:}"
@@ -4426,6 +4434,14 @@ PY
       exit 255
     fi
     cmd="$(arg_val --command "$@")"
+    if [[ "$(cat "$S/vm_generation" 2>/dev/null)" == "new" && "$cmd" == "true" ]]; then
+      true_calls="$(( $(cat "$S/new_vm_ssh_true_calls" 2>/dev/null || echo 0) + 1 ))"
+      echo "$true_calls" > "$S/new_vm_ssh_true_calls"
+      if [[ "${FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE:-}" == "true" && "$true_calls" == "2" ]]; then
+        echo "ERROR: (gcloud.compute.start-iap-tunnel) Error while connecting [4003: 'failed to connect to backend']. (Failed to connect to port 22)" >&2
+        exit 255
+      fi
+    fi
     bash -c "$cmd"
     exit $? ;;
   *)
@@ -4568,6 +4584,7 @@ class ReplaceVmHarness(RealControllerBase):
             "PROD_SSH_WAIT_TRIES": "2",
             "PROD_SSH_WAIT_INTERVAL": "0",
             "PROD_INCUMBENT_SSH_INTERVAL": "0",
+            "PROD_UPLOAD_BUNDLE_INTERVAL": "0",
             "CLOUDSDK_CORE_PROJECT": PROD_ENV["PROD_GCP_PROJECT_ID"],
         }
         defaults.update(extra)
@@ -5021,6 +5038,74 @@ class ReplaceVmHarness(RealControllerBase):
         self.assertEqual(rb_fail_out["status"], "replace_vm_rollback_failed")
         self.assertFalse(rb_fail_out["rolled_back_to_old_boot_disk"])
         self.assertIn("simulated rollback restore failure", rb_fail_out["rollback_error"] or "")
+
+    def test_replace_vm_retries_transient_first_boot_iap_upload_and_rejects_template_missing_disk_size_gb(self):
+        script_text = self.REPLACE_VM.read_text(encoding="utf-8")
+        self.assertIn('PROD_UPLOAD_BUNDLE_TRIES="${PROD_UPLOAD_BUNDLE_TRIES:-6}"', script_text)
+        self.assertIn('PROD_UPLOAD_BUNDLE_INTERVAL="${PROD_UPLOAD_BUNDLE_INTERVAL:-5}"', script_text)
+        self.assertIn('PROD_SSH_STABILITY_DELAY="${PROD_SSH_STABILITY_DELAY:-5}"', script_text)
+
+        # Seed a pre-existing pantheon-prod-control-template-e2s8-v3 template whose boot disk initializeParams
+        # has sourceImage (GCE Debian 12 default 10GB) but omits diskSizeGb -> template_is_compatible must reject,
+        # delete, and recreate it with diskSizeGb=120. Also simulate transient first-boot IAP upload failure
+        # (first SCP attempt fails, second succeeds) and a transient second-probe SSH drop during wait_for_ssh.
+        (self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").write_text(
+            json.dumps({
+                "name": "pantheon-prod-control-template-e2s8-v3",
+                "properties": {
+                    "machineType": "e2-standard-8",
+                    "scheduling": {"preemptible": False, "provisioningModel": "STANDARD"},
+                    "disks": [{
+                        "boot": True,
+                        "autoDelete": True,
+                        "mode": "READ_WRITE",
+                        "type": "PERSISTENT",
+                        "initializeParams": {
+                            "diskType": "pd-balanced",
+                            "sourceImage": "projects/debian-cloud/global/images/family/debian-12",
+                        },
+                    }],
+                    "metadata": {"items": [{"key": "serial-port-enable", "value": "FALSE"}]},
+                },
+            })
+        )
+        self._seed_pre_g77_offline_boot_disk_incumbent(vm_status="TERMINATED")
+        r = self._run_replace_vm(
+            PROD_INSTANCE_TEMPLATE="pantheon-prod-control-template-e2s8-v3",
+            PROD_SSH_WAIT_TRIES="3",
+            PROD_SSH_STABILITY_DELAY="1",
+            FAKE_NEW_VM_SSH_SECOND_PROBE_FAIL_ONCE="true",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="1",
+            GITHUB_RUN_ID="45908618778",
+            GITHUB_RUN_ATTEMPT="1",
+        )
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout}\nstderr={r.stderr}")
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(out["status"], "prod_vm_replaced")
+        self.assertEqual(out["instance_template"], "pantheon-prod-control-template-e2s8-v3")
+        # Template missing diskSizeGb was deleted and recreated with 120GB boot disk.
+        self.assertIn(
+            "deleted_template pantheon-prod-control-template-e2s8-v3",
+            (self.state / "template_deletes.log").read_text(),
+        )
+        v3_tpl = json.loads((self.state / "templates" / "pantheon-prod-control-template-e2s8-v3.json").read_text())
+        self.assertEqual(v3_tpl["properties"]["disks"][0]["initializeParams"]["diskSizeGb"], "120")
+        # wait_for_ssh ran stability re-probe after transient drop (4 total 'true' SSH calls) and SCP retried after 1 transient failure.
+        self.assertEqual(int((self.state / "new_vm_ssh_true_calls").read_text().strip()), 4)
+        self.assertEqual(int((self.state / "new_vm_scp_attempts").read_text().strip()), 2)
+
+        # When all PROD_UPLOAD_BUNDLE_TRIES attempts fail on the new VM, it rolls back to old_boot_disk at upload_bundle_new_vm.
+        self.setUp()
+        r_fail = self._run_replace_vm(
+            PROD_UPLOAD_BUNDLE_TRIES="2",
+            FAKE_NEW_VM_UPLOAD_TRANSIENT_FAILS="3",
+        )
+        self.assertEqual(r_fail.returncode, 3, f"stdout={r_fail.stdout}\nstderr={r_fail.stderr}")
+        fail_out = json.loads(r_fail.stdout.strip().splitlines()[-1])
+        self.assertEqual(fail_out["status"], "replace_vm_rolled_back")
+        self.assertEqual(fail_out["failed_stage"], "upload_bundle_new_vm")
+        self.assertTrue(fail_out["rolled_back_to_old_boot_disk"])
+        self.assertTrue(fail_out["orphaned_new_boot_disk_deleted"])
 
 
 if __name__ == "__main__":
