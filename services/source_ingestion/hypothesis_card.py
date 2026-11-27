@@ -387,6 +387,11 @@ REUSABLE_ANSWER_STATUSES = ("card", "no_hypothesis", "rejected")
 # Attempt rows of records untouched this long are pruned (the record has long
 # been closed or carded by then: 6 attempts at 3 a day take 2 days).
 RECORD_ATTEMPT_RETENTION_DAYS = 30
+# Hard row bound of ``input_answers``. A reuse touch keeps an answer alive past the
+# 30-day window, so "400 new rows/day x 30 days" alone does not bound the table;
+# the least recently used answers beyond this many rows are evicted on write
+# (an evicted answer only costs one later call, which the daily cap still bounds).
+MAX_INPUT_ANSWER_ROWS = 12000
 
 RESERVED = "reserved"
 DAILY_CAP_REACHED = "daily_cap"
@@ -616,6 +621,11 @@ class ExtractionLedger:
             )
             cutoff = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=RECORD_ATTEMPT_RETENTION_DAYS)).strftime("%Y-%m-%d")
             c.execute("DELETE FROM input_answers WHERE day < ?", (cutoff,))
+            c.execute(
+                "DELETE FROM input_answers WHERE rowid IN ("
+                "SELECT rowid FROM input_answers ORDER BY day DESC, rowid DESC LIMIT -1 OFFSET ?)",
+                (MAX_INPUT_ANSWER_ROWS,),
+            )
 
     def touch_input_answer(self, source_id: str, input_digest: str) -> None:
         """A reuse keeps the answer alive while versions of the source keep arriving."""

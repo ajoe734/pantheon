@@ -1711,3 +1711,34 @@ class TestNewerVersionSupersedesOlder:
         assert result.processed == 1
         assert queue.get(v1.source_id, v1.source_digest).skip_reason == _superseded_reason(v2)
         assert queue.get(v2.source_id, v2.source_digest).status == "done"
+
+
+class TestCommittedReplayIsNotSuperseded:
+    """A retry_wait row whose seed is committed (Registry replay pending) is lineage, not a paid call."""
+
+    def test_registry_failed_retry_keeps_committed_seed_and_survives_newer_version(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        started = queue.begin_job(claimed, lease_seconds=60, now=111.0)
+        status = queue.mark_retry_or_dead_letter(
+            started, error="registry_sync_failed: RuntimeError: outage",
+            base_delay_seconds=0, now=112.0, committed_seed_id="seed-committed-1",
+        )
+        assert status.value == "retry_wait"
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        old = queue.get(v1.source_id, v1.source_digest)
+        assert old.status == "retry_wait" and old.seed_id == "seed-committed-1"
+        # The replay is still claimable and begins without being superseded.
+        claimed_ids = {j.job_id for j in queue.claim_due(worker_id="w2", lease_seconds=60, now=210.0)}
+        assert claimed_ids == {v1.job_id, v2.job_id}
+
+    def test_retry_without_committed_seed_is_still_superseded(self, tmp_path: Path) -> None:
+        queue = DistillationJobQueue(tmp_path / "q.sqlite")
+        v1 = queue.enqueue_source_record(_version(1), enqueued_at=100.0)
+        (claimed,) = queue.claim_due(worker_id="w1", lease_seconds=60, now=110.0, job_ids=[v1.job_id])
+        started = queue.begin_job(claimed, lease_seconds=60, now=111.0)
+        queue.mark_retry_or_dead_letter(started, error="l2 timeout", base_delay_seconds=0, now=112.0)
+        v2 = queue.enqueue_source_record(_version(2), enqueued_at=200.0)
+        old = queue.get(v1.source_id, v1.source_digest)
+        assert old.status == "skipped" and old.skip_reason == _superseded_reason(v2)

@@ -1026,6 +1026,8 @@ class DistillationJobQueue:
         """Job id of the newest later-admitted version of this job's source, if any.
 
         Only versioned rows take part (legacy source-id jobs carry no version).
+        A row holding a committed seed (``seed_id`` set while awaiting a Registry
+        replay) is never superseded: its replay is committed lineage, not a paid call.
         Admission order is (enqueued_at, rowid); a PK lookup plus one range of
         ``distillation_outbox_source_version_idx``.
         """
@@ -1036,6 +1038,7 @@ class DistillationJobQueue:
               JOIN distillation_outbox AS newer
                 ON newer.source_id = current.source_id
                AND newer.source_digest <> ''
+               AND current.seed_id IS NULL
                AND (newer.enqueued_at > current.enqueued_at
                     OR (newer.enqueued_at = current.enqueued_at AND newer.rowid > current.rowid))
              WHERE current.job_id = ? AND current.source_digest <> ''
@@ -1067,6 +1070,7 @@ class DistillationJobQueue:
               FROM distillation_outbox
              WHERE source_id = ? AND source_digest <> '' AND job_id <> ?
                AND status IN ('pending', 'retry_wait')
+               AND seed_id IS NULL
                AND (enqueued_at < ? OR (enqueued_at = ? AND rowid < ?))
             """,
             (source_id, newer_job_id, newer_at, newer_at, int(newer["rid"])),
@@ -2067,6 +2071,7 @@ class DistillationJobQueue:
         base_delay_seconds: float,
         now: str | datetime | float | None = None,
         permanent: bool = False,
+        committed_seed_id: str | None = None,
     ) -> DistillationJobStatus:
         effective_now = _timestamp(now) if now is not None else self._now()
         with self._connect() as connection:
@@ -2116,6 +2121,7 @@ class DistillationJobQueue:
                        SET status = ?, available_at = ?, processed_at = ?,
                            last_error = ?, lease_owner = NULL,
                            lease_token = NULL, lease_expires_at = NULL,
+                           seed_id = COALESCE(?, seed_id),
                            updated_at = ?
                      WHERE job_id = ?
                     """,
@@ -2124,6 +2130,7 @@ class DistillationJobQueue:
                         available_at,
                         effective_now if dead_letter else None,
                         error,
+                        committed_seed_id,
                         effective_now,
                         job.job_id,
                     ),
@@ -4204,6 +4211,7 @@ class DistillationWorker:
                     error=f"registry_sync_failed: {type(exc).__name__}: {exc}",
                     base_delay_seconds=self._retry_base_seconds,
                     now=now,
+                    committed_seed_id=result.seed.seed_id,
                 )
                 return "failed", failure_status.value
             if registry_result.status == "skipped":

@@ -1403,3 +1403,23 @@ def test_only_newest_version_is_called_when_versions_queue_up(tmp_path):
     assert len(transport.calls) == 1
     assert "source_record_id='src-1'" in transport.calls[0]["prompt"]
     assert queue.get("src-1").job_id == jobs[2].job_id
+
+
+def test_input_answers_hard_row_cap_holds_even_when_reuse_touches_old_rows(tmp_path, monkeypatch):
+    from services.source_ingestion import hypothesis_card as hc
+
+    monkeypatch.setattr(hc, "MAX_INPUT_ANSWER_ROWS", 5)
+    ledger = hc.ExtractionLedger(tmp_path / "l.sqlite", daily_cap=5)
+    for i in range(5):
+        ledger.put_input_answer(f"s{i}", "sha256:a", outcome="no_hypothesis", detail="x", event_id=i)
+    with ledger._conn() as c:
+        c.execute("UPDATE input_answers SET day=date('now', '-1 day')")
+    # Reusing the oldest answer keeps it alive (sliding retention) ...
+    ledger.touch_input_answer("s0", "sha256:a")
+    for i in range(5, 9):
+        ledger.put_input_answer(f"s{i}", "sha256:a", outcome="no_hypothesis", detail="x", event_id=i)
+    with ledger._conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM input_answers").fetchone()[0] == 5
+    # ... but the bound holds: the least recently used rows were evicted, not the touched one.
+    assert ledger.input_answer("s0", "sha256:a") is not None
+    assert ledger.input_answer("s1", "sha256:a") is None
