@@ -3,7 +3,7 @@
   "class": "RC2",
   "parent_work_package": "L2-EXTRACTION-DEADLINE-AND-BUDGET-TRUTH-20261125",
   "owner": "Antigravity",
-  "reviewer": "Claude",
+  "reviewer": "Claude2",
   "hosted_input": {
     "source": "task source document (read-only hosted measurement 2026-11-27 05:00-06:10Z, backend d55c5eea4, #7908 live since 04:22Z switch)",
     "probe_failure": "Root 45935529622 verdict 05:59Z: discovery probe stage hypothesis_cards failed no_verified_hypothesis_card_last_24h (calls_today 326/400, verified_last_24h 0)",
@@ -73,6 +73,7 @@
     "services/source_ingestion/tests/test_hypothesis_compiler_wiring.py": "10 passed (includes test_authenticated_adapter_contract_controller_tick_compiles and test_real_client_adapter_and_gateway_proposer_path_carries_deadline_and_limit proving real client -> real adapter /structured -> real AssistantOpenClawProvider -> Gateway payload carries deadline and max_output_tokens with no stubbed dispatcher)",
     "services/source_ingestion/tests/test_hypothesis_extraction.py": "107 passed (includes test_fixed_defect_outcomes_checked_in_list_and_hosted_backlog_budget, test_cap_exhausted_proposer_defers_without_repaying_cached_card, test_proposer_timeout_and_cached_card_retry_under_per_record_limits, and test_hosted_5_testable_cards_failed_under_old_15s_deadline_compile_after_deploy)",
     "services/source_ingestion/tests/test_distillation_worker.py": "76 passed (includes test_proposer_failed_dead_letter_and_skipped_row_redriven_at_most_once)",
+    "services/source_ingestion/tests/test_demand_priority.py": "29 passed (test_environment_controller_tick_drives_demand_deferral_across_two_windows updated PANTHEON_L2_EXTRACTION_DAILY_CALL_CAP from 2 to 4 for 2 records/window x 2 metered calls/record: 1 card + 1 proposer)",
     "scripts/test_persona_cycle_owner_ports_compose_contract.py scripts/test_l2_extraction_deploy_switch_contract.py": "27 passed",
     "scripts/check_storage_manifest.py": "passed"
   },
