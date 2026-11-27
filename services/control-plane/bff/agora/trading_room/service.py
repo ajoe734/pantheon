@@ -163,10 +163,28 @@ class TradingRoomService:
         imitation_candidate_reader: Optional[Any] = None,
     ):
         global _active_service
+        from services.agora.shadow_mode import build_default_imitation_candidate_resolver
+
         self.decision_lock_owner = decision_lock_owner
         self.attribution_client_factory = attribution_client_factory
         self.institutional_knowledge_reader = institutional_knowledge_reader
-        self.imitation_candidate_reader = imitation_candidate_reader
+        if imitation_candidate_reader is not None:
+            self.imitation_candidate_reader = imitation_candidate_reader
+        else:
+            owner_resolver = (
+                getattr(
+                    decision_lock_owner,
+                    "imitation_candidate_resolver",
+                    getattr(decision_lock_owner, "_imitation_candidate_resolver", None),
+                )
+                if decision_lock_owner is not None
+                else None
+            )
+            self.imitation_candidate_reader = (
+                owner_resolver
+                if owner_resolver is not None
+                else build_default_imitation_candidate_resolver()
+            )
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
         self.utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat())
@@ -606,25 +624,38 @@ class TradingRoomService:
         strategy_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolve the caller's latest trader_imitation behaviour candidate(s) and training state."""
+        from services.agora.shadow_mode import (
+            PolicyLearningImitationCandidateClient,
+            build_default_imitation_candidate_resolver,
+        )
+
         clean_tenant = str(tenant_id or "").strip()
         clean_user = str(user_id or "").strip()
         clean_strategy = str(strategy_id or "").strip()
 
         reader = self.imitation_candidate_reader
-        if reader is None and self.decision_lock_owner is not None:
-            reader = getattr(self.decision_lock_owner, "_imitation_candidate_resolver", None)
+        owner_resolver = (
+            getattr(
+                self.decision_lock_owner,
+                "imitation_candidate_resolver",
+                getattr(self.decision_lock_owner, "_imitation_candidate_resolver", None),
+            )
+            if self.decision_lock_owner is not None
+            else None
+        )
+        if reader is None:
+            reader = owner_resolver
+        elif (
+            isinstance(reader, PolicyLearningImitationCandidateClient)
+            and owner_resolver is not None
+            and not isinstance(owner_resolver, PolicyLearningImitationCandidateClient)
+        ):
+            reader = owner_resolver
+        if reader is None:
+            reader = build_default_imitation_candidate_resolver()
 
         raw: Any = None
-        if callable(reader):
-            try:
-                raw = reader(
-                    tenant_id=clean_tenant,
-                    user_id=clean_user,
-                    strategy_id=clean_strategy or None,
-                )
-            except TypeError:
-                raw = reader(clean_tenant, clean_user, clean_strategy or None)
-        elif reader is not None and hasattr(reader, "get_trader_imitation_state"):
+        if reader is not None and hasattr(reader, "get_trader_imitation_state"):
             raw = reader.get_trader_imitation_state(
                 tenant_id=clean_tenant,
                 user_id=clean_user,
@@ -637,6 +668,15 @@ class TradingRoomService:
                 strategy_id=clean_strategy,
             )
             raw = {"candidates": cands, "candidate": cands[0] if cands else None}
+        elif callable(reader):
+            try:
+                raw = reader(
+                    tenant_id=clean_tenant,
+                    user_id=clean_user,
+                    strategy_id=clean_strategy or None,
+                )
+            except TypeError:
+                raw = reader(clean_tenant, clean_user, clean_strategy or None)
 
         if isinstance(raw, Mapping):
             if "candidate" in raw or "candidates" in raw or "decision_count" in raw:
@@ -655,7 +695,7 @@ class TradingRoomService:
                     "candidate": cand_obj,
                     "candidates": cands_list[:3],
                     "decision_count": raw.get("decision_count"),
-                    "training_approved": bool(raw.get("training_approved", True)),
+                    "training_approved": bool(raw.get("training_approved", cand_obj is not None)),
                     "source": "policy_learning",
                 }
             # Direct candidate mapping
@@ -673,14 +713,14 @@ class TradingRoomService:
                 "candidate": cands_seq[0] if cands_seq else None,
                 "candidates": cands_seq[:3],
                 "decision_count": (cands_seq[0].get("decision_count") if cands_seq else None),
-                "training_approved": True,
+                "training_approved": bool(cands_seq),
                 "source": "policy_learning",
             }
         return {
             "candidate": None,
             "candidates": [],
             "decision_count": None,
-            "training_approved": True,
+            "training_approved": False,
             "source": "agora",
         }
 
@@ -982,32 +1022,34 @@ class TradingRoomService:
                     candidates = [candidate]
                     break
 
-        explicit_decision_count = imitation_state.get("decision_count")
-        if explicit_decision_count is None:
-            ds_count = 0
-            if hasattr(owner, "_resolve_dataset_store"):
-                try:
-                    ds_store = owner._resolve_dataset_store()
-                    if ds_store is not None and hasattr(ds_store, "list_decision_evidence_versions"):
-                        versions = ds_store.list_decision_evidence_versions(
-                            tenant_id=scope["tenant_id"],
-                            user_id=scope["user_id"],
-                        )
-                        if clean_strategy:
-                            versions = [
-                                v
-                                for v in versions
-                                if not str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip()
-                                or str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip() == clean_strategy
-                            ]
-                        ds_count = len(versions)
-                except Exception:
-                    ds_count = 0
-            explicit_decision_count = max(
-                len(own_locks),
-                ds_count,
-                int((candidate or {}).get("decision_count") or 0),
-            )
+        raw_decision_count = imitation_state.get("decision_count")
+        ds_count = 0
+        if hasattr(owner, "_resolve_dataset_store"):
+            try:
+                ds_store = owner._resolve_dataset_store()
+                if ds_store is not None and hasattr(ds_store, "list_decision_evidence_versions"):
+                    versions = ds_store.list_decision_evidence_versions(
+                        tenant_id=scope["tenant_id"],
+                        user_id=scope["user_id"],
+                    )
+                    if clean_strategy:
+                        versions = [
+                            v
+                            for v in versions
+                            if not str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip()
+                            or str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip() == clean_strategy
+                        ]
+                    ds_count = len(versions)
+            except Exception:
+                ds_count = 0
+        explicit_decision_count = max(
+            int(raw_decision_count)
+            if isinstance(raw_decision_count, (int, float)) and not isinstance(raw_decision_count, bool)
+            else 0,
+            len(own_locks),
+            ds_count,
+            int((candidate or {}).get("decision_count") or 0),
+        )
 
         settlements: Dict[str, Dict[str, Any]] = {}
         attr_status = "ok"
@@ -1035,7 +1077,7 @@ class TradingRoomService:
             candidates=candidates,
             decision_count=int(explicit_decision_count or 0),
             minimum_decisions_required=MIN_TRADER_DECISIONS_FOR_IMITATION,
-            training_approved=bool(imitation_state.get("training_approved", True)),
+            training_approved=bool(imitation_state.get("training_approved", False) or candidate is not None),
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
             strategy_id=clean_strategy,
@@ -1044,6 +1086,7 @@ class TradingRoomService:
         is_empty = comparison.get("comparison_state") in {
             "not_enough_decisions",
             "awaiting_training_approval",
+            "pending_candidate_training",
         }
         return {
             "status": "empty" if is_empty else "ok",

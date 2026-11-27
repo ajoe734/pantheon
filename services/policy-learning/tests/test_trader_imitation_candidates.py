@@ -440,6 +440,24 @@ def test_training_approval_gate_rejects_proposed_dispatched_and_tenantless_jobs_
     assert approval_payload["approved_by"] == "policy-learning-service"
     assert approval_payload["experiment_approval"]["approved_by"] == "policy-learning-service"
 
+    # 5. Approvals and decision-evidence records are persisted in durable job storage and survive restart.
+    module.store.record_decision_evidence_version(_make_decision_evidence_version(1))
+    restarted_store = module.PolicyLearningStore(tmp_path)
+    persisted_approval = module.get_trader_training_approval(
+        restarted_store,
+        tenant_id="tenant-a",
+        user_id="trader-lin",
+        strategy_id="strat-twse-1",
+    )
+    assert persisted_approval is not None
+    assert persisted_approval["approved_by"] == "policy-learning-service"
+    persisted_evidence = restarted_store.list_decision_evidence_records(
+        tenant_id="tenant-a",
+        user_id="trader-lin",
+    )
+    assert len(persisted_evidence) == 1
+    assert persisted_evidence[0]["evidence_id"] == "ev-tenant-a-trader-lin-strat-twse-1-001"
+
 
 def test_dead_learning_imitation_service_not_built_in_cloudbuild() -> None:
     cloudbuild_text = (REPO_ROOT / "cloudbuild.yaml").read_text(encoding="utf-8")

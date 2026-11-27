@@ -15,7 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+import os
+import urllib.parse
+import urllib.request
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 LOCK_SCHEMA = "AgoraHumanDecisionLock.v1"
 LOCK_RESOURCE = "AgoraDecisionLock"
@@ -315,6 +318,18 @@ def predict_trader_imitation_action(
     """Deterministically evaluate a trained trader behaviour candidate on decision-time inputs."""
     if not isinstance(candidate_or_policy, Mapping):
         return unavailable("invalid_trader_imitation_candidate")
+    for wrap_key in ("candidate", "active_candidate"):
+        if wrap_key in candidate_or_policy and not (
+            candidate_or_policy.get("policy_weights")
+            or candidate_or_policy.get("policy")
+            or candidate_or_policy.get("artifact")
+            or candidate_or_policy.get("weights")
+        ):
+            inner = candidate_or_policy.get(wrap_key)
+            if not isinstance(inner, Mapping):
+                return unavailable("no_trader_imitation_candidate_on_decision_event")
+            candidate_or_policy = inner
+            break
 
     policy: Mapping[str, Any] = candidate_or_policy
     for key in ("policy_weights", "policy"):
@@ -603,6 +618,205 @@ def verify_checksum(lock: Dict[str, Any]) -> bool:
     return lock.get("checksum") == canonical_checksum(lock)
 
 
+_POLICY_LEARNING_URL_ENVS = (
+    "PANTHEON_POLICY_LEARNING_API_URL",
+    "POLICY_LEARNING_API_URL",
+    "PANTHEON_POLICY_LEARNING_SERVICE_URL",
+    "POLICY_LEARNING_URL",
+)
+_POLICY_LEARNING_TOKEN_ENVS = (
+    "POLICY_LEARNING_SERVICE_TOKEN",
+    "PANTHEON_POLICY_LEARNING_SERVICE_TOKEN",
+    "POLICY_LEARNING_API_TOKEN",
+)
+
+
+class PolicyLearningImitationCandidateClient:
+    """Tenant-bound client for policy-learning's /api/policy-learning/trader-imitation/candidates route."""
+
+    def __init__(
+        self,
+        *,
+        base_url: Optional[str] = None,
+        token: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+        urlopen: Optional[Callable[..., Any]] = None,
+    ) -> None:
+        self._base_url = base_url
+        self._token = token
+        self._timeout_seconds = timeout_seconds
+        self._urlopen = urlopen
+
+    def _resolve_base_url(self) -> str:
+        if self._base_url is not None and _clean(self._base_url):
+            return _clean(self._base_url).rstrip("/")
+        for env_name in _POLICY_LEARNING_URL_ENVS:
+            val = _clean(os.getenv(env_name))
+            if val:
+                return val.rstrip("/")
+        return ""
+
+    def _resolve_token(self) -> str:
+        if self._token is not None and _clean(self._token):
+            return _clean(self._token)
+        for env_name in _POLICY_LEARNING_TOKEN_ENVS:
+            val = _clean(os.getenv(env_name))
+            if val:
+                return val
+        return ""
+
+    def _resolve_timeout(self) -> float:
+        if self._timeout_seconds is not None:
+            return max(0.05, float(self._timeout_seconds))
+        raw = _clean(os.getenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0"))
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            return 2.0
+
+    def get_trader_imitation_state(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Query GET /api/policy-learning/trader-imitation/candidates bound to caller's tenant and user."""
+        clean_tenant = _clean(tenant_id)
+        clean_user = _clean(user_id)
+        clean_strategy = _clean(strategy_id)
+        if not clean_tenant or not clean_user:
+            return None
+        base_url = self._resolve_base_url()
+        token = self._resolve_token()
+        if not base_url or not token:
+            return None
+
+        params: Dict[str, str] = {"user_id": clean_user}
+        if clean_strategy:
+            params["strategy_id"] = clean_strategy
+        qs = urllib.parse.urlencode(params)
+        url = f"{base_url}/api/policy-learning/trader-imitation/candidates?{qs}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
+        req.add_unredirected_header("X-Tenant-Id", clean_tenant)
+        req.add_unredirected_header("X-Pantheon-Tenant", clean_tenant)
+        req.add_unredirected_header("X-Pantheon-Service-Actor", f"bff:{clean_user}")
+        opener = self._urlopen or urllib.request.urlopen
+        try:
+            with opener(req, timeout=self._resolve_timeout()) as resp:
+                raw_bytes = resp.read()
+                text = (
+                    raw_bytes.decode("utf-8").strip()
+                    if isinstance(raw_bytes, (bytes, bytearray))
+                    else str(raw_bytes or "").strip()
+                )
+                payload = json.loads(text) if text else None
+        except Exception:
+            return None
+
+        if not isinstance(payload, Mapping):
+            return None
+        resp_tenant = _clean(payload.get("tenant_id"))
+        resp_user = _clean(payload.get("user_id"))
+        if (resp_tenant and resp_tenant != clean_tenant) or (resp_user and resp_user != clean_user):
+            return None
+
+        raw_cands = payload.get("candidates")
+        candidates = (
+            [
+                dict(c)
+                for c in raw_cands
+                if isinstance(c, Mapping)
+                and (not _clean(c.get("tenant_id")) or _clean(c.get("tenant_id")) == clean_tenant)
+                and (not _clean(c.get("user_id")) or _clean(c.get("user_id")) == clean_user)
+            ]
+            if isinstance(raw_cands, (list, tuple))
+            else []
+        )
+        active = payload.get("active_candidate") or payload.get("candidate")
+        candidate_obj: Optional[Dict[str, Any]] = None
+        if isinstance(active, Mapping):
+            if (not _clean(active.get("tenant_id")) or _clean(active.get("tenant_id")) == clean_tenant) and (
+                not _clean(active.get("user_id")) or _clean(active.get("user_id")) == clean_user
+            ):
+                candidate_obj = dict(active)
+        elif candidates:
+            candidate_obj = candidates[0]
+        if candidate_obj is not None and not candidates:
+            candidates = [candidate_obj]
+
+        return {
+            "candidate": candidate_obj,
+            "candidates": candidates[:3],
+            "decision_count": payload.get("decision_count"),
+            "training_approved": bool(payload.get("training_approved", False)),
+            "state": _clean(payload.get("state")) or None,
+            "source": "policy_learning",
+        }
+
+    def list_trader_behaviour_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        state = self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+        if not isinstance(state, Mapping):
+            return []
+        return list(state.get("candidates") or [])
+
+    def resolve_candidate(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        state = self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+        if not isinstance(state, Mapping):
+            return None
+        cand = state.get("candidate")
+        return dict(cand) if isinstance(cand, Mapping) else None
+
+    def __call__(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self.get_trader_imitation_state(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            strategy_id=strategy_id,
+        )
+
+
+def build_default_imitation_candidate_resolver(
+    *,
+    base_url: Optional[str] = None,
+    token: Optional[str] = None,
+    timeout_seconds: Optional[float] = None,
+    urlopen: Optional[Callable[..., Any]] = None,
+) -> PolicyLearningImitationCandidateClient:
+    return PolicyLearningImitationCandidateClient(
+        base_url=base_url,
+        token=token,
+        timeout_seconds=timeout_seconds,
+        urlopen=urlopen,
+    )
+
+
 __all__ = [
     "ACTUAL_FILL_KINDS",
     "DECISION_EVIDENCE_KINDS",
@@ -612,11 +826,13 @@ __all__ = [
     "EXECUTION_OBSERVATION_KINDS",
     "LOCK_RESOURCE",
     "LOCK_SCHEMA",
+    "PolicyLearningImitationCandidateClient",
     "TRADER_DECLARABLE_KINDS",
     "VERDICT_TO_EVIDENCE_KIND",
     "a4_decision",
     "build_decision_lock",
     "build_decision_time_snapshot",
+    "build_default_imitation_candidate_resolver",
     "canonical_checksum",
     "decision_evidence_kind",
     "predict_trader_imitation_action",

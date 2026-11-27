@@ -320,17 +320,51 @@ def test_trader_imitation_comparison_not_enough_decisions_under_30(decided):
     assert data["candidates"] == []
 
 
-def test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolation():
-    """T10 end-to-end: with >= 30 approved decisions and a trained behaviour candidate,
-    each new decision lock carries and settles trader_imitation, the owner-scoped
-    imitation-comparison route returns 1,000-resample bootstrap intervals with 0-containing
-    intervals labelled luck (可能是運氣), and another trader cannot see the caller's data.
+def test_trader_imitation_comparison_fails_closed_when_30_decisions_have_no_approval_or_candidate():
+    """With >= 30 decisions and no candidate / no policy-learning reader configured, comparison fails closed to awaiting_training_approval (never ready)."""
+    store = make_trading_room_store()
+    owner = _owner()
+    for idx in range(1, 31):
+        evt_id = f"evt-unapproved-{idx:02d}"
+        store.upsert_decision_event(_event(evt_id, strategy_id="strat-001"))
+    client = _client(store, owner, TRADER, _FakeAttribution("settled"))
+    for idx in range(1, 31):
+        evt_id = f"evt-unapproved-{idx:02d}"
+        r = client.post(
+            f"/bff/agora/trading-room/decision-events/{evt_id}/decisions",
+            headers=_hdr(f"k-unap-{idx:02d}"),
+            json={"decision": "approve", "rationale": f"r-{idx}"},
+        )
+        assert r.status_code == 201, r.text
+
+    resp = client.get("/bff/agora/trading-room/imitation-comparison", params={"strategy_id": "strat-001"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "empty"
+    assert body["empty"] is True
+    assert body["comparison_state"] == "awaiting_training_approval"
+    assert body["data"]["comparison_state"] == "awaiting_training_approval"
+    assert body["data"]["decision_count"] == 30
+    assert body["data"]["training_approved"] is False
+    assert body["data"]["candidate"] is None
+
+
+def test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolation(monkeypatch):
+    """T10 production composition end-to-end: PolicyLearningImitationCandidateClient wired by default
+    into AgoraWriteService and TradingRoomService calls GET /api/policy-learning/trader-imitation/candidates
+    with tenant headers and service token (no manual service.imitation_candidate_reader injection),
+    attaches and settles trader_imitation on new decision locks, returns 1,000-resample bootstrap
+    intervals with 0-containing intervals labelled luck (可能是運氣), and enforces owner isolation.
     """
+    import io
+    import json
+    import urllib.parse
+    import urllib.request
+    from fastapi import FastAPI, Header, HTTPException, Query
+    from services.agora.shadow_mode import PolicyLearningImitationCandidateClient
     from services.evaluation.main import AttributionOwnerRuntime, create_evaluation_app
     from services.evaluation.tests.test_shadow_settlement import load_recorded_twse_rows
 
-    store = make_trading_room_store()
-    owner = _owner()
     candidate = {
         "candidate_id": "cand-trader-imitation-u1-strat1-v3",
         "version_id": "0.1.3",
@@ -355,23 +389,87 @@ def test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolati
         candidate,
         {**candidate, "candidate_id": "cand-trader-imitation-u1-strat1-v2", "version_id": "0.1.2", "candidate_version": 2},
         {**candidate, "candidate_id": "cand-trader-imitation-u1-strat1-v1", "version_id": "0.1.1", "candidate_version": 1},
-        {**candidate, "candidate_id": "cand-trader-imitation-u1-strat1-v0", "version_id": "0.1.0", "candidate_version": 0},
     ]
 
-    def candidate_reader(*, tenant_id: str, user_id: str, strategy_id=None):
-        if tenant_id == "tenant-001" and user_id == "user-001":
+    pl_app = FastAPI()
+
+    @pl_app.get("/api/policy-learning/trader-imitation/candidates")
+    def _pl_candidates(
+        user_id: str = Query(...),
+        strategy_id: str = Query(default=""),
+        authorization: str = Header(default=""),
+        x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    ):
+        if authorization != "Bearer pl-svc-tok" or not x_tenant_id:
+            raise HTTPException(status_code=401, detail="unauthorized")
+        if x_tenant_id == "tenant-001" and user_id == "user-001" and strategy_id in ("", "strat-001"):
             return {
-                "candidate": candidate,
-                "candidates": older_candidates,
+                "status": "ok",
+                "tenant_id": x_tenant_id,
+                "user_id": user_id,
+                "strategy_id": strategy_id or "strat-001",
+                "state": "ready",
                 "decision_count": 32,
+                "minimum_decisions_required": 30,
+                "remaining_decisions_needed": 0,
                 "training_approved": True,
+                "max_candidates_kept": 3,
+                "candidate_count": 3,
+                "active_candidate": candidate,
+                "candidates": older_candidates,
             }
         return {
-            "candidate": None,
-            "candidates": [],
+            "status": "ok",
+            "tenant_id": x_tenant_id,
+            "user_id": user_id,
+            "strategy_id": strategy_id or None,
+            "state": "not_enough_decisions",
             "decision_count": 0,
+            "minimum_decisions_required": 30,
+            "remaining_decisions_needed": 30,
             "training_approved": False,
+            "max_candidates_kept": 3,
+            "candidate_count": 0,
+            "active_candidate": None,
+            "candidates": [],
         }
+
+    pl_client = TestClient(pl_app)
+    monkeypatch.setenv("PANTHEON_POLICY_LEARNING_API_URL", "http://policy-learning.test")
+    monkeypatch.setenv("POLICY_LEARNING_SERVICE_TOKEN", "pl-svc-tok")
+
+    real_urlopen = urllib.request.urlopen
+
+    class _BytesResp:
+        def __init__(self, body: bytes) -> None:
+            self._buf = io.BytesIO(body)
+
+        def read(self) -> bytes:
+            return self._buf.read()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _routed_urlopen(req, timeout=None):
+        full_url = req.full_url if hasattr(req, "full_url") else str(req)
+        if full_url.startswith("http://policy-learning.test"):
+            parsed = urllib.parse.urlsplit(full_url)
+            path_qs = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+            hdrs = {k: v for k, v in req.header_items()}
+            resp = pl_client.get(path_qs, headers=hdrs)
+            if resp.status_code >= 400:
+                raise urllib.error.HTTPError(full_url, resp.status_code, resp.text, hdrs, None)
+            return _BytesResp(json.dumps(resp.json()).encode("utf-8"))
+        return real_urlopen(req, timeout=timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _routed_urlopen)
+
+    store = make_trading_room_store()
+    owner = _owner()
+    assert isinstance(owner.imitation_candidate_resolver, PolicyLearningImitationCandidateClient)
 
     for idx, verdict in enumerate(("approve", "shadow"), start=1):
         evt_id = f"evt-imit-{idx}"
@@ -388,7 +486,7 @@ def test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolati
 
     writer = _client(store, owner, TRADER, _FakeAttribution())
     service = get_active_trading_room_service()
-    service.imitation_candidate_reader = candidate_reader
+    assert isinstance(service.imitation_candidate_reader, PolicyLearningImitationCandidateClient)
 
     for idx, verdict in enumerate(("approve", "shadow"), start=1):
         evt_id = f"evt-imit-{idx}"
@@ -462,10 +560,8 @@ def test_trader_imitation_comparison_ready_with_bootstrap_luck_and_owner_isolati
     assert data["candidate_count"] == 3
     assert data["max_candidates_kept"] == 3
 
-    # 3. Strict owner isolation: OTHER_TRADER cannot see TRADER's decisions or candidates
+    # 3. Strict owner isolation via default production composition: OTHER_TRADER cannot see TRADER's decisions or candidates
     other_client = _client(store, owner, OTHER_TRADER, _FakeAttribution())
-    other_service = get_active_trading_room_service()
-    other_service.imitation_candidate_reader = candidate_reader
     other_resp = other_client.get("/bff/agora/trading-room/imitation-comparison")
     assert other_resp.status_code == 200, other_resp.text
     other_body = other_resp.json()

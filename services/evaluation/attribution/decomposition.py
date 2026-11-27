@@ -551,7 +551,7 @@ def compare_trader_imitation(
     candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     decision_count: Optional[int] = None,
     minimum_decisions_required: int = MIN_TRADER_DECISIONS_FOR_IMITATION,
-    training_approved: bool = True,
+    training_approved: Optional[bool] = None,
     tenant_id: str = "",
     user_id: str = "",
     strategy_id: str = "",
@@ -617,6 +617,11 @@ def compare_trader_imitation(
         effective_decision_count = max(len(filtered_locks), candidate_decision_count)
 
     seed_prefix = f"{_clean(tenant_id)}|{_clean(user_id)}|{clean_strategy or 'default'}"
+    resolved_training_approved = (
+        bool(training_approved)
+        if training_approved is not None
+        else (active_candidate is not None)
+    )
 
     if effective_decision_count < min_req and active_candidate is None:
         empty_agreement = bootstrap_luck_interval(
@@ -642,7 +647,7 @@ def compare_trader_imitation(
             "decision_count": effective_decision_count,
             "minimum_decisions_required": min_req,
             "remaining_decisions_needed": max(0, min_req - effective_decision_count),
-            "training_approved": bool(training_approved),
+            "training_approved": resolved_training_approved,
             "compared_decision_count": 0,
             "settled_comparison_count": 0,
             "agreement_rate": None,
@@ -665,7 +670,7 @@ def compare_trader_imitation(
             "computation_mode": NO_LANGUAGE_MODEL_PROOF,
         }
 
-    if not training_approved and active_candidate is None:
+    if not resolved_training_approved and active_candidate is None:
         empty_agreement = bootstrap_luck_interval(
             [],
             resamples=resamples,
@@ -826,6 +831,39 @@ def compare_trader_imitation(
         seed_key=f"{seed_prefix}|outcome_gap",
     )
 
+    if active_candidate is None and not decisions_out:
+        return {
+            "comparison_state": "pending_candidate_training",
+            "status_label_zh": "待僕人模仿候選訓練完成（已核准且達 30 筆決策門檻，等待排程訓練）",
+            "tenant_id": _clean(tenant_id) or None,
+            "user_id": _clean(user_id) or None,
+            "strategy_id": clean_strategy or None,
+            "decision_count": effective_decision_count,
+            "minimum_decisions_required": min_req,
+            "remaining_decisions_needed": 0,
+            "training_approved": resolved_training_approved,
+            "compared_decision_count": 0,
+            "settled_comparison_count": 0,
+            "agreement_rate": None,
+            "agreement_count": 0,
+            "disagreement_count": 0,
+            "agreement_interval": agreement_interval,
+            "agreement_label": agreement_interval["label"],
+            "agreement_label_zh": agreement_interval["label_zh"],
+            "outcome_gap": None,
+            "outcome_gap_interval": outcome_gap_interval,
+            "outcome_gap_label": outcome_gap_interval["label"],
+            "outcome_gap_label_zh": outcome_gap_interval["label_zh"],
+            "finding_stated": False,
+            "differences": [],
+            "decisions": [],
+            "candidate": None,
+            "candidates": [],
+            "candidate_count": 0,
+            "max_candidates_kept": MAX_CANDIDATES_PER_TRADER_STRATEGY,
+            "computation_mode": NO_LANGUAGE_MODEL_PROOF,
+        }
+
     agreement_rate = (
         round(math.fsum(agreement_series) / len(agreement_series), 6)
         if agreement_series
@@ -873,7 +911,7 @@ def compare_trader_imitation(
         "decision_count": effective_decision_count,
         "minimum_decisions_required": min_req,
         "remaining_decisions_needed": max(0, min_req - effective_decision_count),
-        "training_approved": bool(training_approved),
+        "training_approved": resolved_training_approved,
         "compared_decision_count": len(decisions_out),
         "settled_comparison_count": len(gap_series),
         "agreement_rate": agreement_rate,

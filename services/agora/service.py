@@ -94,6 +94,9 @@ class AgoraEvidenceWriteService:
         return sorted(items, key=lambda item: (str(item["created_at"]), item["evidence_id"]))
 
 
+_UNSET_IMITATION_RESOLVER = object()
+
+
 class AgoraWriteService:
     """Direct write owner service for Agora operations."""
 
@@ -104,11 +107,16 @@ class AgoraWriteService:
         dsn: Optional[str] = None,
         schema: str = "agora",
         dataset_store: Optional[Any] = None,
-        imitation_candidate_resolver: Optional[Any] = None,
+        imitation_candidate_resolver: Optional[Any] = _UNSET_IMITATION_RESOLVER,
     ) -> None:
+        from .shadow_mode import build_default_imitation_candidate_resolver
+
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
         self.dataset_store = dataset_store
-        self.imitation_candidate_resolver = imitation_candidate_resolver
+        if imitation_candidate_resolver is _UNSET_IMITATION_RESOLVER:
+            self.imitation_candidate_resolver: Optional[Any] = build_default_imitation_candidate_resolver()
+        else:
+            self.imitation_candidate_resolver = imitation_candidate_resolver
         try:
             from services.control_plane.bff.agora.dataset_extraction.extractor import (
                 ensure_journal_evidence_emission_wired,
@@ -686,8 +694,9 @@ class AgoraWriteService:
             prepared["optional_alt_versions"] = opt
             return prepared
 
-        candidate = None
-        if callable(self.imitation_candidate_resolver):
+        candidate: Any = None
+        resolver = self.imitation_candidate_resolver
+        if resolver is not None:
             trader_identity = prepared.get("trader_identity") if isinstance(prepared.get("trader_identity"), dict) else {}
             tenant_id = str(prepared.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
             user_id = str(
@@ -703,11 +712,36 @@ class AgoraWriteService:
                 or ""
             ).strip()
             try:
-                candidate = self.imitation_candidate_resolver(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    strategy_id=strategy_id,
-                )
+                if hasattr(resolver, "resolve_candidate"):
+                    candidate = resolver.resolve_candidate(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id or None,
+                    )
+                elif hasattr(resolver, "get_trader_imitation_state"):
+                    state = resolver.get_trader_imitation_state(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id or None,
+                    )
+                    candidate = state.get("candidate") if isinstance(state, dict) else state
+                elif callable(resolver):
+                    raw_cand = resolver(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id,
+                    )
+                    if isinstance(raw_cand, dict) and (
+                        "candidate" in raw_cand or "active_candidate" in raw_cand
+                    ) and not (
+                        raw_cand.get("policy_weights")
+                        or raw_cand.get("policy")
+                        or raw_cand.get("artifact")
+                        or raw_cand.get("weights")
+                    ):
+                        candidate = raw_cand.get("candidate") or raw_cand.get("active_candidate")
+                    else:
+                        candidate = raw_cand
             except Exception as exc:
                 _logger.warning("Failed to resolve trader imitation candidate for lock: %s", exc)
                 candidate = None
@@ -927,10 +961,15 @@ def build_agora_write_service(
     schema: str = "agora",
     bootstrap: bool = True,
     dataset_store: Optional[Any] = None,
+    imitation_candidate_resolver: Optional[Any] = _UNSET_IMITATION_RESOLVER,
 ) -> AgoraWriteService:
     """Factory creating an AgoraWriteService backed by durable Postgres storage."""
     store = build_agora_store(dsn=dsn, schema=schema, bootstrap=bootstrap)
-    return AgoraWriteService(store=store, dataset_store=dataset_store)
+    return AgoraWriteService(
+        store=store,
+        dataset_store=dataset_store,
+        imitation_candidate_resolver=imitation_candidate_resolver,
+    )
 
 
 __all__ = ["AgoraWriteService", "build_agora_write_service"]

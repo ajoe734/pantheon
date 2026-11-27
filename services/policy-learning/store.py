@@ -807,6 +807,53 @@ class PolicyLearningStore:
                 pruned.append(cid)
         return pruned
 
+    def _durable_job_backend(self) -> Optional[PostgresPolicyLearningJobStore]:
+        if self.job_store is not None:
+            return self.job_store
+        dsn = getattr(self.candidate_store, "dsn", "") if self.candidate_store is not None else ""
+        if not dsn:
+            return None
+        cached = getattr(self, "_fallback_job_store", None)
+        if cached is not None:
+            return cached
+        try:
+            job_table = os.getenv("POLICY_LEARNING_STORE_TABLE", "policy_learning.jobs")
+            bootstrap = os.getenv("POLICY_LEARNING_STORE_BOOTSTRAP", "1").strip().lower() not in ("0", "false", "no")
+            cached = PostgresPolicyLearningJobStore(dsn=dsn, table=job_table, bootstrap=bootstrap)
+            setattr(self, "_fallback_job_store", cached)
+            return cached
+        except Exception:
+            return None
+
+    def _put_durable_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        backend = self._durable_job_backend()
+        if backend is not None:
+            try:
+                return backend.put_job(job)
+            except Exception:
+                pass
+        job_id = str(job.get("job_id") or job.get("id") or "").strip()
+        if not job_id:
+            raise ValueError("job_id is required")
+        with self._thread_lock:
+            records = self._read_jobs()
+            record = json.loads(json.dumps(job))
+            record["job_id"] = job_id
+            record["id"] = job_id
+            records[job_id] = record
+            self._write_jobs(records)
+        return record
+
+    def _list_durable_jobs(self) -> List[Dict[str, Any]]:
+        backend = self._durable_job_backend()
+        if backend is not None:
+            try:
+                return backend.list_jobs()
+            except Exception:
+                pass
+        with self._thread_lock:
+            return list(self._read_jobs().values())
+
     def set_trader_training_approval(
         self,
         *,
@@ -817,16 +864,46 @@ class PolicyLearningStore:
     ) -> Dict[str, Any]:
         clean_tenant = str(tenant_id or "").strip()
         clean_user = str(user_id or "").strip()
+        clean_strategy = str(strategy_id or "*").strip() or "*"
         if not clean_tenant or not clean_user:
             raise ValueError("tenant_id and user_id are required for training approval")
-        key = (
-            clean_tenant,
-            clean_user,
-            str(strategy_id or "*").strip() or "*",
-        )
+        key = (clean_tenant, clean_user, clean_strategy)
         stored = json.loads(json.dumps(approval))
         with self._thread_lock:
             self._trader_training_approvals[key] = stored
+        digest = hashlib.sha256(
+            f"{clean_tenant}|{clean_user}|{clean_strategy}".encode("utf-8")
+        ).hexdigest()[:20]
+        job_id = f"plj-approval-{digest}"
+        approved_at = str(stored.get("approved_at") or _iso(utc_now_dt()))
+        approved_by = str(stored.get("approved_by") or "operator")
+        is_approved = stored.get("approved") is not False
+        self._put_durable_job(
+            {
+                "id": job_id,
+                "job_id": job_id,
+                "policy_id": f"trader-imitation-approval:{clean_tenant}:{clean_user}:{clean_strategy}",
+                "objective": f"Approve trader imitation shadow behaviour candidate training for {clean_user} ({clean_strategy})",
+                "adapter": "imitation",
+                "requested_mode": "offline",
+                "status": "approved" if is_approved else "rejected",
+                "training_approved": is_approved,
+                "approval_id": str(stored.get("approval_id") or f"apv-{job_id}"),
+                "approved_by": approved_by,
+                "approved_at": approved_at,
+                "created_at": approved_at,
+                "updated_at": approved_at,
+                "created_by": approved_by,
+                "constraints": {
+                    "tenant_id": clean_tenant,
+                    "user_id": clean_user,
+                    "strategy_id": clean_strategy,
+                    "training_approved": is_approved,
+                    "experiment_approval_satisfied": is_approved,
+                    "approval_record": stored,
+                },
+            }
+        )
         return stored
 
     def get_trader_training_approval(
@@ -841,16 +918,54 @@ class PolicyLearningStore:
         clean_strategy = str(strategy_id or "").strip()
         if not clean_tenant or not clean_user or not clean_strategy:
             return None
+        candidate_keys = (
+            (clean_tenant, clean_user, clean_strategy),
+            (clean_tenant, clean_user, "*"),
+            (clean_tenant, "*", clean_strategy),
+            (clean_tenant, "*", "*"),
+        )
         with self._thread_lock:
-            for key in (
-                (clean_tenant, clean_user, clean_strategy),
-                (clean_tenant, clean_user, "*"),
-                (clean_tenant, "*", clean_strategy),
-                (clean_tenant, "*", "*"),
-            ):
+            for key in candidate_keys:
                 found = self._trader_training_approvals.get(key)
-                if found and found.get("approved") is not False:
-                    return dict(found)
+                if found is not None:
+                    return dict(found) if found.get("approved") is not False else None
+
+        durable_jobs = self._list_durable_jobs()
+        for (target_t, target_u, target_s) in candidate_keys:
+            target_policy_id = f"trader-imitation-approval:{target_t}:{target_u}:{target_s}"
+            for job in durable_jobs:
+                if not isinstance(job, dict):
+                    continue
+                if str(job.get("status") or "").strip().lower() not in {"approved", "active"}:
+                    continue
+                if job.get("training_approved") is False:
+                    continue
+                constraints = job.get("constraints") if isinstance(job.get("constraints"), dict) else {}
+                c_tenant = str(constraints.get("tenant_id") or "").strip()
+                c_user = str(constraints.get("user_id") or "").strip()
+                c_strategy = str(constraints.get("strategy_id") or "").strip()
+                if (
+                    c_tenant == target_t
+                    and c_user == target_u
+                    and c_strategy == target_s
+                    and (
+                        str(job.get("policy_id") or "").strip() == target_policy_id
+                        or constraints.get("training_approved") is True
+                        or constraints.get("experiment_approval_satisfied") is True
+                    )
+                ):
+                    rec = constraints.get("approval_record")
+                    if isinstance(rec, dict) and rec.get("approved") is not False:
+                        return dict(rec)
+                    return {
+                        "approval_id": str(job.get("approval_id") or job.get("job_id") or ""),
+                        "tenant_id": clean_tenant,
+                        "user_id": clean_user,
+                        "strategy_id": clean_strategy,
+                        "approved": True,
+                        "approved_by": str(job.get("approved_by") or job.get("created_by") or "operator"),
+                        "approved_at": str(job.get("approved_at") or job.get("updated_at") or job.get("created_at") or ""),
+                    }
         return None
 
     def record_decision_evidence_version(self, record: Dict[str, Any]) -> None:
@@ -858,8 +973,31 @@ class PolicyLearningStore:
         ver_id = str(record.get("dataset_version_id") or record.get("evidence_id") or "").strip()
         if not tenant or not ver_id:
             return
+        stored = json.loads(json.dumps(record))
         with self._thread_lock:
-            self._decision_evidence_records[(tenant, ver_id)] = json.loads(json.dumps(record))
+            self._decision_evidence_records[(tenant, ver_id)] = stored
+        user_id = str(stored.get("user_id") or "").strip()
+        digest = hashlib.sha256(f"{tenant}|{ver_id}".encode("utf-8")).hexdigest()[:24]
+        job_id = f"plj-devev-{digest}"
+        now = str(stored.get("captured_at") or stored.get("extracted_at") or _iso(utc_now_dt()))
+        self._put_durable_job(
+            {
+                "id": job_id,
+                "job_id": job_id,
+                "record_kind": "trader_decision_evidence",
+                "policy_id": f"trader-decision-evidence:{tenant}:{user_id}",
+                "status": "recorded",
+                "created_at": now,
+                "updated_at": now,
+                "constraints": {
+                    "record_kind": "trader_decision_evidence",
+                    "tenant_id": tenant,
+                    "user_id": user_id,
+                    "dataset_version_id": ver_id,
+                    "record": stored,
+                },
+            }
+        )
 
     def list_decision_evidence_records(
         self,
@@ -869,14 +1007,38 @@ class PolicyLearningStore:
     ) -> List[Dict[str, Any]]:
         clean_tenant = str(tenant_id or "").strip()
         clean_user = str(user_id or "").strip()
+        by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for job in self._list_durable_jobs():
+            if not isinstance(job, dict):
+                continue
+            constraints = job.get("constraints") if isinstance(job.get("constraints"), dict) else {}
+            if (
+                job.get("record_kind") != "trader_decision_evidence"
+                and constraints.get("record_kind") != "trader_decision_evidence"
+            ):
+                continue
+            rec = constraints.get("record")
+            if not isinstance(rec, dict):
+                continue
+            t_id = str(rec.get("tenant_id") or constraints.get("tenant_id") or "").strip()
+            ver_id = str(
+                rec.get("dataset_version_id")
+                or rec.get("evidence_id")
+                or constraints.get("dataset_version_id")
+                or ""
+            ).strip()
+            if not t_id or not ver_id or t_id != clean_tenant:
+                continue
+            if clean_user and str(rec.get("user_id") or "") != clean_user:
+                continue
+            by_key[(t_id, ver_id)] = dict(rec)
         with self._thread_lock:
-            rows = [
-                dict(rec)
-                for (t_id, _), rec in self._decision_evidence_records.items()
-                if t_id == clean_tenant
-                and (not clean_user or str(rec.get("user_id") or "") == clean_user)
-            ]
-        return rows
+            for (t_id, ver_id), rec in self._decision_evidence_records.items():
+                if t_id == clean_tenant and (
+                    not clean_user or str(rec.get("user_id") or "") == clean_user
+                ):
+                    by_key[(t_id, ver_id)] = dict(rec)
+        return list(by_key.values())
 
     def create_candidate_if_absent(self, candidate: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         """Insert a candidate unless its dedupe key already exists.
@@ -1073,9 +1235,21 @@ class PolicyLearningStore:
         self.jobs_path.write_text(json.dumps(jobs, indent=2, ensure_ascii=True), encoding="utf-8")
 
     def list_jobs(self) -> List[Dict[str, Any]]:
-        if self.job_store is not None:
-            return self.job_store.list_jobs()
-        return list(self._read_jobs().values())
+        raw_jobs = (
+            self.job_store.list_jobs()
+            if self.job_store is not None
+            else list(self._read_jobs().values())
+        )
+        return [
+            job
+            for job in raw_jobs
+            if isinstance(job, dict)
+            and job.get("record_kind") != "trader_decision_evidence"
+            and (
+                not isinstance(job.get("constraints"), dict)
+                or job["constraints"].get("record_kind") != "trader_decision_evidence"
+            )
+        ]
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         if self.job_store is not None:

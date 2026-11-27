@@ -43,13 +43,14 @@
       ],
       "minimum_decisions_required": 30,
       "below_threshold_state": "not_enough_decisions",
-      "approval_gate": "awaiting_training_approval until approved via POST /api/policy-learning/trader-imitation/approvals (which binds approved_by to authority.actor_id) or an explicitly approved/active policy-learning job with matching present tenant_id, user_id, and strategy_id constraints (proposed/dispatched jobs and missing constraints fail closed)",
-      "trainer": "services/learning/imitation/bc_trainer.py (train_bc, attach_step_probabilities) + services/learning/imitation/offline_evaluator.py (evaluate_policy)"
+      "approval_gate": "awaiting_training_approval until approved via POST /api/policy-learning/trader-imitation/approvals (which binds approved_by to authority.actor_id and persists a durable approved job in policy_learning.jobs / policy_learning_jobs.json across restarts and instances) or an explicitly approved/active policy-learning job with matching present tenant_id, user_id, and strategy_id constraints (proposed/dispatched jobs and missing constraints fail closed)",
+      "trainer": "services/research/imitation/bc_trainer.py (train_bc) + services/research/imitation/agora_dataset_source.py (attach_step_probabilities) + services/research/imitation/eval_metrics.py (evaluate_policy)"
     },
     "ac2_trader_imitation_arm_added_to_new_decision_locks_and_settled_with_others": {
       "status": "verified",
-      "decision_lock_builder": "services/agora/shadow_mode.py (build_decision_lock writes arms.trader_imitation and optional_alt_versions.trader_imitation)",
-      "agora_owner_enrichment": "services/agora/service.py (AgoraWriteService._attach_trader_imitation_arm)",
+      "decision_lock_builder": "services/agora/shadow_mode.py (build_decision_lock writes arms.trader_imitation and optional_alt_versions.trader_imitation; PolicyLearningImitationCandidateClient calls GET /api/policy-learning/trader-imitation/candidates bound to caller tenant and user)",
+      "agora_owner_enrichment": "services/agora/service.py (AgoraWriteService._attach_trader_imitation_arm and build_agora_write_service wire PolicyLearningImitationCandidateClient by default)",
+      "bff_composition": "services/control-plane/bff/agora/trading_room/service.py, router.py, routes/common.py, servant/router.py, and agora/router.py wire PolicyLearningImitationCandidateClient into TradingRoomService and resolve decision_lock_owner.imitation_candidate_resolver; fail-closed training_approved=False when no candidate or reader exists",
       "evaluation_settlement": "services/evaluation/attribution/settlement.py (TRADER_IMITATION_ARM='trader_imitation', settle_decision_lock settles trader_imitation with the same data_cutoff, cost_model, and observation_window as human_actual, private_servant, base_strategy, committee_variant)"
     },
     "ac3_agreement_and_gap_carry_1000_resample_bootstrap_intervals_and_zero_interval_labelled_luck": {
@@ -101,6 +102,10 @@
     "services/evaluation/attribution/settlement.py",
     "services/evaluation/attribution/decomposition.py",
     "services/evaluation/tests/test_shadow_settlement.py",
+    "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/agora/servant/router.py",
+    "services/control-plane/bff/agora/trading_room/router.py",
+    "services/control-plane/bff/agora/trading_room/routes/common.py",
     "services/control-plane/bff/agora/trading_room/service.py",
     "services/control-plane/bff/agora/trading_room/routes/decisions.py",
     "services/control-plane/bff/tests/test_agora_shadow_comparison_owner_route.py",
