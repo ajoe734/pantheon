@@ -1,0 +1,99 @@
+{
+  "task_id": "PAPER-RECONCILER-STATE-READ-WITHOUT-CYCLE-LOCK-20261127",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "date": "2026-11-27",
+  "source_status": "ready_for_independent_review",
+  "delivery_status": "not_yet_merged",
+  "root_cause_class": {
+    "register": "docs/operations/problem-register.md",
+    "class": "RC1",
+    "work_package": "WP1.2 503s under crawl load / persona-fleet",
+    "coordination_owner": "persona-loop coordinator 77b586b6",
+    "incident": "Root 46039585005 management crawl saw persona-fleet 503s; reconciler state reads measured up to 21.54 seconds while the cycle held its RLock."
+  },
+  "scope": {
+    "owned_layer": "In-memory fleet snapshot publication, state/health reads, and disconnected HTTP replies.",
+    "unchanged_layer": "Reconcile decisions, fenced worker spawn/drain operations and their cycle lock, owner-service requests, persistent stores, BFF response degradation, and deployment gates.",
+    "composition": "Existing RC1 WP1.2 post-switch acceptance crawl and the persona-loop release chain."
+  },
+  "acceptance": {
+    "ac1_reads_do_not_wait_for_cycle_lock": {
+      "status": "locally_verified",
+      "evidence": "test_http_reads_finish_while_another_thread_holds_cycle_lock issues real HTTP GETs for /api/fleet/state, /healthz, /readyz, / and /livez while another thread holds the cycle lock with unpublished mutations; replies retain the published generation and complete before lock release. test_slow_spawn_publishes_session_before_cycle_finishes also exercises a real blocked reconcile cycle."
+    },
+    "ac2_atomic_snapshot_and_existing_contract": {
+      "status": "locally_verified",
+      "implementation": "_publish_snapshot assembles and deeply detaches the existing _snapshot under the writer lock, then replaces one reference. snapshot copies that published reference without the cycle lock and derives active-session filtering from the same generation. Publications cover initialization, lease/error changes, worker exit/start/stop, monitoring changes, market-input availability, and every reconcile_once exit, including exceptions. No existing assertions were edited; the existing readyz fixture explicitly publishes its manually seeded private state.",
+      "tests": [
+        "test_published_and_returned_snapshots_do_not_alias_mutable_state",
+        "test_cycle_exception_still_publishes_latest_state",
+        "test_error_and_stop_are_published_and_health_stays_fail_closed",
+        "entire services/paper_fleet_reconciler/test_paper_fleet_reconciler.py suite"
+      ]
+    },
+    "ac3_readiness": {
+      "status": "locally_verified",
+      "evidence": "is_ready remains cycle_count > 0, now read from the publication. Health handlers retain is_ready() and snapshot.last_error is None; unready/error replies remain 503 with live=true. Existing full/active session counts and readiness assertions pass."
+    },
+    "ac4_disconnected_clients": {
+      "status": "locally_verified",
+      "evidence": "test_disconnected_reply_logs_once_without_traceback injects BrokenPipeError and ConnectionResetError at both header flush and body write; each produces exactly one DEBUG record with no exception traceback."
+    },
+    "ac5_runtime_budget": {
+      "status": "locally_verified",
+      "new_persistent_writers_jobs_files_queues": 0,
+      "publication_cadence": "At existing in-memory state transitions and cycle exit; no new scheduler or poll. Existing poll_interval_seconds remains unchanged.",
+      "resident_snapshot_count": 1,
+      "representative_hosted_scale": "Synthetic fixture of three running persona workers and three monitoring sessions, matching the three-persona fleet count; this is a local allocation measurement, not a hosted measurement.",
+      "measured_json_bytes": 3071,
+      "measured_python_object_bytes": 8048,
+      "measurement": "CPython 3.12 sys.getsizeof recursively summed over unique object identities; JSON uses len(json.dumps(snapshot).encode()).",
+      "growth_per_day": "Zero accumulated snapshot history and zero persistent bytes. Current snapshot size follows current workers and retained monitoring sessions.",
+      "cap": "One resident published generation, O(workers + retained monitoring sessions). Existing persisted monitoring pruning retains at most 20 ended sessions plus active sessions; this change adds no retention policy. In-flight readers/publication use temporary copies.",
+      "cleanup": "Old generations are reclaimed after current readers release them; process exit releases the current snapshot. Existing persistent-file cleanup is unchanged."
+    },
+    "ac6_hosted": {
+      "status": "pending_deployment_and_hosted_proof",
+      "executed": false,
+      "requirement": "After the reviewed code is merged and deployed, run the read-only probe from inside the operator BFF container: 30 sequential 200 replies with timeout=10 seconds, five seconds between requests, spanning at least one reconcile cycle. Record observed maximum latency as a measurement, not a gate. Record that release's management crawl with no persona-fleet failed read.",
+      "probe_python": "import json, os, time, urllib.request\nurl = os.environ['PANTHEON_PAPER_FLEET_RECONCILER_URL'].rstrip('/') + '/api/fleet/state'\nsamples = []\nfor index in range(30):\n    start = time.monotonic()\n    with urllib.request.urlopen(url, timeout=10.0) as response:\n        status = response.status\n        snapshot = json.load(response)\n    sample = {'index': index + 1, 'status': status, 'elapsed_seconds': round(time.monotonic() - start, 6), 'cycle_count': snapshot['cycle_count'], 'reconciler_id': snapshot['reconciler_id']}\n    samples.append(sample)\n    print(json.dumps(sample), flush=True)\n    assert status == 200, sample\n    if index < 29:\n        time.sleep(5)\nsummary = {'requests': len(samples), 'max_latency_seconds': max(s['elapsed_seconds'] for s in samples), 'cycle_count_min': min(s['cycle_count'] for s in samples), 'cycle_count_max': max(s['cycle_count'] for s in samples), 'reconciler_ids': sorted({s['reconciler_id'] for s in samples})}\nprint(json.dumps({'summary': summary}), flush=True)\nassert len(summary['reconciler_ids']) == 1, 'reconciler restarted during probe; repeat on a stable release'\nassert summary['cycle_count_max'] > summary['cycle_count_min'], 'probe did not span a reconcile cycle'\n",
+      "execution": "Extract probe_python from this committed JSON and pass it as the python3 -c argument using subprocess.run(['docker', 'compose', 'exec', '-T', 'operator-bff', 'python3', '-c', probe], check=True, timeout=600) on the current dev host. Resolve that host and compose project from docs/deployment/vm-dev-staging-prod-management-plan.md section 3.1 and the hosted manifest; capture exact release identities, all sample output, and terminal exit status. This command is a probe recipe and has not been run against hosted dev.",
+      "release_identity": null,
+      "observed_max_latency_seconds": null,
+      "management_crawl_evidence": null
+    }
+  },
+  "validation": [
+    {
+      "command": "timeout 120s python3 -m unittest services.paper_fleet_reconciler.test_paper_fleet_reconciler.TestPublishedFleetSnapshot services.paper_fleet_reconciler.test_paper_fleet_reconciler.TestPaperFleetReadyzAndMonitoringSessionBounds -v",
+      "exit_code": 0,
+      "result": "7 tests passed in 0.574 seconds"
+    },
+    {
+      "command": "timeout 180s /tmp/paper-reconciler-read-tests-py312-20261127/bin/python -m pytest services/paper_fleet_reconciler/test_paper_fleet_reconciler.py -q",
+      "exit_code": 0,
+      "result": "115 passed, 13 subtests passed in 14.62 seconds, including real Redis Docker fenced-leader tests",
+      "environment": "Temporary CPython 3.12 venv with system site packages and pytest, asyncpg, flask, redis, pydantic. Initial runs failed due to missing dependencies; those runs are not passing validation. No repository dependency declarations were changed."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors"
+    }
+  ],
+  "residual_findings": [
+    {
+      "finding": "The task brief records /bff/management/persona-league returning 500 on 2026-11-26 when its paper-fleet reconciler query timed out. BFF degradation behavior is outside this read-path repair.",
+      "disposition": "Carry to the persona-loop coordinator for attachment to the existing RC1 WP1.2 availability instance or its owning BFF class; not closed by local reconciler tests."
+    },
+    {
+      "finding": "Hosted 30-read latency and post-switch persona-fleet crawl evidence cannot exist for this source head until independent review, canonical merge and dev deployment carry it.",
+      "disposition": "Pending in acceptance.ac6_hosted. Source review/merge alone must not be reported as deployed or accepted."
+    }
+  ],
+  "independent_review": {
+    "status": "pending",
+    "assigned_reviewer": "Antigravity"
+  }
+}
