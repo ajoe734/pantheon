@@ -1631,6 +1631,9 @@ services:
       # paper handoffs and writes their state back through a tenant-bound internal
       # service route; Agora itself routes no order (AGORA-PAPER-INTENT-EXECUTION-20261127).
       AGORA_PAPER_EXECUTION_SERVICE_TOKEN: ${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-pantheon-local-agora-paper-execution-service-token}
+      # local: the public default above is accepted only here; the dev deploy sets
+      # hosted, where an unset/default/placeholder token keeps the lane not_configured.
+      AGORA_PAPER_EXECUTION_TOKEN_PROFILE: ${AGORA_PAPER_EXECUTION_TOKEN_PROFILE:-local}
       AGORA_PAPER_EXECUTION_ALLOWED_SERVICE_ACTOR: paper-signal-producer
       AGORA_PAPER_EXECUTION_SERVICE_TENANTS: ${AGORA_PAPER_EXECUTION_SERVICE_TENANTS:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       AGORA_GOVERNANCE_STORE_BACKEND: ${AGORA_GOVERNANCE_STORE_BACKEND:-postgres}
@@ -3094,6 +3097,9 @@ services:
       PANTHEON_AGORA_PAPER_INTENT_CONSUMER: ${PANTHEON_AGORA_PAPER_INTENT_CONSUMER:-auto}
       PANTHEON_AGORA_BFF_INTERNAL_URL: ${PANTHEON_AGORA_BFF_INTERNAL_URL:-http://operator-bff:8001}
       AGORA_PAPER_EXECUTION_SERVICE_TOKEN: ${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-pantheon-local-agora-paper-execution-service-token}
+      # local: the public default above is accepted only here; the dev deploy sets
+      # hosted, where an unset/default/placeholder token keeps the lane not_configured.
+      AGORA_PAPER_EXECUTION_TOKEN_PROFILE: ${AGORA_PAPER_EXECUTION_TOKEN_PROFILE:-local}
       AGORA_PAPER_EXECUTION_SERVICE_TENANTS: ${AGORA_PAPER_EXECUTION_SERVICE_TENANTS:-${PANTHEON_BFF_TENANT_ID:-pantheon-local}}
       PANTHEON_BROKER_PAPER_URL: ${PANTHEON_BROKER_PAPER_URL:-http://broker:8102}
       PANTHEON_LIVE_BROKER_ENABLED: "false"

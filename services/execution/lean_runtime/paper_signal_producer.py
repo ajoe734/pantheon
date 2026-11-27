@@ -3179,13 +3179,13 @@ def main() -> int:  # pragma: no cover
     # AGORA-PAPER-INTENT-EXECUTION-20261127: trader-confirmed Agora paper
     # intents are consumed in this same cycle (no new service).
     from services.execution.lean_runtime.agora_paper_intent_consumer import (
-        consumer_from_env,
+        consumer_status_from_env,
     )
 
-    agora_intents = consumer_from_env(store_for)
+    agora_intents, agora_intent_status = consumer_status_from_env(store_for)
     log.info(
-        "agora paper intent consumer %s",
-        "configured" if agora_intents is not None else "not configured",
+        "agora paper intent consumer state=%s reason=%s",
+        agora_intent_status["state"], agora_intent_status.get("reason", "none"),
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
     startup_line, startup_gap = expression_startup_report(
@@ -3209,6 +3209,8 @@ def main() -> int:  # pragma: no cover
         "live_capital_enabled": False,
         "live_order_submission_enabled": False,
         "agora_paper_intents": None,
+        # Readable consumer state; not_configured never degrades the producer.
+        "agora_paper_intent_consumer": agora_intent_status,
     }
     if startup_gap:
         health["status"] = "degraded"

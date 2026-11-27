@@ -279,6 +279,42 @@ def test_service_boundary_fails_closed(monkeypatch, env, headers, status):
     assert resp.status_code == status
 
 
+@pytest.mark.parametrize(
+    "token,profile,configured",
+    [
+        ("pantheon-local-agora-paper-execution-service-token", "", False),
+        ("pantheon-local-agora-paper-execution-service-token", "hosted", False),
+        ("replace-me-agora-paper-execution-service-token", "hosted", False),
+        ("changeme-token", "hosted", False),
+        ("", "hosted", False),
+        # Only the explicit local profile accepts the public compose default.
+        ("pantheon-local-agora-paper-execution-service-token", "local", True),
+        ("a-real-operator-provisioned-secret", "hosted", True),
+    ],
+)
+def test_public_default_or_placeholder_token_is_rejected_outside_local(monkeypatch, token, profile, configured):
+    from services.control_plane.bff.agora.trading_room.routes import paper_execution as boundary
+
+    monkeypatch.setenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN", token)
+    monkeypatch.setenv("AGORA_PAPER_EXECUTION_TOKEN_PROFILE", profile)
+    status = boundary.paper_execution_boundary_status()
+    assert (status["state"] == "configured") is configured
+    client = _client(TradingRoomStore())
+    resp = client.get(
+        "/internal/agora/paper-execution/handoffs", headers=_service_headers(token=token or "x")
+    )
+    if configured:
+        assert resp.status_code == 200
+    else:
+        # Even the correct (public) value is refused; the reason is readable and
+        # never echoes the token.
+        assert resp.status_code == 503
+        detail = resp.json()["detail"]
+        assert detail["state"] == "not_configured"
+        assert detail["reason"] in {"service_token_unset", "service_token_public_default_or_placeholder"}
+        assert token not in resp.text or token == ""
+
+
 def test_browser_identity_cannot_reach_the_service_boundary():
     client = _client(TradingRoomStore())
     resp = client.get("/internal/agora/paper-execution/handoffs", headers={"Authorization": "Bearer user"})

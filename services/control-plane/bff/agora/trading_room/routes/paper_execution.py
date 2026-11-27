@@ -20,6 +20,7 @@ Nothing on this path can reach canary or live (``environment`` is fixed to
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from typing import Any, Dict, Literal, Optional
 
@@ -27,6 +28,8 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .common import TradingRoomRouteContext
+
+log = logging.getLogger(__name__)
 
 PAPER_EXECUTION_SERVICE_ACTOR = "paper-signal-producer"
 _LOCAL_SERVICE_TOKEN = "pantheon-local-agora-paper-execution-service-token"
@@ -73,6 +76,62 @@ class PaperExecutionStateUpdate(BaseModel):
     accepted_at: Optional[str] = None
 
 
+_PLACEHOLDER_TOKEN_PREFIXES = ("replace-me", "changeme", "change-me", "example", "dummy", "placeholder")
+_LOCAL_TOKEN_PROFILE = "local"
+
+
+def is_public_or_placeholder_token(token: str) -> bool:
+    """True for the public compose default, the env example value or a placeholder."""
+
+    normalized = str(token or "").strip().lower()
+    if normalized in {_LOCAL_SERVICE_TOKEN, _ENV_EXAMPLE_SERVICE_TOKEN}:
+        return True
+    return normalized.startswith(_PLACEHOLDER_TOKEN_PREFIXES)
+
+
+def paper_execution_boundary_status() -> Dict[str, Any]:
+    """Readable configuration state of the paper execution service boundary.
+
+    The repository is public, so the compose default token is public too. Only
+    the explicit local profile (``AGORA_PAPER_EXECUTION_TOKEN_PROFILE=local``,
+    never in staging/prod posture) may use it. Everywhere else an unset, empty,
+    default or placeholder token leaves the boundary ``not_configured`` and every
+    call is rejected; the service itself keeps running and stays healthy.
+    """
+
+    token = str(os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN") or "").strip()
+    actor = str(
+        os.getenv("AGORA_PAPER_EXECUTION_ALLOWED_SERVICE_ACTOR") or PAPER_EXECUTION_SERVICE_ACTOR
+    ).strip()
+    tenants = [
+        item.strip()
+        for item in str(os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TENANTS") or "").split(",")
+        if item.strip()
+    ]
+    posture = str(
+        os.getenv("PANTHEON_PERSISTENCE_POSTURE") or os.getenv("PANTHEON_ENV") or "dev"
+    ).strip().lower()
+    profile = str(os.getenv("AGORA_PAPER_EXECUTION_TOKEN_PROFILE") or "").strip().lower()
+    local_profile = profile == _LOCAL_TOKEN_PROFILE and not posture.startswith(("stage", "staging", "prod"))
+    reason: Optional[str] = None
+    if not token:
+        reason = "service_token_unset"
+    elif is_public_or_placeholder_token(token) and not local_profile:
+        reason = "service_token_public_default_or_placeholder"
+    elif not actor:
+        reason = "service_actor_unset"
+    elif not tenants:
+        reason = "service_tenants_unset"
+    status: Dict[str, Any] = {
+        "boundary": "agora_paper_execution",
+        "state": "configured" if reason is None else "not_configured",
+        "token_profile": "local" if local_profile else "hosted",
+    }
+    if reason is not None:
+        status["reason"] = reason
+    return status
+
+
 def _service_scope(
     authorization: Optional[str],
     service_actor: Optional[str],
@@ -80,6 +139,15 @@ def _service_scope(
 ) -> tuple[str, str]:
     """Authenticate the paper execution lane (not an Agora browser user)."""
 
+    status = paper_execution_boundary_status()
+    if status["state"] != "configured":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                **status,
+                "detail": "Agora paper execution service boundary is not safely configured",
+            },
+        )
     expected_token = str(os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN") or "").strip()
     expected_actor = str(
         os.getenv("AGORA_PAPER_EXECUTION_ALLOWED_SERVICE_ACTOR") or PAPER_EXECUTION_SERVICE_ACTOR
@@ -89,20 +157,6 @@ def _service_scope(
         for item in str(os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TENANTS") or "").split(",")
         if item.strip()
     }
-    posture = str(
-        os.getenv("PANTHEON_PERSISTENCE_POSTURE") or os.getenv("PANTHEON_ENV") or "dev"
-    ).strip().lower()
-    enforced = posture.startswith(("stage", "staging", "prod"))
-    if (
-        not expected_token
-        or not expected_actor
-        or not allowed_tenants
-        or (enforced and expected_token in {_LOCAL_SERVICE_TOKEN, _ENV_EXAMPLE_SERVICE_TOKEN})
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail="Agora paper execution service boundary is not safely configured",
-        )
     scheme, _, supplied = str(authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not supplied or not hmac.compare_digest(supplied, expected_token):
         raise HTTPException(status_code=401, detail="Agora paper execution service credential is invalid")
@@ -117,6 +171,13 @@ def _service_scope(
 
 def build_paper_execution_router(ctx: TradingRoomRouteContext) -> APIRouter:
     router = APIRouter()
+    status = paper_execution_boundary_status()
+    # Readable configuration state (never the token value); a not_configured
+    # boundary rejects every call but never stops operator-bff.
+    log.info(
+        "agora paper execution boundary state=%s reason=%s token_profile=%s",
+        status["state"], status.get("reason", "none"), status["token_profile"],
+    )
 
     @router.get("/internal/agora/paper-execution/handoffs")
     def drain_paper_execution_handoffs(

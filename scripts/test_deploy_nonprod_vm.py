@@ -6961,3 +6961,46 @@ def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_on
     result, _ = _run_real_taiwan_preflight(snapshot, calendar_valid=True, fail_first=2)
     assert (result["status"], result["reason"]) == ("skipped", "holiday")
     assert "timeout=3" not in (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8").split("<<'PREFLIGHT_PY'", 1)[1].split("PREFLIGHT_PY", 1)[0]
+
+
+def _dry_run_dev(extra_env: dict[str, str]) -> subprocess.CompletedProcess:
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", **extra_env}
+    return subprocess.run(
+        [
+            str(DEPLOY_SCRIPT), "--environment", "dev",
+            "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
+            "--project-id", "pantheon-dev-20260902", "--dry-run",
+        ],
+        capture_output=True, text=True, check=False, cwd=ROOT, env=env,
+    )
+
+
+def test_dev_deploy_maps_agora_paper_execution_token_without_printing_it() -> None:
+    """AGORA-PAPER-INTENT-EXECUTION-20261127: configured=true|false info only, never the value."""
+    secret = "s3cret-agora-paper-execution-token-value"
+    configured = _dry_run_dev({"DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN": secret})
+    assert configured.returncode == 0, configured.stderr
+    assert "dev_agora_paper_execution_service_token_configured=true" in configured.stdout
+    assert secret not in configured.stdout + configured.stderr
+
+    # No new deploy gate: an unset secret is reported, not refused.
+    unset = _dry_run_dev({})
+    assert unset.returncode == 0, unset.stderr
+    assert "dev_agora_paper_execution_service_token_configured=false" in unset.stdout
+
+
+def test_dev_deploy_wires_agora_paper_execution_token_through_secret_pattern() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'AGORA_PAPER_EXECUTION_SERVICE_TOKEN="${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-$DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN}"' in script
+    assert 'AGORA_PAPER_EXECUTION_SERVICE_TOKEN=$(shell_quote "${AGORA_PAPER_EXECUTION_SERVICE_TOKEN:-}")' in script
+    # The hosted compose run is never the local profile.
+    assert "AGORA_PAPER_EXECUTION_TOKEN_PROFILE=hosted" in script
+    # No deploy refusal keyed on this token (2026-11-17 rule).
+    assert not re.search(r"error \"[^\"]*AGORA_PAPER_EXECUTION", script)
+    workflow = (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    line = "DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN: ${{ secrets.DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN }}"
+    assert workflow.count(line) == workflow.count(
+        "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}"
+    )
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    assert compose.count("AGORA_PAPER_EXECUTION_TOKEN_PROFILE: ${AGORA_PAPER_EXECUTION_TOKEN_PROFILE:-local}") == 2

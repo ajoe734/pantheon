@@ -605,32 +605,65 @@ class AgoraPaperIntentConsumer:
         return state
 
 
-def consumer_from_env(store_for: Callable[[Any], Any]) -> AgoraPaperIntentConsumer | None:
-    """Build the consumer when the Agora paper execution boundary is configured.
+_PUBLIC_DEFAULT_TOKENS = frozenset({
+    "pantheon-local-agora-paper-execution-service-token",
+    "replace-me-agora-paper-execution-service-token",
+})
+_PLACEHOLDER_TOKEN_PREFIXES = ("replace-me", "changeme", "change-me", "example", "dummy", "placeholder")
 
-    Returns ``None`` (consumer off) when the BFF URL, service token or tenant
-    list is missing; ``PANTHEON_AGORA_PAPER_INTENT_CONSUMER=off`` turns it off.
+
+def _is_public_or_placeholder_token(token: str) -> bool:
+    normalized = str(token or "").strip().lower()
+    return normalized in _PUBLIC_DEFAULT_TOKENS or normalized.startswith(_PLACEHOLDER_TOKEN_PREFIXES)
+
+
+def consumer_status_from_env(
+    store_for: Callable[[Any], Any],
+) -> tuple[AgoraPaperIntentConsumer | None, dict[str, Any]]:
+    """Build the consumer and a readable health detail for its state.
+
+    The consumer stays off (``state=not_configured``) when the BFF URL, service
+    token or tenant list is missing, or when the token is the public compose
+    default or a placeholder outside the explicit local profile
+    (``AGORA_PAPER_EXECUTION_TOKEN_PROFILE=local``, never in staging/prod).
+    ``PANTHEON_AGORA_PAPER_INTENT_CONSUMER=off`` turns it off. It never raises:
+    a missing secret must not stop the producer or turn it unhealthy.
     """
     switch = os.getenv("PANTHEON_AGORA_PAPER_INTENT_CONSUMER", "auto").strip().lower()
     if switch in {"0", "off", "false", "no", "disabled"}:
-        return None
+        return None, {"state": "off", "reason": "disabled_by_switch"}
     base_url = (os.getenv("PANTHEON_AGORA_BFF_INTERNAL_URL") or "").strip()
     token = (os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN") or "").strip()
     tenants = [t.strip() for t in (os.getenv("AGORA_PAPER_EXECUTION_SERVICE_TENANTS") or "").split(",") if t.strip()]
-    if not base_url or not token or not tenants:
-        if switch in {"1", "on", "true", "yes", "enabled"}:
-            raise RuntimeError(
-                "PANTHEON_AGORA_PAPER_INTENT_CONSUMER=on requires PANTHEON_AGORA_BFF_INTERNAL_URL, "
-                "AGORA_PAPER_EXECUTION_SERVICE_TOKEN and AGORA_PAPER_EXECUTION_SERVICE_TENANTS"
-            )
-        return None
+    posture = (os.getenv("PANTHEON_PERSISTENCE_POSTURE") or os.getenv("PANTHEON_ENV") or "dev").strip().lower()
+    profile = (os.getenv("AGORA_PAPER_EXECUTION_TOKEN_PROFILE") or "").strip().lower()
+    local_profile = profile == "local" and not posture.startswith(("stage", "staging", "prod"))
+    reason: str | None = None
+    if not base_url:
+        reason = "bff_internal_url_unset"
+    elif not token:
+        reason = "service_token_unset"
+    elif _is_public_or_placeholder_token(token) and not local_profile:
+        reason = "service_token_public_default_or_placeholder"
+    elif not tenants:
+        reason = "service_tenants_unset"
+    token_profile = "local" if local_profile else "hosted"
+    if reason is not None:
+        return None, {"state": "not_configured", "reason": reason, "token_profile": token_profile}
     broker_url = (os.getenv("PANTHEON_BROKER_PAPER_URL") or "http://broker:8102").strip()
-    return AgoraPaperIntentConsumer(
+    consumer = AgoraPaperIntentConsumer(
         client=AgoraHandoffClient(base_url, token),
         store_for=store_for,
         tenants=tenants,
         order_reader=BrokerPaperOrderReader(broker_url) if broker_url else None,
     )
+    return consumer, {"state": "configured", "token_profile": token_profile, "tenant_count": len(tenants)}
+
+
+def consumer_from_env(store_for: Callable[[Any], Any]) -> AgoraPaperIntentConsumer | None:
+    """Return the consumer when configured, else ``None`` (consumer off)."""
+    consumer, _status = consumer_status_from_env(store_for)
+    return consumer
 
 
 __all__ = [
@@ -641,5 +674,6 @@ __all__ = [
     "BrokerPaperOrderReader",
     "agora_intent_signal_id",
     "consumer_from_env",
+    "consumer_status_from_env",
     "source_snapshot_price_reader",
 ]

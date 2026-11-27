@@ -451,8 +451,8 @@ def test_consumer_from_env_is_off_until_configured(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     assert consumer_from_env(lambda _b: None) is None
     monkeypatch.setenv("PANTHEON_AGORA_PAPER_INTENT_CONSUMER", "on")
-    with pytest.raises(RuntimeError):
-        consumer_from_env(lambda _b: None)
+    # A missing secret never stops the producer: the consumer stays off.
+    assert consumer_from_env(lambda _b: None) is None
     monkeypatch.setenv("PANTHEON_AGORA_BFF_INTERNAL_URL", "http://operator-bff:8001")
     monkeypatch.setenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN", "t")
     monkeypatch.setenv("AGORA_PAPER_EXECUTION_SERVICE_TENANTS", "tenant-a, tenant-b")
@@ -466,7 +466,7 @@ def test_consumer_from_env_is_off_until_configured(monkeypatch):
 def test_producer_main_runs_the_consumer_in_its_cycle():
     source = (ROOT / "services/execution/lean_runtime/paper_signal_producer.py").read_text()
     main_src = source[source.index("def main() -> int:"):]
-    assert "consumer_from_env(store_for)" in main_src
+    assert "consumer_status_from_env(store_for)" in main_src
     assert "agora_intents.consume(bindings, now_iso)" in main_src
     assert "_require_paper_only_configuration()" in main_src
 
@@ -475,3 +475,43 @@ def test_consumer_module_has_no_live_or_canary_route():
     text = Path(mod.__file__).read_text()
     for forbidden in ("/api/broker/live", "live/orders", "shioaji", "ibkr", "canary_execution"):
         assert forbidden not in text
+
+
+@pytest.mark.parametrize(
+    "token,profile,posture,state,reason",
+    [
+        ("", "hosted", "dev", "not_configured", "service_token_unset"),
+        ("pantheon-local-agora-paper-execution-service-token", "", "dev",
+         "not_configured", "service_token_public_default_or_placeholder"),
+        ("pantheon-local-agora-paper-execution-service-token", "hosted", "dev",
+         "not_configured", "service_token_public_default_or_placeholder"),
+        ("replace-me-agora-paper-execution-service-token", "hosted", "dev",
+         "not_configured", "service_token_public_default_or_placeholder"),
+        ("Placeholder-123", "hosted", "dev",
+         "not_configured", "service_token_public_default_or_placeholder"),
+        # The local default works only in the explicit local profile, never in stage/prod.
+        ("pantheon-local-agora-paper-execution-service-token", "local", "dev", "configured", None),
+        ("pantheon-local-agora-paper-execution-service-token", "local", "prod",
+         "not_configured", "service_token_public_default_or_placeholder"),
+        ("a-real-operator-provisioned-secret", "hosted", "dev", "configured", None),
+    ],
+)
+def test_consumer_stays_off_for_default_or_placeholder_token(monkeypatch, token, profile, posture, state, reason):
+    monkeypatch.delenv("PANTHEON_AGORA_PAPER_INTENT_CONSUMER", raising=False)
+    monkeypatch.setenv("PANTHEON_AGORA_BFF_INTERNAL_URL", "http://operator-bff:8001")
+    monkeypatch.setenv("AGORA_PAPER_EXECUTION_SERVICE_TENANTS", "tenant-a")
+    monkeypatch.setenv("AGORA_PAPER_EXECUTION_SERVICE_TOKEN", token)
+    monkeypatch.setenv("AGORA_PAPER_EXECUTION_TOKEN_PROFILE", profile)
+    monkeypatch.setenv("PANTHEON_ENV", posture)
+    monkeypatch.delenv("PANTHEON_PERSISTENCE_POSTURE", raising=False)
+    consumer, status = mod.consumer_status_from_env(lambda _b: None)
+    assert status["state"] == state
+    assert status.get("reason") == reason
+    assert (consumer is not None) == (state == "configured")
+    assert token not in repr(status) or token == ""
+
+
+def test_producer_health_reports_the_consumer_state():
+    source = (ROOT / "services/execution/lean_runtime/paper_signal_producer.py").read_text()
+    main_src = source[source.index("def main() -> int:"):]
+    assert '"agora_paper_intent_consumer": agora_intent_status' in main_src
