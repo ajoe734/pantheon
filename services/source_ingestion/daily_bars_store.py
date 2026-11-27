@@ -1094,7 +1094,9 @@ KEYED_DATASETS: dict[str, DatasetKeyDeclaration] = {d.dataset: d for d in (
           readers=("services/research/regime/features.py", "services/source_ingestion/feature_catalogue.py")),
     _decl("tw_broker_top", ("symbol", "trade_date", "side", "rank"),
           (_SYMBOL_ALIASES, _DATE_ALIASES, ("side", "direction"), ("rank", "broker_rank", "broker_id")),
-          retention=750, budget=int(0.2 * _MB), readers=("services/data-plane/taiwan_reference.py",)),
+          # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market (about 2,000-2,600 symbols x 20 buy + 20 sell), compact
+          # rows: measured 2.15 MB gzip for 2,000 symbols (80,000 rows); 6 MB leaves room for 2,600 symbols and real names.
+          retention=750, budget=6 * _MB, readers=("services/data-plane/taiwan_reference.py",)),
     _decl("tw_broker_branch_detail", ("symbol", "trade_date", "broker_id", "branch_id"),
           (_SYMBOL_ALIASES, _DATE_ALIASES, ("broker_id", "securities_trader_id"), ("branch_id", "branch", "securities_trader")),
           retention=250, budget=5 * _MB),

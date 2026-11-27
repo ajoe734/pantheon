@@ -125,6 +125,27 @@ def _read_json(path: Path) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+# SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: the whole-market broker run receipt. Only a complete session
+# passes; partial is never fresh, and a provider refusal (per-symbol fallback) fails the run so the
+# coordinator sees it.
+OK_WHOLE_MARKET_STATUSES = frozenset({"complete", "already_complete"})
+
+
+def _whole_market_row(wm: dict) -> tuple[str, str, bool]:
+    status = str(wm.get("status") or "unknown").strip().lower()
+    parts = [f"trade_date={wm.get('trade_date')}", f"symbols={wm.get('stored_symbol_count')}",
+             f"rows={wm.get('rows')}", f"requests={wm.get('requests_made')}",
+             f"bytes_gz={wm.get('bytes_compressed')}"]
+    cov = wm.get("coverage") if isinstance(wm.get("coverage"), dict) else {}
+    if cov:
+        parts.append(f"missing={cov.get('missing_count')}/{cov.get('expected_symbols')}")
+    if wm.get("fallback_required"):
+        parts.append("per-symbol fallback")
+    if wm.get("reason"):
+        parts.append(str(wm["reason"]))
+    return status, "; ".join(parts), status in OK_WHOLE_MARKET_STATUSES
+
+
 def evaluate(step_outcomes: dict[str, str], outcomes_dir: Path) -> tuple[list[dict[str, str]], list[str]]:
     """Return (rows, failures). Each row: kind, name, status, reason, ok."""
     rows: list[dict[str, str]] = []
@@ -155,6 +176,9 @@ def evaluate(step_outcomes: dict[str, str], outcomes_dir: Path) -> tuple[list[di
             status = str(data.get("status") or "").strip().lower() or "unknown"
             reason = str(data.get("reason") or "")
             add("connector", connector, status, reason, status in OK_CONNECTOR_STATUSES)
+            wm = data.get("broker_whole_market")
+            if isinstance(wm, dict):
+                add("check", "tw_broker_top whole market", *_whole_market_row(wm))
 
     steady_outcome = (step_outcomes.get("steady_check") or "").strip().lower()
     if "steady_check" in step_outcomes:
