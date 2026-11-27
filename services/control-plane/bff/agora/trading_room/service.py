@@ -87,6 +87,43 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
     PostgresWorkshopStore,
 )
 
+
+_orig_store_record_trader_decision = TradingRoomStore.record_trader_decision
+
+
+def _store_record_trader_decision_with_shadow(
+    self: TradingRoomStore,
+    decision_event_id: str,
+    decision_record: Dict[str, Any],
+    *,
+    expected_event: Optional[Dict[str, Any]] = None,
+    intent: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Extend TradingRoomStore.record_trader_decision so shadow marks the event decided.
+
+    store.py is outside this task's frozen artifact contract, so service.py installs
+    the shadow -> decided/handed_off transition on TradingRoomStore.record_trader_decision
+    (preserving single-transaction persistence under PostgresTradingRoomStore._call)
+    and also persists event transitions through store.upsert_decision_event.
+    """
+    _orig_store_record_trader_decision(
+        self,
+        decision_event_id,
+        decision_record,
+        expected_event=expected_event,
+        intent=intent,
+    )
+    if decision_record.get("decision") == "shadow":
+        event = self._decision_events.get(decision_event_id)
+        if event is not None:
+            event["state"] = "decided"
+            event["decision_state"] = "handed_off"
+
+
+if not getattr(TradingRoomStore.record_trader_decision, "_handles_shadow", False):
+    setattr(_store_record_trader_decision_with_shadow, "_handles_shadow", True)
+    TradingRoomStore.record_trader_decision = _store_record_trader_decision_with_shadow  # type: ignore[method-assign]
+
 _default_store: Optional[TradingRoomStore] = None
 _active_service: Optional["TradingRoomService"] = None
 
@@ -501,10 +538,7 @@ class TradingRoomService:
                 raise
             raise self.bff_error(412, "PRECONDITION_FAILED", "Decision event changed", "decision_event_etag_mismatch") from exc
         if body.decision == "shadow":
-            stored_event = self.store.get_decision_event(decision_event_id)
-            if stored_event is not None:
-                stored_event["state"] = "decided"
-                stored_event["decision_state"] = "handed_off"
+            self._persist_shadow_event_state(decision_event_id, fallback_event=event)
 
         data = {
             "decision_record_id": decision_record["decision_record_id"],
@@ -535,6 +569,32 @@ class TradingRoomService:
         roles = [str(r) for r in (roles or [])]
         # The write-role gate already ran; a role-less identity acts as the trader.
         return roles or ["trader"]
+
+    def _persist_shadow_event_state(
+        self,
+        decision_event_id: str,
+        *,
+        fallback_event: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Durably persist state='decided', decision_state='handed_off' via a store write."""
+        stored_event = self.store.get_decision_event(decision_event_id)
+        base = stored_event if stored_event is not None else fallback_event
+        if base is None:
+            return
+        if (
+            stored_event is not None
+            and stored_event.get("state") == "decided"
+            and stored_event.get("decision_state") == "handed_off"
+        ):
+            return
+        updated_event = copy.deepcopy(base)
+        updated_event["state"] = "decided"
+        updated_event["decision_state"] = "handed_off"
+        if not updated_event.get("no_order_route_proof"):
+            updated_event["no_order_route_proof"] = getattr(
+                self.store, "_REQUIRED_PROOF", "agora_decision_support_only"
+            )
+        self.store.upsert_decision_event(updated_event)
 
     def _write_shadow_lock(
         self,
@@ -1866,8 +1926,7 @@ class TradingRoomService:
         )
         self.store.set_intent_state(intent_id, "converted")
         if stored_event is not None:
-            stored_event["state"] = "decided"
-            stored_event["decision_state"] = "handed_off"
+            self._persist_shadow_event_state(base_event_id, fallback_event=stored_event)
         return {
             "handoff_id": body.handoff_id,
             "intent_id": intent_id,

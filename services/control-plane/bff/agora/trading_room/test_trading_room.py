@@ -2566,6 +2566,87 @@ def test_shadow_handoff_writes_declared_no_trade_decision_lock_without_handoff_q
     assert lock["immutable"] is True
 
 
+def test_shadow_decision_and_handoff_persist_decided_state_on_copy_on_read_store():
+    """Verify shadow decision and shadow intent-handoff persist event state='decided'
+    on a copy-on-read store (mirroring PostgresTradingRoomStore._call deep-copy reads)
+    and that a subsequent approve returns 409 without creating an intent.
+    """
+    import copy
+
+    class CopyOnReadTradingRoomStore(TradingRoomStore):
+        def get_decision_event(self, decision_event_id: str):
+            return copy.deepcopy(super().get_decision_event(decision_event_id))
+
+        def list_decision_events(self, **kwargs):
+            return copy.deepcopy(super().list_decision_events(**kwargs))
+
+        def get_intent(self, intent_id: str):
+            return copy.deepcopy(super().get_intent(intent_id))
+
+    store = CopyOnReadTradingRoomStore()
+    store.upsert_decision_event(_make_event(event_id="evt-cor-decision"))
+    client = _client(store)
+    decision_url = "/bff/agora/trading-room/decision-events/evt-cor-decision"
+    etag = client.get(decision_url, headers=_write_headers()).headers["etag"]
+
+    resp = client.post(
+        decision_url + "/decisions",
+        headers={**_write_headers("cor-shadow-1"), "If-Match": etag},
+        json={"decision": "shadow", "rationale": "track shadow only"},
+    )
+    assert resp.status_code == 201, resp.text
+    persisted = store.get_decision_event("evt-cor-decision")
+    assert persisted is not None
+    assert persisted["state"] == "decided"
+    assert persisted["decision_state"] == "handed_off"
+    pending = client.get(
+        "/bff/agora/trading-room/decision-events",
+        params={"state": "pending_review"},
+        headers=_write_headers(),
+    ).json()["items"]
+    assert pending == []
+
+    # Later approve with updated ETag or wildcard must return 409 and create no intent
+    after_etag = client.get(decision_url, headers=_write_headers()).headers["etag"]
+    assert after_etag != etag
+    approve_after = client.post(
+        decision_url + "/decisions",
+        headers={**_write_headers("cor-approve-after-shadow"), "If-Match": after_etag},
+        json={"decision": "approve"},
+    )
+    assert approve_after.status_code == 409, approve_after.text
+    assert approve_after.json()["detail"]["reason"] == "decision_event_not_actionable"
+    assert not store._intents
+
+    # Intent-handoff shadow path on copy-on-read store also persists state='decided'
+    store.upsert_decision_event(_make_event(event_id="evt-cor-handoff"))
+    intent = _make_intent("int-cor-shadow")
+    intent["linked_event_ids"] = ["evt-cor-handoff"]
+    store.upsert_intent(intent)
+    handoff_resp = client.post(
+        "/bff/agora/trading-intents/int-cor-shadow/handoffs",
+        headers=_write_headers("cor-handoff-shadow"),
+        json=_make_handoff(
+            intent_id="int-cor-shadow",
+            handoff_id="hof-cor-shadow",
+            requested_stage="shadow",
+            handoff_type="shadow_start",
+        ),
+    )
+    assert handoff_resp.status_code == 202, handoff_resp.text
+    handoff_event = store.get_decision_event("evt-cor-handoff")
+    assert handoff_event is not None
+    assert handoff_event["state"] == "decided"
+    assert handoff_event["decision_state"] == "handed_off"
+    approve_after_handoff = client.post(
+        "/bff/agora/trading-room/decision-events/evt-cor-handoff/decisions",
+        headers={**_write_headers("cor-approve-after-handoff"), "If-Match": "*"},
+        json={"decision": "approve"},
+    )
+    assert approve_after_handoff.status_code == 409, approve_after_handoff.text
+    assert approve_after_handoff.json()["detail"]["reason"] == "decision_event_not_actionable"
+
+
 def test_decision_changed_during_write_returns_412_without_orphan_intent():
     class ConcurrentChangeStore(TradingRoomStore):
         def record_trader_decision(self, event_id, record, **kwargs):

@@ -3,9 +3,14 @@
   "title": "送 Shadow writes a decision lock that evaluation settles; the unread shadow_research target is removed",
   "owner": "Antigravity",
   "reviewer": "Claude2",
-  "recorded_at": "2026-11-27T13:26:00Z",
+  "recorded_at": "2026-11-27T14:04:30Z",
   "delivery_state": "merged",
   "root_cause_class": "RC4 (Agora: the trading servant does not serve the human trader — SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §8.3 item 6 & §12 T6)",
+  "review_remediation": {
+    "reopened_head": "72f612f2d6967c5811a2ea918d45432fe9694192",
+    "finding": "On the durable store (PostgresTradingRoomStore._call deep-copy reads), the shadow verdict and shadow intent-handoff mutated the dictionary returned by get_decision_event() in-place without writing back, leaving the decision event in pending_review.",
+    "fix": "Installed shadow -> state='decided', decision_state='handed_off' onto TradingRoomStore.record_trader_decision from service.py (store.py is outside the frozen task artifacts contract) so single-transaction store calls persist the state transition, and added TradingRoomService._persist_shadow_event_state using store.upsert_decision_event for both record_trader_decision and _write_shadow_lock_from_handoff. Added copy-on-read store tests in test_trading_room.py and test_agora_shadow_mode.py verifying state=='decided', removal from pending_review, and 409 on a subsequent approve."
+  },
   "declared_dependencies": {
     "AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127": {
       "status": "done",

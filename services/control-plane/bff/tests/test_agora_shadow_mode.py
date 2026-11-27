@@ -241,6 +241,35 @@ def test_shadow_decision_rejects_non_no_trade_observation_kind(world):
     assert owner.store.list_decision_locks() == []
 
 
+def test_shadow_verdict_marks_event_decided_on_copy_on_read_store_and_blocks_later_approve():
+    import copy
+    from services.control_plane.bff.agora.trading_room.store import TradingRoomStore
+
+    class CopyOnReadStore(TradingRoomStore):
+        def get_decision_event(self, decision_event_id: str):
+            return copy.deepcopy(super().get_decision_event(decision_event_id))
+
+        def list_decision_events(self, **kwargs):
+            return copy.deepcopy(super().list_decision_events(**kwargs))
+
+    store = CopyOnReadStore()
+    owner = _owner()
+    store.upsert_decision_event(_event("evt-shadow-cor"))
+    client = _app(store, owner, TRADER)
+    resp = _decide(client, "evt-shadow-cor", {"decision": "shadow", "rationale": "shadow on durable store"}, key="k-cor-1")
+    assert resp.status_code == 201, resp.text
+    stored = store.get_decision_event("evt-shadow-cor")
+    assert stored is not None
+    assert stored["state"] == "decided"
+    assert stored["decision_state"] == "handed_off"
+
+    later_approve = _decide(client, "evt-shadow-cor", {"decision": "approve", "rationale": "late approve"}, key="k-cor-2")
+    assert later_approve.status_code == 409, later_approve.text
+    assert later_approve.json()["detail"]["reason"] == "decision_event_not_actionable"
+    assert not store._intents
+    assert len(owner.store.list_decision_locks()) == 1
+
+
 def test_broker_fill_kinds_cannot_be_declared_through_decision_route(world):
     store, owner = world
     store.upsert_decision_event(_event("evt-6"))
