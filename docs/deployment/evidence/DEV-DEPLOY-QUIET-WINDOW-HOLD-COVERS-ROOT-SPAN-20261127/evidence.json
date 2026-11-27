@@ -1,0 +1,93 @@
+{
+  "task": "DEV-DEPLOY-QUIET-WINDOW-HOLD-COVERS-ROOT-SPAN-20261127",
+  "problem": "quiet_window_hold only checked dispatch..dispatch+17 min; on 2026-11-27 Roots recreated containers 42-62 min after dispatch (runner queue up to 21 min) and ran Admit and acceptance until about 2h45m after dispatch",
+  "rule": "scripts/auto_deploy_dev_pair.py: root_span() + quiet_window_hold(windows, now, lead_minutes=span, span_source=...)",
+  "workflow": ".github/workflows/nonprod-deploy.yml, dev Root (component root): jobs deploy-dev -> coordinate-dev-release -> dev-acceptance-stage",
+  "root_steps_that_recreate_restart_rebuild_or_switch": [
+    {
+      "job": "deploy-dev",
+      "step": "Deploy bootstrap predecessor pair in strict live read-only mode under lease",
+      "effect": "deploy_nonprod_vm.sh on the VM; only when BOOTSTRAP_EMPTY_HOST"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Deploy dev VM stack under lease",
+      "effect": "deploy_nonprod_vm.sh rebuilds images and recreates the dev containers (the backend switch)"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Dev Agora restart persistence smoke under lease",
+      "effect": "restarts operator-bff on the VM and reads back"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Refresh Taiwan market session under lease after candidate stack deploy",
+      "effect": "deploy_nonprod_vm.sh --refresh-only: stops the steady source controller/projector, recreates source-ingest into a bounded runtime (deploy_nonprod_vm.sh:4876-4887) and recreates it back to steady (restore_bounded_source_refresh, :4780-4821)",
+      "condition": "PAPER_BOOTSTRAP_REQUESTED == 'true' && BOUNDED_SOURCE_REFRESH_ENABLED != 'true' && BOOTSTRAP_EMPTY_HOST != 'true' (nonprod-deploy.yml:1544)"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Refresh TAIFEX contract dataset under lease after candidate stack deploy",
+      "effect": "same --refresh-only path: steady controllers stopped, source-ingest recreated bounded, then restored",
+      "condition": "PAPER_BOOTSTRAP_REQUESTED == 'true' && BOUNDED_SOURCE_REFRESH_ENABLED != 'true' && BOOTSTRAP_EMPTY_HOST != 'true' (nonprod-deploy.yml:1719)"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Execute bounded TAIFEX contract refresh under lease",
+      "effect": "--refresh-only in bounded run mode: steady controllers stopped and source-ingest recreated once into the bounded runtime; the run's single steady restore follows",
+      "condition": "BOUNDED_SOURCE_REFRESH_ENABLED == 'true' (nonprod-deploy.yml:1810)"
+    },
+    {
+      "job": "deploy-dev",
+      "step": "Compensate dev deployment failure to exact hosted baseline",
+      "effect": "deploy_nonprod_vm.sh restores the prior stack; up to 100 min timeout; only on failure"
+    },
+    {
+      "job": "coordinate-dev-release",
+      "step": "Dispatch exact frontend gate and switch",
+      "effect": "switches the served FE (and the BFF pairing)"
+    },
+    {
+      "job": "coordinate-dev-release",
+      "step": "Roundtrip baseline restore under shared dev lease / Roundtrip same-final return under shared dev lease",
+      "effect": "restore and re-switch the stack; only when run_exact_artifact_roundtrip"
+    },
+    {
+      "job": "coordinate-dev-release",
+      "step": "Compensate rejected release to exact hosted baseline",
+      "effect": "restores the prior FE/BFF; only on a rejected release"
+    },
+    {
+      "job": "dev-acceptance-stage",
+      "step": "Acquire qualification lease and start identity-bound heartbeat ... Run acceptance checks and probes",
+      "effect": "only when a declared check mutates (acceptance/checks.json is currently absent, so it is skipped); it is the last possible mutation of a Root"
+    }
+  ],
+  "root_steps_not_counted": [
+    "Public dev BFF smoke, Steady stack restart-loop check (read-only), advisory functional checks, supplementary read-only QA, acceptance probes: read-only"
+  ],
+  "span": {
+    "definition": "dispatch (run created_at, so runner queue time counts) to the completion (updated_at) of a completed dev Root. All steps above, including the --refresh-only source-ingest recreates, sit inside the three Root jobs and dev-acceptance-stage is the last job, so this is an upper bound on the end of the last service-touching step, with no per-run jobs read",
+    "records_N": 10,
+    "N_why": "about three days of automatic releases: a slow outlier stays in force long enough to matter, one fast lease-starved or cancelled run cannot lower the maximum, and the value still follows a lasting change in Root duration",
+    "selection": "newest 10 runs of nonprod-deploy.yml with display_title 'Dev release ...', status completed, run_attempt 1 (a rerun's updated_at no longer measures one Root); drills, baseline restores and in-progress runs are ignored",
+    "statistic": "maximum, rounded up to whole minutes",
+    "fallback_minutes": 180,
+    "fallback_why": "no completed dev Root record: the 11/27 worst case of 2h45m (165 min) rounded up with a margin. The workflow job timeouts (6h + 6h + 2h) are not used because they would leave no weekday dispatch slot. The fallback is only for genuinely absent records; it never substitutes for records that exist but cannot be measured",
+    "failure": "an unreadable run list (request error, malformed payload) or N records none of which has readable timestamps gives span None: the hold fails closed with reason root_span_unavailable, no dispatch; the next trigger or hourly fallback retries",
+    "decision_output": "held_quiet_window and dispatched results carry root_span_minutes and root_span_source; the hold also carries reason root_span_inside_window, window, window_ends_at and dispatch_allowed_from (null when no allowed minute exists within 8 days)",
+    "dispatch_allowed_from": "jumps from the end of each window the span reaches to the next candidate, so adjacent windows and day boundaries are exact",
+    "unreadable_records": "a record whose created_at/updated_at is missing, malformed or negative is skipped and counted in root_span_source; if at least one of the N is readable its maximum is the span, and if none is readable the span is None (root_span_unavailable, held)"
+  },
+  "budget": {
+    "extra_github_reads_per_deployer_run": 1,
+    "detail": "one extra list-runs request of nonprod-deploy.yml (per_page 100), made only when a dispatch is ready and quiet windows are configured; no new writer, no new workflow, no new variable, no new blocking functional gate; staging and production unchanged; a running release is still never cancelled"
+  },
+  "tests": "scripts/test_auto_deploy_dev_pair.py: windows 'mon-fri 00:30-06:50; daily 09:05-10:45', span 165: Monday 07:30Z held with dispatch_allowed_from 10:45Z; 06:10Z held by the first window; 10:45Z allowed; span source failure held; also Sunday 22:00 -> Monday window, Friday 22:00 -> weekend, Monday 21:50 -> Tuesday, never-fitting span, slowest-of-N selection, queue time, fallback only for absent records, a partly unreadable record set measures the readable ones, all-unreadable records (None, malformed, negative) are unavailable and the deployer holds root_span_unavailable",
+  "verification": "uv run --no-project --with pytest python -m pytest -q scripts/test_auto_deploy_dev_pair.py -> 102 passed",
+  "review": {
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "decision": "pending"
+  }
+}
