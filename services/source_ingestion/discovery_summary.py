@@ -457,7 +457,8 @@ def _read_ledger(
                 return _unavailable(LEDGER_SOURCE, "extraction_ledger_not_initialized")
             cols = {str(r[1]) for r in connection.execute("PRAGMA table_info(calls)")}
             row = connection.execute(
-                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap FROM calls WHERE day = ?", (day,)
+                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap, "
+                f"{'unsent' if 'unsent' in cols else 'NULL'} AS unsent FROM calls WHERE day = ?", (day,)
             ).fetchone()
             for card in newest:
                 found = None
@@ -583,6 +584,7 @@ def _read_ledger(
         "scope": "service",  # one daily budget shared by every tenant of this deployment
         "utc_day": day,
         "calls": int(row["n"]) if row is not None else 0,
+        "unsent_calls": (int(row["unsent"]) if row is not None else 0) if "unsent" in cols else None,
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
         **ritual_obs,

@@ -531,7 +531,7 @@ class ExtractionLedger:
         with self._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
             cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
-            for name in ("timeouts", "billing", "unavailable"):
+            for name in ("timeouts", "billing", "unavailable", "unsent"):
                 if name not in cols:
                     c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
             if "cap" not in cols:
@@ -618,7 +618,11 @@ class ExtractionLedger:
         finally:
             conn.close()
 
-    def reserve_attempt(self, source_id: str = "", digest: str = "") -> str:
+    @staticmethod
+    def utc_day() -> str:
+        return _today()
+
+    def reserve_attempt(self, source_id: str = "", digest: str = "", *, day: str | None = None) -> str:
         """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
         Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
@@ -632,7 +636,7 @@ class ExtractionLedger:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
             c.execute("BEGIN IMMEDIATE")
-            day = _today()
+            day = day or _today()
             today_n = 0
             if source_id:
                 total, today_n = self._source_attempts(c, source_id, day)
@@ -694,6 +698,41 @@ class ExtractionLedger:
     def remaining_daily_calls(self) -> int:
         """Remaining calls under today's daily cap (0 when exhausted)."""
         return max(0, self._daily_cap - self.calls_today())
+
+    def note_unsent(self, source_id: str, *, day: str, reason: str, detail: str) -> None:
+        """Refund exactly one caller-owned reservation and record no-provider evidence.
+
+        Reservations remain spent after ambiguous failure or process crash. The
+        original UTC day is retained even when dispatch crosses midnight.
+        """
+        from services.source_ingestion.semantic_extraction_client import UNSENT_CALL_REASONS
+
+        if reason not in UNSENT_CALL_REASONS:
+            raise ValueError(f"Unknown unsent reason: {reason}")
+        with self._lock, self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            _, before = self._source_attempts(c, source_id, day)
+            c.execute(
+                "UPDATE record_attempts SET total = total - 1,"
+                " day_n = CASE WHEN day = ? THEN MAX(0, day_n - 1) ELSE day_n END"
+                " WHERE source_id=? AND digest='' AND total > 0", (day, source_id),
+            )
+            _, after = self._source_attempts(c, source_id, day)
+            c.execute(
+                "UPDATE calls SET n = MAX(0, n - 1), unsent = unsent + 1,"
+                " sources = MAX(0, sources - ?) WHERE day=?", (int(before > 0 and after == 0), day),
+            )
+            c.execute(
+                "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,'unsent',?)",
+                (datetime.now(timezone.utc).isoformat(), source_id, f"{reason}: {detail}"[:500]),
+            )
+            # Existing events lack retention. Bound this new event kind separately
+            # to 10,080 entries (~7 days at one unavailable tick/minute).
+            c.execute("CREATE INDEX IF NOT EXISTS events_unsent_id ON events(id) WHERE outcome='unsent'")
+            c.execute(
+                "DELETE FROM events WHERE outcome='unsent' AND id < COALESCE("
+                "(SELECT id FROM events WHERE outcome='unsent' ORDER BY id DESC LIMIT 1 OFFSET 10079), 0)"
+            )
 
     def note_call_failure(self, source_id: str, digest: str, failure_code: str, reason: str) -> None:
         """Count a spent call that yielded nothing, and keep the record's reason."""
@@ -802,12 +841,13 @@ class ExtractionLedger:
         """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT n, timeouts, billing, unavailable, sources FROM calls WHERE day=?", (_today(),)
+                "SELECT n, timeouts, billing, unavailable, sources, unsent FROM calls WHERE day=?", (_today(),)
             ).fetchone()
-        n, timeouts, billing, unavailable, sources = (int(v or 0) for v in (row or (0, 0, 0, 0, 0)))
+        n, timeouts, billing, unavailable, sources, unsent = (int(v or 0) for v in (row or (0, 0, 0, 0, 0, 0)))
         return {
             "day": _today(),
             "calls": n,
+            "unsent_calls": unsent,
             "daily_cap": self._daily_cap,
             "timeout_calls": timeouts,
             "billing_failed_calls": billing,
@@ -1308,7 +1348,8 @@ class HypothesisExtractor:
             prior = self._ledger.input_answer(sid, input_digest)
             if prior is not None and is_fixed_defect_input_answer(prior["outcome"], prior["detail"]):
                 self._ledger.retire_input_answer(sid, input_digest)
-        reservation = self._ledger.reserve_attempt(sid, digest)
+        reservation_day = self._ledger.utc_day()
+        reservation = self._ledger.reserve_attempt(sid, digest, day=reservation_day)
         if reservation == DAILY_CAP_REACHED:
             return self._done(sid, "budget_exhausted", f"daily cap {self._ledger.daily_cap} reached")
         if reservation in (RECORD_DAILY_LIMIT, RECORD_TOTAL_LIMIT):
@@ -1326,9 +1367,19 @@ class HypothesisExtractor:
             result = self._client.extract(request)
         except Exception as exc:  # noqa: BLE001 - an unreachable adapter is not "no hypothesis"
             detail = f"{type(exc).__name__}: {exc}"
+            from services.source_ingestion.semantic_extraction_client import SemanticExtractionClientError
+            if isinstance(exc, SemanticExtractionClientError) and exc.unsent_reason:
+                self._ledger.note_unsent(sid, day=reservation_day, reason=exc.unsent_reason, detail=detail)
+                return ExtractionOutcome("extraction_unavailable", detail=detail, extra={"unsent_reason": exc.unsent_reason})
             self._ledger.note_call_failure(sid, digest, "transport_error", detail)
             return self._done(sid, "unavailable", detail)
         usage = call_usage(result)
+        if getattr(result, "unsent_reason", None):
+            self._ledger.note_unsent(
+                sid, day=reservation_day, reason=result.unsent_reason, detail=result.failure_message or "",
+            )
+            status = "failed" if result.unsent_reason in {"admission_denied", "input_budget_exceeded"} else "extraction_unavailable"
+            return ExtractionOutcome(status, detail=result.failure_message or "", extra={"unsent_reason": result.unsent_reason})
         if result.status == "failed" or (result.is_abstained and result.hypothesis_card is None and result.failure_code):
             detail = f"{result.failure_code}: {result.failure_message}"
             if result.failure_code in UNAVAILABLE_FAILURE_CODES:
