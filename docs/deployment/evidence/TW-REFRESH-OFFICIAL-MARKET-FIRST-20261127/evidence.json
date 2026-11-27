@@ -225,6 +225,26 @@
       "full_suite_terminal_result": "47 passed in 63.31s (0:01:03)",
       "structural_and_red_green": "Full parsed YAML comparison with current origin/dev after only the unchanged market-step relocation: PASS. Current-dev ordering regression: expected failure. Task ordering regression: PASS. Exit 0.",
       "admission": "Previous handoff rejected without transition because dev advanced during admission. Resubmit with a new exact head containing this base; no approval or merge authority inferred from source recovery."
+    },
+    "ci_source_owned_return": {
+      "failing_run_id": 46025446411,
+      "failing_job_id": 140601449116,
+      "failing_head": "a9a5973c4be13b701f16b1953ca06fbffc71365b",
+      "failing_check": "Run baseline stage-0 gate",
+      "ci_terminal_result": "1 failed, 233 passed, 2 skipped in 214.18s",
+      "diagnosis": "scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs still asserted TAIFEX before official market (7 < 6). The task-specific workflow suite did not include this stage-0 assertion.",
+      "repair": "Align only the existing stage-0 ordering assertion with the official-first task contract; retain every connector, dataset, egress and deployment-order assertion. No runtime or CI gate changes.",
+      "focused_command": "timeout 60 /tmp/tw-official-first-venv/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py::test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_runs",
+      "red": {
+        "exit_code": 1,
+        "result": "1 failed in 2.02s; assert 7 < 6"
+      },
+      "green": {
+        "exit_code": 0,
+        "result": "1 passed in 1.83s"
+      },
+      "broader_validation": "Pending; anchor before bounded foreground suite.",
+      "delivery": "Prior approval does not apply to the changed head. Requires new exact-head handoff to Antigravity and canonical supervisor merge; hosted acceptance remains pending."
     }
   },
   "acceptance_5_runtime_budget": {
