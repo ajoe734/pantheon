@@ -7,7 +7,7 @@
     "RC2",
     "RC3 WP3.1"
   ],
-  "delivery_state": "PR 7954 source changes pending independent review and merge; hosted acceptance 7 pending deploy",
+  "delivery_state": "PR 7954 reopened by independent review; P1 persisted-side coverage repaired in anchor 42679f9a7; P2 750-session retention blocked on governed artifact-contract addition of services/source_ingestion/retention.py; neither merged nor deployed nor accepted",
   "acceptance": {
     "1_whole_market_from_whole_day_file": {
       "status": "verified_in_source",
@@ -32,7 +32,7 @@
       ]
     },
     "3_runtime_budget": {
-      "status": "verified_on_hosted_shaped_rows",
+      "status": "partial: byte budget verified on hosted-shaped rows; 750-session retention still fails acceptance",
       "cadence": "one run per published session; afternoon crons 10:30Z and 12:30Z, the second makes 0 requests once the session receipt is complete and its keyed partition verifies",
       "rows_per_session": "about 80,000-104,000 (2,000-2,600 symbols x 20 buy + 20 sell)",
       "bytes_per_session": {
@@ -63,7 +63,7 @@
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_receipts_are_pruned_past_the_retention",
         "scripts/test_check_market_data_budget.py"
       ],
-      "retention_acceptance": "partial: actual calendar-day implementation documented; requested 750-session horizon requires the RC3 market-data owner to reconcile retention semantics"
+      "retention_acceptance": "FAILED acceptance 3, not waived by the RC3 residual. The existing sweeper must implement a 750-session retention declaration for tw_broker_top and focused cleanup tests before re-handoff. services/source_ingestion/retention.py is absent from this task's canonical artifact contract; only Human/Ops may add it through artifact-contract while the task is blocked, then reopen the same task."
     },
     "4_requests_quota_token_fallback": {
       "status": "verified_in_source",
@@ -84,12 +84,16 @@
     "5_coverage_gate": {
       "status": "verified_in_source",
       "expected_set": "daily_bars rows of the session with volume > 0 and a 4-digit share code (TWSE and TPEx ordinary shares; daily_bars stores only governed-listing symbols); ETFs, warrants and other codes are stored when present but are not in the expected set",
-      "tolerance": "complete only when <= 2 % of the expected symbols are missing AND >= 1000 symbols are stored; otherwise partial (fresh=false); no daily_bars day -> partial coverage_unverified; a partial receipt is refetched by the next run",
+      "tolerance": "After writing, verify the persisted partition's digest, key fields and row count, then derive symbol/side coverage from those persisted keys. Complete only when <= 2 % of expected symbols are absent, >= 1000 symbols have both buy and sell sides, and no stored symbol lacks either side (zero tolerance for one-sided symbols). Failed readback or no daily_bars day -> partial, never fresh. Before skipping an old complete receipt, repeat this readback against the current expected set. Partial or old false-complete sessions are refetched on the next run.",
       "tests": [
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_outside_tolerance_is_partial_and_never_fresh",
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_within_tolerance_and_minimum_symbols",
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_expected_symbols_come_from_daily_bars_traded_shares",
-        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_daily_bars_means_coverage_unverified_partial"
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_no_daily_bars_means_coverage_unverified_partial",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_missing_sell_side_is_partial_even_with_all_1000_symbols_and_retried",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_coverage_uses_persisted_sides_and_rejects_legacy_complete_receipt",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_persisted_partition_must_verify_before_freshness",
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_complete_receipt_revalidates_current_expected_symbols"
       ]
     },
     "6_licence_and_no_price_daily": {
@@ -139,7 +143,7 @@
     "taiwan_reference.read_tw_broker_top_rows reads the whole session partition (~80k rows) per query and filters by symbol; acceptable for the servant's per-question read but a per-symbol index would make it faster",
     "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
     "the two-year SponsorPro backfill still has not been run on hosted",
-    "RC3 / market-data retention owner: services/source_ingestion/retention.py expires keyed partitions using today minus retention_days=750 calendar days; acceptance asks for 750 trading sessions. No retention code is changed by this reader repair. Receipts separately cap their count at 750 session files. The coordinator must reconcile this within the existing RC3 market-data work package before claiming full retention acceptance.",
+    "BLOCKING P2 acceptance 3, RC3 market-data owner cb4f6795: services/source_ingestion/retention.py expires keyed partitions using today minus retention_days=750 calendar days. The requested 750-session retention is still required. Canonical artifacts omit retention.py, and command_artifact_contract permits only Human/Ops in todo/blocked states to revise scope. Add that path through the existing governed command, coordinate this existing RC3 package and reopen this task; do not open a duplicate fix or waive acceptance. Receipts separately cap their count at 750 session files.",
     "Current canonical reviewer is Codex2 after supervisor reassignment, whereas the older next-message says Antigravity. Handoff uses the governed assigned reviewer; the coordinator retains responsibility for the different-model-family capacity rule.",
     "Validation limitation: the expanded 242-test refresh/storage/retention batch and all four 180-second shards timed out. No expanded-batch pass is claimed. Focused broker/route, whole-market deploy and budget validation are recorded separately; required repository CI remains authoritative for its full suites."
   ],
@@ -259,6 +263,33 @@
       }
     ],
     "passed_focused_unique_tests": 143
+  },
+  "review_repair_20261127": {
+    "rejected_head": "f6fb354db0e22c09b54fe76b05f343ccb706ed5f",
+    "p1_source_anchor": "42679f9a7",
+    "p1_change": "Completion and zero-request reruns require persisted two-sided coverage and current expected-set readback, not the union of generated symbols. A missing side on even one stored symbol stays partial and retryable. No new job or writer; the existing once-per-session run and 750-receipt count cap are unchanged. One extra readback of the bounded <=6 MB session partition after a write; complete reruns already performed a partition readback.",
+    "validation": [
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py",
+        "result": "22 passed in 12.42s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
+        "result": "128 passed, 1 existing Starlette/httpx deprecation warning in 51.02s",
+        "exit_status": 0
+      }
+    ],
+    "p2_blocker": {
+      "required_actor": "Human/Ops",
+      "classification": "external scope/governance hold; declared SOURCE-BROKER-TOP-KEYED-SIDE-20261127 is already done and satisfied",
+      "missing_artifact": "services/source_ingestion/retention.py",
+      "governance_source": "scripts/ai_status.py command_artifact_contract: Only Human/Ops can revise task artifact contracts; only todo/blocked tasks may be revised. No canonical state or command runtime edited by this worker.",
+      "existing_owner_package": "RC3 WP3.1 market-data owner cb4f6795; SOURCE-RETENTION-SWEEPER-20261118-R2 is archived done, existing session-retention obligation remains on this task",
+      "required_continuation": "Human/Ops adds the missing artifact through artifact-contract while blocked and reopens this same task. Implement a retention_sessions=750 declaration in daily_bars_store.py, make the existing _plan_keyed sweeper retain the latest 750 stored session partitions (with existing pin protection), and add focused real-store dry-run/delete tests across 751 sessions spanning more than 750 calendar days, pinned old sessions and unchanged calendar-retention datasets. Reconcile cap/manifest/design/evidence, then refresh dev and hand off the new exact head to the assigned independent reviewer. Proposed continuation only: no retention implementation or cleanup-test pass is claimed.",
+      "acceptance_3": "still fails until implementation and independent review; no operator acceptance revision inferred",
+      "acceptance_7": "pending deploy and real hosted read-only proof"
+    }
   },
   "continuation_20261127": {
     "prior_owner": "Claude",
