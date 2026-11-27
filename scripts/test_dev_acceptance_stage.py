@@ -482,3 +482,95 @@ def test_manifest_without_failed_reads_summarizes_as_before():
                                         "problems": ["crash", "render_crash_console"],
                                         "error": "TypeError: L.target.version.toLowerCase is not a function"}]
     assert all("failedReads" not in r for r in summary["routes"])
+
+
+# --- pinned transport diagnostics (ACCEPT-CRAWL-TRANSPORT-ERRORS-20261127) ----------------------
+
+def _transport_manifest(passed=False, errors=None):
+    # Contract at execute-plans 619891d5e, accept-management-hosted-production.mjs:1103.
+    manifest = _manifest([_route("/management/human-inbox")], passed)
+    manifest["result"]["failures"] = [] if passed else ["Pinned BFF transport failed."]
+    manifest["pinnedTransport"] = {
+        "pass": passed,
+        "errors": ["GET /bff/management/human-inbox: net::ERR_ABORTED"] if errors is None else errors,
+        "terminatedBeforeSend": [],
+    }
+    return manifest
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_pinned_transport_errors_reach_artifact_and_failed_verdict_without_changing_outcome(tmp_path, passed):
+    manifest = _transport_manifest(passed)
+    check, artifact = _crawl(tmp_path, runner=_writer(manifest, code=0 if passed else 1))
+    assert artifact["pinnedTransport"] == {
+        "errors": ["GET /bff/management/human-inbox: net::ERR_ABORTED"],
+        "terminatedBeforeSendCount": 0,
+    }
+    expected = "passed" if passed else "failed"
+    assert artifact["status"] == check["status"] == expected
+    results = _passing_probe_results() + [check]
+    verdict = stage.build_verdict(status=stage.verdict_status(results), results=results, identity=CRAWL_IDENT, run={})
+    assert verdict["acceptance"] == expected
+    if not passed:
+        assert "Pinned BFF transport failed." in verdict["failed"][0]["detail"]
+        assert "GET /bff/management/human-inbox: net::ERR_ABORTED" in verdict["failed"][0]["detail"]
+
+
+def test_pinned_transport_counts_terminated_before_send_without_copying_rows(tmp_path):
+    manifest = _transport_manifest(errors=[])
+    # Row fields from pinned-browser-bff-bearer.mjs:279; only the count is retained.
+    row = {"outcome": "terminated_before_send", "interceptionId": "interception-job.1",
+           "networkId": "123.1", "path": "/bff/management/human-inbox", "requestStage": "Request",
+           "pausePhase": "active", "phase": "active", "reason": "target_closed_before_continuation"}
+    manifest["pinnedTransport"]["terminatedBeforeSend"] = [row, {**row, "networkId": None}]
+    check, artifact = _crawl(tmp_path, runner=_writer(manifest))
+    assert artifact["pinnedTransport"] == {"errors": [], "terminatedBeforeSendCount": 2}
+    assert "interception-job.1" not in json.dumps([check, artifact])
+
+
+def test_pinned_transport_bounds_errors_redacts_secrets_and_strips_request_query(tmp_path):
+    errors = [f"GET /bff/management/human-inbox?token=QUERYSECRET&cursor=9#fragment: net::ERR_ABORTED {TOKEN}",
+              "GET /bff/management/human-inbox: net::ERR_ABORTED viewer-secret-xyz",
+              "GET /bff/management/human-inbox: net::ERR_ABORTED [REDACTED]"]
+    # A short environment secret expands during redaction; the final cap must still hold.
+    errors += ["GET /bff/management/human-inbox: " + "z" * 190] * 22
+    check, artifact = _crawl(tmp_path, runner=_writer(_transport_manifest(errors=errors)),
+                             env={**VIEWER_ENV, "EXTRA_TOKEN": "zz"})
+    kept = artifact["pinnedTransport"]["errors"]
+    assert len(kept) == 20 and all(len(error) <= 200 for error in kept)
+    assert len(kept[3]) == 200
+    assert kept[:3] == ["GET /bff/management/human-inbox: net::ERR_ABORTED [redacted]",
+                        "GET /bff/management/human-inbox: net::ERR_ABORTED [redacted]",
+                        "GET /bff/management/human-inbox: net::ERR_ABORTED [REDACTED]"]
+    text = json.dumps([check, artifact])
+    for secret in (TOKEN, "viewer-secret-xyz", "QUERYSECRET", "cursor=", "fragment", "?", "zz"):
+        assert secret not in text
+    assert "; pinned transport errors: " + "; ".join(kept[:3]) in check["detail"]
+    assert kept[3] not in check["detail"]  # only the first three errors enter the verdict
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_manifest_without_pinned_transport_keeps_exact_artifact_and_verdict_shape(tmp_path, passed, monkeypatch):
+    monkeypatch.setattr(stage, "_now", lambda: "2026-11-27T00:00:00Z")
+    original = stage.crawl_check
+    monkeypatch.setattr(stage, "crawl_check", lambda **kw: original(**kw, clock=lambda: 0.0))
+    manifest = _manifest([_route("/management/human-inbox")], passed)
+    expected = "passed" if passed else "failed"
+    code = 0 if passed else 1
+    check, artifact = _crawl(tmp_path, runner=_writer(manifest, code=code))
+    summary = stage.summarize_crawl(manifest)
+    assert set(summary) == {"pass", "overall", "failures", "routeCount", "routes", "failedRoutes", "nonGetRequests"}
+    assert artifact == {
+        "schemaVersion": stage.CRAWL_SCHEMA, "generatedAt": "2026-11-27T00:00:00Z",
+        "deadlineSeconds": 720, "frontendSha": SHA_B, "backendSha": SHA_A,
+        "feUrl": CRAWL_IDENT["fe_url"], "bffUrl": CRAWL_IDENT["bff_url"], "script": stage.CRAWL_SCRIPT,
+        "identity": "viewer", "readOnly": True, "seconds": 0.0, "exitCode": code,
+        "crawlOverall": "pass" if passed else "fail", "crawlFailures": manifest["result"]["failures"],
+        "routeCount": 1, "routes": [{"path": "/management/human-inbox", "kind": "nav", "status": "ok", "dataPass": True}],
+        "failedRoutes": [], "nonGetRequests": [], "status": expected,
+    }
+    detail = "1 routes crawled; overall pass" if passed else (
+        "no failing route; crawl failures: No route crashes, is blank, or fails to navigate., No render-crash console errors.")
+    assert check == {"id": stage.CRAWL_ID, "kind": "check", "owner": stage.CRAWL_OWNER,
+                     "status": expected, "exit_code": code, "detail": detail, "seconds": 0.0,
+                     "required": True, "failedRoutes": []}
