@@ -537,6 +537,45 @@ class PublishPorts(Ports):
         return {"status": "published", "envelope_artifact_id": "env-%d" % version, "deployment_plan_id": "plan-%d" % version}
 
 
+@pytest.mark.parametrize("result", ["dispatched", "failed_read"])
+def test_pending_dispatch_retries_exact_version_without_membership_gate(result):
+    history = pins(("a", 1.0, False, "active"), version=2)
+    history["published"]["2"]["status"] = "dispatched"
+    ports = PublishPorts(history, pool_now=live_pool(6, ("a", 1.0, "active")))
+    tried = []
+    def publish(persona, version):
+        tried.append(version)
+        if result == "failed_read":
+            raise RuntimeError("owner_down")
+        return {"status": "dispatched"}
+    ports.publish_pool = publish
+    for _ in range(2):
+        out = run_publish(ports, ports.pool_now)
+        assert out["status"] == "publication_dispatch_unconfirmed"
+        assert out["reasons"] == ["publication_dispatch_unconfirmed"]
+    assert tried == [2, 2] and ports.consults == []
+
+
+def test_hosted_v2_dispatch_confirmed_then_v6_admission_only_republish():
+    history = pins(("a", 1.0, False, "active"), joined=None, version=2)
+    history["published"]["2"]["status"] = "dispatched"
+    ports = PublishPorts(history, pool_now=live_pool(6, ("a", 1.0, "active")))
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "published" and out["publication_pending"] and ports.published == [2]
+    assert out["reasons"] == ["envelope_member_admission_missing:a"] and ports.consults == []
+    history["published"]["2"]["status"] = "published"
+    assert run_publish(ports, ports.pool_now)["status"] == "published" and ports.published == [2, 6]
+
+
+def test_confirmed_dispatch_does_not_bypass_real_membership_consultation():
+    history = pins(("a", 1.0, False, "active"), version=2)
+    history["published"]["2"]["status"] = "dispatched"
+    ports = PublishPorts(history, pool_now=live_pool(6, ("a", .9, "active"), ("b", .1, "trial")))
+    ports.consult_state = {"state": "pending", "request_id": "r", "decision_id": "d"}
+    out = run_publish(ports, ports.pool_now)
+    assert out["status"] == "consultation_pending" and ports.published == [2] and ports.consults == [6]
+
+
 JOINED = "2026-10-01T00:00:00Z"
 
 
@@ -756,6 +795,8 @@ def _escalated_world(monkeypatch, *, pool_version=5):
             return world.governance.post(body)
         if service == "evolution" and method == "GET" and path.startswith("/api/evolution/proposals/"):
             return world.governance.get(path.rsplit("/", 1)[1])
+        if service == "evolution" and method == "GET" and path.startswith("/api/evolution/proposals?"):
+            return list(world.governance.proposals.values())
         if service == "bff" and method == "GET" and path.endswith("/publish-history"):
             return {"data": world.history}
         if service == "bff" and method == "POST" and path.endswith("/strategy-pool/publish"):
@@ -801,7 +842,7 @@ def test_operator_approval_is_consumed_by_the_next_cycle_and_recorded_on_the_rec
     out = world.cycle._publish(PERSONA, "pk-2")
     assert out["status"] == "published" and out["operator_decision_id"] == decision_id
     assert out["pool_version"] == 5 and out["envelope_artifact_id"] == "env-5"
-    assert world.published == [{"pool_version": 5, "stage": "paper"}] and len(world.governance.posts) == 1
+    assert world.published == [{"pool_version": 5, "stage": "paper", "defer_confirmation": True}] and len(world.governance.posts) == 1
 
 
 def test_operator_rejection_keeps_the_previous_envelope_and_records_the_reason(monkeypatch):
