@@ -718,9 +718,60 @@ class PersonaProvisioningCoordinator:
 
         return publish
 
+    def _is_non_trading_paper_enrollment_record(self, record: ProvisioningRecord) -> bool:
+        """True when a provisioning record belongs to a non-trading persona or trader servant paper book."""
+        from .personas import fleet_classification as _fleet_cls
+
+        raw_payload = getattr(record, "request_payload", None)
+        payload = raw_payload if isinstance(raw_payload, Mapping) else {}
+        raw_result = getattr(record, "result", None)
+        result = raw_result if isinstance(raw_result, Mapping) else {}
+        raw_references = getattr(record, "references", None)
+        references = raw_references if isinstance(raw_references, Mapping) else {}
+        to_dict = getattr(record, "to_dict", None)
+        record_dict = to_dict() if callable(to_dict) else {}
+        if _fleet_cls.is_non_trading_persona(payload) or (
+            isinstance(record_dict, Mapping) and _fleet_cls.is_non_trading_persona(record_dict)
+        ):
+            return True
+        for container in (
+            payload,
+            payload.get("paper_book") if isinstance(payload.get("paper_book"), Mapping) else {},
+            result,
+            references,
+        ):
+            if str(container.get("book_kind") or "").strip().lower() == "trader_servant_paper_book":
+                return True
+        if (
+            str(getattr(record, "idempotency_key", None) or "").strip().startswith("trader-paper-book:")
+            or str(payload.get("mandate") or "").strip().lower() == "user_private_agora_servant_paper_book"
+        ):
+            return True
+        try:
+            provider = getattr(self, "persona_owner_provider", None)
+            owner = provider() if callable(provider) else None
+            getter = getattr(owner, "get_persona", None) if owner is not None else None
+            persona_id = str(getattr(record, "persona_id", None) or "").strip()
+            persona = getter(persona_id) if callable(getter) and persona_id else None
+        except Exception:
+            persona = None
+        if isinstance(persona, Mapping):
+            if _fleet_cls.is_non_trading_persona(persona):
+                return True
+            meta = persona.get("metadata") if isinstance(persona.get("metadata"), Mapping) else {}
+            paper_book = meta.get("paper_book") if isinstance(meta.get("paper_book"), Mapping) else {}
+            if (
+                str(meta.get("book_kind") or paper_book.get("book_kind") or "").strip().lower()
+                == "trader_servant_paper_book"
+            ):
+                return True
+        return False
+
     def _enroll_in_place(self, record: ProvisioningRecord) -> ProvisioningRecord:
         """Enrol under the lease this coordinator already holds; readback on the ledger."""
 
+        if self._is_non_trading_paper_enrollment_record(record):
+            return record
         try:
             outcome = self._paper_enrollment(record).enroll().to_dict()
         except Exception as exc:  # noqa: BLE001 - never blocks paper admission
@@ -763,6 +814,8 @@ class PersonaProvisioningCoordinator:
         """
 
         if record.state not in {"provisioning", "succeeded"}:
+            return record
+        if self._is_non_trading_paper_enrollment_record(record):
             return record
         active = self.store.acquire(
             record.tenant_id,
