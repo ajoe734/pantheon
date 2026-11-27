@@ -280,3 +280,61 @@ def test_postgres_versions_and_selection_survive_store_restart(
     assert restarted_session["selected_version_id"] == "wsv-restart-next"
     assert restarted_session["active_workshop_version_id"] == "wsv-restart-next"
     assert restarted_session["active_strategy_spec_registry_id"] == next_registry_id
+
+
+def test_v1_14_contract_bundle_includes_twelve_block_completeness_and_decisions() -> None:
+    bundle_path = AGORA_SPECS / "bundle_index.v1_14.json"
+    manifest_path = AGORA_SPECS / "v15/capability_manifest_v1_14.json"
+    openapi_path = ROOT / "services/control-plane/openapi/agora_v1_14.openapi.yaml"
+    backend_routes_path = ROOT / "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json"
+
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    openapi = json.loads(openapi_path.read_text(encoding="utf-8"))
+    backend_routes = json.loads(backend_routes_path.read_text(encoding="utf-8"))
+
+    assert bundle["files"]["specs/agora/v15/capability_manifest_v1_14.json"] == _sha256(manifest_path)
+    assert bundle["openapi"] == {
+        "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+        "sha256": _sha256(openapi_path),
+    }
+    assert bundle["route_families"]["agora.workshop.twelve-block-completeness.v1"] == [
+        "GET /bff/agora/workshops/{workshop_id}/completeness",
+        "POST /bff/agora/workshops/{workshop_id}/completeness",
+        "POST /bff/agora/workshops/{workshop_id}/decisions",
+    ]
+    manifest_routes = {(r["method"], r["path"]) for r in manifest["routes"]}
+    assert ("GET", "/bff/agora/workshops/{workshop_id}/completeness") in manifest_routes
+    assert ("POST", "/bff/agora/workshops/{workshop_id}/completeness") in manifest_routes
+    assert ("POST", "/bff/agora/workshops/{workshop_id}/decisions") in manifest_routes
+
+    schemas = openapi["components"]["schemas"]
+    block_schema = schemas["WorkshopStrategyBlockV114"]
+    assert block_schema["properties"]["state"]["enum"] == [
+        "confirmed",
+        "inferred",
+        "missing",
+        "weak",
+        "conflict",
+    ]
+    assert block_schema["properties"]["v10_block_id"]["enum"] == [
+        "market_scope",
+        "insider_branch_mapping",
+        "winner_branch_scoring",
+        "migration_reverse_flow",
+        "event_lead",
+        "signal_formation",
+        "entry_holding",
+        "add_reduce_exit",
+        "sizing_leverage",
+        "cost_liquidity_capacity",
+        "validation_backtest_refutation",
+        "monitoring_update",
+    ]
+    decision_schema = schemas["WorkshopNextDecisionV114"]
+    assert decision_schema["properties"]["options"]["minItems"] == 2
+    assert decision_schema["properties"]["options"]["maxItems"] == 4
+
+    route_keys = {(e["method"], e["path"]) for e in backend_routes["entries"]}
+    assert ("POST", "/bff/agora/workshops/{param}/decisions") in route_keys
+
