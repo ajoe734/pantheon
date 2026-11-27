@@ -20,6 +20,11 @@ import test_supervisor as fixtures
 from rewrite import dispatch_admission as admission
 from rewrite import provider_health as health
 
+# Lanes that share one account in the source config, and the next owner
+# fallback for them that is on a different account.
+SHARED_PAIR = ("antigravity", "antigravity2")
+FALLBACK_LANE, FALLBACK_OWNER = "claude", "Claude"
+
 
 class SharedQuotaConfigTests(unittest.TestCase):
     def setUp(self):
@@ -34,9 +39,9 @@ class SharedQuotaConfigTests(unittest.TestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
         self.lanes = [supervisor.delivery_lane_for_agent(self.config, name)
-                      for name in ("claude", "claude2")]
+                      for name in SHARED_PAIR]
 
-    def healthy(self, names=("claude", "claude2")):
+    def healthy(self, names=SHARED_PAIR):
         snapshot = health.empty_delivery_health()
         for name in names:
             for endpoint in supervisor.delivery_lane_for_agent(self.config, name).endpoints:
@@ -77,9 +82,9 @@ class SharedQuotaConfigTests(unittest.TestCase):
         self.assertNotEqual(left.assignment_identity, right.assignment_identity)
         # Shared quota does not disqualify independent review after health returns.
         self.assertEqual(supervisor.plan_task_assignment_pair(
-            self.config, {"owner": "Claude", "reviewer": "Claude2", "status": "todo"},
-            state=self.healthy(), fixed_owner="Claude", allowed_reviewers=["Claude2"]),
-            ("Claude", "Claude2"))
+            self.config, {"owner": "Antigravity", "reviewer": "Antigravity2", "status": "todo"},
+            state=self.healthy(), fixed_owner="Antigravity", allowed_reviewers=["Antigravity2"]),
+            ("Antigravity", "Antigravity2"))
 
     def test_active_counts_and_capacity_are_shared(self):
         state = self.healthy()
@@ -131,6 +136,17 @@ class SharedQuotaConfigTests(unittest.TestCase):
                         for lane in self.lanes:
                             self.assertEqual(self.decision(state, lane).eligible, source == "live")
 
+    def test_claude_lanes_have_separate_accounts(self):
+        claude, claude2 = (supervisor.delivery_lane_for_agent(self.config, name)
+                           for name in ("claude", "claude2"))
+        self.assertNotEqual(claude.endpoints[0].account_id, claude2.endpoints[0].account_id)
+        for exhausted, peer in ((claude, claude2), (claude2, claude)):
+            state = self.healthy(("claude", "claude2"))
+            self.fail_quota(state, exhausted)
+            self.assertEqual(self.decision(state, exhausted).reason,
+                             admission.DispatchBlockReason.ACCOUNT_RETRY_AFTER)
+            self.assertTrue(self.decision(state, peer).eligible)
+
     def test_auth_failure_remains_endpoint_local(self):
         for failed_lane, peer in (self.lanes, self.lanes[::-1]):
             state = self.healthy()
@@ -141,7 +157,7 @@ class SharedQuotaConfigTests(unittest.TestCase):
 
     def test_recovery_fallback_and_duplicate_lease_admission(self):
         for failed_lane in self.lanes:
-            state = self.healthy(("claude", "claude2", "antigravity"))
+            state = self.healthy(SHARED_PAIR + (FALLBACK_LANE,))
             self.fail_quota(state, failed_lane)
             task = fixtures.task_fixture(owner=failed_lane.assignment_identity, reviewer="Human/Ops")
             receipt = {"status": "pending", "recovery_role": "owner",
@@ -149,9 +165,9 @@ class SharedQuotaConfigTests(unittest.TestCase):
             status = {"tasks": [task]}
             before = copy.deepcopy((task, state))
             self.assertEqual(supervisor.worker_recovery_assignment_pair(
-                self.config, state, status, task, receipt), ("Antigravity", "Human/Ops"))
+                self.config, state, status, task, receipt), (FALLBACK_OWNER, "Human/Ops"))
             self.assertTrue((task, state) == before, "Selection must not mutate authority")
-            fallback = supervisor.delivery_lane_for_agent(self.config, "antigravity")
+            fallback = supervisor.delivery_lane_for_agent(self.config, FALLBACK_LANE)
             self.assertTrue(self.decision(state, fallback).eligible)
             self.assertEqual(self.decision(state, fallback, leased_task_ids=frozenset({"QUOTA-TEST"})).reason,
                              admission.DispatchBlockReason.TASK_LEASED)
@@ -161,7 +177,7 @@ class SharedQuotaConfigTests(unittest.TestCase):
             account = fallback.endpoints[0].account_id
             limit = self.config["ready_dispatcher"]["max_concurrent_per_account"][account]
             state["workers"] = {str(i): {
-                "provider": fallback.endpoints[0].provider_id, "agent_id": "antigravity",
+                "provider": fallback.endpoints[0].provider_id, "agent_id": FALLBACK_LANE,
                 "task_id": f"OCCUPIED-{i}", "status": "running"} for i in range(limit)}
             self.assertIsNone(supervisor.worker_recovery_assignment_pair(
                 self.config, state, status, task, receipt))
@@ -175,11 +191,11 @@ class SharedQuotaConfigTests(unittest.TestCase):
         self.config["paths"] = harness.config["paths"]
         self.config["task_state_store"] = harness.config["task_state_store"]
         harness.config = self.config
-        task = fixtures.task_fixture(owner="Claude", reviewer="Human/Ops", status="in_progress")
+        task = fixtures.task_fixture(owner="Antigravity", reviewer="Human/Ops", status="in_progress")
         supervisor.write_status(self.config, {"tasks": [task], "blockers": [], "handoffs": []},
                                 source="test-shared-quota-seed")
         state = self.healthy()
-        worker = harness._worker(agent_id="claude")
+        worker = harness._worker(agent_id="antigravity")
         harness._store_started(state, worker)
         self.fail_quota(state, self.lanes[0])
         with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=harness._drain_status_outbox):
@@ -188,18 +204,18 @@ class SharedQuotaConfigTests(unittest.TestCase):
             held = supervisor.load_status(self.config)
             held_task = held["tasks"][0]
             self.assertTrue(supervisor.task_has_pending_worker_recovery(held_task))
-            self.assertEqual(held_task["owner"], "Claude")
+            self.assertEqual(held_task["owner"], "Antigravity")
             self.assertEqual(supervisor.build_dispatch_plan(
                 self.config, state, held, supervisor.queue_events(state), live_total=0)["events"], [])
             # Only the unrelated eligible fallback gains fresh health. Shared
             # lanes remain exhausted throughout canonical reassignment/replay.
-            refreshed = self.healthy(("antigravity",))["delivery_health"]
+            refreshed = self.healthy((FALLBACK_LANE,))["delivery_health"]
             for bucket in ("accounts", "endpoints"):
                 state["delivery_health"][bucket].update(refreshed[bucket])
             for _ in range(3):
                 supervisor.reconcile_pending_worker_recoveries(self.config, state)
             latest = supervisor.load_status(self.config)
-            self.assertEqual(latest["tasks"][0]["owner"], "Antigravity")
+            self.assertEqual(latest["tasks"][0]["owner"], FALLBACK_OWNER)
             self.assertEqual(latest["tasks"][0]["generation"], 3)
             receipts = latest[supervisor.WORKER_RECOVERY_RECEIPTS_KEY]
             self.assertEqual(len(receipts), 1)
@@ -207,7 +223,7 @@ class SharedQuotaConfigTests(unittest.TestCase):
             self.assertEqual(receipts[receipt_id]["status"], "reassigned")
             events = [e for e in supervisor.queue_events(state) if e.get("recovery_receipt_id") == receipt_id]
             self.assertEqual(len(events), 1)
-            self.assertEqual(events[0]["target_agent"], "antigravity")
+            self.assertEqual(events[0]["target_agent"], FALLBACK_LANE)
             self.assertEqual(worker["status"], "superseded")
             self.assertEqual(len(state["workers"]), 1, "Recovery must leave launch to the existing planner")
 
