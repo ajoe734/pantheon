@@ -1552,6 +1552,20 @@ def pm12_performance_attribution_response(
         sources = pm12_performance_attribution_sources(tenant_id, read_store=read_store)
     facts = pm12_performance_attribution_facts(sources)
 
+    # These PM-12 functions serve Management, independently of Agora's owner-
+    # scoped performance projections. Reuse the already-read persona directory;
+    # explicit test diagnostics must not attribute a trader's private book to
+    # the institutional cohort. Keep the shared fact builder unscoped.
+    from services.control_plane.persona.persona_policy_resolver import non_trading_identity_source
+
+    non_trading_ids = {
+        str(pid) for pid, record in sources["personas_by_id"].items()
+        if isinstance(record, Mapping) and non_trading_identity_source(record)
+    }
+    excluded_facts = [f for f in facts if str(f.get("persona_id") or "") in non_trading_ids]
+    facts = [f for f in facts if str(f.get("persona_id") or "") not in non_trading_ids]
+    hidden_non_trading_persona_count = len({f["persona_id"] for f in excluded_facts})
+
     # Default list scope: drop retired runtimes that never produced attribution
     # data, before filtering, grouping and paging so totals match rows.  An
     # explicit persona/runtime drill-down still returns them; the facts builder
@@ -1659,7 +1673,16 @@ def pm12_performance_attribution_response(
     }
     if surface_key != "performance_attribution":
         surfaces["performance_attribution"] = ranking_fn(attribution_surface, snapshot_at=snapshot_at)
-    learning = pm12_attribution_instrument_learning(sources)
+    # Counterfactual grades must use the same runtime cohort as the visible
+    # facts, rather than aggregating the excluded book's telemetry.
+    visible_runtime_ids = {f.get("runtime_id") for f in facts}
+    learning = pm12_attribution_instrument_learning({
+        **sources,
+        "telemetry_by_runtime_id": {
+            rid: telemetry for rid, telemetry in sources["telemetry_by_runtime_id"].items()
+            if rid in visible_runtime_ids
+        },
+    })
     summary = {
         "period": period_key,
         "dimensions": dimensions,
@@ -1686,6 +1709,7 @@ def pm12_performance_attribution_response(
         "margin_use": learning["margin_use"],
         "instrument_learning": learning,
         "hidden_test_persona_count": hidden_test_persona_count,
+        "hidden_non_trading_persona_count": hidden_non_trading_persona_count,
         "hidden_test_strategy_count": hidden_test_strategy_count,
         "include_test_personas": bool(include_test_personas),
     }
@@ -1719,6 +1743,7 @@ def pm12_performance_attribution_response(
             "dimensions": dimensions,
             "policy": "read_only_performance_attribution",
             "hidden_test_persona_count": hidden_test_persona_count,
+            "hidden_non_trading_persona_count": hidden_non_trading_persona_count,
             "hidden_test_strategy_count": hidden_test_strategy_count,
         },
     }

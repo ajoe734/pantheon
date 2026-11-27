@@ -237,9 +237,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             persona_lookup = unavailable_lookup(
                 f"persona directory read failed: {type(exc).__name__}"
             )
-        # Strategies whose personas are all test-scoped are hidden by default
-        # and counted in meta; include_test_personas=true returns them. Only
-        # needed when the one directory read found test-scoped personas.
+        # Hide strategies whose personas all belong to the test/non-trading
+        # cohort from the same directory read. The explicit include_test switch
+        # retains the existing diagnostic view of all strategies.
         # Unbound synthetic / raw-seed stubs are hidden under the same switch.
         # The Registry owner excludes the unbound stubs and the rows whose
         # Personas are all test-scoped in the same read that selects and counts
@@ -248,7 +248,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         owner_hide_kwargs: Dict[str, Any] = (
             {
                 "hide_stubs": True,
-                "hide_persona_ids": sorted(persona_lookup.test_persona_ids)
+                "hide_persona_ids": sorted(persona_lookup.management_hidden_persona_ids)
                 if persona_lookup.available
                 else [],
             }
@@ -391,7 +391,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             owner_page is not None
             and hide_test
             and not owner_hid
-            and persona_lookup.test_persona_ids
+            and persona_lookup.management_hidden_persona_ids
         ):
             # An owner that does not take the hide input (older Registry): the
             # page it returned cannot be made exact, so classify the whole
@@ -713,7 +713,14 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             }
         meta["surfaces"] = surfaces
         meta["hidden_retired_persona_count"] = hidden_retired_persona_count
-        meta["hidden_test_persona_strategy_count"] = hidden_test_persona_strategy_count
+        meta["hidden_persona_strategy_count"] = hidden_test_persona_strategy_count
+        # Registry reports one count for the supplied cohort, not separate test
+        # and advisory counts. Never label their combined count as test-only.
+        meta["hidden_test_persona_strategy_count"] = (
+            None if hide_test and persona_lookup.non_trading_persona_ids
+            else hidden_test_persona_strategy_count
+        )
+        meta["persona_exclusion_scope"] = ["test", "non_trading"] if hide_test else []
         meta["hidden_unbound_stub_strategy_count"] = hidden_unbound_stub_strategy_count
         meta["include_test_personas"] = bool(include_test_personas)
         return {
