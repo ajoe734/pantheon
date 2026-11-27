@@ -1,13 +1,13 @@
 {
   "schema_version": "task_evidence.v1",
   "task": "SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127",
-  "owner": "Claude",
-  "reviewer": "Antigravity",
+  "owner": "Codex",
+  "reviewer": "Codex2",
   "register_class": [
     "RC2",
     "RC3 WP3.1"
   ],
-  "delivery_state": "source + focused tests; hosted proof (acceptance 7) pending deploy",
+  "delivery_state": "PR 7954 source changes pending independent review and merge; hosted acceptance 7 pending deploy",
   "acceptance": {
     "1_whole_market_from_whole_day_file": {
       "status": "verified_in_source",
@@ -27,7 +27,8 @@
       "per_symbol_path": "records_from_daily_report_payload no longer embeds raw_rows in metadata or body; keeps price_levels (count)",
       "branch_detail_decision": "tw_broker_branch_detail is NOT written by the daily run: every branch x symbol pair is roughly 5-10x the top-20 rows per session with no declared reader; the two-year backfill command keeps its own output directory and is not changed by this task",
       "tests": [
-        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_per_symbol_records_no_longer_embed_raw_price_level_rows"
+        "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_per_symbol_records_no_longer_embed_raw_price_level_rows",
+        "services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides"
       ]
     },
     "3_runtime_budget": {
@@ -47,8 +48,8 @@
         }
       },
       "growth_per_day": "about 2.2-2.7 MB gzip per session plus one ~1 KB receipt",
-      "cap": "6 MB per session partition (KEYED_DATASETS tw_broker_top day_budget_bytes; write refused above it, nothing published); 750 sessions -> at most 4.5 GB, expected 1.6-2.0 GB",
-      "retention": "keyed retention 750 sessions; removed by the existing retention sweeper (services/source_ingestion/retention.py reads KEYED_DATASETS retention_days); receipts pruned to the newest 750 by the writer",
+      "cap": "6 MB per session partition; existing keyed retention is 750 calendar days (at most 750 daily partitions, <=4.5 GB). Receipts retain 750 session files (~0.75 MB). A guaranteed 750 trading-session history remains unresolved.",
+      "retention": "Existing keyed sweeper expires partitions older than 750 calendar days (KEYED_DATASETS.retention_days), not 750 trading sessions. Receipts retain the newest 750 session files. The session/day mismatch is an explicit RC3 market-data residual; 750-session acceptance is not claimed.",
       "source_evidence_store": "receives nothing per broker row; one receipt per session at <market_data_store>/receipts/tw_broker_whole_market/date=<session>.json",
       "updated": [
         "services/source_ingestion/daily_bars_store.py KEYED_DATASETS tw_broker_top budget 0.2 MB -> 6 MB",
@@ -61,7 +62,8 @@
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_over_budget_session_publishes_nothing",
         "services/source_ingestion/tests/test_finmind_broker_whole_market.py::test_receipts_are_pruned_past_the_retention",
         "scripts/test_check_market_data_budget.py"
-      ]
+      ],
+      "retention_acceptance": "partial: actual calendar-day implementation documented; requested 750-session horizon requires the RC3 market-data owner to reconcile retention semantics"
     },
     "4_requests_quota_token_fallback": {
       "status": "verified_in_source",
@@ -96,7 +98,11 @@
     },
     "7_hosted_proof": {
       "status": "pending_deploy",
-      "check": "read-only after deploy: keyed/tw_broker_top/_manifest/date=<latest session>.json row_count / bytes and the receipt receipts/tw_broker_whole_market/date=<session>.json on volume pantheon_source-ingest-data; expect >= 1000 symbols with both sides and bytes <= 6 MB (expected 2.2-2.7 MB)"
+      "check": "read-only after deploy: keyed/tw_broker_top/_manifest/date=<latest session>.json row_count / bytes and the receipt receipts/tw_broker_whole_market/date=<session>.json on volume pantheon_source-ingest-data; expect >= 1000 symbols with both sides and bytes <= 6 MB (expected 2.2-2.7 MB)",
+      "probe_python": "import gzip, json, sys\nfrom collections import defaultdict\nfrom pathlib import Path\nfrom services.source_ingestion.daily_bars_store import KEYED_DATASETS, keyed_dataset_store\nfrom services.source_ingestion.finmind_broker_backfill import read_whole_market_receipt, traded_share_symbols\nfrom services.source_ingestion.routers.ingest_operations import _broker_flow_row\nroot, day = Path(sys.argv[1]), sys.argv[2]\nstore = keyed_dataset_store(root, \"tw_broker_top\")\nreceipt = read_whole_market_receipt(root, day)\nassert receipt and receipt[\"status\"] == \"complete\" and receipt[\"fresh\"] is True, \"no complete receipt\"\nverified = store.verify_partition(day)\nassert verified[\"verified\"], verified.get(\"reason\")\ndel verified\nmanifest = store.read_manifest(day)\nsides = defaultdict(set)\nrows = uncompressed = compressed = compact_rows = 0\nfor entry in manifest[\"files\"]:\n    path = store.base / entry[\"path\"]\n    compressed += path.stat().st_size\n    with gzip.open(path, \"rb\") as handle:\n        for line in handle:\n            uncompressed += len(line)\n            if not line.strip():\n                continue\n            rec = json.loads(line)\n            row = _broker_flow_row(rec)\n            assert row and row[\"date\"] == day and 1 <= row[\"rank\"] <= 20, \"unreadable broker row\"\n            meta = rec[\"metadata\"]\n            assert meta[\"license_scope\"] == \"vendor_research\" and meta[\"redistribution_allowed\"] is False\n            compact_rows += isinstance(meta.get(\"normalized_row\"), dict)\n            sides[row[\"symbol\"]].add(row[\"side\"])\n            rows += 1\nassert len(sides) >= 1000 and all(s == {\"buy\", \"sell\"} for s in sides.values()), \"insufficient two-sided coverage\"\nexpected = traded_share_symbols(root, day)\nassert expected, \"missing governed traded-share daily bars\"\nmissing = expected - set(sides)\nassert len(missing) / len(expected) <= 0.02, \"partial coverage\"\nassert compact_rows > 0 and rows == manifest[\"row_count\"]\nassert compressed == manifest[\"bytes\"] == receipt[\"bytes_compressed\"] <= KEYED_DATASETS[\"tw_broker_top\"].day_budget_bytes\nassert 0 <= receipt[\"requests_made\"] <= 1 <= receipt[\"plan_hourly_cap\"]\nassert store.read_manifest(day) == manifest, \"partition changed during probe; retry after refresh\"\nprint(json.dumps({\"trade_date\": day, \"symbols_with_both_sides\": len(sides), \"expected_traded_shares\": len(expected), \"missing\": len(missing), \"rows\": rows, \"compact_rows\": compact_rows, \"bytes_compressed\": compressed, \"bytes_uncompressed\": uncompressed, \"receipt_bytes_uncompressed\": receipt[\"bytes_uncompressed\"], \"requests_made\": receipt[\"requests_made\"], \"keyed_retention_calendar_days\": KEYED_DATASETS[\"tw_broker_top\"].retention_days, \"result\": \"pass\"}, sort_keys=True))\n",
+      "read_only_probe_command": "python3 -c 'import json,subprocess,sys; e=json.load(open(sys.argv[1])); subprocess.run([\"docker\",\"exec\",\"-e\",\"PYTHONDONTWRITEBYTECODE=1\",sys.argv[2],\"python\",\"-c\",e[\"acceptance\"][\"7_hosted_proof\"][\"probe_python\"],sys.argv[3],sys.argv[4]],check=True)' docs/deployment/evidence/SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127/evidence.json \"$SOURCE_INGEST_CONTAINER\" \"$MARKET_DATA_STORAGE_ROOT\" \"$TRADE_DATE\"",
+      "probe_inputs": "After exact-version deployment and refresh, set SOURCE_INGEST_CONTAINER to the current hosted source-ingest container, MARKET_DATA_STORAGE_ROOT to its mounted market_data_store path, and TRADE_DATE to the published session. Run from the checkout containing this committed evidence manifest. No provider call, task mutation or data write; output must be recorded with deployed identities before claiming acceptance. This checks coverage/bytes, not the unresolved 750-session retention horizon.",
+      "local_probe_validation": "Validated with a synthetic 1000-symbol two-sided fixture only; complete passes, missing store and partial receipt fail, no bytes/mtimes changed and no missing root created. Hosted status remains pending_deploy."
     },
     "8_problem_register": {
       "status": "done",
@@ -117,7 +123,9 @@
       "docs/04/.../SD_MARKET_DATA_ONE_WRITE_PER_DAY_2026-11-16.md (6A tw_broker_top row; the budget checker reads limits from it)",
       "docs/operations/storage-manifest.json",
       "docs/operations/problem-register.md",
-      "tests"
+      "tests",
+      "services/source_ingestion/routers/ingest_operations.py (compact/legacy read compatibility)",
+      "services/source_ingestion/tests/test_broker_branch_flow_route.py (mixed keyed partition regression)"
     ],
     "not_changed": [
       "services/data-plane/taiwan_reference.py (keyed reader already reads both sides)",
@@ -130,11 +138,12 @@
   "residual_findings": [
     "taiwan_reference.read_tw_broker_top_rows reads the whole session partition (~80k rows) per query and filters by symbol; acceptable for the servant's per-question read but a per-symbol index would make it faster",
     "venue is not stored per row (reader defaults TWSE), same as the per-symbol path",
-    "the two-year SponsorPro backfill still has not been run on hosted"
+    "the two-year SponsorPro backfill still has not been run on hosted",
+    "RC3 / market-data retention owner: services/source_ingestion/retention.py expires keyed partitions using today minus retention_days=750 calendar days; acceptance asks for 750 trading sessions. No retention code is changed by this reader repair. Receipts separately cap their count at 750 session files. The coordinator must reconcile this within the existing RC3 market-data work package before claiming full retention acceptance.",
+    "Current canonical reviewer is Codex2 after supervisor reassignment, whereas the older next-message says Antigravity. Handoff uses the governed assigned reviewer; the coordinator retains responsibility for the different-model-family capacity rule."
   ],
   "verification": {
-    "environment": "task worktree .venv-pantheon (python 3.12) + pyarrow 26.0.1 (the locked source-ingest version) on PYTHONPATH",
-    "commands": [
+    "previous_owner_commands": [
       {
         "cmd": "pytest services/source_ingestion/tests/test_finmind_broker_whole_market.py test_finmind_broker_backfill.py test_finmind_taiwan_connectors.py test_finmind_broker_readback_provenance.py test_datasets_keyed_write.py scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_dev_tw_market_refresh.py::test_finmind_prepare_and_missing_secret_paths_exist",
         "result": "182 passed"
@@ -163,6 +172,61 @@
         "cmd": "bash -n scripts/deploy_nonprod_vm.sh",
         "result": "ok"
       }
+    ],
+    "previous_owner_environment": "task worktree .venv-pantheon (python 3.12) + pyarrow 26.0.1 (the locked source-ingest version) on PYTHONPATH",
+    "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py; Python 3.12, pyarrow 26.0.1, no PYTHONPATH override.",
+    "commands": [
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py::test_mixed_legacy_and_compact_keyed_rows_return_both_sides (before fix)",
+        "result": "1 failed as expected: compact 2454 buy/sell rows omitted",
+        "exit_status": 1,
+        "purpose": "defect reproduction"
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_broker_branch_flow_route.py",
+        "result": "6 passed",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_finmind_broker_readback_provenance.py services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_broker_branch_flow_route.py",
+        "result": "123 passed, 1 existing Starlette/httpx deprecation warning in 74.39s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_deploy_nonprod_vm.py -k whole_market",
+        "result": "4 passed, 236 deselected in 7.96s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_market_data_budget.py --only tw_broker_top",
+        "result": "2 checks passed: measured gzip day_bytes=2623088 <= 6000000; declared limit matches design 6A",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 60 .venv-pantheon/bin/python scripts/check_storage_manifest.py && bash -n scripts/deploy_nonprod_vm.sh && git diff --check",
+        "result": "manifest check passed with zero failures; shell syntax and diff checks passed",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 180 .venv-pantheon/bin/python -m pytest -q scripts/test_rebuild_keyed_broker_top.py scripts/test_dev_tw_market_refresh_workflow.py scripts/test_check_storage_manifest.py scripts/test_check_market_data_budget.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_retention.py",
+        "result": "TIMEOUT; not counted as passed. The same 242 collected IDs are being rerun in four bounded round-robin shards.",
+        "exit_status": 124
+      },
+      {
+        "cmd": "timeout 90 .venv-pantheon/bin/python /tmp/source-broker-probe-local-check.py",
+        "result": "Local synthetic fixture only: 1000 symbols with both sides; 2000 compact rows, 15873 gzip bytes, 1325000 uncompressed bytes; probe passed. Missing-store and partial-receipt probes failed as expected. File SHA-256 and mtime snapshots unchanged; missing root not created. No hosted proof claimed.",
+        "exit_status": 0
+      }
     ]
+  },
+  "continuation_20261127": {
+    "prior_owner": "Claude",
+    "prior_reviewer": "Antigravity",
+    "canonical_assignment": "Governed show at dispatch assigns Codex / Codex2; handoff follows the current canonical reviewer rather than the older next-message naming Antigravity.",
+    "base_sha": "d8dd4db14",
+    "base_sync": "Merged current dev without rewriting the published PR history; f71a168ca preserves both independently appended storage-manifest entries.",
+    "reader_anchor": "a7fa56799",
+    "change": "broker-branch-flow picks fields from metadata.normalized_row, then metadata, then the record; canonical symbol/date/source aliases follow parse_tw_broker_top_record without importing the data-plane service.",
+    "regression": "Before the fix, the mixed-session HTTP query returned symbols_without_rows=[2454] and dropped its compact buy/sell rows; after the fix it returns buy and sell rows for legacy 2330 and compact 2454, with quantities, rank, broker and provenance verified."
   }
 }

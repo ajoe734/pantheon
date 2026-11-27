@@ -6324,11 +6324,12 @@
    "count_at_hosted_scale": "every symbol in the whole-day file (expected about 2,000-2,600 TWSE and TPEx symbols) x 20 buy + 20 sell = about 80,000-104,000 rows per session",
    "size_per_day": "measured on hosted-shaped rows: 2.15 MB gzip / 51 MB uncompressed at 2,000 symbols (80,000 rows), 2.62 MB gzip at 2,600 symbols (104,000 rows); one receipt of about 1 KB",
    "growth_per_day": "about 2.2-2.7 MB per session (keyed partition, gzip) + about 1 KB receipt",
-   "growth": "about 1.6-2.0 GB at the 750-session retention",
-   "cap": "per-session partition write refused above 6 MB (KEYED_DATASETS tw_broker_top day_budget_bytes, design 6A row); 750 sessions retained, so at most 4.5 GB; receipts at most 750 files (~0.75 MB); tw_broker_branch_detail is not written by the daily run; the source evidence store receives no per-row record",
+   "growth": "at most 4.5 GB over 750 calendar days; 750 trading-session horizon is a recorded RC3 residual",
+   "cap": "per-session partition write refused above 6 MB (KEYED_DATASETS tw_broker_top day_budget_bytes, design 6A row); 750 calendar days retained by the keyed sweeper, so at most 4.5 GB; receipts at most 750 files (~0.75 MB); tw_broker_branch_detail is not written by the daily run; the source evidence store receives no per-row record",
    "cleanup": "keyed partitions past 750 days removed by the existing retention sweeper (services/source_ingestion/retention.py, KEYED_DATASETS retention_days); a superseded partition generation is deleted after each manifest swap; receipts beyond the newest 750 are deleted by the writer on each run",
    "readers": [
     "services/data-plane/taiwan_reference.py",
+    "services/source_ingestion/routers/ingest_operations.py",
     "scripts/deploy_nonprod_vm.sh",
     "scripts/tw_refresh_outcome_summary.py"
    ],
