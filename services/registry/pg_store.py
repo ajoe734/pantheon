@@ -1785,7 +1785,7 @@ class PostgresRegistryStore:
         batch_size: int = LINEAGE_INDEX_BACKFILL_BATCH_SIZE,
         max_batches: int = LINEAGE_INDEX_BACKFILL_MAX_BATCHES,
     ) -> dict[str, Any]:
-        """Idempotent, bounded batched backfill of ``lineage_index`` and ``summary_rev`` for pre-existing rows."""
+        """Idempotent, bounded batched backfill of ``lineage_index`` and ``summary_rev`` for pre-existing or rollback-stale rows."""
         self._init_summary_index_cache_state()
         table = self._entries.table
         seq_ident, _fn_build, _fn_tg, _tg_name, _idx_name = self._summary_index_identifiers()
@@ -1795,14 +1795,22 @@ class PostgresRegistryStore:
         batch_sql = (
             "WITH lineage_todo AS ("
             f"SELECT record_id FROM {table} "
-            f"WHERE {LINEAGE_INDEX_COLUMN} IS NULL AND ("
+            f"WHERE ("
+            f"{LINEAGE_INDEX_COLUMN} IS NULL "
+            f"OR {SUMMARY_REV_COLUMN} IS NULL "
+            f"OR {LINEAGE_INDEX_COLUMN} IS DISTINCT FROM {fn_lineage_build}(payload)"
+            ") AND ("
             "jsonb_typeof(payload) = 'object' "
             f"OR (jsonb_typeof(payload) = 'string' AND {fn_lineage_build}(payload) IS NOT NULL)"
             ") ORDER BY record_id ASC LIMIT %s FOR UPDATE SKIP LOCKED"
             ") "
             f"UPDATE {table} AS t "
             f"SET {LINEAGE_INDEX_COLUMN} = {fn_lineage_build}(t.payload), "
-            f"{SUMMARY_REV_COLUMN} = COALESCE(t.{SUMMARY_REV_COLUMN}, nextval('{seq_ident}')) "
+            f"{SUMMARY_REV_COLUMN} = CASE "
+            f"WHEN t.{LINEAGE_INDEX_COLUMN} IS NULL AND t.{SUMMARY_REV_COLUMN} IS NOT NULL "
+            f"THEN t.{SUMMARY_REV_COLUMN} "
+            f"ELSE nextval('{seq_ident}') "
+            "END "
             "FROM lineage_todo WHERE t.record_id = lineage_todo.record_id"
         )
         t_start = time.perf_counter()

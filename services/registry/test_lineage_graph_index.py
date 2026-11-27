@@ -581,9 +581,17 @@ def test_real_pg_idempotent_bounded_backfill_and_rollback_compatibility():
         assert non_null_cnt == len(all_seed)
         assert distinct_ts == 1
 
-        # Simulate rollback to previous release: previous release reads and writes
-        # (record_id, payload, updated_at) without referencing lineage_index
+        # Simulate rollback to previous release: previous release replaces trigger fn
+        # with the summary-only version (fn_lineage_build=None, which sets summary_rev=NULL
+        # on non-strategy_spec writes and leaves lineage_index untouched) and reads/writes
+        # (record_id, payload, updated_at) without referencing lineage_index.
+        seq_ident, fn_build, fn_tg, _tg_name, _idx_name = store._summary_index_identifiers()
         with psycopg.connect(_DSN, autocommit=True) as conn:
+            conn.execute(
+                pg_store._strategy_summary_index_trigger_function_sql(
+                    fn_tg, fn_build, seq_ident, fn_lineage_build=None
+                )
+            )
             rollback_entry = _entry(
                 "reg-during-rollback",
                 "execution_bundle",
@@ -601,11 +609,37 @@ def test_real_pg_idempotent_bounded_backfill_and_rollback_compatibility():
                 """,
                 (rollback_entry.registry_id, json.dumps(rollback_entry.to_dict())),
             )
+            # Also update an existing strategy_spec and an existing execution_bundle during rollback
+            updated_spec = copy.deepcopy(all_seed[0])
+            updated_spec.metadata = {**updated_spec.metadata, "persona_id": "persona-rollback-edited"}
+            updated_bundle = copy.deepcopy(all_seed[2])
+            updated_bundle.metadata = {**updated_bundle.metadata, "capital_pool_id": "pool-rollback-edited"}
+            for mutated in (updated_spec, updated_bundle):
+                conn.execute(
+                    f'UPDATE "{schema}".entries SET payload = %s::jsonb WHERE record_id = %s',
+                    (json.dumps(mutated.to_dict()), mutated.registry_id),
+                )
             readback = conn.execute(
                 f'SELECT payload FROM "{schema}".entries WHERE record_id = %s',
                 (rollback_entry.registry_id,),
             ).fetchone()
             assert readback is not None
+
+        # Simulate roll-forward: _ensure_strategy_summary_index + _ensure_lineage_index
+        # restores the shared trigger and re-backfills any row with NULL or stale lineage_index / summary_rev
+        store._summary_index_ready = False
+        store._ensure_lineage_index()
+        roll_forward_report = store.last_lineage_index_backfill
+        assert roll_forward_report is not None
+        assert roll_forward_report["rows_updated"] == 3
+        svc = RegistryService(store)
+        vis = frozenset({"tenant-dev", BUILTIN_TENANT})
+        g_spec = svc.lineage_graph(visible_tenants=vis, root_id="persona-rollback-edited", depth=1, limit=200)
+        assert (updated_spec.registry_id, "persona-rollback-edited", "persona") in _edge_set(g_spec)
+        g_bundle = svc.lineage_graph(visible_tenants=vis, root_id="pool-rollback-edited", depth=1, limit=200)
+        assert (updated_bundle.registry_id, "pool-rollback-edited", "capital_pool") in _edge_set(g_bundle)
+        g_new = svc.lineage_graph(visible_tenants=vis, root_id="reg-during-rollback", depth=1, limit=200)
+        assert ("run-rollback", "reg-during-rollback", "source_run") in _edge_set(g_new)
     finally:
         with psycopg.connect(_DSN, autocommit=True) as conn:
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
