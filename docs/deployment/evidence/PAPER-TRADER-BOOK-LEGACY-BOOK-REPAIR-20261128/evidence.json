@@ -1,7 +1,7 @@
 {
   "task_id": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128",
   "title": "Repaired trader paper book is paused on a US symbol and its ledger row floods directory warnings",
-  "status": "blocked_on_design_disposition",
+  "status": "blocked_on_option_b_ledger_uniqueness",
   "owner": "Claude2",
   "reviewer": "Codex",
   "review_independence": {
@@ -21,7 +21,18 @@
   "design_constraint": {
     "summary": "The legacy book's approved StrategyArtifact (artifact-persona-paper-<token> v1.0.0, approval apv-persona-paper-artifact-<token>) and DeploymentPlan plan-persona-paper-<token> state parameters.symbols=['SPY']. build_paper_execution_projection_metadata (persona_provisioning_coordinator.py ~5404) pins the projection to ids.strategy_artifact_id/ids.version/ids.deployment_plan_id, and RuntimeBinding artifact_id/artifact_version/plan_id cannot change by transition. The only existing owner-approved revision path, transition_legacy_persona_market -> services/registry/strategy_artifact.py create_market_transition_revision (~1087), adds a market and explicitly preserves the parent's symbols. There is therefore no existing approved owner path that yields a 2330.TW projection for this binding id.",
     "review_round_1_disposition": "The first revision overwrote the projected symbol to 2330.TW in the BFF after the approved projection was built. Codex review (PR #8033 head 013d269e8) rejected it as changing market admission metadata without an owner-approved TWD projection. That override is removed: ensure now fails closed with reason_code trader_paper_book_universe_unapproved and makes zero Runtime-Manager transitions and zero ledger writes for a TWD book whose approved universe is the legacy SPY default.",
-    "decision_needed": "AC1 needs a canonical scope/design disposition: (a) a governed universe-revision path (Registry child revision with new symbols + Governance approval + new DeploymentPlan + Runtime-Manager re-point of artifact/plan identity on the same binding id) as a separate owner-layer task, or (b) retire the legacy book and provision a new one (new binding id, contradicts AC1 'same RuntimeBinding id'), or (c) amend AC1."
+    "decision_needed": "Operator chose (b) at 13:51Z; (b) as written needs a second ledger row that the ledger uniqueness forbids. Needs b1 (owner-layer ledger task, then this task) or b2 (amend AC4/AC5 to single-row generations).",
+    "operator_disposition_2026_11_28_1351Z": {
+      "decision": "option (b): retire the legacy book through PersonaProvisioningCoordinator.retire_case (book-only parameter) and provision one replacement book with generation-2 ids through the existing create path; AC4 legacy row terminal retired + replacement row terminal provisioned; AC5 one extra ledger row per replaced book.",
+      "blocking_fact": "The replacement cannot get its own bff.persona_provisioning row. PostgresPersonaProvisioningStore._bootstrap (services/control-plane/bff/persona_provisioning.py ~398-399) declares UNIQUE (tenant_id, normalized_name) and UNIQUE (tenant_id, persona_id); MemoryPersonaProvisioningStore mirrors it (personas[(tenant_id, persona_id)] holds one key). The existing create path (_coordinate_paper_book_deploy_authorities -> store.reserve) for a generation-2 row with the servant persona_id hits ON CONFLICT DO NOTHING, finds no row by its new idempotency key, and raises 'Persona provisioning reservation disappeared' (or ProvisioningConflict when normalized_name is reused). persona_provisioning.py and the hosted table DDL are not in this task's artifacts.",
+      "rejected_workaround": "A generation-2 row with a different ledger persona_id is not viable: the coordinator writes record.persona_id as the sponsor/persona identity into StrategySpec, approvals, StrategyArtifact and DeploymentPlan (34 uses in persona_provisioning_coordinator.py, e.g. ~5321 sponsor_persona_id) and verifies it against the Persona owner (~3095), so the replacement book would be sponsored by a non-existent persona.",
+      "options": {
+        "b1_ledger_uniqueness_owner_task": "Separate owner-layer task on services/control-plane/bff/persona_provisioning.py plus a hosted migration: replace UNIQUE (tenant_id, persona_id) / (tenant_id, normalized_name) with uniqueness over non-terminal rows (or include a book generation), and define get_by_persona on multiple rows. Then this task implements (b) as written. Wider blast radius: shared ledger table used by every Persona.",
+        "b2_amend_AC4_AC5_single_row_generations": "Keep the one existing ledger row (same idempotency key). retire_case (with a retain-persona parameter and a RuntimeBinding retirer, since _retire_runtime_bindings only verifies) retires generation 1 and keeps its receipts; ensure then moves the generation-1 references and retirement receipt under references.book_generations['1'] and re-leases the same row for generation 2, ending state=succeeded/trader_paper_book_provisioned. Zero extra ledger rows; generation-1 owner ids (pool, pcb, binding, artifact, plan) stay retired with history intact; contained in this task's artifacts. Requires accepting that a book row moves from retired to a new generation (book rows only)."
+      },
+      "recommendation": "b2 (contained, no shared-table DDL); b1 if the ledger must show one terminal row per generation.",
+      "code_changes_this_round": "none; the round-1 code at 8e84d754e is unchanged and still fails closed with trader_paper_book_universe_unapproved for the legacy book."
+    }
   },
   "changes": [
     {
