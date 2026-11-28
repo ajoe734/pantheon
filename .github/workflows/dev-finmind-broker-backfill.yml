@@ -155,6 +155,7 @@ jobs:
           PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: api.finmindtrade.com,storage.googleapis.com
           SOURCE_INGEST_BOUNDED_CONNECTOR_ID: tw-finmind-broker-daily-report
           SOURCE_INGEST_BOUNDED_DATASET: tw_broker_top
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           REFRESH_OUTPUT_PATH: ${{ runner.temp }}/finmind-broker-backfill-outcome.json
           BACKFILL_START_DATE: ${{ inputs.start_date || '' }}
@@ -196,7 +197,7 @@ jobs:
               if [[ "${BACKFILL_VERIFY_ONLY}" == "true" ]]; then
                 bf_args+=(--broker-backfill-verify)
               else
-                bf_args+=(--broker-backfill --backfill-max-requests "${BACKFILL_MAX_REQUESTS}" --backfill-max-wall-seconds "${BACKFILL_MAX_WALL_SECONDS}" --backfill-min-interval-seconds "${BACKFILL_MIN_INTERVAL_SECONDS}")
+                bf_args+=(--bounded-runtime-run --run-hosts api.finmindtrade.com,storage.googleapis.com --run-finmind --broker-backfill --backfill-max-requests "${BACKFILL_MAX_REQUESTS}" --backfill-max-wall-seconds "${BACKFILL_MAX_WALL_SECONDS}" --backfill-min-interval-seconds "${BACKFILL_MIN_INTERVAL_SECONDS}")
                 [[ -n "${BACKFILL_START_DATE}" ]] && bf_args+=(--backfill-start "${BACKFILL_START_DATE}")
                 [[ -n "${BACKFILL_END_DATE}" ]] && bf_args+=(--backfill-end "${BACKFILL_END_DATE}")
               fi
@@ -210,6 +211,61 @@ jobs:
             echo "::error::FinMind two-year broker backfill exited with ${step_rc:-unknown}"
             exit "${step_rc:-1}"
           fi
+
+      - name: Verify and restore steady source-ingest posture
+        if: ${{ always() && steps.lease.outcome == 'success' }}
+        id: steady_check
+        timeout-minutes: 5
+        env:
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
+          TARGET_ENV: dev
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.ld }}/state.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.ld }}/heartbeat.pid
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-identity.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.ld }}/heartbeat-failure.json
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.ld }}/heartbeat.log
+          PANTHEON_COLLECTOR_HOST: ${{ vars.PANTHEON_COLLECTOR_HOST }}
+          STEADY_CHECK_OUTPUT_PATH: ${{ runner.temp }}/steady-restore-check.json
+          REFRESH_OUTCOME_PATH: ${{ runner.temp }}/finmind-broker-backfill-outcome.json
+        shell: /bin/bash --noprofile --norc {0}
+        run: |
+          check_rc=0
+          .lease-controller/scripts/run_with_dev_environment_lease.sh \
+            ./scripts/deploy_nonprod_vm.sh --refresh-only --steady-check \
+              --output "${STEADY_CHECK_OUTPUT_PATH}" </dev/null || check_rc=$?
+          python3 - "${STEADY_CHECK_OUTPUT_PATH}" "${REFRESH_OUTCOME_PATH}" "${check_rc}" <<'PY'
+          import json, pathlib, sys
+          check_path, outcome_path, rc = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), int(sys.argv[3])
+          check = {}
+          if check_path.is_file():
+              try:
+                  parsed = json.loads(check_path.read_text(encoding="utf-8"))
+                  check = parsed if isinstance(parsed, dict) else {}
+              except Exception:
+                  check = {}
+          if not check:
+              check = {"mode": "collector_steady_pull", "reason": f"steady_check_transport_exit_{rc}", "status": "failed"}
+          outcome = {}
+          if outcome_path.is_file():
+              try:
+                  parsed = json.loads(outcome_path.read_text(encoding="utf-8"))
+                  outcome = parsed if isinstance(parsed, dict) else {}
+              except Exception:
+                  outcome = {}
+          outcome["steady_restore_check"] = {"reason": str(check.get("reason") or ""), "status": str(check.get("status") or "failed")}
+          if isinstance(check.get("bounded_runtime"), dict):
+              outcome["bounded_runtime"] = check["bounded_runtime"]
+          if isinstance(outcome.get("bounded_runtime"), dict):
+              br = outcome["bounded_runtime"]
+              print(f"bounded runtime: recreates={br.get('enter_recreates')}+{br.get('restore_recreates')} memory.peak={br.get('memory_peak_bytes')} limit={br.get('memory_limit_bytes')} oom_killed={br.get('oom_killed')} hosts={br.get('hosts')} finmind_token={br.get('finmind_token')}")
+          outcome_path.write_text(json.dumps(outcome, sort_keys=True) + "\n", encoding="utf-8")
+          status, reason = outcome["steady_restore_check"]["status"], outcome["steady_restore_check"]["reason"]
+          print(f"steady restore check: status={status} reason={reason or 'none'}")
+          if status not in ("healthy", "restored"):
+              print(f"::error::steady_restore_check_{status}: {reason or 'unknown'}")
+              sys.exit(1)
+          PY
 
       - name: Upload backfill outcome artifact
         if: ${{ always() && steps.lease.outcome == 'success' }}
@@ -281,6 +337,10 @@ jobs:
           coverage = payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {}
           cov_sessions = int(coverage.get("two_sided_sessions_count") or 0)
           cov_passed = bool(coverage.get("passed"))
+          br = payload.get("bounded_runtime") if isinstance(payload.get("bounded_runtime"), dict) else {}
+          br_peak = br.get("memory_peak_bytes")
+          br_limit = br.get("memory_limit_bytes")
+          br_oom = bool(br.get("oom_killed"))
           lines = [
               "### FinMind Two-Year Broker Backfill Summary",
               "",
@@ -301,13 +361,14 @@ jobs:
               f"| Total stored sessions | `{total_sessions}` |",
               f"| Total stored rows / cap | `{total_rows}` / `{max_rows}` |",
               f"| Total stored bytes / cap | `{total_bytes}` / `{max_bytes}` |",
+              f"| Bounded runtime memory.peak / limit | `{br_peak}` / `{br_limit}` (`oom_killed={br_oom}`) |",
               f"| Two-year coverage sessions (>=480) | `{cov_sessions}` (`passed={cov_passed}`) |",
               "",
           ]
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           print("\n".join(lines))
-          if step_outcome != "success" or status != "ok":
-              raise SystemExit(f"FinMind two-year broker backfill did not succeed: step={step_outcome} status={status} reason={reason}")
+          if step_outcome != "success" or status != "ok" or br_oom:
+              raise SystemExit(f"FinMind two-year broker backfill did not succeed: step={step_outcome} status={status} reason={reason} oom_killed={br_oom}")
           if requests_made > plan_cap:
               raise SystemExit(f"requests_made {requests_made} exceeded plan_hourly_cap {plan_cap}")
           if total_bytes > max_bytes or total_rows > max_rows:

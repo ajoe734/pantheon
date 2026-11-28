@@ -1,0 +1,159 @@
+{
+  "task_id": "L2-CALLS-PER-SOURCE-SPLIT-EXTRACTION-AND-COMPILE-20261128",
+  "class": "RC2",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "source_status": "ready_for_independent_review",
+  "hosted_status": "pending_after_deploy",
+  "cause": "DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127 applied its repeat-extraction limit of 1.5 to total ledger reservations. A successful extraction plus compile is two calls on the same source.",
+  "changes": {
+    "ledger": "reserve_attempt(step=extraction by default, compile explicitly from HypothesisCompiler) increments total and compile_calls atomically in the existing daily row. Proven unsent compile refunds both counts on the reservation UTC day. Daily cap and per-source 3/day and 6/total limits still count both steps.",
+    "migration": "Existing additive-column path adds compile_calls INTEGER NOT NULL DEFAULT 0. Prior reservations cannot be retrospectively split: the switch UTC day and old history are not hosted proof. Measure the first full UTC day after the switch.",
+    "summary": "Both ledger.summary and the read-only discovery summary preserve total calls/calls_per_source and add extraction_calls, compile_calls, extraction_calls_per_source. The owner uses the same SELECT and budget. Missing compile_calls column yields three null fields plus calls_split_reason=ledger_compile_calls_column_missing; zero sources yields null extraction ratio.",
+    "probe": "Reads data.discovery_summary.llm_calls.extraction_calls_per_source and gates it at 1.5. Reports total calls, compile_calls, extraction_calls_per_source and calls_per_source_basis=extraction. Missing/null/invalid split falls back to the total gate with basis=total.",
+    "bff": "Existing owner summary pass-through needs no runtime BFF changes. A real-ledger contract test checks total 2, sources 1, total ratio 2.0 and nested extraction 1, compile 1, extraction ratio 1.0.",
+    "register": "Discovery class instance and coordinator dispositions from conversation 2dc972b7 recorded; no repair/reopen requested for the accepted one-time tombstone cost or 30 outage-closed records.",
+    "test_clock": "Coordinator reopened this task to fix the required stale-world subprocess test introduced by DISCOVERY-PIPELINE-ACCEPTANCE-PROBE-20261125 (11/18 rule). Its board and health timestamps are now fixed at 2020-01-01. Failure, secret-redaction, dev-login POST and two GET assertions remain. No release-probe clock flag or environment override added. Other subprocess tests either skip before reading data or build freshness relative to datetime.now; in-process calls pass explicit now."
+  },
+  "baseline_2026_11_28": {
+    "provenance": "Dispatch source document, conversation 2dc972b7; .orchestrator/assistant-dev-packets/sources/l2-calls-per-source-split-extraction-and-compile-20261128/EXECUTION_TASKS.md (coordination root). Operator/coordinator measurements, not a new worker-hosted measurement.",
+    "release_root_run": "46102871850",
+    "backend_sha": "94ee2f78b",
+    "probe_at": "2026-11-28T05:59:00Z",
+    "ledger_calls": 400,
+    "distinct_sources": 207,
+    "calls_per_source": 1.932,
+    "cap": 400,
+    "probe_status": "failed",
+    "probe_reason": "llm_calls_per_source_over_limit",
+    "ledger_compile_calls": null,
+    "ledger_extraction_calls": null,
+    "split_note": "Reservations were not step-labelled. Do not infer the ledger split from event outcome names.",
+    "card_step_paid_answers": 163,
+    "card_step_distinct_sources": 163,
+    "card_step_paid_answers_per_source": 1.0,
+    "card_step_outcomes": {
+      "card": 99,
+      "no_hypothesis": 52,
+      "rejected": 12
+    },
+    "compile_step_answers": 27,
+    "compile_step_outcomes": {
+      "not_expressible": 16,
+      "needs_data": 11
+    },
+    "unavailable": 162,
+    "timeouts": 32,
+    "context": "Unavailable mostly DNS refusals during adapter rebuild. #7998 merged 483f11762 but not deployed at baseline; #8012 merged e11893b9 but not deployed at baseline. Greater testable share increases valid compiler calls."
+  },
+  "coordinator_dispositions": {
+    "authority": "conversation 2dc972b7, task acceptance item 5",
+    "tombstones": {
+      "task": "SOURCE-VERSION-DIGEST-COLLECTOR-RUN-FIELDS-20261127",
+      "measurement_window": "2026-11-28 04:04Z-08:20Z",
+      "worker_restart": "2026-11-28T04:04:35Z",
+      "sources_all_types_approx": 18200,
+      "sources_by_08_20_approx": 12000,
+      "payload_added_MB": 56.7,
+      "news_sources_one_version_each": 847,
+      "previously_carded_of_these_news": 9,
+      "paid_news_paper_calls_approx": 38,
+      "source_dates": "2026-11-11 through 2026-11-16",
+      "deferred_to_next_cap_window_approx": 121,
+      "first_24h_7996_window_news_approx": 953,
+      "disposition": "Accepted one-time cost, no fix. Market rows skip without calls. Existing 7-day prune compacts the new payload; repaired digest survives compaction so the catch_up wave does not recur."
+    },
+    "outage_attempts": {
+      "closed_at": "2026-11-27",
+      "records": 30,
+      "dns": 28,
+      "policy_unavailable": 2,
+      "disposition": "Accepted loss, not reopened; reopening would also require per-record attempt refunds."
+    }
+  },
+  "tests": {
+    "interpreter": ".venv-pantheon/bin/python3, provisioned by scripts/dev/provision_python_distribution.py (exit 0)",
+    "initial_focused": {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_discovery_summary.py acceptance/test_discovery_pipeline_day.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
+      "exit": 1,
+      "passed": 293,
+      "failed": 1,
+      "duration_seconds": 103.99,
+      "failure": "test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets (static-date assumption; reproduced before repair and fixed in this reopened task, see resolved_findings)"
+    },
+    "added_contract_and_fallback": {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_alpha_factory_contract.py::test_owner_step_split_passes_through_board_with_total_contract acceptance/test_discovery_pipeline_day.py::test_missing_or_unreadable_split_keeps_1128_total_failure",
+      "exit": 0,
+      "passed": 8
+    },
+    "storage_manifest": {
+      "command": "timeout 60 python3 scripts/check_storage_manifest.py",
+      "exit": 0,
+      "passed": true,
+      "entries": 382,
+      "failures": []
+    },
+    "final_scoped_batch": {
+      "command": "timeout 240 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_discovery_summary.py acceptance/test_discovery_pipeline_day.py services/control-plane/bff/tests/test_bff_alpha_factory_contract.py",
+      "exit": 0,
+      "passed": 296,
+      "deselected": 0,
+      "duration_seconds": 95.45
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit": 0
+    },
+    "stale_world_and_stdlib": {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets acceptance/test_discovery_pipeline_day.py::test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages",
+      "exit": 0,
+      "passed": 2,
+      "duration_seconds": 4.08
+    }
+  },
+  "hosted_acceptance": {
+    "status": "pending_after_deploy",
+    "measurement_day_utc": null,
+    "release_switch": null,
+    "calls": null,
+    "extraction_calls": null,
+    "compile_calls": null,
+    "distinct_sources": null,
+    "extraction_calls_per_source": null,
+    "card_step_paid_news_answers": null,
+    "card_step_distinct_news_sources": null,
+    "card_step_paid_news_answers_per_source": null,
+    "probe_hypothesis_cards_values": null,
+    "procedure": [
+      "After the supervisor merges and deploys, record exact hosted manifest SHA, service versions, switch time, and the next full UTC day D. Source/local validation does not satisfy hosted acceptance.",
+      "Read the existing ledger with mode=ro and PRAGMA query_only=ON: SELECT day,n AS calls,n-compile_calls AS extraction_calls,compile_calls,sources AS distinct_sources,CASE WHEN sources>0 THEN 1.0*(n-compile_calls)/sources END AS extraction_calls_per_source FROM calls WHERE day=:D. Require extraction_calls_per_source <=1.5.",
+      "For [D,D+1), count card-step paid answers only: events outcomes card/no_hypothesis/rejected written by HypothesisExtractor._answered. Restrict source_id to distinct news sources from the read-only owner outbox (deduplicate versions; do not multiply the event count through a join). Report answers, distinct news sources and answers/source, target <=1.2. Do not count compiler answers or ambiguous shared event outcomes.",
+      "Read-only acceptance/probes/discovery-pipeline against the deployed BFF during day D, and retain its hypothesis_cards values (calls_today, compile_calls, distinct_sources, calls_per_source, extraction_calls_per_source, calls_per_source_basis=extraction). Retain the completed daily ledger row after D closes. If the live probe is taken after UTC rollover, its live values describe the next day and must not be substituted for the completed D row."
+    ]
+  },
+  "runtime_budget": {
+    "cadence": "unchanged existing distillation tick",
+    "new_writers_tables_files_jobs": 0,
+    "size_and_count": "one integer compile_calls on the existing calls table; one service-wide row per UTC day",
+    "growth_per_day": "at most 8 logical bytes added to each existing daily row, no added rows; SQLite page overhead varies",
+    "cap": "shared 400 calls/day; source 3/day and 6/total; no new history cap",
+    "cleanup": "inherits existing calls lifetime; no pruning added; whole-ledger history remains RC3 WP3.1",
+    "manifest": "docs/operations/storage-manifest.json l2_extraction_ledger.sqlite.call_step_budget"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 hosted acceptance",
+      "finding": "First-full-UTC-day hosted figures require merge/deploy and elapsed observation day; not available in this source delivery.",
+      "disposition": "Keep hosted acceptance pending; do not mark accepted from local tests or source review."
+    }
+  ],
+  "resolved_findings": [
+    {
+      "class": "RC1 required-check calendar clock / test determinism",
+      "owner": "Codex, coordinator-directed repair in this task",
+      "finding": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets assumes its fixed 2026-11-28 synthetic world is stale. On 2026-11-28 the probe correctly returns 0 but the test expects 1.",
+      "baseline_reproduction": "Unmodified base 1ae1c6af9f48376b3449fd69690b92c6b7eb8d63 acceptance module/test/probe/fixture exported to a temporary directory, module path verified there, isolated pytest run: 1 failed, exit 1. No task changes needed to reproduce.",
+      "disposition": "Resolved here after coordinator reopened the task: fixed stale timestamps at 2020-01-01, retained assertions, checked other subprocess tests for the same dependency, recorded discovery class instance, and reran the whole focused suite with no exclusions (296 passed)."
+    }
+  ]
+}

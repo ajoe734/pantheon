@@ -14,6 +14,7 @@ family trial count rises once per template, not once per template per day.
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import fcntl
 import hashlib
 import json
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from services.execution.shioaji_adapter import normalize_taiwan_symbol
-from services.registry.alpha_template import alpha_template_checksum, validate_alpha_template
+from services.registry.alpha_template import alpha_template_definition_checksum, validate_alpha_template
 from services.registry.strategy_artifact import validate_strategy_artifact
 from services.source_ingestion.hypothesis_compiler import attach_default_market_screen
 
@@ -307,10 +308,20 @@ class TemplateDemandSearch:
 
         timestamp = self.store._now().isoformat()
         previous = ((demand.get("discovery") or {}).get("template_search") or {}).get("attempts") or {}
-        record = {"run_at": timestamp, "attempts": {}, "excluded": [], "paper_only": True}
+        record = {"run_at": timestamp, "attempts": {}, "templates_attempted": 0,
+                  "excluded": [], "excluded_by_reason": {}, "paper_only": True}
         tried = set(demand["tried_families"])
         capturing_gate = TemplateProofCapturingGate(self.gate)
         new_attempts = 0
+
+        def persist():
+            # Demand receipts are cumulative; this count belongs only to this run.
+            record["excluded_by_reason"] = dict(sorted(Counter(
+                item["reason"] for item in record["excluded"]
+            ).items()))
+            return self.store.record_template_search(
+                demand["tenant_id"], demand["demand_id"], record, tried_families=tried)
+
         try:
             context = self.context_loader(demand)
             dataset, universe = context["dataset"], _symbols(context["universe"])
@@ -344,8 +355,7 @@ class TemplateDemandSearch:
                         updated.update(registration=reg, registry_id=reg["registry_id"],
                                        baseline_ref=reg["approval_decision_id"])
                         record["attempts"][prev_aid] = updated
-                        self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
-                                                          tried_families=tried)
+                        persist()
             for view in sorted(entries, key=lambda v: v["entry"]["registry_id"]):
                 entry = view["entry"]
                 if entry.get("artifact_type") != "alpha_template":
@@ -355,7 +365,7 @@ class TemplateDemandSearch:
                     continue
                 template = validate_alpha_template(entry["metadata"]["alpha_template"])
                 tid = template["template_id"]
-                if alpha_template_checksum(template) != entry.get("checksum"):
+                if alpha_template_definition_checksum(template) != entry.get("checksum"):
                     record["excluded"].append({"template_id": tid, "reason": "template_checksum_mismatch"})
                     continue
                 if template["scope"] != "time_series" or template["status"] in ("retired", "rejected"):
@@ -417,21 +427,27 @@ class TemplateDemandSearch:
                     receipt.update(artifact=artifact, mechanism_status="mechanism_untested",
                                    mechanism_support=None)
                 record["attempts"][aid] = receipt
+                record["templates_attempted"] += 1
                 # Commit each terminal receipt before starting registration or the next backtest.
                 if total >= self.family_budget:
                     tried.add(family)
-                self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
-                                                  tried_families=tried)
+                persist()
                 if response.passed and self.registrar is not None:
                     reg = self.registrar.register_passed_attempt(
                         demand=demand, template=template, artifact=artifact, receipt=receipt,
                         backtest_evaluation=capturing_gate.last_evaluation)
                     receipt.update(registration=reg, registry_id=reg["registry_id"],
                                    baseline_ref=reg["approval_decision_id"])
-                    self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
-                                                      tried_families=tried)
+                    persist()
+            integrity_excluded = sum(item["reason"] in (
+                "template_checksum_mismatch", "template_tenant_mismatch"
+            ) for item in record["excluded"])
+            if not new_attempts and integrity_excluded:
+                record["reason"] = (
+                    "template_search_unavailable:template_integrity_mismatch:"
+                    + str(integrity_excluded)
+                )
             record.setdefault("reason", "search_completed")
         except Exception as exc:
             record["reason"] = f"template_search_unavailable:{type(exc).__name__}:{str(exc)[:160]}"
-        return self.store.record_template_search(demand["tenant_id"], demand["demand_id"], record,
-                                                 tried_families=tried)
+        return persist()

@@ -1,0 +1,397 @@
+{
+  "task_id": "BFF-PERSONA-LEDGER-SLIM-DIRECTORY-20261128",
+  "owner": "Codex",
+  "reviewer": "Claude2",
+  "state": "functional_evidence_pending_independent_review",
+  "delivery": {
+    "merged": false,
+    "deployed": false,
+    "accepted": false
+  },
+  "repair_of": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/7999",
+    "merge": "33fe5a856",
+    "hosted_bff": "1ae1c6af9",
+    "root_run": "46136811413",
+    "source": "Task-author read-only facts, 2026-11-28 13:19Z to 13:22Z; not worker measurements",
+    "failure": "170 full rows measured 39.6 MB decoded, above the 32 MiB entry cap; no cache retained. Every request fetched full rows and repeated 885–950 ms sizing. Previous evidence fixture retained 19.7 MB and did not reproduce that failure."
+  },
+  "implementation": {
+    "sql": "Only list_for_directory selects _DIRECTORY_COLUMNS: fleet projection plus three risk-context references, and no updated_at/lease/retry columns. authoritative_readback objects become the same empty object marker as existing fleet SQL. Result keeps paper_running/status only. JSON object/null behavior remains the existing fleet contract.",
+    "cache": "Existing transactional revision trigger and REPEATABLE READ READ ONLY snapshot retained; one revision SELECT every call, one row SELECT on changed/missing stamp, detached response copies and fail closed on SQL errors. No TTL. Size graph walk happens once for a loaded scope/stamp; hits do not size. Oversized scopes retain only (stamp,None,measured_size) in a bounded LRU slot, so repeated bypasses at the same stamp reload rows but reuse size. LRU eviction discards the scope and its size metadata. Warning names stamp, tenant, size_bytes and cap_bytes once per observed oversized global revision per store.",
+    "full_reads": "get/get_by_persona/list_by_tenant/list_all, reserve/acquire/checkpoint/release, coordinator, readback and create response keep full-row SQL. Legacy fleet methods are unchanged. No agent-provisioning function edited.",
+    "budget": "Per store <=8 tenant/all-tenant slots, <=32 MiB each and <=64 MiB retained input graphs in total. Negative slots retain no row objects and share the 8-slot limit. One integer suppresses repeated bypass warnings; no new table, recurring job or file. Fixed LRU bookkeeping/lock overhead and transient decoded rows/response copies are separate from retained-graph budget."
+  },
+  "transitive_field_audit": {
+    "entry_points": [
+      "_list_persona_records -> _persona_provisioning_records_directory -> list_for_directory",
+      "_persona_provisioning_records_shared -> same directory reader (request-local sharing retained)"
+    ],
+    "ledger_columns": [
+      "tenant_id",
+      "persona_id",
+      "idempotency_key",
+      "request_hash",
+      "normalized_name",
+      "state",
+      "current_step",
+      "created_at",
+      "error",
+      "compensation",
+      "request_payload",
+      "references",
+      "result"
+    ],
+    "references": {
+      "runtime_binding_id": "_persona_record_for_provisioning success predicate and _persona_provisioning_metadata runtime identity",
+      "runtime_id": "same success predicate and metadata",
+      "authoritative_readback": "_persona_record_for_provisioning only isinstance(Mapping); SQL retains object marker, no receipt content",
+      "provisioning_readback_started_at": "_persona_provisioning_metadata trimmed string",
+      "first_evaluation_schedule_cleanup": "_persona_provisioning_metadata copies whole mapping when registered is False",
+      "requested_risk_profile_provenance": "_persona_record_for_provisioning verified_persona_owner source/persona_id/tenant_id/requested_profile, feeding risk and downstream runtime-profile projection",
+      "capital_pool_risk_policy_resolution": "_persona_provisioning_metadata copies whole mapping and examines resolved",
+      "risk_policy_owner_decision_request": "_persona_provisioning_metadata copies whole mapping; absence_source, reason_code, recommended_governance_action and resolution_status affect waiting/governance metadata"
+    },
+    "result": {
+      "paper_running": "_persona_record_for_provisioning success predicate requires True",
+      "status": "same predicate requires paper_running"
+    },
+    "helpers": [
+      "deterministic_provisioning_ids receives record, reads tenant_id/persona_id only, json.dumps + SHA256 derive IDs; ProvisioningIds.to_dict only generated fields.",
+      "_persona_record_for_provisioning reads request_payload.requested_by, state, normalized_name, created_at and persona_id/tenant_id for identity conflict. _persona_record_tenant_id reads existing owner metadata/top-level tenant_id, not ledger receipt keys. mutate_store=False keeps creator/updater branches inactive.",
+      "_persona_provisioning_metadata reads idempotency_key/request_hash/state/current_step/tenant_id/persona_id plus the listed references. error copied whole; fallback error.owner_decision_request also feeds risk resolution. compensation copied whole.",
+      "Full request_payload preserved: name/requested_by/archetype, mandate, strategy_family/strategyFamily, traits, description/memo, budget, risk_profile/riskProfile, maxDrawdown/max_drawdown, dailyLossLimit/daily_loss_limit, dataSourceStatus/data_source_status, dataSources/data_sources, successRate/success_rate. No payload subkey trimming.",
+      "PersonaProvisioningCoordinator._extract_request_risk_profile_context and _verified_requested_profile receive payload/profile strings only: risk/risk_level/riskLevel, nested risk profiles, metadata profile/provenance, risk policy/ref, require_approved_profile_mapping, candidate approval IDs and traits.risk_appetite. _normalize_risk_level only consumes the derived string.",
+      "_persona_create_declared_data_scope reads payload data_scope/dataScope; _persona_create_required_data_sources reads required_data_sources/requiredDataSources/market; _market_persona_required_data_sources receives market only and returns static TW requirements.",
+      "_openclaw_agent_reconcile_request receives constructed Persona, not record; build_persona_runtime_profile and helpers _persona_id/_workspace_ref/_sync_generation/_routing_source/_resolve_model_routing/_memory_policy/_harness_summary read only constructed Persona metadata, model policy and environment configuration. Routing helpers (configured_chain/default_chain/parse_chain/drop_absent_api_routes/api_route_providers_present/_pool_refs/cli_runtime_refs/_mapping/_loose_routing/_first_model_ref/_fallback_model_refs/_fallback_after/_ready_routing/_blocked_routing/_ordered_pool_refs/_provider_pool_ref/_string_list) never receive ProvisioningRecord. No additional ledger key is reachable.",
+      "_get_active_read_store/_get_active_write_owner select ports; get_persona supplies existing owner data. deepcopy/dict/JSON conversion carry already listed objects. Downstream directory/projected-state/strategy/Persona DTO consumers receive merged Persona records, not ledger rows."
+    ],
+    "further_keys_found": [],
+    "excluded_create_only": "_persona_create_response consumes sorted(record.references) and deployment_dispatch for authoritative_receipt_steps/dispatch_admitted. It and every write/readback path retain full records.",
+    "unused_bookkeeping": "Directory decoder supplies deterministic updated_at=created_at, lease_owner/lease_expires_at=None, attempt_count=0 placeholders without selecting those columns. These fields are not used by the projection. Full reads retain actual values; Postgres tests assert actual attempt/lease/timestamp through uncached get."
+  },
+  "fixture": {
+    "rows": 170,
+    "states": {
+      "retired": 165,
+      "succeeded": 4,
+      "provisioning": 1
+    },
+    "recorded_key_bytes_and_counts": {
+      "authoritative_readback": [
+        1362000,
+        132
+      ],
+      "strategy_artifact_approved": [
+        1091000,
+        169
+      ],
+      "deployment_dispatch": [
+        1086000,
+        169
+      ],
+      "baseline_strategy_artifact_approved": [
+        1040000,
+        169
+      ],
+      "baseline_strategy_spec_approved": [
+        974000,
+        169
+      ],
+      "deployment_plan": [
+        967000,
+        169
+      ],
+      "strategy_spec_approved": [
+        960000,
+        169
+      ],
+      "strategy_artifact_candidate": [
+        792000,
+        169
+      ]
+    },
+    "construction": "Synthetic, private-data-free ledger. Each key occurs the recorded number of times. Aggregate JSON text targets recorded key bytes x2.12 (matching ~17.6 MB aggregate wire text); each receipt has 75 distinct nested sequence/digest mappings plus random/compressible owner receipt text. This recreates decoded Python graph overhead as well as wire bytes, rather than one large string; each preserved request carries 4,400 description bytes and 600 mandate bytes so the slim entry also matches the recorded ~1.25 MB. No hosted raw ledger exported. PostgreSQL TOAST storage depends on actual receipt content; exact local storage/text/decoded sizes are measured below, not asserted identical to hosted.",
+    "risk_and_conflicts": "One succeeded row carries all three risk keys; the other three each carry one separately. Include error.owner_decision_request fallback, compensation, readback-start and cleanup metadata. One provisioning row raises real ProvisioningConflict against Agora Servant owner name; retired persona-c6ef44745087d11cc138 has no Persona owner. Full snapshots and both real HTTP payloads compare exactly cold and warm.",
+    "deterministic_guard": "Decoded full-row graph must be 39–42 MB (above 32 MiB), slim entry must be 1.2–1.5 MB and retain, eight key counts/text budgets must match. Timings and RSS are observations, never test thresholds.",
+    "measured_full_entry_bytes": 39526122,
+    "measured_slim_entry_bytes": 1272404,
+    "compression_limit": "Local stored references 8,044,909 B vs task-author 5.3 MB hosted: synthetic random nested receipts compress differently. Measured references text 17,588,147 B and decoded full/slim graphs 39.53/1.27 MB match the failure/retention scales; no claim that TOAST compressed bytes or contents are identical."
+  },
+  "assertion_changes": [
+    "Old full-row equality/external deployment_dispatch cache checks become projection payload parity and runtime_id invalidation checks: discarded create-only receipts must no longer appear in directory inputs. Full get/list and create/readback regressions still verify full receipts.",
+    "Attempt_count, lease_owner and unchanged updated_at assertions now inspect uncached get because those bookkeeping columns are intentionally absent from directory SQL; current_step/state/compensation/runtime_id still prove next-read invalidation.",
+    "Old per-row ~100 KB text-size assertion is replaced by exact per-key aggregate byte/count assertions plus full decoded >32 MiB guard; hosted key occurrence and object-memory shape differ per row.",
+    "Oversized cache absence assertion becomes bounded negative slot (rows=None) plus one sizing call/one warning per revision, preserving row reload freshness and the original byte/count caps.",
+    "No test removed, skipped to obtain green results, or latency threshold relaxed."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped .venv-pantheon installed from supervisor dependency Python; imports verified from foreign cwd without PYTHONPATH."
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<local DSN> PANTHEON_TEST_POSTGRES_DSN=<local DSN> timeout 180 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_persona_provisioning_postgres_integration.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "130 passed, 3 warnings in 46.92s. Production code final; before final fixture text calibration. Real local Postgres invalidation, reserve/lease/restart and readback/reconcile coverage."
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<local DSN> timeout 180 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/tests/test_strategy_operational_status.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_persona_fleet_shared_read.py services/control-plane/bff/tests/test_persona_fleet_current_latency.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py services/control-plane/bff/tests/test_bff_test_architecture.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "133 passed, 3 warnings in 114.12s. Production code final; before final fixture text calibration. Existing compact-list CPU threshold unchanged and passed."
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<local DSN> timeout 120 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py::test_shared_fleet_ledger_read_checks_stamp_and_falls_back_to_full --disable-warnings --maxfail=2",
+      "exit_code": 0,
+      "result": "Final calibrated shape: 11 passed, 3 warnings in 25.86s. 39–42 MB full, 1.2–1.5 MB slim graph guards; SQL-only selected fields; snapshot/strategy/Persona/fleet payload parity, risk keys together and independently, conflict skip, stamp-only warm reads, changed-revision reload, one sizing/one bypass warning per stamp, tenant/all-tenant/detached copies/fail-closed/byte-count-LRU caps. Real Postgres: first-start upgrade, cross-replica/direct-SQL writes including unchanged timestamp, rollback and in-flight commit snapshot coherence; point reads remain full."
+    },
+    {
+      "command": "Six sequential benchmark invocations using benchmarks.command_template",
+      "exit_code": 0,
+      "result": "All six foreground processes terminated normally; every unique schema dropped by context cleanup. Each after run retains one 1,272,404-byte entry and sizes exactly once across six calls. No timing threshold."
+    },
+    {
+      "command": "git diff --check; .venv-pantheon/bin/python -m compileall -q <four changed Python files>; task-scoped scripts.check_storage_manifest.validate_entry plus nested cache proof/budget and evidence JSON validation",
+      "exit_code": 0,
+      "result": "Passed; budget records cadence/count/size/daily growth/caps/cleanup/emitter rate. Unique local Postgres schemas remaining: 0; task-owned --rm container stopped and removed."
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Refreshed checkout-scoped environment; foreign-cwd package imports verified against this task worktree."
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<task-local DSN> PANTHEON_TEST_POSTGRES_DSN=<task-local DSN> timeout 180 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_persona_provisioning_postgres_integration.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "After dev conflict resolution: 130 passed, 3 warnings in 50.32s; final calibrated fixture and real PostgreSQL coverage included; no skipped tests."
+    },
+    {
+      "command": "git diff --check; .venv-pantheon/bin/python -m compileall -q services/control-plane/bff/persona_provisioning.py services/control-plane/bff/personas/service.py services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py; task-scoped scripts.check_storage_manifest.validate_entry and nested cache budget fields; git diff --exit-code origin/dev HEAD -- <three incoming files>; git diff --exit-code 062c1ba6434603e9818c0e0f9a9e68a5d5e2ec4f HEAD -- <four task Python files>; current generation-3 refresh: git diff --exit-code 9bf4b2432d9a7bdbd4b56a43a6e0fbfe2fe780fb HEAD -- services/control-plane/bff docs/operations/storage-manifest.json; python3 -m compileall -q <four task Python files>; task-scoped storage budget/proof and evidence JSON validation; python3 scripts/git/diff_budget.py --base origin/dev --head HEAD; git diff --check",
+      "exit_code": 0,
+      "result": "Passed. Conflict refresh preserves source-ingestion files exactly from dev and all four task Python files exactly from prior head; no new benchmark required for documentation-only conflict resolution. Current generation-3 documentation-only refresh checks all exit 0. Product/test/manifest identity proves earlier focused Postgres suites and benchmarks remain applicable; no product tests or timings rerun for this documentation-only merge. No test or evidence was weakened. Initial generic validator call on the nested in_process_cache rejected its unsupported top-level kind; the corrected check validates the parent entry and explicitly verifies nested cache proof and budget fields, exit 0 (no manifest change)."
+    }
+  ],
+  "benchmarks": {
+    "method": "Isolated local Python BFF router processes, sequential and after tests; one unique local Postgres schema per invocation. Cold = first process directory call, OS/Postgres buffers not flushed. Actual strategy lookup helper and Persona HTTP router, controlled non-ledger owners. before = uncached full list_by_tenant/list_all baseline; after = SQL-slim revision cache. RSS from /proc/self/status (KiB) and ru_maxrss peak before the final diagnostic full-row read; includes BFF imports, fixture seeding and owner fixtures, not a whole hosted BFF. Size computation includes recursive retained-graph walk once per cold scope/stamp; full diagnostic graph timing is separate.",
+    "command_template": "PANTHEON_TEST_PROVISIONING_DSN=<loopback-only local DSN> timeout 90 .venv-pantheon/bin/python -m services.control_plane.bff.tests.test_persona_directory_ledger_reuse --benchmark --mode <before|after> --surface <directory|strategy_lookup|persona_list> --samples 5",
+    "results": [
+      {
+        "cache_entries": 1,
+        "cache_retained_bytes": 1272404,
+        "cold_ms": 169.024,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 208.009,
+        "mode": "after",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 165456,
+          "after_warm_gc": 165464,
+          "idle": 164812,
+          "peak": 164808
+        },
+        "size_computation_ms": [
+          5.117
+        ],
+        "surface": "directory",
+        "warm_median_ms": 19.157,
+        "warm_ms": [
+          19.157,
+          19.434,
+          18.982,
+          17.825,
+          19.8
+        ]
+      },
+      {
+        "cache_entries": 0,
+        "cache_retained_bytes": 0,
+        "cold_ms": 279.255,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 209.047,
+        "mode": "before",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 192232,
+          "after_warm_gc": 186100,
+          "idle": 164908,
+          "peak": 205336
+        },
+        "size_computation_ms": [],
+        "surface": "directory",
+        "warm_median_ms": 266.554,
+        "warm_ms": [
+          264.72,
+          266.554,
+          264.611,
+          284.252,
+          269.706
+        ]
+      },
+      {
+        "cache_entries": 1,
+        "cache_retained_bytes": 1272404,
+        "cold_ms": 378.006,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 217.746,
+        "mode": "after",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 172852,
+          "after_warm_gc": 173100,
+          "idle": 164816,
+          "peak": 172568
+        },
+        "size_computation_ms": [
+          4.919
+        ],
+        "surface": "persona_list",
+        "warm_median_ms": 111.184,
+        "warm_ms": [
+          111.197,
+          113.517,
+          101.769,
+          103.97,
+          111.184
+        ]
+      },
+      {
+        "cache_entries": 0,
+        "cache_retained_bytes": 0,
+        "cold_ms": 496.163,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 214.596,
+        "mode": "before",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 215772,
+          "after_warm_gc": 177720,
+          "idle": 164916,
+          "peak": 227636
+        },
+        "size_computation_ms": [],
+        "surface": "persona_list",
+        "warm_median_ms": 381.49,
+        "warm_ms": [
+          387.877,
+          374.432,
+          484.545,
+          381.49,
+          367.392
+        ]
+      },
+      {
+        "cache_entries": 1,
+        "cache_retained_bytes": 1272404,
+        "cold_ms": 191.937,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 213.293,
+        "mode": "after",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 166104,
+          "after_warm_gc": 166220,
+          "idle": 164844,
+          "peak": 165620
+        },
+        "size_computation_ms": [
+          5.61
+        ],
+        "surface": "strategy_lookup",
+        "warm_median_ms": 45.305,
+        "warm_ms": [
+          45.484,
+          45.305,
+          47.165,
+          41.6,
+          44.961
+        ]
+      },
+      {
+        "cache_entries": 0,
+        "cache_retained_bytes": 0,
+        "cold_ms": 312.163,
+        "full_entry_bytes": 39526122,
+        "full_size_ms": 208.339,
+        "mode": "before",
+        "postgres_shape": {
+          "references_column_bytes": 8044909,
+          "references_text_bytes": 17588147,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 199968,
+          "after_warm_gc": 189832,
+          "idle": 164836,
+          "peak": 206808
+        },
+        "size_computation_ms": [],
+        "surface": "strategy_lookup",
+        "warm_median_ms": 286.855,
+        "warm_ms": [
+          285.181,
+          286.34,
+          310.285,
+          286.855,
+          300.876
+        ]
+      }
+    ],
+    "exit_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "hosted_acceptance": {
+    "status": "pending_operator_acceptance_task",
+    "worker_boundary": "No VM/SSH access or operator-key reads. All SQL writes confined to unique schemas in task-owned loopback-only ephemeral local Postgres container; schemas and container removed after tests. No deployment requested by worker.",
+    "read_only_followup": "At the exact deployed BFF identity verify unchanged revision directory read retains one entry and second read queries only revision; compare cold/warm strategy and Persona response payloads and first-open latency; verify fleet projection risk metadata and 503 on ledger failure. Record hosted manifest/service versions and acceptance-stage results separately. These are not claimed by local facts."
+  },
+  "residual_findings": [
+    {
+      "finding": "Retired ledger persona-c6ef44745087d11cc138 has no Persona owner (inherited task-author finding).",
+      "disposition": "Attached to existing RC3 WP3.1/WP3.4 retention class in problem-register; coordinator must decide retention/owner rule. Preserve current projection here."
+    }
+  ],
+  "validation_development_note": "Initial SQL-double point-read assertion failed because its fetchone always returned the revision; fixed the double to return actual rows for point queries. Repeated focused batches pass. First measurement had a 37.36 MB full / 0.37 MB slim graph; fixture calibrated to hosted-size preserved payload and 75 nested parts, then final 11 checks and all six measurements reran. Earlier measurements are not used as final evidence.",
+  "source_refresh": {
+    "reason": "Human/Ops unblocked generation 3 on 2026-11-28 14:39Z, authorizing repeated normal origin/dev merges (no rebase/force push), evidence refresh and a fresh Claude2 independent review; product code and test changes were not requested.",
+    "prior_head": "9bf4b2432d9a7bdbd4b56a43a6e0fbfe2fe780fb",
+    "merged_dev": "a70110f4e7f615f7d390f31ae98b3524bd55ac9c",
+    "merge_commit": "e3b72ef5b770b066635774e01a8408fcec7b44e7",
+    "conflict_resolution": "Current dev merged cleanly; all incoming operator decisions retained. Only the task-specific register reviewer was aligned to canonical Claude2. Product code, tests, storage manifest, cache budget and benchmarks are byte-identical to prior head. Earlier e7c576cb7 merge resolved only problem-register documentation and retained incoming source-ingestion files exactly from dev.",
+    "commit_message_correction": "Historical e7c576cb7 anchor body abbreviated dev as a613e0 in error; its actual second parent was 352d08e3e83078821c9aba5b6f6663307ec24993. Current refresh base/merge identities are recorded above; final review head is bound by the governed handoff rather than self-referenced in this file.",
+    "review_assignment": "Canonical reviewer is Claude2. Codex2 approvals at 13:44Z and 14:21Z are superseded on family grounds: the assignment arose from supervisor recovery after terminal_quota:antigravity, not an operator designation; Claude2 had capacity. No previous approval carries to this head.",
+    "cleanup": "Task-owned loopback-only postgres:16-alpine container bff-slim-refresh-20261128 stopped and auto-removed; integration schemas remaining: 0."
+  }
+}

@@ -26,6 +26,7 @@ variable is missing.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -86,7 +87,8 @@ FALLBACK_PREFIX = "evidence suggests"
 GATE_REFUSALS = ("survivorship_limited", "below_threshold", "no_passing_gate_result")
 # Outcomes that mean the stage could not do its job (never working output).
 UNAVAILABLE_CODES = ("mandate_universe_missing", "dataset_unavailable")
-# Paid L2 calls per distinct news source today. One call per source and
+# Extraction reservations per distinct source today (compile shares the cap,
+# but not this repeat-article gate). One call per source and
 # unchanged extraction input leaves room for a revised article or a retry; an
 # article re-paid on every hourly collector refetch shows up as ~3 or more.
 MAX_CALLS_PER_SOURCE = 1.5
@@ -455,12 +457,21 @@ def stage_hypothesis_cards(
         return _failed(name, "llm_calls_over_cap", calls_today=calls, unsent_calls_today=unsent, cap=cap)
     sources = _int(llm.get("distinct_sources"))
     per_source = round(calls / sources, 3) if sources else None
-    # The distinct-source count comes from the ledger through the owner summary
-    # and the BFF board. Until that read is plumbed the stage still reports the
-    # calls it can read and says the ratio is not measurable (not a pass on it).
-    if per_source is not None and per_source > MAX_CALLS_PER_SOURCE:
+    compile_calls = _int(owner_calls.get("compile_calls"))
+    extraction_per_source = owner_calls.get("extraction_calls_per_source")
+    if (isinstance(extraction_per_source, bool)
+            or not isinstance(extraction_per_source, (int, float))
+            or not math.isfinite(extraction_per_source) or extraction_per_source < 0):
+        extraction_per_source = None
+    basis = "extraction" if extraction_per_source is not None else "total"
+    checked_per_source = extraction_per_source if basis == "extraction" else per_source
+    split_values = {"compile_calls": compile_calls, "extraction_calls_per_source": extraction_per_source,
+                    "calls_per_source_basis": basis}
+    # Preserve the total ratio for callers, but judge repeated extraction only.
+    # Older owners without a usable split retain the original total-call gate.
+    if checked_per_source is not None and checked_per_source > MAX_CALLS_PER_SOURCE:
         return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, unsent_calls_today=unsent, cap=cap,
-                       distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE)
+                       distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE, **split_values)
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
     today, _ = _count(board, "hypothesis_cards_today")
@@ -476,6 +487,7 @@ def stage_hypothesis_cards(
         "cap": cap,
         "distinct_sources": sources,
         "calls_per_source": per_source,
+        **split_values,
         "calls_per_source_status": "measured" if per_source is not None else "distinct_sources_not_reported",
         "release_switched_at": switch_iso,
         "ritual_events_since_switch": ritual_events,
@@ -578,7 +590,14 @@ def stage_template_search(board: Dict[str, Any], now: datetime) -> Dict[str, Any
     at = _parse_time(latest.get("latest_at"))
     values = {"latest_at": _iso(at), "outcome": latest.get("outcome"), "reason_code": latest.get("reason_code"),
               "owner_reason": latest.get("reason"), "attempts": sum(_int(s.get("attempt_count")) or 0 for s in searches),
-              "demand_id": latest.get("demand_id")}
+              "demand_id": latest.get("demand_id"),
+              "templates_attempted": _int(latest.get("templates_attempted")) or 0,
+              "excluded_by_reason": _dict(latest.get("excluded_by_reason"))}
+    if not values["templates_attempted"] and any(
+        (_int(values["excluded_by_reason"].get(code)) or 0) > 0
+        for code in ("template_checksum_mismatch", "template_tenant_mismatch")
+    ):
+        return _failed(name, "last_search_attempted_nothing", **values)
     if _search_unavailable(latest):
         return _failed(name, "last_search_unavailable:" + str(latest.get("reason_code") or "reason_not_recorded"),
                        **values)
@@ -648,7 +667,9 @@ def stage_gate_attempts(board: Dict[str, Any], now: datetime) -> Dict[str, Any]:
             continue
         code = str(item.get("reason_code") or "")
         if item.get("kind") == "template_search":
-            if code in GATE_REFUSALS:
+            if (_int(item.get("templates_attempted")) or 0) <= 0:
+                add("last_search_attempted_nothing", False)
+            elif code in GATE_REFUSALS:
                 add(code, True)
             elif str(item.get("outcome") or "").lower() == "completed" and not _search_unavailable(item):
                 add("search_completed", True)
