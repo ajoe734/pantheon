@@ -4,7 +4,7 @@
   "reviewer": "Antigravity",
   "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
   "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
-  "source_base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
+  "source_base": "287701d460de11ef8a2cc6b0323c45417d10d48f",
   "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
   "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
   "incident": {
@@ -131,6 +131,31 @@
       "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
       "exit_code": 0,
       "result": "Production +15/-10 net +5; tests +86/-6 net +80; docs/evidence +220/-5 net +215 before this final evidence entry; terminal output collected."
+    },
+    {
+      "command": "timeout 180s /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py",
+      "exit_code": 0,
+      "result": "141 passed, 1 skipped, 3 warnings in 72.70s after dev composition anchor 872154aa7; terminal exit collected.",
+      "skip_reason": "RANKING_TEST_DSN is not configured for the live PostgreSQL latency check."
+    },
+    {
+      "command": "timeout 90s /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_backfill_hosted_chain_persona_scope.py",
+      "initial_exit_code": 1,
+      "initial_result": "139 passed, 1 failed in 23.00s; failure was missing asyncpg in the reused test virtualenv. Not counted as passed.",
+      "environment_repair": "Installed requirements.txt existing dependency asyncpg>=0.29,<1.0 into the test virtualenv; pip terminal exit 0. No repository dependency change.",
+      "exit_code": 0,
+      "result": "Rerun: 139 passed, 1 skipped, 1 warning in 19.04s; terminal exit collected. Includes the previously failing natural reconciliation case and imported fake-clock regressions.",
+      "skip_reason": "Owned loopback PostgreSQL probe DSN is not configured; existing opt-in test skipped."
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check && git diff --check && python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge && python3 scripts/git/diff_budget.py --base origin/dev --head HEAD && git grep -l hidden_test_persona_strategy_count",
+      "exit_code": 0,
+      "result": "Inventory, whitespace, trailers and reader inventory passed after composition; production +15/-10 net +5, tests +86/-6 net +80, docs/evidence +238/-5 net +233 before this evidence update. Terminal exit collected."
+    },
+    {
+      "command": "git diff --exit-code origin/dev -- services/trade_journey/test_hosted_lifecycle_probe.py services/control-plane/bff/strategies/routes/common.py",
+      "exit_code": 0,
+      "result": "Imported lifecycle clock repair and shared persona-directory reuse match dev byte-for-byte; no task edits in either owner surface."
     }
   ],
   "reader_inventory": {
@@ -163,9 +188,9 @@
   },
   "residual_findings": [
     {
-      "finding": "Previous-head Smoke acceptance failed in the unchanged trade-journey lifecycle probe test; the full file passes locally after dev sync. Order dependence or flakiness is suspected, not established.",
-      "owner_chain": "Trade-journey hosted lifecycle probe / owning coordinator; outside this BFF metadata contract scope.",
-      "disposition": "Record the exact failed CI job and local passing evidence for coordinator classification; if it recurs on the synced head, retry once per dispatch instruction. No lifecycle test or implementation changes in this task.",
+      "finding": "Previous-head Smoke acceptance lifecycle failure recurred on 87116895b; the independently owned real-clock test defect is now repaired by merged PR #8020.",
+      "owner_chain": "RC1 deterministic timing checks: CI-LIFECYCLE-PROBE-TEST-CLOCK-20261128 (Codex/Antigravity), merged as 287701d46.",
+      "disposition": "Owning fix imported unchanged from dev. Exact lifecycle smoke pair passes locally (139 passed, 1 skipped); new-head GitHub CI remains pending. No lifecycle source/test edits relative to dev in this task.",
       "evidence": "https://github.com/ajoe734/pantheon/actions/runs/46104630272/job/140855730901"
     }
   ],
@@ -227,5 +252,19 @@
       "merge_anchor": "842687f75a8a9658011378d38ded4bb51ad7b54a",
       "validation": "141 passed, 1 skipped in 48.69s; source contract remains green."
     }
+  },
+  "ci_red_resume_20261128_0606": {
+    "previous_reviewed_head": "87116895b672fabd47ef8ddc37baaf5a124bc79a",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46109402026/job/140874841634",
+    "raw_log_command": "gh run view 46109402026 --job 140874841634 --log-failed",
+    "raw_log_exit_code": 0,
+    "raw_log_result": "Smoke dispatcher passed. Following lifecycle/persona-scope pair failed only test_natural_mode_accepts_journey_ending_in_reconciliation_completed: 1 failed, 136 passed, 1 skipped in 12.01s.",
+    "owning_fix": "CI-LIFECYCLE-PROBE-TEST-CLOCK-20261128, PR #8020 merged as 287701d460de11ef8a2cc6b0323c45417d10d48f; governed show confirms archived source completion and independent Antigravity review.",
+    "composition_anchor": "872154aa7b27ae0ba4e273059b796fb8f9789abd",
+    "repair": "Merge current dev, importing the independently reviewed fake-clock test fix unchanged. No lifecycle test, runtime or workflow edits relative to dev. No retry of the obsolete head was needed.",
+    "register_resolution": "Preserve dev Pulse acceptance and private-persona visibility task ownership; retain this task PR status, evidence reference and unchanged boundaries.",
+    "review": "Prior-head approval is stale; fresh Antigravity exact-head review required after publication.",
+    "github_ci": "Pending on the new head; local results do not establish a passed required GitHub check.",
+    "hosted": "Pending canonical merge, deployment and next Root read-only probe plus admintest count equality proof."
   }
 }
