@@ -6,7 +6,7 @@ apply the same user_private owner rule as GET /bff/personas/{persona_id}:
 1. A non-owner reading a user_private record gets the exact missing-persona 404 body.
 2. The owner, a persona without owner_scope / visibility_scope, and a trading persona keep
    their current answer.
-3. The rule is the shared read-side check (_ensure_persona_readable) built on
+3. The rule is the shared read-side check (_ensure_persona_exists with viewer_user_id) built on
    _persona_fleet_record_visible_to and _fleet_viewer_user_id; the write routes keep
    _ensure_persona_exists.
 4. A rejected request makes no memory, audit, telemetry, persona-owner or pool owner call,
@@ -336,3 +336,94 @@ def test_read_check_reuses_shared_visibility_rule_and_write_routes_keep_existenc
     # POST strategy-discovery passes no viewer.
     start_src = inspect.getsource(lifecycle_routes.build_lifecycle_router)
     assert start_src.count("viewer_user_id=_lazy_viewer_user_id(identity, utc_now)") == 1
+
+
+# --- Registry outage: the journal check fails closed (real PersonaFleetPort, counted transport) ---
+
+JOURNAL_ROUTES = [path for path, _ in SUBROUTES[11:]]
+
+
+class _CountedRegistry:
+    """Persona registry transport behind the real PersonaFleetPort; counts list calls."""
+
+    def __init__(self, records: List[Dict[str, Any]]) -> None:
+        self.records = records
+        self.calls = 0
+        self.fail = False
+
+    def list_personas(self, **_kwargs: Any) -> List[Dict[str, Any]]:
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("persona registry down")
+        return copy.deepcopy(self.records)
+
+
+@pytest.fixture()
+def journal_harness(monkeypatch: pytest.MonkeyPatch):
+    from services.control_plane.bff.ports.persona_capital_runtime import (
+        PersonaFleetPort,
+        create_persona_capital_runtime_port,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+
+    registry = _CountedRegistry([_servant(SERVANT_OPERATOR_A, OPERATOR_A_USER), _servant(SERVANT_ADMIN_TEST, ADMIN_TEST_USER)])
+    ports = ReadSurfacePorts(
+        persona_capital_runtime=create_persona_capital_runtime_port(persona_port=PersonaFleetPort(store=registry))
+    )
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda explicit=None: explicit or ports)
+    # Empty provisioning ledger: the registry is the only directory source.
+    monkeypatch.setattr(
+        personas_service, "_persona_provisioning_store", lambda: SimpleNamespace(list_for_directory=lambda tenant: [])
+    )
+    monkeypatch.setattr(detail_routes, "_bff_me_tenant_payload", lambda identity, requested_tenant=None: {"id": TENANT_ID})
+    monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry.test")
+    monkeypatch.setenv("PERSONA_URL", "http://persona.test")
+    monkeypatch.setattr(trade_journal, "bound_tenant", lambda payload, tenant, auth: TENANT_ID)
+    owner_calls = {"n": 0}
+
+    def _owner_http(url: str, data: Any, headers: Dict[str, str], method: str = "POST") -> Tuple[int, Dict[str, Any]]:
+        owner_calls["n"] += 1
+        if url.startswith("http://telemetry.test"):
+            return 200, {"projections": [], "next_cursor": None, "count": 0, "projection": {}}
+        return 200, {"data": [], "meta": {"tenant_id": TENANT_ID}}
+
+    monkeypatch.setattr(trade_journal, "_http_call", _owner_http)
+    app = FastAPI()
+    app.include_router(
+        trade_journal.create_trade_journal_router(
+            extract_identity=_identity_for_header,
+            require_read_role=lambda _identity: None,
+            require_operator_role=lambda _identity: None,
+        )
+    )
+    return TestClient(app), registry, owner_calls
+
+
+@pytest.mark.parametrize("path", JOURNAL_ROUTES)
+def test_journal_non_owner_404_with_one_registry_call(journal_harness, path: str) -> None:
+    client, registry, owner_calls = journal_harness
+    response = _get(client, path, SERVANT_OPERATOR_A, ADMIN_TEST_USER)
+    assert response.status_code == 404, response.text
+    assert owner_calls["n"] == 0
+    assert registry.calls == 1  # snapshot's two list_personas reads share one owner call
+
+
+@pytest.mark.parametrize("persona_id", [SERVANT_OPERATOR_A, MISSING])
+@pytest.mark.parametrize("path", JOURNAL_ROUTES)
+def test_journal_fails_closed_when_registry_unavailable(journal_harness, path: str, persona_id: str) -> None:
+    client, registry, owner_calls = journal_harness
+    registry.fail = True
+    response = _get(client, path, persona_id, ADMIN_TEST_USER)
+    assert response.status_code == 503, response.text
+    assert owner_calls["n"] == 0
+    assert registry.calls == 1
+
+
+@pytest.mark.parametrize("path", JOURNAL_ROUTES)
+def test_journal_owner_and_absent_persona_keep_owner_answer_with_healthy_registry(journal_harness, path: str) -> None:
+    client, registry, owner_calls = journal_harness
+    expected = 404 if path.endswith("/trade-journal/ep-1") else 200  # owner's own episode answer
+    assert _get(client, path, SERVANT_ADMIN_TEST, ADMIN_TEST_USER).status_code == expected
+    assert _get(client, path, MISSING, ADMIN_TEST_USER).status_code == expected
+    assert owner_calls["n"] == 2
+    assert registry.calls == 2  # one per request

@@ -7312,13 +7312,51 @@ def _ensure_persona_exists(
     (_persona_fleet_record_visible_to) read by anyone but its owning Agora user answers
     the same 404 as a missing persona. The viewer is resolved only for a private record,
     so every other record costs no Agora scope resolution and keeps its current answer.
-    With require_exists=False a persona absent from the directory is left to the
-    caller's own owner read.
+    With require_exists=False a persona absent from a healthy directory is left to the
+    caller's own owner read; an absent record while the persona registry read is
+    unavailable fails closed (503), since its visibility is unknown.
+
+    The read variant runs in one request read scope, so the directory snapshot and the
+    registry status share a single persona-registry owner call.
     """
+    if viewer_user_id is None:
+        _ensure_persona_exists_in_scope(persona_id, caller_tenant, None, require_exists)
+        return
+    with request_read_scope():
+        _ensure_persona_exists_in_scope(persona_id, caller_tenant, viewer_user_id, require_exists)
+
+
+def _persona_registry_read_unavailable() -> bool:
+    """True when the active read store reports the persona registry read as unavailable."""
+    store = _get_active_read_store()
+    source_of = getattr(store, "dataset_source", None)
+    if not callable(source_of):
+        return False
+    try:
+        return source_of("personas") == "unavailable"
+    except Exception:
+        return True
+
+
+def _ensure_persona_exists_in_scope(
+    persona_id: str,
+    caller_tenant: Optional[str],
+    viewer_user_id: Optional[Callable[[], Optional[str]]],
+    require_exists: bool,
+) -> None:
     directory = _get_persona_directory_snapshot(caller_tenant)
     record = directory.records_by_id.get(persona_id)
     if record is None:
         if not require_exists:
+            if viewer_user_id is not None and _persona_registry_read_unavailable():
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Persona registry is unavailable",
+                    "Persona visibility cannot be confirmed while the persona registry read is unavailable",
+                    precondition_failed="persona_registry",
+                    suggestion="Retry after the persona registry recovers",
+                )
             return
     elif (
         viewer_user_id is None

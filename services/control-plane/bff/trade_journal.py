@@ -450,8 +450,6 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         require_read_role(who)
         if not _allowed(who, persona_id):
             return who, None, _err(403, "FORBIDDEN", "Cross-persona access denied")
-        # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
-        (ensure_persona_readable or _ensure_persona_readable)(who, persona_id)
         authorization = request.headers.get("Authorization")
         if not authorization and request.cookies.get("pantheon_session"):
             authorization = f"Bearer {request.cookies['pantheon_session']}"
@@ -459,6 +457,8 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
             tenant = bound_tenant({}, request.headers.get("X-Tenant-Id"), authorization)
         except ActionUnavailableError:
             return who, None, _err(403, "FORBIDDEN", "A verified caller tenant is required")
+        # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
+        (ensure_persona_readable or _ensure_persona_readable)(who, persona_id)
         base = ((os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL"))
                 if owner == "persona" else os.getenv("PANTHEON_TELEMETRY_API_URL"))
         if not base:
