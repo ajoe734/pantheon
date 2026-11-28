@@ -1,7 +1,7 @@
 {
   "task_id": "BFF-PERSONA-LEDGER-SLIM-DIRECTORY-20261128",
   "owner": "Codex",
-  "reviewer": "Antigravity",
+  "reviewer": "Codex2",
   "state": "functional_evidence_pending_independent_review",
   "delivery": {
     "merged": false,
@@ -155,6 +155,21 @@
       "command": "git diff --check; .venv-pantheon/bin/python -m compileall -q <four changed Python files>; task-scoped scripts.check_storage_manifest.validate_entry plus nested cache proof/budget and evidence JSON validation",
       "exit_code": 0,
       "result": "Passed; budget records cadence/count/size/daily growth/caps/cleanup/emitter rate. Unique local Postgres schemas remaining: 0; task-owned --rm container stopped and removed."
+    },
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Refreshed checkout-scoped environment; foreign-cwd package imports verified against this task worktree."
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<task-local DSN> PANTHEON_TEST_POSTGRES_DSN=<task-local DSN> timeout 180 .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_persona_provisioning_postgres_integration.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "After dev conflict resolution: 130 passed, 3 warnings in 50.32s; final calibrated fixture and real PostgreSQL coverage included; no skipped tests."
+    },
+    {
+      "command": "git diff --check; .venv-pantheon/bin/python -m compileall -q services/control-plane/bff/persona_provisioning.py services/control-plane/bff/personas/service.py services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/test_persona_provisioning_readback.py; task-scoped scripts.check_storage_manifest.validate_entry and nested cache budget fields; git diff --exit-code origin/dev HEAD -- <three incoming files>; git diff --exit-code 062c1ba6434603e9818c0e0f9a9e68a5d5e2ec4f HEAD -- <four task Python files>",
+      "exit_code": 0,
+      "result": "Passed. Conflict refresh preserves source-ingestion files exactly from dev and all four task Python files exactly from prior head; no new benchmark required for documentation-only conflict resolution."
     }
   ],
   "benchmarks": {
@@ -368,5 +383,15 @@
       "disposition": "Attached to existing RC3 WP3.1/WP3.4 retention class in problem-register; coordinator must decide retention/owner rule. Preserve current projection here."
     }
   ],
-  "validation_development_note": "Initial SQL-double point-read assertion failed because its fetchone always returned the revision; fixed the double to return actual rows for point queries. Repeated focused batches pass. First measurement had a 37.36 MB full / 0.37 MB slim graph; fixture calibrated to hosted-size preserved payload and 75 nested parts, then final 11 checks and all six measurements reran. Earlier measurements are not used as final evidence."
+  "validation_development_note": "Initial SQL-double point-read assertion failed because its fetchone always returned the revision; fixed the double to return actual rows for point queries. Repeated focused batches pass. First measurement had a 37.36 MB full / 0.37 MB slim graph; fixture calibrated to hosted-size preserved payload and 75 nested parts, then final 11 checks and all six measurements reran. Earlier measurements are not used as final evidence.",
+  "source_refresh": {
+    "reason": "Auto-integrator returned PR #8038 for exact-head merge conflict; previous approval does not carry to this new head.",
+    "prior_head": "062c1ba6434603e9818c0e0f9a9e68a5d5e2ec4f",
+    "merged_dev": "352d08e3e83078821c9aba5b6f6663307ec24993",
+    "merge_commit": "e7c576cb7f76c3432b106c4b13a9637420ff6f92",
+    "conflict_resolution": "Only docs/operations/problem-register.md conflicted. Retained all incoming detailed hosted regression measurements, predecessor validation/residual references and orphan-row finding; added the repair implementation/evidence and current canonical reviewer. The three incoming source-ingestion files match dev exactly. Product code, tests, measured cache budget and earlier benchmarks are unchanged from prior head.",
+    "commit_message_correction": "The anchor body abbreviated dev as a613e0 in error; its actual second parent and integrated dev are 352d08e3e83078821c9aba5b6f6663307ec24993.",
+    "review_assignment": "Current canonical show names Codex2; earlier evidence and task commits name Antigravity. Fresh exact-head handoff uses the current canonical assignment; previous approval is not reused.",
+    "cleanup": "Task-owned loopback-only postgres:16-alpine container bff-slim-refresh-20261128 stopped and auto-removed; integration schemas remaining: 0."
+  }
 }
