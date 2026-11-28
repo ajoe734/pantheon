@@ -30,12 +30,12 @@
     {
       "surface": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets",
       "finding": "PR #8002 Branch CI run 46138186891 job 140960576923 (Test sweep shard 2) failed at 2026-11-28T11:26Z: expected probe exit 1, got exit 0 and VERDICT passed. The fixture is a passing world dated 2026-11-28, while line 899 assumes the wall clock is later. At the actual run time its observations are still fresh. This calendar-dependent assertion is outside the trade-journey artifact contract.",
-      "disposition": "Blocking residual for the RC1 required-check calendar-clock work package, remediation mechanisms owner f4c32790. Coordinator must register this instance and route a deterministic test repair through the discovery/acceptance owner, or explicitly revise this task's artifact contract. Do not bypass the check, relax probe freshness, or count a later wall-clock rerun as a repair. After the fix reaches dev, merge it into this branch and resubmit exact-head review."
+      "disposition": "Resolved by owning task CI-DISCOVERY-PROBE-TEST-DATED-WORLD-20261128, merged #8036 (5563c9b00). Composed from dev during Claude2 resumption; discovery files match dev exactly. Full discovery test module passes in the bounded 165-test batch; no gate bypass or freshness relaxation by this task."
     },
     {
       "surface": "services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
       "finding": "Full local service batch exceeded its existing capacity p95 ceiling: 5.417s versus 5.0s. The CI job that returned this task passed this test; its sole failure was the HOLD attention assertion. No capacity code or thresholds changed in this task.",
-      "disposition": "Coordinator must attach to existing CI reliability/capacity work package before closure; root cause undiagnosed. Isolated rerun also fails at 5.203s. This test measures projector writes, not BFF reads; test, harness, projector and writer store sources match current dev exactly. No thresholds relaxed."
+      "disposition": "Addressed by owning task TRADE-JOURNEY-CAPACITY-TEST-NO-WALL-CLOCK-20261128, merged #8035 (a7406e41c). Its evidence attributes time to per-call PostgreSQL connection overhead and records the test-only timing opt-in; production thresholds remain unchanged. Composed from dev, capacity file matches dev exactly, and the prior failing test passes in the bounded 165-test batch. Managed full-scale performance acceptance remains with that owner."
     }
   ],
   "implementation": {
@@ -158,6 +158,17 @@
     "focused_result": "exit 0; 13 passed, 0 skipped, 3 warnings in 17.08s; terminal output collected; existing PostgreSQL fixtures cleaned their isolated containers",
     "ci_postgres": "Service suites (postgres), job 140960576710 on the same run/head: success, completed 2026-11-28T11:30:04Z",
     "next": "Canonical blocker for coordinator routing of the out-of-contract discovery test repair; no new exact-head approval, merge or hosted acceptance claimed."
+  },
+  "claude2_resumption_20261128": {
+    "reason": "Human/Ops reopened after discovery repair #8036 and assigned healthy cross-family reviewer Claude2; no implementation changes in this resumption.",
+    "base_commit": "538dc897d6b895460870fb20f576b11a7fc4a0e8",
+    "merge_commit": "8ca68404d13dca1a397d0b49ee1e1504ba456849",
+    "reviewer": "Claude2",
+    "validation_command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same DSN> .venv-pantheon/bin/python -m pytest -q --tb=short --disable-warnings [same 11 targets as review_rehandoff_20261128.validation_command] acceptance/test_discovery_pipeline_day.py services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
+    "validation_result": "exit 0; 165 passed, 0 skipped, 3 warnings in 58.91s; subprocess timeout 210s, outer timeout 240s; isolated PostgreSQL cleanup collected before terminal exit",
+    "other_checks": "Python distribution provision passed; git diff --check and diff budget passed; discovery and capacity repair files match dev exactly.",
+    "fixture_preservation": "recorded_hosted_bodies and source_sha256 remain unchanged from previous head a4e87f1b41d67b82f7d2eef5aa0c1f98f8eee7cc",
+    "residual_findings": "Previous discovery and capacity failures routed to owning tasks and composed from merged dev; no new outside-scope findings. Hosted deployment and acceptance remain pending."
   },
   "public_response_probe_repair_20261128": {
     "rejected_head": "9e2b9901e344bef94e3109a6bde9589439ac2df4",
