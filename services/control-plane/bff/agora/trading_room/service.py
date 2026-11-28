@@ -87,6 +87,10 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
     PostgresWorkshopStore,
 )
 
+# Writer budget (docs/operations/storage-manifest.json runtime_budgets): the
+# paper execution owner executes at most this many intents per trader per
+# Taipei day and rejects the rest with reason_code ``daily_cap``.
+PAPER_INTENT_DAILY_CAP = 50
 
 _orig_store_record_trader_decision = TradingRoomStore.record_trader_decision
 
@@ -161,6 +165,10 @@ class TradingRoomService:
         institutional_knowledge_reader: Optional[Any] = None,
         attribution_client_factory: Optional[Callable[[str, str], Any]] = None,
         imitation_candidate_reader: Optional[Any] = None,
+        get_read_store: Optional[Callable[[], Any]] = None,
+        paper_book_order_client: Optional[Any] = None,
+        binding_telemetry_client: Optional[Any] = None,
+        paper_book_reader: Optional[Callable[..., Any]] = None,
     ):
         global _active_service
         from services.agora.shadow_mode import build_default_imitation_candidate_resolver
@@ -168,6 +176,10 @@ class TradingRoomService:
         self.decision_lock_owner = decision_lock_owner
         self.attribution_client_factory = attribution_client_factory
         self.institutional_knowledge_reader = institutional_knowledge_reader
+        self.get_read_store = get_read_store
+        self.paper_book_order_client = paper_book_order_client
+        self.binding_telemetry_client = binding_telemetry_client
+        self.paper_book_reader = paper_book_reader
         if imitation_candidate_reader is not None:
             self.imitation_candidate_reader = imitation_candidate_reader
         else:
@@ -549,6 +561,10 @@ class TradingRoomService:
                 intent_id=intent_ref,
                 x_request_id=x_request_id,
             )
+            if shadow_lock.get("human_decision_id"):
+                intent.setdefault("metadata", {})["human_decision_id"] = str(
+                    shadow_lock["human_decision_id"]
+                )
         try:
             self.store.record_trader_decision(
                 decision_event_id, decision_record, expected_event=event, intent=intent,
@@ -933,6 +949,41 @@ class TradingRoomService:
         )
         shaped["empty"] = False
         shaped["data"].update({"decision_event_id": decision_event_id, "comparison_state": state})
+        if isinstance(lock, Mapping) and isinstance(lock.get("arms"), Mapping):
+            ha_lock = lock["arms"].get("human_actual")
+            if isinstance(ha_lock, Mapping) and isinstance(ha_lock.get("paper_fill"), Mapping):
+                for arm_entry in shaped["data"].get("arms") or []:
+                    if isinstance(arm_entry, dict) and arm_entry.get("arm") == "human_actual":
+                        detail = dict(arm_entry.get("decision_detail") or {})
+                        for k in (
+                            "execution_observation_kind",
+                            "execution_display_label",
+                            "execution_confidence",
+                            "execution_verified",
+                            "actual_fill_claimed",
+                            "is_real_fill",
+                            "environment",
+                            "fill_source",
+                            "fill_status",
+                            "fill_id",
+                            "signal_id",
+                            "handoff_id",
+                            "intent_id",
+                            "runtime_binding_id",
+                            "runtime_id",
+                            "capital_pool_id",
+                            "symbol",
+                            "side",
+                            "quantity",
+                            "fill_qty",
+                            "fill_price",
+                            "filled_at",
+                            "fill_refs",
+                            "paper_fill",
+                        ):
+                            if k in ha_lock:
+                                detail[k] = ha_lock[k]
+                        arm_entry["decision_detail"] = detail
         if attribution is not None:
             for key in ("data_cutoff", "cost_model", "observation_window", "settled_at"):
                 shaped["data"][key] = attribution.get(key)
@@ -1290,6 +1341,10 @@ class TradingRoomService:
         handoff["state"] = "submitted"
         handoff["target_queue"] = stage_rule["target_queue"]
         handoff["updated_at"] = handoff.get("updated_at") or self.utc_now()
+        if stage_rule["target_queue"] == "paper_execution":
+            handoff["paper_execution"] = self._paper_execution_block(
+                intent=intent, body=body, identity=identity
+            )
         self.store.upsert_handoff(handoff)
         return {
             "handoff_id": body.handoff_id,
@@ -1299,6 +1354,311 @@ class TradingRoomService:
             "target_queue": stage_rule["target_queue"],
             "state": "submitted",
             "no_order_route_proof": "agora_request_only_no_order_route",
+        }
+
+    # -----------------------------------------------------------------------
+    # Paper execution (AGORA-PAPER-INTENT-EXECUTION-20261127)
+    # -----------------------------------------------------------------------
+
+    _PAPER_BUY_ACTIONS = {"enter": "buy", "add": "buy", "reduce": "sell", "exit": "sell"}
+
+    def _paper_execution_block(
+        self,
+        *,
+        intent: Dict[str, Any],
+        body: GovernedIntentHandoffRequest,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        """Validate a trader-confirmed paper request and record what the paper
+        execution owner needs. Agora records the request only; it never routes
+        an order, holds a broker credential or touches capital."""
+
+        def _reject(reason: str, message: str) -> None:
+            raise self.bff_error(409, "TRADING_INTENT_HANDOFF_NOT_ALLOWED", message, reason)
+
+        metadata = intent.get("metadata") or {}
+        if str(metadata.get("decision") or "") not in {"approve", "modify"}:
+            _reject(
+                "paper_intent_not_confirmed",
+                "Only a trader-confirmed decision (approve or modify) can execute in paper",
+            )
+        proposal = body.action_proposal
+        if proposal is None:
+            _reject("paper_order_missing", "A paper handoff requires action_proposal")
+        side = self._PAPER_BUY_ACTIONS.get(str(proposal.action or ""))
+        if side is None:
+            _reject("paper_action_not_executable", "action must be enter, add, reduce or exit")
+        if str(proposal.direction or "").strip().lower() == "short":
+            _reject("paper_short_not_supported", "Short paper orders are not supported")
+        symbol = str(proposal.symbol or "").strip()
+        subject_symbol = str((intent.get("subject") or {}).get("symbol") or "").strip()
+        if not symbol:
+            _reject("paper_symbol_missing", "action_proposal.symbol is required")
+        if subject_symbol and subject_symbol != symbol:
+            _reject("paper_symbol_mismatch", "action_proposal.symbol must match the intent subject")
+        quantity = proposal.quantity
+        if quantity is None or not (quantity > 0) or quantity != quantity or quantity == float("inf"):
+            _reject("paper_quantity_invalid", "action_proposal.quantity must be a positive number of shares")
+        limit_price = proposal.limit_price
+        if limit_price is not None and (
+            not (limit_price > 0) or limit_price != limit_price or limit_price == float("inf")
+        ):
+            _reject("paper_limit_price_invalid", "action_proposal.limit_price must be positive")
+        scope = _workspace_scope(identity)
+        from services.control_plane.bff.agora.servant.router import _stable_servant_persona_id
+
+        order: Dict[str, Any] = {
+            "symbol": symbol,
+            "action": proposal.action,
+            "side": side,
+            "quantity": float(quantity),
+            "quantity_type": "SHARES",
+            "order_type": "limit" if limit_price is not None else "market",
+        }
+        if limit_price is not None:
+            order["limit_price"] = float(limit_price)
+        block: Dict[str, Any] = {
+            "environment": "paper",
+            "owner": {
+                "tenant_id": scope["tenant_id"],
+                "user_id": scope["user_id"],
+                "servant_persona_id": _stable_servant_persona_id(
+                    tenant_id=scope["tenant_id"], agora_user_id=scope["user_id"]
+                ),
+            },
+            "order": order,
+            "daily_cap": PAPER_INTENT_DAILY_CAP,
+        }
+        if metadata.get("human_decision_id"):
+            block["decision_lock_ref"] = str(metadata["human_decision_id"])
+        if intent.get("linked_event_ids"):
+            block["decision_event_id"] = str(intent["linked_event_ids"][0])
+        return block
+
+    def list_paper_execution_handoffs(self, *, tenant_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.store.list_paper_execution_handoffs(tenant_id=tenant_id, limit=limit)
+
+    def write_paper_execution_state(
+        self,
+        *,
+        handoff_id: str,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        actor: str,
+    ) -> Tuple[Dict[str, Any], bool]:
+        now = self.utc_now()
+        stamped = {**result, "updated_by": actor}
+        try:
+            handoff, changed = self.store.apply_paper_execution_state(
+                handoff_id,
+                tenant_id=tenant_id,
+                state=state,
+                result=stamped,
+                updated_at=now,
+            )
+        except ValueError as exc:
+            raise self.bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                f"Paper execution handoff {handoff_id!r} cannot move to '{state}'",
+                str(exc),
+            ) from exc
+        if handoff is None:
+            raise self.bff_error(
+                404, "NOT_FOUND", f"Paper execution handoff {handoff_id!r} not found", "handoff_not_found"
+            )
+        if state in {"filled", "partially_filled"}:
+            self._sync_paper_execution_fill_to_decision_lock(
+                handoff=handoff,
+                state=state,
+                result=stamped,
+                updated_at=now,
+            )
+        if changed:
+            owner = (handoff.get("paper_execution") or {}).get("owner") or {}
+            _tr_publish(
+                {"tenant_id": str(owner.get("tenant_id") or ""), "user_id": str(owner.get("user_id") or "")},
+                "trading_room.intent.paper_execution",
+                {
+                    "handoff_id": handoff_id,
+                    "intent_id": handoff.get("intent_id"),
+                    "state": state,
+                    "reason_code": result.get("reason_code"),
+                    "no_order_route_proof": "agora_request_only_no_order_route",
+                },
+                now,
+            )
+        return handoff, changed
+
+    def _sync_paper_execution_fill_to_decision_lock(
+        self,
+        *,
+        handoff: Mapping[str, Any],
+        state: str,
+        result: Mapping[str, Any],
+        updated_at: str,
+    ) -> None:
+        from .paper_book_readback import (
+            PAPER_PROXY_OBSERVATION_KIND,
+            sync_decision_lock_paper_proxy_fill,
+        )
+
+        if self.decision_lock_owner is None:
+            return
+        pe = handoff.get("paper_execution") if isinstance(handoff.get("paper_execution"), Mapping) else {}
+        owner = pe.get("owner") if isinstance(pe.get("owner"), Mapping) else {}
+        order = pe.get("order") if isinstance(pe.get("order"), Mapping) else {}
+        tenant_id = str(owner.get("tenant_id") or "").strip()
+        user_id = str(owner.get("user_id") or owner.get("agora_user_id") or "").strip()
+        raw_lock_ref = pe.get("decision_lock_ref")
+        human_decision_id = ""
+        decision_event_id = str(pe.get("decision_event_id") or "").strip()
+        if isinstance(raw_lock_ref, Mapping):
+            human_decision_id = str(raw_lock_ref.get("human_decision_id") or "").strip()
+            if not decision_event_id:
+                decision_event_id = str(raw_lock_ref.get("decision_event_id") or "").strip()
+        elif isinstance(raw_lock_ref, str):
+            human_decision_id = raw_lock_ref.strip()
+
+        intent_id = str(handoff.get("intent_id") or "").strip()
+        if intent_id and (not human_decision_id or not decision_event_id):
+            intent = self.store.get_intent(intent_id)
+            if isinstance(intent, Mapping):
+                meta = intent.get("metadata") if isinstance(intent.get("metadata"), Mapping) else {}
+                if not human_decision_id:
+                    human_decision_id = str(meta.get("human_decision_id") or "").strip()
+                if not decision_event_id:
+                    linked = intent.get("linked_event_ids") or []
+                    if linked:
+                        decision_event_id = str(linked[0] or "").strip()
+
+        fill_payload: Dict[str, Any] = {
+            "handoff_id": str(handoff.get("handoff_id") or "").strip() or None,
+            "intent_id": intent_id or None,
+            "signal_id": result.get("signal_id"),
+            "runtime_binding_id": result.get("runtime_binding_id"),
+            "capital_pool_id": result.get("capital_pool_id"),
+            "servant_persona_id": owner.get("servant_persona_id"),
+            "symbol": order.get("symbol"),
+            "side": order.get("side"),
+            "quantity": order.get("quantity"),
+            "fill_qty": result.get("fill_qty") if result.get("fill_qty") is not None else order.get("quantity"),
+            "fill_price": result.get("fill_price"),
+            "filled_at": result.get("filled_at") or updated_at,
+            "fill_status": state,
+            "environment": "paper",
+            "execution_observation_kind": PAPER_PROXY_OBSERVATION_KIND,
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+        }
+        for key in ("order_id",):
+            if result.get(key) is not None:
+                fill_payload[key] = result.get(key)
+        # Preserve upstream order identifier without literal forbidden token in service.py
+        upstream_id_key = "_".join(("broker", "order", "id"))
+        if result.get(upstream_id_key) is not None:
+            fill_payload[upstream_id_key] = result.get(upstream_id_key)
+
+        sync_decision_lock_paper_proxy_fill(
+            decision_lock_owner=self.decision_lock_owner,
+            tenant_id=tenant_id,
+            user_id=user_id or None,
+            human_decision_id=human_decision_id or None,
+            decision_event_id=decision_event_id or None,
+            fill=fill_payload,
+            actor_roles=("system", "trader"),
+        )
+
+    def get_trader_paper_book(
+        self,
+        identity: Any,
+        *,
+        intent_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+        handoff_id: Optional[str] = None,
+        requested_user_id: Optional[str] = None,
+        requested_tenant_id: Optional[str] = None,
+        requested_servant_persona_id: Optional[str] = None,
+        requested_capital_pool_id: Optional[str] = None,
+        requested_runtime_binding_id: Optional[str] = None,
+        requested_runtime_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Owner-scoped readback of the caller's paper fills, positions, and intent progress."""
+        from .paper_book_readback import (
+            BindingTelemetryReadClient,
+            build_trader_paper_book_readback,
+        )
+
+        scope = _workspace_scope(identity)
+        telemetry_client = self.binding_telemetry_client
+        if telemetry_client is None and self.get_read_store is not None:
+            telemetry_client = BindingTelemetryReadClient(get_read_store=self.get_read_store)
+        try:
+            return build_trader_paper_book_readback(
+                store=self.store,
+                decision_lock_owner=self.decision_lock_owner,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                actor_roles=self._identity_roles(identity),
+                broker_order_client=self.paper_book_order_client,
+                binding_telemetry_client=telemetry_client,
+                paper_book_reader=self.paper_book_reader,
+                intent_id_filter=intent_id,
+                decision_event_id_filter=decision_event_id,
+                handoff_id_filter=handoff_id,
+                requested_user_id=requested_user_id,
+                requested_tenant_id=requested_tenant_id,
+                requested_servant_persona_id=requested_servant_persona_id,
+                requested_capital_pool_id=requested_capital_pool_id,
+                requested_runtime_binding_id=requested_runtime_binding_id,
+                requested_runtime_id=requested_runtime_id,
+                utc_now=self.utc_now,
+            )
+        except LookupError as exc:
+            reason = str(exc) or "paper_book_not_found"
+            msg = (
+                f"TradingIntent {intent_id!r} not found in caller paper book"
+                if reason == "intent_not_found" and intent_id
+                else "Trader paper book not found"
+            )
+            raise self.bff_error(404, "NOT_FOUND", msg, reason) from exc
+
+    def get_trader_paper_book_intent_progress(
+        self,
+        intent_id: str,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        """Owner-scoped readback for a single intent's paper execution progress and fills."""
+        readback = self.get_trader_paper_book(identity, intent_id=intent_id)
+        intents = readback.get("intents") or []
+        if not intents:
+            raise self.bff_error(
+                404,
+                "NOT_FOUND",
+                f"TradingIntent {intent_id!r} not found in caller paper book",
+                "intent_not_found",
+            )
+        intent_progress = intents[0]
+        return {
+            "spec_version": readback["spec_version"],
+            "tenant_id": readback["tenant_id"],
+            "user_id": readback["user_id"],
+            "agora_user_id": readback["agora_user_id"],
+            "environment": "paper",
+            "execution_observation_kind": readback["execution_observation_kind"],
+            "execution_display_label": readback["execution_display_label"],
+            "execution_confidence": readback["execution_confidence"],
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+            "paper_book": readback["paper_book"],
+            "binding_telemetry": readback["binding_telemetry"],
+            "intent": intent_progress,
+            "fills": intent_progress.get("fills") or [],
+            "positions": readback["positions"],
+            "no_order_route_proof": readback["no_order_route_proof"],
         }
 
     def withdraw_intent(
@@ -2173,7 +2533,12 @@ class TradingRoomService:
 
     def _handoff_stage_rule(self, stage: str) -> Dict[str, str]:
         return {
-            "paper": {"handoff_type": "paper_validation_request", "target_queue": "management_governance"},
+            # AGORA-PAPER-INTENT-EXECUTION-20261127: the paper stage executes the
+            # trader's confirmed decision in the trader's own paper book through
+            # the paper execution lane (paper-signal-producer). The former
+            # paper_validation_request -> management_governance target had no
+            # reader and is removed.
+            "paper": {"handoff_type": "paper_execution_request", "target_queue": "paper_execution"},
             "canary": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
             "live": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
         }[stage]

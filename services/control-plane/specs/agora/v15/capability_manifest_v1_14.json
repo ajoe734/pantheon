@@ -65,6 +65,21 @@
       "owner": "agora"
     },
     {
+      "method": "POST",
+      "path": "/bff/agora/trading-intents/{intent_id}/handoffs",
+      "owner": "paper_execution"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book",
+      "owner": "paper_execution+telemetry+agora-decision-lock"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book/intents/{intent_id}",
+      "owner": "paper_execution+telemetry+agora-decision-lock"
+    },
+    {
       "method": "GET",
       "path": "/bff/agora/workshops/{workshop_id}/completeness",
       "owner": "agora"
@@ -126,6 +141,11 @@
       "agora.strategy_completeness_snapshot",
       "agora.strategy_workshop_event",
       "agora.habit_profiles"
+    ],
+    "paper_execution": [
+      "/internal/agora/paper-execution/handoffs",
+      "/internal/agora/paper-execution/handoffs/{handoff_id}/state",
+      "/api/broker/paper/orders"
     ]
   },
   "limitations": [
@@ -133,6 +153,7 @@
     "No frontend delivery or hosted acceptance claimed",
     "Entry quarantine unavailable until the memory owner supplies an entry mutation API",
     "Shadow comparison route is read-only; 送 Shadow writes an immutable declared_no_trade decision lock settled by evaluation (AGORA-SHADOW-COMPARISON-OWNER-ROUTE-20261127, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127)",
+    "Paper execution: Agora stores the request and the written-back state only; the paper-signal-producer consumer executes in the trader's paper book (at most 50 per trader per Taipei day); canary and live stay behind promotion review",
     "Habit facts are Agora-owned and shared; the servant's interpretations live only in the servant persona's private memory (persona_private) and cross only through meeting minutes. Habit profile is advice only: no execution authority (AGORA-TRADER-HABIT-PROFILE-20261127). Frontend and hosted delivery are not asserted."
   ]
 }

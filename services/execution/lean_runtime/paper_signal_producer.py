@@ -3367,8 +3367,18 @@ def main() -> int:  # pragma: no cover
         raise ValueError("PAPER_PRODUCER_MAX_TICKS must be >= 0")
     health_file = os.getenv("PAPER_PRODUCER_HEALTH_FILE", "").strip()
     strategy = _runner_strategy()
-    producer = PaperSignalProducer(
-        store_for=_redis_store_factory(signal_store_url), strategy=strategy
+    store_for = _redis_store_factory(signal_store_url)
+    producer = PaperSignalProducer(store_for=store_for, strategy=strategy)
+    # AGORA-PAPER-INTENT-EXECUTION-20261127: trader-confirmed Agora paper
+    # intents are consumed in this same cycle (no new service).
+    from services.execution.lean_runtime.agora_paper_intent_consumer import (
+        consumer_status_from_env,
+    )
+
+    agora_intents, agora_intent_status = consumer_status_from_env(store_for)
+    log.info(
+        "agora paper intent consumer state=%s reason=%s",
+        agora_intent_status["state"], agora_intent_status.get("reason", "none"),
     )
     log.info("paper_signal_producer started; interval=%.0fs", interval)
     startup_line, startup_gap = expression_startup_report(
@@ -3391,6 +3401,9 @@ def main() -> int:  # pragma: no cover
         "execution_mode": "paper",
         "live_capital_enabled": False,
         "live_order_submission_enabled": False,
+        "agora_paper_intents": None,
+        # Readable consumer state; not_configured never degrades the producer.
+        "agora_paper_intent_consumer": agora_intent_status,
     }
     if startup_gap:
         health["status"] = "degraded"
@@ -3425,6 +3438,12 @@ def main() -> int:  # pragma: no cover
                     )
 
             counts = producer.tick(bindings, now_iso) if bindings else {}
+            if agora_intents is not None:
+                try:
+                    health["agora_paper_intents"] = agora_intents.consume(bindings, now_iso)
+                except Exception as exc:  # noqa: BLE001 - never stop strategy production
+                    log.warning("agora paper intent consumer failed: %s", exc)
+                    health["agora_paper_intents"] = {"errors": 1}
             degraded_bindings = producer.degraded_bindings
             if degraded_bindings:
                 health["status"] = "degraded"

@@ -13,7 +13,7 @@ import copy
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 BACKEND_ENV = "AGORA_TRADING_ROOM_STORE_BACKEND"
@@ -193,6 +193,178 @@ class TradingRoomStore:
             for handoff_id in self._handoffs_by_intent.get(intent_id, [])
             if handoff_id in self._handoffs
         ]
+
+    # Paper execution handoffs (AGORA-PAPER-INTENT-EXECUTION-20261127). The
+    # reader is the paper execution lane (paper-signal-producer); it writes the
+    # handoff state back here. Agora itself never routes an order.
+    PAPER_EXECUTION_QUEUE = "paper_execution"
+    PAPER_EXECUTION_OPEN_STATES = ("submitted", "accepted", "partially_filled")
+    _PAPER_EXECUTION_TRANSITIONS = {
+        "submitted": {"accepted", "rejected"},
+        "accepted": {"filled", "partially_filled", "rejected"},
+        "partially_filled": {"filled"},
+    }
+
+    def list_paper_execution_handoffs(
+        self, *, tenant_id: str, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Open paper_execution handoffs of one tenant, oldest first, bounded."""
+        items = []
+        for handoff in self._handoffs.values():
+            if handoff.get("target_queue") != self.PAPER_EXECUTION_QUEUE:
+                continue
+            if handoff.get("state") not in self.PAPER_EXECUTION_OPEN_STATES:
+                continue
+            owner = (handoff.get("paper_execution") or {}).get("owner") or {}
+            if str(owner.get("tenant_id") or "") != str(tenant_id):
+                continue
+            items.append(handoff)
+        items.sort(key=lambda h: (str(h.get("created_at") or ""), str(h.get("handoff_id"))))
+        return [dict(h) for h in items[: max(1, int(limit))]]
+
+    def apply_paper_execution_state(
+        self,
+        handoff_id: str,
+        *,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        updated_at: str,
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """Write the paper execution owner's state back to one handoff.
+
+        Returns ``(handoff, changed)``. A replay of the current state with the
+        same result is idempotent (``changed`` False). Raises ``ValueError``
+        with ``paper_execution_transition_invalid`` for any other transition.
+        """
+        handoff = self._handoffs.get(handoff_id)
+        if handoff is None or handoff.get("target_queue") != self.PAPER_EXECUTION_QUEUE:
+            return None, False
+        block = dict(handoff.get("paper_execution") or {})
+        owner = block.get("owner") or {}
+        if str(owner.get("tenant_id") or "") != str(tenant_id):
+            return None, False
+        current = str(handoff.get("state") or "")
+        if current == state:
+            if (block.get("result") or {}) == result:
+                return dict(handoff), False
+            if state != "partially_filled":
+                raise ValueError("paper_execution_transition_invalid")
+        elif state not in self._PAPER_EXECUTION_TRANSITIONS.get(current, set()):
+            raise ValueError("paper_execution_transition_invalid")
+        history = list(block.get("state_history") or [])
+        history.append({"state": state, "at": updated_at, "reason_code": result.get("reason_code")})
+        block["result"] = dict(result)
+        block["state_history"] = history[-10:]
+        handoff["paper_execution"] = block
+        handoff["state"] = state
+        handoff["updated_at"] = updated_at
+        intent_id = handoff.get("intent_id")
+        if intent_id in self._intents:
+            self._intent_states[intent_id] = state
+        return dict(handoff), True
+
+    def list_trader_paper_book_records(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Owner-scoped snapshot of one trader's intents and paper_execution handoffs."""
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        owned_intents: List[Dict[str, Any]] = []
+        owned_intent_ids: set[str] = set()
+        for intent_id, intent in self._intents.items():
+            meta = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+            it_tenant = str(intent.get("tenant_id") or meta.get("tenant_id") or "").strip()
+            it_user = str(
+                meta.get("user_id")
+                or meta.get("agora_user_id")
+                or intent.get("user_id")
+                or intent.get("operator_id")
+                or ""
+            ).strip()
+            if it_tenant and it_tenant != clean_tenant:
+                continue
+            if it_user != clean_user:
+                continue
+            intent_copy = copy.deepcopy(intent)
+            intent_copy.setdefault("lifecycle_state", self._intent_states.get(intent_id, "draft"))
+            owned_intents.append(intent_copy)
+            owned_intent_ids.add(str(intent_id))
+
+        owned_handoffs: List[Dict[str, Any]] = []
+        for handoff in self._handoffs.values():
+            pe = handoff.get("paper_execution") if isinstance(handoff.get("paper_execution"), dict) else {}
+            owner = pe.get("owner") if isinstance(pe.get("owner"), dict) else {}
+            hof_tenant = str(handoff.get("tenant_id") or owner.get("tenant_id") or "").strip()
+            hof_user = str(owner.get("user_id") or owner.get("agora_user_id") or "").strip()
+            if hof_tenant and hof_tenant != clean_tenant:
+                continue
+            is_owner = bool(hof_user and hof_user == clean_user)
+            if not is_owner:
+                req_by = handoff.get("requested_by") if isinstance(handoff.get("requested_by"), dict) else {}
+                actor_ref = str(req_by.get("actor_ref") or "").strip()
+                if actor_ref and actor_ref == clean_user and (not hof_tenant or hof_tenant == clean_tenant):
+                    is_owner = True
+            if not is_owner and str(handoff.get("intent_id") or "") in owned_intent_ids:
+                is_owner = True
+            if is_owner:
+                owned_handoffs.append(copy.deepcopy(handoff))
+
+        owned_intents.sort(
+            key=lambda it: (str(it.get("expressed_at") or ""), str(it.get("intent_id") or ""))
+        )
+        owned_handoffs.sort(
+            key=lambda h: (str(h.get("created_at") or ""), str(h.get("handoff_id") or ""))
+        )
+        return {
+            "intents": owned_intents,
+            "handoffs": owned_handoffs,
+        }
+
+    def reconcile_paper_execution_fill(
+        self,
+        handoff_id: str,
+        *,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        updated_at: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Reconcile a paper_execution handoff when readback observes a fill or update."""
+        handoff = self._handoffs.get(handoff_id)
+        if handoff is None or handoff.get("target_queue") != self.PAPER_EXECUTION_QUEUE:
+            return None
+        block = dict(handoff.get("paper_execution") or {})
+        owner = block.get("owner") or {}
+        if str(owner.get("tenant_id") or "") != str(tenant_id):
+            return None
+        current = str(handoff.get("state") or "")
+        if current in {"rejected", "cancelled", "expired"}:
+            return dict(handoff)
+        merged_result = dict(block.get("result") or {})
+        for k, v in result.items():
+            if v is not None:
+                merged_result[k] = v
+        merged_result.setdefault("environment", "paper")
+        merged_result.setdefault("no_order_route_proof", self._REQUIRED_HANDOFF_PROOF)
+        merged_result.setdefault("updated_by", "paper-book-readback")
+        history = list(block.get("state_history") or [])
+        if current != state:
+            if current == "submitted" and state in {"filled", "partially_filled"}:
+                history.append({"state": "accepted", "at": updated_at, "reason_code": None})
+            history.append({"state": state, "at": updated_at, "reason_code": merged_result.get("reason_code")})
+        block["result"] = merged_result
+        block["state_history"] = history[-10:]
+        handoff["paper_execution"] = block
+        handoff["state"] = state
+        handoff["updated_at"] = updated_at
+        intent_id = handoff.get("intent_id")
+        if intent_id in self._intents:
+            self._intent_states[intent_id] = state
+        return copy.deepcopy(handoff)
 
     def withdraw_intent(self, intent_id: str, *, withdrawn_at: str) -> Optional[Dict[str, Any]]:
         intent = self.set_intent_state(intent_id, "withdrawn")
@@ -536,6 +708,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
         mutators = {
             "upsert_decision_event", "record_trader_decision", "upsert_intent",
             "set_intent_state", "upsert_handoff", "withdraw_intent",
+            "apply_paper_execution_state", "reconcile_paper_execution_fill",
             "check_and_record_idempotency_key", "upsert_workspace_proposal",
             "upsert_workspace", "upsert_widget_revision_proposal",
             "record_workspace_version",
@@ -543,6 +716,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
         readers = {
             "get_decision_event", "list_decision_events", "get_intent",
             "get_intent_state", "get_handoff", "list_handoffs_for_intent",
+            "list_paper_execution_handoffs", "list_trader_paper_book_records",
             "get_workspace_proposal_record", "get_workspace_proposal_generation_meta",
             "get_workspace_record", "get_workspace_for_strategy", "list_workspaces",
             "get_widget_revision_proposal_record",
