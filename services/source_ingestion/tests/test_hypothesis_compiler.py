@@ -644,3 +644,15 @@ def test_hosted_evidence_probe_reports_real_store_rows_read_only(tmp_path, monke
     assert before == [hashlib.sha256(p.read_bytes()).hexdigest() for p in (ledger_path, compiler_path)]
     scope["ledger"].close()
     scope["compiler"].close()
+
+
+def test_compiler_reserves_compile_step_alongside_card_call(tmp_path):
+    ledger = ExtractionLedger(tmp_path / "split.sqlite")
+    assert ledger.reserve_call("src-1")
+    compiler = HypothesisCompiler(lambda *_: _proposal(), CompilerStore(), ledger)
+    assert compiler.compile(_card(), source_id="src-1").status == COMPILED
+    summary = ledger.summary()
+    assert (summary["calls"], summary["compile_calls"], summary["extraction_calls"],
+            summary["distinct_sources"], summary["extraction_calls_per_source"]) == (2, 1, 1, 1, 1.0)
+    compiler.compile(_card(), source_id="src-1")
+    assert ledger.summary() == summary  # cached compile is free
