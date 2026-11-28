@@ -6623,6 +6623,28 @@
     "file": "scripts/deploy_nonprod_vm.sh",
     "contains": "cap=\"${BOUNDED_RUNTIME_RETIRED_LOG_LINES:-50}\""
    }
+  },
+  {
+   "name": "Bounded source-ingest memory.stat diagnostic in existing refresh run logs",
+   "owner": "market-data domain cb4f6795 / release restore helpers",
+   "writer": "scripts/deploy_nonprod_vm.sh bounded_runtime_record_memory (stdout info line; existing GitHub Actions job log capture)",
+   "task": "TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128",
+   "register_class": "RC2",
+   "bound_status": "bounded",
+   "cadence": "One anon/file current sample alongside each existing memory.peak sample (after an executed profile and before restore); normally <=13 samples per full 12-profile run including restore; extra stale records add one sample each",
+   "count_at_hosted_scale": "Zero new files/tables/queues; one existing Actions job log per refresh on the single dev host",
+   "size": "One numeric anon/file line, <256 bytes/sample; normally <3.25 KiB/run or <13 KiB/day for four scheduled runs, plus manual runs and stale-record retries",
+   "growth_per_day": "Normally <=13 KiB/day added to existing run logs at four scheduled refreshes/day; linear in actual runs/samples, no new recurring writer",
+   "cap": "At most two cgroup keys emitted per sample; historical run retention follows existing Actions run log retention (incident run artifacts expire after 90 days); no independent accumulation on host",
+   "cleanup": "Existing Actions run/log retention and run deletion; no separate host file or cleanup job added",
+   "readers": [
+    "scripts/probe_tw_refresh_restore.py",
+    "market-data diagnostic review"
+   ],
+   "bound_proof": {
+    "file": "scripts/deploy_nonprod_vm.sh",
+    "contains": "source-ingest memory.stat at sample (not peak)"
+   }
   }
  ]
 }

@@ -63,7 +63,8 @@
       "scheduler_health": "healthy",
       "scheduler_mode": "collector_steady_pull",
       "record_phase": "entered",
-      "record_enter_count": 1
+      "record_enter_count": 1,
+      "new_predicate_replay": "Read-only stdin bash with exact new bounded_runtime_matches_steady_record plus existing steady_posture_problem against operator-renamed original state: exit 0, READ_ONLY_RECORD_MATCH_AND_STEADY_POSTURE=passed. No retire/restore calls and no hosted writes."
     },
     "live_repair": {
       "source": "task-scoped brief/operator decision (not performed by this worker)",
@@ -120,7 +121,8 @@
     "cadence": "at most once per retired record; zero new jobs",
     "size_count": "one log and transient sibling; default 50 lines, typically <50 KiB each",
     "growth_per_day": "zero after tail fills; four current scheduled refreshes/day plus manual refreshes",
-    "cap_cleanup": "50-line tail; record deleted on successful retirement; failed-record count cap is a pre-existing RC3 residual"
+    "cap_cleanup": "50-line tail; record deleted on successful retirement; failed-record count cap is a pre-existing RC3 residual",
+    "memory_stat_emitter": "Existing stdout/job-log capture only: <256 bytes/current sample, normally <=13 samples/full 12-profile run, <3.25 KiB/run and <13 KiB/day at four scheduled runs; existing Actions retention/cleanup. No new host files or jobs; separate runtime_budgets entry."
   },
   "verification": {
     "before_change": "4 failed, 6 passed, 254 deselected: retirement, successful/rejected starting recheck, missing deadline helper; base source unchanged when run",
