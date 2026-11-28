@@ -2777,18 +2777,21 @@ def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -
 # --- _persona_provisioning_records_shared ---
 def _persona_provisioning_records_shared(store: Any, clean_tenant: str) -> List[Any]:
     """Durable provisioning ledger read, shared per request (value or failure)."""
-    # The fleet projection needs only a slim subset of each ledger row; stores
-    # that can project it server-side expose ``*_for_fleet`` (others return full).
-    read_prov = (
-        getattr(store, "list_by_tenant_for_fleet", None) or store.list_by_tenant
-        if clean_tenant
-        else getattr(store, "list_all_for_fleet", None) or store.list_all
-    )
-    read_args = (clean_tenant,) if clean_tenant else ()
+    # Full inputs preserve risk provenance/policy metadata that the old SQL
+    # slim projection dropped. Postgres validates its cross-request
+    # cache on this call; request sharing adds no time-based staleness.
     return cached_owner_call(
-        ("persona_provisioning_records", "fleet_slim", id(store), clean_tenant),
-        lambda: list(read_prov(*read_args)),
+        ("persona_provisioning_records", "directory_full", id(store), clean_tenant),
+        lambda: _persona_provisioning_records_directory(store, clean_tenant),
     )
+
+
+def _persona_provisioning_records_directory(store: Any, clean_tenant: str) -> List[Any]:
+    read_directory = getattr(store, "list_for_directory", None)
+    if callable(read_directory):
+        return list(read_directory(clean_tenant or None))
+    read_prov = store.list_by_tenant if clean_tenant else store.list_all
+    return list(read_prov(*((clean_tenant,) if clean_tenant else ())))
 
 
 # --- _list_persona_records ---
@@ -2843,8 +2846,7 @@ def _list_persona_records(
             # once; a failure is cached too, so every caller sees it.
             prov_records = _persona_provisioning_records_shared(store, clean_tenant)
         else:
-            read_prov = store.list_by_tenant if clean_tenant else store.list_all
-            prov_records = read_prov(*((clean_tenant,) if clean_tenant else ()))
+            prov_records = _persona_provisioning_records_directory(store, clean_tenant)
     except Exception as exc:
         log.warning("Persona provisioning store list failed for dependency %s", "persona_provisioning_store")
         raise _bff_error(

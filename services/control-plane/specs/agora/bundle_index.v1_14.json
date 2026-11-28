@@ -6,11 +6,12 @@
     "bundle_index_sha256": "0a03e5efd1a0af3b109dd0386041374c966bc5247655a60b556b9d921e043940"
   },
   "files": {
-    "specs/agora/v15/capability_manifest_v1_14.json": "76472482b4b140eb79deb1eab40d79c9284f5e6d71adfa4699e497d011815db4"
+    "specs/agora/v15/capability_manifest_v1_14.json": "338fa337c038fb9d102cf29c8f556e9d0912fd1706eacba6be847f90c0fb14a1",
+    "specs/agora/v15/governed_intent_handoff.schema.json": "4ad22650e299799e19ca56f3a8aa582e4a44351430201a7df375841f16c5a4ee"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_14.openapi.yaml",
-    "sha256": "25abc289ce3592c6b98a27060ad48cd125fea68a579111c178a396deeb9d3d4c"
+    "sha256": "defe60396bb53d912ff6c4be004a94ac43e2a23c4040d8f1ba960ee413763e48"
   },
   "route_families": {
     "agora.committee-memory.owner.v1": [
@@ -26,11 +27,17 @@
       "POST /bff/agora/servant/paper-book/ensure"
     ],
     "agora.trading-room.shadow-comparison.owner.v1": [
-      "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison"
+      "GET /bff/agora/trading-room/decision-events/{decision_event_id}/shadow-comparison",
+      "GET /bff/agora/trading-room/imitation-comparison"
     ],
     "agora.servant.data-tools.v1": [
       "POST /bff/agora/servant/sessions/{session_id}/messages",
       "GET /bff/agora/servant/sessions/{session_id}/stream"
+    ],
+    "agora.trading.paper-execution.v1": [
+      "POST /bff/agora/trading-intents/{intent_id}/handoffs",
+      "GET /bff/agora/trading-room/paper-book",
+      "GET /bff/agora/trading-room/paper-book/intents/{intent_id}"
     ],
     "agora.workshop.twelve-block-completeness.v1": [
       "GET /bff/agora/workshops/{workshop_id}/completeness",
@@ -40,7 +47,22 @@
     "agora.servant.habits.v1": [
       "GET /bff/agora/servant/habits",
       "PATCH /bff/agora/servant/habits"
+    ],
+    "agora.servant.clarify.v1": [
+      "POST /bff/agora/servant/sessions/{session_id}/messages",
+      "GET /bff/agora/servant/sessions/{session_id}/stream"
+    ],
+    "agora.servant.reports.v1": [
+      "GET /bff/agora/servant/reports",
+      "POST /bff/agora/servant/reports",
+      "GET /bff/agora/servant/reports/{report_id}"
+    ],
+    "agora.trading.workspace-revisions.v1": [
+      "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject",
+      "POST /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject",
+      "GET /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals",
+      "POST /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers"
     ]
   },
-  "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted."
+  "note": "Additive owner forwarding contract. Prior version bytes remain frozen. Frontend and hosted delivery are not asserted. AGORA-PAPER-INTENT-EXECUTION-20261127 adds specs/agora/v15/governed_intent_handoff.schema.json (supersedes the frozen v4 handoff schema): paper handoffs target paper_execution; paper_validation_request and management_governance are removed."
 }

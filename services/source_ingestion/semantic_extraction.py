@@ -700,6 +700,7 @@ class SemanticExtractionResult:
     retry_count: int = 0
     created_at: str = field(default_factory=_utc_now)
     hypothesis_card: Optional[Mapping[str, Any]] = None
+    unsent_reason: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -728,6 +729,7 @@ class SemanticExtractionResult:
             "latency_ms": self.latency_ms,
             "retry_count": self.retry_count,
             "created_at": self.created_at,
+            "unsent_reason": self.unsent_reason,
             "hypothesis_card": dict(self.hypothesis_card) if self.hypothesis_card is not None else None,
         }
 
@@ -764,6 +766,7 @@ class SemanticExtractionResult:
             latency_ms=float(data.get("latency_ms", 0.0)),
             retry_count=int(data.get("retry_count", 0)),
             created_at=str(data.get("created_at") or _utc_now()),
+            unsent_reason=str(data["unsent_reason"]) if data.get("unsent_reason") else None,
             hypothesis_card=dict(data["hypothesis_card"]) if data.get("hypothesis_card") else None,
         )
 

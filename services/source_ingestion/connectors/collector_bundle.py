@@ -1855,13 +1855,33 @@ class CollectorBundleAdapter:
         self, transport: BundleTransport, bundle: VerifiedBundle,
         source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
     ) -> tuple[str, dict[str, Any] | None] | None:
-        """Why a producer-partial price bundle may be acknowledged without rows, else None.
+        """Why a producer-partial bundle may be traversed without rows, else None.
 
-        Only the two price-history sources resolve, and only on independent evidence:
+        The two social pollers can recover an empty failed attempt after a verified
+        later nonempty complete poll. This does not assert no data for the failed poll;
+        every complete poll still passes the ordered raw verification and delivery.
+        The two price-history sources resolve only on independent evidence:
         a later complete bundle of the same source for the same trade date (the rows come
         from that bundle once), or an unscheduled closure confirmed by both venues.
         Anything else keeps the sweep stopped (None).
         """
+        if (self.source_type == "social"
+                and self.source_id in {"collector-tw-threads", "collector-tw-ptt-stock"}
+                and bundle.status == "partial" and not bundle.items
+                and bundle.manifest.get("reason") in {"parse_zero", "fetch_failed"}):
+            # Failed polls are attempts, not historical sessions. Keep this narrow:
+            # nonempty partials may contain unique rows and must remain a barrier.
+            # Index status only narrows candidates; the complete status, identity,
+            # item coverage and digest are proved by the actual bundle metadata.
+            for key, entry in sorted(source_entries, key=lambda pair: pair[0]):
+                if key <= bundle.cursor or entry.get("status", "complete") != "complete":
+                    continue
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("collector partial recovery exceeded the operation deadline")
+                later = self._verified_metadata(transport, entry)
+                if later.status == "complete" and later.items:
+                    return f"recovered_empty_attempt:{later.run_id}", None
+            return None
         if self.source_type != "market" or self.source_id not in _PRICE_HISTORY_PEERS:
             return None
         trade_day = _run_trade_date(bundle.run_id)

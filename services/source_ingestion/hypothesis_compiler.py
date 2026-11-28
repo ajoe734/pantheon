@@ -210,6 +210,18 @@ def card_key(card: Mapping[str, Any]) -> str:
 
 
 def validate_proposal(proposal: Any, *, card: Mapping[str, Any] | None = None) -> tuple[str, str, str, Optional[dict[str, Any]]]:
+    """Validate and retain bounded model refusal context on every rejection path."""
+    kind, reason, dataset, artifact = _validate_proposal(proposal, card=card)
+    if kind in (NOT_EXPRESSIBLE, NEEDS_DATA) and isinstance(proposal, Mapping):
+        model_dataset = re.sub(r"[^A-Za-z0-9_.\-]", "_", str(proposal.get("dataset") or ""))[:80]
+        model_reason = "".join(c if c.isprintable() else " " for c in str(proposal.get("reason") or ""))[:300]
+        # Both existing stores cap details at 500 characters. Keep all context
+        # within that cap, including a bounded machine validation reason.
+        reason = f"{reason[:90]}; dataset={model_dataset}; reason={model_reason}"
+    return kind, reason, dataset, artifact
+
+
+def _validate_proposal(proposal: Any, *, card: Mapping[str, Any] | None = None) -> tuple[str, str, str, Optional[dict[str, Any]]]:
     """Return (kind, reason, dataset, artifact). kind in compiled|not_expressible|needs_data."""
     if not isinstance(proposal, Mapping):
         return NOT_EXPRESSIBLE, "proposal_not_object", "", None
@@ -411,9 +423,11 @@ class HypothesisCompiler:
             RECORD_TOTAL_LIMIT,
             idea_missing_datasets,
             prediction_missing_dataset,
+            stamped_card_testability,
         )
 
-        testability = str(card.get("testability") or "")
+        testability = stamped_card_testability(card)
+        card = {**card, "testability": testability}
         key = card_key(card)
         spans = card.get("cited_spans") or []
         span_sid = str(spans[0].get("source_record_id") or "") if spans and isinstance(spans[0], Mapping) else ""
@@ -452,7 +466,8 @@ class HypothesisCompiler:
                 extra={"cached": True},
             )
         if self._ledger is not None:
-            reservation = self._ledger.reserve_attempt(sid, digest)
+            reservation_day = self._ledger.utc_day()
+            reservation = self._ledger.reserve_attempt(sid, digest, day=reservation_day)
             if reservation == DAILY_CAP_REACHED:
                 detail = f"daily cap {self._ledger.daily_cap} reached"
                 self._ledger.record(sid, BUDGET_EXHAUSTED, detail)
@@ -473,6 +488,10 @@ class HypothesisCompiler:
         except Exception as exc:
             usage = getattr(self._proposer, "last_usage", None)
             failure_code, detail = _classify_proposer_failure(exc)
+            from services.source_ingestion.semantic_extraction_client import SemanticExtractionClientError
+            if self._ledger is not None and isinstance(exc, SemanticExtractionClientError) and exc.unsent_reason:
+                self._ledger.note_unsent(sid, day=reservation_day, reason=exc.unsent_reason, detail=detail)
+                return CompileOutcome("extraction_unavailable", detail, extra={"unsent_reason": exc.unsent_reason})
             if self._ledger is not None:
                 self._ledger.note_call_failure(sid, digest, failure_code, detail)
                 self._ledger.record(sid, "proposer_failed", detail, usage=usage)
@@ -490,7 +509,7 @@ class HypothesisCompiler:
             self._store.count_needs_data(dataset, key)
             self._store.record_outcome(key, NEEDS_DATA, reason, dataset)
             if self._ledger is not None:
-                self._ledger.record(sid, NEEDS_DATA, f"{dataset}:{reason}" if reason else dataset, usage=usage)
+                self._ledger.record(sid, NEEDS_DATA, reason, usage=usage)
             return CompileOutcome(NEEDS_DATA, reason, dataset=dataset)
         if kind == NOT_EXPRESSIBLE or artifact is None:
             self._store.record_outcome(key, NOT_EXPRESSIBLE, reason)

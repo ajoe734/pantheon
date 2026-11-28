@@ -60,6 +60,19 @@ SERVANT_TURNS_TABLE = "agora.servant_turns"  # table: one ~1 KB row per user mes
 HABIT_PROFILES_TABLE = "agora.habit_profiles"
 HABIT_PROFILE_HISTORY_VERSIONS = 12
 HABIT_WIDGET_EVENTS_MAX = 200  # servant user messages read per profile derivation
+# AGORA-SERVANT-REVISIONS-AND-REPORT-20261127 runtime budget (SD §9.3, T11):
+# One weekly report per trader per strategy per ISO week (keep at most 26 weekly reports per
+# trader and strategy, delete older ones on write) plus on-demand reports capped at 3 per day
+# and deleted after 7 days; about 20 KB per report.
+TRADER_REPORTS_TABLE = "agora.trader_reports"
+TRADER_REPORT_WEEKLY_HISTORY_CAP = 26
+TRADER_REPORT_ONDEMAND_DAILY_CAP = 3
+TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7
+TRADER_REPORT_MAX_BYTES = 20480
+
+
+class TraderReportDailyCapError(Exception):
+    """The trader already requested the maximum number of on-demand reports today (3/day)."""
 
 
 class ServantSessionMessageCapError(Exception):
@@ -254,6 +267,9 @@ class AgoraStore:
         )
         self._habit_profiles = PostgresJsonOwnerStore(
             dsn=self.dsn, table=f"{self.schema}.habit_profiles", owner_service="agora-svc", bootstrap=bootstrap
+        )
+        self._trader_reports = PostgresJsonOwnerStore(
+            dsn=self.dsn, table=f"{self.schema}.trader_reports", owner_service="agora-svc", bootstrap=bootstrap
         )
 
     # -------------------------------------------------------------------------
@@ -1285,6 +1301,61 @@ class AgoraStore:
         data = self._decision_locks.get(human_decision_id)
         return DictRecord(data) if data else None
 
+    def record_decision_lock_paper_proxy_fill(
+        self,
+        human_decision_id: str,
+        *,
+        tenant_id: str,
+        fill: Dict[str, Any],
+        user_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        """Attach a paper-book proxy fill (`pantheon_paper_proxy`) to the lock's
+        ``human_actual`` arm without ever marking ``actual_fill_claimed`` or
+        ``execution_verified`` true.
+        """
+        from .shadow_mode import apply_paper_proxy_fill_to_decision_lock
+
+        candidate_ids: List[str] = []
+        clean_lock_id = str(human_decision_id or "").strip()
+        if clean_lock_id:
+            candidate_ids.append(clean_lock_id)
+        clean_event_id = str(decision_event_id or "").strip()
+        if clean_event_id and tenant_id:
+            derived = self.decision_lock_id(str(tenant_id), clean_event_id)
+            if derived not in candidate_ids:
+                candidate_ids.append(derived)
+
+        target_id: Optional[str] = None
+        current: Optional[Dict[str, Any]] = None
+        for cid in candidate_ids:
+            found = self._decision_locks.get(cid)
+            if found is not None:
+                target_id = cid
+                current = dict(found)
+                break
+        if current is None or target_id is None:
+            return None
+        if str(current.get("tenant_id") or "") != str(tenant_id):
+            return None
+        if user_id is not None and str(user_id).strip() and str(current.get("user_id") or "") != str(user_id).strip():
+            return None
+
+        updated = apply_paper_proxy_fill_to_decision_lock(current, fill)
+        if updated.get("checksum") == current.get("checksum"):
+            return DictRecord(current)
+        if hasattr(self._decision_locks, "compare_and_set"):
+            swapped, latest = self._decision_locks.compare_and_set(target_id, current, updated)
+            if swapped:
+                return DictRecord(updated)
+            if latest is not None and str(latest.get("tenant_id") or "") == str(tenant_id):
+                retried = apply_paper_proxy_fill_to_decision_lock(dict(latest), fill)
+                self._decision_locks.put(target_id, retried)
+                return DictRecord(retried)
+            return None
+        self._decision_locks.put(target_id, updated)
+        return DictRecord(updated)
+
     def list_decision_locks(self) -> List[DictRecord]:
         return [DictRecord(row) for row in self._decision_locks.list_all()]
 
@@ -1361,6 +1432,413 @@ class AgoraStore:
         out.sort(key=lambda m: (str(m.get("createdAt")), str(m.get("id"))))
         return out[-HABIT_WIDGET_EVENTS_MAX:]
 
+    # -------------------------------------------------------------------------
+    # Trader reports (AGORA-SERVANT-REVISIONS-AND-REPORT-20261127, SD §9.3)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _enforce_trader_report_byte_cap(record: Dict[str, Any], max_bytes: int = TRADER_REPORT_MAX_BYTES) -> Dict[str, Any]:
+        """Keep each stored trader report within TRADER_REPORT_MAX_BYTES (~20 KB)."""
+        candidate = json.loads(json.dumps(record))
+        encoded = json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return candidate
+        sections = candidate.get("sections")
+        if isinstance(sections, dict):
+            for sec_key, list_key, cap in (
+                ("interventions", "items", 5),
+                ("stale_data_sources", "items", 5),
+                ("paper_book", "positions", 5),
+                ("imitation", "differences", 3),
+                ("habit_changes", "changed_features", 5),
+            ):
+                sec = sections.get(sec_key)
+                if isinstance(sec, dict) and isinstance(sec.get(list_key), list) and len(sec[list_key]) > cap:
+                    sec[list_key] = sec[list_key][:cap]
+        if isinstance(candidate.get("facts"), list) and len(candidate["facts"]) > 24:
+            candidate["facts"] = candidate["facts"][:24]
+        narrative = candidate.get("narrative")
+        if isinstance(narrative, str) and len(narrative) > 1500:
+            candidate["narrative"] = narrative[:1500]
+            candidate["narrative_truncated"] = True
+        encoded = json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > max_bytes and isinstance(candidate.get("facts"), list):
+            while candidate["facts"] and len(
+                json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ) > max_bytes:
+                candidate["facts"].pop()
+        return candidate
+
+    def prune_trader_reports(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        strategy_id: Optional[str] = None,
+        now: Optional[str] = None,
+        weekly_cap: int = TRADER_REPORT_WEEKLY_HISTORY_CAP,
+        on_demand_retention_days: int = TRADER_REPORT_ONDEMAND_RETENTION_DAYS,
+    ) -> Dict[str, int]:
+        """Enforce SD §9.3 retention on write:
+        - Keep at most ``weekly_cap`` (26) weekly reports per trader and strategy; delete older ones.
+        - Delete on-demand reports older than ``on_demand_retention_days`` (7) days.
+        """
+        ref_dt = _parse_rfc3339(now or _utc_now_rfc3339()) or datetime.now(timezone.utc)
+        cutoff = ref_dt - timedelta(days=int(on_demand_retention_days))
+        rows = self._trader_reports.select_where(
+            "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s",
+            (str(tenant_id), str(user_id)),
+        )
+        removed = {"expired_on_demand": 0, "excess_weekly": 0}
+        weekly_by_strategy: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            cadence = str(row.get("cadence") or "")
+            if cadence == "on_demand":
+                created_dt = _parse_rfc3339(row.get("created_at") or row.get("updated_at"))
+                if created_dt is not None and created_dt < cutoff:
+                    if self._trader_reports.delete_if_matches(str(row["report_id"]), row):
+                        removed["expired_on_demand"] += 1
+            elif cadence == "weekly":
+                strat_key = str(row.get("strategy_id") or "*")
+                if strategy_id is None or strat_key == str(strategy_id or "*"):
+                    weekly_by_strategy.setdefault(strat_key, []).append(row)
+
+        for _strat, weekly_rows in weekly_by_strategy.items():
+            weekly_rows.sort(
+                key=lambda r: (
+                    str(r.get("iso_week") or ""),
+                    str(r.get("created_at") or ""),
+                    str(r.get("report_id") or ""),
+                ),
+                reverse=True,
+            )
+            for excess in weekly_rows[max(1, int(weekly_cap)) :]:
+                if self._trader_reports.delete_if_matches(str(excess["report_id"]), excess):
+                    removed["excess_weekly"] += 1
+        removed["reports"] = removed["expired_on_demand"] + removed["excess_weekly"]
+        return removed
+
+    def purge_expired_trader_reports(
+        self,
+        *,
+        now: Optional[str] = None,
+        on_demand_retention_days: int = TRADER_REPORT_ONDEMAND_RETENTION_DAYS,
+        weekly_cap: int = TRADER_REPORT_WEEKLY_HISTORY_CAP,
+    ) -> Dict[str, int]:
+        """Periodic cleanup path called by agora-interaction-worker."""
+        ref_dt = _parse_rfc3339(now or _utc_now_rfc3339()) or datetime.now(timezone.utc)
+        cutoff = ref_dt - timedelta(days=int(on_demand_retention_days))
+        removed = {"expired_on_demand": 0, "excess_weekly": 0}
+        for row in self._trader_reports.select_where("payload ->> 'cadence' = %s", ("on_demand",)):
+            created_dt = _parse_rfc3339(row.get("created_at") or row.get("updated_at"))
+            if created_dt is not None and created_dt < cutoff:
+                if self._trader_reports.delete_if_matches(str(row["report_id"]), row):
+                    removed["expired_on_demand"] += 1
+        weekly_groups: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+        for row in self._trader_reports.select_where("payload ->> 'cadence' = %s", ("weekly",)):
+            key = (
+                str(row.get("tenant_id") or ""),
+                str(row.get("user_id") or ""),
+                str(row.get("strategy_id") or "*"),
+            )
+            weekly_groups.setdefault(key, []).append(row)
+        for _key, weekly_rows in weekly_groups.items():
+            weekly_rows.sort(
+                key=lambda r: (
+                    str(r.get("iso_week") or ""),
+                    str(r.get("created_at") or ""),
+                    str(r.get("report_id") or ""),
+                ),
+                reverse=True,
+            )
+            for excess in weekly_rows[max(1, int(weekly_cap)) :]:
+                if self._trader_reports.delete_if_matches(str(excess["report_id"]), excess):
+                    removed["excess_weekly"] += 1
+        removed["reports"] = removed["expired_on_demand"] + removed["excess_weekly"]
+        return removed
+
+    def count_on_demand_trader_reports_for_day(
+        self,
+        tenant_id: str,
+        user_id: str,
+        report_day: str,
+        *,
+        now: Optional[str] = None,
+    ) -> int:
+        self.prune_trader_reports(tenant_id, user_id, now=now)
+        rows = self._trader_reports.select_where(
+            "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s AND payload ->> 'cadence' = %s AND payload ->> 'report_day' = %s",
+            (str(tenant_id), str(user_id), "on_demand", str(report_day)),
+        )
+        return len(rows)
+
+    def put_trader_report(
+        self,
+        report: Dict[str, Any],
+        *,
+        now: Optional[str] = None,
+        enforce_daily_cap: bool = True,
+    ) -> tuple[bool, DictRecord]:
+        """Store or update one trader report while enforcing SD §9.3 caps and cleanup."""
+        ts = str(now or report.get("updated_at") or report.get("created_at") or _utc_now_rfc3339())
+        tenant_id = str(report.get("tenant_id") or "").strip()
+        user_id = str(report.get("user_id") or "").strip()
+        strategy_id = str(report.get("strategy_id") or "*").strip() or "*"
+        cadence = str(report.get("cadence") or "on_demand").strip()
+        report_id = str(report.get("report_id") or "").strip()
+        if not tenant_id or not user_id or not report_id:
+            raise ValueError("tenant_id, user_id, and report_id are required for trader report")
+        report_day = str(report.get("report_day") or ts[:10]).strip()
+        iso_week_val = str(report.get("iso_week") or "").strip()
+
+        self.prune_trader_reports(tenant_id, user_id, strategy_id=strategy_id, now=ts)
+
+        existing = self._trader_reports.get(report_id)
+        if existing is not None:
+            if str(existing.get("tenant_id")) != tenant_id or str(existing.get("user_id")) != user_id:
+                raise ServantSessionConflictError(report_id)
+            merged = self._enforce_trader_report_byte_cap({
+                **existing,
+                **report,
+                "report_id": report_id,
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "strategy_id": strategy_id,
+                "cadence": cadence,
+                "report_day": report_day,
+                "iso_week": iso_week_val or existing.get("iso_week"),
+                "created_at": existing.get("created_at") or ts,
+                "updated_at": ts,
+            })
+            self._trader_reports.put(report_id, merged)
+            self.prune_trader_reports(tenant_id, user_id, strategy_id=strategy_id, now=ts)
+            return False, DictRecord(merged)
+
+        if cadence == "weekly" and iso_week_val:
+            same_week = self._trader_reports.select_where(
+                "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s AND payload ->> 'strategy_id' = %s AND payload ->> 'cadence' = %s AND payload ->> 'iso_week' = %s",
+                (tenant_id, user_id, strategy_id, "weekly", iso_week_val),
+            )
+            if same_week:
+                prior = same_week[0]
+                prior_id = str(prior["report_id"])
+                merged = self._enforce_trader_report_byte_cap({
+                    **prior,
+                    **report,
+                    "report_id": prior_id,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "strategy_id": strategy_id,
+                    "cadence": "weekly",
+                    "report_day": report_day,
+                    "iso_week": iso_week_val,
+                    "created_at": prior.get("created_at") or ts,
+                    "updated_at": ts,
+                })
+                self._trader_reports.put(prior_id, merged)
+                self.prune_trader_reports(tenant_id, user_id, strategy_id=strategy_id, now=ts)
+                return False, DictRecord(merged)
+
+        if cadence == "on_demand" and enforce_daily_cap:
+            today_count = self.count_on_demand_trader_reports_for_day(
+                tenant_id, user_id, report_day, now=ts
+            )
+            if today_count >= TRADER_REPORT_ONDEMAND_DAILY_CAP:
+                raise TraderReportDailyCapError(
+                    f"On-demand trader report daily cap ({TRADER_REPORT_ONDEMAND_DAILY_CAP}/day) reached for {report_day}"
+                )
+
+        prepared = self._enforce_trader_report_byte_cap({
+            **report,
+            "report_id": report_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "strategy_id": strategy_id,
+            "cadence": cadence,
+            "report_day": report_day,
+            "iso_week": iso_week_val,
+            "status": str(report.get("status") or "queued"),
+            "created_at": str(report.get("created_at") or ts),
+            "updated_at": ts,
+        })
+        self._trader_reports.put(report_id, prepared)
+        self.prune_trader_reports(tenant_id, user_id, strategy_id=strategy_id, now=ts)
+        return True, DictRecord(prepared)
+
+    def get_trader_report(
+        self,
+        report_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Optional[DictRecord]:
+        data = self._trader_reports.get(str(report_id))
+        if data is None:
+            return None
+        if str(data.get("tenant_id")) != str(tenant_id) or str(data.get("user_id")) != str(user_id):
+            return None
+        return DictRecord(data)
+
+    def list_trader_reports(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        strategy_id: Optional[str] = None,
+        cadence: Optional[str] = None,
+        limit: int = TRADER_REPORT_WEEKLY_HISTORY_CAP,
+        now: Optional[str] = None,
+    ) -> List[DictRecord]:
+        self.prune_trader_reports(tenant_id, user_id, now=now)
+        rows = self._trader_reports.select_where(
+            "payload ->> 'tenant_id' = %s AND payload ->> 'user_id' = %s",
+            (str(tenant_id), str(user_id)),
+        )
+        out: List[DictRecord] = []
+        clean_strat = str(strategy_id or "").strip()
+        clean_cadence = str(cadence or "").strip()
+        for row in rows:
+            if clean_strat and str(row.get("strategy_id") or "") != clean_strat:
+                continue
+            if clean_cadence and str(row.get("cadence") or "") != clean_cadence:
+                continue
+            out.append(DictRecord(row))
+        out.sort(
+            key=lambda r: (str(r.get("created_at") or ""), str(r.get("report_id") or "")),
+            reverse=True,
+        )
+        return out[: max(1, int(limit))]
+
+    def claim_trader_report(
+        self,
+        *,
+        lease_owner: str,
+        lease_seconds: float = 600,
+        now: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        """Claim the oldest queued trader report job for agora-interaction-worker generation."""
+        now = now or _utc_now_rfc3339()
+        for status in ("queued", "running"):
+            rows = self._trader_reports.select_where(
+                "payload ->> 'status' = %s",
+                (status,),
+                tail_sql="ORDER BY payload ->> 'created_at' ASC LIMIT 25",
+            )
+            for row in sorted(rows, key=lambda r: (str(r.get("created_at")), str(r.get("report_id")))):
+                if status == "running" and str(row.get("lease_expires_at") or "") > now:
+                    continue
+                claimed = {
+                    **row,
+                    "status": "running",
+                    "attempts": int(row.get("attempts") or 0) + 1,
+                    "lease_owner": lease_owner,
+                    "lease_expires_at": _rfc3339_after(now, lease_seconds),
+                    "updated_at": now,
+                }
+                swapped, _current = self._trader_reports.compare_and_set(str(row["report_id"]), row, claimed)
+                if swapped:
+                    return DictRecord(claimed)
+        return None
+
+    def list_active_trader_scopes(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[DictRecord]:
+        """List bounded active (tenant_id, user_id, strategy_id, servant_persona_id) scopes
+        from Agora owner tables (servant sessions, habit profiles, decision locks, and trader reports)
+        for the weekly post-attribution report tick.
+        """
+        clean_filter_tenant = str(tenant_id or "").strip()
+        users: set[tuple[str, str]] = set()
+        personas_by_user: Dict[tuple[str, str], str] = {}
+        strategies_by_user: Dict[tuple[str, str], set[str]] = {}
+
+        def _record(t_id: Any, u_id: Any, strat_id: Any = None, persona_id: Any = None) -> None:
+            t = str(t_id or "").strip()
+            u = str(u_id or "").strip()
+            if not t or not u:
+                return
+            if clean_filter_tenant and t != clean_filter_tenant:
+                return
+            users.add((t, u))
+            p = str(persona_id or "").strip()
+            if p and (t, u) not in personas_by_user:
+                personas_by_user[(t, u)] = p
+            s = str(strat_id or "").strip()
+            if s and s not in {"*", "__all__"}:
+                strategies_by_user.setdefault((t, u), set()).add(s)
+
+        for session in self._sessions.select_where(
+            "payload ->> 'mode' = %s",
+            (SERVANT_SESSION_MODE,),
+            tail_sql="ORDER BY payload ->> 'updatedAt' DESC LIMIT 100",
+        ):
+            if str(session.get("status") or "").lower() == "closed":
+                continue
+            t_id = session.get("tenantId") or session.get("tenant_id")
+            u_id = session.get("userId") or session.get("user_id")
+            p_id = session.get("servantPersonaId") or session.get("personaId")
+            s_ref = (
+                session.get("strategyRef")
+                or session.get("strategy_ref")
+                or session.get("strategyId")
+                or session.get("strategy_id")
+            )
+            _record(t_id, u_id, s_ref, p_id)
+            for msg in session.get("messages") or []:
+                if not isinstance(msg, dict):
+                    continue
+                meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+                cmd = meta.get("command_context") if isinstance(meta.get("command_context"), dict) else {}
+                if cmd.get("strategy_id"):
+                    _record(t_id, u_id, cmd.get("strategy_id"), p_id)
+
+        for row in self._habit_profiles.list_all():
+            _record(row.get("tenant_id"), row.get("user_id"), row.get("strategy_id"))
+
+        for row in self._decision_locks.list_all():
+            ti = row.get("trader_identity") if isinstance(row.get("trader_identity"), dict) else {}
+            snap = row.get("decision_time_snapshot") if isinstance(row.get("decision_time_snapshot"), dict) else {}
+            _record(
+                row.get("tenant_id") or ti.get("tenant_id"),
+                row.get("user_id") or row.get("agora_user_id") or ti.get("user_id") or ti.get("agora_user_id"),
+                row.get("strategy_id") or snap.get("strategy_id"),
+            )
+
+        for row in self._trader_reports.list_all():
+            _record(
+                row.get("tenant_id"),
+                row.get("user_id"),
+                row.get("strategy_id"),
+                row.get("servant_persona_id"),
+            )
+
+        out: List[DictRecord] = []
+        for t, u in sorted(users):
+            persona_id = personas_by_user.get((t, u)) or f"servant:{t}:{u}"
+            strats = sorted(strategies_by_user.get((t, u)) or [])
+            if strats:
+                for s in strats:
+                    out.append(
+                        DictRecord({
+                            "tenant_id": t,
+                            "user_id": u,
+                            "strategy_id": s,
+                            "servant_persona_id": persona_id,
+                        })
+                    )
+            else:
+                out.append(
+                    DictRecord({
+                        "tenant_id": t,
+                        "user_id": u,
+                        "strategy_id": None,
+                        "servant_persona_id": persona_id,
+                    })
+                )
+        return out[: max(1, int(limit))]
+
 
 def build_agora_store(
     *,
@@ -1390,5 +1868,11 @@ __all__ = [
     "SERVANT_SESSION_RETENTION_DAYS",
     "ServantSessionConflictError",
     "ServantSessionMessageCapError",
+    "TRADER_REPORTS_TABLE",
+    "TRADER_REPORT_MAX_BYTES",
+    "TRADER_REPORT_ONDEMAND_DAILY_CAP",
+    "TRADER_REPORT_ONDEMAND_RETENTION_DAYS",
+    "TRADER_REPORT_WEEKLY_HISTORY_CAP",
+    "TraderReportDailyCapError",
     "build_agora_store",
 ]

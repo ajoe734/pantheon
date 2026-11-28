@@ -444,20 +444,22 @@ def stage_hypothesis_cards(
     calls, calls_reason = _count(board, "llm_calls_today")
     llm = _dict(_dict(_dict(board.get("data")).get("counts")).get("llm_calls_today"))
     cap = _int(llm.get("cap"))
+    owner_calls = _dict(_dict(_dict(board.get("data")).get("discovery_summary")).get("llm_calls"))
+    unsent = _int(owner_calls.get("unsent_calls"))
     closed = _closed_reasons(board)
     if calls_reason:
         return _failed(name, calls_reason, closed_last_24h_by_reason=closed)
     if cap is None or cap <= 0:
-        return _failed(name, "llm_call_cap_missing", calls_today=calls, cap=cap)
+        return _failed(name, "llm_call_cap_missing", calls_today=calls, unsent_calls_today=unsent, cap=cap)
     if calls > cap:
-        return _failed(name, "llm_calls_over_cap", calls_today=calls, cap=cap)
+        return _failed(name, "llm_calls_over_cap", calls_today=calls, unsent_calls_today=unsent, cap=cap)
     sources = _int(llm.get("distinct_sources"))
     per_source = round(calls / sources, 3) if sources else None
     # The distinct-source count comes from the ledger through the owner summary
     # and the BFF board. Until that read is plumbed the stage still reports the
     # calls it can read and says the ratio is not measurable (not a pass on it).
     if per_source is not None and per_source > MAX_CALLS_PER_SOURCE:
-        return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, cap=cap,
+        return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, unsent_calls_today=unsent, cap=cap,
                        distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE)
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
@@ -470,6 +472,7 @@ def stage_hypothesis_cards(
         "drafts_last_24h": len(recent),
         "cards_today": today,
         "calls_today": calls,
+        "unsent_calls_today": unsent,
         "cap": cap,
         "distinct_sources": sources,
         "calls_per_source": per_source,

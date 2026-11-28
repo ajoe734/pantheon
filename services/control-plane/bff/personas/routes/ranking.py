@@ -118,7 +118,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: promotion review queue derived from PM-12 recommendations."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        return _service.get_promotion_reviews(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_promotion_reviews,
             identity=identity,
             quarter=quarter,
             state=state,
@@ -141,7 +143,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: promotion review detail by review id."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        return _service.get_promotion_review_detail(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_promotion_review_detail,
             identity=identity,
             review_id=review_id,
             quarter=quarter,
@@ -178,7 +182,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_persona_league(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_persona_league,
             caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
@@ -220,7 +226,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_persona_league_rankings(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_persona_league_rankings,
             caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
@@ -258,7 +266,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_persona_league_movers(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_persona_league_movers,
             caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
@@ -297,7 +307,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_persona_league_tiers(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_persona_league_tiers,
             caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
@@ -327,7 +339,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_persona_league_heatmap(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_persona_league_heatmap,
             caller_tenant_id=caller_tenant_id,
             state=state,
             archetype=archetype,
@@ -491,7 +505,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
                 correlation_id=correlation_id,
             )
 
-        return _service.get_quarterly_ranking_drilldown(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_quarterly_ranking_drilldown,
             quarter=quarter,
             identity=identity,
             caller_tenant_id=caller_tenant_id,
@@ -543,7 +559,9 @@ def build_ranking_router(ctx: PersonaRouteContext) -> APIRouter:
         identity = _extract_identity(authorization)
         _require_read_role(identity)
         caller_tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
-        return _service.get_quarterly_ranking_recommendations(
+        return _call_or_503_when_reconciler_down(
+            _bff_error,
+            _service.get_quarterly_ranking_recommendations,
             quarter=quarter,
             identity=identity,
             caller_tenant_id=caller_tenant_id,
