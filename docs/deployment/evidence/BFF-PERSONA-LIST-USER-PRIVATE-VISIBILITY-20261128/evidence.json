@@ -1,0 +1,217 @@
+{
+  "task_id": "BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128",
+  "owner": "Codex",
+  "original_implementation_owner": "Antigravity2",
+  "reviewer": "Antigravity",
+  "reviewer_independence": {
+    "owner_family": "Codex",
+    "reviewer_family": "Antigravity",
+    "independent": true,
+    "status": "independent_assignment_confirmed_pending_exact_head_review",
+    "required_action": "The governed show command on 2026-11-28 confirms owner Codex and reviewer Antigravity after Human/Ops reassignment. Antigravity2 authored the original anchor and is not the reviewer. Freeze the published PR head and this committed manifest through handoff to Antigravity; independent approval remains pending and no capacity exception is claimed."
+  },
+  "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility in BFF persona list and detail",
+  "source_base": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
+  "publication_history": {
+    "original_anchor": "bae8065fe6fddb1c4a0992cd7762f0a463b85c6a",
+    "rebased_implementation": "0b01032b3",
+    "fixture_validation_commit": "af21a55dca70f2147e63624ee56791638d448935",
+    "method": "Rebased implementation onto current dev, then merged the already-published original anchor to preserve remote ancestry for a normal non-force push. The add/add evidence conflict keeps the recovered owner, fixture fix, current validation, and pending independent review truth. Product code is unchanged from the validated fixture commit."
+  },
+  "implementation_status": "local_validation_passed_pending_independent_review_and_hosted_acceptance",
+  "implementation": [
+    "GET /bff/personas (services/control-plane/bff/personas/routes/collection.py) resolves viewer_user_id once per request via the existing _fleet_viewer_user_id(identity, tenant_id, utc_now) and filters directory.records_by_id.values() with the existing _persona_fleet_record_visible_to(raw, viewer_user_id) imported from services/control-plane/bff/personas/service.py before state and archetype filtering, before paging, and before canonical_total, filtered_total, page_info.total, and meta.total.",
+    "GET /bff/personas/{persona_id} (services/control-plane/bff/personas/routes/detail.py) checks _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, caller_tenant, utc_now)) immediately after _get_persona_record_for_detail and raises the exact same 404 RESOURCE_NOT_FOUND HTTPException ('Persona not found', 'Persona {persona_id} does not exist') when the record is rejected for a non-owner viewer, before any runtime-binding, containment, strategy-pool, or persona-cycle read.",
+    "services/control-plane/bff/personas/service.py is untouched; no second visibility rule and no name or id pattern was introduced.",
+    "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 in collection.py remain intact. The recorded user_private servant fixture in test_list_scope_classification.py now uses agora_user_id='op-1', matching the caller resolved by the real Agora scope helper; all 11 rows, ordering, paging, and advisory_assistant assertions are preserved.",
+    "services/control-plane/bff/BFF_API_CONTRACT.md documents the shared user_private owner visibility rule on GET /bff/personas (rows and totals) and GET /bff/personas/{persona_id}."
+  ],
+  "subroute_visibility_inventory": [
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/route-policy",
+      "handler": "bff_get_persona_route_policy",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/runtime-profile",
+      "handler": "bff_get_persona_runtime_profile",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/activity",
+      "handler": "bff_get_persona_activity",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/evaluations",
+      "handler": "bff_get_persona_evaluations",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/memory",
+      "handler": "bff_get_persona_memory",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id), then forwards caller token to /api/memory/retrieve with scope='persona' without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/audit",
+      "handler": "bff_get_persona_audit",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/skills",
+      "handler": "bff_get_persona_skills",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/tools",
+      "handler": "bff_get_persona_tools",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/capabilities",
+      "handler": "bff_get_persona_capabilities_surface",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _ensure_persona_exists(persona_id) against directory.records_by_id without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-pool/publish-history",
+      "handler": "bff_get_persona_strategy_pool_publish_history",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) (unless POOL_PUBLISH_SERVICE_ROLE) and _ensure_persona_exists(persona_id, tenant_id) without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-matches",
+      "handler": "bff_get_persona_strategy_matches",
+      "applies_user_private_rule": false,
+      "current_check": "_require_read_role(identity) and _persona_strategy_matches_response(persona_id, ...) without _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal",
+      "handler": "journal_list",
+      "applies_user_private_rule": false,
+      "current_check": "require_read_role(who), _allowed(who, persona_id) JWT persona_ids claim check, and bound_tenant before telemetry owner read; does not check _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal/{episode_id}",
+      "handler": "journal_detail",
+      "applies_user_private_rule": false,
+      "current_check": "require_read_role(who), _allowed(who, persona_id) JWT persona_ids claim check, and bound_tenant before telemetry owner read; does not check _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-reflections",
+      "handler": "reflections",
+      "applies_user_private_rule": false,
+      "current_check": "require_read_role(who), _allowed(who, persona_id) JWT persona_ids claim check, and bound_tenant before persona owner /api/personas/{persona_id}/trade-reflections read; does not check _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-patterns",
+      "handler": "patterns",
+      "applies_user_private_rule": false,
+      "current_check": "require_read_role(who), _allowed(who, persona_id) JWT persona_ids claim check, and bound_tenant before persona owner /api/personas/{persona_id}/trade-reflections read; does not check _persona_fleet_record_visible_to",
+      "changed_in_this_task": false
+    }
+  ],
+  "acceptance_evidence": {
+    "AC1": "GET /bff/personas filters directory.records_by_id.values() with _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, tenant_id, utc_now)) before state/archetype filters, before paging, and before page_info.total, page_info.filtered_total, page_info.canonical_total, and meta.total. Verified in test_persona_list_private_visibility.py::test_list_personas_enforces_user_private_visibility_before_filters_paging_and_totals across owner, another operator, viewer-role caller, unscoped record, non-servant-named private record, and failed scope resolution.",
+    "AC2": "GET /bff/personas/{persona_id} checks _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, caller_tenant, utc_now)) and raises the identical 404 RESOURCE_NOT_FOUND response as a missing persona for non-owners while returning 200 for the owner. Verified in test_persona_list_private_visibility.py::test_get_persona_detail_hides_other_users_private_servant_with_identical_404_and_allows_owner.",
+    "AC3": "All 15 other GET /bff/personas/{persona_id}/* routes in personas/routes/detail.py (9), personas/routes/lifecycle.py (2), and services/control-plane/bff/trade_journal.py (4) are inventoried in subroute_visibility_inventory and recorded in residual_findings below without modification.",
+    "AC4": "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 remain unchanged. The full test_list_scope_classification.py file, privacy tests, and all three required acceptance suites pass (106 passed). The owner fixture retains 11 rows and every purpose/scope/paging assertion; non-owner rejection stays covered by test_persona_list_private_visibility.py.",
+    "AC5": "services/control-plane/bff/BFF_API_CONTRACT.md states that GET /bff/personas rows and totals and GET /bff/personas/{persona_id} apply the user_private owner rule shared with GET /bff/management/persona-fleet.",
+    "AC6": "Runtime budget verified in tests and documented below: no new writer, at most one Agora scope resolution per request, and zero new owner reads.",
+    "AC7": "Hosted proof procedure after deploy documented below (read-only as admintest).",
+    "AC8": "The governed canonical show command confirms owner Codex and assigned reviewer Antigravity, from different model families. The reassignment resolves the former Codex/Codex2 assignment hold. Independent exact-head review is pending; neither approval nor a capacity exception is claimed."
+  },
+  "validation": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0 (.venv-pantheon/bin/python3); resumed worker verified the existing provision with timeout 30 python3 scripts/dev/provision_python_distribution.py --check-only -> exit 0",
+    "focused_and_acceptance_command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_list_private_visibility.py services/control-plane/bff/tests/test_list_scope_classification.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py acceptance/test_mgmt_registry_pages_readable.py",
+    "focused_and_acceptance_result": "Resumed worker rerun on 2026-11-28: 106 passed, 3 warnings in 41.59s; exit 0",
+    "evidence_json_command": "python3 -m json.tool docs/deployment/evidence/BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128/evidence.json",
+    "diff_check_command": "git diff --check origin/dev",
+    "evidence_and_diff_result": "Both exit 0 before the review evidence commit."
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "max_agora_scope_resolutions_per_request": 1,
+    "new_owner_reads_per_request": 0,
+    "cadence": "Request-scoped in-memory predicate on existing GET /bff/personas and GET /bff/personas/{persona_id} calls; no new recurring job, timer, or emitter.",
+    "size_and_count_at_hosted_scale": "Reduces GET /bff/personas response size by dropping other users' user_private Agora servant rows (~2 rows hidden for admintest, ~3 hidden for probe viewer on hosted dev out of ~178 directory records). Adds 0 response fields and 0 persistent records.",
+    "growth_per_day": "0 bytes/day and 0 records/day.",
+    "cap": "Existing GET /bff/personas page_size cap (1..200) and existing in-memory directory snapshot cap unchanged; no new file, table, queue, cache, image, or temporary directory.",
+    "cleanup": "Request-local variables garbage-collected at request completion; no persistent state to clean."
+  },
+  "hosted_acceptance": {
+    "status": "pending_deploy_and_hosted_read_only_verification",
+    "actor": "admintest (read-only)",
+    "checks": [
+      "GET /bff/personas?page_size=200 as admintest lists agora-servant-799a3ce8c021b91cbb54 (owned by pantheon-dev-admin-test) and lists neither agora-servant-fbeaee01e8f34c786555 nor agora-servant-4eef59cbdf80a6b9fea0.",
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555 as admintest returns 404 RESOURCE_NOT_FOUND.",
+      "page_info.total on GET /bff/personas?page_size=200 equals the number of rows returned.",
+      "Next Root's persona-day and mgmt-registry-pages-readable probes do not regress."
+    ]
+  },
+  "residual_findings": [
+    {
+      "finding": "15 sub-routes under GET /bff/personas/{persona_id}/* in detail.py (9: route-policy, runtime-profile, activity, evaluations, memory, audit, skills, tools, capabilities), lifecycle.py (2: strategy-pool/publish-history, strategy-matches), and trade_journal.py (4: trade-journal, trade-journal/{episode_id}, trade-reflections, trade-patterns) do not apply _persona_fleet_record_visible_to and only check _require_read_role + _ensure_persona_exists (or _allowed + bound_tenant in trade_journal.py).",
+      "disposition": "Inventoried per Acceptance #3 and unchanged in this task. Coordinator 70b5f70f acknowledged responsibility in the canonical task next message on 2026-11-28 and is taking this residual to the owning WP2.3 problem-register row; retain it in the exact-head review handoff."
+    }
+  ],
+  "ci_followup": {
+    "observed_head": "59936ee883616b20e18fb72e143c222c9e4dd81e",
+    "branch_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/46137644402",
+    "status": "failed_on_two_out_of_scope_tests_at_previous_head; refreshed_head_checks_pending",
+    "failures": [
+      {
+        "test": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets",
+        "disposition": "Coordinator-diagnosed fixed-NOW versus real-clock failure between 10:00Z and 17:35Z on 2026-11-28; owned by CI-DISCOVERY-PROBE-TEST-DATED-WORLD-20261128. Do not edit this test in this task."
+      },
+      {
+        "test": "services/source_ingestion/tests/test_controller_worker_manual_once.py::test_run_controller_once_concurrent_same_key_multiprocess",
+        "disposition": "Coordinator reported FileNotFoundError to the market-data owner. Do not edit this test in this task; if it recurs after the coordinator reruns failed jobs after 17:35Z, retain it as a residual finding in handoff."
+      }
+    ],
+    "coordinator_plan": "Coordinator 70b5f70f reruns the failed jobs after 17:35Z. These failures are not passing checks or declared-task dependency blockers; exact-head review may proceed while required merge checks remain pending."
+  },
+  "resolved_findings": [
+    {
+      "finding": "The private servant fixture introduced by PR #8011 inherited an owner different from the test caller and was correctly filtered out by the new rule.",
+      "disposition": "Human/Ops admitted test_list_scope_classification.py on 2026-11-28T10:51:01Z; this delivery aligns the fixture's agora_user_id with caller op-1 and preserves all 11 expected rows. All five classification tests pass."
+    }
+  ]
+}
