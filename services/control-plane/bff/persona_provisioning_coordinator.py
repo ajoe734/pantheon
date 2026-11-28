@@ -930,6 +930,7 @@ class PersonaProvisioningCoordinator:
         ids: ProvisioningIds | None = None,
         runtime_binding_reader: RuntimeBindingReader | None = None,
         runtime_binding_retirer: RuntimeBindingRetirer | None = None,
+        fence: Callable[[ProvisioningRecord], None] | None = None,
     ) -> ProvisioningRecord:
         """Retire the whole case this coordinator created; symmetric to create.
 
@@ -940,6 +941,11 @@ class PersonaProvisioningCoordinator:
         deterministic ones (a later trader paper book generation).  A
         ``runtime_binding_retirer`` lets the RuntimeBinding step retire live
         bindings itself instead of only verifying a saga already did.
+        ``fence`` validates the stored row (before the terminal shortcut and
+        again under the lease, before ANY retirement mutation); when it raises,
+        the lease is released unchanged and the error propagates, so a caller
+        whose ``ids`` were derived from a stale read can never retire a newer
+        row.
 
         Every step is GET-first and idempotent, uses the owning service's
         existing API, and counts only once an authoritative readback proves
@@ -956,6 +962,8 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning must be reserved before retirement"
             )
+        if fence is not None:
+            fence(existing)
         if existing.state == "retired":
             return existing
         active = self.store.acquire(
@@ -968,6 +976,22 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning record is leased by another coordinator"
             )
+        if fence is not None:
+            try:
+                fence(active)
+            except BaseException:
+                self.store.release(
+                    active,
+                    lease_owner=self.lease_owner,
+                    lease_seconds=self.lease_seconds,
+                )
+                raise
+            if active.state == "retired":
+                return self.store.release(
+                    active,
+                    lease_owner=self.lease_owner,
+                    lease_seconds=self.lease_seconds,
+                )
         ids = ids or deterministic_provisioning_ids(active)
         prior = active.references.get("retirement")
         retirement: dict[str, Any] = dict(prior) if isinstance(prior, Mapping) else {}

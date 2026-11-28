@@ -417,6 +417,144 @@ def test_crash_after_generation_one_retired_resumes_to_generation_two_without_se
     assert list(final.references["book_generations"]) == ["1"]
 
 
+@pytest.mark.parametrize("pause_point", ["before_retire_case", "before_generation_advance"])
+def test_stale_ensure_interleaved_with_completed_replacement_never_touches_newer_generation(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    pause_point: str,
+) -> None:
+    """Review P1 regression: request A derives generation 1 ids, pauses (immediately before
+    retire_case, or after retiring generation 1 but before the advance), request B (an
+    independent coordinator with its own lease owner) finishes the whole replacement to
+    generation 2, then A resumes. A must not retire generation 2, advance to generation 3 or
+    finalize a stale generation: it continues from the ledger's current generation 2."""
+    seeded = _seed_recorded_legacy_book(
+        owner_stack, monkeypatch, status="paused", session_admission=MARKET_INPUT_MISSING_PAUSE
+    )
+    key = seeded["legacy"].idempotency_key
+    coordinator_a = seeded["coordinator"]
+    coordinator_a.lease_owner = "request-a"
+    coordinator_b = owner_stack["coordinator_for_tenant"](HOSTED_TENANT)
+    coordinator_b.lease_owner = "request-b"
+    assert coordinator_a is not coordinator_b and coordinator_a.store is coordinator_b.store
+    servant_calls = _servant_retirement_spies(coordinator_a) + _servant_retirement_spies(
+        coordinator_b
+    )
+    b_books: List[Dict[str, Any]] = []
+
+    def _run_b() -> None:
+        b_books.append(_ensure_hosted(owner_stack, coordinator_b))
+        row = coordinator_b.store.get(HOSTED_TENANT, key)
+        assert row.state == "succeeded"
+        assert row.references["book_generation"]["generation"] == 2
+
+    if pause_point == "before_retire_case":
+        orig_retire_case = coordinator_a.retire_case
+
+        def _paused_retire_case(*args: Any, **kwargs: Any) -> Any:
+            if not b_books:
+                _run_b()
+            return orig_retire_case(*args, **kwargs)
+
+        monkeypatch.setattr(coordinator_a, "retire_case", _paused_retire_case)
+    else:
+        orig_begin = trader_paper_book._begin_next_trader_paper_book_generation
+
+        def _paused_begin(coordinator: Any, ledger: Any, **kwargs: Any) -> Any:
+            if coordinator is coordinator_a and not b_books:
+                assert ledger.state == "retired"
+                _run_b()
+            return orig_begin(coordinator, ledger, **kwargs)
+
+        monkeypatch.setattr(
+            trader_paper_book, "_begin_next_trader_paper_book_generation", _paused_begin
+        )
+
+    book_a = _ensure_hosted(owner_stack, coordinator_a)
+
+    gen2 = trader_paper_book_generation_ids(HOSTED_TENANT, HOSTED_PERSONA, 2)
+    gen3 = trader_paper_book_generation_ids(HOSTED_TENANT, HOSTED_PERSONA, 3)
+    assert len(b_books) == 1 and b_books[0]["book_generation"] == 2
+    assert book_a["book_generation"] == 2
+    assert book_a["runtime_binding_id"] == b_books[0]["runtime_binding_id"]
+    ledger = coordinator_a.store.get(HOSTED_TENANT, key)
+    assert ledger.state == "succeeded"
+    assert ledger.current_step == TRADER_PAPER_BOOK_PROVISIONED_STEP
+    assert ledger.references["book_generation"]["generation"] == 2
+    assert ledger.result["book_generation"] == 2
+    assert "retirement" not in ledger.references
+    assert list(ledger.references["book_generations"]) == ["1"]
+    assert ledger.lease_owner is None
+    gen2_bindings = owner_stack["rm_service"].find_bindings_for_pool(gen2.capital_pool_id)
+    assert [b.status for b in gen2_bindings] == ["active"]
+    assert owner_stack["rm_service"].find_bindings_for_pool(gen3.capital_pool_id) == []
+    assert gen3.capital_pool_id not in _reload_capital_pools(owner_stack["capital_dir"])
+    assert servant_calls == []
+    readback = read_trader_paper_book(
+        HOSTED_TENANT,
+        HOSTED_PERSONA,
+        agora_user_id=REQUESTER,
+        coordinator=coordinator_a,
+        runtime_client=owner_stack["rm_client"],
+    )
+    assert readback is not None
+    assert readback["book_generation"] == 2
+    assert readback["runtime_binding_id"] == gen2_bindings[0].binding_id
+
+
+def test_stale_generation_fence_refuses_retire_advance_and_finalize_without_writes(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit fence: with the ledger at generation 2, generation-1 ids can neither retire
+    (retire_case fence, checked before any mutation), advance, nor finalize the row."""
+    seeded = _seed_recorded_legacy_book(
+        owner_stack, monkeypatch, status="paused", session_admission=MARKET_INPUT_MISSING_PAUSE
+    )
+    coordinator = seeded["coordinator"]
+    key = seeded["legacy"].idempotency_key
+    _servant_retirement_spies(coordinator)
+    stale_row = coordinator.store.get(HOSTED_TENANT, key)
+    _ensure_hosted(owner_stack, coordinator)
+    current = coordinator.store.get(HOSTED_TENANT, key)
+    assert current.references["book_generation"]["generation"] == 2
+    gen1 = trader_paper_book_ids(HOSTED_TENANT, HOSTED_PERSONA)
+
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        coordinator.retire_case(
+            stale_row,
+            retain_persona=True,
+            ids=gen1,
+            fence=trader_paper_book._trader_paper_book_generation_fence(
+                stale_row, generation=1, ids=gen1
+            ),
+        )
+    assert exc.value.reason_code == trader_paper_book.TRADER_PAPER_BOOK_GENERATION_STALE
+    assert trader_paper_book._begin_next_trader_paper_book_generation(
+        coordinator, stale_row, ids=gen1, expected_generation=1, currency="TWD"
+    ).references["book_generation"]["generation"] == 2
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        trader_paper_book._finalize_trader_paper_book_ledger_record(
+            coordinator,
+            stale_row,
+            runtime_binding={"binding_id": HOSTED_BINDING},
+            ids=gen1,
+            provisioned_at="2026-11-28T18:30:00Z",
+            generation=1,
+        )
+    assert exc.value.reason_code == trader_paper_book.TRADER_PAPER_BOOK_GENERATION_STALE
+    after = coordinator.store.get(HOSTED_TENANT, key)
+    assert after.references == current.references
+    assert after.result == current.result
+    assert after.state == "succeeded"
+    assert after.lease_owner is None
+    # The stale request's direct read path of the stale row also continues from generation 2.
+    assert trader_paper_book._retire_and_advance_trader_paper_book_generation(
+        coordinator, stale_row, runtime_client=owner_stack["rm_client"], currency="TWD"
+    ).references["book_generation"]["generation"] == 2
+    assert coordinator.store.get(HOSTED_TENANT, key).references == current.references
+
+
 def test_generation_move_is_refused_for_non_book_rows_and_persona_scope_retirement(
     owner_stack: Dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -449,6 +587,7 @@ def test_generation_move_is_refused_for_non_book_rows_and_persona_scope_retireme
         coordinator,
         persona_row,
         ids=trader_paper_book_ids(HOSTED_TENANT, "persona-retired"),
+        expected_generation=1,
         currency="TWD",
     )
     assert unchanged.state == "retired"
@@ -476,6 +615,37 @@ def test_generation_move_is_refused_for_non_book_rows_and_persona_scope_retireme
     assert after.references == before.references
 
 
+def test_generation_history_is_capped_before_any_retirement_write(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime budget: a row at the last allowed generation is never retired or advanced again."""
+    seeded = _seed_recorded_legacy_book(
+        owner_stack, monkeypatch, status="paused", session_admission=MARKET_INPUT_MISSING_PAUSE
+    )
+    coordinator = seeded["coordinator"]
+    key = seeded["legacy"].idempotency_key
+    row = coordinator.store.get(HOSTED_TENANT, key)
+    leased = coordinator.store.acquire(HOSTED_TENANT, key, lease_owner="t", lease_seconds=60)
+    leased.references = {
+        **leased.references,
+        "book_generation": {
+            "generation": trader_paper_book.TRADER_PAPER_BOOK_MAX_GENERATIONS,
+            "symbols": ["2330.TW"],
+        },
+    }
+    coordinator.store.release(leased, lease_owner="t")
+    before = coordinator.store.get(HOSTED_TENANT, key)
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        trader_paper_book._retire_and_advance_trader_paper_book_generation(
+            coordinator, before, runtime_client=owner_stack["rm_client"], currency="TWD"
+        )
+    assert exc.value.reason_code == "trader_paper_book_generation_cap"
+    after = coordinator.store.get(HOSTED_TENANT, key)
+    assert after.references == before.references and after.state == before.state
+    assert row is not None
+
+
 def test_generation_move_is_only_reachable_from_ensure_trader_paper_book() -> None:
     """Guard: the retired-to-next-generation move has exactly one entrypoint."""
     import ast
@@ -484,6 +654,7 @@ def test_generation_move_is_only_reachable_from_ensure_trader_paper_book() -> No
     bff_root = Path(trader_paper_book.__file__).resolve().parents[1]
     movers = {
         "_retire_and_advance_trader_paper_book_generation",
+        "_retire_and_advance_fenced",
         "_begin_next_trader_paper_book_generation",
     }
     callers: Dict[str, set] = {name: set() for name in movers}
@@ -507,12 +678,15 @@ def test_generation_move_is_only_reachable_from_ensure_trader_paper_book() -> No
     assert callers["_retire_and_advance_trader_paper_book_generation"] == {
         ("trader_paper_book.py", "ensure_trader_paper_book")
     }
-    assert callers["_begin_next_trader_paper_book_generation"] == {
+    assert callers["_retire_and_advance_fenced"] == {
         ("trader_paper_book.py", "_retire_and_advance_trader_paper_book_generation")
     }
-    assert "retain_persona=True" in inspect.getsource(
-        trader_paper_book._retire_and_advance_trader_paper_book_generation
-    )
+    assert callers["_begin_next_trader_paper_book_generation"] == {
+        ("trader_paper_book.py", "_retire_and_advance_fenced")
+    }
+    fenced_source = inspect.getsource(trader_paper_book._retire_and_advance_fenced)
+    assert "retain_persona=True" in fenced_source
+    assert "fence=_trader_paper_book_generation_fence(" in fenced_source
 
 
 @pytest.mark.parametrize(
