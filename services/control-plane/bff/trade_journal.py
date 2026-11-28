@@ -24,6 +24,16 @@ def _allowed(identity: Any, persona_id: str) -> bool:
     return scoped is None or (isinstance(scoped, list) and persona_id in scoped)
 
 
+def _ensure_persona_readable(identity: Any, persona_id: str) -> None:
+    """Persona-service owner rule for the journal reads; an unlisted persona stays the owner's answer."""
+    from .personas.routes.detail import _lazy_viewer_user_id
+    from .personas.service import _ensure_persona_exists, utc_now
+
+    _ensure_persona_exists(
+        persona_id, viewer_user_id=_lazy_viewer_user_id(identity, utc_now), require_exists=False
+    )
+
+
 def _mask(value: Any, identity: Any) -> Any:
     if {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
         return value
@@ -440,9 +450,8 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         require_read_role(who)
         if not _allowed(who, persona_id):
             return who, None, _err(403, "FORBIDDEN", "Cross-persona access denied")
-        if ensure_persona_readable is not None:
-            # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
-            ensure_persona_readable(who, persona_id)
+        # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
+        (ensure_persona_readable or _ensure_persona_readable)(who, persona_id)
         authorization = request.headers.get("Authorization")
         if not authorization and request.cookies.get("pantheon_session"):
             authorization = f"Bearer {request.cookies['pantheon_session']}"

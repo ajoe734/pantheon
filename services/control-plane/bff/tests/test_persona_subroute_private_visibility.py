@@ -28,10 +28,8 @@ from services.control_plane.bff import trade_journal
 from services.control_plane.bff.agora.identity import scope as agora_scope
 from services.control_plane.bff.models import ErrorCode
 from services.control_plane.bff.personas import service as personas_service
-from services.control_plane.bff.personas.routes import collection as collection_routes
 from services.control_plane.bff.personas.routes import detail as detail_routes
 from services.control_plane.bff.personas.routes import lifecycle as lifecycle_routes
-from services.control_plane.bff.personas.routes.collection import _ensure_persona_readable_by
 from services.control_plane.bff.personas.routes.common import PersonaRouteContext
 from services.control_plane.bff.personas.routes.detail import build_detail_router
 from services.control_plane.bff.personas.routes.lifecycle import build_lifecycle_router
@@ -151,8 +149,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> Tuple[TestClient, Dict[str, int]
     monkeypatch.setattr(agora_scope, "resolve_agora_user_scope", _counted_resolve_scope)
     monkeypatch.setattr(personas_service, "_get_persona_directory_snapshot", _directory)
     tenant_payload = lambda identity, requested_tenant=None: {"id": TENANT_ID}  # noqa: E731
-    for module in (collection_routes, lifecycle_routes):
-        monkeypatch.setattr(module, "_bff_me_tenant_payload", tenant_payload)
+    monkeypatch.setattr(detail_routes, "_bff_me_tenant_payload", tenant_payload)
 
     # Detail owners, each counted after the gate.
     monkeypatch.setattr(
@@ -239,15 +236,12 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> Tuple[TestClient, Dict[str, int]
     app = FastAPI()
     app.include_router(build_detail_router(ctx))
     app.include_router(build_lifecycle_router(ctx))
+    # No hook passed: trade_journal uses its default owner-rule check, as core/app_factory.py does.
     app.include_router(
         trade_journal.create_trade_journal_router(
             extract_identity=_identity_for_header,
             require_read_role=lambda _identity: None,
             require_operator_role=lambda _identity: None,
-            # Same wiring as core/app_factory.py.
-            ensure_persona_readable=lambda who, pid: _ensure_persona_readable_by(
-                who, pid, utc_now, require_exists=False
-            ),
         )
     )
     return TestClient(app), counts
@@ -324,24 +318,21 @@ def test_trade_journal_missing_persona_keeps_owner_answer(harness, path: str) ->
 
 
 def test_read_check_reuses_shared_visibility_rule_and_write_routes_keep_existence_check() -> None:
-    readable = inspect.getsource(personas_service._ensure_persona_readable)
-    assert "_persona_fleet_record_visible_to" in readable
-    assert "_fleet_viewer_user_id" in inspect.getsource(collection_routes._fleet_viewer_resolver)
-    assert "_ensure_persona_readable(" in inspect.getsource(collection_routes._ensure_persona_readable_by)
+    check = inspect.getsource(personas_service._ensure_persona_exists)
+    assert "_persona_fleet_record_visible_to" in check
+    assert "viewer_user_id is None" in check  # write routes pass no viewer: existence only
+    assert "_fleet_viewer_user_id" in inspect.getsource(detail_routes._lazy_viewer_user_id)
 
     detail_src = inspect.getsource(detail_routes)
-    assert detail_src.count("_ensure_persona_readable_by(identity, persona_id, utc_now)") == 9
-    assert "_ensure_persona_exists" not in detail_src
+    assert detail_src.count("_ensure_persona_exists(persona_id, viewer_user_id=_lazy_viewer_user_id(identity, utc_now))") == 9
 
     lifecycle_src = inspect.getsource(lifecycle_routes)
-    # Writes (publish, test-prompt) and the pool-publish service reader keep the existence-only check.
-    assert lifecycle_src.count("_ensure_persona_exists") == 4  # import + publish + service reader + test-prompt
-    assert lifecycle_src.count("_ensure_persona_readable_by") == 2  # import + publish-history
+    # Publish and test-prompt writes keep the bare existence check; only publish-history passes a viewer.
+    assert lifecycle_src.count("_ensure_persona_exists, persona_id, tenant_id)") == 2  # publish + service reader
+    assert lifecycle_src.count("        _ensure_persona_exists(persona_id)\n") == 1
+    assert lifecycle_src.count("viewer_user_id=_lazy_viewer_user_id(identity, utc_now, tenant_id)") == 1
     discovery = inspect.getsource(personas_service._persona_strategy_discovery_payload)
-    assert "_ensure_persona_exists(persona_id)" in discovery  # POST strategy-discovery path unchanged
-
-    app_factory_src = inspect.getsource(
-        __import__("services.control_plane.bff.core.app_factory", fromlist=["x"])
-    )
-    assert "ensure_persona_readable=_trade_journal_persona_readable" in app_factory_src
-    assert "require_exists=False" in app_factory_src
+    assert "_ensure_persona_exists(persona_id, viewer_user_id=viewer_user_id)" in discovery
+    # POST strategy-discovery passes no viewer.
+    start_src = inspect.getsource(lifecycle_routes.build_lifecycle_router)
+    assert start_src.count("viewer_user_id=_lazy_viewer_user_id(identity, utc_now)") == 1

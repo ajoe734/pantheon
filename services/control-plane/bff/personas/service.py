@@ -3137,10 +3137,7 @@ def _persona_strategy_discovery_payload(
     discovery_session_id: Optional[str] = None,
     viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
 ) -> Dict[str, Any]:
-    if viewer_user_id is None:
-        _ensure_persona_exists(persona_id)
-    else:
-        _ensure_persona_readable(persona_id, viewer_user_id)
+    _ensure_persona_exists(persona_id, viewer_user_id=viewer_user_id)
     persona = _get_active_read_store().get_persona(persona_id)
     if persona is None:
         directory = _get_persona_directory_snapshot()
@@ -7301,40 +7298,32 @@ _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
 
 
 # --- _ensure_persona_exists ---
-def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None) -> None:
-    directory = _get_persona_directory_snapshot(caller_tenant)
-    if persona_id in directory.records_by_id:
-        return
-    raise _bff_error(
-        404, ErrorCode.RESOURCE_NOT_FOUND,
-        "Persona not found",
-        f"Persona {persona_id} does not exist",
-    )
-
-
-# --- _ensure_persona_readable ---
-def _ensure_persona_readable(
+def _ensure_persona_exists(
     persona_id: str,
-    viewer_user_id: Callable[[], Optional[str]],
     caller_tenant: Optional[str] = None,
     *,
+    viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
     require_exists: bool = True,
 ) -> None:
-    """Read-side variant of _ensure_persona_exists that applies the owner rule.
+    """Raise the missing-persona 404; the read-side variant also applies the owner rule.
 
-    A user_private record (_persona_fleet_record_visible_to) read by anyone but
-    its owning Agora user answers the same 404 as a missing persona. The viewer
-    is resolved lazily, so only private records cost an Agora scope resolution
-    and every other record keeps its current answer. With require_exists=False
-    a persona absent from the directory is left to the caller's own owner read.
+    Write routes pass no viewer and keep the existence-only check. Read routes pass
+    viewer_user_id (a lazy resolver): a user_private record
+    (_persona_fleet_record_visible_to) read by anyone but its owning Agora user answers
+    the same 404 as a missing persona. The viewer is resolved only for a private record,
+    so every other record costs no Agora scope resolution and keeps its current answer.
+    With require_exists=False a persona absent from the directory is left to the
+    caller's own owner read.
     """
     directory = _get_persona_directory_snapshot(caller_tenant)
     record = directory.records_by_id.get(persona_id)
     if record is None:
         if not require_exists:
             return
-    elif _persona_fleet_record_visible_to(record, None) or _persona_fleet_record_visible_to(
-        record, viewer_user_id()
+    elif (
+        viewer_user_id is None
+        or _persona_fleet_record_visible_to(record, None)
+        or _persona_fleet_record_visible_to(record, viewer_user_id())
     ):
         return
     raise _bff_error(

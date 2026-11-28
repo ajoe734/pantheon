@@ -356,7 +356,6 @@ def _client(world: World, monkeypatch, tmp_path, tenant: str = TENANT, roles=("o
     )
     monkeypatch.setattr(personas_lifecycle, "_pool_publisher", lambda authorization: world.publisher)
     monkeypatch.setattr(personas_lifecycle, "_ensure_persona_exists", lambda *a, **k: None)
-    monkeypatch.setattr(personas_lifecycle, "_ensure_persona_readable_by", lambda *a, **k: None)
     return TestClient(app)
 
 
