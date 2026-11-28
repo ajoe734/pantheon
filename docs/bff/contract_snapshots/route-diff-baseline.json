@@ -1249,6 +1249,20 @@
       },
       {
         "family": "agora-core",
+        "key": "GET /bff/agora/servant/reports",
+        "method": "GET",
+        "path": "/bff/agora/servant/reports",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/servant/reports/{param}",
+        "method": "GET",
+        "path": "/bff/agora/servant/reports/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "GET /bff/agora/servant/sessions/{param}",
         "method": "GET",
         "path": "/bff/agora/servant/sessions/{param}",
@@ -1406,6 +1420,13 @@
         "key": "GET /bff/agora/trading-room/workspaces/{param}",
         "method": "GET",
         "path": "/bff/agora/trading-room/workspaces/{param}",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "GET /bff/agora/trading-room/workspaces/{param}/revision-proposals",
+        "method": "GET",
+        "path": "/bff/agora/trading-room/workspaces/{param}/revision-proposals",
         "status": "implemented"
       },
       {
@@ -3217,6 +3238,13 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/servant/reports",
+        "method": "POST",
+        "path": "/bff/agora/servant/reports",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/servant/sessions",
         "method": "POST",
         "path": "/bff/agora/servant/sessions",
@@ -3259,6 +3287,13 @@
       },
       {
         "family": "agora-core",
+        "key": "POST /bff/agora/strategies/{param}/trading-room/proposals/{param}/reject",
+        "method": "POST",
+        "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}/reject",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
         "key": "POST /bff/agora/trading-data/query",
         "method": "POST",
         "path": "/bff/agora/trading-data/query",
@@ -3297,6 +3332,20 @@
         "key": "POST /bff/agora/trading-room/widget-revision-proposals/{param}/accept",
         "method": "POST",
         "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/widget-revision-proposals/{param}/reject",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/reject",
+        "status": "implemented"
+      },
+      {
+        "family": "agora-core",
+        "key": "POST /bff/agora/trading-room/workspaces/{param}/revision-proposals/triggers",
+        "method": "POST",
+        "path": "/bff/agora/trading-room/workspaces/{param}/revision-proposals/triggers",
         "status": "implemented"
       },
       {
@@ -3974,17 +4023,17 @@
     "task_id": "BFF-CONSOL-026"
   },
   "summary": {
-    "backend_routes": 692,
-    "failure_count": 561,
+    "backend_routes": 699,
+    "failure_count": 568,
     "failures": {
-      "backend_missing_frontend": 560,
+      "backend_missing_frontend": 567,
       "duplicate_backend_keys": 0,
       "duplicate_frontend_keys": 0,
       "frontend_missing_backend": 0,
       "naming_mismatches": 1
     },
     "frontend_routes": 184,
-    "mode_failure_count": 561,
+    "mode_failure_count": 568,
     "status": "fail",
     "warning_count": 0,
     "warnings": {
