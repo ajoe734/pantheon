@@ -126,6 +126,31 @@ def build_decisions_router(ctx: TradingRoomRouteContext) -> APIRouter:
         return shaped
 
     # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/imitation-comparison
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/imitation-comparison")
+    def get_trader_imitation_comparison(
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        strategy_id: Optional[str] = Query(
+            default=None,
+            description="Optional strategy ID filter for the trader's behaviour candidate comparison",
+        ),
+    ) -> Dict[str, Any]:
+        """Owner-scoped comparison of the trader's behaviour candidate (trader_imitation) vs human_actual.
+
+        Returns either ``ready`` with agreement rate, outcome gap, 1,000-resample bootstrap
+        intervals (labelled ``luck`` / ``可能是運氣`` when containing 0), and differences, or
+        ``not_enough_decisions`` when the trader has fewer than 30 decisions.
+        """
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        shaped = ctx.service.get_trader_imitation_comparison(identity, strategy_id=strategy_id)
+        shaped["meta"] = {**ctx._meta(), **(shaped.get("meta") or {})}
+        return shaped
+
+    # ------------------------------------------------------------------
     # POST /bff/agora/trading-room/decision-events/{decision_event_id}/decisions
     # ------------------------------------------------------------------
 

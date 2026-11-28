@@ -352,7 +352,13 @@ def test_a4_built_shadow_decision_lock_settles_all_four_arms() -> None:
 
     settled = settle_decision_lock(lock, market_rows=market_rows, observation_window="5d").to_dict()
     arms = {a["arm"]: a for a in settled["arms"]}
-    assert set(arms.keys()) == {"human_actual", "private_servant", "base_strategy", "committee_variant"}
+    assert set(arms.keys()) == {
+        "human_actual",
+        "private_servant",
+        "base_strategy",
+        "committee_variant",
+        "trader_imitation",
+    }
     assert arms["human_actual"]["settlement_source"] == "declared_no_trade"
     assert arms["human_actual"]["outcome"]["action"] == "no_trade"
     assert arms["human_actual"]["outcome"]["return_pct"] == 0.0
@@ -361,3 +367,126 @@ def test_a4_built_shadow_decision_lock_settles_all_four_arms() -> None:
         assert arms[arm_name]["settlement_source"] == "pantheon_paper_proxy"
         assert arms[arm_name]["outcome"] is not None
         assert arms[arm_name]["outcome"]["return_pct"] != 0.0
+    assert arms["trader_imitation"]["outcome"] is None
+    assert arms["trader_imitation"]["unavailable_reason"] == "no_trader_imitation_candidate_on_decision_event"
+
+
+def test_trader_imitation_arm_settles_with_other_arms_and_comparison_labels_luck() -> None:
+    """trader_imitation arm is added to new decision locks, settled with the others, and bootstrap intervals containing 0 are labelled luck (可能是運氣)."""
+    from services.agora.shadow_mode import build_decision_lock
+    from services.evaluation.attribution import compare_trader_imitation
+
+    market_rows = load_recorded_twse_rows()
+    candidate = {
+        "candidate_id": "cand-imitation-lin-strat1-v1",
+        "version_id": "cand-imitation-lin-strat1-v1",
+        "tenant_id": "tenant-alpha",
+        "user_id": "trader-lin",
+        "strategy_id": "strat-twse-1",
+        "status": "evaluated",
+        "decision_count": 32,
+        "artifact": {
+            "version_id": "cand-imitation-lin-strat1-v1",
+            "decision_count": 32,
+            "model": {
+                "actions": ["no_trade", "hold", "enter", "exit"],
+                "weights": {
+                    "enter": {"confidence": 3.0, "risk_score": -1.0},
+                    "no_trade": {"confidence": -1.0, "risk_score": 2.0},
+                    "hold": {},
+                    "exit": {},
+                },
+                "biases": {"enter": 1.5, "no_trade": -0.5, "hold": -1.0, "exit": -1.0},
+            },
+        },
+    }
+    event = {
+        "decision_event_id": "evt-imit-01",
+        "event_kind": "entry",
+        "strategy_id": "strat-twse-1",
+        "strategy_version_id": "sv-1",
+        "subject": {"symbol": "2330.TW"},
+        "suggested_action": "enter",
+        "confidence": 0.82,
+        "risk_score": 0.18,
+        "data_cutoff": "2024-10-01T05:30:00Z",
+        "servant_suggestion": {"action": "enter", "persona_id": "servant-lin"},
+    }
+    lock1 = build_decision_lock(
+        human_decision_id="hdl-imit-01",
+        decision_record_id="rec-imit-01",
+        event=event,
+        decision_event_id="evt-imit-01",
+        tenant_id="tenant-alpha",
+        user_id="trader-lin",
+        body_decision="approve",
+        rationale="Enter on breakout",
+        modifications=None,
+        decision_time="2024-10-01T06:00:00Z",
+        execution_observation_kind="pantheon_paper_proxy",
+        actor_roles=["trader"],
+        trader_imitation_candidate=candidate,
+    )
+    assert lock1["arms"]["trader_imitation"]["available"] is True
+    assert lock1["arms"]["trader_imitation"]["action"] == "enter"
+    assert lock1["arms"]["trader_imitation"]["candidate_id"] == "cand-imitation-lin-strat1-v1"
+    assert lock1["optional_alt_versions"]["trader_imitation"]["candidate_id"] == "cand-imitation-lin-strat1-v1"
+
+    settled1 = settle_decision_lock(lock1, market_rows=market_rows, observation_window="5d").to_dict()
+    arms1 = {a["arm"]: a for a in settled1["arms"]}
+    assert arms1["trader_imitation"]["unavailable_reason"] is None
+    assert arms1["trader_imitation"]["settlement_source"] == "pantheon_paper_proxy"
+    assert arms1["trader_imitation"]["outcome"] is not None
+    assert arms1["trader_imitation"]["outcome"]["return_pct"] == arms1["human_actual"]["outcome"]["return_pct"]
+
+    # Second lock where human declared no_trade while trader_imitation entered
+    lock2 = build_decision_lock(
+        human_decision_id="hdl-imit-02",
+        decision_record_id="rec-imit-02",
+        event={**event, "decision_event_id": "evt-imit-02"},
+        decision_event_id="evt-imit-02",
+        tenant_id="tenant-alpha",
+        user_id="trader-lin",
+        body_decision="reject",
+        rationale="Skip entry",
+        modifications=None,
+        decision_time="2024-10-01T06:00:00Z",
+        execution_observation_kind="declared_no_trade",
+        actor_roles=["trader"],
+        trader_imitation_candidate=candidate,
+    )
+    settled2 = settle_decision_lock(lock2, market_rows=market_rows, observation_window="5d").to_dict()
+
+    comparison = compare_trader_imitation(
+        [lock1, lock2],
+        settlements={"hdl-imit-01": settled1, "hdl-imit-02": settled2},
+        candidate=candidate,
+        decision_count=32,
+        tenant_id="tenant-alpha",
+        user_id="trader-lin",
+        strategy_id="strat-twse-1",
+    )
+    assert comparison["comparison_state"] == "ready"
+    assert comparison["compared_decision_count"] == 2
+    assert comparison["agreement_rate"] == 0.5
+    assert comparison["agreement_interval"]["resamples"] == 1000
+    assert comparison["outcome_gap_interval"]["resamples"] == 1000
+    # Interval spans 0.0 (one gap is 0.0, one is non-zero) -> zero_inside is True -> labelled luck (可能是運氣)
+    assert comparison["outcome_gap_interval"]["zero_inside"] is True
+    assert comparison["outcome_gap_label"] == "luck"
+    assert comparison["outcome_gap_label_zh"] == "可能是運氣"
+    assert comparison["finding_stated"] is False
+    assert len(comparison["differences"]) == 1
+    assert comparison["differences"][0]["decision_event_id"] == "hdl-imit-02"
+
+    # Under 30 decisions without a trained candidate -> not_enough_decisions
+    not_enough = compare_trader_imitation(
+        [lock1],
+        decision_count=12,
+        tenant_id="tenant-alpha",
+        user_id="trader-lin",
+        strategy_id="strat-twse-1",
+    )
+    assert not_enough["comparison_state"] == "not_enough_decisions"
+    assert not_enough["minimum_decisions_required"] == 30
+    assert not_enough["remaining_decisions_needed"] == 18

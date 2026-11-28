@@ -1,0 +1,27 @@
+{
+ "task_id": "BFF-ALPHA-BOARD-LLM-DISTINCT-SOURCES-20261127",
+ "class": "RC2",
+ "follow_up_of": "#7957 (DISTILLATION-SAME-ARTICLE-REPAID-PER-REFETCH-20261127)",
+ "owner": "Claude2",
+ "reviewer": "Codex",
+ "cause": "ExtractionLedger.summary() reports distinct_sources and calls_per_source, but the owner discovery summary (_read_ledger) read only calls.n and calls.cap, and the BFF alpha factory board copied only calls/cap/scope into counts.llm_calls_today; the discovery probe therefore always reported calls_per_source_status=distinct_sources_not_reported.",
+ "changes": {
+  "services/source_ingestion/discovery_summary.py": "_read_ledger reads calls.sources in the same point read of today's calls row (no extra query, same read budget) and returns distinct_sources and calls_per_source (same formula as ExtractionLedger.summary). Null with distinct_sources_reason when the column is missing (ledger_sources_column_missing) or today's calls were counted before it existed (calls > 0, sources = 0: ledger_sources_not_recorded_for_day); calls_per_source_reason=no_calls_today when there are no calls.",
+  "services/control-plane/bff/console_gap/alpha_factory.py": "counts.llm_calls_today carries distinct_sources and calls_per_source from the owner llm_calls section; null with the owner's reason, or owner_distinct_sources_not_reported / owner_calls_per_source_not_reported when the owner omits them. Never a fabricated 0."
+ },
+ "unsent_call_count": "Not plumbed: no separate unsent-call count exists in the ledger summary yet (acceptance says 'once it exists').",
+ "tests": {
+  "interpreter": ".venv-pantheon/bin/python3 (scripts/dev/provision_python_distribution.py)",
+  "commands": [
+   ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_discovery_summary.py -> 18 passed",
+   ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_alpha_factory_contract.py acceptance/test_discovery_pipeline_day.py -> 74 passed"
+  ],
+  "contract_test": "test_llm_calls_today_carries_distinct_sources_from_the_real_ledger builds a real ExtractionLedger, reserves calls for 3 sources (6 calls), feeds the real read_discovery_summary llm_calls section to the BFF board and asserts distinct_sources/calls_per_source equal ExtractionLedger.summary() (3, 2.0). No hand-written ledger dict."
+ },
+ "acceptance_3_hosted_proof": {
+  "status": "pending_after_deploy",
+  "check": "Read-only discovery-pipeline probe after deploy: hypothesis_cards stage values.distinct_sources and values.calls_per_source numeric, calls_per_source_status=measured.",
+  "note": "Not taken by this worker before merge/deploy. On the first hosted day the counter may read ledger_sources_not_recorded_for_day only if the day's calls predate the sources column (added in #7957); that column is already deployed, so a full UTC day after deploy should be measured."
+ },
+ "runtime_budget": "none: read path only, same single SELECT on today's calls row, two more fields in the response"
+}

@@ -97,6 +97,21 @@ def is_provider_billing_failure(message: Any) -> bool:
     return any(marker in text for marker in _BILLING_FAILURE_MARKERS)
 
 
+# Exhaustive no-provider-call evidence. Everything else is counted conservatively.
+# Connection exceptions qualify ONLY while opening the adapter socket; after
+# request() begins even the same exception may represent a billed model turn.
+UNSENT_CALL_REASONS = {
+    "dns_failure": "socket.gaierror during adapter connect",
+    "connection_refused": "ConnectionRefusedError during adapter connect",
+    "adapter_policy_unavailable": "OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE top-level adapter error_code",
+    "direct_policy_unavailable": "direct provider policy read failed before invoke_structured",
+    "direct_policy_denied": "direct provider policy check denied before invoke_structured",
+    "transport_unconfigured": "no provider or adapter configured",
+    "admission_denied": "client admission refused before dispatch",
+    "input_budget_exceeded": "client input budget refused before dispatch",
+}
+
+
 _DEFAULT_TOKEN_LIMITS: dict[str, int] = {
     "max_input_tokens": 8000,
     "max_output_tokens": 1000,
@@ -209,7 +224,13 @@ def _perform_http_request(
     conn_cls = http.client.HTTPSConnection if is_https else http.client.HTTPConnection
     conn = conn_cls(host, port, timeout=rem)
     try:
-        conn.connect()
+        try:
+            conn.connect()
+        except (socket.gaierror, ConnectionRefusedError) as exc:
+            reason = "dns_failure" if isinstance(exc, socket.gaierror) else "connection_refused"
+            raise SemanticExtractionClientError(
+                str(exc), ExtractionFailureCode.TRANSPORT_ERROR, 503, unsent_reason=reason,
+            ) from exc
         conn.sock = _DeadlineSocket(conn.sock, deadline_at)
         path = parsed.path or "/"
         if parsed.query:
@@ -256,11 +277,17 @@ _is_claim_grounded = is_claim_grounded
 class SemanticExtractionClientError(RuntimeError):
     """Raised when an unrecoverable extraction client error occurs."""
 
-    def __init__(self, message: str, failure_code: ExtractionFailureCode, status_code: int = 500) -> None:
+    def __init__(
+        self, message: str, failure_code: ExtractionFailureCode, status_code: int = 500,
+        *, unsent_reason: Optional[str] = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.failure_code = failure_code
         self.status_code = status_code
+        if unsent_reason is not None and unsent_reason not in UNSENT_CALL_REASONS:
+            raise ValueError(f"Unknown unsent reason: {unsent_reason}")
+        self.unsent_reason = unsent_reason
 
 
 class SemanticExtractionClient:
@@ -371,7 +398,7 @@ class SemanticExtractionClient:
             raise SemanticExtractionClientError(
                 "Direct provider lacks _gateway_call policy verification interface.",
                 ExtractionFailureCode.ADMISSION_DENIED,
-                403,
+                403, unsent_reason="direct_policy_denied",
             )
         try:
             snapshot = provider._gateway_call("config.get", timeout_seconds=max(0.01, deadline - time.monotonic()))
@@ -379,7 +406,7 @@ class SemanticExtractionClient:
             raise SemanticExtractionClientError(
                 f"Cannot verify native-tool denial on extraction Gateway: {exc}",
                 ExtractionFailureCode.ADMISSION_DENIED,
-                503,
+                503, unsent_reason="direct_policy_unavailable",
             ) from exc
         config = snapshot.get("config") if isinstance(snapshot, dict) else None
         agents = config.get("agents") if isinstance(config, dict) else None
@@ -390,7 +417,7 @@ class SemanticExtractionClient:
             raise SemanticExtractionClientError(
                 "Structured extraction policy boundary violated: Gateway tools.deny != ['*'].",
                 ExtractionFailureCode.ADMISSION_DENIED,
-                403,
+                403, unsent_reason="direct_policy_denied",
             )
 
     def _build_prompt(self, request: SemanticExtractionRequest) -> str:
@@ -441,6 +468,7 @@ class SemanticExtractionClient:
                 schema_id=schema_id,
                 model_identity=self._resolve_model_identity(None, request),
                 prompt_identity=_DEFAULT_PROMPT_VERSION,
+                unsent_reason="admission_denied",
                 config_digest=hashlib.sha256(b"admission_denied").hexdigest()[:16],
                 latency_ms=(time.monotonic() - start_time) * 1000.0,
             )
@@ -485,10 +513,12 @@ class SemanticExtractionClient:
                     schema_id=schema_id,
                     model_identity=self._resolve_model_identity(None, request),
                     prompt_identity=_DEFAULT_PROMPT_VERSION,
+                    unsent_reason="input_budget_exceeded",
                     config_digest=hashlib.sha256(b"budget_breach_precall").hexdigest()[:16],
                     latency_ms=(time.monotonic() - start_time) * 1000.0,
                 )
         attempt = 0
+        unsent_reason: Optional[str] = None
         last_error_code: Optional[ExtractionFailureCode] = None
         last_error_msg: Optional[str] = None
         raw_response: Optional[dict[str, Any]] = None
@@ -522,6 +552,11 @@ class SemanticExtractionClient:
             except SemanticExtractionClientError as exc:
                 last_error_code = exc.failure_code
                 last_error_msg = exc.message
+                # L2 has exactly one dispatch. Multi-attempt interactive calls
+                # cannot refund based only on their final attempt.
+                unsent_reason = exc.unsent_reason if max_attempts == 1 else None
+                if exc.unsent_reason:
+                    break
                 if exc.failure_code in (ExtractionFailureCode.TIMEOUT, ExtractionFailureCode.PROVIDER_BILLING):
                     break
                 # Non-retryable failures: invalid schema, wrong tool, refusal, budget breach, admission denied
@@ -594,6 +629,7 @@ class SemanticExtractionClient:
                 retry_count=max(0, attempt - 1),
                 usage=usage_res,
                 cost_usd=cost_res,
+                unsent_reason=unsent_reason,
             )
 
         # 3. Parse and validate structured output
@@ -716,6 +752,15 @@ class SemanticExtractionClient:
                     data_obj = raw_data.get("data") or {}
                     return data_obj
                 err_body = body_bytes.decode("utf-8", errors="replace")
+                try:
+                    adapter_error = json.loads(err_body)
+                except (ValueError, TypeError):
+                    adapter_error = {}
+                if isinstance(adapter_error, dict) and adapter_error.get("error_code") == "OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE":
+                    raise SemanticExtractionClientError(
+                        err_body, ExtractionFailureCode.TRANSPORT_ERROR, status,
+                        unsent_reason="adapter_policy_unavailable",
+                    )
                 if is_provider_billing_failure(err_body) or status == 402:
                     raise SemanticExtractionClientError(err_body, ExtractionFailureCode.PROVIDER_BILLING, status)
                 if status == 422:
@@ -757,7 +802,7 @@ class SemanticExtractionClient:
         raise SemanticExtractionClientError(
             "No OpenClaw transport available (no provider, transport_fn, or adapter_url set)",
             ExtractionFailureCode.TRANSPORT_ERROR,
-            503,
+            503, unsent_reason="transport_unconfigured",
         )
 
     def _process_structured_output(

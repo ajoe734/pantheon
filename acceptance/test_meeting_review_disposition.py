@@ -340,6 +340,123 @@ def test_probe_fails_on_pre_fix_hosted_legacy_shape() -> None:
     } <= failure_codes
 
 
+# Mirrors read_human_inbox_meeting_items' composed metadata, including the
+# successful Research page and the Consultation pagination fields.
+INBOX_MEETINGS_SURFACE_FIXTURE = {
+    "status": "degraded",
+    "source": "bff_composed",
+    "snapshot_at": "2026-11-27T22:40:08Z",
+    "surfaces": {
+        "consultation": {"status": "unavailable", "reason": "consultation_owner_unavailable"},
+        "research": {
+            "status": "ok",
+            "reason": None,
+            "page_info": {"page_size": 100, "next_page_token": None},
+            "href": "/api/v1/research/tickets?meeting_linked=true&human_actionable=true&page_size=100",
+        },
+    },
+}
+
+
+def _check_with_meetings_surface(surface: dict) -> dict:
+    """Keep the recorded REVIEW meeting valid, varying only inbox metadata."""
+    detail = copy.deepcopy(LEGACY_CHENGCHUAN_MT1_FIXTURE)
+    detail.update(operator_review=None, synthesis_unreadable_reason="unknown", evidence_refs=[])
+    # Preserve the real case-file/rounds and supply their projected evidence.
+    detail["evidence_refs"] = [{"source_id": f"mem-summary-{LEGACY_USER_MEETING_ID}"}]
+    inbox_item = {
+        "id": f"meeting_review:{LEGACY_USER_MEETING_ID}",
+        "kind": "meeting_review",
+        "meeting_id": LEGACY_USER_MEETING_ID,
+        "status": "pending",
+        "action_state": "pending",
+        "outcome": "REVIEW",
+        "reason": "synthesis_review_required",
+        "unreadable_reason": "unknown",
+        "evidence_refs": detail["evidence_refs"],
+    }
+
+    def fetch(path: str) -> dict:
+        if path == probe.MEETINGS_PATH:
+            return {"status": "ok", "items": [copy.deepcopy(LEGACY_CHENGCHUAN_MT1_FIXTURE)]}
+        if path == probe.INBOX_MEETINGS_PATH:
+            return {"data": {"items": [inbox_item]}, "meta": {"surfaces": {"meetings": surface}}}
+        if path == f"/bff/management/meetings/{LEGACY_USER_MEETING_ID}":
+            return {"status": "ok", "data": detail}
+        raise AssertionError(f"Unexpected path: {path}")
+
+    return probe.check(fetch)
+
+
+@pytest.mark.parametrize("failed_owner", ["consultation", "research", "both", None])
+def test_probe_reports_real_nested_inbox_meetings_surface_shape(failed_owner: str | None) -> None:
+    surface = copy.deepcopy(INBOX_MEETINGS_SURFACE_FIXTURE)
+    if failed_owner != "consultation":
+        surface["surfaces"]["consultation"] = {"status": "ok", "reason": None, "next_cursor": None}
+    if failed_owner in {"research", "both"}:
+        surface["surfaces"]["research"] = {
+            "status": "unavailable", "reason": "research_owner_unavailable", "status_code": 503,
+        }
+    if failed_owner == "both":
+        surface["surfaces"]["consultation"] = copy.deepcopy(
+            INBOX_MEETINGS_SURFACE_FIXTURE["surfaces"]["consultation"]
+        )
+    surface["status"] = "ok" if failed_owner is None else "unavailable" if failed_owner == "both" else "degraded"
+
+    report = _check_with_meetings_surface(surface)
+    assert report["passed"] is (failed_owner is None)
+    assert report["results"] == {LEGACY_USER_MEETING_ID: "pending_review"}
+    if failed_owner is None:
+        assert report["failed"] == []
+    else:
+        expected = ";".join(
+            f"{owner}:{entry['status']}:{entry['reason'] or 'unknown'}"
+            for owner, entry in surface["surfaces"].items()
+        )
+        assert report["failed"] == [f"inbox_meetings_surface_{surface['status']}:unknown;sub_surfaces={expected}"]
+
+
+def test_probe_caps_nested_meetings_reasons_and_count() -> None:
+    surface = copy.deepcopy(INBOX_MEETINGS_SURFACE_FIXTURE)
+    # Extend the real contributor shape to exercise future contributor growth.
+    for index in range(4):
+        surface["surfaces"][f"additional_{index}"] = copy.deepcopy(surface["surfaces"]["research"])
+    for entry in surface["surfaces"].values():
+        entry["reason"] = "故" * 120 + "TRUNCATED"
+
+    report = _check_with_meetings_surface(surface)
+    assert report["passed"] is False
+    assert report["failed"] == [
+        "inbox_meetings_surface_degraded:unknown;sub_surfaces="
+        + ";".join(f"{owner}:{entry['status']}:{'故' * 120}" for owner, entry in list(surface["surfaces"].items())[:4])
+    ]
+    assert "additional_2" not in report["failed"][0]
+    assert "TRUNCATED" not in report["failed"][0]
+
+
+def test_probe_preserves_top_level_meetings_reason_with_nested_detail() -> None:
+    surface = copy.deepcopy(INBOX_MEETINGS_SURFACE_FIXTURE)
+    surface["reason"] = "human_inbox_partial_read"
+    report = _check_with_meetings_surface(surface)
+    assert report["passed"] is False
+    assert report["failed"] == [
+        "inbox_meetings_surface_degraded:human_inbox_partial_read;sub_surfaces="
+        "consultation:unavailable:consultation_owner_unavailable;research:ok:unknown"
+    ]
+
+
+@pytest.mark.parametrize("status", ["degraded", "unavailable"])
+@pytest.mark.parametrize("reason", [None, "human_inbox_partial_read"])
+@pytest.mark.parametrize("nested", [None, {}])
+def test_probe_keeps_failure_text_without_nested_surfaces(status: str, reason: str | None, nested: dict | None) -> None:
+    surface = {"status": status, "reason": reason}
+    if nested is not None:
+        surface["surfaces"] = nested
+    report = _check_with_meetings_surface(surface)
+    assert report["passed"] is False
+    assert report["failed"] == [f"inbox_meetings_surface_{status}:{reason or 'unknown'}"]
+
+
 def test_probe_exit_77_on_missing_env_without_network_or_secret_leak() -> None:
     env = {k: v for k, v in os.environ.items() if not k.startswith("ACCEPTANCE_")}
     env["ACCEPTANCE_BFF_URL"] = "http://127.0.0.1:9"

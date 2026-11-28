@@ -1,0 +1,80 @@
+{
+  "task_id": "CI-PERSONA-LIST-CPU-RATIO-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "date": "2026-11-28",
+  "root_cause_class": "RC1: required checks must not impose stopwatch thresholds",
+  "scope": {
+    "test": "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py",
+    "base_commit": "9cf0aeff7",
+    "production_changes": false,
+    "other_tests_changed": false,
+    "hosted_verification": "Not performed; no VM, SSH or operator-key access. Hosted verification belongs to the later operator acceptance task."
+  },
+  "reported_incident": {
+    "source": "Task brief: residual from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128, PR #8011; these are coordinator-reported measurements, not runs performed by this task.",
+    "date": "2026-11-28",
+    "expanded_batch_cpu_seconds": {"previous": 0.0549, "compact": 0.0206},
+    "isolated_cpu_seconds": {"previous": 0.0515, "compact": 0.0194},
+    "failure": "About 62 percent CPU reduction failed the old required 70 percent reduction, with the test and service identical to dev."
+  },
+  "assertion_change": {
+    "previous_test": "test_list_cpu_drops_at_least_70_percent",
+    "replacement_test": "test_list_projection_avoids_rich_health_per_row",
+    "removed": "assert new <= old * 0.3",
+    "justification": "A CPU-time ratio is machine/load dependent. Replace that gate with an exact work-count invariant; do not claim a portable 70 percent speedup.",
+    "real_data": "Unchanged _real_raw and real_service fixtures, 160 rows; two connector requirements (one missing), two provider statuses, 103000-byte receipt payload and 29000-byte health detail from unchanged _real_truth. Real PersonaService overlay and projection execute through a delegating spy.",
+    "positive_control": "The previous rich-DTO-then-strip path must call _source_health_bindings_from_requirements exactly 160 times.",
+    "compact_path": "The compact path must return every persona ID in input order and call _source_health_bindings_from_requirements zero times.",
+    "unchanged_coverage": "The other five tests, all helpers, fixtures and imports are byte-for-byte unchanged. They retain payload-size, field equivalence, source status, input/cache isolation and full detail DTO assertions. No skip, xfail, retry or deleted coverage.",
+    "opt_in": "PANTHEON_PERSONA_LIST_CPU_MEASURE=1 with pytest -s prints previous and compact process_time seconds only. Unset by default and absent from .github/workflows; no workflow input added. Timing runs outside the spy context and has no pass/fail threshold. The test docstring documents this switch."
+  },
+  "validation": {
+    "interpreter": ".venv-pantheon/bin/python3, provisioned by python3 scripts/dev/provision_python_distribution.py",
+    "provision_check": {"command": "python3 scripts/dev/provision_python_distribution.py --check-only", "exit_status": 0},
+    "three_consecutive_file_runs": {
+      "command": "for run in 1 2 3; do env -u PANTHEON_PERSONA_LIST_CPU_MEASURE .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py; result=$?; echo RUN $run EXIT $result; if [ $result -ne 0 ]; then exit $result; fi; done",
+      "runs": [
+        {"run": 1, "result": "6 passed, 2 warnings in 1.44s", "exit_status": 0},
+        {"run": 2, "result": "6 passed, 2 warnings in 1.48s", "exit_status": 0},
+        {"run": 3, "result": "6 passed, 2 warnings in 1.47s", "exit_status": 0}
+      ],
+      "batch_exit_status": 0
+    },
+    "regression_mutation": {
+      "method": "Temporary external pytest plugin, pytest_runtest_call: item.funcargs['monkeypatch'].setattr(item.module.svc, '_project_persona_list_records', lambda raws: [item.module._previous_projection(raw) for raw in raws]); run only the replacement test with the CPU opt-in unset.",
+      "command": ".venv-pantheon/bin/python3 /tmp/ci-persona-list-cpu-ratio-validation.py mutation",
+      "result": "Expected failure at assert rich_calls == []: list projection built rich source-health bindings; left contains 160 more items. All row IDs passed before this assertion.",
+      "pytest_exit_status": 1,
+      "harness_exit_status": 0,
+      "service_file_modified": false
+    },
+    "default_path_clock_sentinel": {
+      "method": "Temporary external pytest plugin replaces item.module.time with types.SimpleNamespace(process_time=forbidden_clock), where forbidden_clock raises AssertionError. Run only the replacement test with the CPU opt-in unset.",
+      "command": ".venv-pantheon/bin/python3 /tmp/ci-persona-list-cpu-ratio-validation.py no-clock",
+      "result": "1 passed, 2 warnings in 0.58s",
+      "pytest_exit_status": 0,
+      "harness_exit_status": 0
+    },
+    "opt_in_measurement": {
+      "command": "PANTHEON_PERSONA_LIST_CPU_MEASURE=1 .venv-pantheon/bin/python3 -m pytest -q -s services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py::test_list_projection_avoids_rich_health_per_row",
+      "output": "persona list CPU seconds: previous=0.056715 compact=0.018479",
+      "result": "1 passed, 2 warnings in 0.67s",
+      "exit_status": 0
+    },
+    "scope_check": "Compared original file prefix before the old timing test with new file prefix before the replacement test: byte-for-byte equal. git diff --check passed.",
+    "warnings": "Existing jsonschema.RefResolver deprecation at services/research/strategy_spec/normalizer.py:21; not changed by this task.",
+    "output_collection": "Every validation batch reached a terminal exit status; no background validation remains."
+  },
+  "runtime_budget": {
+    "new_runtime_file_or_writer_or_job_or_workflow_input": false,
+    "hosted_cadence": "none",
+    "hosted_size_bytes": 0,
+    "hosted_count": 0,
+    "hosted_growth_bytes_per_day": 0,
+    "hosted_cap_bytes": 0,
+    "hosted_cleanup": "Not applicable: no runtime resource added.",
+    "static_artifact": "One task-scoped source-controlled evidence JSON required by the artifact contract; no recurring writer. Temporary validation helper and checkout-scoped test environment are local development artifacts only."
+  },
+  "residual_findings": []
+}

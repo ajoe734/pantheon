@@ -1,0 +1,33 @@
+{
+  "task": "TW-REFRESH-STALE-BOUNDED-RUNTIME-RECORD-BLOCKS-REFRESH-20261127",
+  "class": "interrupted refresh leaves leftovers (release owner row)",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "problem": "Refresh run 45985422058 left /tmp/pantheon-bounded-runtime-45985422058 (BR_PHASE=captured, BR_ENTER_COUNT=0, image three releases old and gone). Every later refresh restored from it, failed with bounded_runtime_stale_restore_failed and kept the record, so official market, chip and fundamentals refreshes failed (46075700478, 46078582392).",
+  "solution": {
+    "never_entered": "BR_PHASE != entered and BR_ENTER_COUNT=0 with no pantheon-bounded-refresh-* container: nothing is restored; if steady_posture_problem reports healthy the record is retired with reason never_entered, else it is restored as recorded.",
+    "superseded_by_release": "No bounded container and (running source-ingest image != BR_IMAGE_ID, or none of BR_STEADY_IDS exists): not restored to the recorded image; retired after the steady posture verifies healthy, naming recorded and current image ids. A record whose bounded runtime is in place restores as before.",
+    "named_failure_parts": "recorded_image_missing, source_ingest_restore, steady_container_start, container_counts, controller_mode (record_incomplete); the error reads bounded_runtime_stale_restore_failed: run_<id>:<part>; steady check reason steady_restore_failed:bounded_runtime:<parts>; the record is kept.",
+    "retention_bound": "Retired record directory is deleted after the receipt; the receipt line goes to the log and to pantheon-bounded-runtime-retired.log under the state root (name does not match the record glob), capped to the last 50 lines (BOUNDED_RUNTIME_RETIRED_LOG_LINES). At most one retirement per dead run; no new recurring job."
+  },
+  "changed_files": [
+    "scripts/deploy_nonprod_vm.sh (steady_posture_problem moved to top level; bounded_runtime_retire_if_not_in_place; restore_from_state / restore_all_states / steady check reasons)",
+    "scripts/test_deploy_nonprod_vm.py",
+    "docs/operations/problem-register.md"
+  ],
+  "verification": {
+    "scripts/test_deploy_nonprod_vm.py": "246 passed, 4 skipped (240 existing + 6 new replay tests; the full file was green before the new tests and the new tests were run separately)",
+    "scripts/test_dev_tw_market_refresh.py": "132 passed",
+    "new_tests": [
+      "never-entered record on an older release with missing image and gone steady containers is retired and the refresh proceeds (replay of 45985422058)",
+      "entered record superseded by a later release retired by the steady check",
+      "never-entered record with unhealthy steady posture restored as recorded",
+      "entered record with bounded container present restores as before",
+      "genuine restore failure keeps the record and names recorded_image_missing / container_counts"
+    ]
+  },
+  "hosted_evidence": {
+    "status": "pending",
+    "required": "First Taiwan refresh after merge logs retirement of /tmp/pantheon-bounded-runtime-45985422058, runs the official market step, and a read-only signal-store check shows whether the two 11/26 decisions settled. Must merge before 2026-11-29T23:00Z."
+  }
+}

@@ -748,3 +748,41 @@ def test_route_requires_auth(scale_env, monkeypatch):
     app.include_router(create_management_router(_Runtime()))
     resp = TestClient(app).get(URL)
     assert resp.status_code in (401, 403)
+
+
+def test_llm_calls_carry_distinct_sources_from_the_same_ledger_row(tmp_path):
+    queue = _queue_with_jobs(tmp_path)
+    _, ledger = _ledger(tmp_path, {})
+    for source_id in ("s1", "s1", "s2"):
+        assert ledger.reserve_call(source_id)
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
+    expected = ledger.summary()
+    assert (out["calls"], out["distinct_sources"], out["calls_per_source"]) == (3, 2, 1.5)
+    assert (out["distinct_sources"], out["calls_per_source"]) == (
+        expected["distinct_sources"], expected["calls_per_source"],
+    )
+    assert "distinct_sources_reason" not in out
+
+
+def test_llm_calls_without_a_recorded_source_count_are_null_with_reason(tmp_path):
+    queue = _queue_with_jobs(tmp_path)
+    path, ledger = _ledger(tmp_path, {})
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
+    assert (out["calls"], out["distinct_sources"], out["calls_per_source"]) == (0, 0, None)
+    assert out["calls_per_source_reason"] == "no_calls_today"
+
+    # Calls counted before the ``sources`` column existed: 0 would be fabricated.
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO calls(day, n, cap, sources) VALUES(?, 5, 400, 0)", (day,))
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev")["llm_calls"]
+    assert out["calls"] == 5 and out["distinct_sources"] is None and out["calls_per_source"] is None
+    assert out["distinct_sources_reason"] == "ledger_sources_not_recorded_for_day"
+
+    old = tmp_path / "old_ledger.sqlite"
+    with sqlite3.connect(old) as conn:
+        conn.execute("CREATE TABLE calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
+        conn.execute("INSERT INTO calls(day, n) VALUES(?, 4)", (day,))
+    out = ds.read_discovery_summary(queue_path=queue.path, tenant_id="tenant-dev", ledger_path=old)["llm_calls"]
+    assert out["status"] == "ok" and out["calls"] == 4
+    assert out["distinct_sources"] is None and out["distinct_sources_reason"] == "ledger_sources_column_missing"

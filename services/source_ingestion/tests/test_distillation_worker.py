@@ -34,6 +34,7 @@ from services.source_ingestion.distillation_worker import (
     _synthesize_evidence_bundle,
     _synthesize_evidence_item,
     source_version_digest,
+    source_version_digest_matches,
     source_version_identity,
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
@@ -1018,6 +1019,125 @@ def _legacy_raw_refs_digest(source: SourceRecord) -> str:
     return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
+class TestCollectorRunIdentity:
+    def test_refetch_keeps_first_seen_snapshot_across_restart(self, tmp_path):
+        from services.source_ingestion.tests.test_collector_bundle_connector import _news_refetch_records
+
+        first, later = _news_refetch_records(tmp_path)
+        before = _canonical_json(first.to_dict())
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        original = queue.enqueue_source_record(first)
+        queue = DistillationJobQueue(queue.path)
+        assert queue.enqueue_source_record(later).job_id == original.job_id
+        assert queue.version_count(first.source_id) == queue.count() == 1
+        stored = queue.source_for_job(original)
+        assert _canonical_json(stored.to_dict()) == before
+        assert stored.metadata["available_time"] == first.metadata["available_time"]
+        assert stored.metadata["pit"] == first.metadata["pit"]
+        assert _canonical_json(first.to_dict()) == before  # projection did not mutate nested PIT
+
+    @pytest.mark.parametrize("path", [
+        ("title",), ("content_ref",), ("metadata", "body"), ("metadata", "content_hash"),
+        ("metadata", "event_time"), ("metadata", "tenant_id"),
+        ("metadata", "license_scope"), ("metadata", "access_scope"),
+        ("metadata", "pit", "event_time"), ("metadata", "pit", "validated"),
+        ("metadata", "collector", "fetch_policy_hash"),
+        ("metadata", "collector", "collector_version"),
+        ("metadata", "collector", "bundle_status"),
+        ("metadata", "governance", "direct_execution_allowed"),
+    ])
+    def test_content_and_governed_changes_create_versions(self, tmp_path, path):
+        from services.source_ingestion.tests.test_collector_bundle_connector import _news_refetch_records
+
+        first, later = _news_refetch_records(tmp_path)
+        payload = later.to_dict()
+        # to_dict only shallow-copies metadata; isolate nested mappings too.
+        payload = json.loads(json.dumps(payload))
+        parent = payload
+        for key in path[:-1]:
+            parent = parent[key]
+        parent[path[-1]] = "changed"
+        changed = SourceRecord.from_dict(payload)
+        assert source_version_digest(changed) != source_version_digest(first)
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        assert queue.enqueue_source_record(first).job_id != queue.enqueue_source_record(changed).job_id
+        assert queue.version_count(first.source_id) == 2
+
+    @pytest.mark.parametrize("raw_refs", [False, True])
+    @pytest.mark.parametrize("terminal", [False, True])
+    def test_old_digest_refetch_reuses_committed_job_and_registry_lineage(
+        self, tmp_path, raw_refs, terminal,
+    ):
+        from services.source_ingestion.tests.test_collector_bundle_connector import _news_refetch_records
+        from services.source_ingestion.distillation_controller import _build_registry_payload
+        from services.source_ingestion.strategy_seed_builder import StrategySpecSeedBuilder
+        from services.source_ingestion.hypothesis_card import ExtractionLedger, extraction_input_digest
+
+        first, later = _news_refetch_records(tmp_path)
+        # Model the same already-extracted seed enrichment on both snapshots.
+        for source in (first, later):
+            source.metadata["strategy_seed"] = {"hypothesis": "Revenue momentum predicts returns"}
+        first.metadata["raw_storage_refs"] = [{"raw_blob_path": "raw/first.json"}]
+        later.metadata["raw_storage_refs"] = [{"raw_blob_path": "raw/later.json"}]
+        # Independent historical projections, including both raw-refs generations.
+        historical = first.to_dict()
+        if not raw_refs:
+            historical["metadata"].pop("raw_storage_refs")
+        old_digest = _legacy_raw_refs_digest(SourceRecord.from_dict(historical))
+        assert source_version_digest_matches(first, old_digest)
+        assert not source_version_digest_matches(later, old_digest)
+        assert not source_version_digest_matches(first, "sha256:" + "0" * 64)
+        queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
+        old_job = queue._insert_source_version_and_job(
+            source_id=first.source_id, source_digest=old_digest,
+            payload_json=_canonical_json(first.to_dict()), requested_by="pre-repair",
+            enqueued_at=100.0, event_version="source_record.normalized.v1", versioned=True,
+        )
+        if terminal:
+            queue.mark_done(old_job.job_id, seed_id="previously-paid-seed")
+        queue = DistillationJobQueue(queue.path)
+        admitted = queue.enqueue_source_record(later)
+        assert admitted.job_id == old_job.job_id
+        assert admitted.source_digest == old_digest != source_version_digest(later)
+        with sqlite3.connect(queue.path) as conn:
+            event_id = conn.execute(
+                "SELECT event_id FROM distillation_outbox WHERE job_id=?", (admitted.job_id,),
+            ).fetchone()[0]
+        assert event_id == f"source-normalized:{first.source_id}:{old_digest}"
+        assert admitted.idempotency_key == old_job.idempotency_key
+        assert queue.get(first.source_id, source_version_digest(later)).job_id == old_job.job_id
+        assert queue.version_count(first.source_id) == queue.count() == 1
+        assert queue.source_for_job(admitted).metadata["pit"] == first.metadata["pit"]
+        stored = queue.source_for_job(admitted)
+        item = _synthesize_evidence_item(stored, old_digest)
+        bundle = _synthesize_evidence_bundle(stored, item, old_digest)
+        seed = StrategySpecSeedBuilder().build_seed(bundle, source_records=[stored], evidence_items=[item])
+        request = RegistrySyncRequest(stored, seed, admitted, item, bundle, old_digest)
+        payload = _build_registry_payload(request=request, registry_id="reg-test")
+        assert payload["source_digest"] == old_digest
+
+        # input_answers is keyed by extraction input, not the source-version
+        # digest. Its cached card and event retain their historical references.
+        ledger = ExtractionLedger(tmp_path / "ledger.sqlite3")
+        event_id = ledger.record(first.source_id, "card", old_digest)
+        input_digest = extraction_input_digest(
+            first.metadata["body"], source_record_id=first.source_id, origin="news",
+        )
+        ledger.put_input_answer(
+            first.source_id, input_digest, outcome="card", detail="original answer",
+            event_id=event_id, card={"source_digest": old_digest},
+        )
+        answer = ledger.input_answer(first.source_id, input_digest)
+        events = ledger.events(first.source_id)
+        worker = DistillationWorker(queue, StrategySpecSeedStore(tmp_path / "seeds.jsonl"))
+        result = worker.catch_up([later], tenant_id="tenant-dev")
+        assert result.failed == result.enqueued == 0
+        assert result.processed == (0 if terminal else 1)
+        assert worker.catch_up([later], tenant_id="tenant-dev").processed == 0
+        assert ledger.input_answer(first.source_id, input_digest) == answer
+        assert ledger.events(first.source_id) == events
+
+
 def _tw_market_source(
     *,
     source_id: str = "tw-official:tw_price_daily:TWSE:2330:e4b598d99f084c19",
@@ -1493,10 +1613,10 @@ def test_metrics_count_every_planned_deferral_reason_and_not_delivery_retries(tm
     )
 
     queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
-    for index in range(4):
+    for index in range(5):
         queue.enqueue_source_record(_normalized_source(f"src-{index}", tenant_id="test"))
-    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=4, tenant_id="test")
-    assert len(jobs) == 4
+    jobs = queue.claim_due(worker_id="w", lease_seconds=30, limit=5, tenant_id="test")
+    assert len(jobs) == 5
     for job in jobs:
         queue.begin_job(job, lease_seconds=30)
     future = 4_000_000_000.0
@@ -1504,10 +1624,11 @@ def test_metrics_count_every_planned_deferral_reason_and_not_delivery_retries(tm
     queue.defer_budget(jobs[1], now=future, reason="budget_exhausted")
     queue.defer_budget(jobs[2], now=future, reason="attempts_deferred")
     queue.mark_retry_or_dead_letter(jobs[3], error="registry_sync_failed: timed out", base_delay_seconds=60)
+    queue.defer_budget(jobs[4], now=future, reason="extraction_unavailable", next_window=False)
     metrics = queue.metrics()
-    assert metrics["retry_wait"] == 4
-    assert metrics["deferred"] == 3
-    assert {"budget_exhausted", "attempts_deferred", "extraction_tick_budget"} == PLANNED_DEFERRAL_REASONS
+    assert metrics["retry_wait"] == 5
+    assert metrics["deferred"] == 4
+    assert {"budget_exhausted", "attempts_deferred", "extraction_tick_budget", "extraction_unavailable"} == PLANNED_DEFERRAL_REASONS
 
 
 def test_defer_budget_refuses_an_unplanned_reason(tmp_path) -> None:

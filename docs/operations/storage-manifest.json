@@ -1425,7 +1425,7 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
-   "growth_driver": "SQLite database written by the owner service; one `calls` row per day, one `record_attempts` row per record version attempted (pruned after 30 days), `events` and `cards` per extracted record",
+   "growth_driver": "SQLite database written by the owner service; one `calls` row per day, one `record_attempts` row per record version attempted (pruned after 30 days), `events` and `cards` per extracted record; L2-UNSENT-CALLS-NOT-COUNTED-AND-ADAPTER-DOWN-BACKOFF-20261127 adds calls.unsent (one integer per existing daily row, no new rows) and bounded unsent events in this same database",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "sqlite",
    "name": "l2_extraction_ledger.sqlite",
@@ -1434,7 +1434,18 @@
     "services/source_ingestion/distillation_worker.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "unsent_budget": {
+    "cadence": "existing 60-second distillation tick; stop at first unsent transport/policy failure, <=1 outage event/tick (about 1440/day); local input refusal may also produce one unsent event per processed record, within the existing tick batch limit",
+    "growth_per_day": "counter adds at most 8 bytes per existing daily row; outage reason events about 1 MiB/day typical and <=4.6 MB UTF-8 payload/day at 1440 events, until the global count cap; no new file, table or recurring job",
+    "cap": "one calls.unsent scalar per existing day row; at most MAX_UNSENT_EVENTS=10080 unsent events, source_id <=256 and detail <=500 characters (~0.8 KB typical / <=3.2 KB UTF-8 payload each; ~8 MB typical / <=33 MB payload total plus existing SQLite overhead); unsent-only partial index <=10080 keys",
+    "cleanup": "each unsent write atomically prunes oldest unsent events above 10080; deleted pages reused by SQLite; original calls rows and non-unsent events/cards retain the existing RC3 WP3.1 unreviewed history obligation",
+    "bound_proof": {
+     "file": "services/source_ingestion/hypothesis_card.py",
+     "contains": "MAX_UNSENT_EVENTS = 10_080"
+    },
+    "acceptance": "services/source_ingestion/tests/test_hypothesis_extraction.py::test_unsent_migration_and_event_cap_preserve_spent_history"
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -4944,6 +4955,30 @@
    "task": "AGORA-TRADER-HABIT-PROFILE-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "TRADER_REPORT_WEEKLY_HISTORY_CAP = 26",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "each row is at most 20 KB (TRADER_REPORT_MAX_BYTES = 20480 enforced in AgoraStore.put_trader_report); recurring weekly job ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py runs at most once per 3600s (DEFAULT_WEEKLY_TICK_INTERVAL_SECONDS = 3600), scans at most 50 active trader/strategy scopes (WEEKLY_TICK_MAX_TRADER_SCOPES = 50), requests POST /api/attribution/runs via HttpAttributionPort idempotently once per (tenant_id, iso_week), and writes at most 1 weekly report per (tenant_id, user_id, strategy_id, iso_week) capped at 26 weekly reports per trader and strategy (~6 months, TRADER_REPORT_WEEKLY_HISTORY_CAP = 26); on-demand reports are capped at 3 per trader per day (TRADER_REPORT_ONDEMAND_DAILY_CAP = 3) with 7-day retention (TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7), leaving at most 780 rows (<= 16 MB) at hosted scale (10 traders x 3 strategies)",
+   "cleanup": "AgoraStore.prune_trader_reports on each write deletes weekly reports beyond the newest 26 per trader and strategy and deletes expired on-demand reports; AgoraStore.purge_expired_trader_reports (invoked hourly via ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py) purges on-demand reports older than 7 days",
+   "growth_driver": "recurring weekly tick ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py (3600s check interval, idempotent per tenant_id + ISO week, calling MeetingTriggers.run_without_persona_cycle -> ensure_weekly_attribution_run via HttpAttributionPort and writing 1 weekly report per active trader and strategy after weekly attribution) + at most 3 on-demand reports per trader per day via POST /bff/agora/servant/reports or command bar 整理本週報表 (SD 9.3)",
+   "growth_per_day": "at hosted scale (10 traders x 3 strategies): recurring weekly job writes 30 weekly rows/week (<= 600 KB/week, ~86 KB/day; 0 B on repeat ticks in the same ISO week) plus <= 30 on-demand rows/day (<= 600 KB/day) = <= 686 KB/day before pruning; steady-state bounded to <= 780 rows (<= 16 MB)",
+   "kind": "schema_table",
+   "name": "agora.trader_reports",
+   "owner": "schema:agora",
+   "readers": [
+    "scripts/run_agora_interaction_worker.py",
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/control-plane/bff/agora/servant/reports.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py",
+    "services/persona/meeting_triggers.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-SERVANT-REVISIONS-AND-REPORT-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -5450,18 +5485,23 @@
   },
   {
    "bound_status": "unreviewed",
-   "cap": "none verified in code",
-   "cleanup": "none found by the static inventory",
-   "growth_driver": "owner-store or SQL table rows written by the owner service",
-   "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
+   "cap": "none verified in code for legacy general shadow-imitation backlog rows (tracked under RC3 WP3.1); trader behaviour candidate rows (IMITATION-TRADER-SHADOW-COMPARISON-20261127, candidate_kind=trader_behaviour_candidate) are capped at MAX_CANDIDATES_PER_TRADER_STRATEGY = 3 candidates (~4-6 KB JSONB each, <= 18 KB total) per (tenant_id, user_id, strategy_id), trained only after training approval and >= 30 decisions (MIN_TRADER_DECISIONS_FOR_IMITATION = 30) and deduplicated by dataset content_sha256",
+   "cleanup": "synchronous write-time prune via PolicyLearningStore.prune_trader_behaviour_candidates deletes older trader_behaviour_candidate rows beyond the newest 3 per (tenant_id, user_id, strategy_id); legacy general candidate retention remains tracked under RC3 WP3.1",
+   "growth_driver": "owner-store or SQL table rows written by the owner service; trader behaviour candidates run inside the existing hourly policy-learning-shadow-eval-scheduler (3600s cadence) only when new T4 decision evidence arrives for an approved (trader, strategy) with >= 30 decisions",
+   "growth_per_day": "whole-table legacy rows unmeasured on hosted (RC3 WP3.3); incremental trader_behaviour_candidate growth at hosted scale (1 dev trader, <= 3 active strategies): 0 B/day net after the 3-candidate cap is reached (<= 18 KB steady state per trader and strategy; 0 writes when < 30 decisions or dataset content_sha256 is unchanged)",
    "kind": "schema_table",
    "name": "policy_learning.candidates",
    "owner": "schema:policy_learning",
    "readers": [
-    "services/policy-learning/store.py"
+    "services/policy-learning/store.py",
+    "services/policy-learning/trader_imitation.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "bound_proof": {
+    "contains": "MAX_CANDIDATES_PER_TRADER_STRATEGY = 3",
+    "file": "services/policy-learning/trader_imitation.py"
+   }
   },
   {
    "bound_status": "unreviewed",
@@ -6073,6 +6113,46 @@
     "contains": "_ACTION_NOTES_PER_TICKET_MAX = 128"
    },
    "measurement_ref": "docs/deployment/evidence/RESEARCH-MEETING-ACTION-TICKETS-20261123/storage.json"
+  },
+  {
+   "name": "services/control-plane/bff/persona_provisioning.py::{self.table}_revision",
+   "kind": "table",
+   "owner": "control-plane",
+   "task": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
+   "register_class": "RC3",
+   "bound_status": "bounded",
+   "bound_proof": {
+    "file": "services/control-plane/bff/persona_provisioning.py",
+    "contains": "singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton)"
+   },
+   "readers": [
+    "services/control-plane/bff/persona_provisioning.py"
+   ],
+   "growth_driver": "one transactional revision increment per INSERT/UPDATE/DELETE/TRUNCATE statement on persona_provisioning, including no-op statements; no recurring job",
+   "growth_per_day": "0 logical rows/day after bootstrap; one live row per schema, boolean plus bigint (9 bytes payload before tuple/page/index overhead); physical old versions and WAL use normal Postgres vacuum/WAL management; actual statement count may exceed the brief's 5 changed rows/day",
+   "cap": "exactly one logical row (boolean primary key checked true); bigint revision fails closed on overflow rather than wrapping",
+   "cleanup": "update single row in place logically; Postgres vacuum reclaims obsolete tuple versions; row retained for table lifetime, bootstrap does not reset revision",
+   "directory_cache": {
+    "name": "PostgresPersonaProvisioningStore._directory_cache",
+    "kind": "in_process_cache",
+    "owner": "control-plane",
+    "task": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
+    "register_class": "RC3",
+    "bound_status": "bounded",
+    "bound_proof": {
+     "file": "services/control-plane/bff/persona_provisioning.py",
+     "contains": "_DIRECTORY_MAX_BYTES = 64 * 1024 * 1024"
+    },
+    "readers": [
+     "services/control-plane/bff/personas/service.py"
+    ],
+    "growth_driver": "on-demand directory read; one revision SELECT on every call; no scheduled job, TTL or emitter",
+    "growth_per_day": "no append growth; replace per tenant (including one optional all-tenant key) on committed ledger change; hosted brief reports 5 changed rows/day",
+    "cap": "per BFF store: at most 8 keys; each holds a complete tenant directory, 170 rows at hosted scale (brief: about 6 MB stored / 17.6 MB text); 32 MiB recursive Python object size per entry, 64 MiB total retained object budget; oversized reads bypass retention; transient response/query allocations are separate",
+    "cleanup": "LRU eviction on insertion; changed revision replaces that key; process/store destruction releases all entries; no disk persistence",
+    "size_at_hosted_scale": "Local PostgreSQL 16.15 hosted-shape fixture: one tenant / 170 records / 165 retired, references 5,874,566 B stored and 18,598,107 B JSON text; 19,666,289 B retained Python objects per cached tenant (optional all-tenant key duplicates inputs). Hosted brief: about 6 MB stored / 17.6 MB text. Measurements and isolated BFF process RSS are in task evidence."
+   },
+   "measurement_ref": "docs/deployment/evidence/BFF-PERSONA-LEDGER-READ-REUSE-20261127/evidence.json"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",
@@ -6429,6 +6509,28 @@
    "bound_proof": {
     "file": "services/registry/pg_store.py",
     "contains": "SUMMARY_INDEX_MAX_TENANT_VIEWS = 16"
+   }
+  },
+  {
+   "name": "Agora paper intent execution (trading_room_store_state handoff paper_execution block; binding-queue decision records agora-intent:*, agora-intent-cap:*, agora-intent-enqueued:*)",
+   "owner": "paper execution lane (services/execution/lean_runtime/agora_paper_intent_consumer.py inside paper-signal-producer); handoff block in the Agora trading-room store (services/control-plane/bff/agora/trading_room/store.py)",
+   "writer": "AgoraPaperIntentConsumer.consume once per paper-signal-producer tick (PAPER_PRODUCER_INTERVAL_SECONDS, 60 s): drains at most 100 open paper_execution handoffs per tenant through GET /internal/agora/paper-execution/handoffs, writes state back through POST /internal/agora/paper-execution/handoffs/{id}/state, and enqueues one paper signal per accepted handoff through DecisionSignalProducer",
+   "task": "AGORA-PAPER-INTENT-EXECUTION-20261127",
+   "register_class": "RC4",
+   "cadence": "event-driven by trader decisions (確認執行 / 修改部位 with stage paper); one handoff, one paper signal and one broker paper order per confirmed decision; one drain GET per tenant per tick and at most three state writes per handoff (accepted, then filled / partially_filled / rejected)",
+   "cap": "AGORA_PAPER_INTENT_DAILY_CAP = 50 executed (accepted) intents per trader servant per Taipei day, enforced by the consumer with write-once slot records agora-intent-cap:<servant>:<day>:<1..50>; the 51st is rejected with reason_code daily_cap (the BFF stamps daily_cap 50 on each request). Drain page capped at 100 (route maximum 200); state_history capped at 10 entries per handoff",
+   "size": "measured: handoff record 1,073 B at submit, 1,816 B after filled (paper_execution block about 740 B); Redis per admitted intent: admission record 324 B, cap slot 48 B, enqueued marker 92 B (464 B); paper signal 1,925 B (queue item, removed on ack; processed marker 24 h)",
+   "size_per_day": "at the cap: 50 x 1.8 KB = about 91 KB of handoff JSONB and 50 x 464 B = about 23 KB of Redis records per trader per day; hosted Dev today has no trader decision locks (decision-events items=[] on 2026-11-26), so expected near 0",
+   "growth_per_day": "at most about 114 KB per trader per day at the cap; Redis part bounded by its TTL",
+   "count_at_hosted_scale": "0 handoffs on hosted Dev before this task (paper handoffs had no reader); one dev trader for the hosted proof",
+   "cleanup": "Redis decision records expire after 30 days (RedisPendingSignalStore _decision_ttl_seconds), so at most 50 x 30 x 464 B = about 0.7 MB per trader; signals leave the queue on ack; broker paper orders follow the broker paper store's existing retention; handoff records follow the existing trading-room store (one JSONB row, no retention job today; at the cap about 33 MB per trader per year, recorded as a residual for the trading-room store owner)",
+   "readers": [
+    "services/execution/lean_runtime/agora_paper_intent_consumer.py",
+    "services/control-plane/bff/agora/trading_room/routes/intents.py (GET /bff/agora/trading-intents/{intent_id})"
+   ],
+   "bound_proof": {
+    "file": "services/execution/lean_runtime/agora_paper_intent_consumer.py",
+    "contains": "AGORA_PAPER_INTENT_DAILY_CAP = 50"
    }
   },
   {

@@ -1245,6 +1245,52 @@ def test_preflight_equity_missing_and_fresh_are_distinct():
     assert forced["status"] == "proceed"
 
 
+@pytest.mark.parametrize("now,session,reason", [
+    ("2026-11-28T07:30:00+08:00", "2026-11-27", "weekend"),
+    ("2026-10-26T07:30:00+08:00", "2026-10-22", "holiday"),
+])
+@pytest.mark.parametrize("collector_only", [True, False])
+def test_preflight_pending_official_precedes_nontrading_day_skip(now, session, reason, collector_only):
+    dt = datetime.fromisoformat(now)
+    snapshot = _preflight_snapshot(session, calendar_day=dt.date().isoformat())
+    if collector_only:
+        snapshot["lineage"]["collector_close"] = [{
+            "trade_date": session,
+            "collector_source_id": "collector-tw-twse-price-history",
+            "exchange_endpoint": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+            "bundle_sha256": "a" * 64,
+            "provisional": True,
+            "official": False,
+        }]
+    result = _run_preflight_script(False, dt, snapshot)
+    if collector_only:
+        assert (result["status"], result["reason"]) == ("proceed", "official_rows_missing_collector_only")
+        assert result["session_date"] == session
+        assert result["pending_trade_dates"] == [session]
+        assert result["symbols"] == ["2317.TW", "2330.TW"]
+    else:
+        assert (result["status"], result["reason"]) == ("skipped", reason)
+
+
+@pytest.mark.parametrize("pending_session,expected", [
+    ("2026-11-27", "weekend"),  # Friday's next-morning 07:00 publication is still ahead.
+    ("2026-11-26", "official_rows_missing_collector_only"),  # Earlier pending session is due.
+])
+def test_preflight_saturday_0540_preserves_official_publication_cutoff(pending_session, expected):
+    snapshot = _preflight_snapshot("2026-11-27", calendar_day="2026-11-28")
+    snapshot["lineage"]["collector_close"] = [{
+        "trade_date": pending_session,
+        "collector_source_id": "collector-tw-twse-price-history",
+        "exchange_endpoint": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+        "bundle_sha256": "a" * 64,
+        "provisional": True,
+        "official": False,
+    }]
+    result = _run_preflight_script(False, datetime.fromisoformat("2026-11-28T05:40:00+08:00"), snapshot)
+    assert result["reason"] == expected
+    assert result["status"] == ("skipped" if expected == "weekend" else "proceed")
+
+
 def test_refresh_only_with_no_bindings_runs_bounded_pull_for_baseline_symbol(tmp_path: Path):
     initial_state = {
         "image_id": "sha256:" + "a" * 64,

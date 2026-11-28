@@ -21,6 +21,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
+from .clarification import (
+    CLARIFICATION_DIMENSIONS,
+    MAX_CONSECUTIVE_CLARIFICATIONS,
+    extract_provisional_assumption,
+    format_clarification_answer,
+    format_stated_assumptions_prefix,
+    normalize_clarification_card,
+)
 from .data_tools import (
     MAX_CALLS_PER_ROUND,
     MAX_FACTS_PER_ANSWER,
@@ -51,13 +59,78 @@ _ARGUMENT_PROPERTIES: Dict[str, Any] = {
     "question": {"type": "string", "maxLength": 500},
 }
 
+_CLARIFICATION_OPTION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["option_id", "label"],
+    "properties": {
+        "option_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "label": {"type": "string", "minLength": 1, "maxLength": 300},
+        "description": {"type": ["string", "null"], "maxLength": 400},
+        "is_default": {"type": "boolean"},
+    },
+}
+
+_CLARIFICATION_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["question", "why_it_matters", "options"],
+    "properties": {
+        "decision_id": {"type": ["string", "null"], "maxLength": 120},
+        "question_id": {"type": ["string", "null"], "maxLength": 120},
+        "question": {"type": "string", "minLength": 1, "maxLength": 500},
+        "why_it_matters": {"type": "string", "minLength": 1, "maxLength": 500},
+        "why_now": {"type": ["string", "null"], "maxLength": 500},
+        "changes_data_or_result": {"type": "boolean"},
+        "style_dimension": {
+            "type": ["string", "null"],
+            "enum": [*CLARIFICATION_DIMENSIONS, None],
+        },
+        "resolves": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+        "target_blocks": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+        "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": _CLARIFICATION_OPTION_SCHEMA,
+        },
+        "default_option_id": {"type": ["string", "null"], "maxLength": 64},
+        "provisional_default": {"type": ["string", "null"], "maxLength": 500},
+        "servant_default": {
+            "anyOf": [
+                {"type": "null"},
+                {"type": "string", "maxLength": 500},
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["option_id", "summary"],
+                    "properties": {
+                        "option_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "label": {"type": ["string", "null"], "maxLength": 300},
+                        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+                        "provisional_assumption": {"type": ["string", "null"], "maxLength": 500},
+                    },
+                },
+            ]
+        },
+    },
+}
+
 # Only keywords the OpenClaw adapter validator enforces (pinned by its contract test).
 SERVANT_TURN_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["action", "tool_calls", "answer_text", "cited_fact_ids", "missing_data"],
     "properties": {
-        "action": {"type": "string", "enum": ["call_tools", "answer"]},
+        "action": {"type": "string", "enum": ["call_tools", "answer", "clarify"]},
         "tool_calls": {
             "type": "array",
             "maxItems": MAX_CALLS_PER_ROUND,
@@ -76,6 +149,13 @@ SERVANT_TURN_SCHEMA: Dict[str, Any] = {
             "type": "array", "maxItems": MAX_FACTS_PER_ANSWER, "items": {"type": "string", "maxLength": 16},
         },
         "missing_data": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
+        "stated_assumption": {"type": ["string", "null"], "maxLength": 500},
+        "clarification": {
+            "anyOf": [
+                {"type": "null"},
+                _CLARIFICATION_SCHEMA,
+            ]
+        },
     },
 }
 
@@ -85,10 +165,13 @@ INSTRUCTIONS = (
     "1. 你自己不得寫出任何數字。要顯示某個數值，請寫 {{fact_id}}（例如 {{f3}}），系統會換成該 fact 的值與單位。"
     "股票代號可以直接寫。\n"
     "2. 需要資料就回 action=call_tools，tool_calls 最多 4 個；資料足夠或 must_answer_now=true 時回 action=answer。\n"
-    "3. 沒有工具能提供的資料，寫進 missing_data，並在回答中說明缺什麼；不得用你的記憶當作資料回答。\n"
-    "4. cited_fact_ids 列出回答用到的 fact id。\n"
-    "5. 不要諮詢任何 persona，也不要開會。用繁體中文回答。\n"
-    "6. habit_profile.facts 是交易員的習慣事實（id 為 h1、h2…，附樣本數）與你對這些習慣的解讀。"
+    "3. 只有當交易員的選擇會改變要選取的資料或改變結論，且 clarification_allowed=true 時，才回 action=clarify 與一張 clarification 卡"
+    "（含 question、2 到 4 個 options、default_option_id、provisional_default 與 why_it_matters）。"
+    "若不影響資料或結果，或已連續釐清 2 次（clarification_allowed=false），請在 stated_assumption 寫明你的推定假設並直接回 action=answer。\n"
+    "4. 沒有工具能提供的資料，寫進 missing_data，並在回答中說明缺什麼；不得用你的記憶當作資料回答。\n"
+    "5. cited_fact_ids 列出回答用到的 fact id。\n"
+    "6. 不要諮詢任何 persona，也不要開會。用繁體中文回答。\n"
+    "7. habit_profile.facts 是交易員的習慣事實（id 為 h1、h2…，附樣本數）與你對這些習慣的解讀。"
     "回答與提案若依據某個習慣，請用 {{hN}} 引用它並在 cited_fact_ids 列出；不要自己寫數字，也不要把解讀當成事實。\n"
 )
 
@@ -110,6 +193,11 @@ class TurnOutcome:
     answer_mode: str = "model"
     error: Optional[Dict[str, Any]] = None
     habit: Dict[str, Any] = field(default_factory=dict)
+    clarification: Optional[Dict[str, Any]] = None
+    stated_assumptions: List[str] = field(default_factory=list)
+    consecutive_clarifications: int = 0
+    clarification_choice: Optional[Dict[str, Any]] = None
+    habit_facts: List[Dict[str, Any]] = field(default_factory=list)
 
     def metadata(self) -> Dict[str, Any]:
         return {
@@ -122,6 +210,11 @@ class TurnOutcome:
             "number_guard": self.number_guard,
             "answer_mode": self.answer_mode,
             "persona_calls": 0,
+            "consecutive_clarifications": self.consecutive_clarifications,
+            **({"clarification": self.clarification} if self.clarification is not None else {}),
+            **({"stated_assumptions": list(self.stated_assumptions)} if self.stated_assumptions else {}),
+            **({"clarification_choice": self.clarification_choice} if self.clarification_choice is not None else {}),
+            **({"style_habit_facts": list(self.habit_facts)} if self.habit_facts else {}),
         }
 
 
@@ -228,8 +321,13 @@ def _packet(
     trace: Sequence[Mapping[str, Any]],
     rounds_used: int,
     must_answer_now: bool,
+    clarification_allowed: bool = True,
+    consecutive_clarifications: int = 0,
+    active_clarification_choice: Optional[Mapping[str, Any]] = None,
     habit_facts: Sequence[Mapping[str, Any]] = (),
     habit_ref: Optional[Mapping[str, Any]] = None,
+    style_habit_facts: Sequence[Mapping[str, Any]] = (),
+    forced_assumptions: Sequence[str] = (),
 ) -> str:
     packet = {
         "trader_message": trader_text,
@@ -256,8 +354,29 @@ def _packet(
         "tool_rounds_used": rounds_used,
         "tool_rounds_left": max(0, MAX_TOOL_ROUNDS - rounds_used),
         "must_answer_now": must_answer_now,
+        "clarification_allowed": clarification_allowed and not must_answer_now,
+        "consecutive_clarifications": consecutive_clarifications,
+        "max_consecutive_clarifications": MAX_CONSECUTIVE_CLARIFICATIONS,
+        "active_clarification_choice": dict(active_clarification_choice) if isinstance(active_clarification_choice, Mapping) else None,
+        "style_habit_facts": [dict(f) for f in style_habit_facts],
+        "forced_assumptions": list(forced_assumptions),
     }
     return INSTRUCTIONS + "\n" + PACKET_MARKER + "\n" + json.dumps(packet, ensure_ascii=False, default=str)
+
+
+def _history_clarification_streak(history: Sequence[Mapping[str, Any]]) -> tuple[int, List[Dict[str, Any]]]:
+    assistant_msgs = [m for m in history if isinstance(m, Mapping) and m.get("role") == "assistant"]
+    cards: List[Dict[str, Any]] = []
+    for msg in reversed(assistant_msgs):
+        card = msg.get("clarification")
+        if isinstance(card, Mapping) and card.get("question"):
+            cards.append(dict(card))
+        elif msg.get("answer_mode") == "clarification":
+            cards.append({"question": str(msg.get("content") or "")})
+        else:
+            break
+    cards.reverse()
+    return len(cards), cards
 
 
 def run_tool_turn(
@@ -267,8 +386,13 @@ def run_tool_turn(
     history: Sequence[Mapping[str, Any]],
     invoke: Callable[[str], Mapping[str, Any]],
     habit: Any = None,
+    consecutive_clarifications: int = 0,
+    prior_clarifications: Sequence[Mapping[str, Any]] = (),
+    clarification_choice: Optional[Mapping[str, Any]] = None,
+    habit_facts: Sequence[Mapping[str, Any]] = (),
+    turn_id: str = "",
 ) -> TurnOutcome:
-    """Run the tool rounds and the answer of one turn.
+    """Run the tool rounds and the answer (or typed clarification card) of one turn.
 
     ``invoke(prompt)`` performs one structured provider call and returns the validated JSON
     object; it raises on provider failure.
@@ -281,9 +405,31 @@ def run_tool_turn(
     provider_calls = 0
     # SD §6: every turn carries the trader's habit profile (h-facts); they are context, not a
     # tool round, and do not count against the 30-fact citation budget of tool facts.
-    habit_facts: List[Dict[str, Any]] = [dict(f) for f in (getattr(habit, "facts", None) or [])]
+    profile_habit_facts: List[Dict[str, Any]] = [dict(f) for f in (getattr(habit, "facts", None) or [])]
     habit_ref: Dict[str, Any] = dict(getattr(habit, "ref", None) or {})
-    shown_habit_ids = [f["id"] for f in habit_facts]
+    shown_habit_ids = [f["id"] for f in profile_habit_facts]
+
+    hist_streak, hist_cards = _history_clarification_streak(history[:-1] if history else ())
+    effective_streak = max(int(consecutive_clarifications or 0), hist_streak)
+    effective_prior_cards: List[Dict[str, Any]] = [
+        dict(c) for c in (prior_clarifications or hist_cards) if isinstance(c, Mapping)
+    ]
+    active_choice = clarification_choice
+    if active_choice is None and history and isinstance(history[-1].get("clarification_choice"), Mapping):
+        active_choice = dict(history[-1]["clarification_choice"])
+    session_habit_facts: List[Dict[str, Any]] = [dict(f) for f in habit_facts if isinstance(f, Mapping)]
+    if not session_habit_facts:
+        for msg in history:
+            if isinstance(msg.get("habit_fact"), Mapping):
+                session_habit_facts.append(dict(msg["habit_fact"]))
+
+    stated_assumptions: List[str] = []
+    clarification_suppressed = effective_streak >= MAX_CONSECUTIVE_CLARIFICATIONS
+    if clarification_suppressed:
+        for prior_card in effective_prior_cards:
+            prov = extract_provisional_assumption(prior_card)
+            if prov and prov not in stated_assumptions:
+                stated_assumptions.append(prov)
 
     def execute(calls: Sequence[Mapping[str, Any]]) -> None:
         for call in list(calls)[:MAX_CALLS_PER_ROUND]:
@@ -307,12 +453,27 @@ def run_tool_turn(
 
     plan: Optional[Mapping[str, Any]] = None
     error: Optional[Dict[str, Any]] = None
+    clarification_card: Optional[Dict[str, Any]] = None
+    reprompted_after_suppression = False
     while True:
         must_answer = rounds >= MAX_TOOL_ROUNDS
+        can_clarify = (not clarification_suppressed) and (not must_answer)
         prompt = _packet(
-            trader_text=trader_text, history=history, ctx=ctx, catalog=tools.catalog(), facts=facts,
-            trace=trace, rounds_used=rounds, must_answer_now=must_answer,
-            habit_facts=habit_facts, habit_ref=habit_ref,
+            trader_text=trader_text,
+            history=history,
+            ctx=ctx,
+            catalog=tools.catalog(),
+            facts=facts,
+            trace=trace,
+            rounds_used=rounds,
+            must_answer_now=must_answer,
+            clarification_allowed=can_clarify,
+            consecutive_clarifications=effective_streak,
+            active_clarification_choice=active_choice,
+            habit_facts=profile_habit_facts,
+            habit_ref=habit_ref,
+            style_habit_facts=session_habit_facts,
+            forced_assumptions=stated_assumptions,
         )
         provider_calls += 1
         try:
@@ -321,10 +482,37 @@ def run_tool_turn(
             error = _provider_error(exc)
             plan = None
             break
+
+        raw_stated = str(plan.get("stated_assumption") or "").strip()
+        if raw_stated and raw_stated not in stated_assumptions:
+            stated_assumptions.append(raw_stated)
+
         if plan.get("action") == "call_tools" and plan.get("tool_calls") and not must_answer:
             execute(plan.get("tool_calls") or [])
             rounds += 1
             continue
+
+        if plan.get("action") == "clarify":
+            raw_clar = plan.get("clarification")
+            card = (
+                normalize_clarification_card(raw_clar, seed_id=turn_id or trader_text)
+                if can_clarify
+                else None
+            )
+            if card is not None:
+                clarification_card = card
+                break
+            # Clarification is disallowed (already 2 in a row) or does not change data/result:
+            # record its provisional default as a stated assumption and answer instead.
+            prov = extract_provisional_assumption(raw_clar)
+            if prov and prov not in stated_assumptions:
+                stated_assumptions.append(prov)
+            if not stated_assumptions:
+                stated_assumptions.append("以預設條件與最新可用資料直接回答")
+            clarification_suppressed = True
+            if not str(plan.get("answer_text") or "").strip() and not reprompted_after_suppression:
+                reprompted_after_suppression = True
+                continue
         break
 
     for item in (plan or {}).get("missing_data") or []:
@@ -334,36 +522,73 @@ def run_tool_turn(
     missing = list(dict.fromkeys(missing))
 
     facts_by_id = {f["id"]: f for f in facts}
-    facts_by_id.update({f["id"]: f for f in habit_facts})
+    facts_by_id.update({f["id"]: f for f in profile_habit_facts})
     raw_answer = str((plan or {}).get("answer_text") or "").strip()
-    if plan is not None and raw_answer:
-        allowed = _allowed_number_tokens(facts, trader_text, ctx.command_context.get("selected_symbols") or [])
+    extra_number_tokens: List[str] = list(ctx.command_context.get("selected_symbols") or [])
+    if isinstance(active_choice, Mapping) and active_choice.get("option_label"):
+        extra_number_tokens.extend(_NUMBER.findall(str(active_choice["option_label"])))
+    for assumption in stated_assumptions:
+        extra_number_tokens.extend(_NUMBER.findall(assumption))
+
+    if clarification_card is not None:
+        if raw_answer:
+            allowed = _allowed_number_tokens(facts, trader_text, extra_number_tokens)
+            answer, used, guard = render_answer(raw_answer, facts_by_id, allowed_tokens=allowed)
+            cited = set(used) | {str(i) for i in ((plan or {}).get("cited_fact_ids") or []) if str(i) in facts_by_id}
+        else:
+            answer = format_clarification_answer(clarification_card)
+            cited = {str(i) for i in ((plan or {}).get("cited_fact_ids") or []) if str(i) in facts_by_id}
+            guard = {"model_numbers_removed": [], "removed_count": 0, "unknown_fact_refs": [], "passed": True}
+        mode = "clarification"
+        status = "completed"
+        new_streak = effective_streak + 1
+    elif plan is not None and raw_answer:
+        allowed = _allowed_number_tokens(facts, trader_text, extra_number_tokens)
         answer, used, guard = render_answer(raw_answer, facts_by_id, allowed_tokens=allowed)
         cited = set(used) | {str(i) for i in (plan.get("cited_fact_ids") or []) if str(i) in facts_by_id}
         # A proposal made in this turn is part of the answer, and it is cited together with
         # the habit facts it names (SD §6: proposals cite the habits they relied on).
         cited |= {f["id"] for f in facts if f.get("tool") == "propose_research" and f.get("habit_refs")}
         cited |= {h for f in facts if f["id"] in cited for h in f.get("habit_refs") or []}
+        if stated_assumptions:
+            prefix = format_stated_assumptions_prefix(stated_assumptions)
+            if prefix and not any(a in answer for a in stated_assumptions):
+                answer = f"{prefix}\n{answer}"
         if missing and "缺少的資料" not in answer:
             answer = f"{answer}\n\n{missing_data_sentence(missing)}"
         mode = "model"
         status = "completed"
+        new_streak = 0
     elif facts or missing:
         answer = facts_only_answer(facts, missing)
+        if stated_assumptions:
+            prefix = format_stated_assumptions_prefix(stated_assumptions)
+            if prefix:
+                answer = f"{prefix}\n{answer}"
         cited = {f["id"] for f in facts}
         guard = {"model_numbers_removed": [], "removed_count": 0, "unknown_fact_refs": [], "passed": True}
         mode = "facts_only"
         status = "completed"
+        new_streak = 0
+    elif clarification_suppressed and stated_assumptions and not error:
+        prefix = format_stated_assumptions_prefix(stated_assumptions)
+        answer = f"{prefix}\n已依上述推定假設直接回答。"
+        cited = set()
+        guard = {"model_numbers_removed": [], "removed_count": 0, "unknown_fact_refs": [], "passed": True}
+        mode = "model"
+        status = "completed"
+        new_streak = 0
     else:
         answer, cited, guard, mode = "", set(), {}, "none"
         status = "degraded" if error else "completed"
+        new_streak = 0
     for fact in facts:
         fact["cited"] = fact["id"] in cited
-    habit_cited = [f for f in habit_facts if f["id"] in cited][:MAX_HABIT_FACTS_CITED]
+    habit_cited = [f for f in profile_habit_facts if f["id"] in cited][:MAX_HABIT_FACTS_CITED]
     for fact in habit_cited:
         fact["cited"] = True
     habit_meta: Dict[str, Any] = {}
-    if habit_ref or habit_facts:
+    if habit_ref or profile_habit_facts:
         habit_meta = {
             **habit_ref,
             "carried_fact_ids": shown_habit_ids,
@@ -382,6 +607,11 @@ def run_tool_turn(
         number_guard=guard,
         answer_mode=mode,
         error=error,
+        clarification=clarification_card,
+        stated_assumptions=list(stated_assumptions) if clarification_card is None else [],
+        consecutive_clarifications=new_streak,
+        clarification_choice=dict(active_choice) if isinstance(active_choice, Mapping) else None,
+        habit_facts=session_habit_facts,
     )
 
 

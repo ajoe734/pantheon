@@ -10,7 +10,8 @@ The world is the hosted 2026-11-07 shape of test_strategy_operational_status
 real Persona records), with the hosted 2026-11-25 runtime binding / telemetry
 rows of test_strategy_metrics_truth and a ranking snapshot in the hosted
 ``RankingSnapshotRecord`` shape. Answers and owner call counts are compared
-with the pre-change route, loaded from git at ``BASE``.
+with the pre-change route, loaded from git at ``BASE``, plus the explicit
+hidden-cohort metadata added by MGMT-STRATEGY-HIDDEN-COHORT-COUNT-CONTRACT-20261128.
 """
 from __future__ import annotations
 
@@ -257,6 +258,18 @@ def _read(monkeypatch: pytest.MonkeyPatch, query: str, *, before: bool = False, 
     return body, owners
 
 
+def _assert_answers_match_baseline(before: Dict[str, Any], after: Dict[str, Any]) -> None:
+    # BASE predates the combined-cohort metadata contract. This world's
+    # personas have no non-trading classification, so the combined count is
+    # exactly the baseline test-persona count, including owner-read failures.
+    expected_meta = {
+        **before["meta"],
+        "hidden_persona_strategy_count": before["meta"]["hidden_test_persona_strategy_count"],
+        "persona_exclusion_scope": [] if before["meta"]["include_test_personas"] else ["test"],
+    }
+    assert after == {**before, "meta": expected_meta}
+
+
 ALL_FOUR = frozenset({PERSONA, REGISTRY, RANKING, BINDINGS})
 INDEPENDENT = frozenset({PERSONA, RANKING, BINDINGS})
 
@@ -328,8 +341,7 @@ def test_answers_and_owner_calls_match_the_pre_change_route(
     after, after_owners = _read(monkeypatch, query)
     assert after["items"] == before["items"]
     assert after["page_info"] == before["page_info"]
-    assert after["meta"] == before["meta"]
-    assert after == before
+    _assert_answers_match_baseline(before, after)
     # Not one owner call more than today, per owner.
     for name, count in after_owners.calls.items():
         assert count <= before_owners.calls.get(name, 0), (name, after_owners.calls, before_owners.calls)
@@ -362,7 +374,7 @@ def test_failed_reads_keep_todays_truthful_outcome(
     for query in ("page_size=20", "include_test_personas=true&page_size=20"):
         before, _ = _read(monkeypatch, query, before=True, fail=failed)
         after, owners = _read(monkeypatch, query, fail=failed)
-        assert after == before, query
+        _assert_answers_match_baseline(before, after)
         meta, rows = after["meta"], after["items"]
         assert rows, query
         if PERSONA in failed:

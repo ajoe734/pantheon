@@ -713,13 +713,13 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             }
         meta["surfaces"] = surfaces
         meta["hidden_retired_persona_count"] = hidden_retired_persona_count
-        # Registry reports one count for the supplied cohort, not separate test
-        # and advisory counts. Never label their combined count as test-only.
+        # Registry reports one count for the supplied cohort. Keep the legacy
+        # test-named field as a compatibility alias for that whole cohort.
         meta["hidden_test_persona_strategy_count"] = hidden_test_persona_strategy_count
-        if hide_test and persona_lookup.non_trading_persona_ids:
-            meta["hidden_persona_strategy_count"] = hidden_test_persona_strategy_count
-            meta["hidden_test_persona_strategy_count"] = None
-            meta["persona_exclusion_scope"] = ["test", "non_trading"]
+        meta["hidden_persona_strategy_count"] = hidden_test_persona_strategy_count
+        meta["persona_exclusion_scope"] = (
+            ["test", "non_trading"] if persona_lookup.non_trading_persona_ids else ["test"]
+        ) if hide_test else []
         meta["hidden_unbound_stub_strategy_count"] = hidden_unbound_stub_strategy_count
         meta["include_test_personas"] = bool(include_test_personas)
         return {
