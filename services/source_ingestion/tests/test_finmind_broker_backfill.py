@@ -30,15 +30,20 @@ ROWS = [
 ]
 
 
+_CACHED_PARQUET_BYTES: bytes | None = None
+
+
 def _parquet_bytes() -> bytes:
-    import pyarrow as pa
-    import io
+    global _CACHED_PARQUET_BYTES
+    if _CACHED_PARQUET_BYTES is None:
+        import io
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
-    import pyarrow.parquet as pq
-
-    buf = io.BytesIO()
-    pq.write_table(pa.Table.from_pylist(ROWS), buf)
-    return buf.getvalue()
+        buf = io.BytesIO()
+        pq.write_table(pa.Table.from_pylist(ROWS), buf)
+        _CACHED_PARQUET_BYTES = buf.getvalue()
+    return _CACHED_PARQUET_BYTES
 
 
 class FakeFetcher(FinMindLiveFetcher):
@@ -542,6 +547,17 @@ def test_two_year_default_backfill_window_survives_delete_mode_retention_sweep(t
     assert report["stores"]["keyed"]["deleted_rows"] == 0
     assert store.partitions() == expected_days
 
+    expired_day = (end_day - timedelta(days=751)).isoformat()
+    store.write_records([{"symbol": "2330", "trade_date": expired_day, "side": "buy", "rank": 1, "broker": "A"}], ingest_run_id="bf-old")
+    report_expired = RetentionSweeper(
+        daily_bars_store=DailyBarsStore(root), report_path=tmp_path / REPORT_FILENAME,
+        pin_source=PinSource([pin_path]), keyed_root=root, environ={MODE_ENV: "delete"}, today=lambda: end_day.isoformat(),
+    ).run()
+    assert report_expired["status"] == "completed"
+    assert report_expired["stores"]["keyed"]["would_delete_partitions"] == 1
+    assert report_expired["stores"]["keyed"]["deleted_partitions"] == 1
+    assert store.partitions() == expected_days
+
 
 def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between_sessions(
     tmp_path, monkeypatch
@@ -592,6 +608,48 @@ def test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between
     assert between.requests_made == 1 and f_between.calls == ["2026-06-08"]
     store = keyed_dataset_store(between_dir, "tw_broker_top")
     assert store is not None and store.partitions() == ["2026-06-08"]
+
+    # 3. Crossing 00:35Z during throttle sleep (start 00:34:59Z, default min_interval_seconds=1.5):
+    # wait is bounded to 1.0s (00:35:00Z), guard is rechecked after waiting and before fetching, so session 2 is not fetched.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:34:59Z")
+    sleep_clock, sleeps_crossing, f_sleep_cross = [0.0], [], FakeFetcher()
+    sleep_cross = run_backfill(
+        output_dir=tmp_path / "sleep_cross", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_sleep_cross,
+        sleep=lambda s: (sleeps_crossing.append(s), sleep_clock.__setitem__(0, sleep_clock[0] + s)),
+        clock=lambda: sleep_clock[0],
+    )
+    assert sleep_cross.status == "ok" and sleep_cross.stopped_reason == "market_open_0055z"
+    assert "market_open_0055z" in (sleep_cross.reason or "") and "00:55Z" in (sleep_cross.reason or "")
+    assert sleep_cross.completed == ["2026-06-08"] and sleep_cross.remaining_dates_count == 1
+    assert sleep_cross.requests_made == 1 and f_sleep_cross.calls == ["2026-06-08"]
+    assert sleeps_crossing == [pytest.approx(1.0)] and sleep_clock[0] == pytest.approx(1.0)
+
+    # 4. Long throttle interval (min_interval_seconds=1560, max_wall_seconds=60) starting at 00:34:00Z:
+    # wait is bounded to 60s (00:35:00Z), never sleeping to 01:00Z (1560s), and session 2 is not fetched.
+    monkeypatch.setenv("PANTHEON_REFRESH_NOW", "2026-11-18T00:34:00Z")
+    long_clock, sleeps_long, f_long = [0.0], [], FakeFetcher()
+    long_res = run_backfill(
+        output_dir=tmp_path / "long_wait", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_long,
+        min_interval_seconds=1560.0, max_wall_seconds=60.0,
+        sleep=lambda s: (sleeps_long.append(s), long_clock.__setitem__(0, long_clock[0] + s)),
+        clock=lambda: long_clock[0],
+    )
+    assert long_res.status == "ok" and long_res.stopped_reason == "market_open_0055z"
+    assert "market_open_0055z" in (long_res.reason or "") and long_res.completed == ["2026-06-08"]
+    assert long_res.requests_made == 1 and f_long.calls == ["2026-06-08"]
+    assert sleeps_long == [pytest.approx(60.0)] and long_clock[0] == pytest.approx(60.0)
+
+    # 5. Wall deadline tighter than market deadline during throttle sleep (max_wall_seconds=30 at 00:34:00Z).
+    wall_clock, sleeps_wall, f_wall = [0.0], [], FakeFetcher()
+    wall_res = run_backfill(
+        output_dir=tmp_path / "wall_bound", start=date(2026, 6, 8), end=date(2026, 6, 9), fetcher=f_wall,
+        min_interval_seconds=1560.0, max_wall_seconds=30.0,
+        sleep=lambda s: (sleeps_wall.append(s), wall_clock.__setitem__(0, wall_clock[0] + s)),
+        clock=lambda: wall_clock[0],
+    )
+    assert wall_res.status == "ok" and wall_res.stopped_reason == "max_wall_seconds_reached"
+    assert wall_res.completed == ["2026-06-08"] and wall_res.requests_made == 1 and f_wall.calls == ["2026-06-08"]
+    assert sleeps_wall == [pytest.approx(30.0)] and wall_clock[0] == pytest.approx(30.0)
 
 
 def test_failing_session_prints_redacted_traceback_to_stderr_without_token(

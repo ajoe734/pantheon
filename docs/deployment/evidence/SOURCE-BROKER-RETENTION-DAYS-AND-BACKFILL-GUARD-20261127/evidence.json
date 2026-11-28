@@ -39,7 +39,7 @@
     "3_two_year_backfill_default_window_inside_750_day_retention": {
       "status": "verified_in_source",
       "window_rule": "Backfill default window [end - 730 days, end] (BACKFILL_YEARS = 2, 365 * 2 = 730 calendar days) stays inside the 750-calendar-day retention cutoff (today - 750 days).",
-      "delete_mode_sweep_proof": "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep and services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window run RetentionSweeper in delete mode (dry_run=False) after writing a full two-year backfill window (end minus 730 days through end) plus an out-of-window partition at end minus 751 days: 0 partitions from the two-year backfill window are deleted while the 751-day-old partition is deleted.",
+      "delete_mode_sweep_proof": "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep and services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window first run RetentionSweeper in delete mode (MODE_ENV='delete') after writing the full two-year backfill window (end minus 730 days through end) and assert would_delete_partitions == 0, deleted_partitions == 0, and all backfill partitions remain intact; both tests then write an expired partition at end minus 751 days, run RetentionSweeper in delete mode again, and assert would_delete_partitions == 1 and deleted_partitions == 1 while every partition in the two-year backfill window survives.",
       "tests": [
         "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_two_year_default_backfill_window_survives_delete_mode_retention_sweep",
         "services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window"
@@ -47,7 +47,7 @@
     },
     "4_market_hours_guard_reuse": {
       "status": "verified_in_source",
-      "mechanism": "run_finmind_broker_backfill (scripts/deploy_nonprod_vm.sh) calls bounded_runtime_market_open_guard before entering the bounded runtime and passes PANTHEON_MARKET_OPEN_GUARD_FUNC=$(declare -f bounded_runtime_market_open_guard) into the container; services/source_ingestion/finmind_broker_backfill.py::invoke_bounded_runtime_market_open_guard compiles and runs the single GUARD_PY block from bounded_runtime_market_open_guard (no second time rule) before run_backfill starts and before each session so on a Taiwan weekday no session starts unless it and the steady restore end before 00:55Z. A dispatch inside the window exits with stopped_reason='market_open_0055z' and status='not_run' (0 FinMind requests, 0 bounded runtime entries); reaching the window between sessions saves state, records stopped_reason='market_open_0055z', and exits cleanly for steady restore.",
+      "mechanism": "run_finmind_broker_backfill (scripts/deploy_nonprod_vm.sh) calls bounded_runtime_market_open_guard before entering the bounded runtime and passes PANTHEON_MARKET_OPEN_GUARD_FUNC=$(declare -f bounded_runtime_market_open_guard) into the container; services/source_ingestion/finmind_broker_backfill.py::invoke_bounded_runtime_market_open_guard compiles and runs the single GUARD_PY block from bounded_runtime_market_open_guard (no second time rule) before run_backfill starts, before each session, and immediately after any inter-session throttle wait (with the throttle wait bounded by both max_wall_seconds and the market-open guard cutoff) before fetching so on a Taiwan weekday no session starts unless it and the steady restore end before 00:55Z. A dispatch inside the window exits with stopped_reason='market_open_0055z' and status='not_run' (0 FinMind requests, 0 bounded runtime entries); reaching the window between sessions or during inter-session throttle sleep saves state, records stopped_reason='market_open_0055z', makes no further FinMind request, and exits cleanly for steady restore.",
       "tests": [
         "services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between_sessions",
         "scripts/test_deploy_nonprod_vm.py::test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessions"
@@ -132,13 +132,18 @@
     "environment": "Checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py (Python 3.12.3, pyarrow 26.0.1)",
     "commands": [
       {
-        "cmd": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
-        "result": "91 passed in 77.73s",
+        "cmd": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_datasets_keyed_write.py services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_finmind_broker_whole_market.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window",
+        "result": "90 passed in 48.32s",
+        "exit_status": 0
+      },
+      {
+        "cmd": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_finmind_broker_backfill.py services/source_ingestion/tests/test_retention.py::test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window services/source_ingestion/tests/test_retention.py::test_keyed_datasets_expire_by_their_declared_retention_and_macro_never",
+        "result": "26 passed in 48.80s",
         "exit_status": 0
       },
       {
         "cmd": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_finmind_broker_backfill_workflow.py scripts/test_deploy_nonprod_vm.py -k 'broker_backfill or whole_market or market_open_guard or workflow'",
-        "result": "31 passed, 232 deselected in 14.98s",
+        "result": "31 passed, 232 deselected in 15.15s",
         "exit_status": 0
       },
       {

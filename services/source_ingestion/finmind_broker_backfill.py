@@ -129,21 +129,20 @@ def _load_bounded_runtime_market_open_guard_code() -> Any:
 def invoke_bounded_runtime_market_open_guard(
     *,
     elapsed_seconds: float = 0.0,
+    lookahead_seconds: float = 0.0,
     initial_refresh_now: str = "",
 ) -> str | None:
-    """Reuse bounded_runtime_market_open_guard (no second time rule).
-
-    Returns the named market_open_0055z reason when inside the Taiwan weekday window
-    where a profile/session and its steady restore cannot finish before 00:55Z, else None.
-    """
+    """Reuse bounded_runtime_market_open_guard (no second time rule)."""
     code = _load_bounded_runtime_market_open_guard_code()
     current_raw = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
     restore_raw: str | None = None
-    if current_raw and current_raw == initial_refresh_now and elapsed_seconds > 0:
-        parsed = datetime.fromisoformat(current_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-        advanced = (parsed + timedelta(seconds=elapsed_seconds)).isoformat().replace("+00:00", "Z")
-        restore_raw = current_raw
-        os.environ["PANTHEON_REFRESH_NOW"] = advanced
+    unset_on_restore = False
+    offset = (elapsed_seconds + lookahead_seconds) if (current_raw and current_raw == initial_refresh_now) else lookahead_seconds
+    if offset > 0:
+        base_dt = datetime.fromisoformat(current_raw.replace("Z", "+00:00")).astimezone(timezone.utc) if current_raw else datetime.now(timezone.utc)
+        restore_raw = current_raw if current_raw else None
+        unset_on_restore = not bool(current_raw)
+        os.environ["PANTHEON_REFRESH_NOW"] = (base_dt + timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
     printed: list[str] = []
 
     def _capture_print(*args: Any, **_kwargs: Any) -> None:
@@ -161,6 +160,8 @@ def invoke_bounded_runtime_market_open_guard(
     finally:
         if restore_raw is not None:
             os.environ["PANTHEON_REFRESH_NOW"] = restore_raw
+        elif unset_on_restore:
+            os.environ.pop("PANTHEON_REFRESH_NOW", None)
     if exit_code == 0:
         return printed[-1].strip() if printed else "market_open_0055z"
     return None
@@ -303,13 +304,23 @@ def run_backfill(
     )
     initial_refresh_now = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
 
-    def _check_market_open(elapsed: float = 0.0) -> str | None:
+    def _check_market_open(elapsed: float = 0.0, lookahead: float = 0.0) -> str | None:
         if market_open_guard is not None:
             return market_open_guard()
         return invoke_bounded_runtime_market_open_guard(
-            elapsed_seconds=elapsed,
-            initial_refresh_now=initial_refresh_now,
+            elapsed_seconds=elapsed, lookahead_seconds=lookahead, initial_refresh_now=initial_refresh_now
         )
+
+    def _bound_throttle_wait(wait: float, elapsed: float) -> float:
+        bounded = min(wait, max(0.0, max_wall_seconds - elapsed)) if max_wall_seconds is not None else wait
+        if bounded > 0.0 and market_open_guard is None and _check_market_open(elapsed, bounded):
+            lo, hi = 0.0, bounded
+            for _ in range(30):
+                mid = (lo + hi) / 2.0
+                lo, hi = (lo, mid) if _check_market_open(elapsed, mid) else (mid, hi)
+            rounded = round(hi, 3)
+            bounded = rounded if (0.0 < rounded <= bounded and _check_market_open(elapsed, rounded)) else hi
+        return max(0.0, bounded)
 
     guard_reason = _check_market_open(0.0)
     if guard_reason:
@@ -417,10 +428,11 @@ def run_backfill(
         if max_requests is not None and result.requests_made >= max_requests:
             result.stopped_reason = "max_requests_reached"
             break
-        if max_wall_seconds is not None and (clock() - run_started) >= max_wall_seconds:
+        elapsed = max(0.0, clock() - run_started)
+        if max_wall_seconds is not None and elapsed >= max_wall_seconds:
             result.stopped_reason = "max_wall_seconds_reached"
             break
-        guard_reason = _check_market_open(max(0.0, clock() - run_started))
+        guard_reason = _check_market_open(elapsed)
         if guard_reason:
             result.reason = guard_reason
             result.stopped_reason = "market_open_0055z"
@@ -431,7 +443,20 @@ def run_backfill(
         if last_request is not None:
             wait = min_interval_seconds - (clock() - last_request)
             if wait > 0:
-                sleep(wait)
+                bounded_wait = _bound_throttle_wait(wait, elapsed)
+                if bounded_wait > 0:
+                    sleep(bounded_wait)
+                post_wait_elapsed = max(0.0, clock() - run_started, elapsed + bounded_wait)
+                guard_reason = _check_market_open(post_wait_elapsed)
+                if guard_reason:
+                    result.reason = guard_reason
+                    result.stopped_reason = "market_open_0055z"
+                    if not result.completed and result.requests_made == 0:
+                        result.status = "not_run"
+                    break
+                if max_wall_seconds is not None and post_wait_elapsed >= max_wall_seconds:
+                    result.stopped_reason = "max_wall_seconds_reached"
+                    break
         last_request = clock()
         try:
             raw, meta = fetcher.fetch_storage_objects_raw(FINMIND_BROKER_REPORT_DATASET, day_s)
