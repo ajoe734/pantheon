@@ -3934,3 +3934,46 @@ def test_twse_margin_stored_empty_date_and_finmind_broker_stored_shape_readback(
             )
             assert proc_hosted.returncode == 0, (mode, cid, proc_hosted.stderr)
 
+
+
+# Read-only post-merge proof must reject the historical restore failure and unrelated runs.
+@pytest.mark.parametrize("case", ["restored", "retired", "kept", "step_failed", "wrong_head", "wrong_workflow", "no_outcome"])
+def test_restore_acceptance_probe_requires_the_merged_refresh_and_healthy_posture(monkeypatch, capsys, case):
+    import sys
+    from scripts import probe_tw_refresh_restore as probe
+
+    run = {"head_branch": "dev", "path": ".github/workflows/dev-tw-market-refresh.yml", "status": "completed", "head_sha": "a" * 40}
+    comparison = {"status": "ahead"}
+    job = {"name": "Taiwan Market Daily Refresh", "id": 123, "steps": [{"name": "Verify and restore steady source-ingest posture", "conclusion": "success"}]}
+    logs = "2026-11-28T06:24Z [remote-deploy] steady posture check: status=healthy reason=bounded_runtime_restored_once\n"
+    if case == "retired":
+        logs += "[remote-deploy] bounded runtime record retired: run=1 phase=entered reason=restored_in_place recorded_image=x\n"
+    elif case == "kept":
+        logs += "[remote-deploy] bounded runtime record /tmp/record kept: restore failed at source_ingest_restore\n"
+    elif case == "step_failed":
+        job["steps"][0]["conclusion"] = "failure"
+    elif case == "wrong_head":
+        comparison["status"] = "diverged"
+    elif case == "wrong_workflow":
+        run["path"] = ".github/workflows/nonprod-deploy.yml"
+    elif case == "no_outcome":
+        logs = ""
+
+    def fake_gh(*args, raw=False):
+        path = args[1]
+        if path.endswith("/logs"):
+            return logs
+        if "/compare/" in path:
+            return comparison
+        if "/jobs?" in path:
+            return {"jobs": [job]}
+        return run
+
+    monkeypatch.setattr(probe, "gh", fake_gh)
+    monkeypatch.setattr(sys, "argv", ["probe", "--run-id", "1", "--merged-commit", "b" * 40])
+    expected = case in ("restored", "retired")
+    assert probe.main() == (0 if expected else 1)
+    verdict = json.loads(capsys.readouterr().out)
+    assert verdict["passed"] is expected
+    if case == "retired":
+        assert verdict["restored_in_place_receipts"] == 1

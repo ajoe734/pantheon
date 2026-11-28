@@ -4268,6 +4268,7 @@ sys.exit(1 if n <= {fail_attempts} else 0)
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
     curls = curl_log.read_text(encoding="utf-8").splitlines() if curl_log.exists() else []
     sleeps = sleep_log.read_text(encoding="utf-8").splitlines() if sleep_log.exists() else []
@@ -7108,8 +7109,8 @@ docker() {
     assert not record.exists()
 
 
-@pytest.mark.parametrize("health,posture,expected", [("starting", "", 0), ("starting", "source-ingest_unhealthy", 1), ("unhealthy", "", 1)])
-def test_restore_readiness_timeout_rechecks_starting_posture_once(tmp_path: Path, health: str, posture: str, expected: int) -> None:
+@pytest.mark.parametrize("health,posture,ready,expected", [("starting", "", True, 0), ("starting", "source-ingest_unhealthy", True, 1), ("starting", "", False, 1), ("unhealthy", "", True, 1)])
+def test_restore_readiness_timeout_rechecks_starting_posture_once(tmp_path: Path, health: str, posture: str, ready: bool, expected: int) -> None:
     host = _BoundedRuntimeHost(tmp_path)
     record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A,
                                  steady_ids="steady-sched steady-proj")
@@ -7117,7 +7118,7 @@ def test_restore_readiness_timeout_rechecks_starting_posture_once(tmp_path: Path
     script = host._prelude() + host.fns + f"""
 bounded_runtime_retire_if_not_in_place() {{ return 1; }}
 manage_source_ingest_refresh_runtime() {{ return 75; }}
-curl() {{ return 0; }}
+curl() {{ return {0 if ready else 1}; }}
 steady_posture_problem() {{ echo check >> "{checks}"; reason="{posture}"; }}
 eval "$(declare -f docker | sed '1s/docker/docker_base/')"
 docker() {{
@@ -7134,6 +7135,19 @@ bounded_runtime_restore_from_state "{record}"
     assert record.exists() == bool(expected)
 
 
+
+
+@pytest.mark.parametrize("image", ["", _SHA_OLD])
+def test_restored_in_place_match_rejects_missing_or_different_image(tmp_path: Path, image: str) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A)
+    script = host._prelude() + host.fns + f"""
+BR_IMAGE_ID={_SHA_A}
+bounded_runtime_matches_steady_record "{record}" cid-src "{image}"
+"""
+    proc = subprocess.run(["bash", "-c", script], env=host._env("", "", ""), capture_output=True, text=True, timeout=10)
+    assert proc.returncode == 1
+    assert host.event_lines() == []
 
 def test_manage_restore_uses_the_longer_deadline_and_preserves_timeout_status(tmp_path: Path) -> None:
     # Exercise the actual Python recreate/env validation plus shell wait routing.
