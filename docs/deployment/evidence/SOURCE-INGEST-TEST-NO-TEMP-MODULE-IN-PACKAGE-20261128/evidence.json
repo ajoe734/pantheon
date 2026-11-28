@@ -1,7 +1,7 @@
 {
   "task_id": "SOURCE-INGEST-TEST-NO-TEMP-MODULE-IN-PACKAGE-20261128",
   "owner": "Codex2",
-  "reviewer": "Antigravity",
+  "reviewer": "Claude2",
   "scope": "Test-only source-ingest probe isolation; no production, deployment, digest-policy or controller changes.",
   "incident": {
     "ci_run": "https://github.com/ajoe734/pantheon/actions/runs/46137644402",
@@ -17,8 +17,7 @@
     "exit_code_before_fix": 1,
     "summary": "1 failed in 1.69s; FileNotFoundError for services/source_ingestion/_deployed_requirement_state_probe.py in controller_worker.py:2103 path.read_bytes()",
     "method": "Before changing _deployed_reader, hook its write boundary to enter the real _runtime_deployment; materialize rglob paths, unlink the enumerated probe, then perform the real digest reads. No sleep or probabilistic scheduling. The same regression test now passes because tmp_path is outside the enumerated package.",
-    "terminal_log_sha256": "66b4022c25d91b9b106eb2f794088eaca175abe557e43146fdc494e779117c03",
-    "terminal_output": "F                                                                        [100%]\n=================================== FAILURES ===================================\n___________ test_deployed_reader_cleanup_cannot_race_runtime_digest ____________\n\ntmp_path = PosixPath('/tmp/pantheon-worker-temp/1600643-codex-20261128T113238Z-772ae073/pytest-of-chloe_ong_dev_cctech_support_com/pytest-0/test_deployed_reader_cleanup_c0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x706eba8286e0>\n\n    def test_deployed_reader_cleanup_cannot_race_runtime_digest(tmp_path, monkeypatch):\n        \"\"\"Force enumerate -> probe cleanup -> read, without scheduler timing or sleeps.\"\"\"\n        from services.source_ingestion import controller_worker\n    \n        package_root = Path(m.__file__).parent\n        probe = package_root / \"_deployed_requirement_state_probe.py\"\n        real_rglob, real_write_text = Path.rglob, Path.write_text\n        deployments = []\n    \n        def enumerate_then_cleanup(path, pattern):\n            paths = list(real_rglob(path, pattern))\n            if path == package_root and probe in paths:\n                # The reader process finishes after the digest process enumerates.\n                probe.unlink()\n            return iter(paths)\n    \n        def write_then_hash(path, *args, **kwargs):\n            result = real_write_text(path, *args, **kwargs)\n            if path.name == probe.name:\n                deployments.append(controller_worker._runtime_deployment())\n            return result\n    \n        monkeypatch.setattr(Path, \"rglob\", enumerate_then_cleanup)\n        monkeypatch.setattr(Path, \"write_text\", write_then_hash)\n>       old = _deployed_reader(tmp_path)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nservices/source_ingestion/tests/test_latest_market_snapshot_compaction.py:257: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nservices/source_ingestion/tests/test_latest_market_snapshot_compaction.py:206: in _deployed_reader\n    target.write_text(src, encoding=\"utf-8\")\nservices/source_ingestion/tests/test_latest_market_snapshot_compaction.py:252: in write_then_hash\n    deployments.append(controller_worker._runtime_deployment())\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nservices/source_ingestion/controller_worker.py:2103: in _runtime_deployment\n    artifact_hasher.update(path.read_bytes())\n                           ^^^^^^^^^^^^^^^^^\n/usr/lib/python3.12/pathlib.py:1021: in read_bytes\n    with self.open(mode='rb') as f:\n         ^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = PosixPath('/tmp/pantheon-worker-worktrees/pantheon/source-ingest-test-no-temp-module-in-package-20261128/services/source_ingestion/_deployed_requirement_state_probe.py')\nmode = 'rb', buffering = -1, encoding = None, errors = None, newline = None\n\n    def open(self, mode='r', buffering=-1, encoding=None,\n             errors=None, newline=None):\n        \"\"\"\n        Open the file pointed by this path and return a file object, as\n        the built-in open() function does.\n        \"\"\"\n        if \"b\" not in mode:\n            encoding = io.text_encoding(encoding)\n>       return io.open(self, mode, buffering, encoding, errors, newline)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE       FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pantheon-worker-worktrees/pantheon/source-ingest-test-no-temp-module-in-package-20261128/services/source_ingestion/_deployed_requirement_state_probe.py'\n\n/usr/lib/python3.12/pathlib.py:1015: FileNotFoundError\n=========================== short test summary info ============================\nFAILED services/source_ingestion/tests/test_latest_market_snapshot_compaction.py::test_deployed_reader_cleanup_cannot_race_runtime_digest\n1 failed in 1.69s\n"
+    "terminal_log_sha256": "66b4022c25d91b9b106eb2f794088eaca175abe557e43146fdc494e779117c03"
   },
   "implementation": {
     "probe_path": "tmp_path / _deployed_requirement_state_probe.py; removed by existing finally block",
@@ -30,6 +29,7 @@
   "validation": {
     "initial_focused_command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_controller_worker_manual_once.py",
     "initial_focused_result": "25 passed, 1 skipped in 23.57s; exit 0",
+    "reopen_focused_result": "Same two-file command after evidence compaction: 25 passed, 1 skipped in 14.39s; exit 0. All 40 retained terminal-log SHA-256 digests verified against the collected logs.",
     "skip": "Only pre-existing opt-in ~10 minute journal benchmark; PANTHEON_RUN_COMPACTION_BENCHMARK is not enabled.",
     "repeat_status": "passed; all four bounded foreground batches collected to terminal exit 0",
     "consecutive_full_file_runs": 20,
@@ -50,336 +50,56 @@
       ".venv-pantheon/bin/python3 /tmp/source-ingest-repeat-validation.py 11 15",
       ".venv-pantheon/bin/python3 /tmp/source-ingest-repeat-validation.py 16 20"
     ],
-    "driver_source": "import concurrent.futures\nimport json\nimport pathlib\nimport subprocess\nimport sys\nimport time\n\nroot = pathlib.Path.cwd()\nout = pathlib.Path('/tmp/source-ingest-repeat-validation')\nout.mkdir(exist_ok=True)\npython = str(root / '.venv-pantheon/bin/python3')\ncompaction = 'services/source_ingestion/tests/test_latest_market_snapshot_compaction.py'\ncontroller = 'services/source_ingestion/tests/test_controller_worker_manual_once.py'\n\ndef run(round_no, label, nodes):\n    command = [python, '-m', 'pytest', '-q', *nodes]\n    log = out / f'{round_no:02d}-{label}.log'\n    started = time.monotonic()\n    with log.open('w') as stream:\n        result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, timeout=120)\n    row = dict(round=round_no, label=label, command=command, exit_code=result.returncode,\n               seconds=round(time.monotonic() - started, 3), log=str(log),\n               output=log.read_text().strip())\n    (out / f'{round_no:02d}-{label}.json').write_text(json.dumps(row, indent=2) + '\\n')\n    print(json.dumps(row), flush=True)\n    return result.returncode\n\nfor round_no in range(int(sys.argv[1]), int(sys.argv[2]) + 1):\n    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:\n        futures = [pool.submit(run, round_no, 'both-files', [compaction, controller]),\n                   pool.submit(run, round_no, 'concurrent-multiprocess',\n                               [controller + '::test_run_controller_once_concurrent_same_key_multiprocess'])]\n        codes = [future.result() for future in futures]\n    if any(codes):\n        raise SystemExit(1)\n",
     "parallel_standalone_command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py::test_run_controller_once_concurrent_same_key_multiprocess",
     "terminal_records": [
-      {
-        "round": 1,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.915,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 16.17s",
-        "terminal_log_sha256": "6dd33141cfd5fd0c36282124aac194df75b001fd663aef05e80a4d141d15fde2"
-      },
-      {
-        "round": 1,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.127,
-        "output": ".                                                                        [100%]\n1 passed in 2.40s",
-        "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"
-      },
-      {
-        "round": 2,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.414,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.80s",
-        "terminal_log_sha256": "06c91cad76b3d9135d01c031463de9d30fefacc81ae3a6057d373bcdeb17d5a9"
-      },
-      {
-        "round": 2,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.924,
-        "output": ".                                                                        [100%]\n1 passed in 2.24s",
-        "terminal_log_sha256": "4014033607bc52eed73602df3126bed197e72abc344415ddfab2bf1d2a06219f"
-      },
-      {
-        "round": 3,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.368,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.69s",
-        "terminal_log_sha256": "036c97053f2a8a318fb6ff5484c30b1e2b7ae7c2235bcf19c8a612206c2f6dab"
-      },
-      {
-        "round": 3,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.873,
-        "output": ".                                                                        [100%]\n1 passed in 2.30s",
-        "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"
-      },
-      {
-        "round": 4,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 17.519,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 16.82s",
-        "terminal_log_sha256": "dd2d0b30fe6e5aec51ddeb7118ab3375c1c68d025ffde1d75f60523aa1051e3b"
-      },
-      {
-        "round": 4,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.073,
-        "output": ".                                                                        [100%]\n1 passed in 2.40s",
-        "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"
-      },
-      {
-        "round": 5,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.668,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 16.01s",
-        "terminal_log_sha256": "3282ee1df375a95d44c4e693f48ec2e2ce0a0139951220d8059da3b6222fcacd"
-      },
-      {
-        "round": 5,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.973,
-        "output": ".                                                                        [100%]\n1 passed in 2.34s",
-        "terminal_log_sha256": "2b38bea586f6566a5ace012e1477ba7dd3e599443b5ab807077223fc7fd49484"
-      },
-      {
-        "round": 6,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.877,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 16.19s",
-        "terminal_log_sha256": "4d1e2d8405a18e806633e460605dd6c7b6a5f5142b89f54c19480f8313d8c25b"
-      },
-      {
-        "round": 6,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.926,
-        "output": ".                                                                        [100%]\n1 passed in 2.25s",
-        "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"
-      },
-      {
-        "round": 7,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.866,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.23s",
-        "terminal_log_sha256": "eb018255944f7de7366278f7b563f0e86237221cab0ef83a86dea1f446cd0aa2"
-      },
-      {
-        "round": 7,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.823,
-        "output": ".                                                                        [100%]\n1 passed in 2.25s",
-        "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"
-      },
-      {
-        "round": 8,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.208,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 14.66s",
-        "terminal_log_sha256": "8f9c49dcacbba3955a859c2e3847c045844217644343d870cd22091a5fb0230f"
-      },
-      {
-        "round": 8,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.024,
-        "output": ".                                                                        [100%]\n1 passed in 2.35s",
-        "terminal_log_sha256": "43320ff4b79ea3894d108145d2d01a1409e5600f9c3e30bef26daff9cc27a2e7"
-      },
-      {
-        "round": 9,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.112,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.53s",
-        "terminal_log_sha256": "d002b6e2d71f1513347a8dd2d580ebd84b25e3d66d67f867b23bf255ae244a67"
-      },
-      {
-        "round": 9,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.922,
-        "output": ".                                                                        [100%]\n1 passed in 2.28s",
-        "terminal_log_sha256": "c972b257d505bb1ba3c12af07677ae6c33fd74cacb2197f641d9529df3f962dc"
-      },
-      {
-        "round": 10,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.97,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.34s",
-        "terminal_log_sha256": "2ac8f0daea99906e8418752b55ba5278665cda426845294d9d6cc840a5a10704"
-      },
-      {
-        "round": 10,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.023,
-        "output": ".                                                                        [100%]\n1 passed in 2.38s",
-        "terminal_log_sha256": "5b6af0c27926dd8cda5be8713c0e3453a7a3aa2596b5f86eefbc382c5b177fff"
-      },
-      {
-        "round": 11,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.458,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 14.80s",
-        "terminal_log_sha256": "cb96fe2d63bb00c17938d26e55f4f451e744f9d6de79023688ca1553d07c199e"
-      },
-      {
-        "round": 11,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.972,
-        "output": ".                                                                        [100%]\n1 passed in 2.36s",
-        "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"
-      },
-      {
-        "round": 12,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.108,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 14.48s",
-        "terminal_log_sha256": "8a0ad29964388b2d9eea33ca51c65a088c5f40807ece1c753476333dd741452b"
-      },
-      {
-        "round": 12,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.722,
-        "output": ".                                                                        [100%]\n1 passed in 2.14s",
-        "terminal_log_sha256": "01b75beb7b0597f640ac9f620561b3967e0cb9c22b749c45c463e054acf44ace"
-      },
-      {
-        "round": 13,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.308,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 14.73s",
-        "terminal_log_sha256": "40e3737ec60e7f4fefc6fcfbdbcdaad615c4cd8f22dee0ac6b459ac6c02206ab"
-      },
-      {
-        "round": 13,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.872,
-        "output": ".                                                                        [100%]\n1 passed in 2.27s",
-        "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"
-      },
-      {
-        "round": 14,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.56,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.04s",
-        "terminal_log_sha256": "e623bb0e442095acaba9d784da2a4ea4cd4ba6f10e7a81353330c3fa12d9f115"
-      },
-      {
-        "round": 14,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.925,
-        "output": ".                                                                        [100%]\n1 passed in 2.32s",
-        "terminal_log_sha256": "6b19a9156f4a5a0e26dda1aa3fa761d666fd6f947b4a5f844e57268607f0b44a"
-      },
-      {
-        "round": 15,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.256,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 14.67s",
-        "terminal_log_sha256": "9ef3a1c673110ee386f04327e11ae8990a079a6200756f6d7ccd9d1a4a9e56c4"
-      },
-      {
-        "round": 15,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.923,
-        "output": ".                                                                        [100%]\n1 passed in 2.29s",
-        "terminal_log_sha256": "bfb7345c62d7938734a2b10c1060fea3a9f5cff4ddb9e980aeabaf0904e7e05e"
-      },
-      {
-        "round": 16,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.212,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.64s",
-        "terminal_log_sha256": "a905bdd88df6237d4ea6a24c724481ba4e5cc8bfbbb1dee24769ac64ad64c9be"
-      },
-      {
-        "round": 16,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.073,
-        "output": ".                                                                        [100%]\n1 passed in 2.48s",
-        "terminal_log_sha256": "79a039ba779f058de7471c31a5f53436f8835ec1e13585c50136495cfc3a2a00"
-      },
-      {
-        "round": 17,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.209,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.71s",
-        "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"
-      },
-      {
-        "round": 17,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.873,
-        "output": ".                                                                        [100%]\n1 passed in 2.27s",
-        "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"
-      },
-      {
-        "round": 18,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.71,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.03s",
-        "terminal_log_sha256": "219130beb28fbb790c0b560bf564cc85cb4bb2d3f09e2b85e5d46e64c8417ad7"
-      },
-      {
-        "round": 18,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 3.023,
-        "output": ".                                                                        [100%]\n1 passed in 2.36s",
-        "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"
-      },
-      {
-        "round": 19,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 16.36,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.71s",
-        "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"
-      },
-      {
-        "round": 19,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.923,
-        "output": ".                                                                        [100%]\n1 passed in 2.30s",
-        "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"
-      },
-      {
-        "round": 20,
-        "label": "both-files",
-        "exit_code": 0,
-        "seconds": 15.862,
-        "output": ".............s............                                               [100%]\n25 passed, 1 skipped in 15.21s",
-        "terminal_log_sha256": "dc525e0411857c45a5dda86e23a7dfbbbb176d9a42cea7055a4266f18688e137"
-      },
-      {
-        "round": 20,
-        "label": "concurrent-multiprocess",
-        "exit_code": 0,
-        "seconds": 2.724,
-        "output": ".                                                                        [100%]\n1 passed in 2.16s",
-        "terminal_log_sha256": "b88921feaebc5931c4ac91c3fbd41214e8d9695c7aea217dd7c4bb62fb3896f0"
-      }
+      {"round": 1, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "6dd33141cfd5fd0c36282124aac194df75b001fd663aef05e80a4d141d15fde2"},
+      {"round": 1, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"},
+      {"round": 2, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "06c91cad76b3d9135d01c031463de9d30fefacc81ae3a6057d373bcdeb17d5a9"},
+      {"round": 2, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "4014033607bc52eed73602df3126bed197e72abc344415ddfab2bf1d2a06219f"},
+      {"round": 3, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "036c97053f2a8a318fb6ff5484c30b1e2b7ae7c2235bcf19c8a612206c2f6dab"},
+      {"round": 3, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"},
+      {"round": 4, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "dd2d0b30fe6e5aec51ddeb7118ab3375c1c68d025ffde1d75f60523aa1051e3b"},
+      {"round": 4, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"},
+      {"round": 5, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "3282ee1df375a95d44c4e693f48ec2e2ce0a0139951220d8059da3b6222fcacd"},
+      {"round": 5, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "2b38bea586f6566a5ace012e1477ba7dd3e599443b5ab807077223fc7fd49484"},
+      {"round": 6, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "4d1e2d8405a18e806633e460605dd6c7b6a5f5142b89f54c19480f8313d8c25b"},
+      {"round": 6, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"},
+      {"round": 7, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "eb018255944f7de7366278f7b563f0e86237221cab0ef83a86dea1f446cd0aa2"},
+      {"round": 7, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"},
+      {"round": 8, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "8f9c49dcacbba3955a859c2e3847c045844217644343d870cd22091a5fb0230f"},
+      {"round": 8, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "43320ff4b79ea3894d108145d2d01a1409e5600f9c3e30bef26daff9cc27a2e7"},
+      {"round": 9, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "d002b6e2d71f1513347a8dd2d580ebd84b25e3d66d67f867b23bf255ae244a67"},
+      {"round": 9, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c972b257d505bb1ba3c12af07677ae6c33fd74cacb2197f641d9529df3f962dc"},
+      {"round": 10, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "2ac8f0daea99906e8418752b55ba5278665cda426845294d9d6cc840a5a10704"},
+      {"round": 10, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "5b6af0c27926dd8cda5be8713c0e3453a7a3aa2596b5f86eefbc382c5b177fff"},
+      {"round": 11, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "cb96fe2d63bb00c17938d26e55f4f451e744f9d6de79023688ca1553d07c199e"},
+      {"round": 11, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"},
+      {"round": 12, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "8a0ad29964388b2d9eea33ca51c65a088c5f40807ece1c753476333dd741452b"},
+      {"round": 12, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "01b75beb7b0597f640ac9f620561b3967e0cb9c22b749c45c463e054acf44ace"},
+      {"round": 13, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "40e3737ec60e7f4fefc6fcfbdbcdaad615c4cd8f22dee0ac6b459ac6c02206ab"},
+      {"round": 13, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"},
+      {"round": 14, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "e623bb0e442095acaba9d784da2a4ea4cd4ba6f10e7a81353330c3fa12d9f115"},
+      {"round": 14, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "6b19a9156f4a5a0e26dda1aa3fa761d666fd6f947b4a5f844e57268607f0b44a"},
+      {"round": 15, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "9ef3a1c673110ee386f04327e11ae8990a079a6200756f6d7ccd9d1a4a9e56c4"},
+      {"round": 15, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "bfb7345c62d7938734a2b10c1060fea3a9f5cff4ddb9e980aeabaf0904e7e05e"},
+      {"round": 16, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "a905bdd88df6237d4ea6a24c724481ba4e5cc8bfbbb1dee24769ac64ad64c9be"},
+      {"round": 16, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "79a039ba779f058de7471c31a5f53436f8835ec1e13585c50136495cfc3a2a00"},
+      {"round": 17, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"},
+      {"round": 17, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"},
+      {"round": 18, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "219130beb28fbb790c0b560bf564cc85cb4bb2d3f09e2b85e5d46e64c8417ad7"},
+      {"round": 18, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"},
+      {"round": 19, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"},
+      {"round": 19, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"},
+      {"round": 20, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "dc525e0411857c45a5dda86e23a7dfbbbb176d9a42cea7055a4266f18688e137"},
+      {"round": 20, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b88921feaebc5931c4ac91c3fbd41214e8d9695c7aea217dd7c4bb62fb3896f0"}
     ],
     "additional_checks": [
       "Original test_deployed_reader_reads_compacted_journal_identically AST equals origin/dev.",
       "git diff --check origin/dev..HEAD: exit 0.",
       "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD: exit 0 for anchors.",
       "Evidence JSON parsed successfully; only the four declared artifacts changed; production diff empty."
-    ]
+    ],
+    "driver_source_sha256": "3f4758ffed9143ddd397b1bedc23c095a52c785ce4771f0df51a668e8966c657"
   },
   "runtime_budget": {
     "hosted_cadence": "none; tests only, on demand",
@@ -398,5 +118,10 @@
       "disposition": "Recorded in the existing Required check that fails under CI load register row for coordinator follow-through. Digest policy and production hardening are outside this test-only task."
     }
   ],
-  "delivery": "Implementation and local validation ready for independent review; PR, Antigravity approval and supervisor merge are subsequent canonical lifecycle steps. No hosted deployment claimed."
+  "delivery": "PR #8034; owner resubmits the compact evidence manifest for independent Claude2 review and canonical supervisor merge. No hosted deployment claimed.",
+  "raw_evidence_reference": {
+    "git_object": "6c292e2bb367606acb988eb785d7c4d8708e5399:docs/deployment/evidence/SOURCE-INGEST-TEST-NO-TEMP-MODULE-IN-PACKAGE-20261128/evidence.json",
+    "sha256": "f606051f7faca9cd8dc097ea5e796a8a4a6a42a284e147d43ce9377f18577392",
+    "contents": "Original full reproduction traceback, validation driver source, and 40 collected terminal outputs; retrieve with git show <git_object>."
+  }
 }
