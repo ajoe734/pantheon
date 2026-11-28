@@ -1,20 +1,23 @@
 {
   "task_id": "BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128",
-  "owner": "Antigravity2",
+  "owner": "Codex",
+  "original_implementation_owner": "Antigravity2",
   "reviewer": "Codex2",
   "reviewer_independence": {
-    "owner_family": "Antigravity",
+    "owner_family": "Codex",
     "reviewer_family": "Codex",
-    "independent": true
+    "independent": false,
+    "status": "pending_coordinator_reassignment_after_owner_recovery",
+    "required_action": "Canonical recovery changed the owner from Antigravity2 to Codex while retaining Codex2 as reviewer. Acceptance #8 requires a different-family reviewer. Coordinator must settle the running owner lease and reassign the reviewer through the governed workflow before approval; no cross-family capacity exception is claimed."
   },
   "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility in BFF persona list and detail",
-  "source_base": "bbd0d47a1ec17a4e01aba9ecc26ea0b0af1cad46",
-  "implementation_status": "local_validation_passed_pending_contract_or_review",
+  "source_base": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
+  "implementation_status": "local_validation_passed_pending_independent_review_and_hosted_acceptance",
   "implementation": [
     "GET /bff/personas (services/control-plane/bff/personas/routes/collection.py) resolves viewer_user_id once per request via the existing _fleet_viewer_user_id(identity, tenant_id, utc_now) and filters directory.records_by_id.values() with the existing _persona_fleet_record_visible_to(raw, viewer_user_id) imported from services/control-plane/bff/personas/service.py before state and archetype filtering, before paging, and before canonical_total, filtered_total, page_info.total, and meta.total.",
     "GET /bff/personas/{persona_id} (services/control-plane/bff/personas/routes/detail.py) checks _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, caller_tenant, utc_now)) immediately after _get_persona_record_for_detail and raises the exact same 404 RESOURCE_NOT_FOUND HTTPException ('Persona not found', 'Persona {persona_id} does not exist') when the record is rejected for a non-owner viewer, before any runtime-binding, containment, strategy-pool, or persona-cycle read.",
     "services/control-plane/bff/personas/service.py is untouched; no second visibility rule and no name or id pattern was introduced.",
-    "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 in collection.py remain intact.",
+    "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 in collection.py remain intact. The recorded user_private servant fixture in test_list_scope_classification.py now uses agora_user_id='op-1', matching the caller resolved by the real Agora scope helper; all 11 rows, ordering, paging, and advisory_assistant assertions are preserved.",
     "services/control-plane/bff/BFF_API_CONTRACT.md documents the shared user_private owner visibility rule on GET /bff/personas (rows and totals) and GET /bff/personas/{persona_id}."
   ],
   "subroute_visibility_inventory": [
@@ -143,16 +146,16 @@
     "AC1": "GET /bff/personas filters directory.records_by_id.values() with _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, tenant_id, utc_now)) before state/archetype filters, before paging, and before page_info.total, page_info.filtered_total, page_info.canonical_total, and meta.total. Verified in test_persona_list_private_visibility.py::test_list_personas_enforces_user_private_visibility_before_filters_paging_and_totals across owner, another operator, viewer-role caller, unscoped record, non-servant-named private record, and failed scope resolution.",
     "AC2": "GET /bff/personas/{persona_id} checks _persona_fleet_record_visible_to(raw, _fleet_viewer_user_id(identity, caller_tenant, utc_now)) and raises the identical 404 RESOURCE_NOT_FOUND response as a missing persona for non-owners while returning 200 for the owner. Verified in test_persona_list_private_visibility.py::test_get_persona_detail_hides_other_users_private_servant_with_identical_404_and_allows_owner.",
     "AC3": "All 15 other GET /bff/personas/{persona_id}/* routes in personas/routes/detail.py (9), personas/routes/lifecycle.py (2), and services/control-plane/bff/trade_journal.py (4) are inventoried in subroute_visibility_inventory and recorded in residual_findings below without modification.",
-    "AC4": "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 remain unchanged; acceptance/test_persona_day.py, acceptance/test_pool_risk_snapshot_day.py, acceptance/test_mgmt_registry_pages_readable.py, and services/control-plane/bff/tests/test_persona_list_private_visibility.py all pass (101 passed).",
+    "AC4": "personaPurpose and listScope projections from PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128 remain unchanged. The full test_list_scope_classification.py file, privacy tests, and all three required acceptance suites pass (106 passed). The owner fixture retains 11 rows and every purpose/scope/paging assertion; non-owner rejection stays covered by test_persona_list_private_visibility.py.",
     "AC5": "services/control-plane/bff/BFF_API_CONTRACT.md states that GET /bff/personas rows and totals and GET /bff/personas/{persona_id} apply the user_private owner rule shared with GET /bff/management/persona-fleet.",
     "AC6": "Runtime budget verified in tests and documented below: no new writer, at most one Agora scope resolution per request, and zero new owner reads.",
     "AC7": "Hosted proof procedure after deploy documented below (read-only as admintest).",
-    "AC8": "Owner Antigravity2 (Antigravity family) and Reviewer Codex2 (Codex family) are from different model families."
+    "AC8": "Pending: canonical recovery now assigns owner Codex and reviewer Codex2, both Codex family. Coordinator must assign a different-family reviewer before approval. No independent review or capacity exception is claimed."
   },
   "validation": {
     "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0 (.venv-pantheon/bin/python3)",
-    "focused_and_acceptance_command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_list_private_visibility.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py acceptance/test_mgmt_registry_pages_readable.py",
-    "focused_and_acceptance_result": "101 passed, 3 warnings in 27.6s; exit 0"
+    "focused_and_acceptance_command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_list_private_visibility.py services/control-plane/bff/tests/test_list_scope_classification.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py acceptance/test_mgmt_registry_pages_readable.py",
+    "focused_and_acceptance_result": "106 passed, 3 warnings in 28.67s; exit 0"
   },
   "runtime_budget": {
     "new_writer": false,
@@ -178,10 +181,12 @@
     {
       "finding": "15 sub-routes under GET /bff/personas/{persona_id}/* in detail.py (9: route-policy, runtime-profile, activity, evaluations, memory, audit, skills, tools, capabilities), lifecycle.py (2: strategy-pool/publish-history, strategy-matches), and trade_journal.py (4: trade-journal, trade-journal/{episode_id}, trade-reflections, trade-patterns) do not apply _persona_fleet_record_visible_to and only check _require_read_role + _ensure_persona_exists (or _allowed + bound_tenant in trade_journal.py).",
       "disposition": "Inventoried per Acceptance #3 and intentionally left unchanged in this task; hand off to persona-loop coordinator to attach to WP2.3 or a dedicated sub-route visibility work package if sub-route owner-scoping is required."
-    },
+    }
+  ],
+  "resolved_findings": [
     {
-      "finding": "In services/control-plane/bff/tests/test_list_scope_classification.py::test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_paging, commit 557b53abf (PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128) added servant id='agora-servant-799a3ce8c021b91cbb54' with metadata.owner_scope='user_private' and inherited metadata.agora_user_id='pantheon-dev-operator-a' while the test's mock extract_identity returns operator_id='op-1'. Once GET /bff/personas applies _persona_fleet_record_visible_to, that test drops the servant row for 'op-1' (10 rows instead of 11) unless test_list_scope_classification.py sets servant['metadata']['agora_user_id'] = 'op-1' (or extract_identity uses 'pantheon-dev-operator-a'), which requires pantheon:services/control-plane/bff/tests/test_list_scope_classification.py in the task artifact contract.",
-      "disposition": "Requires Human/Ops artifact-contract addition of pantheon:services/control-plane/bff/tests/test_list_scope_classification.py so the 1-line test fixture owner alignment can be committed within the task PR scope."
+      "finding": "The private servant fixture introduced by PR #8011 inherited an owner different from the test caller and was correctly filtered out by the new rule.",
+      "disposition": "Human/Ops admitted test_list_scope_classification.py on 2026-11-28T10:51:01Z; this delivery aligns the fixture's agora_user_id with caller op-1 and preserves all 11 expected rows. All five classification tests pass."
     }
   ]
 }
