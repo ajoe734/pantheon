@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -361,6 +363,9 @@ class PostgresPersonaProvisioningStore:
         self.dsn = dsn
         self.schema = schema
         self._connect = connect
+        self._directory_lock = RLock()
+        self._directory_cache: OrderedDict[str | None, tuple[int, list[ProvisioningRecord], int]] = OrderedDict()
+        self._directory_cache_bytes = 0
         self._bootstrap()
 
     @property
@@ -393,6 +398,31 @@ class PostgresPersonaProvisioningStore:
                     UNIQUE (tenant_id, normalized_name),
                     UNIQUE (tenant_id, persona_id)
                 )"""
+            )
+            # A transactional, statement-level generation covers every writer,
+            # including other replicas, direct SQL, DELETE and TRUNCATE. Neither
+            # timestamps nor pg_stat counters are reliable invalidation tokens.
+            cur.execute(
+                f"""CREATE TABLE IF NOT EXISTS {self.table}_revision (
+                    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+                    revision BIGINT NOT NULL DEFAULT 0
+                )"""
+            )
+            cur.execute(
+                f"INSERT INTO {self.table}_revision (singleton) VALUES (TRUE) ON CONFLICT DO NOTHING"
+            )
+            cur.execute(
+                f"""CREATE OR REPLACE FUNCTION {self.table}_advance_revision()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    UPDATE {self.table}_revision SET revision=revision+1 WHERE singleton;
+                    RETURN NULL;
+                END; $$"""
+            )
+            cur.execute(
+                f"""CREATE OR REPLACE TRIGGER persona_provisioning_revision
+                AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON {self.table}
+                FOR EACH STATEMENT EXECUTE FUNCTION {self.table}_advance_revision()"""
             )
 
     @staticmethod
@@ -501,6 +531,77 @@ class PostgresPersonaProvisioningStore:
             )
             rows = cur.fetchall()
             return [self._record(row) for row in rows]
+
+    # Retained objects only; temporary query results / response copies are not
+    # cache entries. Oversized directories stay fresh but bypass retention.
+    _DIRECTORY_MAX_ENTRIES = 8
+    _DIRECTORY_MAX_ENTRY_BYTES = 32 * 1024 * 1024
+    _DIRECTORY_MAX_BYTES = 64 * 1024 * 1024
+
+    @staticmethod
+    def _directory_size(value: Any) -> int:
+        seen: set[int] = set()
+
+        def size(obj: Any) -> int:
+            if id(obj) in seen:
+                return 0
+            seen.add(id(obj))
+            result = sys.getsizeof(obj)
+            if isinstance(obj, dict):
+                result += sum(size(k) + size(v) for k, v in obj.items())
+            elif isinstance(obj, (list, tuple)):
+                result += sum(size(v) for v in obj)
+            elif isinstance(obj, ProvisioningRecord):
+                result += size(vars(obj))
+            return result
+
+        return size(value)
+
+    def list_for_directory(self, tenant_id: str | None = None) -> list[ProvisioningRecord]:
+        """Full projection inputs, validated by one cheap stamp read per call.
+
+        The stamp and a miss's rows share a REPEATABLE READ snapshot. Otherwise
+        a concurrent commit between the two SELECTs could associate new rows
+        with an old stamp. The global generation deliberately invalidates every
+        tenant on any committed ledger write. Failures propagate; never serve
+        an unvalidated cached answer. Detached copies protect coordinator reads
+        and later requests from response/projection mutation. Point reads and
+        the ordinary list methods remain uncached.
+        """
+        with self._directory_lock:
+            with self._connect(self.dsn) as conn, conn.cursor() as cur:
+                cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                cur.execute(f"SELECT revision FROM {self.table}_revision WHERE singleton")
+                stamp_row = cur.fetchone()
+                if stamp_row is None:
+                    raise RuntimeError("Persona provisioning revision is missing")
+                stamp = int(stamp_row[0])
+                cached = self._directory_cache.pop(tenant_id, None)
+                if cached is not None:
+                    self._directory_cache_bytes -= cached[2]
+                    if cached[0] == stamp:
+                        self._directory_cache[tenant_id] = cached
+                        self._directory_cache_bytes += cached[2]
+                        return deepcopy(cached[1])
+                where = " WHERE tenant_id=%s" if tenant_id is not None else ""
+                cur.execute(
+                    f"SELECT {self._COLUMNS} FROM {self.table}{where} ORDER BY created_at ASC, persona_id ASC",
+                    (tenant_id,) if tenant_id is not None else (),
+                )
+                records = [self._record(row) for row in cur.fetchall()]
+            entry = (stamp, records)
+            entry_bytes = self._directory_size((tenant_id, entry))
+            if entry_bytes <= min(self._DIRECTORY_MAX_ENTRY_BYTES, self._DIRECTORY_MAX_BYTES):
+                while self._directory_cache and (
+                    len(self._directory_cache) >= self._DIRECTORY_MAX_ENTRIES
+                    or self._directory_cache_bytes + entry_bytes > self._DIRECTORY_MAX_BYTES
+                ):
+                    _, evicted = self._directory_cache.popitem(last=False)
+                    self._directory_cache_bytes -= evicted[2]
+                self._directory_cache[tenant_id] = (stamp, records, entry_bytes)
+                self._directory_cache_bytes += entry_bytes
+                return deepcopy(records)
+            return records
 
     # Read-only fleet projection.  The fleet list consumes only a handful of
     # ``references`` keys and ``result.paper_running/status``; the historical

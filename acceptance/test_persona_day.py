@@ -278,10 +278,69 @@ def test_controller_probe_and_bff_projection_agree(identity, lifecycle):
             "reason": "persona_not_enrolled_for_daily_execution"}])
 
 
+# Field set recorded from hosted GET /bff/personas on 2026-11-27 at 22:43Z
+# (run 46078393132). Non-selection scalar values are representative; purpose
+# is the new owner-derived field. No metadata/persona_class is present on wire.
+HOSTED_1127_ROW_KEYS = frozenset("""
+    id name owner tenantId updatedAt state listScope risk archetype
+    routedStrategies successRate labelKey lifecycleStatus ownerLifecycleState
+    provisioningLifecycleState dataScope paperLedgerId legacyPaperCapitalPoolId
+    capitalMode runtimeId runtimeBindingId deploymentPlanId deploymentStage
+    oodaStage currentWork governanceRequired recommendedGovernanceAction
+    mandate strategyFamily
+""".split())
+HOSTED_1127_SERVANT = "agora-servant-799a3ce8c021b91cbb54"
+HOSTED_1127_SERVANT_RUNTIME = "rt-persona-paper-3ca8da543bef6ede0a07"
+
+
+def hosted_1127_persona_rows(purpose_field="personaPurpose"):
+    """Replay the observed wire shape, shared by the day and risk probes."""
+    rows = []
+    for pid in [*TRADING, HOSTED_1127_SERVANT]:
+        advisory = pid == HOSTED_1127_SERVANT
+        rec = dict.fromkeys(HOSTED_1127_ROW_KEYS)
+        rec.update(id=pid, name="Agora Servant" if advisory else "Trading persona",
+                   owner="pantheon-dev-admin-test", tenantId="pantheon-dev",
+                   updatedAt="2026-11-27T22:43:00Z", state="paper_running",
+                   listScope="current", risk="low",
+                   archetype="agora_servant" if advisory else "momentum",
+                   routedStrategies=0, lifecycleStatus="paper_owner",
+                   ownerLifecycleState="paper_owner", capitalMode="paper",
+                   deploymentStage="paper", governanceRequired=False,
+                   mandate="user_private_agora_servant" if advisory else "daily paper learning",
+                   strategyFamily="agora_servant" if advisory else "daily_learning_paper_momentum")
+        if advisory:
+            rec["runtimeId"] = HOSTED_1127_SERVANT_RUNTIME
+            rec["runtimeBindingId"] = "rb-77d962be4e324032808324109f2c154e"
+        rec[purpose_field] = "advisory_assistant" if advisory else "trading"
+        rows.append(rec)
+    return rows
+
+
+def test_hosted_1127_fixture_has_only_recorded_wire_keys_plus_purpose():
+    for rec in hosted_1127_persona_rows():
+        assert set(rec) == HOSTED_1127_ROW_KEYS | {"personaPurpose"}
+        assert "metadata" not in rec and "persona_class" not in rec
+
+
+@pytest.mark.parametrize("purpose", [None, "unknown", "trading"])
+def test_hosted_1127_missing_or_unknown_purpose_keeps_existing_selection(purpose):
+    # Even a servant-looking name/archetype/mandate is not owner identity proof.
+    # Older BFFs must continue judging eligible rows rather than hide traders.
+    rows = hosted_1127_persona_rows()
+    for rec in rows:
+        if purpose is None:
+            rec.pop("personaPurpose")
+        else:
+            rec["personaPurpose"] = purpose
+    judged, left = pd.partition_personas(rows)
+    assert judged == rows and left == []
+
+
 @pytest.mark.parametrize("purpose_field", ["personaPurpose", "persona_purpose"])
 def test_hosted_1127_three_traders_pass_with_servant_paper_book_excluded(purpose_field):
     now = datetime(2026, 11, 27, 11, 30, tzinfo=timezone.utc)
-    personas = [row(pid, "paper_owner") for pid in TRADING]
+    personas = hosted_1127_persona_rows(purpose_field)[:-1]
     seen = []
 
     def fetch(path):
@@ -297,8 +356,8 @@ def test_hosted_1127_three_traders_pass_with_servant_paper_book_excluded(purpose
         return {"data": {"personaCycle": {"dayStatus": result}}}
 
     control = pd.run(fetch, now)
-    servant = "agora-servant-799a3ce8c021b91cbb54"
-    personas.append(row(servant, "paper_owner", **{purpose_field: "advisory_assistant"}))
+    servant = HOSTED_1127_SERVANT
+    personas.append(hosted_1127_persona_rows(purpose_field)[-1])
     seen.clear()
     report = pd.run(fetch, now)
     assert control["verdict"] == report["verdict"] == "passed"

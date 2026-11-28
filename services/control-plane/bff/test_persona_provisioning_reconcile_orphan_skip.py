@@ -127,6 +127,7 @@ class _SqlTrackingConnect:
     def __init__(self, rows_by_state: list[tuple[str, str]]) -> None:
         self.rows_by_state = list(rows_by_state)
         self.statements: list[tuple[str, Any]] = []
+        self.revision = 0
 
     def __call__(self, _dsn: str) -> "_SqlTrackingConnect":
         return self
@@ -142,6 +143,12 @@ class _SqlTrackingConnect:
 
     def execute(self, sql: str, params: Any = None) -> None:
         self.statements.append((sql.strip(), params))
+        upper = sql.strip().upper()
+        if upper.startswith(("INSERT", "UPDATE", "DELETE", "TRUNCATE")):
+            target = upper.split()[1 if upper.startswith(("UPDATE", "TRUNCATE")) else 2]
+            if target.endswith(".PERSONA_PROVISIONING"):
+                # Model the statement trigger, including no-op ledger writes.
+                self.revision += 1
 
     def fetchall(self) -> list[tuple[str, str]]:
         if not self.statements:
@@ -155,7 +162,9 @@ class _SqlTrackingConnect:
             ]
         return []
 
-    def fetchone(self) -> None:
+    def fetchone(self) -> tuple[int] | None:
+        if self.statements and self.statements[-1][0].upper().startswith("SELECT REVISION FROM "):
+            return (self.revision,)
         return None
 
     @property
@@ -166,6 +175,20 @@ class _SqlTrackingConnect:
             if upper.startswith(("INSERT", "UPDATE", "DELETE")):
                 writes.append(sql)
         return writes
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO bff.persona_provisioning VALUES (%s)",
+    "UPDATE bff.persona_provisioning SET current_step=%s",
+    "DELETE FROM bff.persona_provisioning WHERE persona_id=%s",
+    "TRUNCATE bff.persona_provisioning",
+])
+def test_sql_tracker_advances_revision_on_every_ledger_write(sql: str) -> None:
+    tracker = _SqlTrackingConnect([])
+    for expected in (1, 2):
+        tracker.execute(sql)
+        tracker.execute("SELECT revision FROM bff.persona_provisioning_revision WHERE singleton")
+        assert tracker.fetchone() == (expected,)
 
 
 def test_postgres_steady_state_ticks_with_only_succeeded_and_retired_rows_perform_zero_lease_writes(

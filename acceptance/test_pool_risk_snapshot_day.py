@@ -6,6 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from acceptance.test_persona_day import (
+    HOSTED_1127_SERVANT,
+    HOSTED_1127_SERVANT_RUNTIME,
+    hosted_1127_persona_rows,
+)
+
 _spec = importlib.util.spec_from_file_location("pool_risk_snapshot_day", Path(__file__).with_name("pool_risk_snapshot_day.py"))
 check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check)
@@ -100,7 +106,7 @@ def test_no_trading_persona_fails():
 
 @pytest.mark.parametrize("purpose_field", ["personaPurpose", "persona_purpose"])
 def test_hosted_1127_servant_paper_book_does_not_fail_trading_pool_snapshot(purpose_field):
-    """Synthetic 11/27 replay: the servant's valid paper binding has no telemetry.
+    """Recorded 11/27 wire-shape replay: the servant's valid paper binding has no telemetry.
 
     Paper ownership does not enroll the advisory assistant in a trading cycle.
     The three real pools still await their twenty-row health window.
@@ -110,13 +116,11 @@ def test_hosted_1127_servant_paper_book_does_not_fail_trading_pool_snapshot(purp
         "persona-ee7112a829d38b9135ac": ("rt-3b65a843", 3),
         "persona-6507750312870d03a241": ("rt-3252fa75", 8),
     }
-    servant = "agora-servant-799a3ce8c021b91cbb54"
-    servant_runtime = "rt-persona-paper-3ca8da543bef6ede0a07"
+    servant = HOSTED_1127_SERVANT
+    servant_runtime = HOSTED_1127_SERVANT_RUNTIME
     session = "2026-11-26"
-    personas = [{"id": pid, "ownerLifecycleState": "paper_owner", "tenantId": "tenant-dev",
-                 purpose_field: "trading"} for pid in traders]
-    advisory = {"id": servant, "ownerLifecycleState": "paper_owner", "tenantId": "tenant-dev",
-                purpose_field: "advisory_assistant"}
+    recorded = hosted_1127_persona_rows(purpose_field)
+    personas, advisory = recorded[:-1], recorded[-1]
     bindings = [{"persona_id": pid, "runtime_id": runtime, "deployment_stage": "paper", "status": "active"}
                 for pid, (runtime, _) in traders.items()]
     bindings.append({"persona_id": servant, "runtime_id": servant_runtime,
@@ -143,6 +147,14 @@ def test_hosted_1127_servant_paper_book_does_not_fail_trading_pool_snapshot(purp
 
     now = datetime(2026, 11, 27, 11, 30, tzinfo=timezone.utc)
     assert check.run(fetch, now)["verdict"] == "pending"
+    # Prove the old wire shape reproduces the observed telemetry 404 failure.
+    legacy_advisory = dict(advisory)
+    legacy_advisory.pop(purpose_field)
+    personas.append(legacy_advisory)
+    legacy = check.run(fetch, now)
+    assert legacy["verdict"] == "failed"
+    assert legacy["reason"] == "telemetry_summary_unreadable:http_404"
+    personas.pop()
     personas.append(advisory)
     seen.clear()
     report = check.run(fetch, now)

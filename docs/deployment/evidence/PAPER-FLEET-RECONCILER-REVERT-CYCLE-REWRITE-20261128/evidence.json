@@ -1,0 +1,106 @@
+{
+  "task_id": "PAPER-FLEET-RECONCILER-REVERT-CYCLE-REWRITE-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "review_independence": {
+    "owner_family": "Codex",
+    "reviewer_family": "Antigravity",
+    "independent_model_family": true
+  },
+  "problem_register_ref": "docs/operations/problem-register.md: RC1 WP1.2, 503s under crawl load; the register owner records this instance",
+  "source_status": "ready_for_independent_review",
+  "operator_decision": {
+    "date": "2026-11-28",
+    "scope": "Withdraw the PR #7990 cycle rewrite while retaining PR #7987 published-snapshot reads.",
+    "withdrawn_pr": 7990,
+    "withdrawn_merge": "9679a72f0",
+    "preserved_pr": 7987,
+    "restore_reference": "2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3",
+    "delivery_deadline": "Merge in time for a dev release before 2026-11-29T23:15:00Z; 2026-11-30T10:00:00Z is the first freeze-lift cycle.",
+    "active_release_constraint": "Do not cancel Root 46102871850. This task has not cancelled or changed that run."
+  },
+  "implementation": {
+    "service_file": "services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+    "restored_sha256": "c210f15c7b94870e7cd4fe6d750c9cc4dc8b3c47a9974590c29d9bdf154f650a",
+    "restoration": "Byte-identical to restore_reference; only this production file changes. No whole-merge git revert is used.",
+    "comparison_base": "9cf0aeff7",
+    "anchor_commit": "13f0c1758",
+    "test_file": "services/paper_fleet_reconciler/test_paper_fleet_reconciler_state_read.py",
+    "kept_tests_unchanged": [
+      "test_state_reads_return_while_cycle_blocked_in_source_snapshot_fetch",
+      "test_state_reads_return_while_cycle_blocked_in_runtime_manager_transition",
+      "test_state_reads_return_while_cycle_blocked_in_spawn_terminate_and_loop_truth"
+    ],
+    "removed_tests": [
+      {
+        "name": "test_two_concurrent_cycles_cannot_both_mutate_worker_state",
+        "reason": "Depends on the withdrawn _cycle_lock implementation."
+      },
+      {
+        "name": "test_terminate_worker_defers_session_end_publication_until_worker_removed",
+        "reason": "Asserts the withdrawn atomic session-end/worker-removal publication order."
+      },
+      {
+        "name": "test_stale_session_closure_defers_publication_until_worker_removed",
+        "reason": "Asserts the withdrawn stale-session closure publication order."
+      }
+    ],
+    "unchanged_artifacts": [
+      "services/paper_fleet_reconciler/test_paper_fleet_reconciler.py",
+      "docs/operations/problem-register.md",
+      "docs/deployment/evidence/PAPER-FLEET-RECONCILER-STATE-READ-NO-CYCLE-LOCK-20261127/evidence.json"
+    ]
+  },
+  "validation": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped interpreter provisioned; imports verified from a foreign working directory without PYTHONPATH."
+    },
+    {
+      "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/paper_fleet_reconciler/",
+      "exit_code": 0,
+      "result": "116 passed, 2 skipped, 13 subtests passed in 14.80s; terminal output collected before evidence and handoff."
+    },
+    {
+      "command": "git diff --exit-code 2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3 HEAD -- services/paper_fleet_reconciler/paper_fleet_reconciler.py",
+      "exit_code": 0,
+      "result": "Empty diff. Python byte comparison and SHA-256 independently confirmed the restored file."
+    },
+    {
+      "method": "Python ast.get_source_segment comparisons of test methods against comparison_base, and git diff --name-only comparison_base HEAD",
+      "exit_code": 0,
+      "result": "Exactly the three named methods removed; all three retained methods have identical source including assertions. Before the evidence commit, only the service and state-read test file changed; the base suite, register and withdrawn task evidence are unchanged."
+    },
+    {
+      "command": "git diff --check 9cf0aeff7 HEAD",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    }
+  ],
+  "runtime_budget": {
+    "statement": "No recurring job, emitter or persistent writer is added or changed relative to 2c72f5e28; the restored service keeps that release's writers, cadence, size, count, caps and cleanup.",
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_persistent_writers": 0,
+    "additional_growth_bytes_per_day": 0,
+    "cadence": "Existing reconcile poll default 15 seconds and loop-truth write interval default 30 seconds remain as at the restore reference.",
+    "size_count_cap_cleanup": "No additional hosted records or files; the existing monitoring-session retention and retired-binding cleanup at the restore reference are unchanged. No new storage-manifest entry is required."
+  },
+  "hosted_acceptance": {
+    "status": "pending_deployment_and_persona_loop_owner_proof",
+    "owner": "persona-loop owner",
+    "required_read_only_proof": [
+      "Verify the running paper-fleet-reconciler image label names a commit containing this revert.",
+      "From the BFF container, make 30 sequential GET /api/fleet/state requests; each must return 200 in under 10 seconds.",
+      "Inspect the first release crawl after deployment: no failed read on /bff/management/persona-fleet, the human-inbox list, or trading-pulse rankings."
+    ],
+    "limitation": "Local tests and source review do not prove deployment or hosted acceptance. Historical #7987 hosted observations in the brief are rationale, not hosted evidence for this revert."
+  },
+  "residual_findings": [
+    {
+      "finding": "With #7987 retained, a published snapshot can show an ended monitoring session while its worker is still listed during worker termination or stale-session closure, for up to the drain timeout (10 seconds plus 5 seconds kill).",
+      "disposition": "Known residual explicitly accepted as outside this revert's scope in the task brief and already reported to the problem-register owner by the persona-loop owner. Preserve it in the handoff; do not reintroduce #7990's publication-order rewrite here."
+    }
+  ]
+}

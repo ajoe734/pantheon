@@ -1,0 +1,114 @@
+{
+  "task_id": "CI-LIFECYCLE-PROBE-TEST-CLOCK-20261128",
+  "recorded_at": "2026-11-28T04:48:26.277163+00:00",
+  "scope": "Functional source evidence only; test clock repair in RC1 required-check timing class. Independent review, merge and hosted acceptance are pending.",
+  "incident": {
+    "reported_failure_date": "2026-11-28T04:37Z",
+    "pr": 8006,
+    "head": "e6fac6a9f",
+    "run": 46104630272,
+    "job": 140855730901,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/46104630272/job/140855730901",
+    "test": "test_natural_mode_accepts_journey_ending_in_reconciliation_completed",
+    "failure": "assert 1 == 0 on probe exit code; 1 failed, 136 passed, 1 skipped in 10.32 s",
+    "provenance": "Dispatch task brief; historical run was not independently re-fetched.",
+    "cause": "The tests used a 0.1 s deadline with the real monotonic clock; busy runners could expire it before projection correlation. The same reported head passed three local runs."
+  },
+  "implementation": {
+    "change": "Route all 13 existing execute call sites through _execute_on_fake_clock; each invocation gets an isolated FakeClock and a sleeper that advances it. Preserve and compose the manifest-repair sleeper with fake-time advancement.",
+    "production_probe_changed": false,
+    "data_shapes": "Existing _natural_lifecycle_rows, DEFAULT_TEST_CASE, canonical market snapshot and _publish projection/loop records; existing relational and Taiwan cases retained.",
+    "deadline_regression": {
+      "test": "test_probe_deadline_expires_when_fake_sleep_advances_past_timeout",
+      "timeout_seconds": 0.1,
+      "fake_oversleep_seconds": 0.2,
+      "expected": "exit 1, outcome failed, failure.code no_complete_paper_aggregate, timed_out true; only baseline snapshot read; persisted artifact matches"
+    },
+    "stall_regression": {
+      "test": "test_natural_reconciliation_completed_survives_real_stall_before_projection",
+      "real_sleep_seconds": 0.5,
+      "location": "First baseline source snapshot, before polling can reach the projection read; projection read order asserted. The stall does not advance fake time.",
+      "expected": "exit 0, outcome passed, final event reconciliation_completed, fake elapsed exactly 0.05 s"
+    },
+    "assertion_preservation": "AST comparison against origin/dev: all 68 existing test functions retained and all their assertion ASTs unchanged. No changed assertion to justify; no deleted tests, new skip, xfail or rerun.",
+    "polling_entry_audit": "Only direct probe.execute call remaining is the wrapper, which explicitly injects monotonic and sleeper. No direct run_probe calls. CLI tests print the high watermark or reject missing case key before polling."
+  },
+  "validation": {
+    "provision_command": "python3 scripts/dev/provision_python_distribution.py",
+    "environment": "Checkout-scoped .venv-pantheon inheriting the supervisor-configured dependency interpreter; verified imports from a foreign cwd without PYTHONPATH.",
+    "source_base_sha": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
+    "five_consecutive_runs": {
+      "command": [
+        ".venv-pantheon/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "services/trade_journey/test_hosted_lifecycle_probe.py"
+      ],
+      "per_run_timeout_seconds": 60,
+      "runs": [
+        {
+          "attempt": 1,
+          "started_at": "2026-11-28T04:47:02.078631+00:00",
+          "exit_code": 0,
+          "stdout": "........................................................................ [ 53%]\n............................s..................................          [100%]\n134 passed, 1 skipped in 7.80s\n",
+          "stderr": ""
+        },
+        {
+          "attempt": 2,
+          "started_at": "2026-11-28T04:47:10.595450+00:00",
+          "exit_code": 0,
+          "stdout": "........................................................................ [ 53%]\n............................s..................................          [100%]\n134 passed, 1 skipped in 7.59s\n",
+          "stderr": ""
+        },
+        {
+          "attempt": 3,
+          "started_at": "2026-11-28T04:47:18.892561+00:00",
+          "exit_code": 0,
+          "stdout": "........................................................................ [ 53%]\n............................s..................................          [100%]\n134 passed, 1 skipped in 7.68s\n",
+          "stderr": ""
+        },
+        {
+          "attempt": 4,
+          "started_at": "2026-11-28T04:47:27.308051+00:00",
+          "exit_code": 0,
+          "stdout": "........................................................................ [ 53%]\n............................s..................................          [100%]\n134 passed, 1 skipped in 7.73s\n",
+          "stderr": ""
+        },
+        {
+          "attempt": 5,
+          "started_at": "2026-11-28T04:47:35.775710+00:00",
+          "exit_code": 0,
+          "stdout": "........................................................................ [ 53%]\n............................s..................................          [100%]\n134 passed, 1 skipped in 7.90s\n",
+          "stderr": ""
+        }
+      ]
+    },
+    "summary": "Five runs, each exit 0: 134 passed, 1 skipped. Includes both added regressions.",
+    "existing_skip": "test_asyncpg_case_source_live_postgres_queries requires PROBE_TEST_POSTGRES_DSN or PANTHEON_TEST_POSTGRES_DSN for explicitly owned loopback PostgreSQL; neither was configured. No hosted database access.",
+    "checks": [
+      "git diff --check: exit 0",
+      "AST audit: existing assertion ASTs unchanged; all direct probe polling entry calls explicitly inject monotonic and sleeper"
+    ],
+    "setup_attempts": "Bare system Python lacked pytest. An initial temporary venv run lacked asyncpg/pydantic (2 failed, 133 passed); it is not counted as acceptance. Switched to repository provisioning and collected the five successful complete runs above."
+  },
+  "runtime_budget": {
+    "new_runtime_files": 0,
+    "new_runtime_writers": 0,
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_workflow_inputs": 0,
+    "hosted_cadence": "none",
+    "hosted_size_bytes": 0,
+    "hosted_count": 0,
+    "growth_bytes_per_day": 0,
+    "hosted_cap_bytes": 0,
+    "cleanup": "No hosted state added. Existing pytest tmp_path lifecycle manages existing fixture files; the new tests reuse it. One static version-controlled task evidence JSON is added; no runtime writer or recurring output.",
+    "test_cost": "One intentional 0.5 s real stall per file run; all probe poll sleeps advance fake time without waiting."
+  },
+  "hosted_verification": {
+    "performed": false,
+    "disposition": "Deferred to the operator acceptance task, as required by the dispatch brief. No VM/SSH/key access."
+  },
+  "residual_findings": []
+}
