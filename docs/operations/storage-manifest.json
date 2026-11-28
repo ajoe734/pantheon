@@ -6109,8 +6109,10 @@
     "growth_driver": "on-demand directory read; one revision SELECT on every call; no scheduled job, TTL or emitter",
     "growth_per_day": "no append growth; replace per tenant (including one optional all-tenant key) on committed ledger change; hosted brief reports 5 changed rows/day",
     "cap": "per BFF store: at most 8 keys; each holds a complete tenant directory, 170 rows at hosted scale (brief: about 6 MB stored / 17.6 MB text); 32 MiB recursive Python object size per entry, 64 MiB total retained object budget; oversized reads bypass retention; transient response/query allocations are separate",
-    "cleanup": "LRU eviction on insertion; changed revision replaces that key; process/store destruction releases all entries; no disk persistence"
-   }
+    "cleanup": "LRU eviction on insertion; changed revision replaces that key; process/store destruction releases all entries; no disk persistence",
+    "size_at_hosted_scale": "Local PostgreSQL 16.15 hosted-shape fixture: one tenant / 170 records / 165 retired, references 5,874,566 B stored and 18,598,107 B JSON text; 19,666,289 B retained Python objects per cached tenant (optional all-tenant key duplicates inputs). Hosted brief: about 6 MB stored / 17.6 MB text. Measurements and isolated BFF process RSS are in task evidence."
+   },
+   "measurement_ref": "docs/deployment/evidence/BFF-PERSONA-LEDGER-READ-REUSE-20261127/evidence.json"
   }
  ],
  "generated_from": "scripts/check_storage_manifest.py discover() at origin/dev 922594b2d",

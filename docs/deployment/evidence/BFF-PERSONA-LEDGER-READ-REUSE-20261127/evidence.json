@@ -2,18 +2,20 @@
   "task_id": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
   "owner": "Codex",
   "reviewer": "Antigravity",
-  "state": "functional_validation_in_progress",
+  "state": "blocked_required_legacy_test_artifacts",
   "delivery": {
     "merged": false,
     "deployed": false,
-    "accepted": false
+    "accepted": false,
+    "pr": "https://github.com/ajoe734/pantheon/pull/7999",
+    "draft": true
   },
   "implementation": {
     "scope": "Only Postgres provisioning store and Persona directory ledger-read seam; no coordinator, provisioning owner writes, agent-provision functions or route contract changed.",
     "mechanism": "Singleton transactional bigint revision updated by an AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE statement trigger catches every committed statement, even unchanged updated_at and direct SQL from another connection. Every cache call reads that one revision; cold rows and stamp share REPEATABLE READ READ ONLY snapshot. A concurrent commit is visible on the next call, rollback changes neither visible stamp nor rows. Query errors propagate; no TTL/stale-on-error answer. Fresh get/get_by_persona/list_by_tenant/list_all remain uncached.",
     "cache": "Store-local full row inputs, detached deep copies, LRU 8 keys / 32 MiB per key / 64 MiB retained recursive object budget; no cross-service helper was suitable because Registry cache relies on its own stored summary_rev/index/delta model.",
     "fleet": "_persona_provisioning_records_shared now uses full-input stamp validation rather than lossy slim SQL; request sharing is kept. Legacy slim methods remain callable, but this reader no longer selects them.",
-    "pending": "Local timing/RSS collection and broader regression running; independent exact-head review, merge and operator hosted acceptance remain."
+    "pending": "Task author must expand artifact contract for required legacy tests, then resume this same task/branch for fixture/expectation updates, broader failure triage, current-dev integration, fresh CI and independent exact-head review. No review handoff, merge, hosted deployment or acceptance claimed."
   },
   "fleet_projection_audit": {
     "actual_differing_metadata_fields": [
@@ -55,14 +57,60 @@
       "command": "timeout 90 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py --disable-warnings",
       "exit_code": 0,
       "result": "5 passed, 3 skipped, 3 warnings in 4.32s; Postgres cases explicitly skipped without DSN after local container cleanup"
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<local DSN> timeout 90 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py --disable-warnings --maxfail=3",
+      "exit_code": 0,
+      "result": "8 passed, 3 warnings in 12.41s; updated storage/text scale and complete enriched-row fleet/directory parity"
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=<local DSN> timeout 240 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona*.py services/control-plane/bff/tests/test_strategy*.py services/control-plane/bff/tests/test_bff_persona*.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_bff_test_architecture.py --disable-warnings --maxfail=6",
+      "exit_code": 124,
+      "result": "Timed out at 240 seconds around 41%; four failures printed but no final traceback summary. Not passed. Replaced by smaller bounded batches; no claim that the full broad suite completed."
+    },
+    {
+      "command": "timeout 120 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_provisioning_reconcile.py::test_postgres_store_reconciles_canonical_only_provisioning_and_failed_personas_then_idles services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/test_persona_provisioning_readback.py::test_shared_fleet_ledger_read_prefers_slim_reader_and_falls_back_to_full --disable-warnings --tb=short",
+      "exit_code": 1,
+      "result": "3 failed, 6 passed, 3 warnings in 3.24s. Exactly reproduces prior PR CI failures: shared SQL tracking fixture returns no revision; old fleet test asserts slim reader although corrected AC4 accepts full-input reuse."
+    },
+    {
+      "command": "Task-scoped scripts.check_storage_manifest.validate_entry and nested directory_cache cap check; compileall of store, service and test",
+      "exit_code": 0,
+      "result": "Task entry valid; cache budget present; compilation successful"
+    },
+    {
+      "command": "timeout --signal=INT 120 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_strategy_operational_status.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_persona_fleet_shared_read.py services/control-plane/bff/tests/test_persona_fleet_current_latency.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/control-plane/bff/tests/test_persona_owner_lifecycle_truth.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_bff_test_architecture.py --disable-warnings --tb=short",
+      "exit_code": 1,
+      "result": "1 failed, 276 passed, 1 skipped, 3 warnings in 114.99s. Failure: existing test_list_cpu_drops_at_least_70_percent measured old=0.050733805 CPU seconds, new=0.019047849, fails its 70% reduction threshold. Unrelated list projection methods unchanged; no assertion edited."
+    },
+    {
+      "command": "timeout --signal=INT 60 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_persona_owner_lifecycle_truth.py --disable-warnings --tb=short",
+      "exit_code": 1,
+      "result": "3 failed, 11 passed, 3 warnings in 2.55s. Mounted ranking evaluator creates zero proposals for paper_owner/live_owner and keeps same snapshot after lifecycle change; isolated reproduction, no test edits."
+    },
+    {
+      "command": "timeout 45 /tmp/bff-ledger-reuse-venv/bin/python -m pytest --collect-only -q <same 1224-node broad test set>",
+      "exit_code": 0,
+      "result": "1224 collected; progress mapping identifies initial broad failures at three mounted ranking evaluator nodes and composed-app store identity node. The original 240-second run remains incomplete, not passed."
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output /tmp/bff-ledger-reuse-storage-check.json",
+      "exit_code": 0,
+      "result": "passed=true, failures=[], 381 entries, 4 waivers"
+    },
+    {
+      "command": "timeout --signal=INT 30 /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_persona_main_residue.py::test_composed_app_paths_reach_the_same_read_and_command_stores --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "1 passed, 2 warnings in 5.70s; composed-app identity failure does not reproduce standalone."
     }
   ],
-  "test_changes": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit. Following the corrected brief, enrich only one of 170 rows with all three risk keys (hosted currently has none), name the absent-owner row explicitly and compare full fleet and directory snapshots.",
+  "test_changes": "Only new tests; no existing test changed, weakened or deleted. Initial test harness failed because its unrelated Registry count owner was unconfigured; fixed owner boundary in the new fixture. An initial new assertion expected a nested OpenClaw metadata difference not produced by the observed fixture; narrowed to the actual six differing fields, as required by the brief audit. Following the corrected brief, enrich only one of 170 rows with all three risk keys (hosted currently has none), name the absent-owner row explicitly and compare full fleet and directory snapshots. Storage/text fixture now adds repeated receipt text to distinct per-row inputs: measured 5,874,566 bytes stored references / 18,598,107 bytes JSON text (~17.74 MiB), instead of the earlier ~5.4 MB text-only fixture. Only the new test fixture/size assertion changed; no existing regression assertion weakened.",
   "runtime_budget": {
-    "cache": "See registered revision-table storage-manifest entry and its directory_cache budget. Raw hosted sizes are dispatch facts; local retained bytes and RSS have not yet been recorded.",
+    "cache": "Measured 19,666,289 retained recursive object bytes for one 170-row tenant, one entry. At most 8 keys, 32 MiB per entry / 64 MiB retained objects per store; identical all-tenant entry can duplicate this size. No append growth: about five changed ledger rows/day from dispatch replaces affected cache inputs on next stamped read; LRU and oversized bypass bound growth. Transient query and detached response allocations are separate; full before/after RSS recorded above.",
     "jobs_added": 0,
     "emitters_added": 0,
-    "persistent_writers_added": "One singleton revision row, updated in the existing ledger transaction per statement; 0 logical row growth/day."
+    "persistent_writers_added": "One singleton revision row, updated in the existing ledger transaction per statement; 0 logical row growth/day.",
+    "test_resources": "One task-owned localhost-only postgres:16-alpine container with 256 MiB tmpfs; each test/benchmark drops its unique schema in finally. Container is stopped before worker exits; no hosted storage or recurring job."
   },
   "hosted_verification": "Pending operator acceptance task; no VM, SSH, operator key or hosted access used.",
   "residual_findings": [
@@ -73,6 +121,18 @@
     {
       "finding": "One retired provisioning row has no Persona owner (dispatch persona-c6ef44745087d11cc138).",
       "disposition": "Attached to this task RC3 row as retired-ledger retention with no owner rule, per task author 2026-11-28. No repair; preserve current projection; named fixture row has no owner."
+    },
+    {
+      "finding": "Existing test_persona_evaluator_mounted_ranking.py has three isolated failures: zero evaluator proposals and unchanged ranking snapshot after lifecycle update.",
+      "disposition": "Persona-loop/ranking owner must triage under its register class; no repair in this ledger-read task and no claim of pre-existing baseline verification. Exact isolated failure facts above."
+    },
+    {
+      "finding": "Existing compact Persona list CPU benchmark misses its 70% reduction threshold locally (50.734 ms vs 19.048 ms CPU, about 62.5% reduction).",
+      "disposition": "RC3 performance-test owner/coordinator must triage determinism; projection methods are untouched, no threshold weakened or test deleted."
+    },
+    {
+      "finding": "Composed-app store identity node reported failure in the incomplete 1224-node run.",
+      "disposition": "Passes standalone (1 passed in 5.70s). Coordinator/test-isolation owner must triage ordering/global-state dependence in the broad run; no unrelated composition repair attempted."
     }
   ],
   "brief_correction": {
@@ -82,5 +142,143 @@
     "accepted_choice": "Move fleet ledger reads onto full-input stamp-validated reuse.",
     "hosted_read_only_fact_from_task_author": "2026-11-28 01:40Z: 170 rows (165 retired, 4 succeeded, 1 provisioning), none with requested_risk_profile_provenance, capital_pool_risk_policy_resolution or risk_policy_owner_decision_request.",
     "downstream_change": "openclaw_agent_reconcile receives the full-row risk context from now on. No projected field changes on the hosted rows described by the task author; the richer local row proves fleet/directory parity for all three keys."
+  },
+  "local_postgres_benchmark": {
+    "method": "Four isolated Python BFF router processes, sequential before/after runs after the broad test process terminated. Each process seeds a unique schema in local PostgreSQL 16.15, mounts real Persona routes and uses the actual strategy read_persona_state_lookup helper. Non-ledger Persona/Registry owners are in-memory controlled fixtures. Cold means the first BFF read with an empty process cache; PostgreSQL and OS page caches are not flushed. Warm is five successive calls without writes; all paths still run the real directory projections.",
+    "command_template": "PANTHEON_TEST_PROVISIONING_DSN=postgresql://postgres@127.0.0.1:<local-port>/postgres timeout 90 /tmp/bff-ledger-reuse-venv/bin/python -m services.control_plane.bff.tests.test_persona_directory_ledger_reuse --benchmark --mode <before|after> --surface <strategy_lookup|persona_list> --samples 5",
+    "exit_codes": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "before_seam": "list_for_directory replaced only with the original list_by_tenant/list_all full-row reads; all downstream code and projections identical.",
+    "fixture": "170 rows / 165 retired / 4 succeeded / 1 provisioning; eight named large owner receipt keys, one conflicting owner, one retired row without owner, one enriched row carrying all three risk keys. Compressible repeated owner receipt text plus distinct per-row random receipt inputs reproduces about 6 MB stored / 17.6 MiB text (exact SQL byte sizes in results). Synthetic private-data-free receipts, not an exported hosted ledger.",
+    "results": [
+      {
+        "cache_entries": 0,
+        "cache_retained_bytes": 0,
+        "cold_ms": 236.424,
+        "mode": "before",
+        "postgres_shape": {
+          "references_column_bytes": 5874566,
+          "references_text_bytes": 18598107,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 139568,
+          "after_warm_gc": 158460,
+          "idle": 137408,
+          "peak": 158028
+        },
+        "surface": "strategy_lookup",
+        "warm_median_ms": 222.64,
+        "warm_ms": [
+          224.803,
+          210.049,
+          236.017,
+          222.64,
+          214.315
+        ]
+      },
+      {
+        "cache_entries": 1,
+        "cache_retained_bytes": 19666289,
+        "cold_ms": 253.931,
+        "mode": "after",
+        "postgres_shape": {
+          "references_column_bytes": 5874566,
+          "references_text_bytes": 18598107,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 159424,
+          "after_warm_gc": 159596,
+          "idle": 137344,
+          "peak": 159132
+        },
+        "surface": "strategy_lookup",
+        "warm_median_ms": 47.683,
+        "warm_ms": [
+          49.311,
+          47.966,
+          46.572,
+          45.901,
+          47.683
+        ]
+      },
+      {
+        "cache_entries": 0,
+        "cache_retained_bytes": 0,
+        "cold_ms": 436.119,
+        "mode": "before",
+        "postgres_shape": {
+          "references_column_bytes": 5874566,
+          "references_text_bytes": 18598107,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 174100,
+          "after_warm_gc": 143520,
+          "idle": 137428,
+          "peak": 179196
+        },
+        "surface": "persona_list",
+        "warm_median_ms": 294.956,
+        "warm_ms": [
+          286.269,
+          294.956,
+          274.164,
+          495.946,
+          440.61
+        ]
+      },
+      {
+        "cache_entries": 1,
+        "cache_retained_bytes": 19666289,
+        "cold_ms": 429.611,
+        "mode": "after",
+        "postgres_shape": {
+          "references_column_bytes": 5874566,
+          "references_text_bytes": 18598107,
+          "rows": 170
+        },
+        "python": "3.12.3",
+        "rss_kib": {
+          "after_cold": 181108,
+          "after_warm_gc": 181340,
+          "idle": 137556,
+          "peak": 180396
+        },
+        "surface": "persona_list",
+        "warm_median_ms": 106.598,
+        "warm_ms": [
+          102.147,
+          110.472,
+          92.98,
+          106.598,
+          186.223
+        ]
+      }
+    ],
+    "memory_limits": "RSS is this isolated BFF router process including imports, seeding and controlled owner fixtures, measured through /proc/self/status; ru_maxrss peak is also recorded in KiB on Linux. This is not the whole hosted BFF composition. Hosted 3 GiB limit / about 425 MiB current usage are task-author facts, not measurements here. No latency or memory thresholds are added to tests."
+  },
+  "required_scope_correction": {
+    "reason": "Task brief explicitly requires blocking when a necessary file is missing from artifact contract. The accepted fleet mechanism contradicts an old slim-reader expectation; the shared SQL tracking fixture returns None for every fetchone, including the new mandatory stamp SELECT.",
+    "necessary_edits": [
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py"
+    ],
+    "dependent_regression": "services/control-plane/bff/tests/test_persona_provisioning_reconcile.py imports the shared tracking fixture; may require no direct edit but was included in the scope authorization request.",
+    "requested_action": "Task author authorize/add the legacy test files to the existing task artifact contract, then resume existing branch. Update SQL fixture for revision SELECT and fleet reader contract without weakening original business assertions; never mask missing production stamps.",
+    "ci_run": "https://github.com/ajoe734/pantheon/actions/runs/46081424634",
+    "ci_jobs": [
+      140783785028,
+      140783785017,
+      140783785085
+    ]
   }
 }

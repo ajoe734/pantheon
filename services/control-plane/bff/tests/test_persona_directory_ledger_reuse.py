@@ -53,7 +53,7 @@ def hosted_rows():
         refs = {
             key: {
                 "owner": key, "status": "approved", "persona_id": pid,
-                "metadata": {"receipt": "".join(rng.choices("abcdef0123456789", k=3800))},
+                "metadata": {"receipt": "".join(rng.choices("abcdef0123456789", k=3800)) + ("owner-receipt:" * 693)},
             }
             for key in RECEIPT_KEYS
         }
@@ -204,7 +204,9 @@ def test_hosted_shape_payload_parity_and_conflicting_owner_skip(ledger, monkeypa
     assert "provisioning_idempotency_key" not in conflict["metadata"]
     assert "conflicting owner scope" in caplog.text
     assert len([r for r in db.rows if r.state == "retired"]) == 165
-    assert all(31000 < len(json.dumps(r.references).encode()) < 35000 for r in db.rows)
+    # ~32 KiB TOAST storage/row and ~17.6 MB JSON text across 170 rows:
+    # repeated owner receipts preserve the hosted storage/text expansion.
+    assert all(101000 < len(json.dumps(r.references).encode()) < 110000 for r in db.rows)
 
 
 def test_stamp_checked_each_call_all_tenant_isolation_and_detached_copies(ledger):
