@@ -186,6 +186,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> Tuple[TestClient, Dict[str, int]
         counts["strategy_matches"] += 1
         return SimpleNamespace(
             get_persona=lambda pid: copy.deepcopy(records.get(pid)),
+            dataset_source=lambda dataset: "store",
             get_route_policy_for_persona=lambda pid: {},
             get_capability_snapshot_for_persona=lambda pid: {},
         )
@@ -350,9 +351,16 @@ class _CountedRegistry:
         self.records = records
         self.calls = 0
         self.fail = False
+        self.unconfigured = False
 
     def list_personas(self, **_kwargs: Any) -> List[Dict[str, Any]]:
         self.calls += 1
+        if self.unconfigured:
+            from services.control_plane.bff.ports import PersonaWriteOwnerUnavailable
+
+            raise PersonaWriteOwnerUnavailable(
+                "persona_registry_write_owner", "Persona service URL is not configured"
+            )
         if self.fail:
             raise RuntimeError("persona registry down")
         return copy.deepcopy(self.records)
@@ -417,6 +425,28 @@ def test_journal_fails_closed_when_registry_unavailable(journal_harness, path: s
     assert response.status_code == 503, response.text
     assert owner_calls["n"] == 0
     assert registry.calls == 1
+
+
+@pytest.mark.parametrize("persona_id", [SERVANT_OPERATOR_A, MISSING])
+@pytest.mark.parametrize("path", JOURNAL_ROUTES)
+def test_journal_fails_closed_when_registry_missing_or_unconfigured(journal_harness, path: str, persona_id: str) -> None:
+    # Real PersonaFleetPort maps a "not configured" owner to source="missing" with no records.
+    client, registry, owner_calls = journal_harness
+    registry.unconfigured = True
+    response = _get(client, path, persona_id, ADMIN_TEST_USER)
+    assert response.status_code == 503, response.text
+    assert owner_calls["n"] == 0
+    assert registry.calls == 1
+
+
+@pytest.mark.parametrize("path", JOURNAL_ROUTES)
+def test_journal_fails_closed_without_registry_status_capability(journal_harness, monkeypatch, path: str) -> None:
+    client, registry, owner_calls = journal_harness
+    bare = SimpleNamespace(list_personas=lambda **_kw: [])
+    monkeypatch.setattr(personas_service, "_get_active_read_store", lambda explicit=None: explicit or bare)
+    response = _get(client, path, SERVANT_OPERATOR_A, ADMIN_TEST_USER)
+    assert response.status_code == 503, response.text
+    assert owner_calls["n"] == 0
 
 
 @pytest.mark.parametrize("path", JOURNAL_ROUTES)

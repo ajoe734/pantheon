@@ -7314,7 +7314,8 @@ def _ensure_persona_exists(
     so every other record costs no Agora scope resolution and keeps its current answer.
     With require_exists=False a persona absent from a healthy directory is left to the
     caller's own owner read; an absent record while the persona registry read is
-    unavailable fails closed (503), since its visibility is unknown.
+    unavailable, missing/unconfigured or of unknown status fails closed (503), since
+    its visibility is unknown.
 
     The read variant runs in one request read scope, so the directory snapshot and the
     registry status share a single persona-registry owner call.
@@ -7326,16 +7327,28 @@ def _ensure_persona_exists(
         _ensure_persona_exists_in_scope(persona_id, caller_tenant, viewer_user_id, require_exists)
 
 
+_PERSONA_REGISTRY_UNHEALTHY_SOURCES = frozenset({"missing", "unavailable", "unknown", "unconfigured"})
+
+
 def _persona_registry_read_unavailable() -> bool:
-    """True when the active read store reports the persona registry read as unavailable."""
+    """True unless the active read store positively reports a healthy persona registry read.
+
+    Fails closed: an unavailable, missing/unconfigured (PersonaFleetPort maps a
+    "not configured" owner to source="missing" with empty records), empty or unknown
+    status, an absent dataset_source capability, or a status read error all leave a
+    user_private record's visibility unknown.
+    """
     store = _get_active_read_store()
     source_of = getattr(store, "dataset_source", None)
     if not callable(source_of):
-        return False
+        return True
     try:
-        return source_of("personas") == "unavailable"
+        source = source_of("personas")
     except Exception:
         return True
+    if not isinstance(source, str) or not source.strip():
+        return True
+    return source.strip().lower() in _PERSONA_REGISTRY_UNHEALTHY_SOURCES
 
 
 def _ensure_persona_exists_in_scope(
