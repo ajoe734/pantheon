@@ -761,7 +761,7 @@ def pool_publication_authority(monkeypatch, tmp_path):
     bff.include_router(routes.create_personas_router(service=service, get_read_store=lambda: read_store,
                        get_command_store=lambda: command_store, extract_identity_fn=extract_identity))
     monkeypatch.setattr(routes.personas_lifecycle, "_pool_publisher", lambda auth: SimpleNamespace(history=lambda *a: history))
-    monkeypatch.setattr(routes.personas_lifecycle, "_ensure_persona_exists", lambda *a: None)
+    monkeypatch.setattr(routes.personas_lifecycle, "_ensure_persona_exists", lambda *a, **k: None)
     bff_client = TestClient(bff)
     original_urlopen = urllib.request.urlopen
     reads = []

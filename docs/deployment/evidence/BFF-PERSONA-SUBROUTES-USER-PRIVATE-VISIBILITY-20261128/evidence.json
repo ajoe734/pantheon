@@ -175,6 +175,10 @@
     {
       "finding": "Pre-existing failures on base HEAD (architecture inventory counts, mounted trade-journal 503, persona_router/main_composition suites, 33 total) fail identically before and after this change.",
       "disposition": "Out of scope; not edited."
+    },
+    {
+      "finding": "CI ci-red on PR #8049 (Service suites misc): services/evolution/test_evolution_service.py::test_pool_publication_actor_fields_cannot_replace_authenticated_service[wrong_role] failed because its _ensure_persona_exists stub (lambda *a) rejected the keyword-only viewer_user_id the publish-history read now passes.",
+      "disposition": "Stub widened to lambda *a, **k in services/evolution/test_evolution_service.py:764; python3 -m pytest -q services/evolution -> 619 passed, 3 skipped; BFF persona list/subroute visibility tests 105 passed."
     }
   ]
 }
