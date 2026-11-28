@@ -179,106 +179,55 @@ MARKET_INPUT_MISSING_PAUSE = {
 
 
 @pytest.mark.parametrize(
-    ("initial_status", "session_admission", "expected_transitions"),
+    ("initial_status", "session_admission"),
     [
-        ("paused", MARKET_INPUT_MISSING_PAUSE, ["paused", "active"]),
-        ("active", None, ["pending_pause", "paused", "active"]),
+        ("paused", MARKET_INPUT_MISSING_PAUSE),
+        ("active", None),
     ],
     ids=["hosted-reconciler-paused", "active-spy-projection"],
 )
-def test_recorded_legacy_spy_book_moves_to_twd_default_universe_on_same_binding(
+def test_recorded_legacy_spy_book_fails_closed_without_owner_approved_universe(
     owner_stack: Dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     initial_status: str,
     session_admission: Dict[str, Any] | None,
-    expected_transitions: List[str],
 ) -> None:
-    """AC1/AC2/AC4: the legacy SPY book is projected onto 2330.TW from the same approved
-    artifact on the same RuntimeBinding, ends active, its ledger row becomes terminal, and a
-    replay is a no-op."""
+    """AC1 review disposition: the approved artifact of the legacy book is SPY, so the BFF
+    never rewrites the projected symbol. Ensure refuses with zero Runtime-Manager transitions,
+    no second pool/binding, and leaves the ledger row unchanged until an owner-approved
+    revision exists."""
     seeded = _seed_recorded_legacy_book(
         owner_stack, monkeypatch, status=initial_status, session_admission=session_admission
     )
     ids = seeded["ids"]
     coordinator = seeded["coordinator"]
     rm_service = owner_stack["rm_service"]
-    rm_client = owner_stack["rm_client"]
     capital_dir: Path = owner_stack["capital_dir"]
-    build_fleet_desired_state = _load_fleet_desired_state_builder()
-
-    before = build_fleet_desired_state(
-        [b.to_dict() for b in rm_service.list_all()], stage_filter="paper"
-    )
-    if initial_status == "paused":
-        assert [b.binding_id for b in before.bindings] == []
-    else:
-        # Desired-state admits it, but the reconciler can only fetch SPY market input.
-        assert [b.binding_id for b in before.bindings] == [HOSTED_BINDING]
-        assert rm_service.get_binding(HOSTED_BINDING).metadata["symbol"] == "SPY"
+    before_binding = rm_service.get_binding(HOSTED_BINDING).to_dict()
+    ledger_before = coordinator.store.get(HOSTED_TENANT, seeded["legacy"].idempotency_key)
 
     transitions = _spy_transitions(owner_stack, monkeypatch)
-    book = ensure_trader_paper_book(
-        HOSTED_TENANT,
-        HOSTED_PERSONA,
-        requested_by=REQUESTER,
-        agora_user_id=REQUESTER,
-        coordinator=coordinator,
-        runtime_client=rm_client,
-    )
-    assert transitions == [f"{HOSTED_BINDING}:{s}" for s in expected_transitions]
-    assert book["runtime_binding_id"] == HOSTED_BINDING
-    assert book["created_capital_pool"] is False
-    assert book["created_runtime_binding"] is False
-    assert book["provisioning_ledger_state"] == "succeeded"
-
-    # No second pool, capital binding, or RuntimeBinding.
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        ensure_trader_paper_book(
+            HOSTED_TENANT,
+            HOSTED_PERSONA,
+            requested_by=REQUESTER,
+            agora_user_id=REQUESTER,
+            coordinator=coordinator,
+            runtime_client=owner_stack["rm_client"],
+        )
+    assert exc.value.reason_code == "trader_paper_book_universe_unapproved"
+    assert transitions == []
+    assert rm_service.get_binding(HOSTED_BINDING).to_dict() == before_binding
+    assert rm_service.get_binding(HOSTED_BINDING).metadata["symbol"] == "SPY"
     assert list(_reload_capital_pools(capital_dir)) == [ids.capital_pool_id]
     assert list(_reload_capital_bindings(capital_dir)) == [ids.persona_capital_binding_id]
-    pool_bindings = rm_service.find_bindings_for_pool(ids.capital_pool_id)
-    assert [b.binding_id for b in pool_bindings] == [HOSTED_BINDING]
-
-    repaired = rm_service.get_binding(HOSTED_BINDING)
-    assert repaired.status == "active"
-    assert repaired.metadata["symbol"] == "2330.TW"
-    assert "symbols" not in repaired.metadata
-    # Same approved artifact, checksum and market-data policy; only the universe moved.
-    spy_projection = seeded["spy_projection"]
-    assert repaired.artifact_id == ids.strategy_artifact_id
-    assert repaired.artifact_version == ids.version
-    assert repaired.metadata["object_store"] == spy_projection["object_store"]
-    assert repaired.metadata["artifact_checksum"] == spy_projection["artifact_checksum"]
-    assert repaired.metadata["market_data_policy"] == spy_projection["market_data_policy"]
-    assert repaired.metadata["book_universe"]["symbols"] == ["2330.TW"]
-    assert repaired.metadata["book_universe"]["approved_artifact_symbols"] == ["SPY"]
-
-    after = build_fleet_desired_state(
-        [b.to_dict() for b in rm_service.list_all()], stage_filter="paper"
-    )
-    assert [b.binding_id for b in after.bindings] == [HOSTED_BINDING]
-    assert after.excluded == []
-
-    ledger = coordinator.store.get(HOSTED_TENANT, seeded["legacy"].idempotency_key)
-    assert ledger.state == "succeeded"
-    assert ledger.current_step == TRADER_PAPER_BOOK_PROVISIONED_STEP
-    assert ledger.result["runtime_binding_id"] == HOSTED_BINDING
-    assert ledger.lease_owner is None
-
-    # AC2: a replay on the repaired book changes nothing (no transition, no ledger write).
-    transitions.clear()
-    replay = ensure_trader_paper_book(
-        HOSTED_TENANT,
-        HOSTED_PERSONA,
-        requested_by=REQUESTER,
-        agora_user_id=REQUESTER,
-        coordinator=coordinator,
-        runtime_client=rm_client,
-    )
-    assert transitions == []
-    assert replay["runtime_binding_id"] == HOSTED_BINDING
-    assert rm_service.get_binding(HOSTED_BINDING).to_dict() == repaired.to_dict()
-    replay_ledger = coordinator.store.get(HOSTED_TENANT, seeded["legacy"].idempotency_key)
-    assert replay_ledger.attempt_count == ledger.attempt_count
-    assert replay_ledger.updated_at == ledger.updated_at
+    assert [b.binding_id for b in rm_service.find_bindings_for_pool(ids.capital_pool_id)] == [
+        HOSTED_BINDING
+    ]
+    ledger_after = coordinator.store.get(HOSTED_TENANT, seeded["legacy"].idempotency_key)
+    assert ledger_after.state == ledger_before.state == "provisioning"
+    assert ledger_after.attempt_count == ledger_before.attempt_count
 
 
 @pytest.mark.parametrize(
@@ -314,28 +263,109 @@ def test_operator_paused_legacy_book_is_never_resumed_by_ensure(
     assert ledger.state == "provisioning"
 
 
+def _registry_artifact_symbols(coordinator: Any, ids: Any) -> List[str]:
+    receipt = coordinator._owner_get(
+        "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
+    )
+    entry = receipt.get("entry") if isinstance(receipt.get("entry"), dict) else receipt
+    return list(entry["metadata"]["strategy_artifact"]["parameters"]["symbols"])
+
+
+def test_twd_book_symbol_derives_from_approved_registry_receipt_and_replay_is_noop(
+    owner_stack: Dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1/AC2: a TWD book's projected symbol is exactly the approved owner artifact universe
+    (no BFF override, no book_universe annotation); ensure on it again changes nothing and its
+    ledger row is terminal."""
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", HOSTED_TENANT)
+    coordinator = owner_stack["coordinator_for_tenant"](HOSTED_TENANT)
+    rm_service = owner_stack["rm_service"]
+    rm_client = owner_stack["rm_client"]
+    ids = trader_paper_book_ids(HOSTED_TENANT, HOSTED_PERSONA)
+    book = ensure_trader_paper_book(
+        HOSTED_TENANT,
+        HOSTED_PERSONA,
+        requested_by=REQUESTER,
+        coordinator=coordinator,
+        runtime_client=rm_client,
+    )
+    binding = rm_service.get_binding(book["runtime_binding_id"])
+    approved_symbols = _registry_artifact_symbols(coordinator, ids)
+    assert approved_symbols == ["2330.TW"]
+    assert binding.status == "active"
+    assert binding.metadata["symbol"] == approved_symbols[0]
+    assert "book_universe" not in binding.metadata
+    assert book["provisioning_ledger_state"] == "succeeded"
+    ledger = coordinator.store.get(
+        HOSTED_TENANT, f"trader-paper-book:{HOSTED_TENANT}:{HOSTED_PERSONA}"
+    )
+    assert ledger.state == "succeeded"
+    assert ledger.current_step == TRADER_PAPER_BOOK_PROVISIONED_STEP
+
+    transitions = _spy_transitions(owner_stack, monkeypatch)
+    replay = ensure_trader_paper_book(
+        HOSTED_TENANT,
+        HOSTED_PERSONA,
+        requested_by=REQUESTER,
+        coordinator=coordinator,
+        runtime_client=rm_client,
+    )
+    assert transitions == []
+    assert replay["runtime_binding_id"] == book["runtime_binding_id"]
+    assert rm_service.get_binding(book["runtime_binding_id"]).to_dict() == binding.to_dict()
+    replay_ledger = coordinator.store.get(HOSTED_TENANT, ledger.idempotency_key)
+    assert replay_ledger.attempt_count == ledger.attempt_count
+    assert replay_ledger.updated_at == ledger.updated_at
+
+
+@pytest.mark.parametrize(
+    ("symbols", "currency"),
+    [
+        (("2330.TW",), "TWD"),
+        (("2330.TW", "2317.TW"), "TWD"),
+        (("SPY",), "USD"),
+        (("SPY", "QQQ"), "TWD"),
+    ],
+)
+def test_nonlegacy_explicit_universes_are_preserved(symbols: tuple, currency: str) -> None:
+    """Only an exact legacy SPY default under a currency with another book universe fails
+    closed; every other explicit approved universe is projected unchanged."""
+    from services.control_plane.bff.personas.trader_paper_book import (
+        _fail_closed_on_unapproved_book_universe,
+    )
+
+    projection: Dict[str, Any] = (
+        {"symbol": symbols[0]} if len(symbols) == 1 else {"symbols": list(symbols)}
+    )
+    _fail_closed_on_unapproved_book_universe(projection, expected_currency=currency)
+    with pytest.raises(PersonaProvisioningCoordinationError) as exc:
+        _fail_closed_on_unapproved_book_universe({"symbol": "SPY"}, expected_currency="TWD")
+    assert exc.value.reason_code == "trader_paper_book_universe_unapproved"
+
+
 def test_executable_twd_book_paused_on_market_admission_is_left_to_the_reconciler(
     owner_stack: Dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC3: once the book has the TWD universe, resuming a stale-market pause is the paper
     fleet reconciler's existing admission path, not ensure's."""
-    seeded = _seed_recorded_legacy_book(
-        owner_stack, monkeypatch, status="paused", session_admission=MARKET_INPUT_MISSING_PAUSE
-    )
+    monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", HOSTED_TENANT)
+    coordinator = owner_stack["coordinator_for_tenant"](HOSTED_TENANT)
     rm_service = owner_stack["rm_service"]
     rm_client = owner_stack["rm_client"]
-    ensure_trader_paper_book(
+    book = ensure_trader_paper_book(
         HOSTED_TENANT,
         HOSTED_PERSONA,
         requested_by=REQUESTER,
-        coordinator=seeded["coordinator"],
+        coordinator=coordinator,
         runtime_client=rm_client,
     )
+    binding_id = book["runtime_binding_id"]
     stale_pause = {**MARKET_INPUT_MISSING_PAUSE, "reason_code": "market_input_stale"}
-    rm_client.transition(HOSTED_BINDING, "pending_pause", metadata_patch={"session_admission": stale_pause})
-    rm_client.transition(HOSTED_BINDING, "paused", metadata_patch={"session_admission": stale_pause})
-    paused = rm_service.get_binding(HOSTED_BINDING).to_dict()
+    rm_client.transition(binding_id, "pending_pause", metadata_patch={"session_admission": stale_pause})
+    rm_client.transition(binding_id, "paused", metadata_patch={"session_admission": stale_pause})
+    paused = rm_service.get_binding(binding_id).to_dict()
 
     transitions = _spy_transitions(owner_stack, monkeypatch)
     with pytest.raises(PersonaProvisioningCoordinationError) as exc:
@@ -343,12 +373,12 @@ def test_executable_twd_book_paused_on_market_admission_is_left_to_the_reconcile
             HOSTED_TENANT,
             HOSTED_PERSONA,
             requested_by=REQUESTER,
-            coordinator=seeded["coordinator"],
+            coordinator=coordinator,
             runtime_client=rm_client,
         )
     assert exc.value.reason_code == "runtime_binding_not_active"
     assert transitions == []
-    assert rm_service.get_binding(HOSTED_BINDING).to_dict() == paused
+    assert rm_service.get_binding(binding_id).to_dict() == paused
 
 
 class _OwnerRecords:

@@ -997,92 +997,33 @@ def _resolve_paper_book_execution_projection(
         deployment_plan_receipt=plan_receipt if isinstance(plan_receipt, Mapping) else None,
         registry_receipt=reg_receipt if isinstance(reg_receipt, Mapping) else None,
     )
-    return _apply_book_default_universe_to_legacy_projection(
-        projection,
-        ids=ids,
-        expected_currency=expected_currency,
-    )
+    _fail_closed_on_unapproved_book_universe(projection, expected_currency=expected_currency)
+    return projection
 
 
-def _approved_artifact_universe(
+def _fail_closed_on_unapproved_book_universe(
     projection: Mapping[str, Any],
     *,
-    ids: ProvisioningIds,
-) -> Optional[tuple[tuple[str, ...], Any]]:
-    """(symbols, market) of the approved artifact carried in ``projection``'s object_store."""
-    from services.control_plane.governance.deployment_plan import StagePlanner
-
-    object_store = projection.get("object_store")
-    if not isinstance(object_store, Mapping):
-        return None
-    _, artifact_key = StagePlanner.build_object_store_keys(
-        strategy_id=ids.strategy_id,
-        version=ids.version,
-    )
-    raw = object_store.get(artifact_key)
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(raw, Mapping):
-        return None
-    artifact = raw.get("strategy_artifact") if isinstance(raw.get("strategy_artifact"), Mapping) else raw
-    parameters = artifact.get("parameters")
-    if not isinstance(parameters, Mapping):
-        return None
-    symbols = parameters.get("symbols")
-    if not isinstance(symbols, list):
-        return None
-    return tuple(str(item or "").strip() for item in symbols), parameters.get("market")
-
-
-def _apply_book_default_universe_to_legacy_projection(
-    projection: Dict[str, Any],
-    *,
-    ids: ProvisioningIds,
     expected_currency: str,
-) -> Dict[str, Any]:
-    """Project a pre-#7983 TWD book onto the book default universe (2330.TW).
+) -> None:
+    """Refuse to project an approved artifact whose universe is not the book's currency universe.
 
     Books created before #7983 had no ``symbols`` in their ledger request, so
     ``_paper_universe`` minted and approved their artifact on the legacy SPY
-    default. That approved artifact (registry id and version) is immutable and
-    the RuntimeBinding's ``artifact_id``/``artifact_version`` cannot be changed
-    in place, so the approved object_store, checksum and market_data_policy are
-    kept exactly and only the projected market symbol becomes the book's
-    default universe for its currency, the same universe #7983 gives new books.
-    Applies only when the approved artifact universe itself is exactly the
-    legacy default with no explicit market; any other universe is untouched.
+    default. Only an owner-approved revision may change the approved universe;
+    the BFF never rewrites the projected symbol, so ensure refuses without any
+    Runtime-Manager or ledger write.
     """
-    if not _is_legacy_universe_for_currency(_projection_symbols(projection), expected_currency):
-        return projection
-    approved = _approved_artifact_universe(projection, ids=ids)
-    if approved is None:
-        return projection
-    approved_symbols, approved_market = approved
-    if (
-        tuple(s.upper() for s in approved_symbols) != LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE
-        or str(approved_market or "").strip()
-    ):
-        return projection
+    symbols = _projection_symbols(projection)
+    if not _is_legacy_universe_for_currency(symbols, expected_currency):
+        return
     default_universe = trader_paper_book_default_universe(expected_currency)
-    repaired = dict(projection)
-    repaired.pop("symbols", None)
-    if len(default_universe) == 1:
-        repaired["symbol"] = default_universe[0]
-    else:
-        repaired.pop("symbol", None)
-        repaired["symbols"] = list(default_universe)
-    repaired["book_universe"] = {
-        "source": "trader_paper_book_default_universe",
-        "currency": str(expected_currency or "").strip().upper(),
-        "symbols": list(default_universe),
-        "approved_artifact_symbols": list(approved_symbols),
-        "repair": "legacy_absent_symbols_default",
-        "task_id": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128",
-    }
-    return repaired
+    raise PersonaProvisioningCoordinationError(
+        f"Approved trader paper book artifact universe {list(symbols)} does not match the "
+        f"{str(expected_currency or '').strip().upper()} book universe {list(default_universe)}; "
+        "an owner-approved artifact revision is required before the projection can change",
+        reason_code="trader_paper_book_universe_unapproved",
+    )
 
 
 def _repair_runtime_binding_execution_projection_in_place(
