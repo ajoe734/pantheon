@@ -167,12 +167,12 @@ def owner(monkeypatch):
     return state
 
 
-def _execute(params=None):
+def _execute(params=None, *, auth_token="tok"):
     return execute_command_with_status(
         "cmd-1", CommandType.RETIRE_PAPER_PERSONA_CASE,
         {"persona_id": PERSONA, "entity_type": "Persona", "action_id": "RetirePaperPersonaCase",
          "reason": "negative share history cutover", **(params or {})},
-        auth_token="tok",
+        auth_token=auth_token,
     )
 
 
@@ -197,8 +197,11 @@ def test_pending_summary_carries_step_and_reason(owner):
     assert retirement["pending_reason"] == "binding still active"
 
 
-def test_missing_ledger_is_404_without_owner_write(owner):
+def test_missing_ledger_is_404_without_owner_write(owner, monkeypatch):
     owner.plan = None
+    monkeypatch.setattr(persona_adapter, "create_persona_registry_write_owner",
+                        lambda: SimpleNamespace(get_persona=lambda _id: {
+                            "tenant_id": TENANT, "lifecycle_state": "consultable"}))
     status, result, error = _execute()
     assert status == CommandStatus.FAILED
     assert result is None
@@ -322,3 +325,167 @@ def test_contract_documents_the_command():
     assert "RetirePaperPersonaCase" in doc
     assert "persona_case_not_found" in doc
     assert "release_case_use_release_retire" in doc
+
+
+@pytest.fixture
+def lifecycle_owner(owner, monkeypatch, tmp_path):
+    """Use the real HTTP port and strict Persona authority through TestClient."""
+    import io
+    import json
+    import urllib.error
+    from urllib.parse import urlsplit
+
+    from services.persona.write_owner import PersistentPersonaOwner, create_app
+    from services.control_plane.bff.ports.persona_write_owner import PersonaRegistryHttpWritePort
+    from tests.persona_capital_write_owner.test_persistent_owners import (
+        _persona_create_payload, _persona_jwt_headers,
+    )
+
+    monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
+    monkeypatch.setenv("PERSONA_JWT_SECRET", "persona-test-secret")
+    persistent = PersistentPersonaOwner.from_json_path(tmp_path / "personas.json")
+    client = TestClient(create_app(persistent, governance_decision_verifier=None))
+    admin = _persona_jwt_headers("operator-persona", TENANT, "persona.admin")
+    assert client.post("/api/personas", headers=admin, json=_persona_create_payload(
+        persona_id=PERSONA, tenant_id=TENANT)).status_code == 201
+    state = SimpleNamespace(owner=persistent, client=client, calls=[], fail_retire=False)
+    state.token = _persona_jwt_headers("op-test", TENANT, "operator", "governance_reviewer")["Authorization"][7:]
+    state.token_for = lambda role, tenant=TENANT: _persona_jwt_headers("op-test", tenant, role)["Authorization"][7:]
+
+    def opener(request, *, timeout):
+        body = json.loads(request.data) if request.data else None
+        state.calls.append({"method": request.method, "body": body, "headers": dict(request.headers)})
+        if state.fail_retire and body and body.get("target_state") == "retired":
+            raise urllib.error.HTTPError(request.full_url, 503, "owner unavailable", {}, io.BytesIO(b"{}"))
+        response = client.request(request.method, urlsplit(request.full_url).path,
+                                  headers=dict(request.headers), json=body)
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(request.full_url, response.status_code, "owner refused", {},
+                                         io.BytesIO(response.content))
+        return io.BytesIO(response.content)
+
+    port = PersonaRegistryHttpWritePort(base_url="http://persona", service_token="must-not-be-used", opener=opener)
+    monkeypatch.setattr(persona_adapter, "create_persona_registry_write_owner", lambda: port)
+    owner.plan = None
+
+    def start_at(source):
+        if source != "draft":
+            assert client.patch(f"/api/personas/{PERSONA}/lifecycle", headers=admin,
+                                json={"actor_id": "operator-persona", "target_state": "research_only"}).status_code == 200
+        if source == "frozen":
+            assert client.patch(f"/api/personas/{PERSONA}/lifecycle", headers={"Authorization": f"Bearer {state.token}"},
+                                json={"actor_id": "op-test", "target_state": "frozen"}).status_code == 200
+    state.start_at = start_at
+    return state
+
+
+@pytest.mark.parametrize("source,targets", [
+    ("draft", ["retired"]), ("frozen", ["retired"]), ("research_only", ["frozen", "retired"]),
+])
+def test_never_provisioned_retirement_uses_owner_steps(lifecycle_owner, owner, source, targets):
+    from services.control_plane.bff.core.owner_reads import authorization, selected_tenant
+
+    lifecycle_owner.start_at(source)
+    context_before = (authorization.get(), selected_tenant.get())
+    status, result, error = _execute(auth_token=lifecycle_owner.token)
+    assert status == CommandStatus.EXECUTED, error
+    steps = result["domain_receipt"]["steps"]
+    assert [step["target_state"] for step in steps] == targets
+    assert [step["from_state"] for step in steps] == ([source, "frozen"] if len(targets) == 2 else [source])
+    assert all(step["action_id"] == "AdvanceLifecycle" for step in steps)
+    assert [step["authoritative_readback"]["lifecycle_state"] for step in steps] == targets
+    assert result["authoritative_readback"] == steps[-1]["authoritative_readback"]
+    assert result["authoritative_readback"]["lifecycle_state"] == "retired"
+    assert lifecycle_owner.owner.get(PERSONA).lifecycle_state == "retired"
+    calls = lifecycle_owner.calls
+    assert [call["method"] for call in calls] == ["GET"] + ["PATCH"] * len(targets)
+    assert all(call["headers"]["Authorization"] == f"Bearer {lifecycle_owner.token}" for call in calls)
+    assert all(call["body"]["actor_id"] == "op-test" for call in calls[1:])
+    assert (authorization.get(), selected_tenant.get()) == context_before
+    assert owner.calls == []
+
+
+@pytest.mark.parametrize("role", ["viewer", "operator", "persona.admin"])
+def test_never_provisioned_retirement_refused_role(lifecycle_owner, owner, role):
+    before = lifecycle_owner.owner.get(PERSONA).model_dump()
+    status, result, error = _execute(auth_token=lifecycle_owner.token_for(role))
+    assert status == CommandStatus.FAILED
+    assert result is None
+    assert error["downstream_status"] == 403
+    assert error["domain_receipt"]["steps"] == []
+    assert error["domain_receipt"]["failed_step"]["target_state"] == "retired"
+    assert lifecycle_owner.owner.get(PERSONA).model_dump() == before
+    assert owner.calls == []
+
+
+def test_never_provisioned_second_step_failure_records_frozen_readback(lifecycle_owner, owner):
+    lifecycle_owner.start_at("research_only")
+    lifecycle_owner.fail_retire = True
+    status, result, error = _execute(auth_token=lifecycle_owner.token)
+    assert status == CommandStatus.FAILED
+    assert result is None
+    assert error["downstream_status"] == 503
+    assert error["retryable"] is True
+    receipt = error["domain_receipt"]
+    assert receipt["failed_step"] == {"action_id": "AdvanceLifecycle", "from_state": "frozen", "target_state": "retired"}
+    assert [step["target_state"] for step in receipt["steps"]] == ["frozen"]
+    assert receipt["authoritative_readback"] == receipt["steps"][0]["authoritative_readback"]
+    assert receipt["authoritative_readback"]["lifecycle_state"] == "frozen"
+    assert lifecycle_owner.owner.get(PERSONA).lifecycle_state == "frozen"
+    assert owner.calls == []
+    # A new command can resume from the actual frozen owner record.
+    lifecycle_owner.fail_retire = False
+    status, result, error = _execute(auth_token=lifecycle_owner.token)
+    assert status == CommandStatus.EXECUTED, error
+    assert [step["target_state"] for step in result["domain_receipt"]["steps"]] == ["retired"]
+
+
+@pytest.mark.parametrize("source", ["consultable", "paper_owner", "live_owner", "retired"])
+def test_other_unprovisioned_lifecycles_are_refused(owner, monkeypatch, source):
+    calls = []
+    monkeypatch.setattr(persona_adapter, "create_persona_registry_write_owner", lambda: SimpleNamespace(
+        get_persona=lambda _id: {"tenant_id": TENANT, "lifecycle_state": source},
+        advance_lifecycle=lambda *a, **kw: calls.append(kw),
+    ))
+    owner.plan = None
+    status, result, error = _execute()
+    assert status == CommandStatus.FAILED
+    assert result is None
+    assert (error["code"], error["downstream_status"]) == ("persona_case_not_found", 404)
+    assert calls == owner.calls == []
+
+
+def test_never_provisioned_cannot_write_another_tenant(lifecycle_owner):
+    before = lifecycle_owner.owner.get(PERSONA).model_dump()
+    status, result, error = _execute(auth_token=lifecycle_owner.token_for("governance_reviewer", "other"))
+    assert status == CommandStatus.FAILED
+    assert result is None
+    assert all(call["method"] == "GET" for call in lifecycle_owner.calls)
+    assert lifecycle_owner.owner.get(PERSONA).model_dump() == before
+
+
+def test_provisioned_path_never_constructs_lifecycle_port(owner, monkeypatch):
+    def unexpected_port():
+        pytest.fail("Provisioned and release cases must keep the coordinator-only path")
+
+    monkeypatch.setattr(persona_adapter, "create_persona_registry_write_owner", unexpected_port)
+    owner.summary = {"persona_id": PERSONA, "state": "retired", "retirement": {"status": "retired"}}
+    status, result, error = _execute()
+    assert status == CommandStatus.EXECUTED, error
+    assert result["dispatch_path"] == "persona_provisioning.retire_case"
+    owner.plan["release_case"] = True
+    status, result, error = _execute()
+    assert status == CommandStatus.FAILED
+    assert error["code"] == "release_case_use_release_retire"
+    assert len(owner.calls) == 1
+
+
+def test_missing_owner_persona_is_404_without_write(owner, monkeypatch):
+    owner.plan = None
+    monkeypatch.setattr(persona_adapter, "create_persona_registry_write_owner",
+                        lambda: SimpleNamespace(get_persona=lambda _id: None))
+    status, result, error = _execute()
+    assert status == CommandStatus.FAILED
+    assert result is None
+    assert (error["code"], error["downstream_status"]) == ("persona_case_not_found", 404)
+    assert owner.calls == []
