@@ -329,3 +329,55 @@ def test_point_in_time_decision_time_filtering_and_record_evaluation(library):
     assert view.entry.evaluation_summary["evaluation_ref"] == "rrun-alpha-eval-test01"
     assert view.entry.evaluation_summary["duplicate_of"] == "qlib_alpha158:KMID2"
     reset_store()
+
+
+def test_hosted_library_definition_digests_survive_evaluation_without_migration():
+    """182 stored seed digests; 171 evaluated rows have duplicate_of present/null."""
+    import copy
+    from services.registry.storage import get_store, reset_store
+
+    reset_store()
+    svc = RegistryService(get_store())
+    registered = at.ensure_builtin_alpha_templates(svc)
+    original = {v.entry.registry_id: v.entry.checksum for v in registered}
+    evaluated = 0
+    for seed in at.load_library_templates():
+        record = at.validate_alpha_template(seed)
+        rid = at.alpha_template_registry_id(record['template_id'])
+        assert original[rid] == at.alpha_template_checksum(record)
+        if record['scope'] == 'time_series':
+            at.record_alpha_template_evaluation(
+                svc, record['template_id'],
+                evaluation_ref='rrun-alpha-eval-2026-11-27-ac389bee8277-b000',
+                duplicate_of=None)
+            evaluated += 1
+        stored = svc.get(rid).entry
+        assert at.alpha_template_definition_checksum(stored.metadata['alpha_template']) == original[rid]
+        assert stored.checksum == original[rid]
+    assert evaluated == 171
+    before = copy.deepcopy([v.entry.to_dict() for v in svc.list_all_entries()])
+    assert len(at.ensure_builtin_alpha_templates(svc)) == 182
+    assert [v.entry.to_dict() for v in svc.list_all_entries()] == before
+    # A valid but altered definition with its old stored digest still collides.
+    rid = at.alpha_template_registry_id('qlib_alpha158:KMID')
+    entry = svc.get(rid).entry
+    changed = copy.deepcopy(entry.metadata)
+    changed['alpha_template']['attribution'] += ' altered'
+    svc.update_metadata(rid, expected_metadata=entry.metadata, new_metadata=changed,
+                        actor={'id': 'test', 'role': 'service', 'tenant': '__builtin__'})
+    with pytest.raises(at.AlphaTemplateValidationError, match='id collision'):
+        at.ensure_builtin_alpha_templates(svc)
+    reset_store()
+
+
+def test_tenant_non_draft_registration_uses_canonical_definition_digest(library):
+    import copy
+    seed = copy.deepcopy(library['qlib_alpha158:KMID'])
+    seed['template_id'] = 'custom:Kmid'
+    seed['origin'] = {'library': 'custom', 'ref': 'Kmid'}
+    _, draft = at.build_alpha_template_registry_payload(seed)
+    seed.update(status='evaluated', evaluation_ref='rrun-tenant-first', duplicate_of=None)
+    _, evaluated = at.build_alpha_template_registry_payload(seed)
+    assert evaluated.checksum == draft.checksum
+    assert evaluated.metadata['alpha_template']['status'] == 'evaluated'
+    assert at.alpha_template_checksum(at.validate_alpha_template(seed)) != draft.checksum

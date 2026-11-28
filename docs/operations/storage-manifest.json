@@ -4955,6 +4955,30 @@
    "task": "AGORA-TRADER-HABIT-PROFILE-20261127"
   },
   {
+   "bound_proof": {
+    "contains": "TRADER_REPORT_WEEKLY_HISTORY_CAP = 26",
+    "file": "services/agora/store.py"
+   },
+   "bound_status": "bounded",
+   "cap": "each row is at most 20 KB (TRADER_REPORT_MAX_BYTES = 20480 enforced in AgoraStore.put_trader_report); recurring weekly job ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py runs at most once per 3600s (DEFAULT_WEEKLY_TICK_INTERVAL_SECONDS = 3600), scans at most 50 active trader/strategy scopes (WEEKLY_TICK_MAX_TRADER_SCOPES = 50), requests POST /api/attribution/runs via HttpAttributionPort idempotently once per (tenant_id, iso_week), and writes at most 1 weekly report per (tenant_id, user_id, strategy_id, iso_week) capped at 26 weekly reports per trader and strategy (~6 months, TRADER_REPORT_WEEKLY_HISTORY_CAP = 26); on-demand reports are capped at 3 per trader per day (TRADER_REPORT_ONDEMAND_DAILY_CAP = 3) with 7-day retention (TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7), leaving at most 780 rows (<= 16 MB) at hosted scale (10 traders x 3 strategies)",
+   "cleanup": "AgoraStore.prune_trader_reports on each write deletes weekly reports beyond the newest 26 per trader and strategy and deletes expired on-demand reports; AgoraStore.purge_expired_trader_reports (invoked hourly via ServantTurnWorker.maybe_purge in scripts/run_agora_interaction_worker.py) purges on-demand reports older than 7 days",
+   "growth_driver": "recurring weekly tick ServantTurnWorker.maybe_run_weekly_tick in scripts/run_agora_interaction_worker.py (3600s check interval, idempotent per tenant_id + ISO week, calling MeetingTriggers.run_without_persona_cycle -> ensure_weekly_attribution_run via HttpAttributionPort and writing 1 weekly report per active trader and strategy after weekly attribution) + at most 3 on-demand reports per trader per day via POST /bff/agora/servant/reports or command bar 整理本週報表 (SD 9.3)",
+   "growth_per_day": "at hosted scale (10 traders x 3 strategies): recurring weekly job writes 30 weekly rows/week (<= 600 KB/week, ~86 KB/day; 0 B on repeat ticks in the same ISO week) plus <= 30 on-demand rows/day (<= 600 KB/day) = <= 686 KB/day before pruning; steady-state bounded to <= 780 rows (<= 16 MB)",
+   "kind": "schema_table",
+   "name": "agora.trader_reports",
+   "owner": "schema:agora",
+   "readers": [
+    "scripts/run_agora_interaction_worker.py",
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/control-plane/bff/agora/servant/reports.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py",
+    "services/persona/meeting_triggers.py"
+   ],
+   "register_class": "RC4",
+   "task": "AGORA-SERVANT-REVISIONS-AND-REPORT-20261127"
+  },
+  {
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
@@ -5972,8 +5996,8 @@
     "file": "services/source_ingestion/daily_bars_store.py"
    },
    "bound_status": "bounded",
-   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days (tw_broker_top: budget x 750 stored sessions), plus evidence-pinned exceptions",
-   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none), except tw_broker_top retention_sessions=750 (newest stored dates); read by SOURCE-RETENTION-SWEEPER-20261118-R2 with existing pin protection; superseded generation file deleted after each manifest swap",
+   "cap": "per-day partition bytes = section 6A budget of each dataset (declared in KEYED_DATASETS.day_budget_bytes; write refused above it); total = budget x retention_days (tw_broker_top: 6 MB x about 500 sessions in 750 calendar days <= 3.0 GB), plus evidence-pinned exceptions",
+   "cleanup": "retention_days declared per dataset (2555/750/250/180/365 d, macro none; tw_broker_top retention_days=750 calendar days); read by SOURCE-RETENTION-SWEEPER-20261118-R2 with existing pin protection; superseded generation file deleted after each manifest swap",
    "growth_driver": "keyed partition writer (one record per key per date partition, replaced in place; unchanged re-run writes nothing)",
    "growth_per_day": "measured on hosted-shaped rows (SOURCE-DATASETS-KEYED-WRITE-20261119 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 evidence): institutional 0.114 MB, margin 0.038 MB, broker_top whole market (SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127): compact rows, 2.15 MB gzip at 2,000 symbols x 20 buy + 20 sell (80,000 rows, 51 MB uncompressed) and 2.62 MB at 2,600 symbols, <= 6 MB/day section 6A budget, key (symbol, trade_date, side, rank), broker_branch 0.175 MB, community 0.075 MB, ssf 0.012 MB, index 0.001 MB each",
    "kind": "jsonl",
@@ -6425,9 +6449,9 @@
    "count_at_hosted_scale": "every symbol in the whole-day file (expected about 2,000-2,600 TWSE and TPEx symbols) x 20 buy + 20 sell = about 80,000-104,000 rows per session",
    "size_per_day": "measured on hosted-shaped rows: 2.15 MB gzip / 51 MB uncompressed at 2,000 symbols (80,000 rows), 2.62 MB gzip at 2,600 symbols (104,000 rows); one receipt of about 1 KB",
    "growth_per_day": "about 2.2-2.7 MB per session (keyed partition, gzip) + about 1 KB receipt",
-   "growth": "steady state <=4.5 GB over 750 stored sessions after successful delete-mode sweep, plus evidence-pinned older partitions (<=6 MB each); dry-run, unresolved pins and delete-share refusals defer cleanup",
-   "cap": "per-session partition write refused above 6 MB (KEYED_DATASETS tw_broker_top day_budget_bytes, design 6A row); 750 stored session dates retained by the keyed sweeper, so <=4.5 GB after successful delete-mode sweep, plus evidence-pinned older partitions (reported by sweeper); dry-run/unresolved pins/delete-share refusal can defer enforcement; receipts at most 750 files (~0.75 MB); tw_broker_branch_detail is not written by the daily run; the source evidence store receives no per-row record",
-   "cleanup": "keyed partitions outside the newest 750 valid stored session dates through today removed by the existing at-most-daily retention sweeper (services/source_ingestion/retention.py, KEYED_DATASETS retention_sessions); older pinned partitions remain, unresolved pins block deletion, dry_run is default and deletes over 20% require the existing explicit override; a superseded partition generation is deleted after each manifest swap; receipts beyond the newest 750 are deleted by the writer on each run",
+   "growth": "steady state <=3.0 GB across about 500 sessions in 750 calendar days after successful delete-mode sweep, plus evidence-pinned older partitions (<=6 MB each); dry-run, unresolved pins and delete-share refusals defer cleanup",
+   "cap": "per-session partition write refused above 6 MB (KEYED_DATASETS tw_broker_top day_budget_bytes, design 6A row); 6 MB x about 500 sessions in 750 calendar days (retention_days=750) <= 3.0 GB after successful delete-mode sweep, plus evidence-pinned older partitions (reported by sweeper); dry-run/unresolved pins/delete-share refusal can defer enforcement; receipts at most 750 files (~0.75 MB); tw_broker_branch_detail is not written by the daily run; the source evidence store receives no per-row record",
+   "cleanup": "keyed partitions older than 750 calendar days (today - 750 days) removed by the existing at-most-daily retention sweeper (services/source_ingestion/retention.py, KEYED_DATASETS retention_days=750); older pinned partitions remain, unresolved pins block deletion, dry_run is default and deletes over 20% require the existing explicit override; a superseded partition generation is deleted after each manifest swap; receipts beyond the newest 750 are deleted by the writer on each run",
    "readers": [
     "services/data-plane/taiwan_reference.py",
     "services/source_ingestion/routers/ingest_operations.py",
@@ -6442,17 +6466,17 @@
   {
    "name": "FinMind two-year broker top-20 backfill (keyed/tw_broker_top partitions + backfill_state.json)",
    "owner": "source_ingestion (market-data)",
-   "writer": "services/source_ingestion/finmind_broker_backfill.py run_backfill, invoked by scripts/deploy_nonprod_vm.sh run_finmind_broker_backfill inside the source-ingest container from .github/workflows/dev-finmind-broker-backfill.yml under the dev environment lease",
+   "writer": "services/source_ingestion/finmind_broker_backfill.py run_backfill, invoked by scripts/deploy_nonprod_vm.sh run_finmind_broker_backfill inside the bounded source-ingest runtime (--bounded-runtime-run with memory.peak capture and steady restore) from .github/workflows/dev-finmind-broker-backfill.yml under the dev environment lease",
    "task": "SOURCE-BROKER-TWO-YEAR-BACKFILL-HOSTED-20261127",
    "register_class": "RC2",
-   "cadence": "operator-dispatched resumable backfill (workflow_dispatch only, no recurring cron); throttled at >=1.5s per request (<=2,400 requests/hour vs FinMind SponsorYear 6,000/hour cap); default bounded window of at most 180 requests and 2,100s wall time per dispatch inside the 45-minute dev environment lease limit; completed dates and daily-refresh-completed dates make 0 requests on resume",
-   "count_at_hosted_scale": "two-year window (~480-500 trading sessions, ~522 weekdays) x ~2,000-2,600 symbols x 40 rows (20 buy + 20 sell) = ~39,200,000-52,000,000 compact rows across stored two-year partitions, plus 1 backfill_state.json file (~60 KB at 522 dates)",
-   "size": "measured on hosted-shaped compact rows: ~2.15 MB gzip (80,000 rows) to ~2.62 MB gzip (104,000 rows) per trading session => ~1.05-1.31 GB gzip across ~490-500 two-year trading sessions; backfill_state.json <= 128 KB",
+   "cadence": "operator-dispatched resumable backfill (workflow_dispatch only, no recurring cron); guarded by bounded_runtime_market_open_guard before start and before each session so on a Taiwan weekday no session starts unless it and the steady restore end before 00:55Z; throttled at >=1.5s per request (<=2,400 requests/hour vs FinMind SponsorYear 6,000/hour cap); default bounded window of at most 180 requests and 2,100s wall time per dispatch inside the 45-minute dev environment lease limit; completed dates and daily-refresh-completed dates make 0 requests on resume",
+   "count_at_hosted_scale": "two-year window (~480-500 trading sessions, ~522 weekdays in 730 calendar days, inside the 750-day retention window) x ~2,000-2,600 symbols x 40 rows (20 buy + 20 sell) = ~39,200,000-52,000,000 compact rows across stored two-year partitions, plus 1 backfill_state.json file (~60 KB at 522 dates)",
+   "size": "measured on hosted-shaped compact rows: ~2.15 MB gzip (80,000 rows) to ~2.62 MB gzip (104,000 rows) per trading session => ~1.05-1.31 GB gzip across ~490-500 two-year trading sessions; backfill_state.json <= 128 KB; measured single whole-day session memory peak (2,600 symbols, 312,000 raw price-level parquet rows -> 104,000 compact rows): 605,138,944 bytes (577.1 MiB VmHWM / ru_maxrss; 328,498,248 bytes tracemalloc peak)",
    "size_per_day": "0 B/day steady-state once the two-year window is backfilled (daily sessions are written by SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127 into the same keyed/tw_broker_top store)",
-   "growth_per_day": "0 B/day steady-state outside daily refresh; one-time two-year backfill adds ~1.05-1.31 GB gzip (capped at <=3.0 GB for the two-year backfill and <=4.5 GB across 750 retained sessions)",
-   "growth": "one-time backfill of ~480-500 sessions into keyed/tw_broker_top (~1.05-1.31 GB gzip), bounded by BACKFILL_MAX_TOTAL_BYTES = 3,000,000,000 (3.0 GB) and KEYED_DATASETS['tw_broker_top'].retention_sessions = 750 (<=4.5 GB steady-state)",
-   "cap": "per-session cap 6,000,000 bytes compressed (BACKFILL_MAX_SESSION_BYTES / KEYED_DATASETS tw_broker_top day_budget_bytes) and 120,000 rows (BACKFILL_MAX_SESSION_ROWS); two-year backfill total cap 3,000,000,000 bytes (BACKFILL_MAX_TOTAL_BYTES, 3.0 GB) and 60,000,000 rows (BACKFILL_MAX_TOTAL_ROWS); hourly request cap 6,000/h (FINMIND_PLAN_HOURLY_CAP, self-limited to <=2,400/h); run_backfill deletes any over-cap partition and stops immediately with status=cap_exceeded if any cap would be exceeded; no side directory or tw_broker_branch_detail written",
-   "cleanup": "keyed/tw_broker_top partitions outside the newest 750 valid stored session dates through today are pruned by the existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py, retention_sessions=750); superseded partition generations are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately via delete_partition before state commit; backfill_state.json is atomically replaced in place via .tmp rename",
+   "growth_per_day": "0 B/day steady-state outside daily refresh; one-time two-year backfill adds ~1.05-1.31 GB gzip (capped at 6 MB x about 500 sessions in 750 calendar days <= 3.0 GB)",
+   "growth": "one-time backfill of ~480-500 sessions (end minus 730 calendar days) into keyed/tw_broker_top (~1.05-1.31 GB gzip), bounded by BACKFILL_MAX_TOTAL_BYTES = 3,000,000,000 (3.0 GB) and KEYED_DATASETS['tw_broker_top'].retention_days = 750 calendar days (cap 6 MB x about 500 sessions in 750 days <= 3.0 GB)",
+   "cap": "per-session cap 6,000,000 bytes compressed (BACKFILL_MAX_SESSION_BYTES / KEYED_DATASETS tw_broker_top day_budget_bytes) and 120,000 rows (BACKFILL_MAX_SESSION_ROWS); two-year and 750-day retention storage cap 3,000,000,000 bytes (BACKFILL_MAX_TOTAL_BYTES, 6 MB x about 500 sessions in 750 calendar days <= 3.0 GB) and 60,000,000 rows (BACKFILL_MAX_TOTAL_ROWS); bounded runtime memory cap: per-session process memory peak <= 1,610,612,736 bytes (1.5 GiB, measured 577.1 MiB VmHWM at 2,600 symbols) inside the 6,442,450,944-byte (6 GiB) source-ingest container memory limit (cgroup memory.peak captured before steady restore; OOM kill fails the run); hourly request cap 6,000/h (FINMIND_PLAN_HOURLY_CAP, self-limited to <=2,400/h); run_backfill deletes any over-cap partition and stops immediately with status=cap_exceeded if any cap would be exceeded; no side directory or tw_broker_branch_detail written",
+   "cleanup": "keyed/tw_broker_top partitions older than 750 calendar days (today - 750 days) are pruned by the existing RetentionSweeper._plan_keyed (services/source_ingestion/retention.py, retention_days=750) while the full two-year backfill window (end minus 730 days) stays inside the 750-day retention; superseded partition generations are unlinked after each atomic manifest swap; over-cap candidate partitions are unlinked immediately via delete_partition before state commit; backfill_state.json is atomically replaced in place via .tmp rename; bounded runtime state directory is removed after steady restore",
    "readers": [
     "services/data-plane/taiwan_reference.py",
     "services/source_ingestion/routers/ingest_operations.py",

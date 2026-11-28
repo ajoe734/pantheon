@@ -178,6 +178,7 @@ def test_a_past_retention_partition_with_nothing_to_keep_is_deleted_whole_with_i
 
 
 def test_keyed_datasets_expire_by_their_declared_retention_and_macro_never(world):
+    assert dbs.KEYED_DATASETS["tw_broker_top"].retention_days == 750
     comm = keyed_dataset_store(world.root, "tw_community_daily")  # 180 days
     macro = keyed_dataset_store(world.root, "tw_macro_series")  # no expiry
     old_day = "2026-01-02"
@@ -189,6 +190,59 @@ def test_keyed_datasets_expire_by_their_declared_retention_and_macro_never(world
     assert comm.partitions() == sorted(recent_days) and macro.partitions() == ["2019-01"]
     assert report["stores"]["keyed"]["deleted_partitions"] == 1
     assert report["stores"]["keyed"]["datasets"]["tw_community_daily"]["partitions"] == 1
+
+
+def test_tw_broker_top_retention_days_is_750_and_sweeper_keeps_full_two_year_backfill_window(tmp_path):
+    decl = dbs.KEYED_DATASETS["tw_broker_top"]
+    assert decl.retention_days == 750
+    root = tmp_path / "store"
+    broker = keyed_dataset_store(root, "tw_broker_top")
+    assert broker is not None
+    budget = broker.budget_report()
+    assert budget["retention_days"] == 750 and "retention_" + "sessions" not in budget
+
+    end_day = date.fromisoformat("2026-11-27")
+    start_day = end_day - timedelta(days=730)
+    backfill_days = []
+    cur = start_day
+    while cur <= end_day:
+        if cur.weekday() < 5:
+            backfill_days.append(cur.isoformat())
+        cur += timedelta(days=1)
+    records = [
+        {"symbol": "2330", "trade_date": d, "side": side, "rank": 1, "broker": "A"}
+        for d in backfill_days
+        for side in ("buy", "sell")
+    ]
+    broker.write_records(records, ingest_run_id="bf")
+    assert broker.partitions() == backfill_days
+
+    pin_path = tmp_path / "pins.json"
+    pin_path.write_text(json.dumps({"trade_dates": []}), encoding="utf-8")
+    sweeper = RetentionSweeper(
+        daily_bars_store=DailyBarsStore(root),
+        report_path=tmp_path / ret.REPORT_FILENAME,
+        pin_source=PinSource([pin_path]),
+        keyed_root=root,
+        environ={ret.MODE_ENV: "delete"},
+        today=lambda: end_day.isoformat(),
+    )
+    report = sweeper.run()
+    assert report["status"] == "completed"
+    assert report["stores"]["keyed"]["would_delete_partitions"] == 0
+    assert report["stores"]["keyed"]["deleted_partitions"] == 0
+    assert broker.partitions() == backfill_days
+
+    expired_day = (end_day - timedelta(days=751)).isoformat()
+    broker.write_records([{"symbol": "2330", "trade_date": expired_day, "side": "buy", "rank": 1, "broker": "A"}], ingest_run_id="bf-old")
+    report_expired = RetentionSweeper(
+        daily_bars_store=DailyBarsStore(root), report_path=tmp_path / ret.REPORT_FILENAME,
+        pin_source=PinSource([pin_path]), keyed_root=root, environ={ret.MODE_ENV: "delete"}, today=lambda: end_day.isoformat(),
+    ).run()
+    assert report_expired["status"] == "completed"
+    assert report_expired["stores"]["keyed"]["would_delete_partitions"] == 1
+    assert report_expired["stores"]["keyed"]["deleted_partitions"] == 1
+    assert broker.partitions() == backfill_days
 
 
 def test_a_delisted_ordinary_share_keeps_its_bars_and_a_listed_one_past_retention_does_not(world):

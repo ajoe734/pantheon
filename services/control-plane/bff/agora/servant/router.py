@@ -252,6 +252,11 @@ def _message_event(session_id: str, message: Mapping[str, Any]) -> Dict[str, Any
                 "clarification": clarification,
                 "cards": [{"card_type": "clarification", **clarification}] if isinstance(clarification, dict) else [],
                 "stated_assumptions": stated_assumptions,
+                **(
+                    {"trader_report": metadata["trader_report"]}
+                    if isinstance(metadata.get("trader_report"), dict)
+                    else {}
+                ),
             },
         }
     return {
@@ -986,6 +991,7 @@ def create_servant_router(
     ensure_paper_book: Optional[Callable[..., Mapping[str, Any]]] = None,
     read_paper_book: Optional[Callable[..., Optional[Mapping[str, Any]]]] = None,
     habit_service: Any = None,
+    report_service: Any = None,
 ) -> APIRouter:
     router = APIRouter(tags=["agora-servant"])
     knowledge_reader = institutional_knowledge_reader or InstitutionalKnowledgeReader()
@@ -2187,6 +2193,39 @@ def create_servant_router(
         utc_now=utc_now,
         get_read_store=get_read_store,
         habit_service=_habit_service,
+    ))
+
+    # AGORA-SERVANT-REVISIONS-AND-REPORT-20261127: GET/POST /bff/agora/servant/reports (owner-scoped).
+    from .reports import build_default_trader_report_service, create_servant_reports_router
+
+    report_cache: Dict[str, Any] = {}
+
+    def _report_service() -> Optional[Any]:
+        if report_service is not None:
+            return report_service() if callable(report_service) else report_service
+        cached = report_cache.get("service")
+        if cached is None:
+            owner = _resolve_session_owner()
+            if owner is None:
+                return None
+            cached = build_default_trader_report_service(
+                owner,
+                trading_room_service_getter=_resolve_trading_room_service,
+                habit_service_getter=_habit_service,
+                clock=utc_now,
+            )
+            if cached is not None:
+                report_cache["service"] = cached
+        return cached
+
+    router.include_router(create_servant_reports_router(
+        extract_identity=extract_identity,
+        require_read_role=require_read_role,
+        require_write_role=require_write_role,
+        bff_error=bff_error,
+        utc_now=utc_now,
+        get_read_store=get_read_store,
+        report_service=_report_service,
     ))
 
     return router

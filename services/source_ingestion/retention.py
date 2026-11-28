@@ -5,9 +5,8 @@ step 8, section 9 row T5.
 
 What it deletes, per run, and what it never deletes:
 
-* partitions past the retention declared for their dataset (daily bars 2555 days, keyed datasets as declared
-  in ``KEYED_DATASETS``; ``retention_sessions`` keeps the newest N stored session dates through today, regardless
-  of weekends, holidays or collection gaps; without either retention declaration a dataset never expires);
+* partitions past the ``retention_days`` declared for their dataset (daily bars 2555 days, keyed datasets as declared
+  in ``KEYED_DATASETS``; a dataset with ``retention_days=None`` never expires);
 * expired warrants (decision B, final 2026-11-17): at the first run after a warrant leaves the exchange listing its
   daily bars, its current snapshot record and its lineage are deleted; nothing is archived. Expiry comes only from the
   listing (``ListingState.expired_warrants``); the snapshot record goes through ``delete_symbols``;
@@ -420,26 +419,12 @@ class RetentionSweeper:
             sizes = {p: int((store.read_manifest(p) or {}).get("bytes", 0)) for p in parts}
             plan["partitions"] += len(parts)
             plan["total_bytes"] += sum(sizes.values())
-            if decl.retention_sessions is not None:
-                # Count stored sessions, not elapsed calendar days. Future/non-date partitions cannot
-                # displace valid history. Pins outside the window are kept in addition to the N sessions.
-                sessions = []
-                for part in parts:
-                    try:
-                        parsed = date.fromisoformat(part)
-                    except ValueError:
-                        continue
-                    if parsed.isoformat() == part and part <= today:
-                        sessions.append(part)
-                expired = set(sorted(sessions)[:-decl.retention_sessions])
-            elif decl.retention_days is not None:
-                cutoff = (date.fromisoformat(today) - timedelta(days=decl.retention_days)).isoformat()
-                expired = {part for part in parts if len(part) == 10 and part[4] == "-" and part < cutoff}
-            else:
+            if decl.retention_days is None:
                 continue
+            cutoff = (date.fromisoformat(today) - timedelta(days=decl.retention_days)).isoformat()
             doomed = []
             for part in parts:
-                if part in expired:
+                if len(part) == 10 and part[4] == "-" and part < cutoff:
                     if part in pin_dates:
                         plan["pinned_kept"].append(f"{name}:{part}")
                         continue

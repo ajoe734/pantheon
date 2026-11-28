@@ -173,6 +173,15 @@ def test_backfill_step_and_summary_succeed_on_bounded_run(tmp_path: Path) -> Non
         "total_stored_bytes": 412800000,
         "max_total_bytes": 3000000000,
         "max_total_rows": 60000000,
+        "bounded_runtime": {
+            "enter_recreates": 1,
+            "restore_recreates": 1,
+            "memory_peak_bytes": 545259520,
+            "memory_limit_bytes": 6442450944,
+            "oom_killed": False,
+            "hosts": "api.finmindtrade.com,storage.googleapis.com",
+            "finmind_token": True,
+        },
         "coverage": {"passed": False, "two_sided_sessions_count": 192},
     }
     calls_file, guard_calls, guard_failed = _setup_fake_backfill_layout(tmp_path, outcome_data, deploy_rc=0)
@@ -199,6 +208,9 @@ def test_backfill_step_and_summary_succeed_on_bounded_run(tmp_path: Path) -> Non
     assert not guard_failed.exists()
     assert "tok-secret-never-print" not in proc.stdout + proc.stderr
     recorded = [json.loads(l) for l in calls_file.read_text().splitlines()][0]
+    assert "--bounded-runtime-run" in recorded
+    assert "--run-finmind" in recorded
+    assert "--run-hosts" in recorded and recorded[recorded.index("--run-hosts") + 1] == "api.finmindtrade.com,storage.googleapis.com"
     assert "--broker-backfill" in recorded
     assert "--allowed-hosts" in recorded and recorded[recorded.index("--allowed-hosts") + 1] == "api.finmindtrade.com,storage.googleapis.com"
     assert "--backfill-start" in recorded and recorded[recorded.index("--backfill-start") + 1] == "2024-11-26"
@@ -215,6 +227,7 @@ def test_backfill_step_and_summary_succeed_on_bounded_run(tmp_path: Path) -> Non
     summary_text = summary_file.read_text(encoding="utf-8")
     assert "`180` / `6000`" in summary_text
     assert "`max_requests_reached`" in summary_text
+    assert "`545259520` / `6442450944` (`oom_killed=False`)" in summary_text
 
 
 def test_backfill_step_missing_credential_and_cap_exceeded_do_not_quarantine_lease_and_fail_summary(tmp_path: Path) -> None:

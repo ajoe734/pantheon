@@ -38,6 +38,7 @@ class TradingRoomStore:
         self._workspaces: Dict[str, Dict[str, Any]] = {}
         self._widget_revision_proposals: Dict[str, Dict[str, Any]] = {}
         self._workspace_versions: Dict[str, List[Dict[str, Any]]] = {}
+        self._workspace_revision_decisions: Dict[str, List[Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # Decision events
@@ -412,6 +413,24 @@ class TradingRoomStore:
         existing = self._workspace_proposals.get(proposal_id) or {}
         if generation_meta is None:
             generation_meta = existing.get("generation_meta") or {}
+        strategy_id = str(proposal.get("strategyId") or "")
+        workspace_id = str((generation_meta or {}).get("workspaceId") or "")
+        if not workspace_id and strategy_id:
+            ws = self.get_workspace_for_strategy(
+                strategy_id, tenant_id=tenant_id, user_id=user_id
+            )
+            if ws is not None:
+                workspace_id = str(ws.get("id") or "")
+                generation_meta = {**generation_meta, "workspaceId": workspace_id}
+        if proposal.get("status") == "preview":
+            self.supersede_pending_proposals_for_workspace(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                workspace_id=workspace_id or None,
+                strategy_id=strategy_id or None,
+                keep_proposal_id=proposal_id,
+                superseded_at=str(proposal.get("generatedAt") or ""),
+            )
         self._workspace_proposals[proposal_id] = {
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -496,12 +515,32 @@ class TradingRoomStore:
         *,
         tenant_id: str,
         user_id: str,
+        trigger_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         proposal_id = str(proposal["id"])
+        existing = self._widget_revision_proposals.get(proposal_id) or {}
+        if trigger_meta is None:
+            trigger_meta = existing.get("trigger_meta") or {}
+        workspace_id = str(proposal.get("workspaceId") or "")
+        strategy_id = str((trigger_meta or {}).get("strategyId") or "")
+        if not strategy_id and workspace_id:
+            ws_rec = self._workspaces.get(workspace_id) or {}
+            ws_obj = ws_rec.get("workspace") or {}
+            strategy_id = str(ws_obj.get("strategyId") or "")
+        if proposal.get("status") == "preview":
+            self.supersede_pending_proposals_for_workspace(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                workspace_id=workspace_id or None,
+                strategy_id=strategy_id or None,
+                keep_proposal_id=proposal_id,
+                superseded_at=str((trigger_meta or {}).get("createdAt") or ""),
+            )
         self._widget_revision_proposals[proposal_id] = {
             "tenant_id": tenant_id,
             "user_id": user_id,
             "proposal": copy.deepcopy(proposal),
+            "trigger_meta": copy.deepcopy(trigger_meta),
         }
         return copy.deepcopy(proposal)
 
@@ -511,6 +550,241 @@ class TradingRoomStore:
     ) -> Optional[Dict[str, Any]]:
         record = self._widget_revision_proposals.get(proposal_id)
         return copy.deepcopy(record) if record is not None else None
+
+    def supersede_pending_proposals_for_workspace(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        workspace_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+        keep_proposal_id: Optional[str] = None,
+        superseded_at: Optional[str] = None,
+    ) -> List[str]:
+        """Enforce SD §9.2: at most one pending ('preview') proposal per workspace.
+
+        A newer trigger or proposal replaces the existing pending one by marking
+        it ``superseded``.
+        """
+        target_workspace_ids: set[str] = set()
+        if workspace_id:
+            target_workspace_ids.add(str(workspace_id))
+        target_strategy_id = str(strategy_id or "").strip()
+        if workspace_id and not target_strategy_id:
+            ws_rec = self._workspaces.get(str(workspace_id))
+            if ws_rec and str(ws_rec.get("tenant_id")) == tenant_id and str(ws_rec.get("user_id")) == user_id:
+                target_strategy_id = str((ws_rec.get("workspace") or {}).get("strategyId") or "").strip()
+        if target_strategy_id:
+            for ws in self.list_workspaces(
+                tenant_id=tenant_id, user_id=user_id, strategy_id=target_strategy_id
+            ):
+                if ws.get("id"):
+                    target_workspace_ids.add(str(ws["id"]))
+
+        superseded_ids: List[str] = []
+        for pid, rec in self._widget_revision_proposals.items():
+            if str(rec.get("tenant_id") or "") != tenant_id or str(rec.get("user_id") or "") != user_id:
+                continue
+            prop = rec.get("proposal") or {}
+            if pid == keep_proposal_id or prop.get("status") != "preview":
+                continue
+            prop_ws_id = str(prop.get("workspaceId") or "")
+            if prop_ws_id and prop_ws_id in target_workspace_ids:
+                prop["status"] = "superseded"
+                tmeta = rec.setdefault("trigger_meta", {})
+                if superseded_at:
+                    tmeta["supersededAt"] = superseded_at
+                if keep_proposal_id:
+                    tmeta["supersededBy"] = keep_proposal_id
+                superseded_ids.append(pid)
+
+        for pid, rec in self._workspace_proposals.items():
+            if str(rec.get("tenant_id") or "") != tenant_id or str(rec.get("user_id") or "") != user_id:
+                continue
+            prop = rec.get("proposal") or {}
+            if pid == keep_proposal_id or prop.get("status") != "preview":
+                continue
+            gmeta = rec.setdefault("generation_meta", {})
+            rec_ws_id = str(gmeta.get("workspaceId") or "")
+            rec_strat_id = str(prop.get("strategyId") or "")
+            matches_ws = bool(rec_ws_id and rec_ws_id in target_workspace_ids)
+            matches_strat = bool(target_strategy_id and rec_strat_id == target_strategy_id)
+            if matches_ws or matches_strat:
+                prop["status"] = "superseded"
+                if superseded_at:
+                    gmeta["supersededAt"] = superseded_at
+                if keep_proposal_id:
+                    gmeta["supersededBy"] = keep_proposal_id
+                superseded_ids.append(pid)
+
+        return superseded_ids
+
+    def record_workspace_revision_decision(
+        self,
+        workspace_id: str,
+        entry: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Record a V11 §10.3 change-log entry for an accepted or rejected proposal."""
+        key = f"{tenant_id}:{user_id}:{workspace_id}"
+        record = copy.deepcopy(entry)
+        self._workspace_revision_decisions.setdefault(key, []).append(record)
+        return copy.deepcopy(record)
+
+    def list_workspace_revision_decisions(
+        self,
+        workspace_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> List[Dict[str, Any]]:
+        key = f"{tenant_id}:{user_id}:{workspace_id}"
+        return copy.deepcopy(self._workspace_revision_decisions.get(key, []))
+
+    def list_workspace_revision_proposals(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        workspace_id: Optional[str] = None,
+        strategy_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """List workspace and widget revision proposals for one trader's workspace."""
+        target_workspace_ids: set[str] = set()
+        if workspace_id:
+            target_workspace_ids.add(str(workspace_id))
+        resolved_strategy_id = str(strategy_id or "").strip()
+        if workspace_id and not resolved_strategy_id:
+            ws_rec = self._workspaces.get(str(workspace_id))
+            if ws_rec and str(ws_rec.get("tenant_id")) == tenant_id and str(ws_rec.get("user_id")) == user_id:
+                resolved_strategy_id = str((ws_rec.get("workspace") or {}).get("strategyId") or "").strip()
+        if resolved_strategy_id:
+            for ws in self.list_workspaces(
+                tenant_id=tenant_id, user_id=user_id, strategy_id=resolved_strategy_id
+            ):
+                if ws.get("id"):
+                    target_workspace_ids.add(str(ws["id"]))
+
+        items: List[Dict[str, Any]] = []
+        for pid, rec in self._workspace_proposals.items():
+            if str(rec.get("tenant_id") or "") != tenant_id or str(rec.get("user_id") or "") != user_id:
+                continue
+            prop = copy.deepcopy(rec.get("proposal") or {})
+            gmeta = copy.deepcopy(rec.get("generation_meta") or {})
+            rec_ws_id = str(gmeta.get("workspaceId") or "")
+            rec_strat_id = str(prop.get("strategyId") or "")
+            if target_workspace_ids or resolved_strategy_id:
+                if not (
+                    (rec_ws_id and rec_ws_id in target_workspace_ids)
+                    or (resolved_strategy_id and rec_strat_id == resolved_strategy_id)
+                ):
+                    continue
+            eff_ws_id = rec_ws_id or (next(iter(target_workspace_ids)) if len(target_workspace_ids) == 1 else None)
+            items.append({
+                "id": pid,
+                "proposal_id": pid,
+                "proposalId": pid,
+                "proposal_kind": "workspace_proposal",
+                "proposalKind": "workspace_proposal",
+                "workspace_id": eff_ws_id,
+                "workspaceId": eff_ws_id,
+                "strategy_id": rec_strat_id,
+                "strategyId": rec_strat_id,
+                "strategy_version": prop.get("strategyVersion"),
+                "strategyVersion": prop.get("strategyVersion"),
+                "view_id": None,
+                "viewId": None,
+                "widget_id": None,
+                "widgetId": None,
+                "trigger": str(gmeta.get("trigger") or "strategy_version_selected"),
+                "proposer": str(gmeta.get("proposer") or "trading_servant"),
+                "change_summary": str(gmeta.get("changeSummary") or prop.get("rationale") or ""),
+                "changeSummary": str(gmeta.get("changeSummary") or prop.get("rationale") or ""),
+                "rationale": str(prop.get("rationale") or ""),
+                "status": str(prop.get("status") or "preview"),
+                "created_at": str(prop.get("generatedAt") or ""),
+                "createdAt": str(prop.get("generatedAt") or ""),
+                "habit_refs": list(gmeta.get("habitRefs") or []),
+                "habitRefs": list(gmeta.get("habitRefs") or []),
+                "trigger_details": gmeta.get("triggerDetails") or {},
+                "triggerDetails": gmeta.get("triggerDetails") or {},
+                "superseded_by": gmeta.get("supersededBy"),
+                "supersededBy": gmeta.get("supersededBy"),
+                "proposal": prop,
+            })
+
+        for pid, rec in self._widget_revision_proposals.items():
+            if str(rec.get("tenant_id") or "") != tenant_id or str(rec.get("user_id") or "") != user_id:
+                continue
+            prop = copy.deepcopy(rec.get("proposal") or {})
+            tmeta = copy.deepcopy(rec.get("trigger_meta") or {})
+            prop_ws_id = str(prop.get("workspaceId") or "")
+            if target_workspace_ids and prop_ws_id not in target_workspace_ids:
+                continue
+            items.append({
+                "id": pid,
+                "proposal_id": pid,
+                "proposalId": pid,
+                "proposal_kind": "widget_revision_proposal",
+                "proposalKind": "widget_revision_proposal",
+                "workspace_id": prop_ws_id,
+                "workspaceId": prop_ws_id,
+                "strategy_id": str(tmeta.get("strategyId") or resolved_strategy_id or ""),
+                "strategyId": str(tmeta.get("strategyId") or resolved_strategy_id or ""),
+                "strategy_version": tmeta.get("strategyVersion"),
+                "strategyVersion": tmeta.get("strategyVersion"),
+                "view_id": prop.get("viewId"),
+                "viewId": prop.get("viewId"),
+                "widget_id": prop.get("widgetId"),
+                "widgetId": prop.get("widgetId"),
+                "trigger": str(tmeta.get("trigger") or "manual_or_servant_widget_revision"),
+                "proposer": str(tmeta.get("proposer") or "trading_servant"),
+                "change_summary": str(tmeta.get("changeSummary") or prop.get("instruction") or ""),
+                "changeSummary": str(tmeta.get("changeSummary") or prop.get("instruction") or ""),
+                "rationale": str(prop.get("rationale") or ""),
+                "status": str(prop.get("status") or "preview"),
+                "created_at": str(tmeta.get("createdAt") or ""),
+                "createdAt": str(tmeta.get("createdAt") or ""),
+                "habit_refs": list(tmeta.get("habitRefs") or []),
+                "habitRefs": list(tmeta.get("habitRefs") or []),
+                "trigger_details": tmeta.get("triggerDetails") or {},
+                "triggerDetails": tmeta.get("triggerDetails") or {},
+                "superseded_by": tmeta.get("supersededBy"),
+                "supersededBy": tmeta.get("supersededBy"),
+                "proposal": prop,
+            })
+
+        items.sort(key=lambda it: (str(it.get("created_at") or ""), str(it.get("proposal_id") or "")), reverse=True)
+        pending = [it for it in items if it.get("status") == "preview"]
+        primary_ws = workspace_id or (next(iter(target_workspace_ids)) if len(target_workspace_ids) == 1 else "")
+        decisions: List[Dict[str, Any]] = []
+        for ws_key in dict.fromkeys([k for k in (primary_ws, resolved_strategy_id) if k]):
+            decisions.extend(
+                self.list_workspace_revision_decisions(
+                    ws_key, tenant_id=tenant_id, user_id=user_id
+                )
+            )
+        widget_props = [it["proposal"] for it in items if it.get("proposal_kind") == "widget_revision_proposal"]
+        ws_props = [it["proposal"] for it in items if it.get("proposal_kind") == "workspace_proposal"]
+        return {
+            "workspace_id": primary_ws or None,
+            "workspaceId": primary_ws or None,
+            "strategy_id": resolved_strategy_id or None,
+            "strategyId": resolved_strategy_id or None,
+            "pending_proposal": pending[0] if pending else None,
+            "pendingProposal": pending[0] if pending else None,
+            "pending_count": len(pending),
+            "pendingCount": len(pending),
+            "max_pending_per_workspace": 1,
+            "direct_servant_edit_allowed": False,
+            "proposals": items,
+            "widget_revision_proposals": widget_props,
+            "workspace_proposals": ws_props,
+            "change_log": decisions,
+            "changeLog": decisions,
+        }
 
     # ------------------------------------------------------------------
     # Workspace versions and change log
@@ -620,7 +894,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
         "_decision_events", "_intents", "_intent_states", "_handoffs",
         "_handoffs_by_intent", "_trader_decisions", "_idempotency_keys",
         "_workspace_proposals", "_workspaces", "_widget_revision_proposals",
-        "_workspace_versions",
+        "_workspace_versions", "_workspace_revision_decisions",
     )
 
     def __init__(self, *, dsn: str, schema: str = DEFAULT_SCHEMA) -> None:
@@ -711,7 +985,8 @@ class PostgresTradingRoomStore(TradingRoomStore):
             "apply_paper_execution_state", "reconcile_paper_execution_fill",
             "check_and_record_idempotency_key", "upsert_workspace_proposal",
             "upsert_workspace", "upsert_widget_revision_proposal",
-            "record_workspace_version",
+            "record_workspace_version", "supersede_pending_proposals_for_workspace",
+            "record_workspace_revision_decision",
         }
         readers = {
             "get_decision_event", "list_decision_events", "get_intent",
@@ -721,6 +996,7 @@ class PostgresTradingRoomStore(TradingRoomStore):
             "get_workspace_record", "get_workspace_for_strategy", "list_workspaces",
             "get_widget_revision_proposal_record",
             "list_workspace_version_records", "get_workspace_version_record",
+            "list_workspace_revision_decisions", "list_workspace_revision_proposals",
         }
         if name in mutators or name in readers:
             return lambda *args, **kwargs: object.__getattribute__(self, "_call")(

@@ -4171,3 +4171,470 @@ def test_steady_controller_ticks_yield_from_failing_tpex_to_holidays_and_suspens
     assert retry_receipt.status == "completed"
     assert retry_receipt.normalized_count == 1
 
+
+# ---------------------------------------------------------------------------
+# SOURCE-INGEST-SCHEDULER-STARTUP-CONTROLLER-TIMEOUT-20261128
+# ---------------------------------------------------------------------------
+
+
+def test_startup_catchup_missed_ticks_paces_after_single_immediate_tick_and_stays_below_failure_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 4 & 5: startup_missed_ticks: 4 with a slow first answer runs at most one
+    immediate catch-up tick and paces the rest at normal cadence; health never reaches
+    CONTROLLER_FAILURE_LIMIT (3). Uses injected clock/fakes with no wall-clock threshold.
+    """
+    from datetime import timedelta
+    from services.source_ingestion import controller_healthcheck
+
+    clock = [datetime(2026, 11, 28, 2, 42, 51, tzinfo=timezone.utc)]
+
+    def fake_utc_now() -> str:
+        return clock[0].replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    monkeypatch.setattr("services.source_ingestion.controller_state.utc_now", fake_utc_now)
+    monkeypatch.setattr("services.source_ingestion.controller_worker.utc_now", fake_utc_now)
+
+    state_path = tmp_path / "controller_state.json"
+    store = ControllerStateStore(state_path)
+    prior_state = controller_worker._new_state()
+    prior_state.started_at = "2026-11-28T02:30:00Z"
+    prior_state.heartbeat_at = "2026-11-28T02:37:51Z"
+    prior_state.last_tick_at = "2026-11-28T02:37:51Z"
+    prior_state.last_success_at = "2026-11-28T02:37:51Z"
+    store.save(prior_state)
+
+    config = replace(_config(tmp_path), state_path=state_path, interval_seconds=60, timeout_seconds=30.0, max_ticks=4)
+    writer = RecordingWriter([])
+
+    tick_dispatch_offsets: list[int] = []
+    sleep_durations: list[int] = []
+    health_evaluations: list[tuple[bool, str, int]] = []
+    start_dt = clock[0]
+
+    def fake_sleep(seconds: float) -> None:
+        sec = int(seconds)
+        sleep_durations.append(sec)
+        clock[0] = clock[0] + timedelta(seconds=sec)
+
+    def fake_tick(*, config: ControllerConfig, state: ControllerState, store: ControllerStateStore, writer: Any) -> dict[str, Any]:
+        tick_no = len(tick_dispatch_offsets) + 1
+        tick_dispatch_offsets.append(int((clock[0] - start_dt).total_seconds()))
+        state.record_tick_started()
+        if tick_no == 1:
+            # Slow first answer on cold startup (25s simulated elapsed time on injected clock)
+            clock[0] = clock[0] + timedelta(seconds=25)
+            state.record_failure(
+                stage="controller",
+                reason="TimeoutError: simulated slow first answer during startup catch-up",
+                desired_state={"sha256": "a" * 64, "persona_count": 3},
+            )
+            store.save(state)
+            reason = controller_healthcheck.evaluate(
+                state_path,
+                config.interval_seconds,
+                config.interval_seconds * 3,
+                now=clock[0],
+            )
+            health_evaluations.append((reason is None, reason or "healthy", state.consecutive_controller_failures))
+            raise ControllerTickError("controller", "TimeoutError: simulated slow first answer")
+
+        clock[0] = clock[0] + timedelta(seconds=2)
+        state.record_success(
+            desired_state={"sha256": "a" * 64, "persona_count": 3},
+            reconcile={"summary": {"satisfied": 29}, "connector_ids": ["collector-tw-cmoney-forum"]},
+            schedule={"mode": config.mode, "provider_egress_attempted": True, "summary": {"total_ran": 1, "total_failed": 0}},
+            actual_readback={"connector_count": 29, "unresolved_dlq_count": 0, "frontier_backlog": {"queued": 0, "running": 0, "retry": 0}},
+        )
+        store.save(state)
+        reason = controller_healthcheck.evaluate(
+            state_path,
+            config.interval_seconds,
+            config.interval_seconds * 3,
+            now=clock[0],
+        )
+        health_evaluations.append((reason is None, reason or "healthy", state.consecutive_controller_failures))
+        # Even when continuation_pending is True during startup catch-up (ticks < startup_missed_ticks),
+        # next_tick_sleep_seconds must pace at the full 60s cadence rather than 1s back-to-back.
+        return {"status": "ok", "continuation_pending": True}
+
+    rc = controller_worker.run_controller_loop(
+        config=config,
+        store=store,
+        writer=writer,
+        tick_fn=fake_tick,
+        sleep_fn=fake_sleep,
+    )
+    assert rc == 0
+    final_state = store.load()
+    assert final_state is not None
+    assert final_state.startup_missed_ticks == 4
+    # At most one immediate catch-up tick (tick 1 at offset 0s); ticks 2..4 wait full 60s cadence each.
+    assert sleep_durations == [60, 60, 60]
+    assert tick_dispatch_offsets == [0, 85, 147, 209]
+    assert all(ok for ok, _reason, _streak in health_evaluations)
+    assert max(streak for _ok, _reason, streak in health_evaluations) == 1 < controller_healthcheck.CONTROLLER_FAILURE_LIMIT
+    # Once startup catch-up ticks (1..3 for startup_missed_ticks=4) have completed, tick >= 4 can use continuation pause.
+    assert (
+        controller_worker.next_tick_sleep_seconds(
+            tick=4,
+            startup_missed_ticks=4,
+            interval_seconds=60,
+            continuation_pending=True,
+            last_tick_failed=False,
+        )
+        == controller_worker.CONTINUATION_PAUSE_SECONDS
+    )
+
+
+def test_cold_start_controller_stage_requests_use_pre_readyz_warmed_state_without_full_rescan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 2, 3 & 5:
+    - /readyz reports 503 while controller_readback_ready is False, and 200 after warm-up completes.
+    - When Postgres has tenanted + legacy source_id collisions (len(_source_records_by_tenant) == db_count
+      > len(_source_records)), _sync_and_list_source_records does not re-fetch all rows on the first
+      controller/readback.
+    - GET /api/source-ingest/registry (single connector filter) does not invalidate the full
+      _latest_record_cache_key used by GET /api/source-ingest/controller/readback.
+    - stored_instrument_authority reuses daily_bars + stat-validated cache without re-opening covered
+      run files.
+    """
+    pytest.importorskip("pyarrow")
+    from fastapi.testclient import TestClient
+    from scripts import backfill_daily_bars as bf
+    from services.knowledge.evidence import InMemoryEvidenceRepository
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.main import create_app
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+    from services.source_ingestion.security_listing import ListingState
+
+    data_dir = tmp_path / "source-ingest"
+    market_root = data_dir / "market_data_store"
+    norm_day = market_root / "normalized" / "tw_price_daily" / "date=2026-11-20"
+    norm_day.mkdir(parents=True, exist_ok=True)
+    row_line = json.dumps(
+        {
+            "source_id": "2330-2026-11-20",
+            "metadata": {
+                "symbol_canonical": "2330.TWSE",
+                "normalized_row": {
+                    "symbol": "2330",
+                    "symbol_canonical": "2330.TWSE",
+                    "date": "2026-11-20",
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "close": 100.0,
+                    "volume": 1000,
+                    "market": "TWSE",
+                },
+            },
+        }
+    )
+    run_file = norm_day / "ingest-0001.jsonl"
+    run_file.write_text(row_line + "\n", encoding="utf-8")
+    listing = ListingState(last_success_date="2026-11-27")
+    listing.allowlist["2330"] = {
+        "venue": "TWSE",
+        "category": "x",
+        "cfi": "ESVUFR",
+        "is_warrant": False,
+        "first_seen": "2024-01-01",
+        "last_seen": "2026-11-27",
+    }
+    bf.backfill(market_root, listing, today="2026-11-27", apply=True)
+    (market_root / "daily_bars" / "_manifest" / "date=2026-11-20.json").touch()
+
+    pg_rows = [
+        (
+            1,
+            {
+                "source_id": "tw-official:2330:001",
+                "connector_id": "tw-twse-tpex-official-market",
+                "source_type": "market",
+                "title": "2330",
+                "content_ref": "https://example.test/1",
+                "status": "normalized",
+                "trace_id": "t-1",
+                "created_at": "2026-11-27T06:30:00Z",
+                "metadata": {"tenant_id": "default", "dataset": "tw_price_daily", "symbol": "2330.TWSE"},
+            },
+        ),
+        (
+            2,
+            {
+                "source_id": "tw-official:2330:001",
+                "connector_id": "tw-twse-tpex-official-market",
+                "source_type": "market",
+                "title": "2330 legacy",
+                "content_ref": "https://example.test/1",
+                "status": "normalized",
+                "trace_id": "t-0",
+                "created_at": "2026-11-26T06:30:00Z",
+                "metadata": {"tenant_id": None, "dataset": "tw_price_daily", "symbol": "2330.TWSE"},
+            },
+        ),
+        (
+            3,
+            {
+                "source_id": "collector:collector-tw-cmoney-forum:post-1:abc",
+                "connector_id": "collector-tw-cmoney-forum",
+                "source_type": "social",
+                "title": "CMoney post",
+                "content_ref": "https://example.test/2",
+                "status": "normalized",
+                "trace_id": "t-2",
+                "created_at": "2026-11-27T07:00:00Z",
+                "metadata": {"tenant_id": "default", "dataset": "collector_bundle_items", "symbol": "2330.TWSE"},
+            },
+        ),
+    ]
+
+    class FakeCollidingPgRepo(PostgresSourceEvidenceRepository):
+        def __init__(self) -> None:
+            self.table = '"source_ingest"."source_evidence"'
+            self.full_select_calls = 0
+            self.meta_select_calls = 0
+            InMemoryEvidenceRepository.__init__(self)
+            for _aid, payload in pg_rows:
+                InMemoryEvidenceRepository.add_source_record(self, SourceRecord.from_dict(payload))
+
+        def _get_connection(self):
+            repo_self = self
+
+            class _Cur:
+                def __init__(self, rows):
+                    self._rows = rows
+
+                def fetchone(self):
+                    return self._rows[0]
+
+                def fetchall(self):
+                    return self._rows
+
+            class _Conn:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def execute(self, sql: str, params: tuple = ()):
+                    if "COUNT(*)" in sql.upper():
+                        repo_self.meta_select_calls += 1
+                        return _Cur([(3, 3)])
+                    repo_self.full_select_calls += 1
+                    return _Cur([(aid, json.dumps(p)) for aid, p in pg_rows])
+
+            return _Conn()
+
+    fake_repo = FakeCollidingPgRepo()
+    assert len(fake_repo._source_records) == 2
+    assert len(fake_repo._source_records_by_tenant) == 3
+
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(market_root))
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    monkeypatch.setattr(rt_mod, "build_source_evidence_repository", lambda _path: fake_repo)
+
+    runtime = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    runtime.snapshot_universe.stop_background_sweeps()
+    assert runtime.controller_readback_ready is True
+    assert runtime.controller_warm_start_count == 1
+    assert fake_repo.full_select_calls == 0
+
+    client = TestClient(create_app(runtime))
+    assert client.get("/readyz").status_code == 200
+    runtime.controller_readback_ready = False
+    not_ready = client.get("/readyz")
+    assert not_ready.status_code == 503
+    assert not_ready.json()["dependencies"]["source_freshness"]["reason"] == "controller_readback_warming"
+    runtime.controller_readback_ready = True
+
+    rb1 = runtime._controller_readback_payload()
+    assert rb1["source_record_count"] == 2
+    assert fake_repo.full_select_calls == 0
+    cache_key_after_rb1 = runtime._latest_record_cache_key
+
+    entries = runtime._source_connector_entries()
+    runtime._source_policy_registry_payload(entries)
+    assert runtime._latest_record_cache_key == cache_key_after_rb1
+
+    # Verify stored_instrument_authority uses daily_bars + root cache without opening covered run_file
+    monkeypatch.setattr(
+        rt_mod,
+        "_scan_run_file_symbols",
+        lambda _p: (_ for _ in ()).throw(AssertionError("covered run file should not be scanned")),
+    )
+    auth = cb.stored_instrument_authority(market_root, market_root)
+    assert auth == {"2330": ("2330.TWSE",)}
+
+
+def test_warm_controller_readback_failure_preserves_not_ready_until_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 fault-injection regression:
+    - An error during _warm_controller_readback in __init__ leaves controller_readback_ready=False
+      and GET /readyz at 503 instead of masking the failed warm-up as ready.
+    - A subsequent retry after the transient fault clears populates latest-record and DLQ caches
+      and transitions GET /readyz to 200.
+    """
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.main import create_app
+
+    data_dir = tmp_path / "failed-warm"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    with patch.object(
+        rt_mod.SourceIngestionRuntime,
+        "_grouped_freshness_snapshot",
+        side_effect=OSError("transient read error"),
+    ):
+        instance = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    instance.snapshot_universe.stop_background_sweeps()
+
+    assert instance.controller_readback_ready is False
+    assert instance.controller_warm_start_count == 1
+    assert instance._latest_record_cache_key is None
+    assert instance._cached_dlq_summary_key is None
+    assert instance.controller_readback_warm_error == "OSError: transient read error"
+
+    client = TestClient(create_app(instance))
+    not_ready = client.get("/readyz")
+    assert not_ready.status_code == 503
+    freshness_dep = not_ready.json()["dependencies"]["source_freshness"]
+    assert freshness_dep["controller_readback_ready"] is False
+    assert freshness_dep["reason"] == "controller_readback_warming"
+    assert freshness_dep["warm_error"] == "OSError: transient read error"
+
+    assert instance._warm_controller_readback() is True
+    assert instance.controller_readback_ready is True
+    assert instance.controller_warm_start_count == 2
+    assert instance.controller_readback_warm_error is None
+    assert instance._latest_record_cache_key is not None
+    assert instance._cached_dlq_summary_key is not None
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+
+
+def test_stored_instrument_authority_detects_existing_run_file_append_without_directory_mtime_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 coverage revision regression:
+    Appending to an existing covered normalized run file via market_data_storage._append_jsonl
+    leaves the parent date directory mtime unchanged, but changes the covered input file revision
+    (st_size / st_mtime_ns) and must invalidate manifest coverage so the newly appended symbol is
+    returned.
+    """
+    import os
+    from unittest.mock import patch
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.market_data_storage import _append_jsonl
+
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    market = tmp_path / "market"
+    day = market / "normalized" / "tw_price_daily" / "date=2026-11-20"
+    day.mkdir(parents=True)
+    run = day / "ingest-1.jsonl"
+    _append_jsonl(run, [{"metadata": {"symbol_canonical": "2330.TWSE"}}])
+
+    manifests = market / "daily_bars" / "_manifest"
+    manifests.mkdir(parents=True)
+    manifest = manifests / "date=2026-11-20.json"
+    manifest.write_text("{}", encoding="utf-8")
+    stamp = max(day.stat().st_mtime_ns, run.stat().st_mtime_ns, manifest.stat().st_mtime_ns) + 1_000_000
+    os.utime(manifest, ns=(stamp, stamp))
+
+    with patch.object(cb, "_daily_bars_symbols", return_value=["2330.TWSE"]):
+        before = rt_mod._cached_stored_instrument_authority(market)
+        directory_stamp = day.stat().st_mtime_ns
+        _append_jsonl(run, [{"metadata": {"symbol_canonical": "2317.TWSE"}}])
+        after = rt_mod._cached_stored_instrument_authority(market)
+
+    scanned = dict(rt_mod._scan_run_file_symbols(run))
+    assert day.stat().st_mtime_ns == directory_stamp
+    assert before == {"2330": ("2330.TWSE",)}
+    assert "2317" in scanned and "2330" in scanned
+    assert after == {"2317": ("2317.TWSE",), "2330": ("2330.TWSE",)}
+
+
+def test_latest_source_record_observes_non_tail_replacement_with_unchanged_length_and_new_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 non-tail SourceRecord replacement regression:
+    Replacing an existing non-tail SourceRecord via add_source_record leaves repository length
+    and tail record identity unchanged; both _sync_and_list_source_records() and
+    _latest_source_record_by_connector() must observe the replacement immediately and when
+    the latest completed run advances to run-2.
+    """
+    from unittest.mock import patch
+    from services.knowledge.evidence import InMemoryEvidenceRepository
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors.base import SourceRecord
+
+    data_dir = tmp_path / "non-tail-update"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    repo = InMemoryEvidenceRepository()
+    original = SourceRecord.from_dict(
+        {
+            "source_id": "first",
+            "connector_id": "collector-tw-cmoney-forum",
+            "source_type": "social",
+            "title": "old",
+            "content_ref": "https://example.test/first",
+            "status": "normalized",
+            "trace_id": "t1",
+            "created_at": "2026-11-27T07:00:00Z",
+            "metadata": {"source_ingest_run_id": "run-1"},
+        }
+    )
+    tail = replace(original, source_id="tail", connector_id="other")
+    repo.add_source_record(original)
+    repo.add_source_record(tail)
+
+    monkeypatch.setattr(rt_mod, "build_source_evidence_repository", lambda _path: repo)
+    runtime = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    runtime.snapshot_universe.stop_background_sweeps()
+
+    latest_run = {"collector-tw-cmoney-forum": "run-1"}
+    monkeypatch.setattr(
+        runtime,
+        "_grouped_freshness_snapshot",
+        lambda: {"latest_completed_run_id_by_connector": latest_run},
+    )
+    with patch.object(rt_mod, "_active_contract_symbols", return_value=set()):
+        first_read = runtime._latest_source_record_by_connector()
+        assert first_read["collector-tw-cmoney-forum"] is original
+        assert first_read["other"] is tail
+
+        # Non-tail replacement within the same run (unchanged length and tail identity)
+        same_run_updated = replace(original, title="updated-in-run-1")
+        repo.add_source_record(same_run_updated)
+        assert len(repo._source_records) == 2
+        assert next(reversed(repo._source_records.values())) is tail
+        same_run_read = runtime._latest_source_record_by_connector()
+        assert same_run_read["collector-tw-cmoney-forum"] is same_run_updated
+
+        # Non-tail replacement with new completed run-2 (unchanged length and tail identity)
+        updated = replace(original, title="updated", metadata={"source_ingest_run_id": "run-2"})
+        repo.add_source_record(updated)
+        latest_run["collector-tw-cmoney-forum"] = "run-2"
+        second_read = runtime._latest_source_record_by_connector()
+        assert second_read["collector-tw-cmoney-forum"] is updated
+        assert second_read["collector-tw-cmoney-forum"].title == "updated"
+        assert second_read["collector-tw-cmoney-forum"].metadata.get("source_ingest_run_id") == "run-2"
+
+
+
+

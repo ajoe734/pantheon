@@ -131,13 +131,105 @@ class AttributionPort:
         return items
 
 
-def attribution_port_from_env(env: Mapping[str, str], tenant: str) -> AttributionPort | None:
-    base = env.get("PANTHEON_ATTRIBUTION_API_URL", "")
-    token = env.get("PANTHEON_ATTRIBUTION_SERVICE_TOKEN", "")
-    if not base or not token:
-        return None
-    from services.persona.persona_cycle_controller import http_transport
-    return AttributionPort(http_transport(base, token, tenant))
+class HttpAttributionPort(AttributionPort):
+    """HTTP AttributionPort to ``/api/attribution/runs`` and ``/api/attribution/records``
+    authenticated with an env service token or a short-lived runtime service JWT.
+    """
+
+    URL_ENVS = (
+        "PANTHEON_ATTRIBUTION_API_URL",
+        "PANTHEON_EVALUATION_API_URL",
+        "PANTHEON_EVALUATION_SERVICE_URL",
+        "EVALUATION_URL",
+    )
+    TOKEN_ENVS = (
+        "PANTHEON_ATTRIBUTION_SERVICE_TOKEN",
+        "PANTHEON_ATTRIBUTION_SERVICE_JWT",
+        "EVALUATION_SERVICE_TOKEN",
+        "PANTHEON_EVALUATION_SERVICE_TOKEN",
+        "EVALUATION_API_TOKEN",
+    )
+    SECRET_ENVS = (
+        "PANTHEON_RUNTIME_JWT_SECRET",
+        "PANTHEON_BFF_JWT_SECRET",
+        "PERSONA_JWT_SECRET",
+    )
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        token: str | None = None,
+        jwt_secret: str | None = None,
+        tenant: str = "default",
+        env: Mapping[str, str] | None = None,
+        timeout: float = 20.0,
+    ) -> None:
+        source_env = os.environ if env is None else env
+        resolved_base = (
+            base_url
+            if base_url is not None
+            else next((source_env.get(k, "").strip() for k in self.URL_ENVS if source_env.get(k, "").strip()), "")
+        )
+        resolved_token = (
+            token
+            if token is not None
+            else next((source_env.get(k, "").strip() for k in self.TOKEN_ENVS if source_env.get(k, "").strip()), "")
+        )
+        resolved_secret = (
+            jwt_secret
+            if jwt_secret is not None
+            else next((source_env.get(k, "").strip() for k in self.SECRET_ENVS if source_env.get(k, "").strip()), "")
+        )
+        self.base_url = resolved_base.rstrip("/")
+        self._token = resolved_token.removeprefix("Bearer ").removeprefix("bearer ").strip()
+        self._jwt_secret = resolved_secret
+        self.tenant = str(tenant or "default").strip() or "default"
+        self.timeout = float(timeout)
+        self._env = source_env
+        super().__init__(self._http_call)
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and (self._token or self._jwt_secret))
+
+    def _bearer(self) -> str:
+        if self._token:
+            return self._token
+        if not self._jwt_secret:
+            return ""
+        import time as _time
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        now = int(_time.time())
+        claims: dict[str, Any] = {
+            "sub": "agora-interaction-worker",
+            "roles": ["system", "persona", "attribution_runner"],
+            "tenant_id": self.tenant,
+            "iat": now,
+            "exp": now + 120,
+        }
+        for claim, names in (
+            ("iss", ("PANTHEON_RUNTIME_JWT_ISSUER", "PANTHEON_BFF_JWT_ISSUER", "PERSONA_JWT_ISSUER")),
+            ("aud", ("PANTHEON_RUNTIME_JWT_AUDIENCE", "PANTHEON_BFF_JWT_AUDIENCE", "PERSONA_JWT_AUDIENCE")),
+        ):
+            val = next((self._env.get(n, "").strip() for n in names if self._env.get(n, "").strip()), "")
+            if val:
+                claims[claim] = val
+        return encode_jwt_hs256(claims, secret=self._jwt_secret)
+
+    def _http_call(self, method: str, path: str, body: dict | None = None) -> tuple[int, Any]:
+        if not self.configured:
+            raise RuntimeError("attribution_owner_unconfigured")
+        from services.persona.persona_cycle_controller import http_transport
+
+        transport = http_transport(self.base_url, self._bearer(), self.tenant, timeout=self.timeout)
+        return transport(method, path, body)
+
+
+def attribution_port_from_env(env: Mapping[str, str] | None = None, tenant: str = "default") -> HttpAttributionPort | None:
+    port = HttpAttributionPort(env=os.environ if env is None else env, tenant=tenant)
+    return port if port.configured else None
 
 
 def default_opener(persona: Mapping[str, Any], env: Mapping[str, str] | None = None) -> Callable[..., dict[str, Any]]:
@@ -185,6 +277,7 @@ class MeetingTriggers:
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._day_counts: dict[str, int] = {}
         self._convened_keys: set[tuple[str, str]] = set()
+        self._weekly_runs_requested: dict[tuple[str, str], dict[str, Any]] = {}
 
     # ------------------------------------------------------------- helpers
     def _opened_this_week(self, snapshots: Mapping[str, Mapping[str, Any]], persona: Mapping[str, Any], week: str) -> int:
@@ -360,40 +453,120 @@ class MeetingTriggers:
 
     def _mt3(self, ctx, pid, first, enrolled=()):
         week = ctx["week"]
+        tenant = ctx["persona"]["tenant_id"]
+        if first is None:
+            # AGORA-SERVANT-REVISIONS-AND-REPORT-20261127 (SD §13 residual 3): when no persona cycle is enrolled
+            # or active, MT-3 meeting ideation does not fire, but the weekly attribution run request still happens
+            # so weekly trader reports have settled arms.
+            ctx["record"]["not_fired"].append({"meeting_type": "MT-3", "reason": "no_enrolled_persona"})
+            ctx["record"]["weekly_outlier_run"] = self.ensure_weekly_attribution_run(
+                tenant_id=tenant, snapshots=ctx["snapshots"], today=ctx["today"]
+            )
+            return
         if pid != first:
             ctx["record"]["not_fired"].append({"meeting_type": "MT-3", "reason": "not_first_enrolled_persona"})
             return
-        tenant = ctx["persona"]["tenant_id"]
         self._convene(ctx, "MT-3", "weekly_first_enrolled_persona", f"Strategy ideation ({week})",
                       _key("MT-3", tenant, week), subject_ref=f"iso-week:{week}",
                       participants=enrolled_roster(pid, enrolled, trading_cap=4, extras=(RED_TEAM_ENTRY,)))
-        if not self.config.request_weekly_outlier_run:
-            return
-        if self._weekly_run_done(ctx):
-            ctx["record"]["weekly_outlier_run"] = {"status": "already_requested", "iso_week": week}
-            return
-        if self.attribution is None:
-            ctx["record"]["weekly_outlier_run"] = {"status": "not_requested", "reason": "attribution_owner_unconfigured"}
-            return
-        window_end = (ctx["today"] - timedelta(days=ctx["today"].weekday() + 1)).isoformat()  # last Sunday
+        ctx["record"]["weekly_outlier_run"] = self.ensure_weekly_attribution_run(
+            tenant_id=tenant, snapshots=ctx["snapshots"], today=ctx["today"]
+        )
+
+    def ensure_weekly_attribution_run(
+        self,
+        *,
+        tenant_id: str,
+        snapshots: Mapping[str, Mapping[str, Any]] | None = None,
+        today: date | None = None,
+    ) -> dict[str, Any] | None:
+        """Request the weekly attribution run idempotently per (tenant, ISO week), even when no persona cycle runs.
+
+        Addresses SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 §13 residual 3 (AC3 of T11):
+        weekly trader reports depend on the weekly attribution request occurring even if no
+        persona cycle ticks in that ISO week.
+        """
+        if not self.config.enabled or not self.config.request_weekly_outlier_run:
+            return None
+        day = today or self.now().astimezone(timezone.utc).date()
+        week = iso_week(day)
+        clean_tenant = str(tenant_id or "").strip()
+        cache_key = (clean_tenant, week)
+        if cache_key in self._weekly_runs_requested or self._weekly_run_done_for_tenant(
+            clean_tenant, week, snapshots or {}
+        ):
+            cached = self._weekly_runs_requested.get(cache_key) or {}
+            return {
+                "status": "already_requested",
+                "iso_week": week,
+                **({"run_id": cached["run_id"]} if cached.get("run_id") else {}),
+            }
+        if self.attribution is None or not getattr(self.attribution, "configured", True):
+            return {"status": "not_requested", "iso_week": week, "reason": "attribution_owner_unconfigured"}
+        window_end = (day - timedelta(days=day.weekday() + 1)).isoformat()  # last Sunday
         try:
             result = self.attribution.request_weekly_run(window_end)
-            ctx["record"]["weekly_outlier_run"] = {"status": "requested", "iso_week": week, "window_end": window_end,
-                                                   "run_id": result.get("run_id"), "run_status": result.get("status")}
+            outcome = {
+                "status": "requested",
+                "iso_week": week,
+                "window_end": window_end,
+                "run_id": result.get("run_id"),
+                "run_status": result.get("status"),
+            }
+            self._weekly_runs_requested[cache_key] = outcome
+            return dict(outcome)
         except Exception as exc:
-            ctx["record"]["weekly_outlier_run"] = {"status": "not_requested", "iso_week": week,
-                                                   "reason": str(exc)[:120] or type(exc).__name__}
+            return {
+                "status": "not_requested",
+                "iso_week": week,
+                "reason": str(exc)[:120] or type(exc).__name__,
+            }
+
+    def run_without_persona_cycle(
+        self,
+        *,
+        tenant_id: str,
+        snapshots: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Ensure the weekly attribution run happens when no persona daily cycle has run."""
+        record: dict[str, Any] = {
+            "convened": [],
+            "refused": [],
+            "not_fired": [{"meeting_type": "MT-3", "reason": "no_persona_cycle_ran"}],
+            "requests": [],
+            "weekly_outlier_run": None,
+        }
+        try:
+            if not self.config.enabled:
+                record["not_fired"] = [{"reason": "meeting_triggers_disabled"}]
+                return record
+            today = self.now().astimezone(timezone.utc).date()
+            record["weekly_outlier_run"] = self.ensure_weekly_attribution_run(
+                tenant_id=tenant_id,
+                snapshots=snapshots,
+                today=today,
+            )
+        except Exception as exc:
+            record["error"] = "meeting_triggers_unavailable:" + type(exc).__name__
+        return record
 
     @staticmethod
-    def _weekly_run_done(ctx) -> bool:
-        persona, week = ctx["persona"], ctx["week"]
-        for p in ctx["snapshots"].values():
-            if p.get("tenant_id") != persona["tenant_id"]:
+    def _weekly_run_done_for_tenant(
+        tenant_id: str, week: str, snapshots: Mapping[str, Mapping[str, Any]]
+    ) -> bool:
+        for p in snapshots.values():
+            if p.get("tenant_id") != tenant_id:
                 continue
             run = ((p.get("persona_cycle") or {}).get("meetings") or {}).get("weekly_outlier_run") or {}
             if run.get("status") == "requested" and run.get("iso_week") == week:
                 return True
         return False
+
+    @staticmethod
+    def _weekly_run_done(ctx) -> bool:
+        return MeetingTriggers._weekly_run_done_for_tenant(
+            str(ctx["persona"].get("tenant_id") or ""), ctx["week"], ctx["snapshots"]
+        )
 
     def _mt4(self, ctx, pid, first, enrolled):
         record = ctx["record"]

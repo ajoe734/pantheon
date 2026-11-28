@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import uuid
 
 from fastapi import HTTPException
@@ -91,6 +91,59 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
 # paper execution owner executes at most this many intents per trader per
 # Taipei day and rejects the rest with reason_code ``daily_cap``.
 PAPER_INTENT_DAILY_CAP = 50
+# AGORA-SERVANT-REVISIONS-AND-REPORT-20261127 (SD §9.2): repeated trader edits
+# of the same widget (3 times in 7 days) trigger one servant widget revision
+# proposal that makes the edit the default.
+REPEATED_WIDGET_EDIT_THRESHOLD = 3
+REPEATED_WIDGET_EDIT_WINDOW_DAYS = 7
+SERVANT_DIRECT_ACTORS = frozenset({"servant", "trading_servant", "ai_servant"})
+
+
+def _parse_iso_dt(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_strategy_spec_changes(
+    previous_spec: Optional[Mapping[str, Any]],
+    current_spec: Optional[Mapping[str, Any]],
+    *,
+    previous_version: Optional[str] = None,
+    current_version: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Tuple[str, List[str]]:
+    """Deterministically summarize what changed between two StrategySpec versions."""
+    changed_fields: List[str] = []
+    if isinstance(previous_spec, Mapping) and isinstance(current_spec, Mapping):
+        all_keys = sorted(set(previous_spec.keys()) | set(current_spec.keys()))
+        for key in all_keys:
+            if key in {"spec_version", "updated_at", "created_at"}:
+                continue
+            if previous_spec.get(key) != current_spec.get(key):
+                changed_fields.append(str(key))
+    elif isinstance(current_spec, Mapping):
+        changed_fields = [
+            str(k)
+            for k in sorted(current_spec.keys())
+            if k not in {"spec_version", "updated_at", "created_at"} and current_spec.get(k)
+        ][:6]
+
+    parts: List[str] = []
+    if previous_version and current_version and previous_version != current_version:
+        parts.append(f"策略版本由 {previous_version} 更新至 {current_version}")
+    elif current_version:
+        parts.append(f"選用策略版本 {current_version}")
+    if changed_fields:
+        parts.append("變更區塊：" + "、".join(changed_fields[:8]))
+    clean_reason = str(reason or "").strip()
+    if clean_reason:
+        parts.append(f"原因：{clean_reason}")
+    summary = "；".join(parts) if parts else f"策略版本更新（{current_version or 'new'}）"
+    return summary, changed_fields
 
 _orig_store_record_trader_decision = TradingRoomStore.record_trader_decision
 
@@ -468,9 +521,82 @@ class TradingRoomService:
                 payload = op.get("payload") or {}
                 if isinstance(payload, dict):
                     widget_id = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
+                    if not widget_id:
+                        wspec = payload.get("widgetSpec") or payload.get("widget_spec")
+                        if isinstance(wspec, dict):
+                            widget_id = str(wspec.get("id") or "").strip()
             if widget_id and widget_id not in affected:
                 affected.append(widget_id)
         return affected
+
+    def _reject_servant_direct_mutation(
+        self,
+        payload: Optional[Mapping[str, Any]],
+        *,
+        reason: str = "servant_direct_widget_patch_not_allowed",
+    ) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        actor = str(
+            payload.get("initiatedBy")
+            or payload.get("initiated_by")
+            or payload.get("actorType")
+            or payload.get("actor_type")
+            or ""
+        ).strip()
+        if actor in SERVANT_DIRECT_ACTORS:
+            ErrorCode = self._error_code_enum()
+            raise self.bff_error(
+                409,
+                ErrorCode.OPERATION_NOT_ALLOWED,
+                "Servant-originated workspace or widget changes must use revision proposal routes",
+                reason,
+            )
+
+    def _habit_refs_for_scope(
+        self,
+        scope: Mapping[str, str],
+        strategy_id: Optional[str] = None,
+    ) -> Tuple[List[str], List[str]]:
+        """Return (shown_habit_feature_keys, human_statements) from the trader's habit profile."""
+        owner = self.decision_lock_owner
+        if owner is None:
+            return [], []
+        tenant_id = str(scope.get("tenant_id") or "").strip()
+        user_id = str(scope.get("user_id") or "").strip()
+        if not tenant_id or not user_id:
+            return [], []
+        profile: Optional[Mapping[str, Any]] = None
+        try:
+            if hasattr(owner, "get_habit_profile"):
+                profile = owner.get_habit_profile(
+                    tenant_id=tenant_id, user_id=user_id, strategy_id=strategy_id
+                )
+                if profile is None and strategy_id:
+                    profile = owner.get_habit_profile(
+                        tenant_id=tenant_id, user_id=user_id, strategy_id=None
+                    )
+            if profile is None and hasattr(owner, "refresh_habit_profile"):
+                profile = owner.refresh_habit_profile(
+                    tenant_id=tenant_id, user_id=user_id, strategy_id=strategy_id
+                )
+        except Exception:
+            profile = None
+        if not isinstance(profile, Mapping):
+            return [], []
+        feature_keys: List[str] = []
+        statements: List[str] = []
+        for feat in profile.get("features") or []:
+            if isinstance(feat, Mapping) and feat.get("shown") and feat.get("key"):
+                feature_keys.append(str(feat["key"]))
+        try:
+            from ..servant.habits import derive_interpretations
+            for interp in derive_interpretations(profile):
+                if interp.get("statement"):
+                    statements.append(str(interp["statement"]))
+        except Exception:
+            pass
+        return feature_keys, statements
 
     # -----------------------------------------------------------------------
     # Decision Events & Trader Decisions
@@ -1796,6 +1922,24 @@ class TradingRoomService:
 
         now = self.utc_now()
         scope = _workspace_scope(identity)
+        habit_keys, habit_statements = self._habit_refs_for_scope(scope, strategy_id)
+        change_summary = str(
+            body.get("changeSummary")
+            or body.get("change_summary")
+            or (personalization_hints or {}).get("changeSummary")
+            or ""
+        ).strip()
+        trigger_kind = str(
+            body.get("trigger")
+            or (personalization_hints or {}).get("trigger")
+            or "strategy_version_selected"
+        ).strip()
+        merged_hints = dict(personalization_hints or {})
+        if habit_keys and "habitRefs" not in merged_hints:
+            merged_hints["habitRefs"] = habit_keys
+        if change_summary and "changeSummary" not in merged_hints:
+            merged_hints["changeSummary"] = change_summary
+
         resolved_data_freshness = _workspace_data_freshness(
             store=self.store,
             strategy_id=strategy_id,
@@ -1811,7 +1955,7 @@ class TradingRoomService:
             strategy_version=strategy_version,
             proposal_id=f"trp_{uuid.uuid4().hex[:12]}",
             now=now,
-            personalization_hints=personalization_hints,
+            personalization_hints=merged_hints,
             evidence_refs=evidence_refs,
             data_freshness=resolved_data_freshness,
             trading_room_ready=trading_room_ready,
@@ -1824,6 +1968,12 @@ class TradingRoomService:
                 status_code=422,
             )
         proposal = generation.proposal
+        if change_summary:
+            habit_note = f"（依據您的交易習慣：{habit_statements[0]}）" if habit_statements else ""
+            proposal["rationale"] = f"{change_summary}{habit_note}。{proposal['rationale']}"
+        elif habit_statements:
+            proposal["rationale"] = f"依據您的交易習慣（{habit_statements[0]}）：{proposal['rationale']}"
+
         errors: List[str] = []
         if tuple(view["id"] for view in proposal["views"]) != _WINNER_BRANCH_VIEW_IDS:
             errors.append("proposal must include the full V11 Winner Branch view set")
@@ -1832,13 +1982,35 @@ class TradingRoomService:
         if errors:
             self.validation_failed(errors)
 
+        existing_ws = self.store.get_workspace_for_strategy(
+            strategy_id, tenant_id=scope["tenant_id"], user_id=scope["user_id"]
+        )
+        gen_meta = {
+            **generation.meta(),
+            "trigger": trigger_kind,
+            "proposer": "trading_servant",
+            "changeSummary": change_summary or f"v1 - trading servant initial workspace proposal ({strategy_version})",
+            "habitRefs": habit_keys,
+            "createdAt": now,
+        }
+        target_ws_id = str(
+            body.get("workspaceId")
+            or body.get("workspace_id")
+            or (existing_ws or {}).get("id")
+            or ""
+        ).strip()
+        if target_ws_id:
+            gen_meta["workspaceId"] = target_ws_id
+        if isinstance(body.get("triggerDetails"), Mapping):
+            gen_meta["triggerDetails"] = dict(body["triggerDetails"])
+
         self.store.upsert_workspace_proposal(
             proposal,
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
-            generation_meta=generation.meta(),
+            generation_meta=gen_meta,
         )
-        return proposal, generation.meta()
+        return proposal, gen_meta
 
     def get_workspace_proposal(
         self,
@@ -1886,16 +2058,46 @@ class TradingRoomService:
                 details_extra={"proposal_status": proposal.get("status")},
             )
 
-        workspace = _workspace_from_proposal(
-            proposal=proposal,
-            workspace_id=f"trw_{uuid.uuid4().hex[:12]}",
-            user_id=scope["user_id"],
-            now=self.utc_now(),
+        gen_meta = self.store.get_workspace_proposal_generation_meta(proposal_id)
+        bound_ws_id = str((gen_meta or {}).get("workspaceId") or "").strip()
+        existing_ws_record = (
+            self.store.get_workspace_record(bound_ws_id) if bound_ws_id else None
         )
+        now = self.utc_now()
+        if (
+            existing_ws_record is not None
+            and _record_visible_to_scope(existing_ws_record, scope)
+            and isinstance(existing_ws_record.get("workspace"), dict)
+        ):
+            existing_ws = copy.deepcopy(existing_ws_record["workspace"])
+            existing_ws["strategyVersion"] = proposal["strategyVersion"]
+            existing_ws["views"] = copy.deepcopy(proposal["views"])
+            existing_ws["activeViewId"] = proposal["views"][0]["id"]
+            workspace = _touch_workspace(existing_ws, now=now, generated_by="trading_servant")
+            summary_text = str(
+                (gen_meta or {}).get("changeSummary")
+                or f"v{workspace['dashboardVersion']} - strategy version revision ({proposal['strategyVersion']})"
+            )
+            source_rev_id: Optional[str] = proposal_id
+        else:
+            workspace = _workspace_from_proposal(
+                proposal=proposal,
+                workspace_id=f"trw_{uuid.uuid4().hex[:12]}",
+                user_id=scope["user_id"],
+                now=now,
+            )
+            raw_summary = str((gen_meta or {}).get("changeSummary") or "").strip()
+            summary_text = (
+                raw_summary
+                if raw_summary and not raw_summary.startswith("v1 - trading servant initial workspace proposal")
+                else "v1 - trading servant initial workspace proposal"
+            )
+            source_rev_id = None
+
         version = self.persist_workspace_with_version(
             workspace,
             scope=scope,
-            change_summary="v1 - trading servant initial workspace proposal",
+            change_summary=summary_text,
             generated_by="trading_servant",
             changed_by="trading_servant",
             reason=proposal.get("rationale"),
@@ -1905,15 +2107,106 @@ class TradingRoomService:
                 for view in workspace.get("views") or []
                 for widget in view.get("widgets") or []
             ],
+            source_revision_proposal_id=source_rev_id,
         )
 
         proposal["status"] = "accepted"
+        gen_meta["workspaceId"] = workspace["id"]
         self.store.upsert_workspace_proposal(
             proposal,
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
+            generation_meta=gen_meta,
+        )
+        self.store.record_workspace_revision_decision(
+            workspace["id"],
+            {
+                "proposalId": proposal_id,
+                "proposalKind": "workspace_proposal",
+                "workspaceId": workspace["id"],
+                "strategyId": strategy_id,
+                "strategyVersion": proposal["strategyVersion"],
+                "trigger": str((gen_meta or {}).get("trigger") or "strategy_version_selected"),
+                "proposer": "trading_servant",
+                "decidedBy": scope["user_id"],
+                "decidedAt": now,
+                "status": "accepted",
+                "reason": str(proposal.get("rationale") or summary_text),
+                "changeSummary": summary_text,
+                "effectEvaluation": "not_evaluated",
+                "rollbackAvailable": True,
+                "versionId": version["id"],
+            },
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
         )
         return workspace, version
+
+    def reject_workspace_proposal(
+        self,
+        strategy_id: str,
+        proposal_id: str,
+        body: Optional[Dict[str, Any]],
+        identity: Any,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if idempotency_key:
+            self.check_idempotency(
+                identity,
+                f"POST:/bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject",
+                idempotency_key,
+            )
+        proposal, scope = self.load_proposal_for_identity(
+            strategy_id=strategy_id,
+            proposal_id=proposal_id,
+            identity=identity,
+        )
+        if proposal.get("status") != "preview":
+            ErrorCode = self._error_code_enum()
+            raise self.bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Only preview TradingRoomWorkspaceProposal resources can be rejected",
+                "workspace_proposal_not_preview",
+                details_extra={"proposal_status": proposal.get("status")},
+            )
+        now = self.utc_now()
+        reason = str((body or {}).get("reason") or "").strip() or "交易員拒絕套用此版面修訂提案。"
+        gen_meta = self.store.get_workspace_proposal_generation_meta(proposal_id)
+        # TradingRoomWorkspaceProposal.status enum in trading_room_workspace.schema.json uses 'cancelled'
+        proposal["status"] = "cancelled"
+        gen_meta["rejectedAt"] = now
+        gen_meta["rejectionReason"] = reason
+        self.store.upsert_workspace_proposal(
+            proposal,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            generation_meta=gen_meta,
+        )
+        ws_id = str((gen_meta or {}).get("workspaceId") or strategy_id)
+        decision_entry = self.store.record_workspace_revision_decision(
+            ws_id,
+            {
+                "proposalId": proposal_id,
+                "proposalKind": "workspace_proposal",
+                "workspaceId": (gen_meta or {}).get("workspaceId"),
+                "strategyId": strategy_id,
+                "strategyVersion": proposal.get("strategyVersion"),
+                "trigger": str((gen_meta or {}).get("trigger") or "strategy_version_selected"),
+                "proposer": "trading_servant",
+                "decidedBy": scope["user_id"],
+                "decidedAt": now,
+                "status": "rejected",
+                "reason": reason,
+                "changeSummary": str((gen_meta or {}).get("changeSummary") or proposal.get("rationale") or ""),
+                "effectEvaluation": "not_evaluated",
+                "rollbackAvailable": False,
+                "versionId": None,
+            },
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        return {"proposal": proposal, "changeLog": decision_entry}
 
     def lookup_workspace(
         self,
@@ -1983,17 +2276,22 @@ class TradingRoomService:
                 f"PATCH:/bff/agora/trading-room/workspaces/{workspace_id}/layout",
                 idempotency_key,
             )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_layout_patch_not_allowed")
         workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         self.require_workspace_etag(if_match, workspace)
 
         operations = (body or {}).get("operations") or []
         if not isinstance(operations, list) or not operations:
             self.validation_failed(["operations must be a non-empty array"], status_code=400)
+        for op in operations:
+            if isinstance(op, Mapping):
+                self._reject_servant_direct_mutation(op, reason="servant_direct_layout_patch_not_allowed")
 
         now = self.utc_now()
         updated, errors = _apply_workspace_layout_ops(workspace, operations, now=now)
         if errors or updated is None:
             self.validation_failed(errors)
+        affected_widgets = self.affected_widgets_from_operations(operations)
         version = self.persist_workspace_with_version(
             updated,
             scope=scope,
@@ -2001,7 +2299,13 @@ class TradingRoomService:
             generated_by="user_modified",
             changed_by=scope["user_id"],
             reason="layout operations accepted by trader",
-            affected_widgets=self.affected_widgets_from_operations(operations),
+            affected_widgets=affected_widgets,
+        )
+        self._check_repeated_trader_edits_trigger(
+            workspace=updated,
+            scope=scope,
+            affected_widgets=affected_widgets,
+            now=now,
         )
         return updated, version
 
@@ -2019,6 +2323,7 @@ class TradingRoomService:
                 f"POST:/bff/agora/trading-room/workspaces/{workspace_id}/views",
                 idempotency_key,
             )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_view_patch_not_allowed")
         workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         self.require_workspace_etag(if_match, workspace)
 
@@ -2068,6 +2373,7 @@ class TradingRoomService:
                 f"PATCH:/bff/agora/trading-room/workspaces/{workspace_id}/views/{view_id}",
                 idempotency_key,
             )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_view_patch_not_allowed")
         workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         self.require_workspace_etag(if_match, workspace)
         updated = copy.deepcopy(workspace)
@@ -2079,6 +2385,7 @@ class TradingRoomService:
         patch = body.get("patch") or body
         if not isinstance(patch, dict):
             self.validation_failed(["patch must be an object"], status_code=400)
+        self._reject_servant_direct_mutation(patch, reason="servant_direct_view_patch_not_allowed")
         unsupported = set(patch) - (_VIEW_ALLOWED_FIELDS - {"id"})
         if unsupported:
             self.validation_failed([f"view patch has unsupported fields: {sorted(unsupported)}"], status_code=400)
@@ -2119,6 +2426,7 @@ class TradingRoomService:
                 f"POST:/bff/agora/trading-room/workspaces/{workspace_id}/widgets",
                 idempotency_key,
             )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_widget_patch_not_allowed")
         workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         self.require_workspace_etag(if_match, workspace)
         view_id = str(body.get("viewId") or body.get("view_id") or "").strip()
@@ -2127,6 +2435,7 @@ class TradingRoomService:
         widget = body.get("widgetSpec") or body.get("widget_spec") or {}
         if not isinstance(widget, dict):
             self.validation_failed(["widgetSpec must be an object"], status_code=400)
+        self._reject_servant_direct_mutation(widget, reason="servant_direct_widget_patch_not_allowed")
 
         updated = copy.deepcopy(workspace)
         view = _find_view(updated, view_id)
@@ -2172,22 +2481,15 @@ class TradingRoomService:
                 f"PATCH:/bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}",
                 idempotency_key,
             )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_widget_patch_not_allowed")
         workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
         self.require_workspace_etag(if_match, workspace)
         patch = body.get("patch") or body
         if not isinstance(patch, dict):
             self.validation_failed(["patch must be an object"], status_code=400)
-        actor = str(patch.get("initiatedBy") or patch.get("initiated_by") or patch.get("actorType") or "").strip()
-        if actor in {"servant", "trading_servant", "ai_servant"}:
-            ErrorCode = self._error_code_enum()
-            raise self.bff_error(
-                409,
-                ErrorCode.OPERATION_NOT_ALLOWED,
-                "Servant-originated widget changes must use WidgetRevisionProposal routes",
-                "servant_direct_widget_patch_not_allowed",
-            )
+        self._reject_servant_direct_mutation(patch, reason="servant_direct_widget_patch_not_allowed")
 
-        unsupported = set(patch) - (_WIDGET_ALLOWED_FIELDS - {"id"}) - {"initiatedBy", "initiated_by", "actorType"}
+        unsupported = set(patch) - (_WIDGET_ALLOWED_FIELDS - {"id"}) - {"initiatedBy", "initiated_by", "actorType", "actor_type"}
         if unsupported:
             self.validation_failed([f"widget patch has unsupported fields: {sorted(unsupported)}"], status_code=400)
         updated = copy.deepcopy(workspace)
@@ -2198,7 +2500,7 @@ class TradingRoomService:
         clean_patch = {
             key: value
             for key, value in patch.items()
-            if key not in {"initiatedBy", "initiated_by", "actorType"}
+            if key not in {"initiatedBy", "initiated_by", "actorType", "actor_type"}
         }
         _normalize_widget_data_availability(clean_patch)
         widget.update(copy.deepcopy(clean_patch))
@@ -2217,6 +2519,12 @@ class TradingRoomService:
             reason="manual workspace widget update",
             affected_views=[str((_view or {}).get("id") or "")],
             affected_widgets=[widget_id],
+        )
+        self._check_repeated_trader_edits_trigger(
+            workspace=updated,
+            scope=scope,
+            affected_widgets=[widget_id],
+            now=now,
         )
         return updated, version
 
@@ -2285,6 +2593,24 @@ class TradingRoomService:
         if errors:
             self.validation_failed(errors)
 
+        now = self.utc_now()
+        habit_keys, habit_statements = self._habit_refs_for_scope(
+            scope, str(workspace.get("strategyId") or "")
+        )
+        trigger_kind = str(payload.get("trigger") or "manual_or_servant_widget_revision").strip()
+        trigger_meta: Dict[str, Any] = {
+            "trigger": trigger_kind,
+            "proposer": "trading_servant",
+            "strategyId": workspace.get("strategyId"),
+            "strategyVersion": workspace.get("strategyVersion"),
+            "changeSummary": str(payload.get("changeSummary") or instruction),
+            "habitRefs": habit_keys,
+            "habitStatements": habit_statements[:3],
+            "createdAt": now,
+        }
+        if isinstance(payload.get("triggerDetails"), Mapping):
+            trigger_meta["triggerDetails"] = dict(payload["triggerDetails"])
+
         proposal = {
             "id": f"wrp_{uuid.uuid4().hex[:12]}",
             "workspaceId": workspace_id,
@@ -2302,6 +2628,7 @@ class TradingRoomService:
             proposal,
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
+            trigger_meta=trigger_meta,
         )
         return proposal
 
@@ -2439,12 +2766,799 @@ class TradingRoomService:
             source_revision_proposal_id=proposal_id,
         )
         proposal["status"] = "accepted"
+        raw_rec = self.store.get_widget_revision_proposal_record(proposal_id) or {}
+        tmeta = dict(raw_rec.get("trigger_meta") or {})
         self.store.upsert_widget_revision_proposal(
             proposal,
             tenant_id=scope["tenant_id"],
             user_id=scope["user_id"],
+            trigger_meta=tmeta,
+        )
+        self.store.record_workspace_revision_decision(
+            workspace_id,
+            {
+                "proposalId": proposal_id,
+                "proposalKind": "widget_revision_proposal",
+                "workspaceId": workspace_id,
+                "viewId": proposal["viewId"],
+                "widgetId": proposal["widgetId"],
+                "strategyId": workspace.get("strategyId"),
+                "strategyVersion": workspace.get("strategyVersion"),
+                "trigger": str(tmeta.get("trigger") or "manual_or_servant_widget_revision"),
+                "proposer": "trading_servant",
+                "decidedBy": scope["user_id"],
+                "decidedAt": now,
+                "status": "accepted",
+                "appliedAction": applied_action,
+                "reason": proposal["rationale"],
+                "changeSummary": change_summary,
+                "effectEvaluation": "not_evaluated",
+                "rollbackAvailable": True,
+                "versionId": version["id"],
+            },
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
         )
         return proposal, updated, version, applied_action, copied_widget_id
+
+    def reject_widget_revision_proposal(
+        self,
+        proposal_id: str,
+        body: Optional[Dict[str, Any]],
+        identity: Any,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if idempotency_key:
+            self.check_idempotency(
+                identity,
+                f"POST:/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject",
+                idempotency_key,
+            )
+        proposal, scope = self.load_revision_proposal_for_identity(
+            proposal_id=proposal_id,
+            identity=identity,
+        )
+        if proposal.get("status") != "preview":
+            ErrorCode = self._error_code_enum()
+            raise self.bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Only preview WidgetRevisionProposal resources can be rejected",
+                "widget_revision_proposal_not_preview",
+                details_extra={"proposal_status": proposal.get("status")},
+            )
+        workspace_id = proposal["workspaceId"]
+        workspace, ws_scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        if ws_scope != scope:
+            self.raise_workspace_forbidden("widget_revision_proposal", proposal_id)
+
+        now = self.utc_now()
+        reason = str((body or {}).get("reason") or "").strip() or "交易員拒絕套用此元件修訂提案。"
+        proposal["status"] = "rejected"
+        raw_rec = self.store.get_widget_revision_proposal_record(proposal_id) or {}
+        tmeta = dict(raw_rec.get("trigger_meta") or {})
+        tmeta["rejectedAt"] = now
+        tmeta["rejectionReason"] = reason
+        self.store.upsert_widget_revision_proposal(
+            proposal,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            trigger_meta=tmeta,
+        )
+        decision_entry = self.store.record_workspace_revision_decision(
+            workspace_id,
+            {
+                "proposalId": proposal_id,
+                "proposalKind": "widget_revision_proposal",
+                "workspaceId": workspace_id,
+                "viewId": proposal.get("viewId"),
+                "widgetId": proposal.get("widgetId"),
+                "strategyId": workspace.get("strategyId"),
+                "strategyVersion": workspace.get("strategyVersion"),
+                "trigger": str(tmeta.get("trigger") or "manual_or_servant_widget_revision"),
+                "proposer": "trading_servant",
+                "decidedBy": scope["user_id"],
+                "decidedAt": now,
+                "status": "rejected",
+                "reason": reason,
+                "changeSummary": str(tmeta.get("changeSummary") or proposal.get("instruction") or ""),
+                "effectEvaluation": "not_evaluated",
+                "rollbackAvailable": False,
+                "versionId": None,
+            },
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        return {"proposal": proposal, "workspace": workspace, "changeLog": decision_entry}
+
+    def list_workspace_revision_proposals(
+        self,
+        workspace_id: str,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        return self.store.list_workspace_revision_proposals(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            workspace_id=workspace_id,
+            strategy_id=str(workspace.get("strategyId") or ""),
+        )
+
+    # -----------------------------------------------------------------------
+    # SD §9.2 Servant-initiated workspace revision triggers
+    # -----------------------------------------------------------------------
+
+    def on_strategy_version_selected(
+        self,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        tenant_id: str,
+        user_id: str,
+        previous_strategy_version: Optional[str] = None,
+        previous_strategy_spec: Optional[Mapping[str, Any]] = None,
+        current_strategy_spec: Optional[Mapping[str, Any]] = None,
+        change_reason: Optional[str] = None,
+        workshop_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Trigger 1 (SD §9.2): A new strategy version is selected in the workshop.
+
+        Produces one workspace revision proposal through ``create_workspace_proposal``
+        with ``changeSummary`` naming what changed in the strategy. At most one
+        pending proposal exists per workspace; the servant never edits the
+        workspace directly.
+        """
+        change_summary, changed_fields = summarize_strategy_spec_changes(
+            previous_strategy_spec,
+            current_strategy_spec,
+            previous_version=previous_strategy_version,
+            current_version=strategy_version,
+            reason=change_reason,
+        )
+        identity = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "sub": user_id,
+            "roles": ["trader"],
+        }
+        proposal, gen_meta = self.create_workspace_proposal(
+            strategy_id=strategy_id,
+            body={
+                "strategyVersion": strategy_version,
+                "trigger": "strategy_version_selected",
+                "changeSummary": change_summary,
+                "workspaceId": workspace_id,
+                "personalizationHints": {
+                    "trigger": "strategy_version_selected",
+                    "changeSummary": change_summary,
+                    "changedFields": changed_fields,
+                    "previousStrategyVersion": previous_strategy_version,
+                    "workshopId": workshop_id,
+                },
+                "triggerDetails": {
+                    "trigger": "strategy_version_selected",
+                    "previousStrategyVersion": previous_strategy_version,
+                    "newStrategyVersion": strategy_version,
+                    "changedFields": changed_fields,
+                    "workshopId": workshop_id,
+                    "changeReason": change_reason,
+                },
+            },
+            identity=identity,
+        )
+        _tr_publish(
+            {"tenant_id": tenant_id, "user_id": user_id},
+            "trading_room.workspace.revision_proposed",
+            {
+                "proposal_id": proposal["proposalId"],
+                "proposal_kind": "workspace_proposal",
+                "workspace_id": gen_meta.get("workspaceId"),
+                "strategy_id": strategy_id,
+                "strategy_version": strategy_version,
+                "trigger": "strategy_version_selected",
+                "change_summary": change_summary,
+                "direct_workspace_edit": False,
+            },
+            self.utc_now(),
+        )
+        return proposal, gen_meta
+
+    def _check_repeated_trader_edits_trigger(
+        self,
+        *,
+        workspace: Dict[str, Any],
+        scope: Dict[str, str],
+        affected_widgets: Sequence[str],
+        now: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Trigger 2 (SD §9.2): Repeated trader edits (same widget edited 3 times in 7 days).
+
+        Counts layout and widget versions per widget within the last 7 days where
+        ``generatedBy == 'user_modified'``. When a widget reaches >= 3 edits in
+        7 days, generates one WidgetRevisionProposal that makes the edit the
+        default, superseding any existing pending proposal for this workspace.
+        """
+        if not affected_widgets:
+            return None
+        workspace_id = str(workspace.get("id") or "")
+        versions = self.store.list_workspace_version_records(
+            workspace_id,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+        )
+        now_dt = _parse_iso_dt(now) or datetime.now(timezone.utc)
+        from datetime import timedelta
+
+        window_start = now_dt - timedelta(days=REPEATED_WIDGET_EDIT_WINDOW_DAYS)
+        created_proposal: Optional[Dict[str, Any]] = None
+
+        for widget_id in affected_widgets:
+            clean_wid = str(widget_id or "").strip()
+            if not clean_wid:
+                continue
+            matching_versions: List[str] = []
+            for ver in versions:
+                if str(ver.get("generatedBy") or "") != "user_modified":
+                    continue
+                clog = ver.get("changeLog") if isinstance(ver.get("changeLog"), Mapping) else {}
+                ver_widgets = [str(w) for w in (clog.get("affectedWidgets") or [])]
+                if clean_wid not in ver_widgets:
+                    continue
+                ver_dt = _parse_iso_dt(ver.get("createdAt") or clog.get("changedAt"))
+                if ver_dt is not None and ver_dt < window_start:
+                    continue
+                matching_versions.append(str(ver.get("id") or ""))
+
+            if len(matching_versions) < REPEATED_WIDGET_EDIT_THRESHOLD:
+                continue
+
+            view, current_widget = _find_widget(workspace, clean_wid)
+            if view is None or current_widget is None:
+                continue
+            before_spec = copy.deepcopy(current_widget)
+            _normalize_widget_data_availability(before_spec)
+            before_spec.setdefault("dataAvailability", "partial")
+            proposed_spec = copy.deepcopy(before_spec)
+            habit_keys, habit_statements = self._habit_refs_for_scope(
+                scope, str(workspace.get("strategyId") or "")
+            )
+            habit_note = f"（引用習慣：{habit_statements[0]}）" if habit_statements else ""
+            base_why = str(proposed_spec.get("whyIncluded") or "").strip()
+            default_note = (
+                f"僕人觀察到您在 {REPEATED_WIDGET_EDIT_WINDOW_DAYS} 天內手動修改此元件 "
+                f"{len(matching_versions)} 次，建議將此設定固定為版面預設值{habit_note}。"
+            )
+            if default_note not in base_why:
+                proposed_spec["whyIncluded"] = f"{base_why} {default_note}".strip()
+            q = copy.deepcopy(proposed_spec.get("query") or {"filters": {}})
+            filters = dict(q.get("filters") or {})
+            filters["servantDefaultedFromRepeatedEdits"] = True
+            filters["repeatedEditCount7d"] = len(matching_versions)
+            q["filters"] = filters
+            proposed_spec["query"] = q
+
+            change_summary = (
+                f"交易員於 {REPEATED_WIDGET_EDIT_WINDOW_DAYS} 天內調整元件 {clean_wid} "
+                f"共 {len(matching_versions)} 次，僕人提案將此修改設為版面預設值"
+            )
+            rationale = (
+                f"{change_summary}{habit_note}（版本：{', '.join(matching_versions[-3:])}）。"
+                "僕人不會直接修改版面，需經交易員同意後才套用。"
+            )
+            proposal = {
+                "id": f"wrp_{uuid.uuid4().hex[:12]}",
+                "workspaceId": workspace_id,
+                "viewId": view["id"],
+                "widgetId": clean_wid,
+                "instruction": "將交易員反覆修改的元件配置設為預設版面",
+                "beforeSpec": before_spec,
+                "proposedSpec": proposed_spec,
+                "rationale": rationale,
+                "warnings": [],
+                "dataAvailability": str(proposed_spec.get("dataAvailability") or "partial"),
+                "status": "preview",
+            }
+            trigger_meta = {
+                "trigger": "repeated_trader_edits",
+                "proposer": "trading_servant",
+                "strategyId": workspace.get("strategyId"),
+                "strategyVersion": workspace.get("strategyVersion"),
+                "changeSummary": change_summary,
+                "habitRefs": habit_keys,
+                "habitStatements": habit_statements[:3],
+                "createdAt": now,
+                "triggerDetails": {
+                    "trigger": "repeated_trader_edits",
+                    "widgetId": clean_wid,
+                    "viewId": view["id"],
+                    "editCountInWindow": len(matching_versions),
+                    "windowDays": REPEATED_WIDGET_EDIT_WINDOW_DAYS,
+                    "threshold": REPEATED_WIDGET_EDIT_THRESHOLD,
+                    "versionIds": matching_versions,
+                },
+            }
+            created_proposal = self.store.upsert_widget_revision_proposal(
+                proposal,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                trigger_meta=trigger_meta,
+            )
+            _tr_publish(
+                scope,
+                "trading_room.workspace.revision_proposed",
+                {
+                    "proposal_id": created_proposal["id"],
+                    "proposal_kind": "widget_revision_proposal",
+                    "workspace_id": workspace_id,
+                    "widget_id": clean_wid,
+                    "trigger": "repeated_trader_edits",
+                    "change_summary": change_summary,
+                    "direct_workspace_edit": False,
+                },
+                now,
+            )
+            break
+        return created_proposal
+
+    def evaluate_workspace_revision_triggers(
+        self,
+        workspace_id: str,
+        body: Dict[str, Any],
+        identity: Any,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate and fire SD §9.2 servant workspace revision triggers on a workspace.
+
+        Supports:
+          - ``strategy_version_selected``: new strategy version selected
+          - ``repeated_trader_edits``: same widget edited >= 3 times in 7 days
+          - ``data_freshness_change`` / ``data_change``: a data source used by a widget
+            turns ``stale``, ``unavailable`` or newly ``fresh``
+          - ``regime_change`` / ``data_or_regime_change``: a governed active RegimeState
+            transitions on ``macro`` or on the strategy's primary axis (never from a
+            missing or proposed/candidate regime record)
+
+        Always enforces at most one pending proposal per workspace and never
+        mutates the active workspace directly.
+        """
+        if idempotency_key:
+            self.check_idempotency(
+                identity,
+                f"POST:/bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers",
+                idempotency_key,
+            )
+        self._reject_servant_direct_mutation(body, reason="servant_direct_widget_patch_not_allowed")
+        workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)
+        payload = body or {}
+        trigger = str(payload.get("trigger") or "").strip().lower()
+        now = self.utc_now()
+        strategy_id = str(workspace.get("strategyId") or "").strip()
+
+        if trigger in {"strategy_version_selected", "new_strategy_version"}:
+            new_version = str(
+                payload.get("strategyVersion")
+                or payload.get("strategy_version")
+                or payload.get("newStrategyVersion")
+                or ""
+            ).strip()
+            if not new_version:
+                self.validation_failed(["strategyVersion is required for strategy_version_selected trigger"], status_code=400)
+            proposal, gen_meta = self.on_strategy_version_selected(
+                strategy_id=strategy_id,
+                strategy_version=new_version,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                previous_strategy_version=str(
+                    payload.get("previousStrategyVersion")
+                    or payload.get("previous_strategy_version")
+                    or workspace.get("strategyVersion")
+                    or ""
+                ).strip()
+                or None,
+                previous_strategy_spec=payload.get("previousStrategySpec") or payload.get("previous_strategy_spec"),
+                current_strategy_spec=payload.get("currentStrategySpec") or payload.get("current_strategy_spec"),
+                change_reason=payload.get("reason") or payload.get("changeReason"),
+                workshop_id=payload.get("workshopId") or payload.get("workshop_id"),
+                workspace_id=workspace_id,
+            )
+            listing = self.store.list_workspace_revision_proposals(
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                workspace_id=workspace_id,
+                strategy_id=strategy_id,
+            )
+            return {
+                "triggered": True,
+                "trigger": "strategy_version_selected",
+                "proposal_kind": "workspace_proposal",
+                "proposal": proposal,
+                "change_summary": gen_meta.get("changeSummary"),
+                "pending_count": listing["pending_count"],
+                "pending_proposal": listing["pending_proposal"],
+                "workspace_unchanged": True,
+                "workspace_dashboard_version": workspace.get("dashboardVersion"),
+            }
+
+        if trigger == "repeated_trader_edits":
+            target_wid = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
+            candidates = (
+                [target_wid]
+                if target_wid
+                else [
+                    str(w.get("id") or "")
+                    for v in (workspace.get("views") or [])
+                    for w in (v.get("widgets") or [])
+                    if w.get("id")
+                ]
+            )
+            proposal_obj = self._check_repeated_trader_edits_trigger(
+                workspace=workspace,
+                scope=scope,
+                affected_widgets=candidates,
+                now=now,
+            )
+            listing = self.store.list_workspace_revision_proposals(
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                workspace_id=workspace_id,
+                strategy_id=strategy_id,
+            )
+            return {
+                "triggered": proposal_obj is not None,
+                "trigger": "repeated_trader_edits",
+                "proposal_kind": "widget_revision_proposal" if proposal_obj else None,
+                "proposal": proposal_obj,
+                "reason": None if proposal_obj else "repeated_edit_threshold_not_reached",
+                "pending_count": listing["pending_count"],
+                "pending_proposal": listing["pending_proposal"],
+                "workspace_unchanged": True,
+                "workspace_dashboard_version": workspace.get("dashboardVersion"),
+            }
+
+        if trigger in {"data_freshness_change", "data_change", "regime_change", "data_or_regime_change"}:
+            return self._propose_data_or_regime_change(
+                workspace=workspace,
+                scope=scope,
+                payload=payload,
+                now=now,
+            )
+
+        self.validation_failed(
+            [
+                "trigger must be one of: strategy_version_selected, repeated_trader_edits, "
+                "data_freshness_change, regime_change, data_or_regime_change"
+            ],
+            status_code=400,
+        )
+        return {}
+
+    def _propose_data_or_regime_change(
+        self,
+        *,
+        workspace: Dict[str, Any],
+        scope: Dict[str, str],
+        payload: Mapping[str, Any],
+        now: str,
+    ) -> Dict[str, Any]:
+        """Trigger 3 (SD §9.2): Data source freshness change or governed RegimeState transition."""
+        workspace_id = str(workspace.get("id") or "")
+        strategy_id = str(workspace.get("strategyId") or "")
+        habit_keys, habit_statements = self._habit_refs_for_scope(scope, strategy_id)
+        habit_note = f"（引用習慣：{habit_statements[0]}）" if habit_statements else ""
+
+        # Check if a regime change payload was provided
+        regime_payload = payload.get("regime") if isinstance(payload.get("regime"), Mapping) else None
+        trigger_name = str(payload.get("trigger") or "").strip().lower()
+        is_regime = trigger_name == "regime_change" or regime_payload is not None
+
+        if is_regime:
+            reg = regime_payload if isinstance(regime_payload, Mapping) else payload
+            reg_state = str(reg.get("state") or "active").strip().lower()
+            model_status = str(reg.get("model_status") or reg.get("modelStatus") or "approved").strip().lower()
+            from_state = str(reg.get("from_state") or reg.get("fromState") or reg.get("previous_state") or "").strip()
+            to_state = str(reg.get("to_state") or reg.get("toState") or reg.get("current_state") or reg.get("regime_class") or "").strip()
+            axis = str(reg.get("axis") or reg.get("primary_axis") or "macro").strip()
+            regime_id = str(reg.get("regime_id") or reg.get("regimeId") or f"regime:{strategy_id}:{now[:10]}").strip()
+            as_of = str(reg.get("as_of") or reg.get("asOf") or reg.get("session") or now).strip()
+
+            if reg_state == "proposed" or model_status == "candidate" or reg_state != "active" or model_status != "approved":
+                listing = self.store.list_workspace_revision_proposals(
+                    tenant_id=scope["tenant_id"],
+                    user_id=scope["user_id"],
+                    workspace_id=workspace_id,
+                    strategy_id=strategy_id,
+                )
+                return {
+                    "triggered": False,
+                    "trigger": "regime_change",
+                    "proposal_kind": None,
+                    "proposal": None,
+                    "reason": "proposed_regime_record_only" if (reg_state == "proposed" or model_status == "candidate") else "no_governed_regime_record",
+                    "pending_count": listing["pending_count"],
+                    "pending_proposal": listing["pending_proposal"],
+                    "workspace_unchanged": True,
+                    "workspace_dashboard_version": workspace.get("dashboardVersion"),
+                }
+            if not to_state or (from_state and from_state == to_state):
+                listing = self.store.list_workspace_revision_proposals(
+                    tenant_id=scope["tenant_id"],
+                    user_id=scope["user_id"],
+                    workspace_id=workspace_id,
+                    strategy_id=strategy_id,
+                )
+                return {
+                    "triggered": False,
+                    "trigger": "regime_change",
+                    "proposal_kind": None,
+                    "proposal": None,
+                    "reason": "no_regime_transition",
+                    "pending_count": listing["pending_count"],
+                    "pending_proposal": listing["pending_proposal"],
+                    "workspace_unchanged": True,
+                    "workspace_dashboard_version": workspace.get("dashboardVersion"),
+                }
+
+            requested_wid = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
+            view, target_widget = (None, None)
+            if requested_wid:
+                view, target_widget = _find_widget(workspace, requested_wid)
+            if target_widget is None:
+                for preferred_wid in ("overview_strategy_health", "branch_stability", "positions_pyramid_plan"):
+                    view, target_widget = _find_widget(workspace, preferred_wid)
+                    if target_widget is not None:
+                        break
+            if target_widget is None:
+                for v in workspace.get("views") or []:
+                    if v.get("widgets"):
+                        view, target_widget = v, v["widgets"][0]
+                        break
+            if view is None or target_widget is None:
+                self.validation_failed(["workspace has no widgets for regime revision proposal"], status_code=422)
+
+            before_spec = copy.deepcopy(target_widget)
+            _normalize_widget_data_availability(before_spec)
+            before_spec.setdefault("dataAvailability", "partial")
+            proposed_spec = copy.deepcopy(before_spec)
+            transition_label = f"{from_state} -> {to_state}" if from_state else to_state
+            q = copy.deepcopy(proposed_spec.get("query") or {"filters": {}})
+            filters = dict(q.get("filters") or {})
+            filters["regimeAxis"] = axis
+            filters["regimeState"] = to_state
+            filters["regimeId"] = regime_id
+            q["filters"] = filters
+            proposed_spec["query"] = q
+            proposed_spec["whyIncluded"] = (
+                f"{before_spec.get('whyIncluded', '')} "
+                f"治理盤勢狀態變更（{axis}: {transition_label}，as_of={as_of}）{habit_note}。"
+            ).strip()
+            revision_action = str(payload.get("revisionAction") or payload.get("revision_action") or "annotate").strip()
+            change_summary = f"治理盤勢狀態變更（{axis}: {transition_label}），僕人提案更新元件 {target_widget['id']} 盤勢標註與篩選"
+            rationale = (
+                f"{change_summary}（regime_id={regime_id}, as_of={as_of}）{habit_note}。"
+                "僕人不會直接修改版面，需經交易員同意後才套用。"
+            )
+            proposal = {
+                "id": f"wrp_{uuid.uuid4().hex[:12]}",
+                "workspaceId": workspace_id,
+                "viewId": view["id"],
+                "widgetId": target_widget["id"],
+                "instruction": f"治理盤勢變更（{axis}: {transition_label}）：{revision_action} 元件設定",
+                "beforeSpec": before_spec,
+                "proposedSpec": proposed_spec,
+                "rationale": rationale,
+                "warnings": [],
+                "dataAvailability": str(proposed_spec.get("dataAvailability") or "partial"),
+                "status": "preview",
+            }
+            tmeta = {
+                "trigger": "regime_change",
+                "proposer": "trading_servant",
+                "strategyId": strategy_id,
+                "strategyVersion": workspace.get("strategyVersion"),
+                "changeSummary": change_summary,
+                "habitRefs": habit_keys,
+                "habitStatements": habit_statements[:3],
+                "createdAt": now,
+                "triggerDetails": {
+                    "trigger": "regime_change",
+                    "axis": axis,
+                    "fromState": from_state or None,
+                    "toState": to_state,
+                    "regimeId": regime_id,
+                    "asOf": as_of,
+                    "revisionAction": revision_action,
+                },
+            }
+            saved = self.store.upsert_widget_revision_proposal(
+                proposal,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                trigger_meta=tmeta,
+            )
+            _tr_publish(
+                scope,
+                "trading_room.workspace.revision_proposed",
+                {
+                    "proposal_id": saved["id"],
+                    "proposal_kind": "widget_revision_proposal",
+                    "workspace_id": workspace_id,
+                    "widget_id": target_widget["id"],
+                    "trigger": "regime_change",
+                    "change_summary": change_summary,
+                    "direct_workspace_edit": False,
+                },
+                now,
+            )
+            listing = self.store.list_workspace_revision_proposals(
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                workspace_id=workspace_id,
+                strategy_id=strategy_id,
+            )
+            return {
+                "triggered": True,
+                "trigger": "regime_change",
+                "proposal_kind": "widget_revision_proposal",
+                "proposal": saved,
+                "change_summary": change_summary,
+                "pending_count": listing["pending_count"],
+                "pending_proposal": listing["pending_proposal"],
+                "workspace_unchanged": True,
+                "workspace_dashboard_version": workspace.get("dashboardVersion"),
+            }
+
+        # Data freshness change (source turns stale, unavailable, or newly fresh)
+        data_source = str(
+            payload.get("dataSource")
+            or payload.get("data_source")
+            or ""
+        ).strip()
+        freshness_state = str(
+            payload.get("freshness")
+            or payload.get("freshnessState")
+            or payload.get("freshness_state")
+            or payload.get("state")
+            or ""
+        ).strip().lower()
+        as_of = str(payload.get("as_of") or payload.get("asOf") or now).strip()
+        if freshness_state not in {"stale", "unavailable", "fresh", "missing", "full", "partial", "degraded"}:
+            self.validation_failed(
+                ["freshness state must be one of: stale, unavailable, fresh (or full/partial/missing)"],
+                status_code=400,
+            )
+        mapped_availability = (
+            "full"
+            if freshness_state in {"fresh", "full"}
+            else ("missing" if freshness_state in {"unavailable", "missing"} else "partial")
+        )
+        canonical_freshness = (
+            "fresh"
+            if mapped_availability == "full"
+            else ("unavailable" if mapped_availability == "missing" else "stale")
+        )
+
+        requested_wid = str(payload.get("widgetId") or payload.get("widget_id") or "").strip()
+        view, target_widget = (None, None)
+        if requested_wid:
+            view, target_widget = _find_widget(workspace, requested_wid)
+        if target_widget is None and data_source:
+            for v in workspace.get("views") or []:
+                for w in v.get("widgets") or []:
+                    if str(w.get("dataSource") or "") == data_source:
+                        view, target_widget = v, w
+                        break
+                if target_widget is not None:
+                    break
+        if target_widget is None:
+            for v in workspace.get("views") or []:
+                if v.get("widgets"):
+                    view, target_widget = v, v["widgets"][0]
+                    break
+        if view is None or target_widget is None:
+            self.validation_failed(["workspace has no matching widget for data freshness trigger"], status_code=422)
+
+        eff_source = data_source or str(target_widget.get("dataSource") or "")
+        before_spec = copy.deepcopy(target_widget)
+        _normalize_widget_data_availability(before_spec)
+        before_spec.setdefault("dataAvailability", "partial")
+        proposed_spec = copy.deepcopy(before_spec)
+        proposed_spec["dataAvailability"] = mapped_availability
+        q = copy.deepcopy(proposed_spec.get("query") or {"filters": {}})
+        filters = dict(q.get("filters") or {})
+        filters["sourceFreshnessState"] = canonical_freshness
+        filters["sourceAsOf"] = as_of
+        q["filters"] = filters
+        proposed_spec["query"] = q
+
+        revision_action = str(
+            payload.get("revisionAction")
+            or payload.get("revision_action")
+            or ("annotate" if canonical_freshness == "stale" else ("replace" if canonical_freshness == "unavailable" else "add"))
+        ).strip()
+        state_zh = {"stale": "過期（stale）", "unavailable": "無法取得（unavailable）", "fresh": "恢復新鮮（fresh）"}[canonical_freshness]
+        proposed_spec["whyIncluded"] = (
+            f"{before_spec.get('whyIncluded', '')} "
+            f"資料來源 {eff_source} 狀態轉為{state_zh}（as_of={as_of}）{habit_note}。"
+        ).strip()
+        warnings = (
+            [f"資料來源 {eff_source} 目前為 {canonical_freshness}（as_of={as_of}）。"]
+            if canonical_freshness in {"stale", "unavailable"}
+            else []
+        )
+        change_summary = f"資料來源 {eff_source} 轉為{state_zh}，僕人提案（{revision_action}）更新元件 {target_widget['id']}"
+        rationale = (
+            f"{change_summary}（as_of={as_of}）{habit_note}。"
+            "僕人不會直接修改版面，需經交易員同意後才套用。"
+        )
+        proposal = {
+            "id": f"wrp_{uuid.uuid4().hex[:12]}",
+            "workspaceId": workspace_id,
+            "viewId": view["id"],
+            "widgetId": target_widget["id"],
+            "instruction": f"資料來源 {eff_source} 狀態變更為 {canonical_freshness}：{revision_action} 元件",
+            "beforeSpec": before_spec,
+            "proposedSpec": proposed_spec,
+            "rationale": rationale,
+            "warnings": warnings,
+            "dataAvailability": mapped_availability,
+            "status": "preview",
+        }
+        tmeta = {
+            "trigger": "data_freshness_change",
+            "proposer": "trading_servant",
+            "strategyId": strategy_id,
+            "strategyVersion": workspace.get("strategyVersion"),
+            "changeSummary": change_summary,
+            "habitRefs": habit_keys,
+            "habitStatements": habit_statements[:3],
+            "createdAt": now,
+            "triggerDetails": {
+                "trigger": "data_freshness_change",
+                "dataSource": eff_source,
+                "freshness": canonical_freshness,
+                "dataAvailability": mapped_availability,
+                "asOf": as_of,
+                "revisionAction": revision_action,
+            },
+        }
+        saved = self.store.upsert_widget_revision_proposal(
+            proposal,
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            trigger_meta=tmeta,
+        )
+        _tr_publish(
+            scope,
+            "trading_room.workspace.revision_proposed",
+            {
+                "proposal_id": saved["id"],
+                "proposal_kind": "widget_revision_proposal",
+                "workspace_id": workspace_id,
+                "widget_id": target_widget["id"],
+                "trigger": "data_freshness_change",
+                "change_summary": change_summary,
+                "direct_workspace_edit": False,
+            },
+            now,
+        )
+        listing = self.store.list_workspace_revision_proposals(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            workspace_id=workspace_id,
+            strategy_id=strategy_id,
+        )
+        return {
+            "triggered": True,
+            "trigger": "data_freshness_change",
+            "proposal_kind": "widget_revision_proposal",
+            "proposal": saved,
+            "change_summary": change_summary,
+            "pending_count": listing["pending_count"],
+            "pending_proposal": listing["pending_proposal"],
+            "workspace_unchanged": True,
+            "workspace_dashboard_version": workspace.get("dashboardVersion"),
+        }
 
     def list_workspace_versions(self, workspace_id: str, identity: Any) -> List[Dict[str, Any]]:
         _workspace, scope = self.load_workspace_for_identity(workspace_id=workspace_id, identity=identity)

@@ -578,7 +578,14 @@ def stage_template_search(board: Dict[str, Any], now: datetime) -> Dict[str, Any
     at = _parse_time(latest.get("latest_at"))
     values = {"latest_at": _iso(at), "outcome": latest.get("outcome"), "reason_code": latest.get("reason_code"),
               "owner_reason": latest.get("reason"), "attempts": sum(_int(s.get("attempt_count")) or 0 for s in searches),
-              "demand_id": latest.get("demand_id")}
+              "demand_id": latest.get("demand_id"),
+              "templates_attempted": _int(latest.get("templates_attempted")) or 0,
+              "excluded_by_reason": _dict(latest.get("excluded_by_reason"))}
+    if not values["templates_attempted"] and any(
+        (_int(values["excluded_by_reason"].get(code)) or 0) > 0
+        for code in ("template_checksum_mismatch", "template_tenant_mismatch")
+    ):
+        return _failed(name, "last_search_attempted_nothing", **values)
     if _search_unavailable(latest):
         return _failed(name, "last_search_unavailable:" + str(latest.get("reason_code") or "reason_not_recorded"),
                        **values)
@@ -648,7 +655,9 @@ def stage_gate_attempts(board: Dict[str, Any], now: datetime) -> Dict[str, Any]:
             continue
         code = str(item.get("reason_code") or "")
         if item.get("kind") == "template_search":
-            if code in GATE_REFUSALS:
+            if (_int(item.get("templates_attempted")) or 0) <= 0:
+                add("last_search_attempted_nothing", False)
+            elif code in GATE_REFUSALS:
                 add(code, True)
             elif str(item.get("outcome") or "").lower() == "completed" and not _search_unavailable(item):
                 add("search_completed", True)

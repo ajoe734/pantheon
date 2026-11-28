@@ -1172,6 +1172,327 @@
         },
         "x-business-owner": "agora"
       }
+    },
+    "/bff/agora/servant/reports": {
+      "get": {
+        "tags": [
+          "agora-servant-reports"
+        ],
+        "summary": "List the caller's weekly and on-demand trader reports",
+        "operationId": "list_servant_trader_reports_bff_agora_servant_reports_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "name": "trigger",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          {
+            "name": "trader_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Must equal the caller; any other trader reads as 404."
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Must equal the caller; any other user reads as 404."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 26
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-scoped list of weekly and on-demand trader reports.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantTraderReportsListEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Another trader's reports read as not found."
+          },
+          "503": {
+            "description": "Agora owner unavailable."
+          }
+        },
+        "x-business-owner": "agora"
+      },
+      "post": {
+        "tags": [
+          "agora-servant-reports"
+        ],
+        "summary": "Generate an on-demand or post-attribution weekly trader report (capped at 3 on-demand per day)",
+        "operationId": "create_servant_trader_report_bff_agora_servant_reports_post",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServantTraderReportCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Owner-scoped trader report with every number attributed to its owner, source, and as_of.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantTraderReportEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "422": {
+            "description": "Payload validation or size cap failed."
+          },
+          "429": {
+            "description": "On-demand trader report daily cap (3/day) exceeded."
+          },
+          "503": {
+            "description": "Agora owner unavailable."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/servant/reports/{report_id}": {
+      "get": {
+        "tags": [
+          "agora-servant-reports"
+        ],
+        "summary": "Read a single weekly or on-demand trader report owned by the caller",
+        "operationId": "get_servant_trader_report_bff_agora_servant_reports__report_id__get",
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trader_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-scoped trader report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServantTraderReportEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Report not found or belongs to another trader."
+          },
+          "503": {
+            "description": "Agora owner unavailable."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject": {
+      "post": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Reject a preview TradingRoomWorkspaceProposal and record the decision in changeLog",
+        "operationId": "reject_workspace_proposal_bff_agora_strategies__strategy_id__trading_room_proposals__proposal_id__reject_post",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "proposal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposal rejected and recorded in changeLog; workspace unchanged."
+          },
+          "404": {
+            "description": "Proposal not found."
+          },
+          "409": {
+            "description": "Proposal is not in preview state."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject": {
+      "post": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Reject a preview WidgetRevisionProposal and record the decision in changeLog",
+        "operationId": "reject_widget_revision_proposal_bff_agora_trading_room_widget_revision_proposals__proposal_id__reject_post",
+        "parameters": [
+          {
+            "name": "proposal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Widget revision proposal rejected and recorded in changeLog; workspace unchanged."
+          },
+          "404": {
+            "description": "Proposal not found."
+          },
+          "409": {
+            "description": "Proposal is not in preview state."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "List workspace and widget revision proposals and changeLog decisions for a workspace",
+        "operationId": "list_workspace_revision_proposals_bff_agora_trading_room_workspaces__workspace_id__revision_proposals_get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace revision proposals (at most one pending per workspace) and changeLog."
+          },
+          "404": {
+            "description": "Workspace not found."
+          }
+        },
+        "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers": {
+      "post": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Evaluate SD 9.2 servant workspace revision triggers (new strategy version, repeated trader edits, data or regime change)",
+        "operationId": "evaluate_workspace_revision_triggers_bff_agora_trading_room_workspaces__workspace_id__revision_proposals_triggers_post",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trigger evaluation result with at most one pending proposal per workspace; workspace never edited directly."
+          },
+          "400": {
+            "description": "Unsupported trigger or missing parameters."
+          },
+          "404": {
+            "description": "Workspace not found."
+          }
+        },
+        "x-business-owner": "agora"
+      }
     }
   },
   "components": {
@@ -3670,6 +3991,91 @@
           "no_order_route_proof": {
             "type": "string",
             "const": "agora_paper_book_readback_only"
+          }
+        }
+      },
+      "ServantTraderReportCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "trigger": {
+            "type": "string",
+            "default": "on_demand"
+          },
+          "window_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 90,
+            "default": 7
+          },
+          "window_start": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_end": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attribution_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "defer_to_worker": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "ServantTraderReportEnvelope": {
+        "type": "object",
+        "required": [
+          "status",
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "data": {
+            "type": "object"
+          },
+          "meta": {
+            "type": "object"
+          }
+        }
+      },
+      "ServantTraderReportsListEnvelope": {
+        "type": "object",
+        "required": [
+          "status",
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          },
+          "data": {
+            "type": "object"
+          },
+          "meta": {
+            "type": "object"
           }
         }
       }

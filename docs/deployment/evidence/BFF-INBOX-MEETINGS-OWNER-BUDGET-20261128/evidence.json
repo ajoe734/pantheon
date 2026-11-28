@@ -1,0 +1,137 @@
+{
+  "task_id": "BFF-INBOX-MEETINGS-OWNER-BUDGET-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "root_cause_class": "RC1 WP1.2: 503s under crawl load / Human Inbox meetings owner reads",
+  "source_baseline_commit": "287701d460de11ef8a2cc6b0323c45417d10d48f",
+  "evidence_scope": "Functional source evidence only. Independent review, merge, deploy and hosted acceptance pending.",
+  "incident": {
+    "reported_roots": [
+      "46061668193",
+      "46102871850"
+    ],
+    "reported_meeting_id": "mtg-2c016da5651a0dc4",
+    "reported_reason": "consultation_owner_unavailable",
+    "proven_source_defect": "Three independent GETs ran serially in one 0.4 s consultation allowance; failure of any GET discarded all consultation items.",
+    "hosted_observations_source": "Supervisor-generated task brief; not independently inspected by this worker."
+  },
+  "implementation": {
+    "reads": [
+      "list_meetings(limit=100)",
+      "list_proposals()",
+      "get_catalogue()"
+    ],
+    "scheduling": "Submit three independent reads concurrently with copied request contexts and separate clients. Wait once until the unchanged consultation deadline; cancel pending futures and omit late results.",
+    "partial_results": "Project every successful collection when another read times out, fails transport or returns invalid data. Each failed read is identified in consultation.reason and consultation.reads. Any 401/403 discards all consultation results and reports denied.",
+    "timeout_classification": "read_timeout:<operation> for exhausted deadlines, socket TimeoutError, or URLError wrapping TimeoutError, including the shared HTTP client exception cause chain.",
+    "pagination": "Existing limit=100 and owner_page_has_more degradation retained; no hidden extra page requests.",
+    "unchanged": [
+      "PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS and its 1.0 s cap",
+      "0.4 consultation owner budget fraction",
+      "research owner path and budget",
+      "other inbox contributors",
+      "consultation service",
+      "hosted probe",
+      "problem register"
+    ]
+  },
+  "runtime_budget": {
+    "cadence": "On demand only, per inbox request; no recurring cadence added.",
+    "owner_calls_per_request": 3,
+    "owner_calls_per_day": "3 * meetings-contributor request count; unchanged from baseline; no scheduled calls.",
+    "max_meetings_per_owner_call": 100,
+    "other_collection_sizes": "Existing proposals/catalogue response contracts unchanged; no claim of a new byte or row cap.",
+    "threads_cap_per_bff_process": 12,
+    "outstanding_submissions_cap_per_bff_process": 12,
+    "concurrency_per_request": 3,
+    "capacity_handling": "Nonblocking semaphore admission; excess reads return owner_read_capacity_exhausted:<operation>. Expired requests submit no work.",
+    "cleanup": "Permit released by completion/cancellation callback. Results are request-local and discarded after projection; sockets retain remaining deadline as their timeout. Late transport results cannot mutate the snapshot. Worker threads are reused, capped at 12 and reclaimed on process exit.",
+    "known_limit": "Python cannot interrupt an already-running blocking transport. Collection still returns at its deadline; any overrun occupies one of the 12 slots until it exits, and overload is reported instead of admitting unbounded outstanding reads.",
+    "daily_persistent_growth_bytes": 0,
+    "persistent_storage_cap_bytes": 0,
+    "new_persistent_writers": 0,
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_workflow_inputs": 0,
+    "new_cross_request_cache_entries": 0,
+    "storage_manifest_registration": "Not applicable: no runtime persistent writer added."
+  },
+  "row_provenance": {
+    "source": "services/control-plane/bff/tests/test_meetings_human_inbox.py existing test_human_inbox_review_meeting_exposes_cause_and_evidence_and_leaves_pending_when_reviewed",
+    "incident_row": "Existing mtg-2c016da5651a0dc4 fixture extracted unchanged to INCIDENT_MEETING, retaining synthesis, operator_review, participants, full case-file/private evidence and timestamps.",
+    "scale_simulation": "100 rows: original incident row plus 99 copies with distinct test ids. Existing proposal and catalogue/refusal fixtures retained. These are incident-shaped fixtures, not a captured hosted 100-row page.",
+    "test_isolation": "New budget fixture mounts the real OwnerReadContextMiddleware so tenant, service credential and deadline propagation are asserted in all three concurrent HTTP transports."
+  },
+  "local_measurements": {
+    "kind": "local simulated transport; not hosted evidence",
+    "calls": 30,
+    "owner_reads_seconds": {
+      "list_meetings": {
+        "median": 0.18308427900774404,
+        "max": 0.18461006396682933,
+        "count": 30
+      },
+      "list_proposals": {
+        "median": 0.18431159952888265,
+        "max": 0.18923220300348476,
+        "count": 30
+      },
+      "get_catalogue": {
+        "median": 0.1803709744999651,
+        "max": 0.1860295839724131,
+        "count": 30
+      }
+    },
+    "inbox_seconds": {
+      "median": 0.2132586910156533,
+      "max": 0.25766817800467834
+    }
+  },
+  "verification": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py",
+      "exit_code": 0,
+      "result": "261 passed, 3 deprecation warnings, 85.48 s. Before final expired-budget guard and expanding the concurrency case to 30 calls; final focused run below covers both."
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/worker-test-python/current/bin/python3 -m pytest -q services/control-plane/bff/tests/test_meetings_human_inbox.py --junitxml=/tmp/bff-inbox-owner-budget-functional.xml -o junit_family=xunit1",
+      "exit_code": 0,
+      "result": "23 passed, 3 deprecation warnings, 14.00 s; includes 30 sequential inbox reads, each containing three concurrent 180 ms simulated owner GETs."
+    },
+    {
+      "command": "In-memory baseline replay of services/control-plane/bff/tests/test_meetings_human_inbox.py::test_three_owner_reads_share_one_allowance_concurrently using meetings/client.py at 287701d460de11ef8a2cc6b0323c45417d10d48f",
+      "exit_code": 1,
+      "expected_failure": true,
+      "result": "Baseline serial code cannot rendezvous all three reads: BrokenBarrierError becomes contributor_read_error, then consultation surface assertion fails. No checkout files modified by replay."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "acceptance": {
+    "1_hosted_before_change_30_reads": "PENDING operator acceptance: per-operation hosted median/max not collected; VM/SSH access forbidden for this worker.",
+    "2_hosted_after_deploy_30_inbox_reads": "PENDING operator acceptance: local simulated 30-call evidence above is not hosted proof.",
+    "3_named_timeouts": "PASS: each of three reads tested with direct socket timeout, URL-wrapped timeout and late response after deadline; expired parent deadline also names all three reads.",
+    "4_partial_review_retention": "PASS: incident review item stays visible when proposals or catalogue fails or times out; successful proposals/refusals survive a meetings-list timeout.",
+    "5_cap_unchanged": "PASS: 10 and 1.1 clamp to 1.0, 0.5 remains 0.5; owner fraction remains 0.4; other contributor tests passed.",
+    "6_runtime_budget": "RECORDED above; no new runtime writer, recurring job, workflow input or cross-request cache.",
+    "7_first_root_probe": "PENDING operator acceptance: first post-deploy Root must pass probe:meeting-review-disposition.",
+    "8_existing_tests_preserved": "PASS: no existing test deleted or assertion changed; existing incident row extracted unchanged. 19 new cases added. Existing four tests remain intact."
+  },
+  "hosted_acceptance_handoff": {
+    "owner": "Operator acceptance task (as directed by task brief)",
+    "worker_hosted_access_performed": false,
+    "required": [
+      "Record 30 sequential calls per owner read before change with median/max.",
+      "After deploy record 30 sequential source_type=meeting inbox reads: meetings.status=ok and consultation.status=ok.",
+      "Record exact deployed identities and first Root meeting-review-disposition result."
+    ]
+  },
+  "review_independence": {
+    "owner_family": "Codex",
+    "reviewer_family": "Antigravity",
+    "exception": null
+  },
+  "residual_findings": []
+}

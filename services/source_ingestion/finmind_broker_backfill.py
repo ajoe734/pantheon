@@ -32,11 +32,14 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import builtins
 import gzip
 import json
+import os
 import re
 import sys
 import time
+import traceback
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -100,9 +103,73 @@ def weekdays(start: date, end: date) -> Iterable[date]:
         day += timedelta(days=1)
 
 
+_GUARD_CODE_CACHE: dict[str, Any] = {}
+
+
+def _load_bounded_runtime_market_open_guard_code() -> Any:
+    """Compile the single bounded_runtime_market_open_guard GUARD_PY block from deploy_nonprod_vm.sh."""
+    raw_func = os.environ.get("PANTHEON_MARKET_OPEN_GUARD_FUNC", "").strip()
+    if not raw_func:
+        script_path = Path(__file__).resolve().parents[2] / "scripts" / "deploy_nonprod_vm.sh"
+        raw_func = script_path.read_text(encoding="utf-8")
+    cached = _GUARD_CODE_CACHE.get(raw_func)
+    if cached is not None:
+        return cached
+    marker_start = "bounded_runtime_market_open_guard"
+    idx = raw_func.find(marker_start)
+    search_text = raw_func[idx:] if idx >= 0 else raw_func
+    m = re.search(r"<<'GUARD_PY'\n(.*?)\nGUARD_PY", search_text, re.DOTALL)
+    if not m:
+        raise RuntimeError("bounded_runtime_market_open_guard GUARD_PY block not found")
+    code = compile(m.group(1), "<deploy_nonprod_vm.sh:bounded_runtime_market_open_guard>", "exec")
+    _GUARD_CODE_CACHE[raw_func] = code
+    return code
+
+
+def invoke_bounded_runtime_market_open_guard(
+    *,
+    elapsed_seconds: float = 0.0,
+    lookahead_seconds: float = 0.0,
+    initial_refresh_now: str = "",
+) -> str | None:
+    """Reuse bounded_runtime_market_open_guard (no second time rule)."""
+    code = _load_bounded_runtime_market_open_guard_code()
+    current_raw = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
+    restore_raw: str | None = None
+    unset_on_restore = False
+    offset = (elapsed_seconds + lookahead_seconds) if (current_raw and current_raw == initial_refresh_now) else lookahead_seconds
+    if offset > 0:
+        base_dt = datetime.fromisoformat(current_raw.replace("Z", "+00:00")).astimezone(timezone.utc) if current_raw else datetime.now(timezone.utc)
+        restore_raw = current_raw if current_raw else None
+        unset_on_restore = not bool(current_raw)
+        os.environ["PANTHEON_REFRESH_NOW"] = (base_dt + timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+    printed: list[str] = []
+
+    def _capture_print(*args: Any, **_kwargs: Any) -> None:
+        printed.append(" ".join(str(a) for a in args))
+
+    ns: dict[str, Any] = {
+        "__builtins__": {**builtins.__dict__, "print": _capture_print},
+        "__name__": "__main__",
+    }
+    exit_code = 1
+    try:
+        exec(code, ns, ns)
+    except SystemExit as exc:
+        exit_code = 0 if exc.code in (0, None) else int(exc.code)
+    finally:
+        if restore_raw is not None:
+            os.environ["PANTHEON_REFRESH_NOW"] = restore_raw
+        elif unset_on_restore:
+            os.environ.pop("PANTHEON_REFRESH_NOW", None)
+    if exit_code == 0:
+        return printed[-1].strip() if printed else "market_open_0055z"
+    return None
+
+
 @dataclass
 class BackfillResult:
-    status: str = "ok"  # ok | credential_unavailable | dependency_unavailable | quota_exhausted | partial | cap_exceeded | failed
+    status: str = "ok"  # ok | not_run | credential_unavailable | dependency_unavailable | quota_exhausted | partial | cap_exceeded | failed
     reason: str | None = None
     completed: list[str] = field(default_factory=list)
     skipped_completed: list[str] = field(default_factory=list)
@@ -222,11 +289,11 @@ def run_backfill(
     max_session_bytes: int = BACKFILL_MAX_SESSION_BYTES,
     max_session_rows: int = BACKFILL_MAX_SESSION_ROWS,
     run_id: str = "",
+    market_open_guard: Callable[[], str | None] | None = None,
 ) -> BackfillResult:
     from .daily_bars_store import DailyBudgetError, KeyedDatasetError, keyed_dataset_store
 
     target_root = Path(market_data_root if market_data_root is not None else (output_dir or "."))
-    fetcher = fetcher or FinMindLiveFetcher()
     result = BackfillResult(
         max_total_bytes=max_total_bytes,
         max_total_rows=max_total_rows,
@@ -235,6 +302,34 @@ def run_backfill(
         window_start=start.isoformat(),
         window_end=end.isoformat(),
     )
+    initial_refresh_now = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
+
+    def _check_market_open(elapsed: float = 0.0, lookahead: float = 0.0) -> str | None:
+        if market_open_guard is not None:
+            return market_open_guard()
+        return invoke_bounded_runtime_market_open_guard(
+            elapsed_seconds=elapsed, lookahead_seconds=lookahead, initial_refresh_now=initial_refresh_now
+        )
+
+    def _bound_throttle_wait(wait: float, elapsed: float) -> float:
+        bounded = min(wait, max(0.0, max_wall_seconds - elapsed)) if max_wall_seconds is not None else wait
+        if bounded > 0.0 and market_open_guard is None and _check_market_open(elapsed, bounded):
+            lo, hi = 0.0, bounded
+            for _ in range(30):
+                mid = (lo + hi) / 2.0
+                lo, hi = (lo, mid) if _check_market_open(elapsed, mid) else (mid, hi)
+            rounded = round(hi, 3)
+            bounded = rounded if (0.0 < rounded <= bounded and _check_market_open(elapsed, rounded)) else hi
+        return max(0.0, bounded)
+
+    guard_reason = _check_market_open(0.0)
+    if guard_reason:
+        result.status = "not_run"
+        result.reason = guard_reason
+        result.stopped_reason = "market_open_0055z"
+        return result
+
+    fetcher = fetcher or FinMindLiveFetcher()
     cred = fetcher.credential_status()
     if not cred.get("available"):
         result.status = "credential_unavailable"
@@ -333,14 +428,35 @@ def run_backfill(
         if max_requests is not None and result.requests_made >= max_requests:
             result.stopped_reason = "max_requests_reached"
             break
-        if max_wall_seconds is not None and (clock() - run_started) >= max_wall_seconds:
+        elapsed = max(0.0, clock() - run_started)
+        if max_wall_seconds is not None and elapsed >= max_wall_seconds:
             result.stopped_reason = "max_wall_seconds_reached"
+            break
+        guard_reason = _check_market_open(elapsed)
+        if guard_reason:
+            result.reason = guard_reason
+            result.stopped_reason = "market_open_0055z"
+            if not result.completed and result.requests_made == 0:
+                result.status = "not_run"
             break
 
         if last_request is not None:
             wait = min_interval_seconds - (clock() - last_request)
             if wait > 0:
-                sleep(wait)
+                bounded_wait = _bound_throttle_wait(wait, elapsed)
+                if bounded_wait > 0:
+                    sleep(bounded_wait)
+                post_wait_elapsed = max(0.0, clock() - run_started, elapsed + bounded_wait)
+                guard_reason = _check_market_open(post_wait_elapsed)
+                if guard_reason:
+                    result.reason = guard_reason
+                    result.stopped_reason = "market_open_0055z"
+                    if not result.completed and result.requests_made == 0:
+                        result.status = "not_run"
+                    break
+                if max_wall_seconds is not None and post_wait_elapsed >= max_wall_seconds:
+                    result.stopped_reason = "max_wall_seconds_reached"
+                    break
         last_request = clock()
         try:
             raw, meta = fetcher.fetch_storage_objects_raw(FINMIND_BROKER_REPORT_DATASET, day_s)
@@ -368,6 +484,7 @@ def run_backfill(
         except (FinMindFetchError, OSError, ImportError) as exc:
             result.failed[day_s] = _safe_reason(exc, token)[:200]
             result.status = "partial"
+            _emit_safe_traceback(day_s, token)
             continue
 
         if not agg:
@@ -433,6 +550,7 @@ def run_backfill(
         except (KeyedDatasetError, OSError) as exc:
             result.failed[day_s] = _safe_reason(exc, token)[:200]
             result.status = "partial"
+            _emit_safe_traceback(day_s, token)
             continue
 
         manifest = store.read_manifest(day_s) or {}
@@ -610,6 +728,13 @@ def aggregate_branch_rows(raw: bytes) -> list[dict[str, Any]]:
 def _safe_reason(exc: BaseException, token: str | None) -> str:
     text = f"{type(exc).__name__}: {exc}"[:300]
     return text.replace(token, "***") if token else text
+
+
+def _emit_safe_traceback(day_s: str, token: str | None) -> None:
+    tb = traceback.format_exc()
+    if token:
+        tb = tb.replace(token, "***")
+    print(f"[finmind_broker_backfill] session {day_s} failed:\n{tb.rstrip()}", file=sys.stderr, flush=True)
 
 
 def _whole_market_readback(store: Any, trade_date: str, expected: set[str] | None) -> dict[str, Any]:
@@ -929,14 +1054,17 @@ def verify_two_year_backfill_coverage(
             two_sided_sessions.append(day_s)
 
     passed = (
-        len(two_sided_sessions) >= min_sessions
+        decl.retention_days == 750
+        and len(two_sided_sessions) >= min_sessions
         and len(deficient_sessions) == 0
         and total_bytes <= BACKFILL_MAX_TOTAL_BYTES
         and total_rows <= BACKFILL_MAX_TOTAL_ROWS
     )
     reason: str | None = None
     if not passed:
-        if deficient_sessions:
+        if decl.retention_days != 750:
+            reason = f"keyed_retention_days {decl.retention_days} != 750"
+        elif deficient_sessions:
             reason = f"{len(deficient_sessions)} deficient sessions (first: {deficient_sessions[0]})"
         elif total_bytes > BACKFILL_MAX_TOTAL_BYTES:
             reason = f"total_bytes {total_bytes} exceeds cap {BACKFILL_MAX_TOTAL_BYTES}"
@@ -962,7 +1090,7 @@ def verify_two_year_backfill_coverage(
         "total_bytes_compressed_in_window": total_bytes,
         "max_total_bytes_cap": BACKFILL_MAX_TOTAL_BYTES,
         "max_total_rows_cap": BACKFILL_MAX_TOTAL_ROWS,
-        "keyed_retention_sessions": decl.retention_sessions,
+        "keyed_retention_days": decl.retention_days,
         "min_session_symbols_with_both_sides": min(per_session_symbol_counts.values(), default=0),
         "max_session_symbols_with_both_sides": max(per_session_symbol_counts.values(), default=0),
         "per_session_symbol_counts": per_session_symbol_counts,

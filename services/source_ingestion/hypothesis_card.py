@@ -14,8 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -186,6 +188,11 @@ def hypothesis_card_model_schema() -> dict[str, Any]:
 
 
 def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) -> str:
+    from services.source_ingestion.hypothesis_compiler import catalogue_summary
+
+    catalogue = catalogue_summary()
+    compact = json.dumps({k: catalogue[k] for k in ("datasets", "builtin_fields")},
+                         separators=(",", ":"), ensure_ascii=False)
     return "\n".join(
         [
             "You extract at most one testable market hypothesis from the document below.",
@@ -197,7 +204,10 @@ def build_hypothesis_prompt(text: str, *, source_record_id: str, origin: str) ->
             "a longer answer is refused, so keep it brief.",
             f"cited_spans entries use source_record_id={source_record_id!r}; `start`/`end` are",
             "character offsets into the document and `exact_text` must equal document[start:end] exactly.",
-            "signal_inputs name governed datasets/features; rule_sketch uses plain factor vocabulary only.",
+            "Top-level signal_inputs must be catalogue dataset.field names; rule_sketch uses plain factor vocabulary only.",
+            "Use the governed names below, including for idea inputs and prediction observables.",
+            "Use needs_data:<name> only when no catalogue dataset provides the required data; never invent aliases.",
+            "CATALOGUE: " + compact,
             "Separately include screen_idea (which stocks, in ordered steps) and entry_idea (when to buy).",
             "Each idea has statement, signal_inputs [{dataset, field}], and exact cited_spans.",
             "Omit an idea when absent from the document; never invent a missing screen or entry.",
@@ -263,7 +273,15 @@ def verify_cited_spans(card: Mapping[str, Any], *, text: str, source_record_id: 
         if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end <= start or end > len(text):
             raise CardRejected("citation_unverifiable", f"span {i} offsets out of range")
         if not exact or text[start:end] != exact:
-            raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text")
+            def normalize(value: str) -> str:
+                return " ".join(unicodedata.normalize("NFKC", value).split())
+
+            normalized_exact = normalize(exact or "")
+            matched = bool(normalized_exact and normalized_exact in normalize(text))
+            # Raw preview keeps exactly 80 characters even for control-heavy
+            # quotes; JSON escaping could exceed the existing 500-char ledger cap.
+            trace = f"normalized_match={str(matched).lower()}; exact_text={(exact or '')[:80]}"
+            raise CardRejected("citation_unverifiable", f"span {i} is not an exact substring of the stored text; {trace}")
 
 
 def finalize_card(
@@ -285,9 +303,7 @@ def finalize_card(
     for name in ("screen_idea", "entry_idea"):
         if name in card:
             verify_cited_spans(card[name], text=text, source_record_id=source_record_id)
-    missing = idea_missing_datasets(card)
-    if missing and card["testability"] != "not_testable":
-        card["testability"] = f"needs_data:{missing[0]}"
+    card["testability"] = stamped_card_testability(card)
     if "predictions" in card:
         predictions = []
         for i, prediction in enumerate(card["predictions"]):
@@ -301,6 +317,33 @@ def finalize_card(
             predictions.append({**prediction, "testability": f"needs_data:{missing}" if missing else "testable"})
         card["predictions"] = predictions
     return card
+
+
+UNPARSABLE_SIGNAL_INPUT = "unparsable_signal_input"
+
+
+def signal_input_missing_datasets(card: Mapping[str, Any]) -> list[str]:
+    """Read legacy top-level strings as dataset.field, failing closed on bad names."""
+    from services.registry.factor_rule import get_feature_definition
+
+    missing = set()
+    for item in card.get("signal_inputs", ()):
+        if not isinstance(item, str) or "." not in item:
+            missing.add(UNPARSABLE_SIGNAL_INPUT)
+            continue
+        dataset, feature = item.rsplit(".", 1)
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,80}", dataset) or not feature or feature != feature.strip():
+            missing.add(UNPARSABLE_SIGNAL_INPUT)
+        elif get_feature_definition(dataset, feature) is None:
+            missing.add(dataset)
+    return sorted(missing)
+
+
+def stamped_card_testability(card: Mapping[str, Any]) -> str:
+    """Retain abstention/declared unmet requirements; never trust model testable alone."""
+    declared = str(card.get("testability") or "")
+    missing = sorted(set(idea_missing_datasets(card) + signal_input_missing_datasets(card)))
+    return f"needs_data:{missing[0]}" if missing and declared != "not_testable" else declared
 
 
 def idea_missing_datasets(card: Mapping[str, Any]) -> list[str]:

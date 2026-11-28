@@ -7226,7 +7226,7 @@ def _extract_broker_backfill_funcs() -> str:
     stamp_start = text.index("stamp_refresh_call_id() {")
     stamp_end = text.index("\n# Proves the latest closed Taiwan session", stamp_start)
     bf_start = text.index("run_finmind_broker_backfill() {")
-    bf_end = text.index("\n# Compose services of the source-ingest family.", bf_start)
+    bf_end = text.index("\nexecute_bounded_source_refresh_entrypoint() {", bf_start)
     return text[stamp_start:stamp_end] + "\n" + text[bf_start:bf_end]
 
 
@@ -7239,15 +7239,54 @@ def _run_broker_backfill_func(
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
+    state_root = tmp_path / "br_state"
+    state_root.mkdir(exist_ok=True)
+    events_file = tmp_path / "br_events.log"
     calls = tmp_path / "docker_calls.jsonl"
+    img_sha = "a" * 64
     (bin_dir / "docker").write_text(f"""#!{_sys.executable}
 import json, os, subprocess, sys
 args = sys.argv[1:]
 with open({str(calls)!r}, "a") as fh:
     fh.write(json.dumps(args) + "\\n")
+joined = " ".join(args)
 if args[:1] == ["compose"]:
-    print("cid-source-ingest"); sys.exit(0)
+    if "images -q source-ingest" in joined:
+        print({img_sha!r}); sys.exit(0)
+    if "ps --status running -q source-ingest-scheduler" in joined:
+        print("steady-sched"); sys.exit(0)
+    if "ps --status running -q source-ingest-agora-projector" in joined:
+        print("steady-proj"); sys.exit(0)
+    if "ps -q source-ingest" in joined or "ps -a -q source-ingest" in joined:
+        print("cid-source-ingest"); sys.exit(0)
+    sys.exit(0)
+if args[:1] == ["inspect"]:
+    target = args[-1]
+    fmt = args[2] if len(args) > 2 else ""
+    if "{{.Image}}" in fmt:
+        print("sha256:" + {img_sha!r}); sys.exit(0)
+    if "{{json .Config.Env}}" in fmt:
+        if target == "steady-sched":
+            print('["PANTHEON_TENANT_ID=t","PANTHEON_ENV=dev","GIT_SHA=gitsha1","SOURCE_INGEST_CONTROLLER_MODE=collector_steady_pull"]')
+        else:
+            print('["A=1","FINMIND_API_TOKEN=steady-old"]')
+        sys.exit(0)
+    if "{{.HostConfig.Memory}}" in fmt:
+        print(os.environ.get("FAKE_LIMIT_BYTES", "6442450944")); sys.exit(0)
+    if "{{.State.OOMKilled}}" in fmt:
+        print(os.environ.get("FAKE_OOM", "false")); sys.exit(0)
+    sys.exit(0)
+if args[:2] == ["image", "inspect"]:
+    print("sha256:" + {img_sha!r}); sys.exit(0)
+if args[:1] in (["stop"], ["start"], ["rm"]):
+    sys.exit(0)
+if args[:1] == ["ps"]:
+    if "service=source-ingest" in joined and "status=created" not in joined:
+        print("cid-source-ingest")
+    sys.exit(0)
 if args[:1] == ["exec"]:
+    if args[-2:] == ["cat", "/sys/fs/cgroup/memory.peak"]:
+        print(os.environ.get("FAKE_PEAK_BYTES", "545259520")); sys.exit(0)
     code = sys.stdin.read()
     assert "run_backfill" in code and "verify_two_year_backfill_coverage" in code
     mode = {exec_mode!r}
@@ -7278,6 +7317,33 @@ if args[:1] == ["exec"]:
                 i += 1
         env["PYTHONPATH"] = {str(ROOT)!r}
         env["SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT"] = {str(tmp_path / "mds")!r}
+        if mode == "real_between_sessions":
+            prelude = '''
+import io, os, pyarrow as pa, pyarrow.parquet as pq
+from services.source_ingestion.connectors import finmind_taiwan as ft
+rows = [
+    {{"date": "2026-06-08", "stock_id": "2330", "securities_trader_id": "9200", "securities_trader": "A", "price": 950.0, "buy": 4000, "sell": 300}},
+    {{"date": "2026-06-08", "stock_id": "2330", "securities_trader_id": "1440", "securities_trader": "B", "price": 949.0, "buy": 100, "sell": 2100}},
+]
+buf = io.BytesIO()
+pq.write_table(pa.Table.from_pylist(rows), buf)
+body = buf.getvalue()
+def _fake_fetch(self, dataset, day_s):
+    os.environ["PANTHEON_REFRESH_NOW"] = "2026-11-18T00:35:00Z"
+    return body, {{}}
+ft.FinMindLiveFetcher.fetch_storage_objects_raw = _fake_fetch
+'''
+            code = prelude + "\\n" + code
+        elif mode == "real_failing_session":
+            prelude = '''
+import os
+from services.source_ingestion.connectors import finmind_taiwan as ft
+def _boom_fetch(self, dataset, day_s):
+    tok = os.environ.get("FINMIND_API_TOKEN") or ""
+    raise ft.FinMindFetchError(f"upstream storage_objects 502 with secret={{tok}}")
+ft.FinMindLiveFetcher.fetch_storage_objects_raw = _boom_fetch
+'''
+            code = prelude + "\\n" + code
         sys.exit(subprocess.run([{_sys.executable!r}, "-c", code], env=env).returncode)
     sys.exit(0)
 sys.exit(1)
@@ -7286,13 +7352,22 @@ sys.exit(1)
     out_file = tmp_path / "backfill-outcome.json"
     script = tmp_path / "run_backfill.sh"
     script.write_text(
-        "set -euo pipefail\ninfo() { :; }\n"
+        "set -euo pipefail\n"
+        "info() { :; }\n"
+        "curl_with_retry() { :; }\n"
+        f'EVENTS_FILE={str(events_file)!r}\n'
+        'manage_source_ingest_refresh_runtime() {\n'
+        '  echo "$2 hosts=${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-} finmind=${PANTHEON_BOUNDED_RUNTIME_FINMIND_TOKEN:-false}" >> "${EVENTS_FILE}"\n'
+        '}\n'
         + _extract_broker_backfill_funcs()
         + f'\nrun_finmind_broker_backfill "{out_file}"\n'
     )
     env = {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "BOUNDED_RUNTIME_STATE_ROOT": str(state_root),
+        "PANTHEON_REFRESH_RUN_ID": "9101",
+        "PANTHEON_REFRESH_NOW": "2026-11-27T10:30:00Z",
         "FINMIND_API_TOKEN": "tok-super-secret-value",
         "PANTHEON_REFRESH_CALL_ID": "call-backfill-1",
         **(extra_env or {}),
@@ -7310,7 +7385,19 @@ def test_broker_backfill_func_passes_token_by_name_and_restricts_egress(tmp_path
     payload = json.loads(out_file.read_text(encoding="utf-8"))
     assert payload["status"] == "ok" and payload["call_id"] == "call-backfill-1"
     assert "tok-super-secret-value" not in out_file.read_text(encoding="utf-8")
-    exec_args = next(c for c in calls if c[:1] == ["exec"])
+    assert payload["bounded_runtime"] == {
+        "enter_recreates": 1,
+        "finmind_token": True,
+        "hosts": "api.finmindtrade.com,storage.googleapis.com",
+        "memory_limit_bytes": 6442450944,
+        "memory_peak_bytes": 545259520,
+        "oom_killed": False,
+        "restore_recreates": 1,
+    }
+    events = (tmp_path / "br_events.log").read_text(encoding="utf-8").splitlines()
+    assert [e.split()[0] for e in events] == ["bounded", "restore"]
+    assert not list((tmp_path / "br_state").glob("pantheon-bounded-runtime-*"))
+    exec_args = next(c for c in calls if c[:1] == ["exec"] and "-i" in c)
     assert "FINMIND_API_TOKEN" in exec_args
     assert not any(a.startswith("FINMIND_API_TOKEN=") for a in exec_args)
     assert "PANTHEON_EXTERNAL_EGRESS=allowlist" in exec_args
@@ -7355,6 +7442,72 @@ def test_broker_backfill_in_container_verify_only_runs_with_egress_deny_and_no_t
     assert payload["coverage"]["read_only"] is True
     assert payload["coverage"]["min_sessions_required"] == 480
     assert not (tmp_path / "mds").exists()
+
+
+def test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessions(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    # 1. Dispatch inside the Taiwan weekday market-open window (Wednesday 00:40Z): no bounded enter, no FinMind request.
+    inside_dir = tmp_path / "inside"
+    inside_dir.mkdir()
+    proc_in, calls_in, out_in = _run_broker_backfill_func(
+        inside_dir,
+        "real",
+        {"PANTHEON_REFRESH_NOW": "2026-11-18T00:40:00Z"},
+    )
+    assert proc_in.returncode != 0
+    assert calls_in == []
+    assert not (inside_dir / "br_events.log").exists()
+    payload_in = json.loads(out_in.read_text(encoding="utf-8"))
+    assert payload_in["status"] == "not_run"
+    assert payload_in["stopped_reason"] == "market_open_0055z"
+    assert "market_open_0055z" in payload_in["reason"] and "00:55Z" in payload_in["reason"]
+    assert payload_in["requests_made"] == 0
+
+    # 2. Dispatch starts at 00:34Z (allowed), finishes session 2026-06-08, then reaches 00:35Z before session 2026-06-09.
+    between_dir = tmp_path / "between"
+    between_dir.mkdir()
+    proc_bw, _calls_bw, out_bw = _run_broker_backfill_func(
+        between_dir,
+        "real_between_sessions",
+        {
+            "PANTHEON_REFRESH_NOW": "2026-11-18T00:34:00Z",
+            "BROKER_BACKFILL_START_DATE": "2026-06-08",
+            "BROKER_BACKFILL_END_DATE": "2026-06-09",
+            "BROKER_BACKFILL_MIN_INTERVAL_SECONDS": "0.6",
+        },
+    )
+    assert proc_bw.returncode == 0, proc_bw.stderr
+    payload_bw = json.loads(out_bw.read_text(encoding="utf-8"))
+    assert payload_bw["status"] == "ok"
+    assert payload_bw["stopped_reason"] == "market_open_0055z"
+    assert "market_open_0055z" in payload_bw["reason"]
+    assert payload_bw["completed_count"] == 1
+    assert payload_bw["remaining_dates_count"] == 1
+    assert payload_bw["requests_made"] == 1
+    assert payload_bw["bounded_runtime"]["enter_recreates"] == 1
+    assert payload_bw["bounded_runtime"]["restore_recreates"] == 1
+
+
+def test_broker_backfill_stderr_reaches_step_log_with_traceback_and_redacted_token(tmp_path: Path) -> None:
+    pytest.importorskip("pyarrow")
+    proc, _calls, out_file = _run_broker_backfill_func(
+        tmp_path,
+        "real_failing_session",
+        {
+            "BROKER_BACKFILL_START_DATE": "2026-06-08",
+            "BROKER_BACKFILL_END_DATE": "2026-06-08",
+        },
+    )
+    assert proc.returncode != 0
+    assert "Traceback (most recent call last):" in proc.stderr
+    assert "session 2026-06-08 failed:" in proc.stderr
+    assert "FinMindFetchError: upstream storage_objects 502 with secret=***" in proc.stderr
+    assert "tok-super-secret-value" not in proc.stderr
+    assert "tok-super-secret-value" not in proc.stdout
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["status"] == "partial"
+    assert "2026-06-08" in payload["failed"]
+    assert "tok-super-secret-value" not in json.dumps(payload)
 
 
 def test_refresh_only_routes_broker_backfill_flag() -> None:
