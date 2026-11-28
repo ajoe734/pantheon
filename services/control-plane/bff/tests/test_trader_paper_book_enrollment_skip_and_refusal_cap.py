@@ -712,7 +712,9 @@ def test_paper_enrollment_reconcile_never_acts_on_trader_servant_paper_book_reco
         lease_owner="initial-book-provision",
         lease_seconds=180,
     )
-    assert leased is not None and leased.state == "provisioning"
+    # PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: ensure already moved the
+    # book's ledger row to the terminal ``succeeded`` state, so reserve returns it.
+    assert leased is not None and leased.state == "succeeded"
     world.provisioning_store.release(
         leased,
         lease_owner="initial-book-provision",
@@ -721,12 +723,23 @@ def test_paper_enrollment_reconcile_never_acts_on_trader_servant_paper_book_reco
 
     now = datetime(2026, 11, 27, 12, 30, 0, tzinfo=timezone.utc)
     stored_record = world.provisioning_store.get(TENANT, current_record.idempotency_key)
-    assert stored_record is not None and stored_record.state == "provisioning"
+    assert stored_record is not None and stored_record.state == "succeeded"
+    hosted_record = ProvisioningRecord(
+        tenant_id=current_record.tenant_id,
+        idempotency_key=current_record.idempotency_key,
+        request_hash=current_record.request_hash,
+        normalized_name=current_record.normalized_name,
+        persona_id=current_record.persona_id,
+        request_payload=hosted_legacy_payload,
+        state="provisioning",
+    )
 
-    # Both the current record shape and the hosted 09:42Z record shape are non-trading and non-actionable.
+    # The current record shape, the hosted 09:42Z record shape and the stored row are non-trading and non-actionable.
     assert _is_non_trading_paper_enrollment_record(current_record, persona_owner=world.persona_owner) is True
+    assert _is_non_trading_paper_enrollment_record(hosted_record, persona_owner=world.persona_owner) is True
     assert _is_non_trading_paper_enrollment_record(stored_record, persona_owner=world.persona_owner) is True
     assert _is_paper_enrollment_record_actionable(current_record, now, 600, persona_owner=world.persona_owner) is False
+    assert _is_paper_enrollment_record_actionable(hosted_record, now, 600, persona_owner=world.persona_owner) is False
     assert _is_paper_enrollment_record_actionable(stored_record, now, 600, persona_owner=world.persona_owner) is False
 
     # Also verify synthetic records matching solely by book_kind or solely by persona_class.

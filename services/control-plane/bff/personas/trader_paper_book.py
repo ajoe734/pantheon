@@ -46,6 +46,17 @@ TRADER_PAPER_STARTING_CAPITAL_CURRENCY_ENV_KEYS: tuple[str, ...] = (
     "PANTHEON_AGORA_TRADER_PAPER_CURRENCY",
 )
 
+# PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: one place for the trader paper
+# book default universe per starting-capital currency (#7983 created TWD books
+# with 2330.TW) and for the legacy default that books created before #7983 got
+# from ``PersonaProvisioningCoordinator._paper_universe`` when symbols were absent.
+TRADER_PAPER_BOOK_DEFAULT_UNIVERSE_BY_CURRENCY: Dict[str, tuple[str, ...]] = {
+    "TWD": ("2330.TW",),
+}
+LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE: tuple[str, ...] = ("SPY",)
+TRADER_PAPER_BOOK_IDEMPOTENCY_PREFIX = "trader-paper-book:"
+TRADER_PAPER_BOOK_PROVISIONED_STEP = "trader_paper_book_provisioned"
+
 _CURRENCY_RE = re.compile(r"^[A-Z]{3,8}$")
 _STAGE_FIELD_NAMES: tuple[str, ...] = (
     "target_stage",
@@ -252,6 +263,77 @@ def validate_servant_persona_paper_ceiling(
             )
 
 
+def trader_paper_book_default_universe(currency: Any) -> tuple[str, ...]:
+    """Default trader paper book universe for ``currency`` (empty when none is defined)."""
+    return TRADER_PAPER_BOOK_DEFAULT_UNIVERSE_BY_CURRENCY.get(
+        str(currency or "").strip().upper(), ()
+    )
+
+
+def is_trader_paper_book_ledger_record(record: Any) -> bool:
+    """True for a ``bff.persona_provisioning`` row written for a trader servant paper book.
+
+    Such a row only leases the book's Registry/Governance/Deployment authorities;
+    it is not a Persona provisioning request and must never be projected onto
+    the servant Persona record. Both the deterministic idempotency key and the
+    book mandate must match, so a Persona request can never opt out by key alone.
+    The mandate (not ``book_kind``) is required because the hosted rows written
+    before #7983 carry no ``book_kind``/``persona_class``; a row that does state
+    a ``book_kind`` must state the trader book kind.
+    """
+    key = str(getattr(record, "idempotency_key", None) or "").strip()
+    if not key.startswith(TRADER_PAPER_BOOK_IDEMPOTENCY_PREFIX):
+        return False
+    payload = getattr(record, "request_payload", None)
+    if not isinstance(payload, Mapping):
+        return False
+    if str(payload.get("mandate") or "").strip() != "user_private_agora_servant_paper_book":
+        return False
+    book_kind = str(payload.get("book_kind") or "").strip()
+    return book_kind in {"", "trader_servant_paper_book"}
+
+
+def _projection_symbols(projection: Mapping[str, Any]) -> tuple[str, ...]:
+    metadata = projection.get("metadata")
+    meta = metadata if isinstance(metadata, Mapping) else {}
+    symbol = str(projection.get("symbol") or meta.get("symbol") or "").strip()
+    if symbol:
+        return (symbol,)
+    raw = projection.get("symbols") or meta.get("symbols")
+    if isinstance(raw, (list, tuple)):
+        return tuple(str(item or "").strip() for item in raw)
+    return ()
+
+
+def _is_legacy_universe_for_currency(symbols: tuple[str, ...], currency: Any) -> bool:
+    """True when a book's projected universe is the legacy absent-symbols default
+    while its currency has a different book default universe (a pre-#7983 TWD book)."""
+    default_universe = trader_paper_book_default_universe(currency)
+    return bool(
+        default_universe
+        and tuple(s.upper() for s in symbols) == LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE
+        and default_universe != LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE
+    )
+
+
+def _is_market_admission_pause(binding: Mapping[str, Any]) -> bool:
+    """True for a binding the paper fleet reconciler paused on market admission.
+
+    The reconciler records ``session_admission.reason_code`` ``market_input_*``
+    and auto-resumes such pauses itself; operator pauses use another reason
+    and are never resumed here.
+    """
+    status = str(binding.get("status") or binding.get("state") or "").strip().lower()
+    if status != "paused":
+        return False
+    metadata = binding.get("metadata")
+    meta = metadata if isinstance(metadata, Mapping) else {}
+    session_admission = meta.get("session_admission")
+    if not isinstance(session_admission, Mapping):
+        return False
+    return str(session_admission.get("reason_code") or "").startswith("market_input_")
+
+
 def trader_paper_book_provisioning_record(
     tenant_id: str,
     persona_id: str,
@@ -278,7 +360,11 @@ def trader_paper_book_provisioning_record(
         "requested_by": clean_requester,
         "execution_context": "paper",
         "environment_ceiling": "paper",
-        **({"symbols": ["2330.TW"]} if currency.strip().upper() == "TWD" else {}),
+        **(
+            {"symbols": list(default_universe)}
+            if (default_universe := trader_paper_book_default_universe(currency))
+            else {}
+        ),
     }
     request_hash = hashlib.sha256(
         json.dumps(
@@ -290,7 +376,7 @@ def trader_paper_book_provisioning_record(
     ts = str(created_at or "").strip() or "2026-11-27T00:00:00Z"
     return ProvisioningRecord(
         tenant_id=clean_tenant,
-        idempotency_key=f"trader-paper-book:{clean_tenant}:{clean_persona}",
+        idempotency_key=f"{TRADER_PAPER_BOOK_IDEMPOTENCY_PREFIX}{clean_tenant}:{clean_persona}",
         request_hash=request_hash,
         normalized_name=f"agora-servant-{clean_persona}",
         persona_id=clean_persona,
@@ -304,7 +390,7 @@ def trader_paper_book_ids(tenant_id: str, persona_id: str) -> ProvisioningIds:
     """Derive deterministic owner IDs for `(tenant_id, persona_id)`."""
     dummy = ProvisioningRecord(
         tenant_id=str(tenant_id or "").strip(),
-        idempotency_key=f"trader-paper-book:{tenant_id}:{persona_id}",
+        idempotency_key=f"{TRADER_PAPER_BOOK_IDEMPOTENCY_PREFIX}{tenant_id}:{persona_id}",
         request_hash="0" * 64,
         normalized_name=f"agora-servant-{persona_id}",
         persona_id=str(persona_id or "").strip(),
@@ -415,6 +501,7 @@ def _validate_runtime_binding_readback(
     persona_id: str,
     capital_pool_id: str,
     persona_capital_binding_id: str,
+    require_active: bool = True,
 ) -> Dict[str, Any]:
     binding_id = str(
         binding.get("binding_id")
@@ -448,7 +535,7 @@ def _validate_runtime_binding_readback(
                 reason_code="non_paper_runtime_binding",
             )
     status = str(binding.get("status") or binding.get("state") or "").strip().lower()
-    if status != "active":
+    if status != "active" and (require_active or status != "paused"):
         raise PersonaProvisioningCoordinationError(
             f"RuntimeBinding {binding_id} status is {status!r}, expected 'active'",
             reason_code="runtime_binding_not_active",
@@ -821,6 +908,10 @@ def _binding_has_executable_projection(
         )
         if not (len(names) > 1 and all(names) and len(set(names)) == len(names)):
             return False
+    if _is_legacy_universe_for_currency(_projection_symbols(binding), expected_currency):
+        # A pre-#7983 TWD book projected on the legacy SPY default is not executable
+        # on the Taiwan market input; ensure repairs it in place.
+        return False
     market_data_policy = (
         binding.get("market_data_policy") or metadata.get("market_data_policy")
     )
@@ -900,12 +991,98 @@ def _resolve_paper_book_execution_projection(
             reg_receipt = coordinator._owner_get(
                 "registry", f"/api/registry/strategy-artifacts/{ids.strategy_artifact_id}"
             )
-    return coordinator.build_paper_execution_projection_metadata(
+    projection = coordinator.build_paper_execution_projection_metadata(
         record,
         ids,
         deployment_plan_receipt=plan_receipt if isinstance(plan_receipt, Mapping) else None,
         registry_receipt=reg_receipt if isinstance(reg_receipt, Mapping) else None,
     )
+    return _apply_book_default_universe_to_legacy_projection(
+        projection,
+        ids=ids,
+        expected_currency=expected_currency,
+    )
+
+
+def _approved_artifact_universe(
+    projection: Mapping[str, Any],
+    *,
+    ids: ProvisioningIds,
+) -> Optional[tuple[tuple[str, ...], Any]]:
+    """(symbols, market) of the approved artifact carried in ``projection``'s object_store."""
+    from services.control_plane.governance.deployment_plan import StagePlanner
+
+    object_store = projection.get("object_store")
+    if not isinstance(object_store, Mapping):
+        return None
+    _, artifact_key = StagePlanner.build_object_store_keys(
+        strategy_id=ids.strategy_id,
+        version=ids.version,
+    )
+    raw = object_store.get(artifact_key)
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(raw, Mapping):
+        return None
+    artifact = raw.get("strategy_artifact") if isinstance(raw.get("strategy_artifact"), Mapping) else raw
+    parameters = artifact.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return None
+    symbols = parameters.get("symbols")
+    if not isinstance(symbols, list):
+        return None
+    return tuple(str(item or "").strip() for item in symbols), parameters.get("market")
+
+
+def _apply_book_default_universe_to_legacy_projection(
+    projection: Dict[str, Any],
+    *,
+    ids: ProvisioningIds,
+    expected_currency: str,
+) -> Dict[str, Any]:
+    """Project a pre-#7983 TWD book onto the book default universe (2330.TW).
+
+    Books created before #7983 had no ``symbols`` in their ledger request, so
+    ``_paper_universe`` minted and approved their artifact on the legacy SPY
+    default. That approved artifact (registry id and version) is immutable and
+    the RuntimeBinding's ``artifact_id``/``artifact_version`` cannot be changed
+    in place, so the approved object_store, checksum and market_data_policy are
+    kept exactly and only the projected market symbol becomes the book's
+    default universe for its currency, the same universe #7983 gives new books.
+    Applies only when the approved artifact universe itself is exactly the
+    legacy default with no explicit market; any other universe is untouched.
+    """
+    if not _is_legacy_universe_for_currency(_projection_symbols(projection), expected_currency):
+        return projection
+    approved = _approved_artifact_universe(projection, ids=ids)
+    if approved is None:
+        return projection
+    approved_symbols, approved_market = approved
+    if (
+        tuple(s.upper() for s in approved_symbols) != LEGACY_ABSENT_SYMBOLS_DEFAULT_UNIVERSE
+        or str(approved_market or "").strip()
+    ):
+        return projection
+    default_universe = trader_paper_book_default_universe(expected_currency)
+    repaired = dict(projection)
+    repaired.pop("symbols", None)
+    if len(default_universe) == 1:
+        repaired["symbol"] = default_universe[0]
+    else:
+        repaired.pop("symbol", None)
+        repaired["symbols"] = list(default_universe)
+    repaired["book_universe"] = {
+        "source": "trader_paper_book_default_universe",
+        "currency": str(expected_currency or "").strip().upper(),
+        "symbols": list(default_universe),
+        "approved_artifact_symbols": list(approved_symbols),
+        "repair": "legacy_absent_symbols_default",
+        "task_id": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128",
+    }
+    return repaired
 
 
 def _repair_runtime_binding_execution_projection_in_place(
@@ -957,13 +1134,21 @@ def _repair_runtime_binding_execution_projection_in_place(
         metadata_patch["agora_user_id"] = str(agora_user_id).strip()
 
     status = str(binding.get("status") or binding.get("state") or "").strip().lower()
-    if status != "active":
+    if status == "active":
+        transitioner(binding_id, "pending_pause", metadata_patch=metadata_patch)
+        transitioner(binding_id, "paused")
+    elif _is_market_admission_pause(binding):
+        # The reconciler paused this binding because the market input of its
+        # previous (non-executable) projection was missing; the repaired
+        # projection is written while paused and the binding resumes on the
+        # same binding_id. Market admission is then re-evaluated by the
+        # reconciler exactly as for every other paper binding.
+        transitioner(binding_id, "paused", metadata_patch=metadata_patch)
+    else:
         raise PersonaProvisioningCoordinationError(
             f"RuntimeBinding {binding_id} status is {status!r}; cannot repair projection in place",
             reason_code="runtime_binding_not_active",
         )
-    transitioner(binding_id, "pending_pause", metadata_patch=metadata_patch)
-    transitioner(binding_id, "paused")
     updated = transitioner(binding_id, "active", metadata_patch=metadata_patch)
 
     readback: Optional[Mapping[str, Any]] = None
@@ -986,6 +1171,73 @@ def _repair_runtime_binding_execution_projection_in_place(
         capital_pool_id=capital_pool_id,
         persona_capital_binding_id=persona_capital_binding_id,
     )
+
+
+def _finalize_trader_paper_book_ledger_record(
+    coordinator: PersonaProvisioningCoordinator,
+    record: ProvisioningRecord,
+    *,
+    runtime_binding: Mapping[str, Any],
+    ids: ProvisioningIds,
+    provisioned_at: str,
+) -> Optional[str]:
+    """Move the book's existing ``bff.persona_provisioning`` row to a terminal state.
+
+    The row exists only to lease the book's Registry/Governance/Deployment
+    authorities. Once the book is provisioned (active, executable RuntimeBinding)
+    it is recorded ``succeeded`` by the same store writer, so nothing keeps
+    retrying it. No row is created when none exists, a row already recorded
+    for this binding is not written again, and a retired or compensated row is
+    never revived. Returns the resulting ledger state, or None without a row.
+    """
+    store = getattr(coordinator, "store", None)
+    getter = getattr(store, "get", None)
+    if not callable(getter):
+        return None
+    existing = getter(record.tenant_id, record.idempotency_key)
+    if existing is None or not is_trader_paper_book_ledger_record(existing):
+        return None
+    binding_id = str(runtime_binding.get("binding_id") or "").strip()
+    existing_result = existing.result if isinstance(existing.result, Mapping) else {}
+    if (
+        existing.state == "succeeded"
+        and existing.current_step == TRADER_PAPER_BOOK_PROVISIONED_STEP
+        and existing_result.get("runtime_binding_id") == binding_id
+    ):
+        return existing.state
+    if existing.state in {"retired", "compensated"}:
+        return existing.state
+    leased = store.acquire(
+        existing.tenant_id,
+        existing.idempotency_key,
+        lease_owner=coordinator.lease_owner,
+        lease_seconds=coordinator.lease_seconds,
+    )
+    if leased is None:
+        # Another coordinator holds the lease; the next ensure finalizes it.
+        return existing.state
+    try:
+        if leased.state not in {"retired", "compensated"}:
+            leased.state = "succeeded"
+            leased.current_step = TRADER_PAPER_BOOK_PROVISIONED_STEP
+            leased.error = None
+            leased.result = {
+                **(dict(leased.result) if isinstance(leased.result, Mapping) else {}),
+                "status": "trader_paper_book_provisioned",
+                "book_kind": "trader_servant_paper_book",
+                "capital_pool_id": ids.capital_pool_id,
+                "persona_capital_binding_id": ids.persona_capital_binding_id,
+                "runtime_binding_id": binding_id,
+                "runtime_id": str(runtime_binding.get("runtime_id") or trader_paper_runtime_id(ids)),
+                "provisioned_at": provisioned_at,
+            }
+    finally:
+        leased = store.release(
+            leased,
+            lease_owner=coordinator.lease_owner,
+            lease_seconds=coordinator.lease_seconds,
+        )
+    return leased.state
 
 
 def ensure_trader_paper_book(
@@ -1133,6 +1385,7 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=not _is_market_admission_pause(candidate),
         )
     if len(non_terminal) > 1:
         raise PersonaProvisioningCoordinationError(
@@ -1150,6 +1403,7 @@ def ensure_trader_paper_book(
             persona_id=clean_persona,
             capital_pool_id=ids.capital_pool_id,
             persona_capital_binding_id=ids.persona_capital_binding_id,
+            require_active=not _is_market_admission_pause(non_terminal[0]),
         )
         getter = getattr(active_runtime_client, "get", None)
         if callable(getter):
@@ -1161,12 +1415,22 @@ def ensure_trader_paper_book(
                     persona_id=clean_persona,
                     capital_pool_id=ids.capital_pool_id,
                     persona_capital_binding_id=ids.persona_capital_binding_id,
+                    require_active=not _is_market_admission_pause(latest),
                 )
-        if not _binding_has_executable_projection(
+        has_projection = _binding_has_executable_projection(
             runtime_binding,
             ids=ids,
             expected_currency=effective_starting["currency"],
-        ):
+        )
+        if has_projection and _is_market_admission_pause(runtime_binding):
+            # Already executable: resuming a market-admission pause belongs to
+            # the paper fleet reconciler, never to ensure.
+            raise PersonaProvisioningCoordinationError(
+                f"RuntimeBinding {runtime_binding['binding_id']} is paused on market admission; "
+                "the paper fleet reconciler resumes it on an admitted snapshot",
+                reason_code="runtime_binding_not_active",
+            )
+        if not has_projection:
             projection_metadata = _resolve_paper_book_execution_projection(
                 active_coordinator,
                 record,
@@ -1363,6 +1627,16 @@ def ensure_trader_paper_book(
         "requested_by": clean_requester,
         "provisioned_at": now,
     }
+
+    ledger_state = _finalize_trader_paper_book_ledger_record(
+        active_coordinator,
+        record,
+        runtime_binding=runtime_binding,
+        ids=ids,
+        provisioned_at=now,
+    )
+    if ledger_state is not None:
+        book_summary["provisioning_ledger_state"] = ledger_state
 
     if persona_write_owner is not None:
         _persist_paper_book_metadata_on_persona(
