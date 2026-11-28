@@ -892,9 +892,12 @@ def test_gdelt_failures_record_reason_and_auto_pause(tmp_path, fixtures_dir, tes
         else:
             transport.register(target, payload, http_status=status)
         outcome = runner.run_source("collector-gdelt", run_id=f"{failure}-{attempt}")
-        assert outcome.status == ("partial" if attempt == 0 else "paused")
+        assert outcome.status == ("paused" if failure == "access" or attempt else "partial")
         assert outcome.bundle.manifest["paused_reason"]
         assert not list((tmp_path / "state" / "gdelt-feed").glob("*.bundled"))
+        if failure == "access":
+            assert outcome.status == "paused" and outcome.state.retry_at
+            break  # First 429 starts the daily cooldown; no immediate second request.
     with pytest.raises(SourcePausedError):
         runner.run_source("collector-gdelt", run_id="must-not-fetch")
 

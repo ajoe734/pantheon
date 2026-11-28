@@ -70,7 +70,7 @@ from collector_stack.runner import CollectorRunner, SourcePausedError
         ),
     ],
 )
-def test_two_consecutive_429_403_or_login_redirects_pause_source_and_write_paused_manifest(
+def test_rate_limit_pauses_immediately_and_repeated_authorization_blocks_pause(
     tmp_path: Path,
     test_hasher: AuthorHasher,
     first_resp: FetchResponse,
@@ -91,27 +91,27 @@ def test_two_consecutive_429_403_or_login_redirects_pause_source_and_write_pause
         transport=transport,
     )
 
-    # 1st block -> status is partial, consecutive_blocks=1, not paused yet
+    rate_limited = expected_reason_substr == "http_429"
     outcome_1 = runner.run_source(
         "collector-tw-threads",
         run_id="run-block-1",
         started_at="2026-11-10T01:00:00Z",
         finished_at="2026-11-10T01:00:05Z",
     )
-    assert outcome_1.status == "partial"
-    assert outcome_1.state.paused is False
+    assert outcome_1.status == ("paused" if rate_limited else "partial")
+    assert outcome_1.state.paused is rate_limited
     assert outcome_1.state.consecutive_blocks == 1
 
     # 2nd consecutive block -> auto-paused, manifest has status="paused"
     outcome_2 = runner.run_source(
         "collector-tw-threads",
         run_id="run-block-2",
-        started_at="2026-11-10T07:00:00Z",
-        finished_at="2026-11-10T07:00:05Z",
+        started_at="2026-11-11T07:00:00Z",
+        finished_at="2026-11-11T07:00:05Z",
     )
     assert outcome_2.status == "paused"
     assert outcome_2.state.paused is True
-    assert outcome_2.state.consecutive_blocks == 2
+    assert outcome_2.state.consecutive_blocks == (1 if rate_limited else 2)
 
     manifest = verify_bundle_directory(outcome_2.bundle.bundle_dir)
     assert manifest["status"] == "paused"
@@ -125,7 +125,7 @@ def test_two_consecutive_429_403_or_login_redirects_pause_source_and_write_pause
     # 3rd run is refused while paused without making any request
     calls_before = len(transport.calls)
     with pytest.raises(SourcePausedError, match="auto-paused"):
-        runner.run_source("collector-tw-threads", run_id="run-block-3")
+        runner.run_source("collector-tw-threads", run_id="run-block-3", started_at="2026-11-11T08:00:00Z")
     assert len(transport.calls) == calls_before
 
 
@@ -140,7 +140,7 @@ def test_single_block_followed_by_success_resets_counter_and_config_change_resum
 
     url = "https://www.threads.com/search?q=台股&serp_type=default"
     seq = [
-        FetchResponse(requested_url=url, final_url=url, http_status=429, body=b"rate limited"),
+        FetchResponse(requested_url=url, final_url=url, http_status=403, body=b"forbidden"),
         FetchResponse(requested_url=url, final_url=url, http_status=200, body=good_html),
         FetchResponse(requested_url=url, final_url=url, http_status=403, body=b"forbidden 1"),
         FetchResponse(requested_url=url, final_url=url, http_status=429, body=b"rate limited 2"),

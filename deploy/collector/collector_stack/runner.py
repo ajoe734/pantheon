@@ -337,7 +337,8 @@ class CollectorRunner:
             )
         if sid == "collector-paper-arxiv":
             return ArxivPaperPoller(
-                policy, transport=self.transport, contact_user_agent=ua
+                policy, transport=self.transport, contact_user_agent=ua,
+                request_lock_path=self.root_dir / "state" / "arxiv-api.lock",
             )
         if sid == "collector-paper-openalex":
             return OpenAlexPaperPoller(
@@ -373,6 +374,7 @@ class CollectorRunner:
                 config=self.config,
                 transport=self.transport,
                 contact_user_agent=ua,
+                request_lock_path=self.root_dir / "state" / "arxiv-api.lock",
             )
         raise CollectorConfigError(f"no spider or poller registered for source_id: {sid!r}")
 
@@ -392,17 +394,17 @@ class CollectorRunner:
                 f"source {source_id!r} is disabled by default in fetch-policy.json"
             )
 
+        started_iso = started_at if isinstance(started_at, str) else utc_iso(started_at)
+        finished_iso = finished_at if isinstance(finished_at, str) else utc_iso(finished_at)
         current_state = self.state_store.get_source_state(
-            source_id, current_policy_hash=policy.policy_hash
+            source_id, current_policy_hash=policy.policy_hash,
+            now=datetime.fromisoformat(started_iso.replace("Z", "+00:00")),
         )
         if current_state.paused:
             raise SourcePausedError(
                 f"source {source_id!r} is auto-paused ({current_state.paused_reason}); "
-                "it resumes only when its fetch policy configuration changes"
+                f"retry_at={current_state.retry_at}; authorization blocks require a policy change"
             )
-
-        started_iso = started_at if isinstance(started_at, str) else utc_iso(started_at)
-        finished_iso = finished_at if isinstance(finished_at, str) else utc_iso(finished_at)
 
         collector = self.build_collector(policy)
         kwargs = dict(collect_kwargs or {})
@@ -446,6 +448,8 @@ class CollectorRunner:
                 finished_at=finished_iso,
                 policy_hash=policy.policy_hash,
                 block_reason=blocked.block_reason,
+                retry_after=next((str(v) for k, v in (blocked.response.headers or {}).items()
+                                  if k.lower() == "retry-after"), None),
             )
             bundle_status = "paused" if updated_state.paused else "partial"
             paused_reason = updated_state.paused_reason if updated_state.paused else blocked.block_reason
@@ -466,6 +470,7 @@ class CollectorRunner:
                 paused_reason=paused_reason,
                 cadence_seconds=policy.cadence_seconds,
                 consecutive_blocks=updated_state.consecutive_blocks,
+                retry_at=updated_state.retry_at,
             )
             return RunOutcome(
                 source_id=source_id,
@@ -622,11 +627,13 @@ class _CompositePaperCollector:
         config: CollectorConfig,
         transport: FetchTransport,
         contact_user_agent: str,
+        request_lock_path: Path | None = None,
     ) -> None:
         self.arxiv = ArxivPaperPoller(
             config.get_source("collector-paper-arxiv"),
             transport=transport,
             contact_user_agent=contact_user_agent,
+            request_lock_path=request_lock_path,
         )
         self.openalex = OpenAlexPaperPoller(
             config.get_source("collector-paper-openalex"),
