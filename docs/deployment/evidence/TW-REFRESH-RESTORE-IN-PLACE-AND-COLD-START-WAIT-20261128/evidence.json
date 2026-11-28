@@ -5,7 +5,7 @@
   "register_class": "RC2",
   "domain_owner": "cb4f6795",
   "delivery": {
-    "status": "PR #8032 published; independent review admission blocked by missing artifact contract paths; not merged/deployed/accepted",
+    "status": "PR #8032 awaiting renewed exact-head independent review; not merged/deployed/accepted",
     "startup_repair": "#8021 (separate source-ingest cold-start work, no duplicate changes)",
     "pr": "https://github.com/ajoe734/pantheon/pull/8032"
   },
@@ -96,7 +96,7 @@
     "margin_over_observed_start_to_ready_seconds": 106.912,
     "restore_guard_reserve_seconds": 600,
     "reason": "300s readiness + source-ingest health start bound 130s (120+10) + scheduler start bound 120s (90+30) + 50s orchestration/final readyz margin = 600s restore reserve, compatible with existing 10-minute steady-check step. Poll and curl time count against monotonic deadline; curl capped at min(5,remaining) seconds; readiness timeout status 75 alone is eligible for one final posture check when health is starting, followed by a readyz request. Other recreate/image/env failures stay failed.",
-    "market_open_effect": "Default profile budget 900s plus restore 600s prevents new profiles at or after 00:30Z weekdays until market close; previously 00:35Z. 23:30Z primary remains admitted; a proposed 00:30Z backup requires RC2 scheduling/profile-budget disposition."
+    "market_open_effect": "Keep default profile budget 900s plus restore reserve 600s: weekday starts at or after 00:30Z are refused until market close. Operator decision 2026-11-28 ~14:05Z moves the external backup timer from 00:30Z to 00:25Z (08:25 Asia/Taipei Mon..Sat), leaving 4 minutes of dispatch slack through 00:29Z; deterministic injected-clock tests admit 00:25:45Z and refuse 00:30:00Z. 23:30Z primary remains admitted. No default-budget or guard weakening."
   },
   "memory": {
     "peak_bytes": 6442450944,
@@ -151,7 +151,7 @@
     {
       "class": "RC2 market data",
       "owner": "cb4f6795",
-      "finding": "600s reserve moves last default profile admission to 00:30Z; fallback schedule/budget must account for the measured cold start."
+      "finding": "00:30Z backup scheduling disposition resolved by operator decision 2026-11-28: keep the 600s reserve and move the external dev-host backup timer to 00:25Z (08:25 Taipei Mon..Sat), with 4 minutes dispatch slack through 00:29Z. First firing 2026-11-30 00:25Z remains external evidence to observe; 00:30:00Z stays refused."
     },
     {
       "class": "RC3 storage",
@@ -165,12 +165,21 @@
   },
   "compatibility": "Existing never_entered and superseded_by_release retirement stays unchanged. A different running image remains superseded_by_release (existing #8003 contract), not restored_in_place. Same-image env mismatch or stopped recorded container follows existing restore path.",
   "review_admission": {
-    "status": "blocked",
+    "status": "artifact_contract_corrected_pending_new_handoff",
     "attempted_head": "b40d52c0e63937a0add5828eb1b6fba40a767415",
     "error": "changed file docs/operations/storage-manifest.json is outside the task artifact contract for repository pantheon",
     "also_requires_declared_artifact": "scripts/probe_tw_refresh_restore.py",
     "required_actor": "Human/Ops",
-    "correction": "With canonical task blocked, use the governed artifact-contract add command for docs/operations/storage-manifest.json and scripts/probe_tw_refresh_restore.py, then reopen the same task and repeat exact-head handoff to Antigravity. No replacement task, hand-edited JSON, identity impersonation or gate modification.",
+    "correction": "Human/Ops added docs/operations/storage-manifest.json and scripts/probe_tw_refresh_restore.py to the canonical artifacts contract and reopened this task at 2026-11-28T14:30:15Z. Owner must publish the scheduling tests/disposition and repeat exact-head handoff to Antigravity.",
     "why_required": "Repository AGENTS.md requires changed persistent writers registered in storage manifest and an executable read-only acceptance probe; retain both committed artifacts rather than drop these delivery requirements."
-  }
+  },
+  "external_dependencies": [
+    {
+      "component": "dev-host user timer pantheon-tw-refresh-dispatch.timer",
+      "owner": "RC2 market-data domain owner cb4f6795",
+      "source": "Human/Ops canonical reopen message 2026-11-28T14:30:15Z (operator decision ~14:05Z); not independently inspected by this worker",
+      "disposition": "Backup changed externally at 14:06Z from 08:30 to 08:25 Asia/Taipei Mon..Sat; first firing Mon 2026-11-30 00:25Z. Primary 07:30 Taipei and 06:40/07:40/10:50Z slots unchanged.",
+      "boundary": "Timer is outside this repository; this PR records the supplied disposition and tests admission with default 900+600 budgets. First actual timer dispatch and post-merge hosted restore proof remain pending."
+    }
+  ]
 }

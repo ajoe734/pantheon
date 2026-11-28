@@ -6922,6 +6922,30 @@ def test_market_open_guard_window(now: str, blocked: bool) -> None:
     assert f"GUARD={0 if blocked else 1}" in proc.stdout, proc.stdout + proc.stderr
 
 
+@pytest.mark.parametrize(
+    ("now", "blocked"),
+    [("2026-11-30T00:25:45Z", False), ("2026-11-30T00:30:00Z", True)],
+)
+def test_market_open_guard_backup_dispatch_with_default_budgets(now: str, blocked: bool) -> None:
+    # The external backup timer fires at 08:25 Taipei. Allow 45s dispatch
+    # latency while retaining the 900s profile + 600s cold-start restore reserve.
+    env = {
+        key: value for key, value in os.environ.items()
+        if key not in {"PANTHEON_REFRESH_PROFILE_BUDGET_SECONDS", "PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS"}
+    }
+    env["PANTHEON_REFRESH_NOW"] = now
+    script = _prune_shell_function("bounded_runtime_market_open_guard")
+    proc = subprocess.run(
+        ["bash", "-c", f"{script}\nbounded_runtime_market_open_guard"],
+        env=env, capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert proc.returncode == (0 if blocked else 1), proc.stdout + proc.stderr
+    if blocked:
+        assert "market_open_0055z" in proc.stdout and "last profile start 00:30Z" in proc.stdout
+    else:
+        assert proc.stdout == ""
+
+
 def test_profile_outside_the_run_union_or_finmind_without_token_is_rejected_before_any_change(tmp_path: Path) -> None:
     host = _BoundedRuntimeHost(tmp_path, union="openapi.twse.com.tw,www.tpex.org.tw", finmind=False)
     proc, outcome = host.run_profile(0, "tw-taifex-put-call", "taifex_options_chip", "openapi.taifex.com.tw,www.taifex.com.tw")
