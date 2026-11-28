@@ -3,7 +3,8 @@
 """Read-only hosted park/expire proof after deployment.json's deployedAt.
 
 Uses the existing viewer login, then GET only. Scans at most 20 journey pages
-and 5 timeline pages per journey (200 rows/page); exceeding either bound fails.
+each for new decisions and existing open non-probe decisions, and 5 timeline
+pages per new journey (200 rows/page); exceeding either bound fails.
 Exit 77 means no new parked decision (or missing configuration); 0 passes, 1 fails.
 Required env: ACCEPTANCE_BFF_URL, ACCEPTANCE_FE_URL,
 ACCEPTANCE_VIEWER_CLIENT_ID, ACCEPTANCE_VIEWER_CLIENT_SECRET.
@@ -43,8 +44,9 @@ def pages(fetch, path, params, cap):
 
 
 def check(fetch, manifest, *, now=None):
+    now = now or datetime.now(timezone.utc)
     cutoff = timestamp(manifest["deployedAt"])
-    if cutoff > (now or datetime.now(timezone.utc)):
+    if cutoff > now:
         raise ValueError("deployment cutoff in future")
     params = {"tenant_id": "tenant-dev", "environment": "paper", "page_size": 200, "from": cutoff.isoformat(), "include_probe": "true"}
     parked, expired, failed = [], [], []
@@ -65,13 +67,35 @@ def check(fetch, manifest, *, now=None):
             if not park or any(e.get("reason_code") != code for e in expire):
                 failed.append("expire_event_reason:" + jid)
             detail = fetch(BASE + "/" + quote(jid, safe="") + "?" + urlencode({"tenant_id": "tenant-dev", "environment": "paper"}))["data"]
+            hold = str(((detail.get("outcome") or {}).get("reason_detail") or {}).get("decision_action") or "").strip().lower() == "hold"
             for body in (row, detail):
                 if body.get("status") != "expired" or (body.get("outcome") or {}).get("reason_code") != code or (body.get("outcome") or {}).get("kind") != "expired":
                     failed.append("expire_outcome:" + jid)
-                if (body.get("next_step") or {}).get("action_needed") != "review_market_data_refresh":
+                if hold and (body.get("next_step") is not None or body.get("side") is not None or (body.get("outcome", {}).get("reason_detail") or {}).get("decision_action") != "hold"):
+                    failed.append("expire_hold_no_order:" + jid)
+                elif not hold and (body.get("next_step") or {}).get("action_needed") != "review_market_data_refresh":
                     failed.append("expire_next_step:" + jid)
+    # Existing parked rows must be corrected too, including decisions created
+    # before this release. Limit to open, non-probe rows before pagination.
+    live_pending = []
+    scope = {"tenant_id": "tenant-dev", "environment": "paper"}
+    for row in pages(fetch, BASE, {**scope, "page_size": 200, "status": "open", "include_probe": "false"}, 20):
+        jid = row["journey_id"]
+        detail = fetch(BASE + "/" + quote(jid, safe="") + "?" + urlencode(scope))["data"]
+        decision = (detail.get("stages") or {}).get("trade_decision") or {}
+        if decision.get("status") != "pending_settlement":
+            continue
+        expiry = (detail.get("outcome", {}).get("reason_detail") or {}).get("expires_at")
+        if not expiry or timestamp(expiry) <= now:
+            continue
+        live_pending.append(jid)
+        for body in (row, detail):
+            if (body.get("flags") or {}).get("stalled") is not False:
+                failed.append("pending_stalled:" + jid)
+            if body.get("read_state") != "formal":
+                failed.append("pending_read_state:" + jid)
     return {"deployment_cutoff": cutoff.isoformat(), "parked": parked, "expired": expired,
-            "failed": failed, "exit_code": 1 if failed else 0 if parked else 77}
+            "live_pending": live_pending, "failed": failed, "exit_code": 1 if failed else 0 if parked or live_pending else 77}
 
 
 def request(req):
