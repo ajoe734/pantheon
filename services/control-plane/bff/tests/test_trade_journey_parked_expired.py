@@ -136,10 +136,67 @@ def test_release_probe_reports_skip_pass_and_wrong_expiry():
     outcome = {"kind": "expired", "reason_code": expire["reason_code"]}
     assert check(fetch_for([park, expire], outcome), manifest, now=now)["exit_code"] == 0
     assert check(fetch_for([park, expire], {"kind": "normal"}), manifest, now=now)["exit_code"] == 1
-    hold_expire = {**expire, "side": "hold"}
     hold_outcome = {**outcome, "reason_detail": {"decision_action": "hold"}}
-    assert check(fetch_for([park, hold_expire], hold_outcome, side=None, next_step=None), manifest, now=now)["exit_code"] == 0
-    assert check(fetch_for([park, hold_expire], hold_outcome), manifest, now=now)["exit_code"] == 1
+    assert check(fetch_for([park, expire], hold_outcome, side=None, next_step=None), manifest, now=now)["exit_code"] == 0
+    assert check(fetch_for([park, expire], hold_outcome), manifest, now=now)["exit_code"] == 1
+
+
+@pytest.mark.parametrize("action", ["hold", "buy", "sell"])
+def test_release_probe_uses_rendered_producer_list_detail_and_timeline(action):
+    import runpy
+    check = runpy.run_path(str(Path(__file__).resolve().parents[4] / "acceptance/probes/trade-journey-parked-expired"))["check"]
+    producer, store, emitter, raw, binding = recorded_decision_producer("expired_2330_D20261125")
+    producer.settle_pending_intraday(binding, "2026-11-27T10:00:00+08:00")
+    # HOLD is the unmodified recording; BUY/SELL are derived order-intent cases.
+    events = deepcopy(emitter.events)
+    if action != "hold":
+        for event in events:
+            event["metadata"]["side"] = action
+    projection = project_events(events)
+    original = deepcopy(projection.timeline)
+    now = datetime(2026, 11, 27, 10, tzinfo=timezone.utc)
+    from services.control_plane.bff.trade_journey_projection_store import TimelinePage
+    class TimelineReader(Reader):
+        def page_timeline(self, **kwargs):
+            return TimelinePage(items=projection.timeline, next_page_token=None, total=len(projection.timeline))
+    c = parked_client(TimelineReader([projection]), now)
+    manifest = {"deployedAt": "2026-11-25T00:00:00Z"}
+    mutation = None
+    def fetch(path):
+        response = c.get(path, headers=HEADERS)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        if "/timeline?" in path:
+            for event in payload["data"]["items"]:
+                assert "side" not in event
+                assert "decision_action" not in (event.get("reason_detail") or {})
+        if mutation:
+            mutation(path, payload)
+        return payload
+    report = check(fetch, manifest, now=now)
+    assert report["failed"] == []
+    assert report["exit_code"] == 0
+    assert report["expired"] == [projection.journey_id]
+    # Both list and detail must retain the action-appropriate next step.
+    for surface in ("list", "detail"):
+        def mutation(path, payload):
+            if "/timeline?" in path:
+                return
+            is_detail = "/" + projection.journey_id + "?" in path
+            if is_detail != (surface == "detail"):
+                return
+            body = payload["data"] if is_detail else payload["data"]["items"][0]
+            body["next_step"] = {"action_needed": "review_market_data_refresh"} if action == "hold" else None
+        report = check(fetch, manifest, now=now)
+        expected = "expire_hold_no_order:" if action == "hold" else "expire_next_step:"
+        assert report["failed"] == [expected + projection.journey_id]
+        assert report["exit_code"] == 1
+    # Timeline reason validation remains mandatory, including for HOLD.
+    def mutation(path, payload):
+        if "/timeline?" in path:
+            payload["data"]["items"][-1]["reason_code"] = "wrong_reason"
+    assert check(fetch, manifest, now=now)["failed"] == ["expire_event_reason:" + projection.journey_id]
+    assert projection.timeline == original
 
 
 EVIDENCE = Path(__file__).resolve().parents[4] / "docs/deployment/evidence/TRADE-JOURNEY-PARKED-ROWS-NOT-STALLED-OR-PARTIAL-20261127/evidence.json"

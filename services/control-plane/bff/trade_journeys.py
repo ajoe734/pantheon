@@ -1716,6 +1716,9 @@ def _timeline_event(event: Mapping[str, Any]) -> Dict[str, Any]:
     row.setdefault("status", event.get("stage_status"))
     row.setdefault("payload_redaction", "none")
     row.setdefault("schema_version", event.get("schema_version", "1"))
+    # Older projections omit the expiry reason already normalized in outcome.
+    if event.get("stage") == "trade_decision" and event.get("decision_status") == "expired_no_price" and not row.get("reason_code"):
+        row["reason_code"] = "target_session_not_reconciled_by_expiry"
     src_id = _source_event_id(event)
     if src_id:
         row.setdefault("source_event_id", src_id)

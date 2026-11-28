@@ -67,7 +67,7 @@ def check(fetch, manifest, *, now=None):
             if not park or any(e.get("reason_code") != code for e in expire):
                 failed.append("expire_event_reason:" + jid)
             detail = fetch(BASE + "/" + quote(jid, safe="") + "?" + urlencode({"tenant_id": "tenant-dev", "environment": "paper"}))["data"]
-            hold = str(expire[-1].get("side") or (expire[-1].get("reason_detail") or {}).get("decision_action") or "").strip().lower() == "hold"
+            hold = str(((detail.get("outcome") or {}).get("reason_detail") or {}).get("decision_action") or "").strip().lower() == "hold"
             for body in (row, detail):
                 if body.get("status") != "expired" or (body.get("outcome") or {}).get("reason_code") != code or (body.get("outcome") or {}).get("kind") != "expired":
                     failed.append("expire_outcome:" + jid)
