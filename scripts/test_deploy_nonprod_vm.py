@@ -4199,7 +4199,7 @@ def _run_manage_refresh_runtime_shell(
 ) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     curl_fn = _prune_shell_function("curl_with_retry")
-    manage_fn = _prune_shell_function("manage_source_ingest_refresh_runtime")
+    manage_fn = "\n".join(_prune_shell_function(n) for n in ("source_ingest_restore_clock", "wait_for_source_ingest_restore_readiness", "manage_source_ingest_refresh_runtime"))
 
     fake = tmp_path / "bin"
     fake.mkdir(parents=True, exist_ok=True)
@@ -4273,8 +4273,8 @@ sys.exit(1 if n <= {fail_attempts} else 0)
     return proc, curls, sleeps
 
 
-@pytest.mark.parametrize("action", ["bounded", "restore"])
-def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded_and_restore(
+@pytest.mark.parametrize("action", ["bounded"])
+def test_manage_source_ingest_refresh_runtime_waits_for_readyz_36x5_on_bounded(
     tmp_path: Path, action: str
 ) -> None:
     # 18 failures (= 90s warmup, exceeding the old 12x5=60s restore cap and previously
@@ -6557,7 +6557,7 @@ _RUN_FUNCTIONS = (
     "steady_check_find_refresh_orphans", "steady_check_settle_refresh_orphans", "steady_check_cleanup_call_files",
     "steady_check_health_bound_seconds", "bounded_runtime_state_dir", "bounded_runtime_list_state_dirs",
     "bounded_runtime_state_set", "bounded_runtime_record_memory", "bounded_runtime_market_open_guard",
-    "bounded_runtime_validate_profile", "bounded_runtime_retire_if_not_in_place", "bounded_runtime_restore_from_state",
+    "bounded_runtime_validate_profile", "bounded_runtime_matches_steady_record", "bounded_runtime_retire_if_not_in_place", "bounded_runtime_restore_from_state",
     "bounded_runtime_restore_all_states", "steady_posture_problem", "execute_steady_posture_check", "run_finmind_broker_whole_market", "execute_bounded_source_refresh_entrypoint",
 )
 
@@ -7065,6 +7065,93 @@ def test_genuine_stale_restore_failure_keeps_the_record_and_names_the_failing_pa
     if failure == "image":
         assert not any(e.startswith("restore") for e in host.event_lines()), "a missing image is never recreated"
 
+
+
+# --- TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128 ---
+
+@pytest.mark.parametrize("mismatch", ["", "env", "stopped", "source_stopped", "bounded", "unhealthy"])
+def test_kept_entered_record_retires_only_with_the_complete_recorded_steady_posture(tmp_path: Path, mismatch: str) -> None:
+    host = _BoundedRuntimeHost(tmp_path, run_id="9100")
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A,
+                                 steady_ids="steady-sched steady-proj")
+    (record / "pre_env.json").write_text('["FINMIND_API_TOKEN=steady-old","A=1"]')
+    script = host._prelude() + host.fns + """
+eval "$(declare -f docker | sed '1s/docker/docker_base/')"
+docker() {
+  case "$*" in
+    "inspect --format {{.State.Status}} "*)
+      if [[ "$MISMATCH" == stopped && "${@: -1}" == steady-proj ]] || [[ "$MISMATCH" == source_stopped && "${@: -1}" == cid-src ]]; then
+        echo exited
+      else echo running; fi ;;
+    "inspect --format {{json .Config.Env}} cid-src")
+      if [[ "$MISMATCH" == env ]]; then echo '["A=2","FINMIND_API_TOKEN=steady-old"]'; else docker_base "$@"; fi ;;
+    "ps -a -q --filter name=^pantheon-bounded-refresh-"*) [[ "$MISMATCH" != bounded ]] || echo bx1 ;;
+    *) docker_base "$@" ;;
+  esac
+}
+"""
+    if mismatch == "unhealthy":
+        script += 'steady_posture_problem() { reason="source-ingest_unhealthy"; }\n'
+    script += f'bounded_runtime_restore_from_state "{record}"\n'
+    proc = subprocess.run(["bash", "-c", script], env={**host._env("", "", ""), "MISMATCH": mismatch},
+                          capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    if not mismatch:
+        assert host.event_lines() == [], "an already restored source-ingest must not be recreated"
+        assert "reason=restored_in_place" in proc.stdout
+        assert '"restore_recreates": 0' not in proc.stdout  # summary stays structured, receipt carries reason
+        assert "docker start steady-sched steady-proj" not in host.docker_calls()
+        assert "reason=restored_in_place" in (host.state_root / "pantheon-bounded-runtime-retired.log").read_text()
+    else:
+        assert [e.split()[0] for e in host.event_lines()] == ["restore"]
+        assert "reason=restored_in_place" not in proc.stdout
+    assert not record.exists()
+
+
+@pytest.mark.parametrize("health,posture,expected", [("starting", "", 0), ("starting", "source-ingest_unhealthy", 1), ("unhealthy", "", 1)])
+def test_restore_readiness_timeout_rechecks_starting_posture_once(tmp_path: Path, health: str, posture: str, expected: int) -> None:
+    host = _BoundedRuntimeHost(tmp_path)
+    record = _write_stale_record(host, "9001", phase="entered", enter_count=1, image=_SHA_A,
+                                 steady_ids="steady-sched steady-proj")
+    checks = tmp_path / "checks"
+    script = host._prelude() + host.fns + f"""
+bounded_runtime_retire_if_not_in_place() {{ return 1; }}
+manage_source_ingest_refresh_runtime() {{ return 75; }}
+curl() {{ return 0; }}
+steady_posture_problem() {{ echo check >> "{checks}"; reason="{posture}"; }}
+eval "$(declare -f docker | sed '1s/docker/docker_base/')"
+docker() {{
+  case "$*" in
+    "inspect --format {{{{if .State.Health}}}}"*) echo {health} ;;
+    *) docker_base "$@" ;;
+  esac
+}}
+bounded_runtime_restore_from_state "{record}"
+"""
+    proc = subprocess.run(["bash", "-c", script], env=host._env("", "", ""), capture_output=True, text=True, timeout=30)
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+    assert (checks.read_text().splitlines() if checks.exists() else []) == (["check"] if health == "starting" else [])
+    assert record.exists() == bool(expected)
+
+
+def test_restore_ready_wait_uses_an_injected_monotonic_deadline(tmp_path: Path) -> None:
+    # Curl time counts too: simulate a 193-second cold start, then a wait that never becomes ready.
+    for ready_at, expected in [(193, 0), (9999, 75)]:
+        clock = tmp_path / f"clock-{ready_at}"
+        clock.write_text("0")
+        script = _prune_shell_function("wait_for_source_ingest_restore_readiness") + f"""
+source_ingest_restore_clock() {{ cat "{clock}"; }}
+sleep() {{ echo $(( $(cat "{clock}") + $1 )) > "{clock}"; }}
+curl() {{
+  local now=$(cat "{clock}")
+  echo $((now + 5)) > "{clock}"
+  (( now >= {ready_at} ))
+}}
+wait_for_source_ingest_restore_readiness
+"""
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+        assert proc.returncode == expected, proc.stderr
+        assert int(clock.read_text()) == (205 if expected == 0 else 420)
 
 def test_preflight_waits_for_a_warming_up_source_ingest_instead_of_failing_on_one_short_call() -> None:
     snapshot = {"snapshot_id": "s", "event_time": "2026-10-02T06:00:00Z", "calendar_evidence": {"market": "TWSE"}}

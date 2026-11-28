@@ -3165,6 +3165,31 @@ PREFLIGHT_PY
   return "${preflight_rc}"
 }
 
+# Monotonic clock is a function so deadline tests advance a deterministic clock without sleeping.
+source_ingest_restore_clock() {
+  python3 -c 'import time; print(int(time.monotonic()))'
+}
+
+# Run 46114700528: restore start 06:21:15Z, first ready 06:24:27Z (193s rounded up).
+# 420s leaves 227s margin. Curl time counts against the deadline; each call is capped at 5s.
+# Status 75 distinguishes readiness exhaustion from image/env/recreate failures.
+wait_for_source_ingest_restore_readiness() {
+  local deadline now remaining call_bound pause
+  deadline=$(( $(source_ingest_restore_clock) + 420 ))
+  while :; do
+    now="$(source_ingest_restore_clock)"; remaining=$((deadline - now))
+    (( remaining > 0 )) || return 75
+    call_bound=5; (( remaining >= call_bound )) || call_bound="${remaining}"
+    if curl -fsS --max-time "${call_bound}" --connect-timeout "${call_bound}" "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" >/dev/null; then
+      return 0
+    fi
+    now="$(source_ingest_restore_clock)"; remaining=$((deadline - now))
+    (( remaining > 0 )) || return 75
+    pause=5; (( remaining >= pause )) || pause="${remaining}"
+    sleep "${pause}"
+  done
+}
+
 manage_source_ingest_refresh_runtime() {
   local env_path="$1" action="$2" img_id="$3" arg="${4:-}"
   python3 - "${env_path}" "${action}" "${img_id}" "${arg}" <<'PY'
@@ -3275,9 +3300,9 @@ if action == "restore":
 PY
   local runtime_rc=$?
   (( runtime_rc == 0 )) || return "${runtime_rc}"
-  if [[ "${action}" == "bounded" || "${action}" == "restore" ]]; then
-    # A recreated process is not ready for dataset preparation or the next connector's preflight yet.
-    # Wait up to 180s (36 * 5s, matching docker-compose start_period 120s plus retries) with a 5s curl limit.
+  if [[ "${action}" == "restore" ]]; then
+    wait_for_source_ingest_restore_readiness
+  elif [[ "${action}" == "bounded" ]]; then
     curl_with_retry "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" 36 5 --max-time 5 --connect-timeout 5
   fi
 }
@@ -4451,7 +4476,7 @@ raw = os.environ.get("PANTHEON_REFRESH_NOW", "").strip()
 now = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")) if raw else datetime.datetime.now(datetime.timezone.utc)
 now = now.astimezone(datetime.timezone.utc)
 profile = int(os.environ.get("PANTHEON_REFRESH_PROFILE_BUDGET_SECONDS") or "900")
-restore = int(os.environ.get("PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS") or "300")
+restore = int(os.environ.get("PANTHEON_REFRESH_RESTORE_BUDGET_SECONDS") or "600")
 open_minute = 55  # market open 09:00 Taipei = 01:00Z; steady posture must be back by 00:55Z
 close_minute = 5 * 60 + 30  # 13:30 Taipei close
 start_minute = open_minute - (profile + restore + 59) // 60
@@ -4480,18 +4505,40 @@ if connector.startswith("tw-finmind-") and not finmind:
 VALIDATE_PY
 }
 
+# Exact pre-environment comparison never prints values (including credentials). Every recorded
+# steady container must still be running; a healthy replacement does not satisfy this check.
+bounded_runtime_matches_steady_record() {
+  local dir="$1" cid="$2" current_image="$3" steady_id
+  [[ -n "${cid}" && -n "${current_image}" && "${current_image}" == "${BR_IMAGE_ID:-}" ]] || return 1
+  [[ "$(docker inspect --format '{{.State.Status}}' "${cid}" 2>/dev/null)" == running ]] || return 1
+  for steady_id in ${BR_STEADY_IDS:-}; do
+    [[ "$(docker inspect --format '{{.State.Status}}' "${steady_id}" 2>/dev/null)" == running ]] || return 1
+  done
+  docker inspect --format '{{json .Config.Env}}' "${cid}" 2>/dev/null | python3 -c 'import json,sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        before = json.load(f)
+    after = json.load(sys.stdin)
+    assert isinstance(before, list) and isinstance(after, list)
+    assert all(isinstance(x, str) and "=" in x for x in before + after)
+    sys.exit(0 if sorted(before) == sorted(after) else 1)
+except Exception:
+    sys.exit(1)' "${dir}/pre_env.json"
+}
+
 # A record only describes the stack while the bounded runtime it recorded is still in place. Retires (without
 # restoring anything) a record that (a) was never entered (BR_PHASE=captured, BR_ENTER_COUNT=0) or (b) was
 # superseded by a later release (the running source-ingest image differs from BR_IMAGE_ID, or none of the
 # recorded steady containers exists any more), and only when no pantheon-bounded-refresh-* container exists
-# and the steady posture verifies healthy (steady_posture_problem). Retiring = one receipt line in the log and
+# and the steady posture verifies healthy (steady_posture_problem). An entered same-image record whose
+# exact pre-environment and all recorded running containers match is retired as restored_in_place. Retiring = one receipt line in the log and
 # in BOUNDED_RUNTIME_RETIRED_LOG (capped to its last BOUNDED_RUNTIME_RETIRED_LOG_LINES lines; its name does not
 # match the record glob), then the record directory is deleted, so a dead run leaves at most one receipt.
 # Returns 0 when retired; 1 when the record must be restored as recorded (TW-REFRESH-STALE-BOUNDED-RUNTIME-
 # RECORD-BLOCKS-REFRESH-20261127: run 45985422058 left a captured, never entered record whose image no longer
 # existed, and every later refresh failed trying to restore it).
 bounded_runtime_retire_if_not_in_place() {
-  local dir="$1" current_image="$2" retire_reason="" steady_id steady_left=0 reason="" waited_cids=" " receipt log cap
+  local dir="$1" current_image="$2" cid="${3:-}" retire_reason="" steady_id steady_left=0 reason="" waited_cids=" " receipt log cap
   [[ -z "$(docker ps -a -q --filter 'name=^pantheon-bounded-refresh-' 2>/dev/null || true)" ]] || return 1
   if [[ "${BR_PHASE:-}" != "entered" && "${BR_ENTER_COUNT:-0}" == "0" ]]; then
     retire_reason="never_entered"
@@ -4504,6 +4551,9 @@ bounded_runtime_retire_if_not_in_place() {
     elif [[ -n "${BR_STEADY_IDS:-}" ]] && (( steady_left == 0 )); then
       retire_reason="superseded_by_release"
     fi
+  fi
+  if [[ -z "${retire_reason}" ]] && bounded_runtime_matches_steady_record "${dir}" "${cid}" "${current_image}"; then
+    retire_reason="restored_in_place"
   fi
   [[ -n "${retire_reason}" ]] || return 1
   steady_posture_problem
@@ -4536,7 +4586,7 @@ print(json.dumps({"retired": {"current_image": a[3], "phase": a[1], "reason": a[
 # recorded_image_missing, source_ingest_restore, steady_container_start, container_counts, controller_mode) on
 # failure. Removes the state directory only when everything succeeded; a failed restore keeps the record.
 bounded_runtime_restore_from_state() {
-  local dir="$1" restore_rc=0 cid current_image="" parts=() sched_cid sched_mode
+  local dir="$1" restore_rc=0 cid current_image="" parts=() sched_cid sched_mode readiness_rc=0 reason="" waited_cids=" "
   BOUNDED_RUNTIME_SUMMARY_JSON=""; BOUNDED_RUNTIME_RETIRE_REASON=""; BOUNDED_RUNTIME_RESTORE_FAILED_PART=""
   [[ -s "${dir}/state.env" && -s "${dir}/pre_env.json" ]] || { info "bounded runtime state ${dir} is incomplete; refusing unverified restore" >&2; BOUNDED_RUNTIME_RESTORE_FAILED_PART="record_incomplete"; return 1; }
   cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
@@ -4544,7 +4594,7 @@ bounded_runtime_restore_from_state() {
   local BR_IMAGE_ID="" BR_STEADY_IDS="" BR_CONTROLLER_MODE="" BR_ENTER_COUNT=0 BR_PEAK_BYTES="" BR_LIMIT_BYTES="" BR_OOM="false" BR_HOSTS="" BR_FINMIND="false" BR_PHASE=""
   # shellcheck disable=SC1091
   source "${dir}/state.env" || { BOUNDED_RUNTIME_RESTORE_FAILED_PART="record_incomplete"; return 1; }
-  bounded_runtime_retire_if_not_in_place "${dir}" "${current_image}" && return 0
+  bounded_runtime_retire_if_not_in_place "${dir}" "${current_image}" "${cid}" && return 0
   bounded_runtime_record_memory "${dir}" "${cid}"
   # shellcheck disable=SC1091
   source "${dir}/state.env" || true
@@ -4560,7 +4610,9 @@ bounded_runtime_restore_from_state() {
     restore_rc=1; parts+=("recorded_image_missing")
   else
     SOURCE_INGEST_RESTORE_CONTROLLER_MODE="${BR_CONTROLLER_MODE:-reconcile_only}" \
-      manage_source_ingest_refresh_runtime "${dir}/pre_env.json" restore "${BR_IMAGE_ID}" || { restore_rc=1; parts+=("source_ingest_restore"); }
+      manage_source_ingest_refresh_runtime "${dir}/pre_env.json" restore "${BR_IMAGE_ID}" || readiness_rc=$?
+    # Only readiness exhaustion may be reconsidered after starting the steady containers.
+    if (( readiness_rc != 0 && readiness_rc != 75 )); then restore_rc=1; parts+=("source_ingest_restore"); fi
   fi
   # shellcheck disable=SC2086
   if [[ -n "${BR_STEADY_IDS}" ]]; then docker start ${BR_STEADY_IDS} >/dev/null 2>&1 || { restore_rc=1; parts+=("steady_container_start"); }; fi
@@ -4575,6 +4627,19 @@ except Exception:
     env={}
 print((env.get("SOURCE_INGEST_CONTROLLER_MODE") or "").strip())' 2>/dev/null || true)"
     [[ "${sched_mode}" == "${BR_CONTROLLER_MODE}" ]] || { restore_rc=1; parts+=("controller_mode"); }
+  fi
+  if (( readiness_rc == 75 )); then
+    cid="$(docker compose -p pantheon -f docker-compose.yml ps -q source-ingest 2>/dev/null | head -n1 || true)"
+    reason="source_ingest_readiness_timeout"
+    if [[ -n "${cid}" && "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${cid}" 2>/dev/null)" == starting ]]; then
+      info "restore readiness deadline ended during startup; rechecking steady posture once"
+      steady_posture_problem
+      # A healthy Docker liveness check alone does not establish application readiness.
+      if [[ -z "${reason}" ]] && ! curl -fsS --max-time 5 --connect-timeout 5 "${SOURCE_INGEST_API_URL:-http://127.0.0.1:18097}/readyz" >/dev/null; then
+        reason="source_ingest_readiness_timeout"
+      fi
+    fi
+    if [[ -n "${reason}" ]]; then restore_rc=1; parts+=("source_ingest_restore"); fi
   fi
   BOUNDED_RUNTIME_SUMMARY_JSON="$(python3 -c 'import json,sys
 a=sys.argv[1:]
