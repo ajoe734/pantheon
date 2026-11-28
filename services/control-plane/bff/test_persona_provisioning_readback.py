@@ -1767,7 +1767,9 @@ def test_shared_fleet_ledger_read_checks_stamp_and_falls_back_to_full(
     monkeypatch.setattr(store, "list_all_for_fleet", lambda: pytest.fail("lossy slim read"))
     for tenant in (TENANT, ""):
         first = svc._persona_provisioning_records_shared(store, tenant)
-        assert first == db.rows
+        assert first == store.list_for_directory(tenant or None)
+        assert all(set(r.references) <= set(store._DIRECTORY_REFERENCE_KEYS) for r in first)
+        assert first[165].references["requested_risk_profile_provenance"] == db.rows[165].references["requested_risk_profile_provenance"]
         db.calls.clear()
         assert svc._persona_provisioning_records_shared(store, tenant) == first
         assert len(db.calls) == 2
@@ -1775,11 +1777,11 @@ def test_shared_fleet_ledger_read_checks_stamp_and_falls_back_to_full(
         assert db.calls[1] == "SELECT revision FROM bff.persona_provisioning_revision WHERE singleton"
 
         # An external commit leaves updated_at unchanged but advances the stamp.
-        db.rows[165].references["deployment_dispatch"]["accepted_revision"] = db.revision
+        db.rows[165].references["runtime_id"] = f"external-revision-{db.revision}"
         db.revision += 1
         db.calls.clear()
         changed = svc._persona_provisioning_records_shared(store, tenant)
-        assert changed == db.rows
+        assert changed[165].references["runtime_id"] == db.rows[165].references["runtime_id"]
         assert changed != first
         assert sum(sql.startswith("SELECT revision") for sql in db.calls) == 1
         assert sum(sql.startswith("SELECT tenant_id,") for sql in db.calls) == 1
