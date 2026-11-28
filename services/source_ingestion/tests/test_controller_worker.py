@@ -4171,3 +4171,307 @@ def test_steady_controller_ticks_yield_from_failing_tpex_to_holidays_and_suspens
     assert retry_receipt.status == "completed"
     assert retry_receipt.normalized_count == 1
 
+
+# ---------------------------------------------------------------------------
+# SOURCE-INGEST-SCHEDULER-STARTUP-CONTROLLER-TIMEOUT-20261128
+# ---------------------------------------------------------------------------
+
+
+def test_startup_catchup_missed_ticks_paces_after_single_immediate_tick_and_stays_below_failure_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 4 & 5: startup_missed_ticks: 4 with a slow first answer runs at most one
+    immediate catch-up tick and paces the rest at normal cadence; health never reaches
+    CONTROLLER_FAILURE_LIMIT (3). Uses injected clock/fakes with no wall-clock threshold.
+    """
+    from datetime import timedelta
+    from services.source_ingestion import controller_healthcheck
+
+    clock = [datetime(2026, 11, 28, 2, 42, 51, tzinfo=timezone.utc)]
+
+    def fake_utc_now() -> str:
+        return clock[0].replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    monkeypatch.setattr("services.source_ingestion.controller_state.utc_now", fake_utc_now)
+    monkeypatch.setattr("services.source_ingestion.controller_worker.utc_now", fake_utc_now)
+
+    state_path = tmp_path / "controller_state.json"
+    store = ControllerStateStore(state_path)
+    prior_state = controller_worker._new_state()
+    prior_state.started_at = "2026-11-28T02:30:00Z"
+    prior_state.heartbeat_at = "2026-11-28T02:37:51Z"
+    prior_state.last_tick_at = "2026-11-28T02:37:51Z"
+    prior_state.last_success_at = "2026-11-28T02:37:51Z"
+    store.save(prior_state)
+
+    config = replace(_config(tmp_path), state_path=state_path, interval_seconds=60, timeout_seconds=30.0, max_ticks=4)
+    writer = RecordingWriter([])
+
+    tick_dispatch_offsets: list[int] = []
+    sleep_durations: list[int] = []
+    health_evaluations: list[tuple[bool, str, int]] = []
+    start_dt = clock[0]
+
+    def fake_sleep(seconds: float) -> None:
+        sec = int(seconds)
+        sleep_durations.append(sec)
+        clock[0] = clock[0] + timedelta(seconds=sec)
+
+    def fake_tick(*, config: ControllerConfig, state: ControllerState, store: ControllerStateStore, writer: Any) -> dict[str, Any]:
+        tick_no = len(tick_dispatch_offsets) + 1
+        tick_dispatch_offsets.append(int((clock[0] - start_dt).total_seconds()))
+        state.record_tick_started()
+        if tick_no == 1:
+            # Slow first answer on cold startup (25s simulated elapsed time on injected clock)
+            clock[0] = clock[0] + timedelta(seconds=25)
+            state.record_failure(
+                stage="controller",
+                reason="TimeoutError: simulated slow first answer during startup catch-up",
+                desired_state={"sha256": "a" * 64, "persona_count": 3},
+            )
+            store.save(state)
+            reason = controller_healthcheck.evaluate(
+                state_path,
+                config.interval_seconds,
+                config.interval_seconds * 3,
+                now=clock[0],
+            )
+            health_evaluations.append((reason is None, reason or "healthy", state.consecutive_controller_failures))
+            raise ControllerTickError("controller", "TimeoutError: simulated slow first answer")
+
+        clock[0] = clock[0] + timedelta(seconds=2)
+        state.record_success(
+            desired_state={"sha256": "a" * 64, "persona_count": 3},
+            reconcile={"summary": {"satisfied": 29}, "connector_ids": ["collector-tw-cmoney-forum"]},
+            schedule={"mode": config.mode, "provider_egress_attempted": True, "summary": {"total_ran": 1, "total_failed": 0}},
+            actual_readback={"connector_count": 29, "unresolved_dlq_count": 0, "frontier_backlog": {"queued": 0, "running": 0, "retry": 0}},
+        )
+        store.save(state)
+        reason = controller_healthcheck.evaluate(
+            state_path,
+            config.interval_seconds,
+            config.interval_seconds * 3,
+            now=clock[0],
+        )
+        health_evaluations.append((reason is None, reason or "healthy", state.consecutive_controller_failures))
+        # Even when continuation_pending is True during startup catch-up (ticks < startup_missed_ticks),
+        # next_tick_sleep_seconds must pace at the full 60s cadence rather than 1s back-to-back.
+        return {"status": "ok", "continuation_pending": True}
+
+    rc = controller_worker.run_controller_loop(
+        config=config,
+        store=store,
+        writer=writer,
+        tick_fn=fake_tick,
+        sleep_fn=fake_sleep,
+    )
+    assert rc == 0
+    final_state = store.load()
+    assert final_state is not None
+    assert final_state.startup_missed_ticks == 4
+    # At most one immediate catch-up tick (tick 1 at offset 0s); ticks 2..4 wait full 60s cadence each.
+    assert sleep_durations == [60, 60, 60]
+    assert tick_dispatch_offsets == [0, 85, 147, 209]
+    assert all(ok for ok, _reason, _streak in health_evaluations)
+    assert max(streak for _ok, _reason, streak in health_evaluations) == 1 < controller_healthcheck.CONTROLLER_FAILURE_LIMIT
+    # Once startup catch-up ticks (1..3 for startup_missed_ticks=4) have completed, tick >= 4 can use continuation pause.
+    assert (
+        controller_worker.next_tick_sleep_seconds(
+            tick=4,
+            startup_missed_ticks=4,
+            interval_seconds=60,
+            continuation_pending=True,
+            last_tick_failed=False,
+        )
+        == controller_worker.CONTINUATION_PAUSE_SECONDS
+    )
+
+
+def test_cold_start_controller_stage_requests_use_pre_readyz_warmed_state_without_full_rescan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 2, 3 & 5:
+    - /readyz reports 503 while controller_readback_ready is False, and 200 after warm-up completes.
+    - When Postgres has tenanted + legacy source_id collisions (len(_source_records_by_tenant) == db_count
+      > len(_source_records)), _sync_and_list_source_records does not re-fetch all rows on the first
+      controller/readback.
+    - GET /api/source-ingest/registry (single connector filter) does not invalidate the full
+      _latest_record_cache_key used by GET /api/source-ingest/controller/readback.
+    - stored_instrument_authority reuses daily_bars + stat-validated cache without re-opening covered
+      run files.
+    """
+    pytest.importorskip("pyarrow")
+    from fastapi.testclient import TestClient
+    from scripts import backfill_daily_bars as bf
+    from services.knowledge.evidence import InMemoryEvidenceRepository
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.connectors.base import SourceRecord
+    from services.source_ingestion.main import create_app
+    from services.source_ingestion.pg_store import PostgresSourceEvidenceRepository
+    from services.source_ingestion.security_listing import ListingState
+
+    data_dir = tmp_path / "source-ingest"
+    market_root = data_dir / "market_data_store"
+    norm_day = market_root / "normalized" / "tw_price_daily" / "date=2026-11-20"
+    norm_day.mkdir(parents=True, exist_ok=True)
+    row_line = json.dumps(
+        {
+            "source_id": "2330-2026-11-20",
+            "metadata": {
+                "symbol_canonical": "2330.TWSE",
+                "normalized_row": {
+                    "symbol": "2330",
+                    "symbol_canonical": "2330.TWSE",
+                    "date": "2026-11-20",
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "close": 100.0,
+                    "volume": 1000,
+                    "market": "TWSE",
+                },
+            },
+        }
+    )
+    run_file = norm_day / "ingest-0001.jsonl"
+    run_file.write_text(row_line + "\n", encoding="utf-8")
+    listing = ListingState(last_success_date="2026-11-27")
+    listing.allowlist["2330"] = {
+        "venue": "TWSE",
+        "category": "x",
+        "cfi": "ESVUFR",
+        "is_warrant": False,
+        "first_seen": "2024-01-01",
+        "last_seen": "2026-11-27",
+    }
+    bf.backfill(market_root, listing, today="2026-11-27", apply=True)
+    (market_root / "daily_bars" / "_manifest" / "date=2026-11-20.json").touch()
+
+    pg_rows = [
+        (
+            1,
+            {
+                "source_id": "tw-official:2330:001",
+                "connector_id": "tw-twse-tpex-official-market",
+                "source_type": "market",
+                "title": "2330",
+                "content_ref": "https://example.test/1",
+                "status": "normalized",
+                "trace_id": "t-1",
+                "created_at": "2026-11-27T06:30:00Z",
+                "metadata": {"tenant_id": "default", "dataset": "tw_price_daily", "symbol": "2330.TWSE"},
+            },
+        ),
+        (
+            2,
+            {
+                "source_id": "tw-official:2330:001",
+                "connector_id": "tw-twse-tpex-official-market",
+                "source_type": "market",
+                "title": "2330 legacy",
+                "content_ref": "https://example.test/1",
+                "status": "normalized",
+                "trace_id": "t-0",
+                "created_at": "2026-11-26T06:30:00Z",
+                "metadata": {"tenant_id": None, "dataset": "tw_price_daily", "symbol": "2330.TWSE"},
+            },
+        ),
+        (
+            3,
+            {
+                "source_id": "collector:collector-tw-cmoney-forum:post-1:abc",
+                "connector_id": "collector-tw-cmoney-forum",
+                "source_type": "social",
+                "title": "CMoney post",
+                "content_ref": "https://example.test/2",
+                "status": "normalized",
+                "trace_id": "t-2",
+                "created_at": "2026-11-27T07:00:00Z",
+                "metadata": {"tenant_id": "default", "dataset": "collector_bundle_items", "symbol": "2330.TWSE"},
+            },
+        ),
+    ]
+
+    class FakeCollidingPgRepo(PostgresSourceEvidenceRepository):
+        def __init__(self) -> None:
+            self.table = '"source_ingest"."source_evidence"'
+            self.full_select_calls = 0
+            self.meta_select_calls = 0
+            InMemoryEvidenceRepository.__init__(self)
+            for _aid, payload in pg_rows:
+                InMemoryEvidenceRepository.add_source_record(self, SourceRecord.from_dict(payload))
+
+        def _get_connection(self):
+            repo_self = self
+
+            class _Cur:
+                def __init__(self, rows):
+                    self._rows = rows
+
+                def fetchone(self):
+                    return self._rows[0]
+
+                def fetchall(self):
+                    return self._rows
+
+            class _Conn:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def execute(self, sql: str, params: tuple = ()):
+                    if "COUNT(*)" in sql.upper():
+                        repo_self.meta_select_calls += 1
+                        return _Cur([(3, 3)])
+                    repo_self.full_select_calls += 1
+                    return _Cur([(aid, json.dumps(p)) for aid, p in pg_rows])
+
+            return _Conn()
+
+    fake_repo = FakeCollidingPgRepo()
+    assert len(fake_repo._source_records) == 2
+    assert len(fake_repo._source_records_by_tenant) == 3
+
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SOURCE_INGEST_MARKET_DATA_STORAGE_ROOT", str(market_root))
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    monkeypatch.setattr(rt_mod, "build_source_evidence_repository", lambda _path: fake_repo)
+
+    runtime = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    runtime.snapshot_universe.stop_background_sweeps()
+    assert runtime.controller_readback_ready is True
+    assert runtime.controller_warm_start_count == 1
+    assert fake_repo.full_select_calls == 0
+
+    client = TestClient(create_app(runtime))
+    assert client.get("/readyz").status_code == 200
+    runtime.controller_readback_ready = False
+    not_ready = client.get("/readyz")
+    assert not_ready.status_code == 503
+    assert not_ready.json()["dependencies"]["source_freshness"]["reason"] == "controller_readback_warming"
+    runtime.controller_readback_ready = True
+
+    rb1 = runtime._controller_readback_payload()
+    assert rb1["source_record_count"] == 2
+    assert fake_repo.full_select_calls == 0
+    cache_key_after_rb1 = runtime._latest_record_cache_key
+
+    entries = runtime._source_connector_entries()
+    runtime._source_policy_registry_payload(entries)
+    assert runtime._latest_record_cache_key == cache_key_after_rb1
+
+    # Verify stored_instrument_authority uses daily_bars + root cache without opening covered run_file
+    monkeypatch.setattr(
+        rt_mod,
+        "_scan_run_file_symbols",
+        lambda _p: (_ for _ in ()).throw(AssertionError("covered run file should not be scanned")),
+    )
+    auth = cb.stored_instrument_authority(market_root, market_root)
+    assert auth == {"2330": ("2330.TWSE",)}
+
+

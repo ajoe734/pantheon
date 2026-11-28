@@ -248,6 +248,243 @@ def _active_contract_symbols() -> set[str]:
     return symbols
 
 
+class _StatCachedConnectorScheduleStore(JsonlConnectorScheduleStore):
+    """Stat-cached schedule config store that skips full file replay when unchanged."""
+
+    def __init__(self, path: str | Path) -> None:
+        self._read_key: tuple[int, int, int] | None = None
+        self.reload_count = 0
+        super().__init__(path)
+
+    def _stat_key(self) -> tuple[int, int, int] | None:
+        try:
+            st = self.path.stat()
+            return (st.st_ino, st.st_size, st.st_mtime_ns)
+        except OSError:
+            return None
+
+    def _reload_unlocked(self) -> None:
+        key = self._stat_key()
+        if key is None:
+            self._schedules = {}
+            self._read_key = None
+            return
+        if self._read_key is not None and key == self._read_key:
+            return
+        super()._reload_unlocked()
+        self.reload_count += 1
+        self._read_key = key
+
+    def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
+        super()._append(record_type, record_id, payload)
+        self._read_key = self._stat_key()
+
+
+_INSTRUMENT_AUTHORITY_LOCK = threading.RLock()
+_INSTRUMENT_AUTHORITY_FILE_CACHE_MAX = 16384
+_INSTRUMENT_AUTHORITY_FILE_CACHE: dict[tuple[str, int, int, int], tuple[tuple[str, str], ...]] = {}
+_INSTRUMENT_AUTHORITY_ROOT_CACHE: dict[tuple[str, bool], tuple[Any, dict[str, tuple[str, ...]]]] = {}
+
+
+def _scan_run_file_symbols(path: Path) -> tuple[tuple[str, str], ...]:
+    import gzip
+
+    try:
+        st = path.stat()
+    except OSError:
+        return ()
+    cache_key = (str(path), st.st_ino, st.st_mtime_ns, st.st_size)
+    with _INSTRUMENT_AUTHORITY_LOCK:
+        cached = _INSTRUMENT_AUTHORITY_FILE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    opener = gzip.open if path.suffix == ".gz" else Path.open
+    pairs: set[tuple[str, str]] = set()
+    try:
+        with opener(path, "rt", encoding="utf-8") as handle:  # type: ignore[operator]
+            for line in handle:
+                if not line.strip():
+                    continue
+                meta = (json.loads(line) or {}).get("metadata") or {}
+                nrow = meta.get("normalized_row") or {}
+                canonical = str(meta.get("symbol_canonical") or nrow.get("symbol_canonical") or "").upper()
+                if "." in canonical:
+                    pairs.add((canonical.rsplit(".", 1)[0], canonical))
+    except (OSError, ValueError):
+        return ()
+    result = tuple(sorted(pairs))
+    with _INSTRUMENT_AUTHORITY_LOCK:
+        if len(_INSTRUMENT_AUTHORITY_FILE_CACHE) >= _INSTRUMENT_AUTHORITY_FILE_CACHE_MAX:
+            _INSTRUMENT_AUTHORITY_FILE_CACHE.clear()
+        _INSTRUMENT_AUTHORITY_FILE_CACHE[cache_key] = result
+    return result
+
+
+def _single_root_instrument_authority(root: Path, *, from_bars: bool) -> dict[str, tuple[str, ...]]:
+    from .connectors.collector_bundle import SOCIAL_SYMBOL_AUTHORITY_DATASET, _daily_bars_symbols, _slug
+
+    root_str = str(root)
+    if from_bars:
+        bars_dir = root / "daily_bars"
+        if not bars_dir.is_dir():
+            return {}
+        manifest_dir = bars_dir / "_manifest"
+        try:
+            manifest_sig = tuple(
+                (p.name, st.st_ino, st.st_mtime_ns, st.st_size)
+                for p in sorted(manifest_dir.glob("date=*.json"))
+                for st in (p.stat(),)
+            ) if manifest_dir.is_dir() else ()
+        except OSError:
+            manifest_sig = None
+        if manifest_sig is not None:
+            with _INSTRUMENT_AUTHORITY_LOCK:
+                hit = _INSTRUMENT_AUTHORITY_ROOT_CACHE.get((root_str, True))
+                if hit is not None and hit[0] == manifest_sig:
+                    return hit[1]
+        found: dict[str, set[str]] = {}
+        for canonical in _daily_bars_symbols(root):
+            canonical = canonical.upper()
+            if "." in canonical:
+                found.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+        res = {ticker: tuple(sorted(c)) for ticker, c in found.items()}
+        if manifest_sig is not None:
+            with _INSTRUMENT_AUTHORITY_LOCK:
+                _INSTRUMENT_AUTHORITY_ROOT_CACHE[(root_str, True)] = (manifest_sig, res)
+        return res
+
+    base = root / "normalized" / _slug(SOCIAL_SYMBOL_AUTHORITY_DATASET)
+    if not base.is_dir():
+        return {}
+    manifest_dir = root / "daily_bars" / "_manifest"
+    manifests: dict[str, tuple[int, int, int]] = {}
+    if manifest_dir.is_dir():
+        for mf in sorted(manifest_dir.glob("date=*.json")):
+            try:
+                mst = mf.stat()
+                manifests[mf.stem] = (mst.st_ino, mst.st_mtime_ns, mst.st_size)
+            except OSError:
+                continue
+
+    date_dirs: list[tuple[Path, int]] = []
+    for d in sorted(base.glob("date=*")):
+        try:
+            if d.is_dir():
+                date_dirs.append((d, d.stat().st_mtime_ns))
+        except OSError:
+            continue
+
+    date_dir_names = {d.name for d, _ in date_dirs}
+    use_daily_bars = bool(manifests) and all(k in date_dir_names for k in manifests)
+
+    covered_sigs: list[tuple[str, int, tuple[int, int, int]]] = []
+    uncovered_paths: list[Path] = []
+    uncovered_sigs: list[tuple[str, int, int, int]] = []
+    for d, d_mtime_ns in date_dirs:
+        msig = manifests.get(d.name) if use_daily_bars else None
+        if msig is not None and msig[1] >= d_mtime_ns:
+            covered_sigs.append((d.name, d_mtime_ns, msig))
+        else:
+            for p in sorted(d.glob("*.jsonl*")):
+                try:
+                    pst = p.stat()
+                except OSError:
+                    continue
+                uncovered_paths.append(p)
+                uncovered_sigs.append((str(p), pst.st_ino, pst.st_mtime_ns, pst.st_size))
+
+    root_sig = (tuple(covered_sigs), tuple(uncovered_sigs))
+    with _INSTRUMENT_AUTHORITY_LOCK:
+        hit = _INSTRUMENT_AUTHORITY_ROOT_CACHE.get((root_str, False))
+        if hit is not None and hit[0] == root_sig:
+            return hit[1]
+
+    found_run: dict[str, set[str]] = {}
+    if covered_sigs:
+        for canonical in _daily_bars_symbols(root):
+            canonical = canonical.upper()
+            if "." in canonical:
+                found_run.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+    for p in uncovered_paths:
+        for ticker, canonical in _scan_run_file_symbols(p):
+            found_run.setdefault(ticker, set()).add(canonical)
+
+    res_run = {ticker: tuple(sorted(c)) for ticker, c in found_run.items()}
+    with _INSTRUMENT_AUTHORITY_LOCK:
+        _INSTRUMENT_AUTHORITY_ROOT_CACHE[(root_str, False)] = (root_sig, res_run)
+    return res_run
+
+
+def _cached_stored_instrument_authority(*roots: str | Path) -> dict[str, tuple[str, ...]]:
+    from .market_data_storage import daily_price_reader_mode
+
+    from_bars = daily_price_reader_mode() == "daily_bars"
+    unique_roots: list[Path] = []
+    seen_roots: set[str] = set()
+    for r in roots:
+        p = Path(r)
+        key = str(p)
+        if key not in seen_roots:
+            seen_roots.add(key)
+            unique_roots.append(p)
+    if len(unique_roots) == 1:
+        return dict(_single_root_instrument_authority(unique_roots[0], from_bars=from_bars))
+    found: dict[str, set[str]] = {}
+    for p in unique_roots:
+        for ticker, canonicals in _single_root_instrument_authority(p, from_bars=from_bars).items():
+            found.setdefault(ticker, set()).update(canonicals)
+    return {ticker: tuple(sorted(c)) for ticker, c in found.items()}
+
+
+def _fast_resolve_pending_dlq_for_completed_frontiers(self: Any) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+    pending_frontier_ids = {
+        str(entry.event.payload.get("frontier_id") or "").strip()
+        for entry in self.unresolved_dead_letter_entries(tag_filter="retry_exhausted")
+        if entry.event.event_type == "source_ingestion.scheduled_run_failed"
+    }
+    pending_frontier_ids.discard("")
+    if not pending_frontier_ids:
+        return resolved
+    if "get_frontier" not in getattr(self.store, "__dict__", {}) and hasattr(self.store, "list_frontier"):
+        done_by_id = {
+            f.frontier_id: f
+            for f in self.store.list_frontier(status="done")
+            if f.ingest_run_id and f.frontier_id in pending_frontier_ids
+        }
+        for event_frontier_id in sorted(done_by_id):
+            frontier = done_by_id[event_frontier_id]
+            resolved.extend(
+                self.resolve_pending_dlq_for_recovery(
+                    frontier_id=event_frontier_id,
+                    connector_id=frontier.connector_id,
+                    recovery_ingest_run_id=frontier.ingest_run_id,
+                )
+            )
+        return resolved
+    for event_frontier_id in sorted(pending_frontier_ids):
+        frontier = self.store.get_frontier(event_frontier_id)
+        if frontier is None or frontier.status != "done" or not frontier.ingest_run_id:
+            continue
+        resolved.extend(
+            self.resolve_pending_dlq_for_recovery(
+                frontier_id=event_frontier_id,
+                connector_id=frontier.connector_id,
+                recovery_ingest_run_id=frontier.ingest_run_id,
+            )
+        )
+    return resolved
+
+
+from .connectors import collector_bundle as _collector_bundle_mod
+from .pipeline import IngestPipelineService as _IngestPipelineService_mod
+
+_collector_bundle_mod.stored_instrument_authority = _cached_stored_instrument_authority
+_IngestPipelineService_mod.resolve_pending_dlq_for_completed_frontiers = (  # type: ignore[method-assign]
+    _fast_resolve_pending_dlq_for_completed_frontiers
+)
+
+
 class SourceIngestionRuntime:
     """Explicit runtime holding stores, managers, locks, and configuration."""
 
@@ -347,7 +584,7 @@ class SourceIngestionRuntime:
         self.pin_source = PinSource.from_env(run_files_root=self.MARKET_DATA_STORAGE_ROOT)
         self.store = JsonlIngestScheduleStore(self.SCHEDULE_STORE_PATH, pinned_run_ids=self.pin_source.run_ids)
         self.connector_store = JsonlConfiguredConnectorStore(self.CONNECTOR_STORE_PATH)
-        self.schedule_config_store = JsonlConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)
+        self.schedule_config_store = _StatCachedConnectorScheduleStore(self.CONNECTOR_SCHEDULE_CONFIG_PATH)
         self.configured_fetcher = ConfiguredConnectorFetcher(self.connector_store)
         self.evidence_repository = build_source_evidence_repository(self.SOURCE_EVIDENCE_STORE_PATH)
         self.evidence_builder = EvidenceBundleBuilder(self.evidence_repository)
@@ -415,8 +652,12 @@ class SourceIngestionRuntime:
         self._evidence_pg_initialized_repo_id: int | None = None
         self._evidence_pg_last_append_id: int = 0
         self._evidence_pg_last_count: int = 0
+        self._evidence_pg_cached_key: Any | None = None
+        self._evidence_pg_cached_records: tuple[SourceRecord, ...] = ()
         self._latest_record_cache_key: Any | None = None
         self._latest_record_cache_value: dict[str, SourceRecord] = {}
+        self._cached_dlq_summary_key: Any | None = None
+        self._cached_dlq_summary_value: dict[str, Any] | None = None
 
         self._import_guard_lock = threading.RLock()
         self._last_import_input_digest: str | None = None
@@ -424,6 +665,12 @@ class SourceIngestionRuntime:
 
         self.pipeline = IngestPipelineService(self)
         self.import_configured_connectors_if_changed()
+        self.controller_readback_ready = False
+        self.controller_warm_start_count = 0
+        try:
+            self._warm_controller_readback()
+        finally:
+            self.controller_readback_ready = True
 
     def import_configured_connectors_if_changed(self, *, force: bool = False) -> Any | None:
         """Guarded startup/change import of configured connectors into SourceManagementStore (SD-SRCM § 10.1)."""
@@ -1016,9 +1263,35 @@ class SourceIngestionRuntime:
             except (MarketSnapshotStateError, OSError):
                 pass
 
+    def _warm_controller_readback(self) -> None:
+        """Warm controller-stage readback and instrument authority caches before /readyz turns 200."""
+        self.controller_warm_start_count += 1
+        try:
+            grouped = self._grouped_freshness_snapshot()
+            self._latest_source_record_by_connector(
+                receipts_by_connector=grouped["ordered_receipts_by_connector"],
+                runs_by_connector=grouped["runs_by_connector"],
+            )
+            self._dlq_readback_summary()
+            if (self.MARKET_DATA_STORAGE_ROOT / "daily_bars" / "_manifest").is_dir():
+                _cached_stored_instrument_authority(self.MARKET_DATA_STORAGE_ROOT)
+        except Exception:
+            pass
+
     def _source_freshness_readiness(self) -> dict[str, Any]:
         """Return a fixed-cost readiness projection from the controller snapshot."""
         from .pipeline import _parse_utc_datetime
+
+        if not getattr(self, "controller_readback_ready", True):
+            return {
+                "status": "degraded",
+                "data_ready": False,
+                "controller_readback_ready": False,
+                "scheduled_connector_count": 0,
+                "stale_connector_count": 0,
+                "degraded_connector_count": 0,
+                "reason": "controller_readback_warming",
+            }
 
         try:
             state_size_bytes = self.CONTROLLER_STATE_PATH.stat().st_size
@@ -1639,8 +1912,9 @@ class SourceIngestionRuntime:
                     else:
                         raise ValueError("unexpected metadata row format")
 
+                    by_tenant_count = len(getattr(repo, "_source_records_by_tenant", ()) or ())
                     if self._evidence_pg_initialized_repo_id != id(repo):
-                        if len(repo._source_records) == db_count:
+                        if len(repo._source_records) == db_count or by_tenant_count == db_count:
                             self._evidence_pg_last_append_id = max_append_id
                             self._evidence_pg_last_count = db_count
                             self._evidence_pg_initialized_repo_id = id(repo)
@@ -1697,7 +1971,20 @@ class SourceIngestionRuntime:
             except Exception:
                 return tuple(repo.list_source_records())
 
-        return tuple(repo._source_records.values())
+        last_obj = next(reversed(repo._source_records.values()), None) if repo._source_records else None
+        tuple_key = (
+            id(repo),
+            self._evidence_pg_last_append_id,
+            self._evidence_pg_last_count,
+            len(repo._source_records),
+            id(last_obj),
+        )
+        if self._evidence_pg_cached_key == tuple_key:
+            return self._evidence_pg_cached_records
+        records_tuple = tuple(repo._source_records.values())
+        self._evidence_pg_cached_key = tuple_key
+        self._evidence_pg_cached_records = records_tuple
+        return records_tuple
 
     def _latest_source_record_by_connector(
         self,
@@ -1705,57 +1992,55 @@ class SourceIngestionRuntime:
         runs_by_connector: Mapping[str, Sequence[Any]] | None = None,
         *,
         connector_ids: Iterable[str] | None = None,
+        _precomputed_latest_run_by_connector: Mapping[str, str] | None = None,
     ) -> dict[str, SourceRecord]:
         target_cids = frozenset(str(c) for c in connector_ids) if connector_ids is not None else None
         if target_cids is not None and not target_cids:
             return {}
         active_symbols = _active_contract_symbols()
         latest_run_by_connector: dict[str, str] = {}
-        if receipts_by_connector is None:
+        if _precomputed_latest_run_by_connector is not None:
+            latest_run_by_connector = dict(_precomputed_latest_run_by_connector)
+        elif receipts_by_connector is None:
             try:
                 grouped = self._grouped_freshness_snapshot()
                 latest_run_by_connector = dict(grouped["latest_completed_run_id_by_connector"])
             except Exception:
                 latest_run_by_connector = {}
         else:
-            iter_cids = (
-                (cid for cid in receipts_by_connector if cid in target_cids)
-                if target_cids is not None
-                else receipts_by_connector.keys()
-            )
-            for cid in iter_cids:
-                recs = receipts_by_connector[cid]
-                ordered = _ordered_run_receipts(recs, (runs_by_connector or {}).get(cid, ()))
-                latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
-                if latest_completed and latest_completed.ingest_run_id:
-                    latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
+            try:
+                grouped = self._grouped_freshness_snapshot()
+                if receipts_by_connector is grouped.get("ordered_receipts_by_connector"):
+                    latest_run_by_connector = dict(grouped["latest_completed_run_id_by_connector"])
+            except Exception:
+                pass
+            if not latest_run_by_connector:
+                for cid, recs in receipts_by_connector.items():
+                    ordered = _ordered_run_receipts(recs, (runs_by_connector or {}).get(cid, ()))
+                    latest_completed = next((r for r in reversed(ordered) if r.status == "completed"), None)
+                    if latest_completed and latest_completed.ingest_run_id:
+                        latest_run_by_connector[cid] = str(latest_completed.ingest_run_id)
 
         records = self._sync_and_list_source_records()
         last_rec_obj = records[-1] if records else None
-        relevant_runs_key = tuple(
-            sorted(
-                (cid, run_id)
-                for cid, run_id in latest_run_by_connector.items()
-                if target_cids is None or cid in target_cids
-            )
-        )
-        cache_key = (
+        all_runs_key = tuple(sorted(latest_run_by_connector.items()))
+        full_cache_key = (
             id(self.evidence_repository),
             len(records),
             id(last_rec_obj),
-            relevant_runs_key,
+            all_runs_key,
             frozenset(active_symbols),
-            target_cids,
         )
         with self._registry_cache_lock:
-            if self._latest_record_cache_key == cache_key:
-                return dict(self._latest_record_cache_value)
+            if self._latest_record_cache_key == full_cache_key:
+                cached_map = self._latest_record_cache_value
+                if target_cids is None:
+                    return dict(cached_map)
+                return {cid: rec for cid, rec in cached_map.items() if cid in target_cids}
 
         latest: dict[str, tuple[tuple[Any, ...], SourceRecord]] = {}
         for record in records:
             cid = record.connector_id
-            if target_cids is not None and cid not in target_cids:
-                continue
             # Historical sweeps grow this population on every tick. Ranking only
             # reads scalar metadata; avoid allocating serialized record and
             # metadata mappings for every stored row in each readback.
@@ -1801,9 +2086,11 @@ class SourceIngestionRuntime:
 
         result = {cid: item[1] for cid, item in latest.items()}
         with self._registry_cache_lock:
-            self._latest_record_cache_key = cache_key
+            self._latest_record_cache_key = full_cache_key
             self._latest_record_cache_value = dict(result)
-        return result
+        if target_cids is None:
+            return result
+        return {cid: rec for cid, rec in result.items() if cid in target_cids}
 
     def _collector_offerings(self, configs: Sequence[ConfiguredConnector]) -> dict[str, dict[str, Any]]:
         from .connectors.collector_bundle import (
@@ -1848,17 +2135,17 @@ class SourceIngestionRuntime:
             schedule.connector_id: schedule
             for schedule in self.schedule_config_store.list_schedules()
         }
-        snapshot = self.store.read_freshness_snapshot()
-        runs_by_connector: dict[str, list[Any]] = {}
-        for run in snapshot["runs"]:
-            connector_id = str(getattr(run, "connector_id", ""))
-            runs_by_connector.setdefault(connector_id, []).append(run)
-        receipts_by_connector: dict[str, list[IngestReceipt]] = {}
-        for receipt in snapshot["receipts"]:
-            receipts_by_connector.setdefault(receipt.connector_id, []).append(receipt)
+        grouped = self._grouped_freshness_snapshot()
+        runs_by_connector = grouped["runs_by_connector"]
+        receipts_by_connector = grouped["ordered_receipts_by_connector"]
+        latest_run_by_connector = grouped["latest_run_by_connector"]
+        watermarks = grouped["watermarks"]
         observed_at = datetime.now(timezone.utc)
         latest_by_connector = self._latest_source_record_by_connector(
-            receipts_by_connector=receipts_by_connector, runs_by_connector=runs_by_connector)
+            receipts_by_connector=receipts_by_connector,
+            runs_by_connector=runs_by_connector,
+            _precomputed_latest_run_by_connector=grouped["latest_completed_run_id_by_connector"],
+        )
         readbacks: list[dict[str, Any]] = []
         for config in sorted(configs, key=lambda item: item.connector.connector_id):
             connector = config.connector
@@ -1868,11 +2155,13 @@ class SourceIngestionRuntime:
                 connector_id,
                 connector_metadata=connector.metadata,
                 schedule=schedule,
-                watermark=snapshot["watermarks"].get(connector_id),
+                watermark=watermarks.get(connector_id),
                 runs=runs_by_connector.get(connector_id, ()),
                 receipts=receipts_by_connector.get(connector_id, ()),
                 now=observed_at,
                 latest_record=latest_by_connector.get(connector_id),
+                _preordered_receipts=True,
+                _precomputed_latest_run=latest_run_by_connector.get(connector_id),
             )
             health = self.source_health_store.get(connector_id)
             health_payload = health.to_dict() if health is not None else None
@@ -1902,36 +2191,25 @@ class SourceIngestionRuntime:
             )
         return readbacks
 
-    def _controller_readback_payload(self) -> dict[str, Any]:
-        connector_readbacks = self._controller_connector_readbacks()
-        frontier = self.store.list_frontier()
-        frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)
-        staleness_values = [
-            int(item["freshness"]["staleness_seconds"])
-            for item in connector_readbacks
-            if item.get("freshness", {}).get("staleness_seconds") is not None
-        ]
-        controller_state = read_controller_state(self.CONTROLLER_STATE_PATH)
-        requirement_snapshot = self.requirement_snapshot_store.latest
+    def _dlq_readback_summary(self) -> dict[str, Any]:
         dlq_entries = self.dead_letter_queue.entries()
-        dlq_status_counts = {
-            status.value: sum(1 for entry in dlq_entries if entry.status == status)
-            for status in DeadLetterStatus
-        }
+        cache_key = tuple((id(e), e.status, e.replay_attempts) for e in dlq_entries)
+        with self._registry_cache_lock:
+            if self._cached_dlq_summary_key == cache_key and self._cached_dlq_summary_value is not None:
+                return self._cached_dlq_summary_value
+        dlq_status_counts = {status.value: 0 for status in DeadLetterStatus}
         dlq_status_counts_by_connector: dict[str, dict[str, int]] = {}
-        # Oldest unresolved rejection per connector: one timestamp per connector, so a controller
-        # can report the age of a backlog it does not fail on.
         dlq_oldest_unresolved_by_connector: dict[str, datetime] = {}
         for entry in dlq_entries:
+            status_val = entry.status.value
+            dlq_status_counts[status_val] += 1
             connector_id = entry.event.payload.get("connector_id")
-            # Preserve unattributed entries in the totals. The terminal validator
-            # rejects this bucket (and unknown connector IDs) for scoped admission.
             if not isinstance(connector_id, str) or not connector_id.strip():
                 connector_id = ""
             counts = dlq_status_counts_by_connector.setdefault(
                 connector_id, {status.value: 0 for status in DeadLetterStatus}
             )
-            counts[entry.status.value] += 1
+            counts[status_val] += 1
             if entry.status in _UNRESOLVED_DLQ_STATUSES:
                 rejected_at = entry.rejected_at
                 oldest = dlq_oldest_unresolved_by_connector.get(connector_id)
@@ -1945,16 +2223,7 @@ class SourceIngestionRuntime:
                 DeadLetterStatus.SCHEMA_REJECTED,
             )
         )
-        return {
-            "schema_version": "source_ingest_controller_readback.v1",
-            "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "controller_state": controller_state,
-            "skipped_count": int(((controller_state or {}).get("reconcile") or {}).get("skipped_count") or 0),
-            "skipped_ids": list(((controller_state or {}).get("reconcile") or {}).get("skipped_ids") or [])[:50],
-            "controller_state_path": str(self.CONTROLLER_STATE_PATH),
-            "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
-            "connector_count": len(connector_readbacks),
-            "source_record_count": len(self._sync_and_list_source_records()),
+        summary = {
             "dlq_count": len(dlq_entries),
             "pending_dlq_count": dlq_status_counts[DeadLetterStatus.PENDING.value],
             "unresolved_dlq_count": unresolved_dlq_count,
@@ -1964,6 +2233,39 @@ class SourceIngestionRuntime:
                 connector_id: rejected_at.isoformat().replace("+00:00", "Z")
                 for connector_id, rejected_at in sorted(dlq_oldest_unresolved_by_connector.items())
             },
+        }
+        with self._registry_cache_lock:
+            self._cached_dlq_summary_key = cache_key
+            self._cached_dlq_summary_value = summary
+        return summary
+
+    def _controller_readback_payload(self) -> dict[str, Any]:
+        connector_readbacks = self._controller_connector_readbacks()
+        frontier = self.store.list_frontier()
+        frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)
+        staleness_values = [
+            int(item["freshness"]["staleness_seconds"])
+            for item in connector_readbacks
+            if item.get("freshness", {}).get("staleness_seconds") is not None
+        ]
+        controller_state = read_controller_state(self.CONTROLLER_STATE_PATH)
+        requirement_snapshot = self.requirement_snapshot_store.latest
+        dlq_summary = self._dlq_readback_summary()
+        if hasattr(self.evidence_repository, "_source_records") and self._evidence_pg_cached_key is not None:
+            source_record_count = len(self._evidence_pg_cached_records)
+        else:
+            source_record_count = len(self._sync_and_list_source_records())
+        return {
+            "schema_version": "source_ingest_controller_readback.v1",
+            "captured_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "controller_state": controller_state,
+            "skipped_count": int(((controller_state or {}).get("reconcile") or {}).get("skipped_count") or 0),
+            "skipped_ids": list(((controller_state or {}).get("reconcile") or {}).get("skipped_ids") or [])[:50],
+            "controller_state_path": str(self.CONTROLLER_STATE_PATH),
+            "requirement_snapshot": requirement_snapshot.to_dict() if requirement_snapshot is not None else None,
+            "connector_count": len(connector_readbacks),
+            "source_record_count": source_record_count,
+            **dlq_summary,
             "frontier_backlog": frontier_backlog,
             "frontier_backlog_by_connector": dict(sorted(frontier_backlog_by_connector.items())),
             "max_lag_seconds": max(staleness_values, default=0),
