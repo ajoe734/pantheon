@@ -294,6 +294,19 @@ def test_persona_list_scope_recorded_shapes_and_never_from_name() -> None:
 def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_paging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Replay the 2026-11-27 audited owner identity facts on recorded owner shapes.
+    # Unrelated older owner fields are representative; purpose is never injected.
+    # Paper ownership must not override the servant's canonical identity metadata.
+    servant = copy.deepcopy(RECORDED_AGORA_SERVANT)
+    servant.update(id="agora-servant-799a3ce8c021b91cbb54",
+                   persona_id="agora-servant-799a3ce8c021b91cbb54",
+                   lifecycle_state="paper_owner")
+    servant["metadata"]["owner_scope"] = "user_private"
+    other_traders = []
+    for pid in ("persona-2448c7053e33ea48da47", "persona-6507750312870d03a241"):
+        trader = copy.deepcopy(RECORDED_LIVE_PAPER_OWNER)
+        trader.update(id=pid, persona_id=pid)
+        other_traders.append(trader)
     recorded_rows = [
         copy.deepcopy(RECORDED_OLDER_PROBE_BASELINE_NO_DATA_SCOPE),
         copy.deepcopy(RECORDED_OLDER_RELEASE_PROBE_KEY_ONLY_NO_DATA_SCOPE),
@@ -303,6 +316,8 @@ def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_pag
         copy.deepcopy(RECORDED_LIVE_PAPER_OWNER),
         copy.deepcopy(RECORDED_RETIRED_FORMER_LIVE_PERSONA),
         copy.deepcopy(RECORDED_RESEARCH_HANDOFF_DRAFT_PERSONA),
+        servant,
+        *other_traders,
     ]
     monkeypatch.setattr(personas_service, "_routed_strategy_counts_by_persona", lambda: {})
 
@@ -316,7 +331,13 @@ def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_pag
         "current",
         "retired",
         "research",
+        "current",
+        "current",
+        "current",
     ]
+    expected_purposes = ["trading", "trading", "trading", "advisory_assistant",
+                         "advisory_assistant", "trading", "trading", "unknown",
+                         "advisory_assistant", "trading", "trading"]
     assert [r["id"] for r in projected_rows] == [r["id"] for r in recorded_rows]
     assert [r["listScope"] for r in projected_rows] == expected_scopes
 
@@ -327,9 +348,15 @@ def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_pag
         records_by_id={r["id"]: copy.deepcopy(r) for r in recorded_rows},
         catalog_defaults_by_id={},
     )
+    snapshot_reads = []
+
+    def read_snapshot(tenant_id, **kw):
+        snapshot_reads.append(tenant_id)
+        return snapshot
+
     monkeypatch.setattr(
         "services.control_plane.bff.personas.routes.collection._get_persona_directory_snapshot",
-        lambda tenant_id, **kw: snapshot,
+        read_snapshot,
     )
     monkeypatch.setattr(
         "services.control_plane.bff.personas.routes.collection._bff_me_tenant_payload",
@@ -377,14 +404,23 @@ def test_get_bff_personas_exposes_list_scope_and_preserves_row_set_order_and_pag
     assert [row["listScope"] for row in full_body["data"]] == expected_scopes
     assert [row["listScope"] for row in full_body["items"]] == expected_scopes
 
+    assert [row["personaPurpose"] for row in full_body["data"]] == expected_purposes
+    assert full_body["items"] == full_body["data"]
+    assert all("metadata" not in row and "persona_class" not in row for row in full_body["data"])
+    assert snapshot_reads == [TENANT_ID]
+
     page1 = client.get("/bff/personas?page_size=3").json()
     assert [row["id"] for row in page1["data"]] == [r["id"] for r in recorded_rows[:3]]
     assert [row["listScope"] for row in page1["data"]] == expected_scopes[:3]
     assert page1["page_info"]["next_page_token"] == "3"
+    assert [row["personaPurpose"] for row in page1["data"]] == expected_purposes[:3]
 
     page2 = client.get("/bff/personas?page_size=3&page_token=3").json()
     assert [row["id"] for row in page2["data"]] == [r["id"] for r in recorded_rows[3:6]]
     assert [row["listScope"] for row in page2["data"]] == expected_scopes[3:6]
+
+    assert [row["personaPurpose"] for row in page2["data"]] == expected_purposes[3:6]
+    assert snapshot_reads == [TENANT_ID] * 3
 
 
 def test_success_rate_is_null_when_unrecorded_or_zero_and_all_four_projections_and_league_agree(

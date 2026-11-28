@@ -1,0 +1,79 @@
+{
+  "task_id": "PERSONA-LIST-PURPOSE-FOR-DAY-PROBE-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "root_cause_class": "RC2 / WP2.3 persona-day selection; repair of merged #7963",
+  "source_base": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+  "implementation_status": "local_validation_passed_pending_independent_review_merge_deploy_and_hosted_proof",
+  "implementation": [
+    "GET /bff/personas adds personaPurpose to every projected dict using existing fleet_classification.persona_classification on its paired raw owner record. This runs independently of the existing listScope field and uses the already-loaded directory snapshot.",
+    "No service.py change; composes with #7999 owner-read reuse. No new classifier, owner read, endpoint, job, or writer. No management/persona-fleet read; user-private rows remain visible in the same list.",
+    "Existing persona_day.py already excludes explicit advisory_assistant purpose; production probe code and pool-risk selection remain unchanged. Added regressions use the actual 2026-11-27 list key set plus the projected purpose, shared between both probe tests.",
+    "Missing, unknown or trading purpose preserves existing lifecycle-based selection, even for a row with servant-looking archetype/mandate/name. Unknown owners project unknown without being silently dropped."
+  ],
+  "fixture_provenance": {
+    "incident_run": "https://github.com/ajoe734/pantheon/actions/runs/46078393132",
+    "observed_at": "2026-11-27T22:43:00Z",
+    "recorded_facts": "Task-scoped hosted audit records the row key set, servant identity, runtime, owner lifecycle and metadata identity. Existing recorded owner shapes in test_list_scope_classification.py supply unrelated fields; the two additional trading IDs reuse the recorded canonical paper-provisioning metadata shape. Those are representative replays, not complete verbatim raw owner dumps.",
+    "wire_fixture": "acceptance/test_persona_day.py::hosted_1127_persona_rows; exact observed key set plus purpose. Non-selection scalar values are representative; no metadata or persona_class is injected.",
+    "incident_artifact_readback": "Downloaded the existing persona-day-acceptance artifact from run 46078393132 (read only). persona-day.json: all three trading IDs passed, servant failed terminal_packet_today; pool-risk-snapshot-day.json: failed, telemetry_summary_unreadable:http_404. This is incident evidence, not post-change hosted acceptance."
+  },
+  "acceptance_evidence": {
+    "AC1_AC2": "Endpoint regression in test_list_scope_classification.py classifies the audited paper_owner servant identity as advisory_assistant from owner metadata (persona_class agora_servant, owner_scope user_private, execution_authority none), all three trading IDs as trading, and an unclassified owner as unknown. It verifies data/items parity, paging, order and exactly one directory snapshot call per request.",
+    "AC3": "Both purpose spellings: exact hosted key shape judges the same three trading personas with all seven checks passing; servant appears in left_out with persona_not_enrolled_for_daily_execution and receives no detail read.",
+    "AC4": "Same shared fixture keeps the servant binding active and supplies its telemetry summary as http_404. Legacy row without purpose reproduces failed telemetry_summary_unreadable:http_404; projected advisory row results in pending, with only the three trading pools at 3/20, 3/20 and 8/20 and no servant telemetry read.",
+    "AC5": "All otherwise-eligible rows remain selected when purpose is absent, unknown or trading; prior lifecycle, status and tenant checks are unchanged.",
+    "AC6": "BFF_API_CONTRACT.md documents the three values, source, no additional read, advisory paper-book handling and old-BFF fallback.",
+    "AC7": "Runtime budget below.",
+    "AC8": "Pending coordinator-owned post-deploy dispatched persona-day-acceptance workflow; local replay is not hosted proof."
+  },
+  "validation": {
+    "provision": "timeout 180 python3 scripts/dev/provision_python_distribution.py; exit 0, task-local interpreter inherits supervisor PANTHEON_DEPENDENCY_PYTHON and verified from foreign cwd.",
+    "focused_command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_list_scope_classification.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py",
+    "focused_result": "67 passed, 3 dependency deprecation warnings in 13.85s; terminal exit 0 collected.",
+    "expanded_command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_list_scope_classification.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py",
+    "expanded_result": "72 passed, 1 failed in 15.73s; terminal exit 1 collected. The failure is the existing direct-helper CPU ratio test, documented as residual below. All five other compact-row tests passed.",
+    "residual_recheck": "timeout 60 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py::test_list_cpu_drops_at_least_70_percent; 1 failed in 0.62s; terminal exit 1 collected.",
+    "preliminary_result": "Before provisioning the required task-local environment, the focused 67 tests also passed with /tmp/bff-ledger-reuse-venv/bin/python; superseded by the task-local result above.",
+    "static_checks": "git diff --check; python3 -m json.tool on this manifest; both exit 0."
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "new_owner_reads_per_request": 0,
+    "cadence": "Only existing GET /bff/personas requests; no recurring cadence/job/emitter added. Existing weekday 11:30Z read-only acceptance workflow unchanged.",
+    "size_and_count_at_hosted_scale": "One string per list row; at most 38 added compact UTF-8 JSON bytes per row per array (including separator). Incident has 178 rows (3 traders + servant + 174 left out), so at most 13528 extra bytes across the existing duplicated data/items arrays. Existing page_size cap is 200, at most 15200 added wire bytes per response.",
+    "growth_per_day": "0 persistent runtime bytes and 0 new runtime records per day.",
+    "cap": "Existing 200-row page cap; enum limited to trading/advisory_assistant/unknown. No new persistent cache, queue, table, file, image or temporary directory.",
+    "cleanup": "Response-local values released with request; no new retention or cleanup process. Existing workflow artifact retention (30 days) unchanged."
+  },
+  "hosted_acceptance": {
+    "status": "pending_review_merge_deploy_and_coordinator_dispatch",
+    "run_id": null,
+    "owner": "persona-loop coordinator",
+    "deployment_deadline": "Deploy before 2026-11-30 09:05Z hold; daily cycle at 10:00Z, scheduled probe at 11:30Z.",
+    "procedure": [
+      "Verify hosted manifest includes the merged task head and all expected steady services are healthy at the expected versions.",
+      "Read GET /bff/personas as the probe viewer: servant personaPurpose=advisory_assistant, three trading IDs personaPurpose=trading.",
+      "Dispatch the existing persona-day-acceptance.yml against dev after deployment and record its run ID and terminal status; collect both JSON artifacts.",
+      "Verify persona-day left_out contains agora-servant-799a3ce8c021b91cbb54 with persona_not_enrolled_for_daily_execution and only the three trading personas are judged.",
+      "Verify pool risk snapshot step does not fail on servant telemetry_summary http_404; pending health windows remain valid. Record unrelated genuine failures separately, without calling the release accepted."
+    ],
+    "claim_boundary": "No hosted mutation, deployment, synthetic cycle or post-change probe was performed by this worker. Source review and merge do not establish deployed or accepted state."
+  },
+  "residual_findings": [
+    {
+      "finding": "Existing compact-row helper CPU benchmark fails the 70% reduction threshold on this worker (new/old about 37.6% in both expanded and isolated batches).",
+      "test": "services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py::test_list_cpu_drops_at_least_70_percent",
+      "expanded_cpu_seconds": {
+        "old": 0.0548865739999993,
+        "new": 0.02064571299999951
+      },
+      "isolated_cpu_seconds": {
+        "old": 0.05146415599999976,
+        "new": 0.01937569000000039
+      },
+      "scope_evidence": "The test calls _project_persona_list_records directly and never enters the changed collection route. service.py blob a4db073a1c5356c58f7a7ba467cd3a77f431a03a and benchmark test blob 97beead4a83984633418179009c6febdfb3cc7c2 exactly match origin/dev 9cf0aeff70d7611dda3d5bca4f5f460147aad003. Neither file is changed by this task.",
+      "disposition": "Hand off to persona-loop coordinator for attachment to the existing BFF read-performance owning class (or a new registered class if needed) before chain closure. Not repaired or waived in this purpose-projection task; do not report expanded suite as passed."
+    }
+  ]
+}
