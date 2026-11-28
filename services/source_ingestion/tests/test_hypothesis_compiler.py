@@ -124,17 +124,9 @@ from services.source_ingestion.hypothesis_card import ExtractionLedger, Hypothes
 from services.source_ingestion.semantic_extraction_client import SemanticExtractionClient  # noqa: E402
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
 from services.source_ingestion.tests.test_hypothesis_extraction import (  # noqa: E402
-    _Transport, _card as _ext_card, _run, _source, _RecordedTransport, _prediction_recording as _raw_prediction_recording, _card_with_origin,
+    _Transport, _card as _ext_card, _run, _source, _RecordedTransport, _prediction_recording, _card_with_origin,
     _screen_entry_recording,
 )
-
-
-def _prediction_recording():
-    recording = _raw_prediction_recording()
-    # These compiler tests isolate prediction handling with a governed rule
-    # input. The original recording's bare monthly_revenue_yoy now fails closed.
-    recording["response"]["output"]["structured_data"]["hypothesis_card"]["signal_inputs"] = ["tw_monthly_revenue.yoy"]
-    return recording
 
 
 def test_split_compiles_ordered_screen_and_entry_and_fingerprints():

@@ -202,7 +202,12 @@ def test_contract_file_matches_code():
 
 def _prediction_recording():
     path = Path(__file__).parent / "fixtures/hypothesis_predictions_recorded.json"
-    return json.loads(path.read_text())
+    recording = json.loads(path.read_text())
+    # Replay the hand-authored prediction fixture with a governed top-level input
+    # for every consumer, including Research's card-to-admission integration tests.
+    # Bare legacy names remain covered by the fail-closed catalogue tests below.
+    recording["response"]["output"]["structured_data"]["hypothesis_card"]["signal_inputs"] = ["tw_monthly_revenue.yoy"]
+    return recording
 
 
 def _screen_entry_recording():
@@ -273,6 +278,8 @@ def test_predictions_survive_real_worker_entrypoint_and_are_catalogue_checked(tm
     worker, _, store, _ = _worker(tmp_path, t)
     assert _run(worker, _source(body=t.recording["stored_text"])).created == 1
     card = _card_with_origin(store.list_all()[0])
+    assert card["signal_inputs"] == ["tw_monthly_revenue.yoy"]
+    assert card["testability"] == "testable"
     assert [p["testability"] for p in card["predictions"]] == [
         "testable", "testable", "needs_data:unlisted_orders", "needs_data:tw_monthly_revenue",
     ]
