@@ -93,13 +93,24 @@ def hosted_rows():
                     "recommended_governance_action": "review_mapping",
                 },
             })
+        if i in (166, 167, 168):
+            key = ("requested_risk_profile_provenance", "capital_pool_risk_policy_resolution",
+                   "risk_policy_owner_decision_request")[i - 166]
+            refs[key] = deepcopy(rows[165].references[key])
+            if key == "requested_risk_profile_provenance":
+                refs[key]["persona_id"] = pid
+        if i == 169:
+            refs["provisioning_readback_started_at"] = "2026-11-27T17:45:00Z"
+            refs["first_evaluation_schedule_cleanup"] = {"registered": False, "reason": "pending"}
         rows.append(ProvisioningRecord(
             tenant_id=TENANT, idempotency_key=f"create-{i}", request_hash=f"hash-{i}",
             normalized_name=name.lower(), persona_id=pid,
             request_payload={"name": name, "tenant_id": TENANT, "requested_by": "operator", "budget": 10000000},
             state="retired" if i < 165 else "succeeded" if i < 169 else "provisioning",
             current_step="authoritative_readback", references=refs,
-            result={"paper_running": True, "status": "paper_running"},
+            result={"paper_running": True, "status": "paper_running", "unused_receipt": {"source": "owner"}},
+            error={"reason": "retired", "owner_decision_request": {"reason_code": "needs_review"}} if i == 164 else None,
+            compensation={"pool": "released"} if i == 1 else None,
             created_at="2026-11-10T00:00:00Z", updated_at="2026-11-16T00:00:00Z",
         ))
     return rows
@@ -447,12 +458,12 @@ def test_postgres_each_write_visible_next_read_and_timestamp_unchanged_sql(pg_le
     record.compensation = {"pool": "released"}
     record = replica.release(record, lease_owner="worker")
     assert current().compensation == {"pool": "released"}
-    assert current().lease_owner is None
-    previous_time = current().updated_at
+    assert replica.get(TENANT, "new").lease_owner is None
+    previous_time = replica.get(TENANT, "new").updated_at
     with psycopg.connect(store.dsn) as conn:
         conn.execute(f"UPDATE {store.table} SET current_step='direct_sql' WHERE persona_id='persona-new'")
     assert current().current_step == "direct_sql"
-    assert current().updated_at == previous_time
+    assert replica.get(TENANT, "new").updated_at == previous_time
     with psycopg.connect(store.dsn) as conn:
         conn.execute(f"DELETE FROM {store.table} WHERE persona_id='persona-new'")
     assert len(store.list_for_directory(TENANT)) == 170
@@ -605,6 +616,7 @@ def _benchmark():
                 f'SELECT count(*), sum(pg_column_size("references")), sum(octet_length("references"::text)) FROM {store.table}'
             ).fetchone()
         rss_final = rss_kib()
+        rss_peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         full_rows = store.list_all()
         started = time.perf_counter()
         full_entry_bytes = original_size((TENANT, (1, full_rows)))
@@ -614,7 +626,7 @@ def _benchmark():
             "full_entry_bytes": full_entry_bytes, "full_size_ms": round(full_size_ms, 3),
             "mode": args.mode, "surface": args.surface, "cold_ms": round(cold_ms, 3),
             "warm_ms": [round(ms, 3) for ms in warm_ms], "warm_median_ms": round(statistics.median(warm_ms), 3),
-            "rss_kib": {"idle": rss_idle, "after_cold": rss_cold, "after_warm_gc": rss_final, "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+            "rss_kib": {"idle": rss_idle, "after_cold": rss_cold, "after_warm_gc": rss_final, "peak": rss_peak},
             "cache_retained_bytes": store._directory_cache_bytes, "cache_entries": len(store._directory_cache),
             "postgres_shape": {"rows": shape[0], "references_column_bytes": shape[1], "references_text_bytes": shape[2]},
             "python": platform.python_version(),
