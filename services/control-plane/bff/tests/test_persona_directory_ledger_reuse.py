@@ -67,7 +67,7 @@ def hosted_rows():
             receipt = {
                 "owner": key, "status": "approved", "persona_id": pid,
                 "parts": [{"sequence": j, "digest": "".join(rng.choices("abcdef0123456789", k=20))}
-                          for j in range(70)],
+                          for j in range(75)],
                 "metadata": {"receipt": ""},
             }
             target = round(key_bytes * 2.12 / count)
@@ -105,7 +105,13 @@ def hosted_rows():
         rows.append(ProvisioningRecord(
             tenant_id=TENANT, idempotency_key=f"create-{i}", request_hash=f"hash-{i}",
             normalized_name=name.lower(), persona_id=pid,
-            request_payload={"name": name, "tenant_id": TENANT, "requested_by": "operator", "budget": 10000000},
+            request_payload={
+                "name": name, "tenant_id": TENANT, "requested_by": "operator", "budget": 10000000,
+                # The hosted slim graph is ~1.25 MB too: retain realistic
+                # request text, rather than benchmarking only tiny scalars.
+                "description": f"Persona {i}: " + "".join(rng.choices("abcdef0123456789", k=4400)),
+                "mandate": f"Mandate {i}: " + "".join(rng.choices("abcdef0123456789", k=600)),
+            },
             state="retired" if i < 165 else "succeeded" if i < 169 else "provisioning",
             current_step="authoritative_readback", references=refs,
             result={"paper_running": True, "status": "paper_running", "unused_receipt": {"source": "owner"}},
@@ -269,8 +275,10 @@ def test_hosted_shape_payload_parity_and_conflicting_owner_skip(ledger, monkeypa
     # Guard against the too-small #7999 fixture: measure decoded full rows,
     # exactly as the production cache does, not just wire string length.
     full_bytes = store._directory_size((TENANT, (db.revision, store.list_all())))
+    assert 39_000_000 < full_bytes < 42_000_000
     assert full_bytes > store._DIRECTORY_MAX_ENTRY_BYTES
-    assert 0 < store._directory_cache_bytes < store._DIRECTORY_MAX_ENTRY_BYTES
+    assert 1_200_000 < store._directory_cache_bytes < 1_500_000
+    assert store._directory_cache_bytes < store._DIRECTORY_MAX_ENTRY_BYTES
     assert store._directory_cache[TENANT][1] is not None
 
 
