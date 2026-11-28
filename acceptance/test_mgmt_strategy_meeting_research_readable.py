@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import threading
+
+import pytest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
@@ -57,7 +59,7 @@ def test_fails_on_recorded_pre_fix_hosted_shapes():
     assert not report["passed"]
     assert {f.split(":")[0] for f in report["failed"]} == {
         "stub_or_probe_strategies_listed", "meta_hidden_unbound_stub_strategy_count_missing",
-        "meta_hidden_test_persona_strategy_count_missing", "dead_letter_meetings_listed",
+        "meta_hidden_persona_strategy_count_missing", "dead_letter_meetings_listed",
         "non_real_research_tasks_listed", "meta_hidden_non_real_count_missing",
         "research_demands_unavailable"}
     strategy_failure = next(f for f in report["failed"] if f.startswith("stub_or_probe"))
@@ -174,3 +176,21 @@ def test_probe_main_against_local_fixture_server(monkeypatch, capsys):
     finally:
         server.shutdown()
     assert {m for m, _ in seen} == {"GET", "POST"} and not [p for m, p in seen if m not in ("GET", "POST")]
+
+
+@pytest.mark.parametrize("counts,passes", [
+    ({"hidden_persona_strategy_count": 166}, True),
+    ({"hidden_test_persona_strategy_count": 166}, True),
+    ({"hidden_persona_strategy_count": 166, "hidden_test_persona_strategy_count": None}, True),
+    ({"hidden_persona_strategy_count": None, "hidden_test_persona_strategy_count": 166}, True),
+    ({"hidden_persona_strategy_count": False, "hidden_test_persona_strategy_count": 166}, True),
+    ({"hidden_persona_strategy_count": None, "hidden_test_persona_strategy_count": None}, False),
+    ({"hidden_persona_strategy_count": True, "hidden_test_persona_strategy_count": False}, False),
+    ({"hidden_persona_strategy_count": "166"}, False),
+    ({}, False),
+])
+def test_strategy_hidden_cohort_count_accepts_new_and_legacy_contracts(counts, passes):
+    body = {"items": [], "meta": {"hidden_unbound_stub_strategy_count": 0, **counts}}
+    count, failures = probe._strategy_failures(lambda path: body)
+    assert count == 0
+    assert failures == ([] if passes else ["meta_hidden_persona_strategy_count_missing"])

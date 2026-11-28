@@ -7,7 +7,7 @@ token stays in memory and is never printed) and checks, with GET only:
   * GET /bff/strategies?exclude_state=draft lists no "SIMULATION paper-only" row, no
     strat-tw-official / "TW official" raw-seed row, and no retired or unbound
     "Pantheon Dev Paper Release" probe row, and reports meta.hidden_unbound_stub_strategy_count
-    and meta.hidden_test_persona_strategy_count;
+    and meta.hidden_persona_strategy_count (legacy test-named alias accepted);
   * GET /bff/meetings?status=upcoming lists no dead_letter meeting;
   * GET /bff/research-tasks?view=research lists no is_non_real row, exposes meta.hidden_non_real_count,
     reports meta.surfaces.research_demands.status == ok (open persona demands readable from the Research
@@ -65,9 +65,14 @@ def _strategy_failures(fetch):
             bad.append(sid)
     if bad:
         failures.append("stub_or_probe_strategies_listed:" + ",".join(bad[:5]))
-    for key in ("hidden_unbound_stub_strategy_count", "hidden_test_persona_strategy_count"):
-        if not isinstance(first_meta.get(key), int) or isinstance(first_meta.get(key), bool):
-            failures.append("meta_" + key + "_missing")
+    hidden_stubs = first_meta.get("hidden_unbound_stub_strategy_count")
+    if not isinstance(hidden_stubs, int) or isinstance(hidden_stubs, bool):
+        failures.append("meta_hidden_unbound_stub_strategy_count_missing")
+    hidden_personas = first_meta.get("hidden_persona_strategy_count")
+    if not isinstance(hidden_personas, int) or isinstance(hidden_personas, bool):
+        hidden_personas = first_meta.get("hidden_test_persona_strategy_count")
+    if not isinstance(hidden_personas, int) or isinstance(hidden_personas, bool):
+        failures.append("meta_hidden_persona_strategy_count_missing")
     return len(rows), failures
 
 
