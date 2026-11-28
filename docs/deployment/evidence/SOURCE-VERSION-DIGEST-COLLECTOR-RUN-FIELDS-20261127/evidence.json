@@ -68,8 +68,15 @@
     "residual_findings": [
       "Existing prune retains source-version/outbox tombstones indefinitely; older register wording that rows are removed after 7 days is inaccurate. No hard row cap is introduced here; coordinator should attach this storage residual to RC3 before closing the chain.",
       "A pre-repair digest whose payload was already compacted to PRUNED_PAYLOAD_JSON cannot be compared to a later refetch because its content projection is gone. Such a source can acquire one repaired identity on its next observation. Existing input-answer reuse/per-source call budgets still apply; this patch cannot reconstruct lost snapshots or guarantee earliest PIT from already-pruned historical rows. Coordinator must disposition under RC2/RC3; retained snapshots and post-repair tombstones are covered.",
-      "Prior task residual for distinct_sources plumbing into the BFF discovery board remains outside this artifact contract and is not closed by this identity repair.",
       "24h hosted row ratio, superseded closure decline and before/after news MB/day are still pending deployment and observation."
-    ]
+    ],
+    "composition": "BFF-ALPHA-BOARD-LLM-DISTINCT-SOURCES-20261127 source plumbing is now in merged dev; its hosted numeric distinct_sources/calls_per_source proof remains pending. Preserve that independent task's ownership and acceptance."
+  },
+  "conflict_repair": {
+    "reason": "Auto-integrator returned PR #7996 for a real conflict with dev; previous exact-head approval is invalid for this new delivery.",
+    "previous_head": "d9f3c3cdec513ae1e2669486aa9fa2d4ecbd7918",
+    "merged_dev": "60584b301fd09f2bd0dab6ce2f8385cd2d54296c",
+    "resolution": "Only docs/operations/problem-register.md conflicted. Preserve upstream BFF-ALPHA-BOARD-LLM-DISTINCT-SOURCES-20261127 ledger-to-board plumbing together with this task's identity root cause, resolved measurement, first-seen PIT, historical digest compatibility and storage residuals. No product code changed during conflict resolution.",
+    "verification": "pending focused rerun after merge anchor"
   }
 }

@@ -403,6 +403,9 @@ def create_agora_router(
         trading_room_store=trading_room_store,
         workshop_store=workshop_store,
         decision_lock_owner=resolved_decision_lock_owner,
+        imitation_candidate_reader=getattr(
+            resolved_decision_lock_owner, "imitation_candidate_resolver", None
+        ),
     ))
     router.include_router(create_performance_router(
         **_kw,
