@@ -1,0 +1,304 @@
+{
+  "task_id": "COLLECTOR-INTAKE-COMPLETE-BUNDLES-NOT-CONSUMED-20261128",
+  "owner": "Codex2",
+  "reviewer": "Antigravity2",
+  "delivery_state": "source ready for independent review; not merged, deployed or accepted",
+  "reproduction": {
+    "captured_at": "2026-11-28T03:58:25.752695+00:00",
+    "host": "165-232-172-111.sslip.io",
+    "sources": [
+      {
+        "source": "collector-tw-threads",
+        "cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+        "pending_count": 69,
+        "checks": [
+          {
+            "entry": {
+              "bundle_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "date": "2026-11-11",
+              "finished_at": "2026-11-11T04:49:23Z",
+              "run_id": "run-20261111T044923Z",
+              "source_id": "collector-tw-threads",
+              "status": "partial"
+            },
+            "verified_status": "partial",
+            "reason": "parse_zero",
+            "verified_items": 0,
+            "verified_raw_files": 0,
+            "seconds": 0.489
+          },
+          {
+            "entry": {
+              "bundle_sha256": "3abae29f17c1b8ac506b3c81082edc32b8b79700a1140ad3f4cd92990f0a6b8a",
+              "date": "2026-11-28",
+              "finished_at": "2026-11-28T00:16:28Z",
+              "run_id": "run-20261128T001628Z",
+              "source_id": "collector-tw-threads",
+              "status": "complete"
+            },
+            "verified_status": "complete",
+            "reason": null,
+            "verified_items": 18,
+            "verified_raw_files": 18,
+            "seconds": 1.522
+          }
+        ]
+      },
+      {
+        "source": "collector-tw-ptt-stock",
+        "cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+        "pending_count": 38,
+        "checks": [
+          {
+            "entry": {
+              "bundle_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "date": "2026-11-18",
+              "finished_at": "2026-11-18T18:16:33Z",
+              "run_id": "run-20261118T181633Z",
+              "source_id": "collector-tw-ptt-stock",
+              "status": "partial"
+            },
+            "verified_status": "partial",
+            "reason": "fetch_failed",
+            "verified_items": 0,
+            "verified_raw_files": 0,
+            "seconds": 0.549
+          },
+          {
+            "entry": {
+              "bundle_sha256": "86e531d6b14abf9e50840e777a1d3c9373b6b577072dc8eca5d1f42dbfbf8f61",
+              "date": "2026-11-28",
+              "finished_at": "2026-11-28T00:17:53Z",
+              "run_id": "run-20261128T001753Z",
+              "source_id": "collector-tw-ptt-stock",
+              "status": "complete"
+            },
+            "verified_status": "complete",
+            "reason": null,
+            "verified_items": 9,
+            "verified_raw_files": 9,
+            "seconds": 1.136
+          }
+        ]
+      },
+      {
+        "source": "collector-tw-instagram-popular",
+        "cursor": null,
+        "pending_count": 69,
+        "checks": [
+          {
+            "entry": {
+              "bundle_sha256": "2bc70aa81d582c4d9cc0daae429fafac82e3a264c4ebbf02bdd9750a35a48baf",
+              "date": "2026-11-11",
+              "finished_at": "2026-11-11T04:49:23Z",
+              "run_id": "run-20261111T044923Z",
+              "source_id": "collector-tw-instagram-popular",
+              "status": "complete"
+            },
+            "verified_status": "complete",
+            "reason": null,
+            "verified_items": 12,
+            "verified_raw_files": 12,
+            "seconds": 1.462
+          },
+          {
+            "entry": {
+              "bundle_sha256": "bb127df687e7667200dbd0fc0c6ee1fdd6f2d3d59a5041305cfed663688e10b8",
+              "date": "2026-11-28",
+              "finished_at": "2026-11-28T00:15:42Z",
+              "run_id": "run-20261128T001542Z",
+              "source_id": "collector-tw-instagram-popular",
+              "status": "complete"
+            },
+            "verified_status": "complete",
+            "reason": null,
+            "verified_items": 12,
+            "verified_raw_files": 12,
+            "seconds": 1.228
+          }
+        ]
+      }
+    ],
+    "full_pull_readonly": {
+      "method": "Hosted CollectorBundleAdapter.pull with actual stored cursor and actual HttpBundleTransport. _write_raw replaced with no-op; deferred_collector_acknowledgement enabled, returned acknowledgement never invoked. Only transport/verify and feature planning run.",
+      "hosted_container_image": "pantheon-source-ingest {\"com.docker.compose.config-hash\":\"5ebffb86c04e9283a2a4848b60ba30d15337c4dd65a3974c0429aacb0a001c9b\",\"com.docker.compose.container-number\":\"1\",\"com.docker.compose.depends_on\":\"postgres:service_healthy:false\",\"com.docker.compose.image\":\"sha256:5fab0848e4f045d112f7742682faf5297c1a7c7251506f98db2b72900a521b9a\",\"com.docker.compose.oneoff\":\"False\",\"com.docker.compose.project\":\"pantheon\",\"com.docker.compose.project.config_files\":\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root/docker-compose.yml,/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/release-artifacts/baseline-46102871850-1-33d26a8fbb36f73f9a4e967f6f80e552eda18489cc30ee372a0b8dbd917a4c83/candidate-images.override.json\",\"com.docker.compose.project.working_dir\":\"/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/managed-deploy-worktrees/dev-root/dev-root\",\"com.docker.compose.replace\":\"source-ingest-1\",\"com.docker.compose.service\":\"source-ingest\",\"com.docker.compose.version\":\"2.40.3\"}",
+      "result": [
+        {
+          "source": "collector-tw-threads",
+          "input_cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+          "next_cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+          "raw_count": 0,
+          "bundle_count": 1,
+          "complete": false,
+          "no_new_data": false,
+          "observed": {
+            "health_state": "degraded",
+            "reasons": [
+              "collector_complete_boundary_unverified",
+              "cursor_lag_over_7_days"
+            ],
+            "freshness": {
+              "collector_last_run_at": "2026-11-28T00:16:28Z",
+              "cursor": "2026-11-11T04:49:23Z#run-20261111T044923Z|items=0",
+              "cursor_lag_days": 16.81,
+              "cadence_seconds": 86400
+            },
+            "last_run": {
+              "collector_status": "complete",
+              "paused_reason": null
+            }
+          },
+          "acknowledgement_called": false
+        },
+        {
+          "source": "collector-tw-ptt-stock",
+          "input_cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+          "next_cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+          "raw_count": 0,
+          "bundle_count": 1,
+          "complete": false,
+          "no_new_data": false,
+          "observed": {
+            "health_state": "degraded",
+            "reasons": [
+              "collector_complete_boundary_unverified",
+              "cursor_lag_over_7_days"
+            ],
+            "freshness": {
+              "collector_last_run_at": "2026-11-28T00:17:53Z",
+              "cursor": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0",
+              "cursor_lag_days": 9.251,
+              "cadence_seconds": 86400
+            },
+            "last_run": {
+              "collector_status": "complete",
+              "paused_reason": null
+            }
+          },
+          "acknowledgement_called": false
+        }
+      ],
+      "exact_stop": "_pull_ordered: after verify_bundle, _resolve_partial_bundle returns None for source_type=social; bundle.status in {paused, partial} sets unverified_pending=True and breaks before every newer complete bundle."
+    }
+  },
+  "cause": "_pull_ordered verifies the cursor partial bundle then stops at status partial. _resolve_partial_bundle only resolves market price history. Threads is stuck behind six initial empty parse_zero attempts; PTT behind empty fetch_failed attempts. Newest complete Threads/PTT and Instagram files verify through hosted HttpBundleTransport, including every raw hash; file modes are 600 for manifests, 644 for items.",
+  "resolution_contract": "Reuse _resolve_partial_bundle for these two social pollers only. Empty failed attempts (parse_zero/fetch_failed) may be traversed after a later nonempty complete same-source poll is verified. This records recovery of a failed attempt, never proof that the failed poll had no data. Nonempty partials, paused bundles, other reasons and sources retain the existing stop. No unverified raw row is acknowledged.",
+  "fixtures": {
+    "path": "services/source_ingestion/tests/fixtures/collector_intake_20261128.json",
+    "capture": "Original UTF-8 files read-only SSH exported on 2026-11-28 from /var/lib/pantheon-collector. 13 bundles, 94 bundle files plus status.json; no credentials, author identifiers already hashed by host."
+  },
+  "validation": {
+    "baseline": {
+      "head": "9cf0aeff70d7611dda3d5bca4f5f460147aad003 (origin/dev before edits)",
+      "command": "timeout 90 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py -k 'real_failed_attempts or instagram_control'",
+      "exit_status": 1,
+      "result": "2 failed, 1 passed: Threads/PTT result.records == (), cursor unchanged at |items=0; Instagram passes."
+    },
+    "focused": {
+      "command": "timeout 90 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py services/source_ingestion/tests/test_collector_partial_bundle_resolution.py",
+      "exit_status": 0,
+      "result": "34 passed in 5.56s"
+    },
+    "full_collector_suite": {
+      "command": "timeout 180 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py services/source_ingestion/tests/test_collector_partial_bundle_resolution.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_outcome_truth.py",
+      "exit_status": 0,
+      "result": "261 passed, 4 skipped in 96.81s; all foreground terminal output and exit status collected."
+    },
+    "storage_manifest": {
+      "command": "python3 scripts/check_storage_manifest.py",
+      "exit_status": 0,
+      "result": "passed; 380 entries, 0 failures; no new writers"
+    },
+    "whitespace": {
+      "command": "git diff --check",
+      "exit_status": 0
+    },
+    "coverage": "Original real-file layout/modes; original hosted partial cursors; reversed index ordering; full and capped scheduler delivery through real provider/fetcher/scheduler; nonempty partial/paused/unknown reason/other-source/other-type barriers; corrupt successor metadata/raw refusal; unchanged no-new-data proof including PTT governed-feature residual; read-only hosted probe false-positive guards."
+  },
+  "runtime_budget": {
+    "new_writers": 0,
+    "new_jobs": 0,
+    "cadence": "Existing 6-hour producer polls (4/day/source), existing hosted source scheduler. No new trigger or cadence change. Recovery lookup runs only for a verified empty failed attempt.",
+    "count_size_growth_cap_cleanup": "No new persistent state or row kind. Existing bounded verified metadata cache (16 entries, MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES file bytes) is reused for recovery metadata. Existing resolution observations travel in existing receipts. Successful backlog ingestion uses existing raw/normalized stores and retention; deployment measurement pending.",
+    "hosted_scale_sample": {
+      "threads": {
+        "items_per_latest_bundle": 18,
+        "raw_bytes": 6111,
+        "total_bundle_file_bytes": 24039
+      },
+      "ptt": {
+        "items_per_latest_bundle": 9,
+        "raw_bytes": 1589,
+        "total_bundle_file_bytes": 9876
+      }
+    },
+    "growth_per_day": "At sampled 6-hour cadence, 108 raw item deliveries/day for both sources (30,800 input raw bytes/day; 135,660 total input bundle-file bytes/day). This is a sample projection, not a bound or measurement of normalized/derived hosted growth. Catch-up is existing backlog, not a new recurring emitter.",
+    "cap_cleanup": "No new disk writer. Existing raw/normalized and community ledgers remain registered in docs/operations/storage-manifest.json; community_ledger.jsonl and community_emitted.jsonl have no verified cap/cleanup there (RC3 residual). Metadata lookahead reuses the existing process-local 16-entry / 71,680,000-file-byte LRU, evicted on insertion and reset on process exit. Probe reads <=24 MB per invocation, 0 disk growth, no recurring schedule."
+  },
+  "hosted_acceptance": {
+    "status": "pending source review, merge and governed deployment",
+    "owner_chain": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113 / market-data domain cb4f6795",
+    "requirements": "Read-only post-deploy receipts: both sources have raw_count > 0, record ingest_run_id and cursor lag < 1 day. No hosted state or cursor was edited.",
+    "probe": "services/source_ingestion/tests/collector_intake_acceptance.py --since <actual governed switch timestamp>; run inside source-ingest container or pipe through docker exec -i python - --since <switch>; reads bounded receipt tail, requires positive post-switch receipt and latest completed cursor lag <1 day for both sources.",
+    "pre_fix_probe": {
+      "captured_at": "2026-11-28T04:03:13.045611+00:00",
+      "since": "2026-11-28T03:55:09+00:00",
+      "journal_bytes_examined": 23998253,
+      "sources": {
+        "collector-tw-threads": {
+          "latest_receipt": {},
+          "positive_ingest": null,
+          "cursor_lag_days": null,
+          "passed": false
+        },
+        "collector-tw-ptt-stock": {
+          "latest_receipt": {},
+          "positive_ingest": null,
+          "cursor_lag_days": null,
+          "passed": false
+        }
+      },
+      "passed": false
+    }
+  },
+  "residual_findings": [
+    {
+      "finding": "YouTube, breadth, OpenAlex, GDELT and arXiv scheduled failures from dispatch are outside the two-source scope. They require their own transport/verify diagnosis, not application of this social rule.",
+      "disposition": "Retain with RC2 collector hosted intake package; coordinator owns follow-through."
+    },
+    {
+      "finding": "The real PTT latest bundle contains a year token 2026 interpreted by the existing community symbol mapper as an ungoverned symbol. Raw ingestion still completes with a current cursor, but feature_rejected prevents boundary acknowledgement and the next empty read remains collector_consumed_boundary_unverified. Confirmed through real configured scheduler; this patch preserves that refusal.",
+      "disposition": "Separate RC2 social/governed feature evidence issue for market-data coordinator cb4f6795; do not relax empty outcome verification."
+    },
+    {
+      "finding": "Existing social community ledgers have no verified cap/cleanup in storage-manifest.json. Recovery restores input flow; sampled raw input growth is documented but normalized/derived growth still needs hosted measurement.",
+      "disposition": "Existing RC3 WP3.1/WP3.3 source_ingestion writer inventory; no new writer introduced."
+    }
+  ],
+  "pre_fix_latest_receipts": {
+    "collector-tw-threads": {
+      "ingest_run_id": "ingest-f7344a05e4b7",
+      "status": "failed",
+      "started_at": "2026-11-28T03:48:55Z",
+      "finished_at": "2026-11-28T03:48:59Z",
+      "raw_count": 0,
+      "watermark": null
+    },
+    "collector-tw-ptt-stock": {
+      "ingest_run_id": "ingest-6253d11aa739",
+      "status": "failed",
+      "started_at": "2026-11-28T03:50:10Z",
+      "finished_at": "2026-11-28T03:50:13Z",
+      "raw_count": 0,
+      "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0"
+    },
+    "collector-tw-instagram-popular": {
+      "ingest_run_id": "ingest-779b0a5ea4b9",
+      "status": "completed",
+      "started_at": "2026-11-28T01:54:57Z",
+      "finished_at": "2026-11-28T01:54:58Z",
+      "raw_count": 0,
+      "watermark": "2026-11-28T00:15:42Z#run-20261128T001542Z"
+    }
+  }
+}
