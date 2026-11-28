@@ -32,11 +32,18 @@ from services.control_plane.bff.tests import test_strategy_operational_status as
 
 TENANT = "tenant-dev"
 NOW = "2026-11-27T23:00:00Z"
-RECEIPT_KEYS = (
-    "authoritative_readback", "strategy_artifact_approved", "deployment_dispatch",
-    "baseline_strategy_artifact_approved", "baseline_strategy_spec_approved",
-    "deployment_plan", "strategy_spec_approved", "strategy_artifact_candidate",
-)
+# Recorded aggregate key bytes (task-author hosted read, 2026-11-28).
+RECEIPT_KEY_BYTES = {
+    "authoritative_readback": (1_362_000, 132),
+    "strategy_artifact_approved": (1_091_000, 169),
+    "deployment_dispatch": (1_086_000, 169),
+    "baseline_strategy_artifact_approved": (1_040_000, 169),
+    "baseline_strategy_spec_approved": (974_000, 169),
+    "deployment_plan": (967_000, 169),
+    "strategy_spec_approved": (960_000, 169),
+    "strategy_artifact_candidate": (792_000, 169),
+}
+RECEIPT_KEYS = tuple(RECEIPT_KEY_BYTES)
 
 
 def hosted_rows():
@@ -49,14 +56,28 @@ def hosted_rows():
         if i == 169:
             pid = "agora-servant-799a3ce8c021b91cbb54"
         name = f"Trader {i}" if i != 169 else f"{pid} trader paper book"
-        # Distinct receipts, not a shared tiny object or repeated single byte.
-        refs = {
-            key: {
+        # Weight receipt text by the recorded per-key bytes/count, retaining
+        # the measured 17.6 MB wire shape. Nested receipts reproduce Python's
+        # >32 MiB decoded graph too (the previous large-string fixture did not).
+        refs = {}
+        for key, (key_bytes, count) in RECEIPT_KEY_BYTES.items():
+            present = (i < 128 or 165 <= i < 169) if count == 132 else i != 164
+            if not present:
+                continue
+            receipt = {
                 "owner": key, "status": "approved", "persona_id": pid,
-                "metadata": {"receipt": "".join(rng.choices("abcdef0123456789", k=3800)) + ("owner-receipt:" * 693)},
+                "parts": [{"sequence": j, "digest": "".join(rng.choices("abcdef0123456789", k=20))}
+                          for j in range(70)],
+                "metadata": {"receipt": ""},
             }
-            for key in RECEIPT_KEYS
-        }
+            target = round(key_bytes * 2.12 / count)
+            padding = target - len(json.dumps(receipt).encode())
+            random_bytes = min(3600, padding)
+            receipt["metadata"]["receipt"] = (
+                "".join(rng.choices("abcdef0123456789", k=random_bytes))
+                + ("owner-receipt:" * ((padding - random_bytes + 13) // 14))[:padding - random_bytes]
+            )
+            refs[key] = receipt
         refs.update({"runtime_id": f"runtime-{i}", "runtime_binding_id": f"rb-{i}"})
         # Hosted rows currently have none of these keys. Enrich one row to
         # prove field parity for future risk context as required by AC4.
@@ -103,10 +124,35 @@ class _SQLDouble:
                     raise RuntimeError("database unreachable")
                 db.calls.append(sql)
                 self.sql, self.params = sql, params
-            def fetchone(self): return (db.revision,)
+            def fetchone(self):
+                if self.sql.startswith("SELECT revision"):
+                    return (db.revision,)
+                rows = self.fetchall()
+                if "idempotency_key=%s" in self.sql:
+                    rows = [r for r in rows if r[1] == self.params[1]]
+                if "persona_id=%s" in self.sql:
+                    rows = [r for r in rows if r[4] == self.params[1]]
+                return rows[0] if rows else None
             def fetchall(self):
                 rows = [r for r in db.rows if not self.params or r.tenant_id == self.params[0]]
-                return [deepcopy(tuple(getattr(r, k) for k in PostgresPersonaProvisioningStore._RECORD_FIELDS)) for r in rows]
+                directory = 'AS "references"' in self.sql
+                fields = (PostgresPersonaProvisioningStore._DIRECTORY_RECORD_FIELDS if directory
+                          else PostgresPersonaProvisioningStore._RECORD_FIELDS)
+                result = []
+                for r in rows:
+                    values = {k: deepcopy(getattr(r, k)) for k in fields}
+                    if directory:
+                        values["references"] = {
+                            k: ({} if isinstance(v, dict) else None) if k == "authoritative_readback" else v
+                            for k, v in values["references"].items()
+                            if k in PostgresPersonaProvisioningStore._DIRECTORY_REFERENCE_KEYS
+                        }
+                        if isinstance(values["result"], dict):
+                            values["result"] = {k: v for k, v in values["result"].items()
+                                                if k in PostgresPersonaProvisioningStore._FLEET_RESULT_KEYS}
+                    result.append(tuple(json.dumps(values[k]) if k in {"references", "result", "request_payload", "error", "compensation"}
+                                        and values[k] is not None else values[k] for k in fields))
+                return result
 
         class Conn:
             def __enter__(self): return self
@@ -204,23 +250,59 @@ def test_hosted_shape_payload_parity_and_conflicting_owner_skip(ledger, monkeypa
     assert "provisioning_idempotency_key" not in conflict["metadata"]
     assert "conflicting owner scope" in caplog.text
     assert len([r for r in db.rows if r.state == "retired"]) == 165
-    # ~32 KiB TOAST storage/row and ~17.6 MB JSON text across 170 rows:
-    # repeated owner receipts preserve the hosted storage/text expansion.
-    assert all(101000 < len(json.dumps(r.references).encode()) < 110000 for r in db.rows)
+    for key, (key_bytes, count) in RECEIPT_KEY_BYTES.items():
+        values = [r.references[key] for r in db.rows if key in r.references]
+        assert len(values) == count
+        assert sum(len(json.dumps(v).encode()) for v in values) == pytest.approx(key_bytes * 2.12, abs=count)
+    assert 17_000_000 < sum(len(json.dumps(r.references).encode()) for r in db.rows) < 19_000_000
+    # Guard against the too-small #7999 fixture: measure decoded full rows,
+    # exactly as the production cache does, not just wire string length.
+    full_bytes = store._directory_size((TENANT, (db.revision, store.list_all())))
+    assert full_bytes > store._DIRECTORY_MAX_ENTRY_BYTES
+    assert 0 < store._directory_cache_bytes < store._DIRECTORY_MAX_ENTRY_BYTES
+    assert store._directory_cache[TENANT][1] is not None
 
 
 def test_stamp_checked_each_call_all_tenant_isolation_and_detached_copies(ledger):
     store, db = ledger
     first = store.list_for_directory(TENANT)
-    first[0].references[RECEIPT_KEYS[0]]["metadata"]["receipt"] = "changed response"
+    first[0].references["runtime_id"] = "changed response"
     assert store.list_for_directory(TENANT)[0] != first[0]
     assert store.list_for_directory("other") == []
     assert len(store.list_for_directory()) == 170
-    db.rows[0].references["external_sql"] = {"visible": True}
+    db.rows[0].references["runtime_id"] = "external-sql-visible"
     db.revision += 1  # timestamp deliberately unchanged
-    assert store.list_for_directory(TENANT)[0].references["external_sql"] == {"visible": True}
-    assert store.list_for_directory()[0].references["external_sql"] == {"visible": True}
+    assert store.list_for_directory(TENANT)[0].references["runtime_id"] == "external-sql-visible"
+    assert store.list_for_directory()[0].references["runtime_id"] == "external-sql-visible"
     assert len([sql for sql in db.calls if sql.startswith("SELECT revision")]) == 6
+
+
+def test_hosted_entry_sized_once_per_revision_and_sql_selects_only_projection(ledger, monkeypatch):
+    store, db = ledger
+    sizes = []
+    size = store._directory_size
+    def counted(value):
+        sizes.append(size(value))
+        return sizes[-1]
+    monkeypatch.setattr(store, "_directory_size", counted)
+    store.list_for_directory(TENANT)
+    sql = _full_selects(db.calls)[0]
+    assert all(f"'{key}'" in sql for key in store._DIRECTORY_REFERENCE_KEYS)
+    assert "'paper_running','status'" in sql
+    assert all(f"'{key}'" not in sql for key in RECEIPT_KEYS[1:])
+    assert all(column not in sql for column in ("updated_at", "lease_owner", "lease_expires_at", "attempt_count"))
+    db.calls.clear()
+    store.list_for_directory(TENANT)
+    assert db.calls == [
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        "SELECT revision FROM bff.persona_provisioning_revision WHERE singleton",
+    ]
+    assert len(sizes) == 1
+    db.revision += 1
+    store.list_for_directory(TENANT)
+    store.list_for_directory(TENANT)
+    assert len(sizes) == 2
+    assert len(_full_selects(db.calls)) == 1
 
 
 def test_unvalidated_cache_never_masks_failure(ledger, monkeypatch, tmp_path):
@@ -233,7 +315,7 @@ def test_unvalidated_cache_never_masks_failure(ledger, monkeypatch, tmp_path):
     assert exc.value.status_code == 503
 
 
-def test_lru_entry_count_byte_cap_and_oversized_bypass(ledger, monkeypatch):
+def test_lru_entry_count_byte_cap_and_oversized_bypass(ledger, monkeypatch, caplog):
     store, db = ledger
     for i in range(12):
         store.list_for_directory(f"empty-{i}")
@@ -246,11 +328,25 @@ def test_lru_entry_count_byte_cap_and_oversized_bypass(ledger, monkeypatch):
     for i in range(12):
         store.list_for_directory(f"bounded-{i}")
     assert store._directory_cache_bytes <= 2500
+    sizes = []
+    original_size = store._directory_size
+    def measured_size(value):
+        sizes.append(True)
+        return original_size(value)
+    monkeypatch.setattr(store, "_directory_size", measured_size)
     before = len(_full_selects(db.calls))
     assert len(store.list_for_directory(TENANT)) == 170
     assert len(store.list_for_directory(TENANT)) == 170
     assert len(_full_selects(db.calls)) == before + 2
-    assert TENANT not in store._directory_cache
+    assert store._directory_cache[TENANT][1] is None
+    assert len(sizes) == 1
+    warnings = [r.message for r in caplog.records if "cache bypass" in r.message]
+    assert len(warnings) == 1
+    assert "size_bytes=" in warnings[0] and "cap_bytes=2500" in warnings[0]
+    db.revision += 1
+    store.list_for_directory(TENANT)
+    assert len(sizes) == 2
+    assert len([r for r in caplog.records if "cache bypass" in r.message]) == 2
 
 
 def _local_dsn():
@@ -337,10 +433,13 @@ def test_postgres_each_write_visible_next_read_and_timestamp_unchanged_sql(pg_le
         return next(r for r in store.list_for_directory(TENANT) if r.persona_id == record.persona_id)
     assert current().state == "reserved"
     record = replica.acquire(TENANT, "new", lease_owner="worker", lease_seconds=60)
-    assert current().attempt_count == 1
+    assert replica.get(TENANT, "new").attempt_count == 1
+    assert current().state == "provisioning"
+    record.references["runtime_id"] = "runtime-checkpointed"
     record.references["deployment_dispatch"] = {"accepted": True}
     record = replica.checkpoint(record, lease_owner="worker")
-    assert current().references["deployment_dispatch"] == {"accepted": True}
+    assert current().references["runtime_id"] == "runtime-checkpointed"
+    assert replica.get(TENANT, "new").references["deployment_dispatch"] == {"accepted": True}
     record.state = "retired"
     record = replica.checkpoint(record, lease_owner="worker")
     assert current().state == "retired"
@@ -404,11 +503,12 @@ def test_postgres_rollback_inflight_commit_and_point_reads(pg_ledger, monkeypatc
     assert len(store.list_by_tenant(TENANT)) == len(store.list_all()) == 170
 
 
-def test_fleet_uses_full_inputs_and_documents_old_projection_differences(ledger, monkeypatch, tmp_path):
+def test_fleet_uses_directory_inputs_and_documents_old_projection_differences(ledger, monkeypatch, tmp_path):
     store, db = ledger
     _wire(monkeypatch, store, db.rows, tmp_path)
-    monkeypatch.setattr(store, "list_by_tenant_for_fleet", lambda *_: pytest.fail("lossy slim read used"))
-    assert ps._persona_provisioning_records_shared(store, TENANT) == store.list_by_tenant(TENANT)
+    monkeypatch.setattr(store, "list_by_tenant_for_fleet", lambda *_: pytest.fail("old fleet-only projection used"))
+    assert ps._persona_provisioning_records_shared(store, TENANT) == store.list_for_directory(TENANT)
+    assert store.get(TENANT, db.rows[165].idempotency_key).references == db.rows[165].references
     directory = ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW)
     fleet = ps._get_persona_directory_snapshot(TENANT, snapshot_at=NOW, reuse_request_read=True)
     assert fleet == directory
@@ -449,7 +549,7 @@ def _benchmark():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmark", action="store_true", required=True)
     parser.add_argument("--mode", choices=("before", "after"), required=True)
-    parser.add_argument("--surface", choices=("strategy_lookup", "persona_list"), required=True)
+    parser.add_argument("--surface", choices=("directory", "strategy_lookup", "persona_list"), required=True)
     parser.add_argument("--samples", type=int, default=5)
     args = parser.parse_args()
     if not 1 <= args.samples <= 20:
@@ -463,8 +563,19 @@ def _benchmark():
         if args.mode == "before":
             patch.setattr(store, "list_for_directory", lambda tenant=None: store.list_by_tenant(tenant) if tenant else store.list_all())
 
+        size_ms = []
+        original_size = store._directory_size
+        def measured_size(value):
+            started = time.perf_counter()
+            result = original_size(value)
+            size_ms.append((time.perf_counter() - started) * 1000)
+            return result
+        patch.setattr(store, "_directory_size", measured_size)
+
         def call():
-            if args.surface == "strategy_lookup":
+            if args.surface == "directory":
+                assert len(store.list_for_directory(TENANT)) == 170
+            elif args.surface == "strategy_lookup":
                 result = read_persona_state_lookup(
                     directory_snapshot=ps._get_persona_directory_snapshot,
                     projected_state=ps._persona_record_projected_state,
@@ -493,10 +604,17 @@ def _benchmark():
             shape = conn.execute(
                 f'SELECT count(*), sum(pg_column_size("references")), sum(octet_length("references"::text)) FROM {store.table}'
             ).fetchone()
+        rss_final = rss_kib()
+        full_rows = store.list_all()
+        started = time.perf_counter()
+        full_entry_bytes = original_size((TENANT, (1, full_rows)))
+        full_size_ms = (time.perf_counter() - started) * 1000
         print(json.dumps({
+            "size_computation_ms": [round(ms, 3) for ms in size_ms],
+            "full_entry_bytes": full_entry_bytes, "full_size_ms": round(full_size_ms, 3),
             "mode": args.mode, "surface": args.surface, "cold_ms": round(cold_ms, 3),
             "warm_ms": [round(ms, 3) for ms in warm_ms], "warm_median_ms": round(statistics.median(warm_ms), 3),
-            "rss_kib": {"idle": rss_idle, "after_cold": rss_cold, "after_warm_gc": rss_kib(), "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+            "rss_kib": {"idle": rss_idle, "after_cold": rss_cold, "after_warm_gc": rss_final, "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
             "cache_retained_bytes": store._directory_cache_bytes, "cache_entries": len(store._directory_cache),
             "postgres_shape": {"rows": shape[0], "references_column_bytes": shape[1], "references_text_bytes": shape[2]},
             "python": platform.python_version(),
