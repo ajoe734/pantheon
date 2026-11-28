@@ -6,7 +6,7 @@
   "owner": "Claude2",
   "reviewer": "Antigravity",
   "base": "a4754247d (origin/dev, after AGORA-SERVANT-SESSION-DURABLE-20261127 #7943 and SOURCE-BROKER-TOP-KEYED-SIDE-20261127 #7942)",
-  "delivery_state": "source_and_tests_verified_worker_env_wired_hosted_proof_pending_deploy",
+  "delivery_state": "source_and_tests_verified_hosted_proof_verified",
   "design_choices": [
     "Tool rounds run in agora-interaction-worker (AD-AG-05), in BFF code (services/control-plane/bff/agora/servant/), so a tool call is resolved by the BFF and never by the model.",
     "Each round is one OpenClaw /structured call with SERVANT_TURN_SCHEMA (adapter-enforced keywords only; pinned by services/openclaw-gateway-adapter/tests/test_servant_tool_turn_schema_contract.py). The conversation history (last 20 messages, T1) travels inside the turn packet.",
@@ -87,14 +87,66 @@
       ]
     },
     "ac7_hosted_proof": {
-      "status": "pending_post_merge_dev_deploy",
+      "status": "verified_hosted",
       "blocking_condition": "Resolved in source by PR #7968: docker-compose.yml agora-interaction-worker now sets PANTHEON_SOURCE_INGEST_API_URL (${PANTHEON_SOURCE_INGEST_API_URL:-http://source-ingest:8097}) and PANTHEON_RUNTIME_JWT_SECRET/ISSUER/AUDIENCE with the same fallback chain as the source-ingest service, plus a non-required source-ingest health dependency. The hosted proof runs after that PR is merged and Dev is redeployed.",
       "procedure_after_deploy": [
         "POST /bff/agora/servant/sessions/{id}/messages with content 分析分點 and context {quick_task: analyze_broker_branches, selected_symbols: [<held symbol, e.g. 2330>]}",
         "GET /bff/agora/servant/sessions/{id}/stream: record the servant.message.completed citations (connector tw-finmind-broker-daily-report, as_of = latest stored session, source_id per row) and answer_mode",
         "Record MOPS (tw-mops-official-disclosures) and news (collector-news-rss) freshness from the disclosures and news tool results (newest record time and freshness state)"
       ],
-      "recorded": null,
+      "recorded": {
+        "captured_at": "2026-11-28T00:57:14Z",
+        "proof_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-acceptance-evidence/AGORA-SERVANT-DATA-TOOLS-20261127/20261128/ac7_hosted_proof.json",
+        "proof_sha256": "bf32274f86e0b24b30edbb32eab1f1b2b9bb878acd74ae790908bab65c3360e8",
+        "hosted_release": {
+          "run": "Hosted Dev Root 46078610190",
+          "bff_commit": "2c72f5e2845b57d8a3ad8f1a3b1818eb2c7edea3",
+          "frontend_sha": "0284c136d72bae5b491d63ae7b9f0afa24aaa224",
+          "release_name": "20261128T005000Z-0284c136d72b-gate-46085160636-46087870367-1-2099787",
+          "deploymentState": "accepted",
+          "accepted_at": "2026-11-28T00:53:59Z",
+          "bff_auth_mode": "strict"
+        },
+        "actor": "admintest (tenant-dev)",
+        "session_id": "ba7cd0f17d5341979c53540240faaa38",
+        "analyze_broker_branches_turn": {
+          "request": "POST /bff/agora/servant/sessions/{id}/messages content 分析分點, context {quick_task: analyze_broker_branches, selected_symbols: [2330]} -> 202",
+          "turn_id": "servant-turn-852ec2ab13cc1adb32829423",
+          "provider_status": "completed",
+          "answer_mode": "model",
+          "tool_rounds": 1,
+          "wait_ms": 26973.6,
+          "citations": 6,
+          "citation_shape": "broker_branch_flow x6 (top 3 buy + top 3 sell), connector tw-finmind-broker-daily-report, as_of 2026-11-26 (latest stored session at capture, returned by the default latest-session read), freshness fresh, unit shares, source_id finmind-broker-top:2330:2026-11-26:<side>:<hash>",
+          "rows": "buy: 臺銀 11253732, 永豐金 1808464, 富邦 794009; sell: 法銀巴黎 -7207007, 台灣摩根 -3068888, 摩根大通 -1641847",
+          "answer_numbers": "every number in the answer is a BFF-rendered fact value",
+          "missing_data": [
+            "分點背後的最終買賣方身分"
+          ]
+        },
+        "disclosures_and_news_turn": {
+          "turn_id": "servant-turn-ea368dd8c767ee4eeee8d3df",
+          "provider_status": "completed",
+          "answer_mode": "model",
+          "tool_rounds": 1,
+          "wait_ms": 40055.0,
+          "mops_disclosures": {
+            "connector": "tw-mops-official-disclosures",
+            "freshness": "not_configured",
+            "newest_record": null,
+            "servant_behaviour": "reported as missing data (no MOPS disclosure record is stored) and did not answer from model memory"
+          },
+          "news": {
+            "connector": "collector-news-rss",
+            "freshness": "fresh",
+            "citations": 26,
+            "newest_record_as_of": "2026-11-27T13:04:00Z",
+            "oldest_cited_as_of": "2026-11-26T01:19:00Z"
+          }
+        },
+        "openclaw_lifecycle_compat": "session create 201 active, get 200 active, terminate 200 canceled",
+        "residual": "MOPS disclosures are not_configured on hosted Dev (no stored tw-mops-official-disclosures records for the servant read); the tool reports this as missing data, as AC1/AC4 require. Enabling MOPS ingestion belongs to the source-ingestion owner, not this task."
+      },
       "worker_env_wiring": {
         "pr": 7968,
         "artifact": "docker-compose.yml (agora-interaction-worker environment, depends_on)",
