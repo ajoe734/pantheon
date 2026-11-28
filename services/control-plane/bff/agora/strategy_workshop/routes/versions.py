@@ -613,6 +613,21 @@ def build_versions_router(
                 reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
                 precondition_failed="workshop_version_projection",
             )
+        previous_version_id = str(session.get("selected_version_id") or "") or None
+        previous_registry_id = str(session.get("active_strategy_spec_registry_id") or "") or None
+        previous_spec: Optional[Dict[str, Any]] = None
+        if previous_registry_id and previous_registry_id != registry_id:
+            try:
+                prev_readback, _prev_sha, _prev_sid = _read_strategy_version(
+                    registry_id=previous_registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+                if isinstance(prev_readback, dict):
+                    previous_spec = prev_readback
+            except Exception:
+                previous_spec = None
         selected_session = {
             **session,
             "strategy_id": link["strategy_id"],
@@ -657,6 +672,36 @@ def build_versions_router(
                 "trace_id": request_id,
             },
         )
+        _ws_publish(
+            workshop_id,
+            "workshop.version.selected",
+            {
+                "workshop_version_id": version_id,
+                "strategy_spec_registry_id": registry_id,
+                "strategy_id": link["strategy_id"],
+                "previous_version_id": previous_version_id,
+            },
+            utc_now_fn=utc_now,
+        )
+        try:
+            from services.control_plane.bff.agora.trading_room.service import (
+                get_active_trading_room_service,
+            )
+
+            tr_service = get_active_trading_room_service()
+            tr_service.on_strategy_version_selected(
+                strategy_id=str(link["strategy_id"]),
+                strategy_version=str(version_id),
+                tenant_id=str(scope.tenant_id),
+                user_id=str(scope.user_id),
+                previous_strategy_version=previous_version_id,
+                previous_strategy_spec=previous_spec,
+                current_strategy_spec=registry_readback if isinstance(registry_readback, dict) else None,
+                change_reason=str(link.get("change_reason") or "") or None,
+                workshop_id=workshop_id,
+            )
+        except Exception:
+            pass
         return _command_response(
             receipt=receipt,
             resource=resource,

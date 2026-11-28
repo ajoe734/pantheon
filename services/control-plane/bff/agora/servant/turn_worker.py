@@ -24,6 +24,7 @@ from services.agora.store import (
     SERVANT_HISTORY_MESSAGES,
     SERVANT_TURN_MAX_ATTEMPTS,
     ServantSessionMessageCapError,
+    TraderReportDailyCapError,
 )
 from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
@@ -34,6 +35,7 @@ from .clarification import (
 )
 from .data_tools import ServantDataTools, ToolContext, normalize_command_context
 from .habits import HabitService, build_default_habit_service
+from .reports import TraderReportService, build_default_trader_report_service
 from .tool_turn import SERVANT_TURN_SCHEMA, TurnOutcome, run_tool_turn
 
 logger = logging.getLogger("agora.servant.turn_worker")
@@ -112,6 +114,7 @@ class ServantTurnWorker:
         clock: Callable[[], str] = _utc_now,
         tools: Optional[ServantDataTools] = None,
         habits: Optional[HabitService] = None,
+        reports: Optional[TraderReportService] = None,
     ) -> None:
         self.owner = owner
         # SD §4.3: the fixed read-only tool set, resolved here and never by the model.
@@ -121,6 +124,10 @@ class ServantTurnWorker:
         self.habits = habits if habits is not None else build_default_habit_service(
             owner, journal_reader=getattr(self.tools, "journal_reader", None)
         )
+        # SD §9.3: weekly and on-demand trader reports (also invoked via command bar 整理本週報表).
+        self.reports = reports if reports is not None else build_default_trader_report_service(
+            owner, habit_service_getter=lambda: self.habits, clock=clock
+        )
         self.client_factory = client_factory or OpenClawOpsClient
         self.worker_id = worker_id or os.getenv(
             "PANTHEON_AGORA_SERVANT_WORKER_ID", f"servant-turn-worker-{uuid.uuid4().hex[:12]}"
@@ -129,7 +136,14 @@ class ServantTurnWorker:
         self.purge_interval_seconds = purge_interval_seconds
         self.clock = clock
         self._last_purge = 0.0
-        self.metrics: Dict[str, int] = {"completed": 0, "degraded": 0, "failed": 0, "purged_sessions": 0}
+        self.metrics: Dict[str, int] = {
+            "completed": 0,
+            "degraded": 0,
+            "failed": 0,
+            "purged_sessions": 0,
+            "reports_generated": 0,
+            "purged_reports": 0,
+        }
 
     # -- one turn -----------------------------------------------------------------
 
@@ -198,6 +212,8 @@ class ServantTurnWorker:
         answer: Optional[str] = None
         error: Optional[Dict[str, Any]] = None
         outcome: Optional[TurnOutcome] = None
+        report_payload: Optional[Dict[str, Any]] = None
+        report_citations: List[Dict[str, Any]] = []
         if int(turn.get("attempts") or 0) > SERVANT_TURN_MAX_ATTEMPTS:
             provider_status = "degraded"
             error = {"code": "SERVANT_TURN_ATTEMPTS_EXHAUSTED", "message": "worker did not finish the turn"}
@@ -209,6 +225,12 @@ class ServantTurnWorker:
                 messages, before_message_id=user_message_id
             )
             cmd_ctx = normalize_command_context(user_meta.get("command_context"))
+            quick_task = str(cmd_ctx.get("quick_task") or "").strip()
+            user_text = str(user_message.get("content") or "").strip()
+            is_report_quick_task = (
+                quick_task in {"整理本週報表", "weekly_trader_report", "trader_report"}
+                or user_text == "整理本週報表"
+            )
             ctx = ToolContext(
                 tenant_id=str(turn.get("tenant_id") or ""),
                 user_id=str(turn.get("user_id") or ""),
@@ -216,31 +238,60 @@ class ServantTurnWorker:
                 servant_persona_id=persona_id,
                 command_context=cmd_ctx,
             )
-            try:
-                client = self.client_factory()
-                outcome = run_tool_turn(
-                    tools=self.tools,
-                    ctx=ctx,
-                    history=history,
-                    invoke=lambda prompt: self._structured_round(client, prompt, turn, audit),
-                    habit=self._habit_context(ctx),
-                    consecutive_clarifications=consecutive_clarifications,
-                    prior_clarifications=streak_cards,
-                    clarification_choice=user_meta.get("clarification_choice")
-                    if isinstance(user_meta.get("clarification_choice"), Mapping)
-                    else None,
-                    habit_facts=extract_clarification_habit_facts_from_messages(
-                        messages, strategy_id=cmd_ctx.get("strategy_id")
-                    ),
-                    turn_id=turn_id,
-                )
-                answer = outcome.answer or None
-                provider_status = outcome.provider_status
-                error = outcome.error
-            except Exception as exc:  # a poison turn must settle, not loop on the lease
-                logger.exception("servant turn %s failed", turn_id)
-                provider_status = "degraded"
-                error = {"code": "SERVANT_TURN_INTERNAL", "message": type(exc).__name__}
+            if is_report_quick_task and self.reports is not None:
+                try:
+                    gen_report = self.reports.generate_report(
+                        tenant_id=ctx.tenant_id,
+                        user_id=ctx.user_id,
+                        servant_persona_id=persona_id,
+                        strategy_id=cmd_ctx.get("strategy_id"),
+                        trigger="on_demand",
+                        actor_roles=_WORKER_ROLES,
+                    )
+                    answer = str(gen_report.get("narrative") or "")
+                    report_citations = list(gen_report.get("citations") or [])
+                    report_payload = {
+                        "report_id": gen_report.get("report_id"),
+                        "trigger": gen_report.get("trigger"),
+                        "strategy_id": gen_report.get("strategy_id"),
+                        "strategy_version": gen_report.get("strategy_version"),
+                        "window_start": gen_report.get("window_start"),
+                        "window_end": gen_report.get("window_end"),
+                    }
+                    self.metrics["reports_generated"] += 1
+                except TraderReportDailyCapError as exc:
+                    provider_status = "degraded"
+                    error = {"code": "TRADER_REPORT_DAILY_CAP_EXCEEDED", "message": str(exc)}
+                except Exception as exc:
+                    logger.exception("servant report turn %s failed", turn_id)
+                    provider_status = "degraded"
+                    error = {"code": "SERVANT_REPORT_INTERNAL", "message": type(exc).__name__}
+            else:
+                try:
+                    client = self.client_factory()
+                    outcome = run_tool_turn(
+                        tools=self.tools,
+                        ctx=ctx,
+                        history=history,
+                        invoke=lambda prompt: self._structured_round(client, prompt, turn, audit),
+                        habit=self._habit_context(ctx),
+                        consecutive_clarifications=consecutive_clarifications,
+                        prior_clarifications=streak_cards,
+                        clarification_choice=user_meta.get("clarification_choice")
+                        if isinstance(user_meta.get("clarification_choice"), Mapping)
+                        else None,
+                        habit_facts=extract_clarification_habit_facts_from_messages(
+                            messages, strategy_id=cmd_ctx.get("strategy_id")
+                        ),
+                        turn_id=turn_id,
+                    )
+                    answer = outcome.answer or None
+                    provider_status = outcome.provider_status
+                    error = outcome.error
+                except Exception as exc:  # a poison turn must settle, not loop on the lease
+                    logger.exception("servant turn %s failed", turn_id)
+                    provider_status = "degraded"
+                    error = {"code": "SERVANT_TURN_INTERNAL", "message": type(exc).__name__}
 
         try:
             self.owner.append_session_message(
@@ -252,7 +303,7 @@ class ServantTurnWorker:
                 payload={
                     "role": "assistant",
                     "sender": {"type": "servant", "id": persona_id},
-                    "citations": list(outcome.facts) if outcome is not None else [],
+                    "citations": list(outcome.facts) if outcome is not None else report_citations,
                     "metadata": {
                         "turn_id": turn_id,
                         "reply_to": user_message_id,
@@ -265,6 +316,7 @@ class ServantTurnWorker:
                             else {}
                         ),
                         **({"tool_turn": outcome.metadata()} if outcome is not None else {}),
+                        **({"trader_report": report_payload} if report_payload is not None else {}),
                     },
                 },
                 created_at=self.clock(),
@@ -297,11 +349,73 @@ class ServantTurnWorker:
                 break
             self.process_turn(dict(turn))
             processed += 1
+        if self.reports is not None and hasattr(self.owner, "claim_trader_report"):
+            while processed < limit:
+                queued_report = self.owner.claim_trader_report(
+                    actor_roles=_WORKER_ROLES,
+                    now=self.clock(),
+                )
+                if queued_report is None:
+                    break
+                self.reports.process_queued_report(queued_report, actor_roles=_WORKER_ROLES)
+                self.metrics["reports_generated"] += 1
+                processed += 1
         self.maybe_purge()
         return processed
 
+    def run_weekly_post_attribution_reports(
+        self,
+        *,
+        tenant_id: str,
+        traders: List[Mapping[str, Any]],
+        snapshots: Optional[List[Any]] = None,
+        triggers: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Run the weekly attribution request (even when no persona cycle runs; SD §13 residual 3)
+        and produce each trader's weekly report after attribution (SD §9.3).
+        """
+        from services.persona.meeting_triggers import MeetingTriggers
+
+        mt = triggers if triggers is not None else MeetingTriggers()
+        attribution_run = mt.ensure_weekly_attribution_run(
+            tenant_id=tenant_id,
+            snapshots=list(snapshots or []),
+        )
+        run_id: Optional[str] = None
+        if isinstance(attribution_run, Mapping):
+            run_id = str(attribution_run.get("run_id") or attribution_run.get("id") or "") or None
+        elif attribution_run is not None:
+            run_id = str(getattr(attribution_run, "run_id", getattr(attribution_run, "id", "")) or "") or None
+
+        reports_out: List[Dict[str, Any]] = []
+        if self.reports is not None:
+            for trader in traders:
+                user_id = str(trader.get("user_id") or trader.get("trader_id") or "").strip()
+                if not user_id:
+                    continue
+                persona_id = str(
+                    trader.get("servant_persona_id") or f"servant:{tenant_id}:{user_id}"
+                ).strip()
+                strategy_id = str(trader.get("strategy_id") or "").strip() or None
+                rep = self.reports.ensure_weekly_report_after_attribution(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    servant_persona_id=persona_id,
+                    strategy_id=strategy_id,
+                    attribution_run_id=run_id,
+                    actor_roles=_WORKER_ROLES,
+                )
+                reports_out.append(rep)
+                self.metrics["reports_generated"] += 1
+        return {
+            "tenant_id": tenant_id,
+            "attribution_run": attribution_run,
+            "attribution_run_id": run_id,
+            "reports": reports_out,
+        }
+
     def maybe_purge(self) -> Optional[Dict[str, int]]:
-        """Cleanup path: servant sessions untouched for 180 days are deleted with their turns."""
+        """Cleanup path: servant sessions untouched for 180 days and expired on-demand trader reports."""
         now = time.monotonic()
         if self._last_purge and now - self._last_purge < self.purge_interval_seconds:
             return None
@@ -314,4 +428,13 @@ class ServantTurnWorker:
             logger.exception("servant session purge failed")
             return None
         self.metrics["purged_sessions"] += int(removed.get("sessions", 0))
+        if hasattr(self.owner, "purge_expired_trader_reports"):
+            try:
+                purged_rep = self.owner.purge_expired_trader_reports(
+                    now=self.clock(), actor_roles=_SYSTEM_ROLES
+                )
+                removed["trader_reports"] = int(purged_rep.get("reports", 0))
+                self.metrics["purged_reports"] += int(purged_rep.get("reports", 0))
+            except Exception:
+                logger.exception("trader report purge failed")
         return removed

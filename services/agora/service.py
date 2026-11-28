@@ -18,6 +18,9 @@ WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "enqueue"), ["operator", 
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantTurn", "process"), ["system", "persona"])
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraServantSession", "purge"), ["system"])
 WRITE_AUTHORITY_MATRIX.setdefault(("AgoraHabitProfile", "refresh"), ["operator", "admin", "trader", "system", "persona"])
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraTraderReport", "create"), ["operator", "admin", "trader", "system", "persona"])
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraTraderReport", "process"), ["system", "persona", "operator", "admin", "trader"])
+WRITE_AUTHORITY_MATRIX.setdefault(("AgoraTraderReport", "purge"), ["system", "persona"])
 
 _logger = logging.getLogger(__name__)
 
@@ -884,6 +887,91 @@ class AgoraWriteService:
         if row is None or str(row.get("tenant_id")) != str(tenant_id) or str(row.get("user_id")) != str(user_id):
             return None
         return DictRecord(row["current"])
+
+    # -------------------------------------------------------------------------
+    # Trader reports (AGORA-SERVANT-REVISIONS-AND-REPORT-20261127, SD §9.3)
+    # -------------------------------------------------------------------------
+    def put_trader_report(
+        self,
+        report: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str] = ("trader",),
+        *,
+        now: Optional[str] = None,
+        enforce_daily_cap: bool = True,
+    ) -> tuple[bool, DictRecord]:
+        assert_authorized("AgoraTraderReport", "create", actor_roles)
+        return self.store.put_trader_report(
+            report,
+            now=now,
+            enforce_daily_cap=enforce_daily_cap,
+        )
+
+    def get_trader_report(
+        self,
+        report_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Optional[DictRecord]:
+        return self.store.get_trader_report(report_id, tenant_id=tenant_id, user_id=user_id)
+
+    def list_trader_reports(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+        cadence: Optional[str] = None,
+        limit: int = 26,
+        now: Optional[str] = None,
+    ) -> List[DictRecord]:
+        return self.store.list_trader_reports(
+            tenant_id,
+            user_id,
+            strategy_id=strategy_id,
+            cadence=cadence,
+            limit=limit,
+            now=now,
+        )
+
+    def count_on_demand_trader_reports_for_day(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        report_day: str,
+        now: Optional[str] = None,
+    ) -> int:
+        return self.store.count_on_demand_trader_reports_for_day(
+            tenant_id,
+            user_id,
+            report_day,
+            now=now,
+        )
+
+    def claim_trader_report(
+        self,
+        *,
+        lease_owner: str,
+        actor_roles: Union[Sequence[str], str] = ("persona",),
+        lease_seconds: float = 600,
+        now: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        assert_authorized("AgoraTraderReport", "process", actor_roles)
+        return self.store.claim_trader_report(
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds,
+            now=now,
+        )
+
+    def purge_expired_trader_reports(
+        self,
+        *,
+        actor_roles: Union[Sequence[str], str] = ("system",),
+        now: Optional[str] = None,
+    ) -> Dict[str, int]:
+        assert_authorized("AgoraTraderReport", "purge", actor_roles)
+        return self.store.purge_expired_trader_reports(now=now)
 
     def extract_decision_lock_evidence(
         self,
