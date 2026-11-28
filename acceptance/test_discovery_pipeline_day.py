@@ -41,6 +41,7 @@ def good_board():
             ],
             "scaffolded": [
                 {"kind": "template_search", "demand_id": "rd-1", "attempt_count": 2,
+                 "templates_attempted": 1, "excluded_by_reason": {},
                  "latest_at": "2026-11-28T10:03:00Z", "outcome": "completed",
                  "reason_code": "survivorship_limited", "reason": "survivorship_limited: no attestation"},
             ],
@@ -944,3 +945,35 @@ def test_probe_reports_unsent_separately_from_spend():
     assert values["cap"] == 400
     del board["data"]["discovery_summary"]["llm_calls"]["unsent_calls"]
     assert stage(run(board), "hypothesis_cards")["values"]["unsent_calls_today"] is None
+
+
+@pytest.mark.parametrize('integrity_reason', ['template_checksum_mismatch', 'template_tenant_mismatch'])
+@pytest.mark.parametrize('attempted', [0, 1])
+def test_hosted_20261127_empty_search_cannot_pass_search_or_gate(integrity_reason, attempted):
+    """Rebuild the two real demands that the old probe incorrectly passed on 11/27."""
+    board = good_board()
+    board['data']['scaffolded'] = [
+        {'kind': 'template_search', 'demand_id': demand_id, 'attempt_count': 4,
+         'latest_run_id': run_id, 'latest_at': at, 'outcome': 'completed',
+         'reason': 'search_completed', 'reason_code': 'search_completed',
+         'templates_attempted': attempted, 'excluded_by_reason': {integrity_reason: 171}}
+        for demand_id, run_id, at in (
+            ('rd-796e24e24bf2055d3c42', 'rrun-20261127-032', '2026-11-27T10:07:59Z'),
+            ('rd-975bb89106f1c696a680', 'matching-second-run', '2026-11-27T10:11:48Z'))]
+    report = run(board)
+    search = stage(report, 'template_search')
+    gate = stage(report, 'gate_attempts')
+    assert search['values']['templates_attempted'] == attempted
+    assert search['values']['excluded_by_reason'] == {integrity_reason: 171}
+    if attempted:
+        assert search['status'] == gate['status'] == 'passed'
+        assert gate['values']['working_results'] == 2
+    else:
+        assert search['reason'] == 'last_search_attempted_nothing'
+        assert search['status'] == gate['status'] == 'failed'
+        assert gate['values']['working_results'] == 0
+        # The new typed unavailable response must retain the same explicit failure.
+        board['data']['scaffolded'][-1].update(
+            outcome='failed', reason='template_search_unavailable:template_integrity_mismatch:171',
+            reason_code='template_search_unavailable')
+        assert stage(run(board), 'template_search')['reason'] == 'last_search_attempted_nothing'
