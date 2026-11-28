@@ -134,7 +134,15 @@
     "environment_correction": "Initial full batch using an older /tmp/tw-official-first-venv was interrupted after 141 passed, 2 skipped and one missing-fastapi import failure (exit 2); not counted as passing. Final validation uses supervisor-provided PANTHEON_DEPENDENCY_PYTHON.",
     "probe_negative": "python3 scripts/probe_tw_refresh_restore.py --run-id 46114700528 --merged-commit 287701d460de11ef8a2cc6b0323c45417d10d48f: expected exit 1, rejected failed restore and missing healthy outcome.",
     "final_affected_cases": "After setting readiness to 300s and updating both exact-restore harnesses to injected clocks: timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py -q -k \"kept_entered_record or restore_readiness_timeout or injected_monotonic_deadline or manage_restore or restored_in_place_match or market_open_guard_window or broker_backfill_market_open_guard or exact_restore or restore_acceptance_probe\": exit 0, 39 passed, 373 deselected in 27.60s. Covers all six previously failing cases; all unaffected cases passed in the full batch. The timed-out old harness orphan was identified in this task worktree and terminated; no background validation left running.",
-    "scope": "Combined full-batch unaffected passes plus final focused passes validate the two requested files; no claim that the pre-fix full batch itself passed. Normal repository CI still runs on the final PR head."
+    "scope": "Combined full-batch unaffected passes plus final focused passes validate the two requested files; no claim that the pre-fix full batch itself passed. Normal repository CI still runs on the final PR head.",
+    "backup_disposition_revision": {
+      "base": "origin/dev 352d08e3e83078821c9aba5b6f6663307ec24993 integrated without conflicts before validation",
+      "command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py -q -k \"kept_entered_record or restore_readiness_timeout or injected_monotonic_deadline or manage_restore or restored_in_place_match or market_open_guard or broker_backfill_market_open_guard or exact_restore or restore_acceptance_probe\"",
+      "terminal_result": "exit 0; 41 passed, 373 deselected in 29.84s",
+      "default_budget_regression": "Injected PANTHEON_REFRESH_NOW with profile/restore budget env overrides removed: Monday 2026-11-30 00:25:45Z admitted, 00:30:00Z refused; no wall-clock threshold.",
+      "checks": "bash -n scripts/deploy_nonprod_vm.sh; git diff --check origin/dev...HEAD; python3 scripts/check_storage_manifest.py: all exit 0; manifest passed=true, 382 entries, no failures",
+      "scope": "Only scheduling tests and evidence/register disposition changed in this revision. Runtime guard, 600s default restore reserve and external timer untouched. Earlier full-batch result remains recorded with its failures; not relabelled as passed."
+    }
   },
   "hosted_acceptance": {
     "status": "pending_post_merge",
