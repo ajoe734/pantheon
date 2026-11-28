@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, Query
 
@@ -18,6 +18,7 @@ from ..service import (
     _bff_me_tenant_payload,
     _coordinate_persona_create,
     _dry_run_success_response,
+    _ensure_persona_readable,
     _get_persona_directory_snapshot,
     _management_prune_camel_aliases,
     _normalize_persona_create_name,
@@ -63,6 +64,38 @@ def _fleet_viewer_user_id(identity: Any, tenant_id: str, utc_now: Any) -> str:
         ).user_id
     except AgoraScopeResolutionError:
         return ""
+
+
+def _fleet_viewer_resolver(
+    identity: Any, utc_now: Any, tenant_id: Optional[str] = None
+) -> Callable[[], str]:
+    """Lazy _fleet_viewer_user_id: the caller tenant and Agora scope resolve only when called."""
+
+    def _resolve() -> str:
+        tenant = tenant_id or str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        return _fleet_viewer_user_id(identity, tenant, utc_now)
+
+    return _resolve
+
+
+def _ensure_persona_readable_by(
+    identity: Any,
+    persona_id: str,
+    utc_now: Any,
+    *,
+    tenant_id: Optional[str] = None,
+    require_exists: bool = True,
+) -> None:
+    """Shared read-side existence check for persona subroutes (user_private owner rule).
+
+    Answers a non-owner read of a user_private record with the missing-persona 404.
+    """
+    _ensure_persona_readable(
+        persona_id,
+        _fleet_viewer_resolver(identity, utc_now, tenant_id),
+        tenant_id,
+        require_exists=require_exists,
+    )
 
 
 def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:

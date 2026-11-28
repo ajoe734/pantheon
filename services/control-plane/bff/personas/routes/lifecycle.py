@@ -37,6 +37,7 @@ from ..service import (
     _strategy_discovery_page_size,
     _strategy_persona_idempotency_check,
 )
+from .collection import _ensure_persona_readable_by, _fleet_viewer_resolver
 from .common import PersonaRouteContext, make_context_dependency
 from ...persona_pool_publisher import (
     OwnerPoolReader,
@@ -552,7 +553,13 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
         if POOL_PUBLISH_SERVICE_ROLE not in identity.roles:
             _require_read_role(identity)
         authorization = _pool_owner_authorization(identity, authorization, tenant_id)
-        await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
+        if POOL_PUBLISH_SERVICE_ROLE in identity.roles:
+            # The pool-publish service reads its own publication record; it is not a viewer.
+            await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
+        else:
+            await asyncio.to_thread(
+                _ensure_persona_readable_by, identity, persona_id, utc_now, tenant_id=tenant_id
+            )
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
         from ...auth.policy import bff_auth_mode, bff_auth_stub_enabled
 
@@ -587,6 +594,7 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
             include_blocked=include_blocked,
             page_token=page_token,
             page_size=page_size,
+            viewer_user_id=_fleet_viewer_resolver(identity, utc_now),
         )
 
 

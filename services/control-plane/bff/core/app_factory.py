@@ -1010,11 +1010,22 @@ def mount_bff_routers(
 
     # 10, 11: Trade journal & journeys
     from ..trade_journal import create_trade_journal_router
+    from ..personas.routes.collection import _ensure_persona_readable_by
+
+    _trade_journal_utc_now = _dep("utc_now")
+
+    def _trade_journal_persona_readable(identity: Any, persona_id: str) -> None:
+        # Only the user_private owner rule; a persona absent here stays the owner's answer.
+        _ensure_persona_readable_by(
+            identity, persona_id, _trade_journal_utc_now, require_exists=False
+        )
+
     app.include_router(
         create_trade_journal_router(
             extract_identity=_dep("_extract_identity"),
             require_read_role=_dep("_require_read_role"),
             require_operator_role=_dep("_require_operator_role"),
+            ensure_persona_readable=_trade_journal_persona_readable,
         )
     )
     from ..trade_journeys import create_trade_journeys_router

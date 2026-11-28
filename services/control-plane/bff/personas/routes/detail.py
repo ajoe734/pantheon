@@ -14,7 +14,6 @@ from ..service import (
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
     _bff_me_tenant_payload,
     _composed_surface_status,
-    _ensure_persona_exists,
     _filter_audit_events_by_target,
     _get_persona_directory_snapshot,
     _get_persona_record_for_detail,
@@ -33,7 +32,7 @@ from ..service import (
     build_persona_runtime_profile,
     deterministic_provisioning_ids,
 )
-from .collection import _fleet_viewer_user_id
+from .collection import _ensure_persona_readable_by, _fleet_viewer_user_id
 from .common import PersonaRouteContext, make_context_dependency
 
 log = logging.getLogger(__name__)
@@ -676,7 +675,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: persona route policy."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         policy = _service.get_route_policy_for_persona(persona_id)
         if not policy:
@@ -704,7 +703,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: persona OpenClaw runtime profile contract."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         persona = _service.get_persona(persona_id) or {"persona_id": persona_id}
         route_policy = _service.get_route_policy_for_persona(persona_id)
@@ -737,7 +736,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: persona activity (sessions + recent consultations)."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         sessions = _service.get_sessions_for_persona(persona_id) or []
         consultations: List[Dict[str, Any]] = _service.list_consultations_for_persona(persona_id) or []
@@ -763,7 +762,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: persona evaluations (teaching sessions stand in until evaluation runs ship)."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         teaching = _service.get_teaching_sessions_for_persona(persona_id) or []
         return {
@@ -786,7 +785,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: canonical Memory Plane entries for a persona."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         memory, source = _retrieve_canonical_persona_memory(persona_id, identity, authorization, (x_tenant_id or '').strip() or None)
         surface_status = "ok" if source["available"] else "degraded"
@@ -812,7 +811,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: audit trail for a persona."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         events = _list_governance_audit_events(include_agora_events=False) or []
         filtered = _filter_audit_events_by_target(events, persona_id)
@@ -835,7 +834,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: skills accessible to a persona, derived from capability snapshot (PER-002)."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         effective_skill_ids = list((snapshot or {}).get("effective_skills") or [])
@@ -872,7 +871,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: tools accessible to a persona, derived from capability snapshot (PER-002)."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         effective_tool_ids = list((snapshot or {}).get("effective_tools") or [])
@@ -909,7 +908,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         """BFF: capability snapshot surface for a persona (PER-002 read surface)."""
         identity = _extract_identity(authorization)
         _require_read_role(identity)
-        _ensure_persona_exists(persona_id)
+        _ensure_persona_readable_by(identity, persona_id, utc_now)
         snapshot_at = utc_now()
         snapshot = _service.get_capability_snapshot_for_persona(persona_id)
         data: Dict[str, Any] = {

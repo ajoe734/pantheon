@@ -429,7 +429,7 @@ def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     raise RuntimeError(f"unsupported action: {act}")
 
 
-def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command) -> APIRouter:
+def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command, ensure_persona_readable: Callable[[Any, str], None] | None = None) -> APIRouter:
     router = APIRouter()
 
     def identity(request: Request) -> Any:
@@ -440,6 +440,9 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
         require_read_role(who)
         if not _allowed(who, persona_id):
             return who, None, _err(403, "FORBIDDEN", "Cross-persona access denied")
+        if ensure_persona_readable is not None:
+            # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
+            ensure_persona_readable(who, persona_id)
         authorization = request.headers.get("Authorization")
         if not authorization and request.cookies.get("pantheon_session"):
             authorization = f"Bearer {request.cookies['pantheon_session']}"
