@@ -197,8 +197,8 @@
       "services/source_ingestion/runtime.py: _latest_source_record_by_connector() caches the full connector map without target_cids in the cache key and filters on return, so GET /api/source-ingest/registry is an O(1) cache hit and never invalidates controller/readback's cache.",
       "services/source_ingestion/runtime.py: _controller_connector_readbacks() and _controller_readback_payload() use _grouped_freshness_snapshot() with _preordered_receipts=True and _precomputed_latest_run, and _dlq_readback_summary() caches the 7,620-entry DLQ aggregation when unchanged.",
       "services/source_ingestion/runtime.py: _StatCachedConnectorScheduleStore stat-caches connector_schedule.jsonl so reconcile does not re-parse 434 lines ~120 times per request; _fast_resolve_pending_dlq_for_completed_frontiers queries store.list_frontier(status='done') once per tick instead of 7,528 store.get_frontier() lock acquisitions.",
-      "services/source_ingestion/runtime.py: _cached_stored_instrument_authority deduplicates roots, uses DailyBarsReader (_daily_bars_symbols) for normalized/tw_price_daily dates covered by up-to-date daily_bars manifests (486/498 dates on hosted dev), caches per-file symbols by (path, st_ino, st_mtime_ns, st_size) for uncovered dates, and caches per-root authority snapshots.",
-      "services/source_ingestion/runtime.py: SourceIngestionRuntime.__init__() warms controller readback and instrument authority in _warm_controller_readback() before setting controller_readback_ready=True; /readyz reports 503 (reason='controller_readback_warming') until warm-up finishes.",
+      "services/source_ingestion/runtime.py: _cached_stored_instrument_authority deduplicates roots, stats every normalized/tw_price_daily run file and tracks covered input file revisions (path, st_ino, st_mtime_ns, st_size) per manifest signature in _INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE so in-place appends via _append_jsonl invalidate manifest coverage even when parent directory mtime is unchanged, uses DailyBarsReader (_daily_bars_symbols) for dates covered by up-to-date daily_bars manifests (486/498 dates on hosted dev), caches per-file symbols by (path, st_ino, st_mtime_ns, st_size) for uncovered dates, and caches per-root authority snapshots.",
+      "services/source_ingestion/runtime.py: SourceIngestionRuntime.__init__() warms controller readback and instrument authority in _warm_controller_readback() and preserves controller_readback_ready=False (with controller_readback_warm_error) if warm-up fails or leaves latest-record/DLQ caches unset; /readyz reports 503 (reason='controller_readback_warming') until a warm-up attempt succeeds.",
       "services/source_ingestion/controller_worker.py & controller_state.py: run_controller_loop() and next_tick_sleep_seconds() execute at most one immediate catch-up tick (tick == 1) when startup_missed_ticks > 1 and pace remaining missed ticks at the full normal cadence (interval_seconds)."
     ],
     "no_new_deploy_gate_or_wall_clock_test_threshold": true,
@@ -206,7 +206,9 @@
       "command": ".venv-pantheon/bin/python -m pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_controller_healthcheck.py services/source_ingestion/tests/test_controller_state_health.py services/source_ingestion/tests/test_ready_covers_snapshot_lookup.py services/source_ingestion/tests/test_source_readiness_bounded.py services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_persona_source_reconciler.py",
       "new_tests": [
         "services/source_ingestion/tests/test_controller_worker.py::test_startup_catchup_missed_ticks_paces_after_single_immediate_tick_and_stays_below_failure_limit",
-        "services/source_ingestion/tests/test_controller_worker.py::test_cold_start_controller_stage_requests_use_pre_readyz_warmed_state_without_full_rescan"
+        "services/source_ingestion/tests/test_controller_worker.py::test_cold_start_controller_stage_requests_use_pre_readyz_warmed_state_without_full_rescan",
+        "services/source_ingestion/tests/test_controller_worker.py::test_warm_controller_readback_failure_preserves_not_ready_until_retry_succeeds",
+        "services/source_ingestion/tests/test_controller_worker.py::test_stored_instrument_authority_detects_existing_run_file_append_without_directory_mtime_change"
       ]
     }
   },
@@ -221,6 +223,11 @@
         "cap": "16,384 files (~2 MB max RSS)",
         "cleanup": "Cleared on cap overflow",
         "name": "_INSTRUMENT_AUTHORITY_FILE_CACHE"
+      },
+      {
+        "cap": "16,384 date partitions (~500 KB max RSS)",
+        "cleanup": "Cleared on cap overflow; replaced in-place on manifest or file revision change",
+        "name": "_INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE"
       },
       {
         "cap": "Bounded by distinct storage roots (1 root on hosted, ~200 KB)",

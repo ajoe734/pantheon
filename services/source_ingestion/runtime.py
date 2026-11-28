@@ -284,6 +284,9 @@ _INSTRUMENT_AUTHORITY_LOCK = threading.RLock()
 _INSTRUMENT_AUTHORITY_FILE_CACHE_MAX = 16384
 _INSTRUMENT_AUTHORITY_FILE_CACHE: dict[tuple[str, int, int, int], tuple[tuple[str, str], ...]] = {}
 _INSTRUMENT_AUTHORITY_ROOT_CACHE: dict[tuple[str, bool], tuple[Any, dict[str, tuple[str, ...]]]] = {}
+_INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE: dict[
+    tuple[str, str], tuple[tuple[int, int, int], tuple[tuple[str, int, int, int], ...], bool]
+] = {}
 
 
 def _scan_run_file_symbols(path: Path) -> tuple[tuple[str, str], ...]:
@@ -377,21 +380,48 @@ def _single_root_instrument_authority(root: Path, *, from_bars: bool) -> dict[st
     date_dir_names = {d.name for d, _ in date_dirs}
     use_daily_bars = bool(manifests) and all(k in date_dir_names for k in manifests)
 
-    covered_sigs: list[tuple[str, int, tuple[int, int, int]]] = []
+    covered_sigs: list[tuple[str, int, tuple[int, int, int], tuple[tuple[str, int, int, int], ...]]] = []
+    covered_paths: list[Path] = []
     uncovered_paths: list[Path] = []
     uncovered_sigs: list[tuple[str, int, int, int]] = []
     for d, d_mtime_ns in date_dirs:
+        dir_files: list[tuple[Path, tuple[str, int, int, int]]] = []
+        max_file_mtime_ns = d_mtime_ns
+        for p in sorted(d.glob("*.jsonl*")):
+            try:
+                pst = p.stat()
+            except OSError:
+                continue
+            fsig = (str(p), pst.st_ino, pst.st_mtime_ns, pst.st_size)
+            dir_files.append((p, fsig))
+            if pst.st_mtime_ns > max_file_mtime_ns:
+                max_file_mtime_ns = pst.st_mtime_ns
+        if not dir_files:
+            continue
+        file_sigs = tuple(fsig for _, fsig in dir_files)
         msig = manifests.get(d.name) if use_daily_bars else None
-        if msig is not None and msig[1] >= d_mtime_ns:
-            covered_sigs.append((d.name, d_mtime_ns, msig))
+        is_covered = False
+        if msig is not None and msig[1] >= max_file_mtime_ns:
+            cov_key = (root_str, d.name)
+            with _INSTRUMENT_AUTHORITY_LOCK:
+                prev_cov = _INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE.get(cov_key)
+                if prev_cov is None or prev_cov[0] != msig:
+                    if len(_INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE) >= _INSTRUMENT_AUTHORITY_FILE_CACHE_MAX:
+                        _INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE.clear()
+                    _INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE[cov_key] = (msig, file_sigs, True)
+                    is_covered = True
+                elif prev_cov[2] and prev_cov[1] == file_sigs:
+                    is_covered = True
+                else:
+                    _INSTRUMENT_AUTHORITY_MANIFEST_COVERAGE[cov_key] = (msig, file_sigs, False)
+                    is_covered = False
+        if is_covered and msig is not None:
+            covered_sigs.append((d.name, d_mtime_ns, msig, file_sigs))
+            covered_paths.extend(p for p, _ in dir_files)
         else:
-            for p in sorted(d.glob("*.jsonl*")):
-                try:
-                    pst = p.stat()
-                except OSError:
-                    continue
+            for p, fsig in dir_files:
                 uncovered_paths.append(p)
-                uncovered_sigs.append((str(p), pst.st_ino, pst.st_mtime_ns, pst.st_size))
+                uncovered_sigs.append(fsig)
 
     root_sig = (tuple(covered_sigs), tuple(uncovered_sigs))
     with _INSTRUMENT_AUTHORITY_LOCK:
@@ -401,10 +431,14 @@ def _single_root_instrument_authority(root: Path, *, from_bars: bool) -> dict[st
 
     found_run: dict[str, set[str]] = {}
     if covered_sigs:
-        for canonical in _daily_bars_symbols(root):
-            canonical = canonical.upper()
-            if "." in canonical:
-                found_run.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+        bars_symbols = _daily_bars_symbols(root)
+        if bars_symbols:
+            for canonical in bars_symbols:
+                canonical = canonical.upper()
+                if "." in canonical:
+                    found_run.setdefault(canonical.rsplit(".", 1)[0], set()).add(canonical)
+        else:
+            uncovered_paths = covered_paths + uncovered_paths
     for p in uncovered_paths:
         for ticker, canonical in _scan_run_file_symbols(p):
             found_run.setdefault(ticker, set()).add(canonical)
@@ -667,10 +701,8 @@ class SourceIngestionRuntime:
         self.import_configured_connectors_if_changed()
         self.controller_readback_ready = False
         self.controller_warm_start_count = 0
-        try:
-            self._warm_controller_readback()
-        finally:
-            self.controller_readback_ready = True
+        self.controller_readback_warm_error: str | None = None
+        self._warm_controller_readback()
 
     def import_configured_connectors_if_changed(self, *, force: bool = False) -> Any | None:
         """Guarded startup/change import of configured connectors into SourceManagementStore (SD-SRCM § 10.1)."""
@@ -1263,27 +1295,38 @@ class SourceIngestionRuntime:
             except (MarketSnapshotStateError, OSError):
                 pass
 
-    def _warm_controller_readback(self) -> None:
+    def _warm_controller_readback(self) -> bool:
         """Warm controller-stage readback and instrument authority caches before /readyz turns 200."""
         self.controller_warm_start_count += 1
+        self.controller_readback_ready = False
         try:
             grouped = self._grouped_freshness_snapshot()
             self._latest_source_record_by_connector(
                 receipts_by_connector=grouped["ordered_receipts_by_connector"],
                 runs_by_connector=grouped["runs_by_connector"],
+                _precomputed_latest_run_by_connector=grouped["latest_completed_run_id_by_connector"],
             )
             self._dlq_readback_summary()
-            if (self.MARKET_DATA_STORAGE_ROOT / "daily_bars" / "_manifest").is_dir():
+            if (self.MARKET_DATA_STORAGE_ROOT / "daily_bars" / "_manifest").is_dir() or (
+                self.MARKET_DATA_STORAGE_ROOT / "normalized"
+            ).is_dir():
                 _cached_stored_instrument_authority(self.MARKET_DATA_STORAGE_ROOT)
-        except Exception:
-            pass
+            if self._latest_record_cache_key is None or self._cached_dlq_summary_key is None:
+                raise RuntimeError("controller readback caches remained unset after warm-up")
+        except Exception as exc:
+            self.controller_readback_ready = False
+            self.controller_readback_warm_error = f"{type(exc).__name__}: {exc}"
+            return False
+        self.controller_readback_warm_error = None
+        self.controller_readback_ready = True
+        return True
 
     def _source_freshness_readiness(self) -> dict[str, Any]:
         """Return a fixed-cost readiness projection from the controller snapshot."""
         from .pipeline import _parse_utc_datetime
 
         if not getattr(self, "controller_readback_ready", True):
-            return {
+            payload: dict[str, Any] = {
                 "status": "degraded",
                 "data_ready": False,
                 "controller_readback_ready": False,
@@ -1292,6 +1335,10 @@ class SourceIngestionRuntime:
                 "degraded_connector_count": 0,
                 "reason": "controller_readback_warming",
             }
+            warm_error = getattr(self, "controller_readback_warm_error", None)
+            if warm_error is not None:
+                payload["warm_error"] = warm_error
+            return payload
 
         try:
             state_size_bytes = self.CONTROLLER_STATE_PATH.stat().st_size
@@ -2240,6 +2287,8 @@ class SourceIngestionRuntime:
         return summary
 
     def _controller_readback_payload(self) -> dict[str, Any]:
+        if not getattr(self, "controller_readback_ready", True):
+            self._warm_controller_readback()
         connector_readbacks = self._controller_connector_readbacks()
         frontier = self.store.list_frontier()
         frontier_backlog, frontier_backlog_by_connector = _frontier_backlog_readback(frontier)

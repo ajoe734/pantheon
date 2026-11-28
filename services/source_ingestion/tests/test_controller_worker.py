@@ -4475,3 +4475,97 @@ def test_cold_start_controller_stage_requests_use_pre_readyz_warmed_state_withou
     assert auth == {"2330": ("2330.TWSE",)}
 
 
+def test_warm_controller_readback_failure_preserves_not_ready_until_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 fault-injection regression:
+    - An error during _warm_controller_readback in __init__ leaves controller_readback_ready=False
+      and GET /readyz at 503 instead of masking the failed warm-up as ready.
+    - A subsequent retry after the transient fault clears populates latest-record and DLQ caches
+      and transitions GET /readyz to 200.
+    """
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.main import create_app
+
+    data_dir = tmp_path / "failed-warm"
+    monkeypatch.setenv("SOURCE_INGEST_DATA_DIR", str(data_dir))
+    with patch.object(
+        rt_mod.SourceIngestionRuntime,
+        "_grouped_freshness_snapshot",
+        side_effect=OSError("transient read error"),
+    ):
+        instance = rt_mod.SourceIngestionRuntime(data_dir=data_dir)
+    instance.snapshot_universe.stop_background_sweeps()
+
+    assert instance.controller_readback_ready is False
+    assert instance.controller_warm_start_count == 1
+    assert instance._latest_record_cache_key is None
+    assert instance._cached_dlq_summary_key is None
+    assert instance.controller_readback_warm_error == "OSError: transient read error"
+
+    client = TestClient(create_app(instance))
+    not_ready = client.get("/readyz")
+    assert not_ready.status_code == 503
+    freshness_dep = not_ready.json()["dependencies"]["source_freshness"]
+    assert freshness_dep["controller_readback_ready"] is False
+    assert freshness_dep["reason"] == "controller_readback_warming"
+    assert freshness_dep["warm_error"] == "OSError: transient read error"
+
+    assert instance._warm_controller_readback() is True
+    assert instance.controller_readback_ready is True
+    assert instance.controller_warm_start_count == 2
+    assert instance.controller_readback_warm_error is None
+    assert instance._latest_record_cache_key is not None
+    assert instance._cached_dlq_summary_key is not None
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+
+
+def test_stored_instrument_authority_detects_existing_run_file_append_without_directory_mtime_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance 3 coverage revision regression:
+    Appending to an existing covered normalized run file via market_data_storage._append_jsonl
+    leaves the parent date directory mtime unchanged, but changes the covered input file revision
+    (st_size / st_mtime_ns) and must invalidate manifest coverage so the newly appended symbol is
+    returned.
+    """
+    import os
+    from unittest.mock import patch
+    from services.source_ingestion import runtime as rt_mod
+    from services.source_ingestion.connectors import collector_bundle as cb
+    from services.source_ingestion.market_data_storage import _append_jsonl
+
+    monkeypatch.delenv("PANTHEON_DAILY_PRICE_READER", raising=False)
+    market = tmp_path / "market"
+    day = market / "normalized" / "tw_price_daily" / "date=2026-11-20"
+    day.mkdir(parents=True)
+    run = day / "ingest-1.jsonl"
+    _append_jsonl(run, [{"metadata": {"symbol_canonical": "2330.TWSE"}}])
+
+    manifests = market / "daily_bars" / "_manifest"
+    manifests.mkdir(parents=True)
+    manifest = manifests / "date=2026-11-20.json"
+    manifest.write_text("{}", encoding="utf-8")
+    stamp = max(day.stat().st_mtime_ns, run.stat().st_mtime_ns, manifest.stat().st_mtime_ns) + 1_000_000
+    os.utime(manifest, ns=(stamp, stamp))
+
+    with patch.object(cb, "_daily_bars_symbols", return_value=["2330.TWSE"]):
+        before = rt_mod._cached_stored_instrument_authority(market)
+        directory_stamp = day.stat().st_mtime_ns
+        _append_jsonl(run, [{"metadata": {"symbol_canonical": "2317.TWSE"}}])
+        after = rt_mod._cached_stored_instrument_authority(market)
+
+    scanned = dict(rt_mod._scan_run_file_symbols(run))
+    assert day.stat().st_mtime_ns == directory_stamp
+    assert before == {"2330": ("2330.TWSE",)}
+    assert "2317" in scanned and "2330" in scanned
+    assert after == {"2317": ("2317.TWSE",), "2330": ("2330.TWSE",)}
+
+
+
