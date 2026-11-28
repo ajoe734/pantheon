@@ -548,7 +548,7 @@ def _telemetry(n):
     }
 
 
-def _hosted_shaped_store(sessions_order="ended_first"):
+def _hosted_shaped_store(sessions_order="ended_first", *, crawl_counts=False):
     bindings = (
         [_binding(i, "active") for i in range(4)]
         + [_binding(10 + i, "paused") for i in range(6)]
@@ -568,7 +568,14 @@ def _hosted_shaped_store(sessions_order="ended_first"):
             "status": "running", "active": True, "started_at": "2026-11-05T00:00:00Z",
         }
         sessions += [ended, running] if sessions_order == "ended_first" else [running, ended]
-    return _FleetStore(bindings, sessions, telemetry=[_telemetry(i) for i in range(4)])
+    store = _FleetStore(bindings, sessions, telemetry=[_telemetry(i) for i in range(4)])
+    if crawl_counts:
+        # 2026-11-28 read-only hosted counts from the task brief. Retain the
+        # previous fixture's retired bindings as the prescribed upper bound.
+        store.bindings = store.bindings[:4] + store.bindings[13:]
+        store.sessions = []
+        store.telemetry = store.telemetry[:3]
+    return store
 
 
 def test_trading_pulse_excludes_retired_and_failed_from_operator_counts() -> None:
@@ -1356,3 +1363,123 @@ def test_risk_radar_queries_bounded_strategy_summary_page_and_never_calls_unpage
     finally:
         authorization.reset(token)
     assert calls == []
+
+
+# BFF-TRADING-PULSE-READS-UNDER-CRAWL-20261128. Keep the historical fixture
+# defaults above: those assertions cover a larger, mixed-status fleet.
+_CRAWL_SNAP = "2026-11-28T13:26:00Z"
+_PULSE_EVIDENCE = "docs/deployment/evidence/BFF-TRADING-PULSE-READS-UNDER-CRAWL-20261128/evidence.json"
+
+
+class _PulseReadTrace:
+    """Observe real facade calls without marking its methods as patched."""
+    def __init__(self, target):
+        import threading
+        self._target = target
+        self.samples = {}
+        self.lock = threading.Lock()
+
+    def measure(self, name, call):
+        from time import perf_counter
+        def read(*args, **kwargs):
+            start = perf_counter()
+            try:
+                return call(*args, **kwargs)
+            finally:
+                with self.lock:
+                    self.samples.setdefault(name, []).append((perf_counter() - start) * 1000)
+        return read
+
+    def __getattr__(self, name):
+        value = getattr(self._target, name)
+        return self.measure(name, value) if callable(value) else value
+
+
+def _crawl_read_fixture(*, retired_copies=1, telemetry_copies=1):
+    from types import SimpleNamespace
+    from services.control_plane.bff.ports.persona_capital_runtime import (
+        PersonaFleetPort, RuntimePort, PersonaCapitalRuntimeDomainPort,
+    )
+    from services.control_plane.bff.ports.read_surface_ports import ReadSurfacePorts
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+        create_in_memory_lifecycle_telemetry_governance_port,
+    )
+    fleet = _hosted_shaped_store(crawl_counts=True)
+    people = [{"id": f"p-r-{i}", "name": f"Trader {i}", "tenant_id": "tenant-test",
+               "lifecycle_state": "active"} for i in range(13)]
+    people += [{"id": f"retired-{i}", "name": f"Retired {i}", "tenant_id": "tenant-test",
+                "lifecycle_state": "retired"} for i in range(165)]
+    people[3]["metadata"] = {"persona_class": "agora_servant"}
+    bindings = fleet.bindings[:4] + fleet.bindings[4:] * retired_copies
+    for i, binding in enumerate(bindings[:4]):
+        binding["strategy_id"] = f"strategy-{i}"
+    # A scale extension adds only old-binding telemetry; active facts are fixed.
+    telemetry = fleet.telemetry + [
+        {**fleet.telemetry[0], "runtime_id": f"retired-r-{i}", "binding_id": f"retired-b-{i}"}
+        for i in range(3 * (telemetry_copies - 1))
+    ]
+    for row in telemetry:
+        row.update(collected_at=_CRAWL_SNAP, pnl_at=_CRAWL_SNAP, drawdown_at=_CRAWL_SNAP,
+                   pnl_currency="TWD", pnl_period_start_at="2026-11-01T00:00:00Z",
+                   pnl_definition="net_ledger_pnl", ledger_fill_count=3)
+    rollbacks = [{"id": "rollback-0", "runtime_id": "r-0", "status": "completed",
+                  "initiated_at": "2026-11-01T00:00:00Z", "completed_at": "2026-11-01T00:01:00Z"}]
+    raw = ReadSurfacePorts(
+        persona_capital_runtime=PersonaCapitalRuntimeDomainPort(
+            persona_port=PersonaFleetPort(records_provider=lambda: people),
+            runtime_port=RuntimePort(runtime_bindings_provider=lambda: bindings),
+        ),
+        lifecycle_telemetry_governance=create_in_memory_lifecycle_telemetry_governance_port(
+            telemetry_summaries=telemetry, all_rollbacks=rollbacks, paper_live_drift_reports=[],
+        ),
+        paper_runtime_monitoring_sessions_provider=lambda: [],
+    )
+    # Use real facade/port methods for roster, status, monitoring, telemetry,
+    # rollback and drift. Only remote strategy and journey results are supplied.
+    raw.get_strategy_spec_detail = lambda sid, version_selector=None: {
+        "strategy_id": sid, "tenant_id": "tenant-test", "title": sid,
+        "market_scope": {"symbols": ["2317.TWSE"]},
+    }
+    trace = _PulseReadTrace(raw)
+    class Reader:
+        def page_journeys(self, **kwargs):
+            assert kwargs["page_size"] == 1
+            return SimpleNamespace(items=[])
+    reader = Reader()
+    reader.page_journeys = trace.measure("page_journeys", reader.page_journeys)
+    raw._trade_journey_projection_reader_override = reader
+    pcr = raw.persona_capital_runtime
+    for name in ("persona", "runtime"):
+        port = getattr(pcr, name)
+        port.get_surface_status = trace.measure(f"{name}.get_surface_status", port.get_surface_status)
+    pcr.persona._records_provider = trace.measure("persona.owner_read", pcr.persona._records_provider)
+    pcr.runtime._runtime_bindings_provider = trace.measure("runtime.owner_read", pcr.runtime._runtime_bindings_provider)
+    return trace
+
+
+def _measure_crawl_reads(surface, **scale):
+    from time import perf_counter
+    from services.control_plane.bff.core.owner_reads import request_read_scope
+    store = _crawl_read_fixture(**scale)
+    svc = ManagementService(read_store=store)
+    started = perf_counter()
+    # Match the hosted request middleware cache, including before-change runs.
+    from services.control_plane.bff.management_read_models import service as module
+    with pytest.MonkeyPatch.context() as patch, request_read_scope():
+        for name in ("_project_operator_runtime_state_row", "_build_trading_pulse_baseline_comparison", "_pulse_latest_outcome"):
+            patch.setattr(module, name, store.measure(name, getattr(module, name)))
+        body = getattr(svc, surface)(snapshot_at=_CRAWL_SNAP)
+    return body, {"total_ms": (perf_counter() - started) * 1000,
+                  "reads": {name: {"count": len(values), "elapsed_ms": values}
+                            for name, values in sorted(store.samples.items())}}
+
+
+if __name__ == "__main__":
+    import json
+    from services.control_plane.bff.core.owner_reads import selected_tenant
+    token = selected_tenant.set("tenant-test")
+    try:
+        print(json.dumps({surface: dict(zip(("payload", "measurement"), _measure_crawl_reads(surface)))
+                          for surface in ("get_trading_pulse", "get_trading_pulse_rankings")}, ensure_ascii=False))
+    finally:
+        selected_tenant.reset(token)
