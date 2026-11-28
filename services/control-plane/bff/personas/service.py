@@ -1544,7 +1544,9 @@ def plan_persona_provisioning_case_retirement(
     """
 
     record = _persona_provisioning_store().get_by_persona(tenant_id, persona_id)
-    if record is None:
+    if record is None or _is_trader_paper_book_ledger_row(record):
+        # PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: a trader paper book row
+        # (even a retired book generation) is never the servant Persona's case.
         return None
     retirement = record.references.get("retirement")
     retirement = retirement if isinstance(retirement, Mapping) else {}
@@ -2794,6 +2796,13 @@ def _persona_provisioning_records_directory(store: Any, clean_tenant: str) -> Li
     return list(read_prov(*((clean_tenant,) if clean_tenant else ())))
 
 
+def _is_trader_paper_book_ledger_row(record: Any) -> bool:
+    """A trader servant paper book's ledger row is not a Persona provisioning projection."""
+    from .trader_paper_book import is_trader_paper_book_ledger_record
+
+    return is_trader_paper_book_ledger_record(record)
+
+
 # --- _list_persona_records ---
 def _list_persona_records(
     tenant_id: Optional[str] = None,
@@ -2859,6 +2868,10 @@ def _list_persona_records(
         ) from exc
 
     for record in prov_records:
+        if _is_trader_paper_book_ledger_row(record):
+            # PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: the book's authority
+            # lease row shares the servant persona_id but never relabels it.
+            continue
         try:
             persona_proj, _ = _persona_record_for_provisioning(
                 record,
@@ -2955,6 +2968,8 @@ def _get_persona_record_for_detail(
             suggestion="Inspect persona provisioning persistence health before retrying",
         ) from exc
 
+    if prov_record is not None and _is_trader_paper_book_ledger_row(prov_record):
+        prov_record = None
     if prov_record is not None:
         try:
             persona_proj, _ = _persona_record_for_provisioning(
@@ -6202,6 +6217,9 @@ def _reconcile_paper_risk_policy_renewal_once() -> int:
         return 0
     now = datetime.now(timezone.utc)
     for record in records:
+        if _is_trader_paper_book_ledger_row(record):
+            # The book's own ensure call owns its paper risk policy gate.
+            continue
         if record.state != "succeeded" or not PersonaProvisioningCoordinator.paper_risk_renewal_due(
             (record.references or {}).get("paper_risk_policy_renewal"), now
         ):

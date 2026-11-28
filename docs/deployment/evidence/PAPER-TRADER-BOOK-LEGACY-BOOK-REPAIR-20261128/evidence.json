@@ -1,0 +1,198 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128",
+  "title": "Repaired trader paper book is paused on a US symbol and its ledger row floods directory warnings",
+  "status": "implemented_round_3_pending_review_and_hosted_proof",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "review_independence": {
+    "owner_family": "claude",
+    "reviewer_family": "codex",
+    "cross_family_verified": true
+  },
+  "problem_register_ref": {
+    "file": "docs/operations/problem-register.md",
+    "section": "RC4. Nobody looks at the whole design",
+    "row": "Agora servant row of RC4 already cites PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128 (in progress as PR #8033, operator option (b)). This task does not edit the register; the register owner (f4c32790) updates the row with the merged commit and hosted result."
+  },
+  "root_cause": {
+    "universe": "The hosted ledger row (pre-#7983) has no request_payload.symbols, so PersonaProvisioningCoordinator._paper_universe (persona_provisioning_coordinator.py ~3963) minted and approved the book's StrategyArtifact on the legacy SPY default. PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 commit 4fc8eb0e4 removed the SPY->2330.TW swap from _resolve_paper_book_execution_projection, so the in-place repair projected the approved SPY artifact: binding metadata.symbol=SPY. The reconciler (paper_fleet_reconciler.py _check_market_admission ~2142) then asked Source for SPY and paused the binding with session_admission.reason_code=market_input_missing. trader_paper_book.py::_binding_has_executable_projection did not look at the symbol, so a replay of ensure treated the SPY-projected binding as complete, and _validate_runtime_binding_readback rejected the paused binding with runtime_binding_not_active before any repair.",
+    "ledger_warning": "The book's bff.persona_provisioning row shares the servant persona_id but its normalized_name (agora-servant-<id>) differs from the servant Persona name, so _persona_record_for_provisioning raised ProvisioningConflict for it on every directory read (personas/service.py ~2871, ~2968) and logged a warning without an id (2979 times 04:01Z-10:47Z). The row stayed state=provisioning, current_step=deployment_plan_readback, attempt_count=50 because nothing ever finalized it."
+  },
+  "design_constraint": {
+    "summary": "The legacy book's approved StrategyArtifact (artifact-persona-paper-<token> v1.0.0, approval apv-persona-paper-artifact-<token>) and DeploymentPlan plan-persona-paper-<token> state parameters.symbols=['SPY']. build_paper_execution_projection_metadata (persona_provisioning_coordinator.py ~5404) pins the projection to ids.strategy_artifact_id/ids.version/ids.deployment_plan_id, and RuntimeBinding artifact_id/artifact_version/plan_id cannot change by transition. The only existing owner-approved revision path, transition_legacy_persona_market -> services/registry/strategy_artifact.py create_market_transition_revision (~1087), adds a market and explicitly preserves the parent's symbols. There is therefore no existing approved owner path that yields a 2330.TW projection for this binding id.",
+    "review_round_1_disposition": "The first revision overwrote the projected symbol to 2330.TW in the BFF after the approved projection was built. Codex review (PR #8033 head 013d269e8) rejected it as changing market admission metadata without an owner-approved TWD projection. That override is removed: ensure now fails closed with reason_code trader_paper_book_universe_unapproved and makes zero Runtime-Manager transitions and zero ledger writes for a TWD book whose approved universe is the legacy SPY default.",
+    "decision_needed": "Resolved: coordinator 70b5f70f disposition 2026-11-28 17:45Z chose b2 (single-row generations).",
+    "operator_disposition_2026_11_28_1351Z": {
+      "decision": "option (b): retire the legacy book through PersonaProvisioningCoordinator.retire_case (book-only parameter) and provision one replacement book with generation-2 ids through the existing create path; AC4 legacy row terminal retired + replacement row terminal provisioned; AC5 one extra ledger row per replaced book.",
+      "blocking_fact": "The replacement cannot get its own bff.persona_provisioning row. PostgresPersonaProvisioningStore._bootstrap (services/control-plane/bff/persona_provisioning.py ~398-399) declares UNIQUE (tenant_id, normalized_name) and UNIQUE (tenant_id, persona_id); MemoryPersonaProvisioningStore mirrors it (personas[(tenant_id, persona_id)] holds one key). The existing create path (_coordinate_paper_book_deploy_authorities -> store.reserve) for a generation-2 row with the servant persona_id hits ON CONFLICT DO NOTHING, finds no row by its new idempotency key, and raises 'Persona provisioning reservation disappeared' (or ProvisioningConflict when normalized_name is reused). persona_provisioning.py and the hosted table DDL are not in this task's artifacts.",
+      "rejected_workaround": "A generation-2 row with a different ledger persona_id is not viable: the coordinator writes record.persona_id as the sponsor/persona identity into StrategySpec, approvals, StrategyArtifact and DeploymentPlan (34 uses in persona_provisioning_coordinator.py, e.g. ~5321 sponsor_persona_id) and verifies it against the Persona owner (~3095), so the replacement book would be sponsored by a non-existent persona.",
+      "options": {
+        "b1_ledger_uniqueness_owner_task": "Separate owner-layer task on services/control-plane/bff/persona_provisioning.py plus a hosted migration: replace UNIQUE (tenant_id, persona_id) / (tenant_id, normalized_name) with uniqueness over non-terminal rows (or include a book generation), and define get_by_persona on multiple rows. Then this task implements (b) as written. Wider blast radius: shared ledger table used by every Persona.",
+        "b2_amend_AC4_AC5_single_row_generations": "Keep the one existing ledger row (same idempotency key). retire_case (with a retain-persona parameter and a RuntimeBinding retirer, since _retire_runtime_bindings only verifies) retires generation 1 and keeps its receipts; ensure then moves the generation-1 references and retirement receipt under references.book_generations['1'] and re-leases the same row for generation 2, ending state=succeeded/trader_paper_book_provisioned. Zero extra ledger rows; generation-1 owner ids (pool, pcb, binding, artifact, plan) stay retired with history intact; contained in this task's artifacts. Requires accepting that a book row moves from retired to a new generation (book rows only)."
+      },
+      "recommendation": "b2 (contained, no shared-table DDL); b1 if the ledger must show one terminal row per generation.",
+      "code_changes_this_round": "none; the round-1 code at 8e84d754e is unchanged and still fails closed with trader_paper_book_universe_unapproved for the legacy book."
+    },
+    "coordinator_disposition_2026_11_28_1745Z": {
+      "decision": "b2. The operator decision (retire the legacy SPY book, provision a replacement on 2330.TW) is about the book; the ledger row layout is an implementation detail, so no shared-table DDL. Everything in the 13:51Z disposition stands except AC4 and AC5.",
+      "AC4": "The trader one existing bff.persona_provisioning row is kept (same tenant, persona_id, idempotency key). Generation 1 is retired through retire_case with retain_persona plus a RuntimeBinding retirer (extension of _retire_runtime_bindings); its references and retirement receipt move under references.book_generations['1']; ensure re-leases the same row for generation 2 and it ends state succeeded, step trader_paper_book_provisioned; the persona directory read no longer logs the conflicting owner scope warning for this row; a real persona provisioning conflict still logs and is still skipped. Guards (tests): move allowed only for trader_servant_paper_book rows and only from ensure_trader_paper_book; a retired persona row cannot be re-leased; servant persona, memory and owner scope are never retired and no reader shows the servant as retired while generation 1 is retired; a crash after retiring generation 1 and before generation 2 is provisioned resumes to generation 2 with no second retire and no orphaned owner ids.",
+      "AC5": "Zero extra ledger rows; one extra pool, capital binding and RuntimeBinding per replaced legacy book (hosted has exactly one); no new writer type; references.book_generations grows by one entry per replacement.",
+      "AC6_AC7": "Unchanged. The hosted ensure call still needs operator approval, which the coordinator asks for after deploy."
+    }
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "summary": "retire_case gains retain_persona (book-only: skips first_evaluation_schedule and persona steps, records retirement.scope='book' so a replay never widens), ids (retire a later generation's owner ids) and per-call runtime_binding_reader/runtime_binding_retirer. _retire_runtime_bindings is extended, not copied: without a retirer it only verifies (saga-owned personas); with one it retires each live binding and counts it only after a fresh readback is terminal (receipt retired_by_case). deterministic_provisioning_ids is split into provisioning_ids_for_token. _paper_universe falls back to references.book_generation.symbols for a trader paper book ledger row (idempotency prefix + book mandate) when the immutable request payload has no symbols; the SPY default for non-book rows is unchanged."
+    },
+    {
+      "path": "services/control-plane/bff/personas/trader_paper_book.py",
+      "summary": "Single-row generations. trader_paper_book_generation/_generation_ids (generation 1 keeps the existing ids; generation N>=2 derives its own pool, pcb, strategy, artifact, plan, binding and runtime ids deterministically). ensure_trader_paper_book resumes an interrupted replacement, provisions the current generation (_ensure_trader_paper_book_generation, the previous body unchanged apart from the ids), and on trader_paper_book_universe_unapproved (approved artifact on the legacy SPY default) calls _retire_and_advance_trader_paper_book_generation: retire_case(retain_persona=True, RuntimeBinding retirer via the Runtime-Manager status machine), then _begin_next_trader_paper_book_generation moves references/retirement/result under references.book_generations[N] and re-leases the same row (state provisioning, references.book_generation = {generation N+1, symbols 2330.TW}). Guards: book rows only, book-scope retirement only (trader_paper_book_retired_with_persona otherwise), reachable only from ensure. read_trader_paper_book reads the current generation from the row and returns None while the current generation is retired. The BFF never rewrites an approved artifact symbol: generation 2 is minted and approved on 2330.TW through the existing create path."
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "summary": "Directory/detail/renewal reads skip the book ledger row (round 1). plan_persona_provisioning_case_retirement also returns None for a book row, so no reader shows the servant as retired while generation 1 is retired."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py",
+      "summary": "Replaces the round-1 fail-closed test: recorded hosted legacy book (reconciler-paused and active variants) is replaced by generation 2 on the same row; crash after retire and crash after advance resume without a second retire or orphaned ids; guard tests (non-book row, persona-scope retirement, single entrypoint by AST); round-1 tests kept."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
+      "summary": "Round 1, unchanged this round: the book row is terminal (succeeded) after ensure."
+    }
+  ],
+  "acceptance_criteria": {
+    "AC1_legacy_spy_book_moves_to_twd_universe_on_same_binding": {
+      "status": "superseded_by_b2_verified_by_tests",
+      "note": "Per the 17:45Z disposition the legacy book is replaced, not mutated: the SPY RuntimeBinding id cannot take a 2330.TW projection through an owner-approved path (see design_constraint), so generation 2 gets a new pool, capital binding and RuntimeBinding on 2330.TW. Hosted ids change: the new binding/runtime ids are in the ensure response and in the ledger row references.book_generation / result; coordinator must use them for AC6.",
+      "tests": [
+        "test_recorded_legacy_spy_book_is_replaced_by_generation_two_on_the_same_ledger_row[hosted-reconciler-paused]",
+        "test_recorded_legacy_spy_book_is_replaced_by_generation_two_on_the_same_ledger_row[active-spy-projection]",
+        "test_twd_book_symbol_derives_from_approved_registry_receipt_and_replay_is_noop",
+        "test_nonlegacy_explicit_universes_are_preserved",
+        "test_operator_paused_legacy_book_is_never_resumed_by_ensure"
+      ]
+    },
+    "AC2_idempotent_when_already_twd_projected": {
+      "status": "verified_by_tests",
+      "tests": [
+        "test_twd_book_symbol_derives_from_approved_registry_receipt_and_replay_is_noop: replay makes zero transitions, leaves the binding byte-equal and does not write the ledger row (attempt_count and updated_at unchanged)",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id",
+        "replay of the replaced book: zero transitions, ledger attempt_count/updated_at unchanged (same b2 test)"
+      ]
+    },
+    "AC3_no_reconciler_or_admission_special_case": {
+      "status": "verified_by_diff_and_grep",
+      "evidence": [
+        "git diff --stat over services/paper_fleet_reconciler, services/runtime-manager and services/runtime_manager is empty for this task",
+        "grep -c 'trader_servant_paper_book|book_kind': services/paper_fleet_reconciler/paper_fleet_reconciler.py = 0, services/runtime-manager/fleet_desired_state.py = 0",
+        "Admission is the shared path: paper_fleet_reconciler.py _check_market_admission (~2142) -> services/execution/market_snapshot_admission.py admit_market_snapshot (~1034), reading binding.metadata.symbol exactly as for the three Taiwan trading personas; auto-resume is the shared reconciler branch at ~1167 (reason_code startswith market_input_)."
+      ]
+    },
+    "AC4_ledger_row_terminal_and_no_warning_but_real_conflict_still_logs": {
+      "status": "verified_by_tests",
+      "tests": [
+        "test_recorded_legacy_spy_book_is_replaced_by_generation_two_on_the_same_ledger_row (same row, state succeeded, step trader_paper_book_provisioned, references.book_generations['1'] holds generation-1 references and book-scope retirement receipt, no persona/schedule retirement)",
+        "test_crash_after_generation_one_retired_resumes_to_generation_two_without_second_retire (retire_case called once; one pool/binding for generation 2; no servant archive/schedule calls; no reader shows servant retired)",
+        "test_generation_move_is_refused_for_non_book_rows_and_persona_scope_retirement",
+        "test_generation_move_is_only_reachable_from_ensure_trader_paper_book (AST)",
+        "test_directory_read_skips_book_ledger_row_but_still_skips_and_logs_real_conflict (mutation-checked; a real conflict still logs 1 and is skipped)",
+        "test_persona_directory_ledger_reuse.py::test_hosted_shape_payload_parity_and_conflicting_owner_skip"
+      ],
+      "mutation_checks": "retain_persona=False, retirer disabled, plan-reader skip removed and generation-universe fallback removed each fail 3-4 tests."
+    },
+    "AC5_runtime_budget": {
+      "status": "recorded",
+      "new_writers": 0,
+      "changed_writer": "services/control-plane/bff/persona_provisioning.py ledger table, written only through the existing store.acquire/checkpoint/release by ensure_trader_paper_book (_begin_next_trader_paper_book_generation, _finalize_trader_paper_book_ledger_record) and retire_case. docs/operations/storage-manifest.json is outside this task's artifact contract (the status tool rejects it), so the entry services/control-plane/bff/persona_provisioning.py::{self.table} must be updated through its owning lane with the cap, cleanup, growth_driver and growth_per_day text in storage_manifest_registration_for_owning_lane below.",
+      "ledger_rows": {
+        "before": "1 trader book row",
+        "after": "1 (same row, re-leased for generation 2; zero extra rows)"
+      },
+      "serialized_size": {
+        "method": "owner_stack test fixture (real Capital and Runtime-Manager owners, fake Registry/Governance transport), json.dumps of the stored row after one replacement",
+        "references_before_replacement_bytes": 59266,
+        "references_book_generations_entry_for_generation_1_bytes": 61454,
+        "of_which_retirement_receipt_bytes": 1003,
+        "references_book_generation_marker_bytes": 124,
+        "result_bytes": 399,
+        "references_after_replacement_bytes": 120926,
+        "note": "Hosted receipts are the same owner receipts; the figure is the test-fixture size and is an upper-order estimate, to be re-measured on the hosted row by the coordinator after the approved ensure."
+      },
+      "daily_growth": "0 B/day steady state (no recurring job, replay is a no-op). One replacement appends about 61.5 KB once per replaced legacy book; hosted has exactly one legacy book, so about 62 KB once, not per day.",
+      "cap": "TRADER_PAPER_BOOK_MAX_GENERATIONS=3 per ledger row, enforced in _retire_and_advance_trader_paper_book_generation before any write (reason_code trader_paper_book_generation_cap; test_generation_history_is_capped_before_any_retirement_write). references.book_generations therefore holds at most 2 retired generations (<= about 123 KB) and the row at most about 185 KB.",
+      "cleanup_retention": "No cleanup job: retired generations are the audit trail of retired owner ids and are kept for the life of the ledger row, bounded by the generation cap; the ledger row itself follows the existing RC3 WP3.1 retention of the persona_provisioning table. Retired owner objects (pool archived, capital binding revoked, RuntimeBinding retired) stay with history intact.",
+      "owner_objects_per_replaced_legacy_book": "+1 CapitalPool, +1 PersonaCapitalBinding, +1 RuntimeBinding (hosted has exactly one legacy book); generation-1 pool archived, pcb revoked, binding retired; +1 StrategySpec/StrategyArtifact/approvals/DeploymentPlan set through the existing create path",
+      "warnings_per_directory_read": {
+        "hosted_before": "1 for the book row (2979 total 04:01Z-10:47Z)",
+        "after": "0 for the book row; a real conflicting row still logs 1"
+      },
+      "added_calls": "Read paths: one in-memory prefix/mandate check per ledger row. read_trader_paper_book adds one ledger GET. ensure adds one ledger GET plus two generation-live ledger GETs (start of the generation ensure and before the RuntimeBinding deploy); the replacement itself (once per legacy book) adds retire_case owner calls plus a full generation-2 create.",
+      "storage_manifest_registration_for_owning_lane": {
+        "entry": "services/control-plane/bff/persona_provisioning.py::{self.table}",
+        "growth_driver_append": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: ensure_trader_paper_book moves a replaced trader paper book generation's references, retirement receipt, result and owner ids under references.book_generations[N] on the same ledger row via the existing store.acquire/release, once per replaced legacy book; no recurring job",
+        "growth_per_day_append": "0 B/day steady state; one replacement appends ~61.5 KB once per replaced legacy book (hosted has exactly 1)",
+        "cap_append": "TRADER_PAPER_BOOK_MAX_GENERATIONS=3 per ledger row enforced in code (trader_paper_book_generation_cap): at most 2 retired generations (<= ~123 KB), row <= ~185 KB",
+        "cleanup_append": "no cleanup job: retired generations are the audit trail of retired owner ids, kept for the life of the row and bounded by the generation cap",
+        "status": "not registered: docs/operations/storage-manifest.json is outside this task's artifact contract and artifact-contract add is limited to todo/blocked tasks by Human/Ops; this task is blocked on Human/Ops to either add the manifest to this task's artifacts (then this lane applies the exact text above) or register it through an owning lane. The runtime budget is NOT complete until that commit exists."
+      }
+    },
+    "AC6_hosted_proof_after_deploy": {
+      "status": "pending_hosted",
+      "required": "Coordinator 70b5f70f read-only plus one operator-approved POST /bff/agora/servant/paper-book/ensure as admintest: desired-state lists rb-77d962be4e324032808324109f2c154e with a TWD symbol; reconciler runs one worker on the next Taiwan session; GET /api/v1/telemetry/rt-persona-paper-3ca8da543bef6ede0a07/summary returns 200; zero strategy signals; no new conflicting owner scope warning for the row.",
+      "note": "After the approved ensure the book is generation 2: read the new runtime_binding_id/runtime_id/capital_pool_id from the ensure response (or ledger references.book_generation/result); rb-77d962be4e324032808324109f2c154e and rt-persona-paper-3ca8da543bef6ede0a07 are the retired generation 1. Desired-state must list the new binding with symbol 2330.TW."
+    },
+    "AC7_register_and_review_independence": {
+      "status": "register_row_cites_task_owner_updates_after_merge",
+      "facts": "The current RC4 Agora servant row in docs/operations/problem-register.md already cites this task (checked on the PR head and origin/dev). The register owner f4c32790 still owns attaching the merged commit and the hosted result; this task does not edit the register. Reviewer Codex and owner Claude2 are different model families."
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon python -m pytest -q services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_agora_paper_book_readback.py services/runtime-manager/test_fleet_desired_state.py -> 322 passed (after merging origin/dev 3892a3f3a), 4 skipped, exit 0"
+    ],
+    "round_3": [
+      "same 10 manifest suites -> 326 passed (52 in the three trader paper book files + 274 in the other seven, 4 skipped), exit 0; after merging origin/dev ec4b1fe3e trader/directory suites 67 passed, 4 skipped",
+      "git diff --check -> clean"
+    ],
+    "round_4": [
+      "same 10 manifest suites -> 327 passed, 4 skipped, 78.23s, exit 0 (adds test_stale_authority_coordination_never_checkpoints_old_ids_into_newer_generation)",
+      "reviewer reproduction /tmp/test_paper_book_review_authority_fence.py -> 1 passed; request A raises trader_paper_book_generation_stale, generation=2 state=succeeded, changed_reference_keys=[]",
+      "git diff --check -> clean"
+    ]
+  },
+  "residual_findings": [
+    {
+      "id": "RESIDUAL-RETIRE-SCRIPT-SERVANT-ID",
+      "summary": "retire_persona_provisioning_case(tenant, servant_persona_id) still resolves the book row through get_by_persona and would run a full-scope retire_case (archiving the servant) if an operator runs the retire script with the servant id; pre-existing, operator-invoked, not changed here. A book row retired that way is refused by ensure (trader_paper_book_retired_with_persona)."
+    },
+    {
+      "id": "RESIDUAL-RISK-REPAIR-GEN1-IDS",
+      "summary": "PersonaProvisioningCoordinator.repair_paper_pool_risk_policy derives ids from the ledger row via deterministic_provisioning_ids (generation 1) unless a capital_pool_id is passed; callers repairing a generation-2 book's risk policy must pass the pool id."
+    }
+  ],
+  "review_round_3": {
+    "finding_P1": "Stale ensure was not fenced: generation and owner ids were derived before the retirement lease, retire_case accepted them for whatever row it loaded, _begin_next advanced unconditionally by +1 and ensure then provisioned generation + 1.",
+    "fix": [
+      "retire_case(fence=...) runs the fence on the stored row before the terminal shortcut and again under the lease, before ANY retirement mutation; on failure the lease is released unchanged and the error propagates.",
+      "_trader_paper_book_generation_fence validates book scope, tenant/persona/idempotency key, current generation, owner ids equal to trader_paper_book_generation_ids(current), and rejects Persona-scope retirement.",
+      "_begin_next_trader_paper_book_generation takes expected_generation and ids and, under the lease, only advances exactly expected_generation to expected_generation + 1; any other row is returned unchanged.",
+      "_retire_and_advance_trader_paper_book_generation catches the stale fence error and returns the CURRENT ledger row; ensure provisions trader_paper_book_generation(returned row) instead of generation + 1 and refuses (trader_paper_book_generation_replacement_in_progress) while another request is mid replacement.",
+      "_finalize_trader_paper_book_ledger_record fences before and under the lease (stale or replacing row -> trader_paper_book_generation_stale, no write); _ensure_trader_paper_book_generation asserts the generation is live at its start and before the RuntimeBinding deploy."
+    ],
+    "regression_tests": [
+      "test_stale_ensure_interleaved_with_completed_replacement_never_touches_newer_generation[before_retire_case] and [before_generation_advance]: two independent coordinators with different lease owners; request A pauses, request B completes the replacement to generation 2, A resumes: response generation 2, ledger generation 2, result generation 2, history ['1'], no generation-3 pool or binding, read_trader_paper_book returns the generation-2 book, no servant retirement call",
+      "test_stale_generation_fence_refuses_retire_advance_and_finalize_without_writes",
+      "test_generation_history_is_capped_before_any_retirement_write"
+    ],
+    "P2": "AC5 records serialized size, daily growth, cap (enforced in code) and cleanup/retention. The storage-manifest entry is outside this task's artifact contract and is handed to its owning lane with exact text (AC5.storage_manifest_registration_for_owning_lane).",
+    "evidence_corrections": "AC7 corrected: the register row already cites this task. PR body rewritten to describe the generation replacement."
+  },
+  "review_round_4": {
+    "finding_P1": "_coordinate_paper_book_deploy_authorities acquired the CURRENT ledger row and checkpointed authority receipts for caller-supplied ids without validating generation/book scope, so a stale request could write generation-1 Registry/Governance/Deployment receipts into the completed generation-2 row.",
+    "fix": "_fence_authority_generation runs under the authority lease before ANY owner mutation or ledger checkpoint: it requires a book ledger row with the same tenant/persona/idempotency key, ids equal to trader_paper_book_generation_ids(current generation), and no replacement in progress; otherwise it raises trader_paper_book_generation_stale, the lease is released with the row unchanged, and the next ensure converges on the live generation.",
+    "regression": "test_stale_authority_coordination_never_checkpoints_old_ids_into_newer_generation (two independent coordinators; generation-1 DeploymentPlan removed; A paused before the authority lease; B finishes generation 2; A rejected with zero owner writes and the generation-2 row byte-identical; a later ensure from A returns generation 2).",
+    "finding_P2": "Storage-manifest registration still outstanding; PR body claim 'Registered' corrected to 'not registered, blocked on Human/Ops artifact-contract or owning lane'."
+  }
+}

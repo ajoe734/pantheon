@@ -98,6 +98,9 @@ ScheduleRegistrar = Callable[[str, str, str], Mapping[str, Any]]
 ScheduleRemover = Callable[[str], Mapping[str, Any]]
 # (plan_id, capital_pool_id) -> RuntimeBindings read back by plan and by pool.
 RuntimeBindingReader = Callable[[str, str], "list[Mapping[str, Any]]"]
+# (binding_id, observed status) -> request retirement of a live RuntimeBinding at
+# its owner; success counts only through a later RuntimeBindingReader readback.
+RuntimeBindingRetirer = Callable[[str, str], Any]
 # persona_id -> authoritative Persona readback after archiving (None if absent).
 PersonaArchiver = Callable[[str], "Mapping[str, Any] | None"]
 # persona_id -> OpenClaw agent projection (own agent, SOUL, memory). Best effort:
@@ -220,6 +223,12 @@ def deterministic_provisioning_ids(record: ProvisioningRecord) -> ProvisioningId
         separators=(",", ":"),
     )
     token = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    return provisioning_ids_for_token(token)
+
+
+def provisioning_ids_for_token(token: str) -> ProvisioningIds:
+    """Owner identities for one deterministic token (one Persona, or one book generation)."""
+
     plan_id = f"plan-persona-paper-{token}"
     return ProvisioningIds(
         token=token,
@@ -917,8 +926,26 @@ class PersonaProvisioningCoordinator:
         record: ProvisioningRecord,
         *,
         reason: str = "dev paper release case retired",
+        retain_persona: bool = False,
+        ids: ProvisioningIds | None = None,
+        runtime_binding_reader: RuntimeBindingReader | None = None,
+        runtime_binding_retirer: RuntimeBindingRetirer | None = None,
+        fence: Callable[[ProvisioningRecord], None] | None = None,
     ) -> ProvisioningRecord:
         """Retire the whole case this coordinator created; symmetric to create.
+
+        ``retain_persona`` retires only the book (saga, RuntimeBindings,
+        PersonaCapitalBinding, CapitalPool): the Persona, its first-evaluation
+        schedule, its memory and its owner scope are never touched.  ``ids``
+        names the owner identities to retire when they are not the record's
+        deterministic ones (a later trader paper book generation).  A
+        ``runtime_binding_retirer`` lets the RuntimeBinding step retire live
+        bindings itself instead of only verifying a saga already did.
+        ``fence`` validates the stored row (before the terminal shortcut and
+        again under the lease, before ANY retirement mutation); when it raises,
+        the lease is released unchanged and the error propagates, so a caller
+        whose ``ids`` were derived from a stale read can never retire a newer
+        row.
 
         Every step is GET-first and idempotent, uses the owning service's
         existing API, and counts only once an authoritative readback proves
@@ -935,6 +962,8 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning must be reserved before retirement"
             )
+        if fence is not None:
+            fence(existing)
         if existing.state == "retired":
             return existing
         active = self.store.acquire(
@@ -947,11 +976,32 @@ class PersonaProvisioningCoordinator:
             raise PersonaProvisioningCoordinationError(
                 "Persona provisioning record is leased by another coordinator"
             )
-        ids = deterministic_provisioning_ids(active)
+        if fence is not None:
+            try:
+                fence(active)
+            except BaseException:
+                self.store.release(
+                    active,
+                    lease_owner=self.lease_owner,
+                    lease_seconds=self.lease_seconds,
+                )
+                raise
+            if active.state == "retired":
+                return self.store.release(
+                    active,
+                    lease_owner=self.lease_owner,
+                    lease_seconds=self.lease_seconds,
+                )
+        ids = ids or deterministic_provisioning_ids(active)
         prior = active.references.get("retirement")
         retirement: dict[str, Any] = dict(prior) if isinstance(prior, Mapping) else {}
         retirement.setdefault("reason", reason)
         retirement.setdefault("started_at", utc_now())
+        if retain_persona or retirement.get("scope") == "book":
+            # A started book-only retirement never widens to the Persona on replay.
+            retain_persona = True
+            retirement["scope"] = "book"
+            retirement["persona_retained"] = {"persona_id": active.persona_id}
         retirement["status"] = "pending"
         retirement.pop("pending_step", None)
         retirement.pop("pending_reason", None)
@@ -964,11 +1014,28 @@ class PersonaProvisioningCoordinator:
             ("first_evaluation_schedule", lambda r: (r, self._retire_schedule(r))),
             ("compensation", lambda r: self._retire_compensation(r, ids)),
             ("deployment_saga", lambda r: (r, self._retire_saga(r, ids))),
-            ("runtime_bindings", lambda r: (r, self._retire_runtime_bindings(r, ids))),
+            (
+                "runtime_bindings",
+                lambda r: (
+                    r,
+                    self._retire_runtime_bindings(
+                        r,
+                        ids,
+                        reader=runtime_binding_reader,
+                        retirer=runtime_binding_retirer,
+                    ),
+                ),
+            ),
             ("persona_capital_binding", lambda r: (r, self._retire_pcb(r, ids))),
             ("capital_pool", lambda r: (r, self._retire_pool(r, ids))),
             ("persona", lambda r: (r, self._retire_persona(r))),
         ]
+        if retain_persona:
+            steps = [
+                step
+                for step in steps
+                if step[0] not in {"first_evaluation_schedule", "persona"}
+            ]
         for name, run in steps:
             try:
                 active, receipt = run(active)
@@ -1103,22 +1170,53 @@ class PersonaProvisioningCoordinator:
         self,
         record: ProvisioningRecord,
         ids: ProvisioningIds,
+        *,
+        reader: RuntimeBindingReader | None = None,
+        retirer: RuntimeBindingRetirer | None = None,
     ) -> Mapping[str, Any]:
-        if self.runtime_binding_reader is None:
+        """Prove every RuntimeBinding of the case is terminal.
+
+        Without a ``retirer`` the deployment saga owns binding retirement and
+        this step only verifies it.  With a ``retirer`` (a book with no saga)
+        each live binding is retired through it and counts only once a fresh
+        readback shows it terminal.
+        """
+
+        read = reader or self.runtime_binding_reader
+        if read is None:
             raise PersonaProvisioningCoordinationError(
                 "RuntimeBinding reader is not configured"
             )
-        bindings = self.runtime_binding_reader(ids.deployment_plan_id, ids.capital_pool_id)
-        observed: dict[str, str] = {}
-        for binding in bindings or []:
-            binding_id = str(binding.get("binding_id") or binding.get("id") or "")
-            observed[binding_id] = str(binding.get("status") or "")
+
+        def observe() -> dict[str, str]:
+            observed: dict[str, str] = {}
+            for binding in read(ids.deployment_plan_id, ids.capital_pool_id) or []:
+                binding_id = str(binding.get("binding_id") or binding.get("id") or "")
+                observed[binding_id] = str(binding.get("status") or "")
+            return observed
+
+        observed = observe()
         live = {k: v for k, v in observed.items() if v not in TERMINAL_RUNTIME_BINDING_STATUSES}
+        retired_here: list[str] = []
+        if live and retirer is not None:
+            for binding_id, status in sorted(live.items()):
+                try:
+                    retirer(binding_id, status)
+                except Exception:  # noqa: BLE001 - response loss reconciled by readback
+                    pass
+                retired_here.append(binding_id)
+            observed = observe()
+            live = {
+                k: v for k, v in observed.items() if v not in TERMINAL_RUNTIME_BINDING_STATUSES
+            }
         if live:
             raise PersonaProvisioningCoordinationError(
                 f"RuntimeBindings are not retired: {sorted(live.items())}"
             )
-        return {"bindings": observed}
+        receipt: dict[str, Any] = {"bindings": observed}
+        if retired_here:
+            receipt["retired_by_case"] = retired_here
+        return receipt
 
     def _retire_pcb(self, record: ProvisioningRecord, ids: ProvisioningIds) -> Mapping[str, Any]:
         return self._revoke_binding(
@@ -3960,6 +4058,33 @@ class PersonaProvisioningCoordinator:
         )
 
     @staticmethod
+    def _book_generation_symbols(record: ProvisioningRecord) -> list[str] | None:
+        """Universe of a trader paper book's current generation (generation >= 2).
+
+        PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: a replaced trader book keeps
+        its one ledger row (and its request payload/hash); the replacement
+        generation's universe is recorded under ``references.book_generation``
+        by the trader paper book ensure. Only that book row kind is honoured.
+        """
+
+        if not str(record.idempotency_key or "").startswith("trader-paper-book:"):
+            return None
+        if (
+            str(record.request_payload.get("mandate") or "").strip()
+            != "user_private_agora_servant_paper_book"
+        ):
+            return None
+        generation = record.references.get("book_generation")
+        if not isinstance(generation, Mapping):
+            return None
+        symbols = generation.get("symbols")
+        if not isinstance(symbols, list) or not symbols or not all(
+            isinstance(item, str) and item.strip() for item in symbols
+        ):
+            return None
+        return [str(item).strip() for item in symbols]
+
+    @staticmethod
     def _paper_universe(
         record: ProvisioningRecord,
         *,
@@ -3974,15 +4099,17 @@ class PersonaProvisioningCoordinator:
         if not isinstance(symbols, list) or not all(
             isinstance(item, str) and item.strip() for item in symbols
         ):
-            category = classify_market_token(
-                market if market is not None else record.request_payload.get("market")
-            )
-            if category not in (None, "US"):
-                raise PersonaProvisioningCoordinationError(
-                    f"paper universe symbols are required for market {category}; "
-                    "no default universe is assumed"
+            symbols = PersonaProvisioningCoordinator._book_generation_symbols(record)
+            if symbols is None:
+                category = classify_market_token(
+                    market if market is not None else record.request_payload.get("market")
                 )
-            symbols = ["SPY"]
+                if category not in (None, "US"):
+                    raise PersonaProvisioningCoordinationError(
+                        f"paper universe symbols are required for market {category}; "
+                        "no default universe is assumed"
+                    )
+                symbols = ["SPY"]
         bar_frequency = str(record.request_payload.get("bar_frequency") or "1d")
         # SD_INTRADAY_MINUTE_BARS §6.1: only governed frequencies may be provisioned.
         try:
