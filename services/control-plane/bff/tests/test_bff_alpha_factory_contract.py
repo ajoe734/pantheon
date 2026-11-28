@@ -1256,3 +1256,22 @@ def test_hosted_template_search_counts_receipts_and_integrity_exclusions(monkeyp
     item = next(i for i in _get(client)['data']['scaffolded'] if i['kind'] == 'template_search')
     assert item['templates_attempted'] == 0
     assert item['excluded_by_reason'] == {'template_tenant_mismatch': 182}
+
+
+def test_owner_step_split_passes_through_board_with_total_contract(monkeypatch, tmp_path) -> None:
+    from services.source_ingestion import discovery_summary as ds
+    from services.source_ingestion.hypothesis_card import ExtractionLedger
+
+    monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", "http://source-ingest.local")
+    path = tmp_path / "l2_extraction_ledger.sqlite"
+    ledger = ExtractionLedger(path, daily_cap=400)
+    assert ledger.reserve_call("src-a")
+    assert ledger.reserve_attempt("src-a", step="compile") == "reserved"
+    owner = ds.read_discovery_summary(
+        queue_path=tmp_path / "missing_queue.jsonl", tenant_id="tenant-dev", ledger_path=path
+    )
+    body = _get(_make_bff_client(monkeypatch, http_get=_owner_router([], summary=_summary(llm_calls=owner["llm_calls"]))))
+    total = body["data"]["counts"]["llm_calls_today"]
+    assert (total["value"], total["distinct_sources"], total["calls_per_source"]) == (2, 1, 2.0)
+    split = body["data"]["discovery_summary"]["llm_calls"]
+    assert (split["extraction_calls"], split["compile_calls"], split["extraction_calls_per_source"]) == (1, 1, 1.0)

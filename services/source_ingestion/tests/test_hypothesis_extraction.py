@@ -2439,6 +2439,8 @@ def test_unsent_compiler_proposer_refunds_its_own_reservation(tmp_path, l2_http_
     assert ledger.calls_today() == ledger.record_attempts("src-1")["total"] == 1
     assert ledger.summary()["distinct_sources"] == 1
     assert ledger.summary()["unsent_calls"] == 1 and state["provider_calls"] == 0
+    assert ledger.summary()["compile_calls"] == 0
+    assert ledger.summary()["extraction_calls"] == 1
 
 
 def test_unsent_refund_uses_reservation_day_across_midnight(tmp_path, monkeypatch):
@@ -2517,3 +2519,63 @@ def test_owner_read_reports_unsent_separately_without_writing(tmp_path, l2_http_
     assert summary["llm_calls"]["status"] == "ok"
     assert summary["llm_calls"]["calls"] == 0
     assert summary["llm_calls"]["unsent_calls"] == 1
+
+
+def test_call_step_split_and_mixed_limits(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    ledger = ExtractionLedger(tmp_path / "steps.sqlite", daily_cap=4)
+    assert ledger.summary()["extraction_calls_per_source"] is None
+    assert ledger.reserve_attempt("s1") == hypothesis_card.RESERVED
+    assert ledger.reserve_attempt("s1", step="compile") == hypothesis_card.RESERVED
+    summary = ledger.summary()
+    assert (summary["calls"], summary["compile_calls"], summary["extraction_calls"],
+            summary["distinct_sources"], summary["extraction_calls_per_source"],
+            summary["calls_per_source"]) == (2, 1, 1, 1, 1.0, 2.0)
+    assert ledger.reserve_attempt("s1", step="compile") == hypothesis_card.RESERVED
+    assert ledger.reserve_attempt("s1") == hypothesis_card.RECORD_DAILY_LIMIT
+    assert ledger.reserve_attempt("s2") == hypothesis_card.RESERVED
+    assert ledger.reserve_attempt("s3", step="compile") == hypothesis_card.DAILY_CAP_REACHED
+    assert ledger.summary()["compile_calls"] == 2
+    assert ledger.record_attempts("s1")["total"] == 3
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+    monkeypatch.setattr(hypothesis_card, "_today", lambda: tomorrow)
+    for step in ("compile", "extraction", "compile"):
+        assert ledger.reserve_attempt("s1", step=step) == hypothesis_card.RESERVED
+    assert ledger.reserve_attempt("s1") == hypothesis_card.RECORD_TOTAL_LIMIT
+
+
+def test_compile_refund_removes_both_counts_and_uses_original_day(tmp_path):
+    ledger = ExtractionLedger(tmp_path / "refund.sqlite")
+    day = ledger.utc_day()
+    assert ledger.reserve_attempt("s1", day=day, step="compile") == hypothesis_card.RESERVED
+    ledger.note_unsent("s1", day=day, step="compile", reason="dns_failure", detail="not sent")
+    summary = ledger.summary()
+    assert (summary["calls"], summary["compile_calls"], summary["extraction_calls"],
+            summary["distinct_sources"], summary["unsent_calls"]) == (0, 0, 0, 0, 1)
+    assert summary["extraction_calls_per_source"] is None
+    assert ledger.record_attempts("s1")["total"] == 0
+    old_day = "2026-11-01"
+    assert ledger.reserve_attempt("s2", day=old_day, step="compile") == hypothesis_card.RESERVED
+    ledger.note_unsent("s2", day=old_day, step="compile", reason="dns_failure", detail="not sent")
+    with ledger._conn() as conn:
+        assert conn.execute("SELECT n, compile_calls, sources, unsent FROM calls WHERE day=?", (old_day,)).fetchone() == (0, 0, 0, 1)
+
+
+def test_compile_column_additive_migration_and_absent_summary(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite"
+    ledger = ExtractionLedger(path)
+    assert ledger.reserve_call("old-source")
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE calls DROP COLUMN compile_calls")
+    missing = ledger.summary()
+    assert missing["calls"] == 1
+    assert all(missing[k] is None for k in ("compile_calls", "extraction_calls", "extraction_calls_per_source"))
+    assert missing["calls_split_reason"] == "ledger_compile_calls_column_missing"
+    migrated = ExtractionLedger(path)
+    assert migrated.summary()["calls"] == 1 and migrated.summary()["compile_calls"] == 0
+    assert migrated.reserve_attempt("old-source", step="compile") == hypothesis_card.RESERVED
+    assert migrated.summary()["compile_calls"] == 1
+    with sqlite3.connect(path) as conn:
+        col = next(r for r in conn.execute("PRAGMA table_info(calls)") if r[1] == "compile_calls")
+        assert col[2:5] == ("INTEGER", 1, "0")
