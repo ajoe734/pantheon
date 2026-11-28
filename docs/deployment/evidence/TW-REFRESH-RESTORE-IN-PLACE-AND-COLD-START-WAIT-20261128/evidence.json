@@ -1,0 +1,159 @@
+{
+  "task": "TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128",
+  "owner": "Codex2",
+  "reviewer": "Antigravity",
+  "register_class": "RC2",
+  "domain_owner": "cb4f6795",
+  "delivery": {
+    "status": "source implementation awaiting independent review; hosted acceptance pending",
+    "startup_repair": "#8021 (separate source-ingest cold-start work, no duplicate changes)"
+  },
+  "incident": {
+    "run_id": 46114700528,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/46114700528",
+    "job_id": 140885780844,
+    "head_sha": "287701d460de11ef8a2cc6b0323c45417d10d48f",
+    "log_source": "gh api repos/ajoe734/pantheon/actions/jobs/140885780844/logs; line numbers below refer to this raw job log",
+    "lines": [
+      {
+        "line": 852,
+        "at": "2026-11-28T06:18:01.9794396Z",
+        "text": "bounded source refresh accepted connector=tw-twse-tpex-official-market run=ingest-f9fb59ffc412 source=tw-official:tw_price_daily:TWSE:2330:c15dd37236133409 freshness=fresh"
+      },
+      {
+        "line": 854,
+        "at": "2026-11-28T06:18:03.2104204Z",
+        "text": "source-ingest memory.peak=6442450944 bytes limit=6442450944 bytes oom_killed=false"
+      },
+      {
+        "line": 1532,
+        "at": "2026-11-28T06:21:06.1108353Z",
+        "text": "Container pantheon-source-ingest-1 Recreate"
+      },
+      {
+        "line": 1535,
+        "at": "2026-11-28T06:21:15.0281115Z",
+        "text": "Container pantheon-source-ingest-1 Started"
+      },
+      {
+        "line": 1680,
+        "at": "2026-11-28T06:24:17.3452778Z",
+        "text": "curl: (22) The requested URL returned error: 503"
+      },
+      {
+        "line": 1681,
+        "at": "2026-11-28T06:24:18.3053378Z",
+        "text": "bounded runtime record /tmp/pantheon-bounded-runtime-46114700528 kept: restore failed at source_ingest_restore"
+      }
+    ],
+    "hosted_container_log": [
+      "2026-11-28T06:24:17.261494845Z GET /readyz HTTP/1.1 503 Service Unavailable",
+      "2026-11-28T06:24:27.548318739Z GET /readyz HTTP/1.1 200 OK",
+      "2026-11-28T06:25:59.331879545Z GET /readyz HTTP/1.1 200 OK"
+    ],
+    "hosted_readonly": {
+      "observed_on": "2026-11-28 before source modification deployment",
+      "pre_env_count": 51,
+      "current_env_count": 51,
+      "exact_env_equal": true,
+      "recorded_image_equal": true,
+      "source_started_at": "2026-11-28T06:21:14.460705919Z",
+      "source_health": "healthy",
+      "scheduler_started_at": "2026-11-28T06:24:17.318068709Z",
+      "scheduler_health": "healthy",
+      "scheduler_mode": "collector_steady_pull",
+      "record_phase": "entered",
+      "record_enter_count": 1
+    },
+    "live_repair": {
+      "source": "task-scoped brief/operator decision (not performed by this worker)",
+      "time": "2026-11-28T10:42Z",
+      "action": "renamed record to /tmp/stale-pantheon-bounded-runtime-46114700528-20261128T1042Z; read-only SSH confirms renamed directory exists and no active matching record exists",
+      "automatic_retirement_proof": false
+    },
+    "old_behavior": "BR_PHASE entered and count 1, same image and existing steady IDs select no retirement reason; restore_from_state unconditionally calls manage_source_ingest_refresh_runtime restore, recreating the already healthy service"
+  },
+  "cold_start_measurements": [
+    {
+      "kind": "Docker StartedAt to first observed ready HTTP 200",
+      "seconds": 193.08761282,
+      "start": "2026-11-28T06:21:14.460705919Z",
+      "end": "2026-11-28T06:24:27.548318739Z",
+      "note": "Ready transition is between last observed 503 at 06:24:17 and first observed 200 at 06:24:27; not claimed as an exact transition instant"
+    },
+    {
+      "kind": "compose recreate announcement to first observed ready HTTP 200",
+      "seconds": 201.4374834,
+      "start": "2026-11-28T06:21:06.1108353Z",
+      "end": "2026-11-28T06:24:27.548318739Z",
+      "note": "Same cold start, including replacement overhead, not an independent sample"
+    }
+  ],
+  "wait_policy": {
+    "readiness_deadline_seconds": 420,
+    "margin_over_observed_start_to_ready_seconds": 226.912,
+    "restore_guard_reserve_seconds": 600,
+    "reason": "420s readiness + existing start-period health recheck (normally 120s) + 60s orchestration margin. Poll and curl time count against monotonic deadline; curl capped at min(5,remaining) seconds; readiness timeout status 75 alone is eligible for one final posture check when health is starting, followed by a readyz request. Other recreate/image/env failures stay failed.",
+    "market_open_effect": "Default profile budget 900s plus restore 600s prevents new profiles at or after 00:30Z weekdays until market close; previously 00:35Z. 23:30Z primary remains admitted; a proposed 00:30Z backup requires RC2 scheduling/profile-budget disposition."
+  },
+  "memory": {
+    "peak_bytes": 6442450944,
+    "limit_bytes": 6442450944,
+    "oom_killed": false,
+    "step": "First reported by official Taiwan market refresh at 06:18:03Z, before TAIFEX/chip/fundamental steps. Container-wide peak includes cold-start/preparation and official projection; cannot attribute a subphase without samples.",
+    "original_bounded_memory_stat": {
+      "status": "unavailable",
+      "anon_bytes": null,
+      "file_bytes": null,
+      "reason": "Prior script captured memory.peak only; original bounded container/cgroup was removed during restore at 06:21Z. No original memory.stat in job logs or saved state. Cannot reconstruct anonymous/page-cache split from peak."
+    },
+    "post_restore_comparison_only": {
+      "captured_at": "2026-11-28T10:49:49Z",
+      "anon_bytes": 3405123584,
+      "file_bytes": 2914115584,
+      "source": "read-only docker exec on steady pantheon-source-ingest-1, new cgroup; NOT the original bounded peak breakdown"
+    },
+    "disposition": "Keep 6 GiB unchanged; add existing-log memory.stat anon/file current samples before bounded runtime removal to prevent losing this diagnostic on next refresh. Original split remains residual evidence gap for domain owner; no OOM inferred from peak alone."
+  },
+  "storage": {
+    "manifest": "docs/operations/storage-manifest.json runtime_budgets (existing #8003 receipt registered)",
+    "cadence": "at most once per retired record; zero new jobs",
+    "size_count": "one log and transient sibling; default 50 lines, typically <50 KiB each",
+    "growth_per_day": "zero after tail fills; four current scheduled refreshes/day plus manual refreshes",
+    "cap_cleanup": "50-line tail; record deleted on successful retirement; failed-record count cap is a pre-existing RC3 residual"
+  },
+  "verification": {
+    "before_change": "4 failed, 6 passed, 254 deselected: retirement, successful/rejected starting recheck, missing deadline helper; base source unchanged when run",
+    "focused_after_change": "10 passed, 253 deselected",
+    "full_suites": "pending",
+    "shell": "bash -n scripts/deploy_nonprod_vm.sh exit 0",
+    "storage": "python3 scripts/check_storage_manifest.py: exit 0, passed=true, 382 entries, no failures"
+  },
+  "hosted_acceptance": {
+    "status": "pending_post_merge",
+    "run_id": null,
+    "procedure": "Read next dev-ref refresh via gh run list/view and raw job log API; confirm head contains merged repair, no bounded_runtime_stale_restore_failed, steady check passes, and read-only SSH finds no active record or restored_in_place receipt. Do not restore the operator-renamed record or trigger a write for read-only proof."
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 market data",
+      "owner": "cb4f6795",
+      "finding": "Original bounded memory.stat split unavailable, as detailed above; future samples now retained in existing run logs."
+    },
+    {
+      "class": "RC2 market data",
+      "owner": "cb4f6795",
+      "finding": "600s reserve moves last default profile admission to 00:30Z; fallback schedule/budget must account for the measured cold start."
+    },
+    {
+      "class": "RC3 storage",
+      "owner": "problem register RC3 owner",
+      "finding": "Existing failed bounded runtime directories lack a global count/age cap; receipt cap does not bound them."
+    }
+  ],
+  "independent_review": {
+    "status": "pending",
+    "assigned_reviewer": "Antigravity"
+  },
+  "compatibility": "Existing never_entered and superseded_by_release retirement stays unchanged. A different running image remains superseded_by_release (existing #8003 contract), not restored_in_place. Same-image env mismatch or stopped recorded container follows existing restore path."
+}

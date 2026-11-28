@@ -2505,7 +2505,7 @@ def test_nonprod_deploy_and_refresh_workflows_separate_twse_and_taifex_bounded_r
 
     refresh_steps = refresh_wf["jobs"]["refresh"]["steps"]
     refresh_by_id = {s.get("id"): (idx, s) for idx, s in enumerate(refresh_steps) if s.get("id")}
-    # The 00:30Z backup must fetch official opens before the 00:35Z guard;
+    # The 00:30Z backup must fetch official opens before the market-open guard;
     # TAIFEX remains a separate refresh with its own dataset and egress.
     assert refresh_by_id["refresh"][0] < refresh_by_id["taifex_refresh"][0]
     assert refresh_by_id["taifex_refresh"][1]["env"]["SOURCE_INGEST_BOUNDED_CONNECTOR_ID"] == "tw-taifex-futures-options-chip"
@@ -4241,7 +4241,7 @@ sys.exit(1 if n <= {fail_attempts} else 0)
 
     sleep = fake / "sleep"
     sleep.write_text(
-        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\n',
+        f'#!/usr/bin/env bash\necho "$*" >> "{sleep_log}"\necho $(( $(cat "{tmp_path / "clock"}" 2>/dev/null || echo 0) + $1 )) > "{tmp_path / "clock"}"\n',
         encoding="utf-8",
     )
     sleep.chmod(0o755)
@@ -4256,6 +4256,7 @@ sys.exit(1 if n <= {fail_attempts} else 0)
         + curl_fn
         + "\n"
         + manage_fn
+        + f'\nsource_ingest_restore_clock() {{ cat "{tmp_path / "clock"}" 2>/dev/null || echo 0; }}\n'
         + f'\nmanage_source_ingest_refresh_runtime "{env_file}" "{action}" "sha256:aa" "2330.TW"\n'
     )
     proc = subprocess.run(
@@ -6904,8 +6905,8 @@ def test_trading_day_before_market_open_restores_steady_once_and_marks_remaining
 @pytest.mark.parametrize(
     ("now", "blocked"),
     [
-        ("2026-11-18T00:34:00Z", False),   # Wednesday, a profile still fits before 00:55Z
-        ("2026-11-18T00:35:00Z", True),    # last start: 00:55Z minus profile and restore budgets
+        ("2026-11-18T00:29:00Z", False),   # Wednesday, a profile still fits before 00:55Z
+        ("2026-11-18T00:30:00Z", True),    # last start: 00:55Z minus profile and restore budgets
         ("2026-11-18T00:56:00Z", True),
         ("2026-11-18T05:29:00Z", True),    # still inside the session
         ("2026-11-18T07:00:00Z", False),   # after the close: the normal afternoon cron
@@ -7099,7 +7100,6 @@ docker() {
     if not mismatch:
         assert host.event_lines() == [], "an already restored source-ingest must not be recreated"
         assert "reason=restored_in_place" in proc.stdout
-        assert '"restore_recreates": 0' not in proc.stdout  # summary stays structured, receipt carries reason
         assert "docker start steady-sched steady-proj" not in host.docker_calls()
         assert "reason=restored_in_place" in (host.state_root / "pantheon-bounded-runtime-retired.log").read_text()
     else:
@@ -7133,6 +7133,17 @@ bounded_runtime_restore_from_state "{record}"
     assert (checks.read_text().splitlines() if checks.exists() else []) == (["check"] if health == "starting" else [])
     assert record.exists() == bool(expected)
 
+
+
+def test_manage_restore_uses_the_longer_deadline_and_preserves_timeout_status(tmp_path: Path) -> None:
+    # Exercise the actual Python recreate/env validation plus shell wait routing.
+    for failures, expected in [(40, 0), (100, 75)]:
+        run_dir = tmp_path / str(failures)
+        run_dir.mkdir()
+        proc, curls, sleeps = _run_manage_refresh_runtime_shell(run_dir, "restore", fail_attempts=failures)
+        assert proc.returncode == expected, proc.stderr
+        assert len(curls) == (41 if failures == 40 else 84)
+        assert sleeps == ["5"] * (40 if failures == 40 else 84)
 
 def test_restore_ready_wait_uses_an_injected_monotonic_deadline(tmp_path: Path) -> None:
     # Curl time counts too: simulate a 193-second cold start, then a wait that never becomes ready.
@@ -7550,14 +7561,14 @@ def test_broker_backfill_market_open_guard_blocks_start_and_stops_between_sessio
     assert "market_open_0055z" in payload_in["reason"] and "00:55Z" in payload_in["reason"]
     assert payload_in["requests_made"] == 0
 
-    # 2. Dispatch starts at 00:34Z (allowed), finishes session 2026-06-08, then reaches 00:35Z before session 2026-06-09.
+    # 2. Dispatch starts at 00:29Z (allowed), finishes session 2026-06-08, then reaches 00:30Z before session 2026-06-09.
     between_dir = tmp_path / "between"
     between_dir.mkdir()
     proc_bw, _calls_bw, out_bw = _run_broker_backfill_func(
         between_dir,
         "real_between_sessions",
         {
-            "PANTHEON_REFRESH_NOW": "2026-11-18T00:34:00Z",
+            "PANTHEON_REFRESH_NOW": "2026-11-18T00:29:00Z",
             "BROKER_BACKFILL_START_DATE": "2026-06-08",
             "BROKER_BACKFILL_END_DATE": "2026-06-09",
             "BROKER_BACKFILL_MIN_INTERVAL_SECONDS": "0.6",

@@ -4453,7 +4453,7 @@ bounded_runtime_state_set() {
 # Reads memory.peak of the running source-ingest container and keeps the maximum in the state.
 # The limit is the container's own memory limit; a container killed for memory sets BR_OOM=true.
 bounded_runtime_record_memory() {
-  local dir="$1" cid="$2" peak limit oom old_peak
+  local dir="$1" cid="$2" peak limit oom old_peak breakdown
   [[ -n "${cid}" && -s "${dir}/state.env" ]] || return 0
   peak="$(docker exec "${cid}" cat /sys/fs/cgroup/memory.peak 2>/dev/null | tr -dc '0-9' || true)"
   limit="$(docker inspect --format '{{.HostConfig.Memory}}' "${cid}" 2>/dev/null | tr -dc '0-9' || true)"
@@ -4464,6 +4464,10 @@ bounded_runtime_record_memory() {
   [[ "${limit}" =~ ^[0-9]+$ ]] && (( limit > 0 )) && bounded_runtime_state_set "${dir}" BR_LIMIT_BYTES "${limit}"
   [[ "${oom}" == "true" ]] && bounded_runtime_state_set "${dir}" BR_OOM true
   info "source-ingest memory.peak=${peak:-unknown} bytes limit=${limit:-unknown} bytes oom_killed=${oom:-unknown}"
+  # Sample before the bounded container is removed. memory.stat is current usage, not a
+  # breakdown of the historical peak; keep that distinction explicit in the run log.
+  breakdown="$(docker exec "${cid}" cat /sys/fs/cgroup/memory.stat 2>/dev/null | awk '$1 == "anon" || $1 == "file" {printf "%s=%s ", $1, $2}' || true)"
+  info "source-ingest memory.stat at sample (not peak): ${breakdown:-unavailable}"
   return 0
 }
 

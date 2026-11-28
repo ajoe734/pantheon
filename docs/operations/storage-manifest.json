@@ -6601,6 +6601,28 @@
     "file": "scripts/openclaw-configure-shared-model-pool.sh",
     "contains": "retired-stock-bootstrap"
    }
+  },
+  {
+   "name": "Taiwan bounded runtime retirement receipt (/tmp/pantheon-bounded-runtime-retired.log)",
+   "owner": "market-data domain cb4f6795 / release restore helpers",
+   "writer": "scripts/deploy_nonprod_vm.sh bounded_runtime_retire_if_not_in_place; existing writer from #8003, adds restored_in_place reason only",
+   "task": "TW-REFRESH-RESTORE-IN-PLACE-AND-COLD-START-WAIT-20261128",
+   "register_class": "RC2",
+   "bound_status": "bounded",
+   "cadence": "Only on retiring an existing stale record, at most once per record; four scheduled refreshes per weekday at current workflow plus manual runs; no new recurring job",
+   "count_at_hosted_scale": "One receipt log and one transient .tmp sibling on the single hosted dev VM; this change adds zero state directories",
+   "size": "Default tail of 50 receipt lines, typically <1 KiB per default-path receipt (<50 KiB log plus <50 KiB transient replacement); actual line length depends on host paths and configurable cap",
+   "growth_per_day": "0 net after the 50-line tail fills; normally 0 on converged runs; at most one receipt per retired record (four newly failed scheduled runs/day would add four lines before tail cap, plus manual runs)",
+   "cap": "Last BOUNDED_RUNTIME_RETIRED_LOG_LINES lines, default 50; tail is rewritten in place; receipt path does not match the state-dir glob",
+   "cleanup": "State directory is removed upon verified retirement; receipt tail is compacted on each append; transient sibling is atomically renamed over log. Pre-existing failed state-dir accumulation has no global count/age cap and remains RC3 residual, not bounded by this receipt cap",
+   "readers": [
+    "scripts/deploy_nonprod_vm.sh",
+    "hosted read-only acceptance"
+   ],
+   "bound_proof": {
+    "file": "scripts/deploy_nonprod_vm.sh",
+    "contains": "cap=\"${BOUNDED_RUNTIME_RETIRED_LOG_LINES:-50}\""
+   }
   }
  ]
 }
