@@ -24,6 +24,16 @@ def _allowed(identity: Any, persona_id: str) -> bool:
     return scoped is None or (isinstance(scoped, list) and persona_id in scoped)
 
 
+def _ensure_persona_readable(identity: Any, persona_id: str) -> None:
+    """Persona-service owner rule for the journal reads; an unlisted persona stays the owner's answer."""
+    from .personas.routes.detail import _lazy_viewer_user_id
+    from .personas.service import _ensure_persona_exists, utc_now
+
+    _ensure_persona_exists(
+        persona_id, viewer_user_id=_lazy_viewer_user_id(identity, utc_now), require_exists=False
+    )
+
+
 def _mask(value: Any, identity: Any) -> Any:
     if {"operator", "approver", "admin", "reviewer"}.intersection(identity.roles):
         return value
@@ -429,7 +439,7 @@ def _dispatch_command(payload: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
     raise RuntimeError(f"unsupported action: {act}")
 
 
-def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command) -> APIRouter:
+def create_trade_journal_router(*, extract_identity: Callable[..., Any], require_read_role: Callable[[Any], None], require_operator_role: Callable[[Any], None], dispatch_command: Callable[[Mapping[str, Any]], tuple[int, dict[str, Any]]] = _dispatch_command, ensure_persona_readable: Callable[[Any, str], None] | None = None) -> APIRouter:
     router = APIRouter()
 
     def identity(request: Request) -> Any:
@@ -447,6 +457,8 @@ def create_trade_journal_router(*, extract_identity: Callable[..., Any], require
             tenant = bound_tenant({}, request.headers.get("X-Tenant-Id"), authorization)
         except ActionUnavailableError:
             return who, None, _err(403, "FORBIDDEN", "A verified caller tenant is required")
+        # user_private owner rule: a non-owner gets the missing-persona 404 before any owner read.
+        (ensure_persona_readable or _ensure_persona_readable)(who, persona_id)
         base = ((os.getenv("PERSONA_URL") or os.getenv("PANTHEON_PERSONA_SERVICE_URL"))
                 if owner == "persona" else os.getenv("PANTHEON_TELEMETRY_API_URL"))
         if not base:

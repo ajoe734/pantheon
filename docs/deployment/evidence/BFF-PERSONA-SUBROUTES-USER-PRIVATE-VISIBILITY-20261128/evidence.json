@@ -1,0 +1,188 @@
+{
+  "task_id": "BFF-PERSONA-SUBROUTES-USER-PRIVATE-VISIBILITY-20261128",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "reviewer_independence": {
+    "owner_family": "Anthropic (Claude)",
+    "reviewer_family": "OpenAI (Codex)",
+    "independent": true
+  },
+  "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility on persona GET subroutes",
+  "depends_on": "BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128 (done; PR #8030 merged)",
+  "implementation": [
+    "services/control-plane/bff/personas/service.py: _ensure_persona_exists gains keyword-only viewer_user_id (lazy resolver) and require_exists. Without a viewer it is the unchanged existence check used by write routes. With a viewer it returns when _persona_fleet_record_visible_to(record, None) is true (record not user_private: no scope resolution), otherwise resolves the viewer and applies _persona_fleet_record_visible_to again; a rejected record raises the same 404 RESOURCE_NOT_FOUND ('Persona not found' / 'Persona {id} does not exist') as a missing persona. No second visibility rule.",
+    "personas/routes/detail.py: _lazy_viewer_user_id(identity, utc_now, tenant_id=None) wraps the existing _fleet_viewer_user_id (tenant and scope resolve only for a private record). The 9 GET routes pass it to _ensure_persona_exists in the same position as before (after _require_read_role).",
+    "personas/routes/lifecycle.py: GET strategy-pool/publish-history passes the viewer after _pool_owner_authorization (original order); the pool-publish service principal keeps the existence-only call because it reads its own publication record and is not a viewer. GET strategy-matches passes the viewer through _persona_strategy_matches_response -> _persona_strategy_discovery_payload (single directory read); POST strategy-discovery passes none and is unchanged.",
+    "trade_journal.py: read_owner calls the default _ensure_persona_readable (or an injected ensure_persona_readable) after require_read_role, _allowed and the bound_tenant guard and before any telemetry/persona owner call; it uses require_exists=False so a persona absent from a healthy directory keeps the owner's answer. When the record is absent and the persona registry read is not positively healthy (the read store's dataset_source('personas') reports 'unavailable', 'missing' -- PersonaFleetPort maps a PersonaWriteOwnerUnavailable 'not configured' owner to source='missing' with empty records -- an empty or unknown status, the store has no dataset_source capability, or the status read raises), visibility is unknown and the route fails closed with 503 DEPENDENCY_UNAVAILABLE before all four journal owner reads. A genuinely absent persona with a healthy registry keeps the owner answer; a present record is judged as in the persona routes.",
+    "personas/service.py: the read variant of _ensure_persona_exists runs in one request_read_scope, so the directory snapshot's two list_personas reads and the registry-status read share one cached persona-registry owner call.",
+    "BFF_API_CONTRACT.md states the owner rule for the 15 routes."
+  ],
+  "subroute_visibility_inventory": [
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/route-policy",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/runtime-profile",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/activity",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/evaluations",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/memory",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/audit",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/skills",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/tools",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/capabilities",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-pool/publish-history",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-matches",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal/{episode_id}",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-reflections",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-patterns",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_exists(viewer_user_id=_lazy_viewer_user_id(...)) -> _persona_fleet_record_visible_to",
+      "changed_in_this_task": true
+    }
+  ],
+  "write_routes_unchanged": {
+    "evidence": "POST /bff/personas/{id}/strategy-pool/publish and POST .../test-prompt in personas/routes/lifecycle.py still call _ensure_persona_exists without a viewer; POST strategy-discovery reaches _ensure_persona_exists with viewer_user_id=None; the service-principal publish-history path passes no viewer. Asserted in test_read_check_reuses_shared_visibility_rule_and_write_routes_keep_existence_check.",
+    "trade_journal_commands": "command() and its _allowed / require_operator_role checks are not touched."
+  },
+  "acceptance_evidence": {
+    "AC1": "tests/test_persona_subroute_private_visibility.py::test_non_owner_gets_missing_persona_404_and_no_owner_call and test_owner_still_answered are parametrized over all 15 routes; test_non_owner_404_is_identical_to_missing_persona_on_persona_routes compares the non-owner body with a genuinely missing persona on the 11 persona-router routes. The trade-journal episode route answers the owner with the telemetry owner's own 404 (the stub reports no episode) and the non-owner with the persona 404.",
+    "AC2": "Visibility is _persona_fleet_record_visible_to + _fleet_viewer_user_id through the one shared check inside _ensure_persona_exists(viewer_user_id=...); routes only pass a lazy viewer. Write routes unchanged (see write_routes_unchanged).",
+    "AC3": "test_unscoped_and_trading_personas_unchanged_without_scope_resolution (15 routes x {trading persona, servant without owner_scope/visibility_scope}) answers as before with 0 scope resolutions; test_trade_journal_missing_persona_keeps_owner_answer keeps the owner answer for a persona absent from the directory.",
+    "AC4": "For every rejected non-owner request the counters for memory, audit, telemetry, persona-owner, pool history, route policy, activity, evaluations, capability snapshot, runtime profile and strategy discovery stay 0 (asserted per route).",
+    "AC5": "BFF_API_CONTRACT.md: new bullet next to the GET /bff/personas owner-visibility bullet.",
+    "AC6": "See runtime_budget.",
+    "AC7": "Pending deploy; see hosted_acceptance.",
+    "AC8": "Owner Claude2 (Anthropic) and reviewer Codex2 (OpenAI) are different model families."
+  },
+  "validation": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0",
+    "new_tests": "cd services/control-plane/bff && ../../../.venv-pantheon/bin/python3 -m pytest -q tests/test_persona_subroute_private_visibility.py tests/test_persona_list_private_visibility.py tests/test_persona_pool_publish_route.py test_persona_pool_publisher.py -> 160 passed exit 0 (includes registry-outage, missing/unconfigured-registry (PersonaWriteOwnerUnavailable 'Persona service URL is not configured', 4 routes x {private, absent} persona: 503, zero journal-owner calls, one registry call), absent-status-capability fail-closed and counted-transport regressions); test_ptj_004_trade_journal.py + test_trade_journal_owner_reads.py: 26 passed 3 failed, the same 3 named failures (test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores [POST reflection:retry 503], test_actual_telemetry_scope_pagination_and_dto, test_pattern_review_producer_end_to_end_reads_through_mounted_bff) reproduced independently on an exported base tree 98e496b99f5505fce0f65ede38b7f49a1be94cd3; tenant-guard order preserved",
+    "regression_set": "17 related files (bff root and tests/: consol_008, consol_016, strategy_persona_contract, persona_strategy_discovery, per002 capabilities, pool publisher, ptj_004, trade_journal_owner_reads, b2_list_detail_facade, main_composition, persona_pool_publish_route, persona_router, event_loop_owner_reads_guard, persona_list_private_visibility, default_bff_actual_persona_sessions, the new subroute test, architecture_boundaries): 341 passed, 33 failed + 1 error; the failing set was compared with an unmodified export of base HEAD 72fe584e0 (33 failures there) and is identical apart from one test fixed afterwards (test_pool_principal_history_and_owner_fetch_use_bff_service_auth, covered by the 129-passed run above).",
+    "pre_existing_failures_on_base": [
+      "test_architecture_boundaries.py::test_mutation_route_ownership_mapping_contract",
+      "test_architecture_boundaries.py::test_symbol_dispositions_inventory_contract",
+      "test_ptj_004_trade_journal.py::test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores",
+      "plus 30 more in test_persona_router.py, test_bff_main_composition.py, test_default_bff_actual_persona_sessions.py and others; identical on base and on this branch (33 on base)"
+    ],
+    "note": "None of the base failures is introduced or masked by this change; they are outside this task's scope."
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "max_agora_scope_resolutions_per_request": 1,
+    "scope_resolutions_for_non_private_records": 0,
+    "new_owner_reads_per_request": "Measured with a counted PersonaRegistry transport behind the real PersonaFleetPort (tests/test_persona_subroute_private_visibility.py, journal_harness): every checked request costs exactly 1 persona-registry directory owner call (GET /api/personas on the hosted PersonaRegistryHttpWritePort). _get_persona_directory_snapshot calls list_personas twice, but under the read variant's request_read_scope both hit the same cached pcr_personas key (previously 2 transport calls per unscoped check). Persona-router routes keep their one directory read (now at most 1 transport call). The 4 trade-journal routes gain that 1 registry call before the telemetry/persona owner call; no memory, audit, telemetry or persona-owner call is added, and a rejected or fail-closed request makes none (asserted).",
+    "cadence": "Request-scoped in-memory predicate; no new job, timer or emitter.",
+    "size_and_count_at_hosted_scale": "No new response fields, files, tables, queues or caches; hides responses for ~5 other-user servants on hosted dev.",
+    "growth_per_day": "0 bytes/day and 0 records/day",
+    "cap": "No new unbounded structure",
+    "cleanup": "Request-local; nothing persistent"
+  },
+  "hosted_acceptance": {
+    "status": "pending_deploy_and_hosted_read_only_verification",
+    "actor": "admintest (read-only browser)",
+    "checks": [
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/memory -> 404",
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/audit -> 404",
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/trade-journal -> 404",
+      "GET /bff/personas/agora-servant-799a3ce8c021b91cbb54/audit (owned by admintest) -> 200"
+    ]
+  },
+  "residual_findings": [
+    {
+      "finding": "Pre-existing failures on base HEAD (architecture inventory counts, mounted trade-journal 503, persona_router/main_composition suites, 33 total) fail identically before and after this change.",
+      "disposition": "Out of scope; not edited."
+    },
+    {
+      "finding": "CI ci-red on PR #8049 (Service suites misc): services/evolution/test_evolution_service.py::test_pool_publication_actor_fields_cannot_replace_authenticated_service[wrong_role] failed because its _ensure_persona_exists stub (lambda *a) rejected the keyword-only viewer_user_id the publish-history read now passes.",
+      "disposition": "Stub widened to lambda *a, **k in services/evolution/test_evolution_service.py:764; python3 -m pytest -q services/evolution -> 619 passed, 3 skipped; BFF persona list/subroute visibility tests 105 passed."
+    },
+    {
+      "finding": "CI ci-red on PR #8049 (Service suites misc): services/evolution/test_evolution_service.py::test_pool_publication_actor_fields_cannot_replace_authenticated_service[wrong_role] failed because its _ensure_persona_exists stub (lambda *a) rejected the keyword viewer_user_id passed by the publish-history read.",
+      "disposition": "Fixed inside the task contract: _ensure_persona_exists takes viewer_user_id as the third positional-or-keyword parameter and publish-history passes it positionally; the evolution test is not edited. pytest services/evolution -> all pass; bff persona list/subroute visibility tests pass."
+    }
+  ]
+}

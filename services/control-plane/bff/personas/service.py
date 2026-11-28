@@ -3135,8 +3135,9 @@ def _persona_strategy_discovery_payload(
     include_blocked: bool,
     snapshot_at: str,
     discovery_session_id: Optional[str] = None,
+    viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
 ) -> Dict[str, Any]:
-    _ensure_persona_exists(persona_id)
+    _ensure_persona_exists(persona_id, viewer_user_id=viewer_user_id)
     persona = _get_active_read_store().get_persona(persona_id)
     if persona is None:
         directory = _get_persona_directory_snapshot()
@@ -3192,6 +3193,7 @@ def _persona_strategy_matches_response(
     page_token: Optional[str],
     page_size: int,
     discovery_session_id: Optional[str] = None,
+    viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
 ) -> Dict[str, Any]:
     snapshot_at = utc_now()
     payload = _persona_strategy_discovery_payload(
@@ -3200,6 +3202,7 @@ def _persona_strategy_matches_response(
         include_blocked=include_blocked,
         snapshot_at=snapshot_at,
         discovery_session_id=discovery_session_id,
+        viewer_user_id=viewer_user_id,
     )
     matches = payload["matches"]
     page_items, next_page_token = _page_slice(matches, page_token, page_size)
@@ -7295,9 +7298,84 @@ _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
 
 
 # --- _ensure_persona_exists ---
-def _ensure_persona_exists(persona_id: str, caller_tenant: Optional[str] = None) -> None:
+def _ensure_persona_exists(
+    persona_id: str,
+    caller_tenant: Optional[str] = None,
+    viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
+    *,
+    require_exists: bool = True,
+) -> None:
+    """Raise the missing-persona 404; the read-side variant also applies the owner rule.
+
+    Write routes pass no viewer and keep the existence-only check. Read routes pass
+    viewer_user_id (a lazy resolver): a user_private record
+    (_persona_fleet_record_visible_to) read by anyone but its owning Agora user answers
+    the same 404 as a missing persona. The viewer is resolved only for a private record,
+    so every other record costs no Agora scope resolution and keeps its current answer.
+    With require_exists=False a persona absent from a healthy directory is left to the
+    caller's own owner read; an absent record while the persona registry read is
+    unavailable, missing/unconfigured or of unknown status fails closed (503), since
+    its visibility is unknown.
+
+    The read variant runs in one request read scope, so the directory snapshot and the
+    registry status share a single persona-registry owner call.
+    """
+    if viewer_user_id is None:
+        _ensure_persona_exists_in_scope(persona_id, caller_tenant, None, require_exists)
+        return
+    with request_read_scope():
+        _ensure_persona_exists_in_scope(persona_id, caller_tenant, viewer_user_id, require_exists)
+
+
+_PERSONA_REGISTRY_UNHEALTHY_SOURCES = frozenset({"missing", "unavailable", "unknown", "unconfigured"})
+
+
+def _persona_registry_read_unavailable() -> bool:
+    """True unless the active read store positively reports a healthy persona registry read.
+
+    Fails closed: an unavailable, missing/unconfigured (PersonaFleetPort maps a
+    "not configured" owner to source="missing" with empty records), empty or unknown
+    status, an absent dataset_source capability, or a status read error all leave a
+    user_private record's visibility unknown.
+    """
+    store = _get_active_read_store()
+    source_of = getattr(store, "dataset_source", None)
+    if not callable(source_of):
+        return True
+    try:
+        source = source_of("personas")
+    except Exception:
+        return True
+    if not isinstance(source, str) or not source.strip():
+        return True
+    return source.strip().lower() in _PERSONA_REGISTRY_UNHEALTHY_SOURCES
+
+
+def _ensure_persona_exists_in_scope(
+    persona_id: str,
+    caller_tenant: Optional[str],
+    viewer_user_id: Optional[Callable[[], Optional[str]]],
+    require_exists: bool,
+) -> None:
     directory = _get_persona_directory_snapshot(caller_tenant)
-    if persona_id in directory.records_by_id:
+    record = directory.records_by_id.get(persona_id)
+    if record is None:
+        if not require_exists:
+            if viewer_user_id is not None and _persona_registry_read_unavailable():
+                raise _bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Persona registry is unavailable",
+                    "Persona visibility cannot be confirmed while the persona registry read is unavailable",
+                    precondition_failed="persona_registry",
+                    suggestion="Retry after the persona registry recovers",
+                )
+            return
+    elif (
+        viewer_user_id is None
+        or _persona_fleet_record_visible_to(record, None)
+        or _persona_fleet_record_visible_to(record, viewer_user_id())
+    ):
         return
     raise _bff_error(
         404, ErrorCode.RESOURCE_NOT_FOUND,
