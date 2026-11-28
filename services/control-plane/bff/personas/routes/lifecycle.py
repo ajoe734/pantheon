@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from functools import partial
 import hashlib
 import logging
 from urllib import error as urllib_error
@@ -559,10 +558,8 @@ def build_lifecycle_router(ctx: PersonaRouteContext) -> APIRouter:
             await asyncio.to_thread(_ensure_persona_exists, persona_id, tenant_id)
         else:
             await asyncio.to_thread(
-                partial(
-                    _ensure_persona_exists, persona_id, tenant_id,
-                    viewer_user_id=_lazy_viewer_user_id(identity, utc_now, tenant_id),
-                )
+                _ensure_persona_exists, persona_id, tenant_id,
+                _lazy_viewer_user_id(identity, utc_now, tenant_id),
             )
         history = await asyncio.to_thread(_pool_publisher(authorization).history, tenant_id, persona_id)
         from ...auth.policy import bff_auth_mode, bff_auth_stub_enabled

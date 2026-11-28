@@ -179,6 +179,10 @@
     {
       "finding": "CI ci-red on PR #8049 (Service suites misc): services/evolution/test_evolution_service.py::test_pool_publication_actor_fields_cannot_replace_authenticated_service[wrong_role] failed because its _ensure_persona_exists stub (lambda *a) rejected the keyword-only viewer_user_id the publish-history read now passes.",
       "disposition": "Stub widened to lambda *a, **k in services/evolution/test_evolution_service.py:764; python3 -m pytest -q services/evolution -> 619 passed, 3 skipped; BFF persona list/subroute visibility tests 105 passed."
+    },
+    {
+      "finding": "CI ci-red on PR #8049 (Service suites misc): services/evolution/test_evolution_service.py::test_pool_publication_actor_fields_cannot_replace_authenticated_service[wrong_role] failed because its _ensure_persona_exists stub (lambda *a) rejected the keyword viewer_user_id passed by the publish-history read.",
+      "disposition": "Fixed inside the task contract: _ensure_persona_exists takes viewer_user_id as the third positional-or-keyword parameter and publish-history passes it positionally; the evolution test is not edited. pytest services/evolution -> all pass; bff persona list/subroute visibility tests pass."
     }
   ]
 }

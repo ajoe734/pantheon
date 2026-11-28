@@ -331,7 +331,7 @@ def test_read_check_reuses_shared_visibility_rule_and_write_routes_keep_existenc
     # Publish and test-prompt writes keep the bare existence check; only publish-history passes a viewer.
     assert lifecycle_src.count("_ensure_persona_exists, persona_id, tenant_id)") == 2  # publish + service reader
     assert lifecycle_src.count("        _ensure_persona_exists(persona_id)\n") == 1
-    assert lifecycle_src.count("viewer_user_id=_lazy_viewer_user_id(identity, utc_now, tenant_id)") == 1
+    assert lifecycle_src.count("_lazy_viewer_user_id(identity, utc_now, tenant_id)") == 1
     discovery = inspect.getsource(personas_service._persona_strategy_discovery_payload)
     assert "_ensure_persona_exists(persona_id, viewer_user_id=viewer_user_id)" in discovery
     # POST strategy-discovery passes no viewer.

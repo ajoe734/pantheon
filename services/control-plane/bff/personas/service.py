@@ -7301,8 +7301,8 @@ _PERSONA_PATCH_SERVER_MANAGED_FIELDS = frozenset({
 def _ensure_persona_exists(
     persona_id: str,
     caller_tenant: Optional[str] = None,
-    *,
     viewer_user_id: Optional[Callable[[], Optional[str]]] = None,
+    *,
     require_exists: bool = True,
 ) -> None:
     """Raise the missing-persona 404; the read-side variant also applies the owner rule.
