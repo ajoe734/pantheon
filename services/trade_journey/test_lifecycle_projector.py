@@ -3733,8 +3733,16 @@ def test_recorded_park_expire_postgres_bff_roundtrip(relational_postgres_dsn):
             detail = c.get(f"/bff/management/trade-journeys/{jid}" + query, headers=HEADERS).json()["data"]
             expected = "open" if seq == 1 else "expired"
             assert row["outcome"]["kind"] == detail["outcome"]["kind"] == expected
+            # AC3/AC4: this recorded HOLD intends no order, even when it expires.
+            for body in (row, detail):
+                assert body["side"] is None
+                assert body["next_step"] is None
+                if seq == 2:
+                    assert body["outcome"]["reason_code"] == "target_session_not_reconciled_by_expiry"
+                    assert body["outcome"]["reason_detail"]["decision_action"] == "hold"
             attention = c.get(LIST + "&attention=attention", headers=HEADERS).json()
-            assert attention["page_info"]["total"] == (0 if seq == 1 else 1)
+            assert attention["page_info"]["total"] == 0
+            assert attention["data"]["items"] == []
         timeline = c.get(f"/bff/management/trade-journeys/{jid}/timeline" + query, headers=HEADERS).json()["data"]["items"]
         assert [e["decision_status"] for e in timeline] == ["pending_settlement", "expired_no_price"]
     finally:
