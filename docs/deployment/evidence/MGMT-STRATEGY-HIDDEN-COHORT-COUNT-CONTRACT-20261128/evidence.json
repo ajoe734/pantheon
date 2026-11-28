@@ -115,6 +115,22 @@
       "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 180s bash -c './scripts/run-acceptance.sh smoke && python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_backfill_hosted_chain_persona_scope.py'",
       "exit_code": 124,
       "result": "TIMEOUT at 180s during pre-existing scripts/test_deploy_nonprod_vm.py at 28%; not counted as passed. Earlier stage0 schema checks and unit suites completed, but the overall dispatcher did not complete and the chained lifecycle invocation was not reached. Terminal output and exit status collected. The exact lifecycle invocation passes separately (137 passed, 1 skipped); new-head hosted CI remains required."
+    },
+    {
+      "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py",
+      "exit_code": 0,
+      "result": "141 passed, 1 skipped, 3 warnings in 48.69s on final dev-sync anchor 842687f75; terminal output collected.",
+      "skip_reason": "RANKING_TEST_DSN is not set; live PostgreSQL strategy-list latency test skipped."
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check && git diff --check && python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+      "exit_code": 0,
+      "result": "Inventory, whitespace and task commit trailers passed after latest dev sync; terminal output collected."
+    },
+    {
+      "command": "python3 scripts/git/diff_budget.py --base origin/dev --head HEAD",
+      "exit_code": 0,
+      "result": "Production +15/-10 net +5; tests +86/-6 net +80; docs/evidence +220/-5 net +215 before this final evidence entry; terminal output collected."
     }
   ],
   "reader_inventory": {
@@ -207,7 +223,9 @@
     "subsequent_dev_sync": {
       "base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
       "upstream_pr": 7998,
-      "resolution": "Clean merge of latest dev before owner handoff. All imported L2 extraction files match dev exactly; no additional task product edits. Focused contracts revalidated after sync."
+      "resolution": "Clean merge of latest dev before owner handoff. All imported L2 extraction files match dev exactly; no additional task product edits. Focused contracts revalidated after sync.",
+      "merge_anchor": "842687f75a8a9658011378d38ded4bb51ad7b54a",
+      "validation": "141 passed, 1 skipped in 48.69s; source contract remains green."
     }
   }
 }
