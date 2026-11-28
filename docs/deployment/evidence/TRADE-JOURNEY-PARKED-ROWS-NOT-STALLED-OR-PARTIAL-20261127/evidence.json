@@ -28,6 +28,11 @@
   },
   "residual_findings": [
     {
+      "surface": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets",
+      "finding": "PR #8002 Branch CI run 46138186891 job 140960576923 (Test sweep shard 2) failed at 2026-11-28T11:26Z: expected probe exit 1, got exit 0 and VERDICT passed. The fixture is a passing world dated 2026-11-28, while line 899 assumes the wall clock is later. At the actual run time its observations are still fresh. This calendar-dependent assertion is outside the trade-journey artifact contract.",
+      "disposition": "Blocking residual for the RC1 required-check calendar-clock work package, remediation mechanisms owner f4c32790. Coordinator must register this instance and route a deterministic test repair through the discovery/acceptance owner, or explicitly revise this task's artifact contract. Do not bypass the check, relax probe freshness, or count a later wall-clock rerun as a repair. After the fix reaches dev, merge it into this branch and resubmit exact-head review."
+    },
+    {
       "surface": "services/trade_journey/test_lifecycle_projector_capacity.py::test_run_capacity_benchmark_projects_full_small_scale_corpus",
       "finding": "Full local service batch exceeded its existing capacity p95 ceiling: 5.417s versus 5.0s. The CI job that returned this task passed this test; its sole failure was the HOLD attention assertion. No capacity code or thresholds changed in this task.",
       "disposition": "Coordinator must attach to existing CI reliability/capacity work package before closure; root cause undiagnosed. Isolated rerun also fails at 5.203s. This test measures projector writes, not BFF reads; test, harness, projector and writer store sources match current dev exactly. No thresholds relaxed."
@@ -141,6 +146,18 @@
     "initial_validation": "Same test selection without explicit DSN: exit 0; 102 passed, 2 skipped, 3 warnings in 26.92s. Explicit DSN rerun covers the two skipped shared-identity tests.",
     "unchanged_scope": "No implementation changes during this resumption. AC3/AC4 HOLD integration assertions remain the only lifecycle test changes. FE side=null compatibility confirmed in canonical task next. No capacity code or threshold changes; existing capacity residual remains with the coordinator as directed.",
     "hosted_acceptance": "pending deployment; no new hosted evidence claimed"
+  },
+  "ci_shard2_resumption_20261128": {
+    "source_head": "2488d7eee510a9981d793b79257a41aac0854639",
+    "base_commit": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46138186891/job/140960576923",
+    "isolation": "git diff origin/dev -- acceptance/test_discovery_pipeline_day.py acceptance/discovery_pipeline_day.py acceptance/probes/discovery-pipeline: empty; the failing test and probe match dev exactly. No production or test files changed during this dispatch.",
+    "reproduction_command": "timeout 45s .venv-pantheon/bin/python -m pytest -q --tb=short --disable-warnings acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets",
+    "reproduction_result": "exit 1; 1 failed in 1.96s; identical assert 0 == 1 at line 901; no secrets printed",
+    "focused_command": "timeout 90s .venv-pantheon/bin/python -m pytest -q --tb=short --disable-warnings services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip",
+    "focused_result": "exit 0; 13 passed, 0 skipped, 3 warnings in 17.08s; terminal output collected; existing PostgreSQL fixtures cleaned their isolated containers",
+    "ci_postgres": "Service suites (postgres), job 140960576710 on the same run/head: success, completed 2026-11-28T11:30:04Z",
+    "next": "Canonical blocker for coordinator routing of the out-of-contract discovery test repair; no new exact-head approval, merge or hosted acceptance claimed."
   },
   "public_response_probe_repair_20261128": {
     "rejected_head": "9e2b9901e344bef94e3109a6bde9589439ac2df4",
