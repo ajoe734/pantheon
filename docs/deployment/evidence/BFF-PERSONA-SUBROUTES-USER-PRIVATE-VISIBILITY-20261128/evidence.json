@@ -1,0 +1,186 @@
+{
+  "task_id": "BFF-PERSONA-SUBROUTES-USER-PRIVATE-VISIBILITY-20261128",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "reviewer_independence": {
+    "owner_family": "Anthropic (Claude)",
+    "reviewer_family": "OpenAI (Codex)",
+    "independent": true
+  },
+  "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility on persona GET subroutes",
+  "depends_on": "BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128 (done; PR #8030 merged)",
+  "implementation": [
+    "services/control-plane/bff/personas/service.py: new _ensure_persona_readable(persona_id, viewer_user_id, caller_tenant=None, *, require_exists=True), the read variant of _ensure_persona_exists. It reads the directory once, returns when _persona_fleet_record_visible_to(record, None) is true (record not user_private, no scope resolution), otherwise resolves the viewer lazily and applies _persona_fleet_record_visible_to again; a rejected record raises the same 404 RESOURCE_NOT_FOUND ('Persona not found' / 'Persona {id} does not exist') as a missing persona. No second visibility rule.",
+    "services/control-plane/bff/personas/routes/collection.py: _fleet_viewer_resolver (lazy wrapper over the existing _fleet_viewer_user_id) and _ensure_persona_readable_by(identity, persona_id, utc_now, *, tenant_id, require_exists), the one route-side entry point.",
+    "personas/routes/detail.py: the 9 GET routes replace _ensure_persona_exists with _ensure_persona_readable_by (same position, after _require_read_role).",
+    "personas/routes/lifecycle.py: GET strategy-pool/publish-history uses _ensure_persona_readable_by after _pool_owner_authorization (original order); the pool-publish service principal keeps _ensure_persona_exists because it reads its own publication record and is not a viewer. GET strategy-matches passes a lazy viewer into _persona_strategy_matches_response -> _persona_strategy_discovery_payload, which calls _ensure_persona_readable instead of _ensure_persona_exists when a viewer is supplied (single directory read); POST strategy-discovery passes none and is unchanged.",
+    "trade_journal.py: create_trade_journal_router takes optional ensure_persona_readable(identity, persona_id), called in read_owner after require_read_role and _allowed and before bound_tenant and any owner call. core/app_factory.py wires it to _ensure_persona_readable_by(..., require_exists=False), so a persona absent from the directory keeps the telemetry/persona owner's answer.",
+    "BFF_API_CONTRACT.md states the owner rule for the 15 routes.",
+    "tests/test_persona_pool_publish_route.py: the _client fixture also stubs _ensure_persona_readable_by next to the existing _ensure_persona_exists stub (fixture only; the publish-history tests otherwise hit the real directory)."
+  ],
+  "subroute_visibility_inventory": [
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/route-policy",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/runtime-profile",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/activity",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/evaluations",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/memory",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/audit",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/skills",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/tools",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/detail.py",
+      "route": "GET /bff/personas/{persona_id}/capabilities",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-pool/publish-history",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+      "route": "GET /bff/personas/{persona_id}/strategy-matches",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-journal/{episode_id}",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-reflections",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    },
+    {
+      "file": "services/control-plane/bff/trade_journal.py",
+      "route": "GET /bff/personas/{persona_id}/trade-patterns",
+      "applies_user_private_rule": true,
+      "check": "_ensure_persona_readable via _ensure_persona_readable_by",
+      "changed_in_this_task": true
+    }
+  ],
+  "write_routes_unchanged": {
+    "evidence": "POST /bff/personas/{id}/strategy-pool/publish and POST .../test-prompt in personas/routes/lifecycle.py still call _ensure_persona_exists; POST strategy-discovery still reaches _ensure_persona_exists inside _persona_strategy_discovery_payload (no viewer passed); detail.py has no remaining _ensure_persona_exists. Asserted in test_read_check_reuses_shared_visibility_rule_and_write_routes_keep_existence_check.",
+    "trade_journal_commands": "command() and its _allowed / require_operator_role checks are not touched."
+  },
+  "acceptance_evidence": {
+    "AC1": "tests/test_persona_subroute_private_visibility.py::test_non_owner_gets_missing_persona_404_and_no_owner_call and test_owner_still_answered are parametrized over all 15 routes; test_non_owner_404_is_identical_to_missing_persona_on_persona_routes compares the non-owner body with a genuinely missing persona on the 11 persona-router routes. The trade-journal episode route answers the owner with the telemetry owner's own 404 (the stub reports no episode) and the non-owner with the persona 404.",
+    "AC2": "Visibility is _persona_fleet_record_visible_to + _fleet_viewer_user_id through one shared check (_ensure_persona_readable); routes only call _ensure_persona_readable_by. Write routes unchanged (see write_routes_unchanged).",
+    "AC3": "test_unscoped_and_trading_personas_unchanged_without_scope_resolution (15 routes x {trading persona, servant without owner_scope/visibility_scope}) answers as before with 0 scope resolutions; test_trade_journal_missing_persona_keeps_owner_answer keeps the owner answer for a persona absent from the directory.",
+    "AC4": "For every rejected non-owner request the counters for memory, audit, telemetry, persona-owner, pool history, route policy, activity, evaluations, capability snapshot, runtime profile and strategy discovery stay 0 (asserted per route).",
+    "AC5": "BFF_API_CONTRACT.md: new bullet next to the GET /bff/personas owner-visibility bullet.",
+    "AC6": "See runtime_budget.",
+    "AC7": "Pending deploy; see hosted_acceptance.",
+    "AC8": "Owner Claude2 (Anthropic) and reviewer Codex2 (OpenAI) are different model families."
+  },
+  "validation": {
+    "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0",
+    "new_tests": "cd services/control-plane/bff && ../../../.venv-pantheon/bin/python3 -m pytest -q tests/test_persona_subroute_private_visibility.py tests/test_persona_list_private_visibility.py test_persona_pool_publisher.py -> 97 passed",
+    "route_fixture_tests": "tests/test_persona_pool_publish_route.py -> 35 passed",
+    "regression_set": "15 related files (bff root and tests/: consol_008, consol_016, strategy_persona_contract, persona_strategy_discovery, per002 capabilities, pool publisher, ptj_004, trade_journal_owner_reads, b2_list_detail_facade, main_composition, persona_pool_publish_route, persona_router, event_loop_owner_reads_guard, persona_list_private_visibility, default_bff_actual_persona_sessions): the failing set was compared against an unmodified export of base HEAD 72fe584e0; after the one fixture stub above the sets are identical.",
+    "pre_existing_failures_on_base": [
+      "test_architecture_boundaries.py::test_mutation_route_ownership_mapping_contract",
+      "test_architecture_boundaries.py::test_symbol_dispositions_inventory_contract",
+      "test_ptj_004_trade_journal.py::test_default_mounted_bff_path_with_real_isolated_owners_and_durable_stores",
+      "plus 30 more in test_persona_router.py, test_bff_main_composition.py, test_default_bff_actual_persona_sessions.py and others; identical on base and on this branch (33 on base)"
+    ],
+    "note": "None of the base failures is introduced or masked by this change; they are outside this task's scope."
+  },
+  "runtime_budget": {
+    "new_writer": false,
+    "max_agora_scope_resolutions_per_request": 1,
+    "scope_resolutions_for_non_private_records": 0,
+    "new_owner_reads_per_request": "0 on the 11 persona-router routes beyond the one directory read they already made; strategy-matches keeps a single directory read (the check replaces the existing one). The 4 trade-journal routes gain one in-process persona directory snapshot read (same as detail routes) before the telemetry/persona owner call; no new owner HTTP call.",
+    "cadence": "Request-scoped in-memory predicate; no new job, timer or emitter.",
+    "size_and_count_at_hosted_scale": "No new response fields, files, tables, queues or caches; hides responses for ~5 other-user servants on hosted dev.",
+    "growth_per_day": "0 bytes/day and 0 records/day",
+    "cap": "No new unbounded structure",
+    "cleanup": "Request-local; nothing persistent"
+  },
+  "hosted_acceptance": {
+    "status": "pending_deploy_and_hosted_read_only_verification",
+    "actor": "admintest (read-only browser)",
+    "checks": [
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/memory -> 404",
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/audit -> 404",
+      "GET /bff/personas/agora-servant-fbeaee01e8f34c786555/trade-journal -> 404",
+      "GET /bff/personas/agora-servant-799a3ce8c021b91cbb54/audit (owned by admintest) -> 200"
+    ]
+  },
+  "residual_findings": [
+    {
+      "finding": "Pre-existing failures on base HEAD (architecture inventory counts, mounted trade-journal 503, persona_router/main_composition suites) fail identically before and after this change.",
+      "disposition": "Out of scope; not edited."
+    },
+    {
+      "finding": "Files outside the declared artifact list were edited: personas/routes/collection.py (the existing _fleet_viewer_user_id lives there), core/app_factory.py (the only place trade_journal's router is constructed), tests/test_persona_pool_publish_route.py (fixture stub).",
+      "disposition": "Needed to compose the shared check without a second rule; flagged for reviewer."
+    }
+  ]
+}
