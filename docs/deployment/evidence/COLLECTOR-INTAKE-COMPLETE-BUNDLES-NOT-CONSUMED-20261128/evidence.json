@@ -124,26 +124,100 @@
   "resolution_contract": "Reuse _resolve_partial_bundle for these two social pollers only. Empty failed attempts (parse_zero/fetch_failed) may be traversed after a later nonempty complete same-source poll is verified. This records recovery of a failed attempt, never proof that the failed poll had no data. Nonempty partials, paused bundles, other reasons and sources retain the existing stop. No unverified raw row is acknowledged.",
   "fixtures": {
     "path": "services/source_ingestion/tests/fixtures/collector_intake_20261128.json",
-    "capture": "Original UTF-8 files read-only SSH exported on 2026-11-28 from /var/lib/pantheon-collector. 13 bundles, 94 files; no credentials, author identifiers already hashed by host. Tests reconstruct actual files with hosted modes."
+    "capture": "Original UTF-8 files read-only SSH exported on 2026-11-28 from /var/lib/pantheon-collector. 13 bundles, 94 bundle files plus status.json; no credentials, author identifiers already hashed by host."
   },
   "validation": {
-    "baseline": "pending collection"
+    "baseline": {
+      "head": "9cf0aeff70d7611dda3d5bca4f5f460147aad003 (origin/dev before edits)",
+      "command": "timeout 90 /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_empty_attempt_recovery.py -k 'real_failed_attempts or instagram_control'",
+      "exit_status": 1,
+      "result": "2 failed, 1 passed: Threads/PTT result.records == (), cursor unchanged at |items=0; Instagram passes."
+    }
   },
   "runtime_budget": {
     "new_writers": 0,
     "new_jobs": 0,
-    "cadence": "Existing 6-hour collector polls and existing hosted scheduler; unchanged.",
-    "count_size_growth_cap_cleanup": "No new persistent state or row kind. Existing bounded verified metadata cache (16 entries, MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES file bytes) is reused for recovery metadata. Existing resolution observations travel in existing receipts. Successful backlog ingestion uses existing raw/normalized stores and retention; deployment measurement pending."
+    "cadence": "Existing 6-hour producer polls (4/day/source), existing hosted source scheduler. No new trigger or cadence change. Recovery lookup runs only for a verified empty failed attempt.",
+    "count_size_growth_cap_cleanup": "No new persistent state or row kind. Existing bounded verified metadata cache (16 entries, MAX_ITEMS_JSONL_BYTES + MAX_MANIFEST_BYTES file bytes) is reused for recovery metadata. Existing resolution observations travel in existing receipts. Successful backlog ingestion uses existing raw/normalized stores and retention; deployment measurement pending.",
+    "hosted_scale_sample": {
+      "threads": {
+        "items_per_latest_bundle": 18,
+        "raw_bytes": 6111,
+        "total_bundle_file_bytes": 24039
+      },
+      "ptt": {
+        "items_per_latest_bundle": 9,
+        "raw_bytes": 1589,
+        "total_bundle_file_bytes": 9876
+      }
+    },
+    "growth_per_day": "At sampled 6-hour cadence, 108 raw item deliveries/day for both sources (30,800 input raw bytes/day; 135,660 total input bundle-file bytes/day). This is a sample projection, not a bound or measurement of normalized/derived hosted growth. Catch-up is existing backlog, not a new recurring emitter.",
+    "cap_cleanup": "No new disk writer. Existing raw/normalized and community ledgers remain registered in docs/operations/storage-manifest.json; community_ledger.jsonl and community_emitted.jsonl have no verified cap/cleanup there (RC3 residual). Metadata lookahead reuses the existing process-local 16-entry / 71,680,000-file-byte LRU, evicted on insertion and reset on process exit. Probe reads <=24 MB per invocation, 0 disk growth, no recurring schedule."
   },
   "hosted_acceptance": {
     "status": "pending source review, merge and governed deployment",
     "owner_chain": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113 / market-data domain cb4f6795",
-    "requirements": "Read-only post-deploy receipts: both sources have raw_count > 0, record ingest_run_id and cursor lag < 1 day. No hosted state or cursor was edited."
+    "requirements": "Read-only post-deploy receipts: both sources have raw_count > 0, record ingest_run_id and cursor lag < 1 day. No hosted state or cursor was edited.",
+    "probe": "services/source_ingestion/tests/collector_intake_acceptance.py --since <actual governed switch timestamp>; run inside source-ingest container or pipe through docker exec -i python - --since <switch>; reads bounded receipt tail, requires positive post-switch receipt and latest completed cursor lag <1 day for both sources.",
+    "pre_fix_probe": {
+      "captured_at": "2026-11-28T04:03:13.045611+00:00",
+      "since": "2026-11-28T03:55:09+00:00",
+      "journal_bytes_examined": 23998253,
+      "sources": {
+        "collector-tw-threads": {
+          "latest_receipt": {},
+          "positive_ingest": null,
+          "cursor_lag_days": null,
+          "passed": false
+        },
+        "collector-tw-ptt-stock": {
+          "latest_receipt": {},
+          "positive_ingest": null,
+          "cursor_lag_days": null,
+          "passed": false
+        }
+      },
+      "passed": false
+    }
   },
   "residual_findings": [
     {
       "finding": "YouTube, breadth, OpenAlex, GDELT and arXiv scheduled failures from dispatch are outside the two-source scope. They require their own transport/verify diagnosis, not application of this social rule.",
       "disposition": "Retain with RC2 collector hosted intake package; coordinator owns follow-through."
+    },
+    {
+      "finding": "The real PTT latest bundle contains a year token 2026 interpreted by the existing community symbol mapper as an ungoverned symbol. Raw ingestion still completes with a current cursor, but feature_rejected prevents boundary acknowledgement and the next empty read remains collector_consumed_boundary_unverified. Confirmed through real configured scheduler; this patch preserves that refusal.",
+      "disposition": "Separate RC2 social/governed feature evidence issue for market-data coordinator cb4f6795; do not relax empty outcome verification."
+    },
+    {
+      "finding": "Existing social community ledgers have no verified cap/cleanup in storage-manifest.json. Recovery restores input flow; sampled raw input growth is documented but normalized/derived growth still needs hosted measurement.",
+      "disposition": "Existing RC3 WP3.1/WP3.3 source_ingestion writer inventory; no new writer introduced."
     }
-  ]
+  ],
+  "pre_fix_latest_receipts": {
+    "collector-tw-threads": {
+      "ingest_run_id": "ingest-f7344a05e4b7",
+      "status": "failed",
+      "started_at": "2026-11-28T03:48:55Z",
+      "finished_at": "2026-11-28T03:48:59Z",
+      "raw_count": 0,
+      "watermark": null
+    },
+    "collector-tw-ptt-stock": {
+      "ingest_run_id": "ingest-6253d11aa739",
+      "status": "failed",
+      "started_at": "2026-11-28T03:50:10Z",
+      "finished_at": "2026-11-28T03:50:13Z",
+      "raw_count": 0,
+      "watermark": "2026-11-18T18:16:33Z#run-20261118T181633Z|items=0"
+    },
+    "collector-tw-instagram-popular": {
+      "ingest_run_id": "ingest-779b0a5ea4b9",
+      "status": "completed",
+      "started_at": "2026-11-28T01:54:57Z",
+      "finished_at": "2026-11-28T01:54:58Z",
+      "raw_count": 0,
+      "watermark": "2026-11-28T00:15:42Z#run-20261128T001542Z"
+    }
+  }
 }
