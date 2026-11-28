@@ -316,7 +316,6 @@ class TemplateDemandSearch:
 
         def persist():
             # Demand receipts are cumulative; this count belongs only to this run.
-            record["templates_attempted"] = new_attempts
             record["excluded_by_reason"] = dict(sorted(Counter(
                 item["reason"] for item in record["excluded"]
             ).items()))
@@ -428,6 +427,7 @@ class TemplateDemandSearch:
                     receipt.update(artifact=artifact, mechanism_status="mechanism_untested",
                                    mechanism_support=None)
                 record["attempts"][aid] = receipt
+                record["templates_attempted"] += 1
                 # Commit each terminal receipt before starting registration or the next backtest.
                 if total >= self.family_budget:
                     tried.add(family)

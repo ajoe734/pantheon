@@ -203,6 +203,8 @@ def test_registry_binding_mismatch_cannot_consume_a_trial(tmp_path, field, value
     row = search.run(demand)
     result = row['discovery']['template_search']
     assert not result['attempts'] and result['excluded'][0]['reason'] == reason
+    assert result['reason'] == 'template_search_unavailable:template_integrity_mismatch:1'
+    assert result['excluded_by_reason'] == {reason: 1}
     assert not (tmp_path / 'trials.json').exists()
 
 
@@ -726,3 +728,115 @@ def test_evaluation_memory_guard_tests_both_sides_cgroup_fallback_and_unreadable
         TemplateDemandSearch(store=store, gate=search.gate, context_loader=lambda d: context,
                              lock_path=tmp_path / 'l',
                              memory_increment_bytes=EVALUATION_MEMORY_INCREMENT_BYTES - 1)
+
+
+def _hosted_evaluated_entries():
+    rows = entries()
+    for view in rows:
+        template = view['entry']['metadata']['alpha_template']
+        if template['scope'] == 'time_series':
+            template.update(status='evaluated',
+                            evaluation_ref='rrun-alpha-eval-2026-11-27-ac389bee8277-b000',
+                            duplicate_of=None)
+    return rows
+
+
+def test_hosted_evaluated_template_reaches_real_gate_and_digest_survives_reevaluation(tmp_path):
+    from services.registry.alpha_template import alpha_template_definition_checksum
+    rows = _hosted_evaluated_entries()
+    assert len(rows) == 182
+    assert sum(v['entry']['metadata']['alpha_template']['status'] == 'evaluated' for v in rows) == 171
+    assert all(alpha_template_definition_checksum(v['entry']['metadata']['alpha_template'])
+               == v['entry']['checksum'] for v in rows)
+    kmid = next(v for v in rows if v['entry']['metadata']['alpha_template']['template_id'] == 'qlib_alpha158:KMID')
+    checksums = []
+    for index in range(2):
+        kmid['entry']['metadata']['alpha_template']['evaluation_ref'] = f'rrun-reevaluation-{index}'
+        kmid['entry']['metadata']['alpha_template']['duplicate_of'] = None if index == 0 else 'qlib_alpha158:KMID2'
+        search, store, demand, _ = setup_search(tmp_path / str(index), templates=[kmid])
+        result = search.run(demand)['discovery']['template_search']
+        assert result['templates_attempted'] == 1
+        assert result['reason'] == 'search_completed'
+        receipt, = result['attempts'].values()
+        assert 'gate' in receipt
+        checksums.append(receipt['template_checksum'])
+        # Historical receipts must not make this subsequent zero-attempt run look productive.
+        again = search.run(demand)['discovery']['template_search']
+        assert again['attempts'] == result['attempts']
+        assert again['templates_attempted'] == 0
+    assert checksums == [kmid['entry']['checksum']] * 2
+
+
+@pytest.mark.parametrize('field', ['expression', 'parameters', 'inputs', 'attribution', 'origin', 'licence'])
+def test_altered_definition_is_still_excluded_without_spending_trial(tmp_path, field):
+    kmid = next(v for v in _hosted_evaluated_entries()
+                if v['entry']['metadata']['alpha_template']['template_id'] == 'qlib_alpha158:KMID')
+    template = kmid['entry']['metadata']['alpha_template']
+    if field == 'expression':
+        template[field] = {'op': 'neg', 'args': [template[field]]}
+    elif field == 'parameters':
+        # Parameters unused by KMID are invalid; use a real windowed seed instead.
+        kmid = next(v for v in _hosted_evaluated_entries()
+                    if v['entry']['metadata']['alpha_template']['template_id'] == 'qlib_alpha158:MA5')
+        template = kmid['entry']['metadata']['alpha_template']
+        key = next(iter(template['parameters']))
+        template['parameters'][key] += 1
+    elif field == 'inputs':
+        template[field][0]['availability_lag_days'] += 1
+    elif field == 'origin':
+        template[field]['ref'] += '-changed'
+    else:
+        template[field] += ' changed'
+    search, _, demand, _ = setup_search(tmp_path, templates=[kmid])
+    result = search.run(demand)['discovery']['template_search']
+    assert result['reason'] == 'template_search_unavailable:template_integrity_mismatch:1'
+    assert result['excluded_by_reason'] == {'template_checksum_mismatch': 1}
+    assert result['templates_attempted'] == 0 and result['attempts'] == {}
+    assert not (tmp_path / 'trials.json').exists()
+
+
+def test_hosted_all_integrity_exclusions_are_failed_and_counted(tmp_path):
+    rows = [v for v in _hosted_evaluated_entries()
+            if v['entry']['metadata']['alpha_template']['scope'] == 'time_series']
+    for view in rows:
+        view['entry']['metadata']['alpha_template']['attribution'] += ' corrupted'
+    search, _, demand, _ = setup_search(tmp_path, templates=rows)
+    result = search.run(demand)['discovery']['template_search']
+    assert result['reason'] == 'template_search_unavailable:template_integrity_mismatch:171'
+    assert result['excluded_by_reason'] == {'template_checksum_mismatch': 171}
+    assert len(result['excluded']) == 171 and result['templates_attempted'] == 0
+    assert not (tmp_path / 'trials.json').exists()
+
+
+def test_real_worker_marks_hosted_integrity_failure_on_run_and_task(tmp_path, monkeypatch, configured_owners):
+    module = _load_service_module(data_dir=str(tmp_path / 'research'))
+    monkeypatch.setattr(module, 'ALPHA_REPLICATION_DATA_DIR', tmp_path / 'alpha')
+    monkeypatch.setenv('RESEARCH_REPLICATION_TRIAL_COUNTER_PATH', str(tmp_path / 'trials.json'))
+    rows = [v for v in _hosted_evaluated_entries()
+            if v['entry']['metadata']['alpha_template']['scope'] == 'time_series']
+    for view in rows:
+        view['entry']['metadata']['alpha_template']['attribution'] += ' altered'
+    entered, release = threading.Event(), threading.Event()
+
+    def context(demand):
+        entered.set()
+        assert release.wait(5)
+        return {'templates': rows, 'dataset': governed_view(), 'universe': ['2330.TW', '0050.TW']}
+
+    monkeypatch.setattr(module, '_template_search_context', context)
+    demand = module.research_demand_store.open('tenant-a', BODY)
+    try:
+        module._search_demand_templates([demand])
+        assert entered.wait(5)
+        run_id = module.store.list_runs()[0]['run_id']
+        worker = next(t for t in threading.enumerate() if t.name == 'retrain-executor-' + run_id)
+    finally:
+        release.set()
+    worker.join(10)
+    assert not worker.is_alive()
+    run = module.get_run(run_id)
+    assert run['status'] == module.store.get_task(run['task_id'])['status'] == 'failed'
+    assert run['failed_step'] == 'template_search'
+    assert run['rejection']['detail'] == 'template_search_unavailable:template_integrity_mismatch:171'
+    assert run['template_search']['templates_attempted'] == 0
+    assert run['template_search']['excluded_by_reason'] == {'template_checksum_mismatch': 171}

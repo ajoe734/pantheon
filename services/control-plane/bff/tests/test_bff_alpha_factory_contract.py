@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware import Middleware
@@ -1222,3 +1224,35 @@ def test_reason_code_normalisation() -> None:
     assert reason_code("Mandate_Universe_Missing: x") == "mandate_universe_missing"
     assert reason_code("dataset missing for X") == "dataset_unavailable"
     assert reason_code("whole_boundary_control_failed:ValueError:boom") == "whole_boundary_control_failed"
+
+
+@pytest.mark.parametrize('attempted', [0, 1])
+def test_hosted_template_search_counts_receipts_and_integrity_exclusions(monkeypatch, attempted):
+    """11/27 latest run shape: search_completed, attempts {}, 171 exclusions."""
+    from services.registry.alpha_template import load_library_templates
+    demand_id = 'rd-796e24e24bf2055d3c42'
+    runs = [_search_run(f'older-{i}', demand_id, f'2026-11-2{3+i}T10:07:59Z',
+                        reason='market_boundary_empty') for i in range(3)]
+    latest = _search_run('rrun-20261127-032', demand_id, '2026-11-27T10:07:59Z',
+                         reason=None, status='completed')
+    latest['template_search'] = {
+        'demand_ref': demand_id, 'run_at': '2026-11-27T10:07:59Z', 'paper_only': True,
+        'reason': 'search_completed',
+        'attempts': {'artifact-1': {'template_id': 'qlib_alpha158:KMID', 'status': 'rejected'}} if attempted else {},
+        'excluded': [{'template_id': t['template_id'], 'reason': 'template_checksum_mismatch'}
+                     for t in load_library_templates() if t['scope'] == 'time_series'],
+    }
+    runs.append(latest)
+    client = _make_bff_client(monkeypatch, http_get=_owner_router(
+        [], runs=runs, demands=[_demand(demand_id, 'persona-a')]))
+    item = next(i for i in _get(client)['data']['scaffolded'] if i['kind'] == 'template_search')
+    assert item['attempt_count'] == 4
+    assert item['templates_attempted'] == attempted
+    assert item['excluded_by_reason'] == {'template_checksum_mismatch': 171}
+    # New runs explicitly distinguish this run from cumulative receipts.
+    latest['template_search'].update(templates_attempted=0,
+                                    attempts={'old': {'template_id': 'qlib_alpha158:KMID'}},
+                                    excluded_by_reason={'template_tenant_mismatch': 182})
+    item = next(i for i in _get(client)['data']['scaffolded'] if i['kind'] == 'template_search')
+    assert item['templates_attempted'] == 0
+    assert item['excluded_by_reason'] == {'template_tenant_mismatch': 182}
