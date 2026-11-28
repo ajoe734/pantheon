@@ -257,6 +257,20 @@ def alpha_template_checksum(template: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
 
 
+def alpha_template_definition_checksum(template: Mapping[str, Any]) -> str:
+    """Bind all validated definition fields, independent of evaluation lifecycle.
+
+    Canonical registration values preserve the original built-in seed digests.
+    New tenant registrations use this same digest even if initially non-draft.
+    Legacy non-draft digests are not accepted or migrated by this function.
+    """
+    record = validate_alpha_template(template)
+    record["status"] = "draft"
+    record["evaluation_ref"] = None
+    record.pop("duplicate_of", None)
+    return alpha_template_checksum(record)
+
+
 def alpha_template_registry_id(template_id: str) -> str:
     safe = "".join(c if c.isalnum() else "-" for c in template_id).strip("-").lower()
     digest = hashlib.sha256(template_id.encode("utf-8")).hexdigest()[:8]
@@ -294,7 +308,7 @@ def build_alpha_template_registry_payload(
             backend=StorageBackend.INLINE,
             path=f"$.entry.metadata.{ALPHA_TEMPLATE_METADATA_KEY}",
         ),
-        checksum=alpha_template_checksum(record),
+        checksum=alpha_template_definition_checksum(record),
         evaluation_summary=eval_summary,
         metadata=metadata,
     )
@@ -410,6 +424,9 @@ def ensure_builtin_alpha_templates(registry_service: RegistryService) -> list[Re
                 existing.artifact_type != ArtifactType.ALPHA_TEMPLATE
                 or existing.checksum != payload.checksum
                 or existing.strategy_id != payload.strategy_id
+                or alpha_template_definition_checksum(
+                    (existing.metadata or {}).get(ALPHA_TEMPLATE_METADATA_KEY, {})
+                ) != payload.checksum
             ):
                 raise AlphaTemplateValidationError(
                     f"built-in AlphaTemplate id collision: {registry_id}"
