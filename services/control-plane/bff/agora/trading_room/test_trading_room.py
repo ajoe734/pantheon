@@ -123,7 +123,12 @@ def _make_intent(intent_id: str = "int-001") -> dict:
         "spec_version": "1.0",
         "intent_id": intent_id,
         "operator_id": "user-001",
-        "metadata": {"tenant_id": "tenant-001", "user_id": "user-001"},
+        "metadata": {
+            "tenant_id": "tenant-001",
+            "user_id": "user-001",
+            "decision": "approve",
+            "human_decision_id": "hdl-001",
+        },
         "intent_type": "entry_interest",
         "direction": "neutral",
         "subject": {"symbol": "AAPL", "strategy_ref": "strat-001"},
@@ -140,7 +145,7 @@ def _make_handoff(
     intent_id: str = "int-001",
     handoff_id: str = "hof-001",
     requested_stage: str = "paper",
-    handoff_type: str = "paper_validation_request",
+    handoff_type: str = "paper_execution_request",
     target_queue: str | None = None,
     state: str = "submitted",
 ) -> dict:
@@ -161,6 +166,7 @@ def _make_handoff(
             "action": "enter",
             "symbol": "AAPL",
             "direction": "neutral",
+            "quantity": 10,
             "non_binding": True,
         },
     }
@@ -546,7 +552,7 @@ def test_governed_intent_handoff_no_order_route_proof():
         handoff_id="hof-001",
         intent_id="int-001",
         requested_stage="paper",
-        handoff_type="paper_validation_request",
+        handoff_type="paper_execution_request",
         state="submitted",
         strategy_id="strat-001",
         strategy_spec_registry_id="reg-001",
@@ -621,14 +627,24 @@ def test_submit_handoff_paper_persists_request_only_record():
     assert resp.status_code == 202, resp.text
     data = resp.json()["data"]
     assert data["requested_stage"] == "paper"
-    assert data["target_queue"] == "management_governance"
+    assert data["target_queue"] == "paper_execution"
     assert data["state"] == "submitted"
     assert data["no_order_route_proof"] == "agora_request_only_no_order_route"
 
     handoff = store.get_handoff("hof-paper")
     assert handoff is not None
     assert handoff["state"] == "submitted"
-    assert handoff["target_queue"] == "management_governance"
+    assert handoff["target_queue"] == "paper_execution"
+    assert handoff["paper_execution"]["owner"]["tenant_id"] == "tenant-001"
+    assert handoff["paper_execution"]["order"] == {
+        "symbol": "AAPL",
+        "action": "enter",
+        "side": "buy",
+        "quantity": 10.0,
+        "quantity_type": "SHARES",
+        "order_type": "market",
+    }
+    assert handoff["paper_execution"]["decision_lock_ref"] == "hdl-001"
     assert store.get_intent_state("int-paper") == "submitted"
     with open(_GOVERNED_HANDOFF_SCHEMA_PATH) as f:
         schema = json.load(f)
@@ -1911,7 +1927,7 @@ _TRADING_INTENT_SCHEMA_PATH = os.path.join(
 )
 _GOVERNED_HANDOFF_SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "specs", "agora", "v4", "governed_intent_handoff.schema.json",
+    "..", "..", "..", "specs", "agora", "v15", "governed_intent_handoff.schema.json",
 )
 _WORKSPACE_SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -2504,7 +2520,7 @@ def test_scoped_decision_pagination_and_queue_etag():
 
 
 @pytest.mark.parametrize("stage,kind,queue", [
-    ("paper", "paper_validation_request", "management_governance"),
+    ("paper", "paper_execution_request", "paper_execution"),
     ("canary", "promotion_review_request", "promotion_review"),
     ("live", "promotion_review_request", "promotion_review"),
 ])

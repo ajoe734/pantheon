@@ -312,20 +312,26 @@ class GovernedActionProposal(BaseModel):
     direction: Optional[str] = None
     size_hint: Optional[str] = None
     portfolio_pct: Optional[float] = None
+    # Paper execution (AGORA-PAPER-INTENT-EXECUTION-20261127): the trader's
+    # confirmed size (shares) and optional limit. Agora still routes no order;
+    # the paper execution owner validates and executes in the trader's paper book.
+    quantity: Optional[float] = None
+    limit_price: Optional[float] = None
     non_binding: Literal[True] = True
 
 
 class GovernedIntentHandoffRequest(BaseModel):
     """Request body for POST /bff/agora/trading-intents/{intent_id}/handoffs.
 
-    Field-aligned with services/control-plane/specs/agora/v4/governed_intent_handoff.schema.json.
+    Field-aligned with services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json
+    (bundle v1.14; supersedes the frozen v4 bytes).
     """
     spec_version: Literal["1.0"] = "1.0"
     handoff_id: str
     intent_id: str
     decision_event_id: Optional[str] = None
     requested_stage: Literal["shadow", "paper", "canary", "live"]
-    handoff_type: Literal["shadow_start", "paper_validation_request", "promotion_review_request"]
+    handoff_type: Literal["shadow_start", "paper_execution_request", "promotion_review_request"]
     state: Literal["draft", "submitted", "accepted", "rejected", "expired", "withdrawn", "converted"]
     strategy_id: str
     strategy_spec_registry_id: str
@@ -333,7 +339,7 @@ class GovernedIntentHandoffRequest(BaseModel):
     evidence_refs: List[EvidenceRef] = Field(default_factory=list)
     no_order_route_proof: Literal["agora_request_only_no_order_route"] = "agora_request_only_no_order_route"
     created_at: str
-    target_queue: Optional[Literal["management_governance", "promotion_review"]] = None
+    target_queue: Optional[Literal["paper_execution", "promotion_review"]] = None
     required_gate_refs: List[str] = Field(default_factory=list)
     action_proposal: Optional[GovernedActionProposal] = None
     rationale: Optional[str] = None
@@ -1719,6 +1725,7 @@ class TradingRoomRouteContext:
                 bff_error=bff_error,
                 decision_lock_owner=kwargs.get("decision_lock_owner"),
                 attribution_client_factory=kwargs.get("attribution_client_factory"),
+                imitation_candidate_reader=kwargs.get("imitation_candidate_reader"),
             )
 
     def _check_write_auth(self, identity: Any) -> None:

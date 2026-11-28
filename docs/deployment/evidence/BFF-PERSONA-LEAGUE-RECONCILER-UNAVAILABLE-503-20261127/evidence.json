@@ -1,0 +1,36 @@
+{
+  "task": "BFF-PERSONA-LEAGUE-RECONCILER-UNAVAILABLE-503-20261127",
+  "class": "RC1 WP1.2",
+  "owner": "Claude2",
+  "reviewer": "Antigravity",
+  "problem": "GET /bff/management/persona-league let PaperReconcilerUnavailableError escape as an unhandled 500 (Root 46061668193 crawl, BFF log 22:33:24Z). Only quarterly-ranking and persona-fleet mapped it to 503; every other ranking.py read that composes PM-12 league rows reached the reconciler through _enrich_persona_item_with_bindings -> _pm12_runtime_session_resolution and answered 500 as well.",
+  "solution": "ranking.py wraps the service call of each affected route in the existing _call_or_503_when_reconciler_down (503 DEPENDENCY_UNAVAILABLE, message 'Paper fleet reconciler unavailable', retryable). No new writer, job or emitter.",
+  "route_audit": {
+    "method": "Reconciler read forced to raise PaperReconcilerUnavailableError('...timed out') at the league-row choke point (_enrich_persona_item_with_bindings) and at ReadSurfacePorts.list_authoritative_paper_runtime_monitoring_sessions, then every persona/ranking/cockpit GET probed through the isolated BFF test client. Call chain read from personas/service.py.",
+    "routes": [
+      {"route": "GET /bff/management/persona-league", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/persona-league/rankings", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/persona-league/movers", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/persona-league/tiers", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/persona-league/heatmap", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/quarterly-ranking", "reaches_reconciler": true, "before": 503, "after": 503, "fixed": false, "note": "already used the helper"},
+      {"route": "GET /bff/management/quarterly-ranking/drilldown", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/quarterly-ranking/recommendations", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/promotion-reviews", "reaches_reconciler": true, "before": 500, "after": 503, "fixed": true},
+      {"route": "GET /bff/management/promotion-reviews/{review_id}", "reaches_reconciler": true, "before": "not probed on a seeded id (same _promotion_review_items/_promotion_review_find chain)", "after": 503, "fixed": true, "note": "wrapped by reading the call chain; test uses an unknown id and still gets 503 because league rows are read first"},
+      {"route": "GET /bff/management/persona-fleet", "reaches_reconciler": true, "before": 503, "after": 503, "fixed": false, "note": "already mapped in collection.py"},
+      {"route": "GET /bff/management/cockpit", "reaches_reconciler": true, "before": 200, "after": 200, "fixed": false, "note": "degrades the surface"},
+      {"route": "GET /bff/management/trading-pulse/rankings", "reaches_reconciler": true, "before": 200, "after": 200, "fixed": false, "note": "degrades the surface"},
+      {"route": "GET /api/v1/operator/runtime-state", "reaches_reconciler": true, "before": 200, "after": 200, "fixed": false, "note": "degrades the surface"},
+      {"route": "GET /bff/persona-league and GET /bff/persona-league/{id}", "reaches_reconciler": false, "note": "read persona league entries from the read store, no reconciler read"},
+      {"route": "GET /bff/management/quarterly-ranking/formula", "reaches_reconciler": false}
+    ],
+    "not_reconciler": "GET /bff/agora/servant/paper-book answered 500 in the probe without reaching the reconciler read; unrelated to this task and left alone."
+  },
+  "verification": {
+    "command": "services/control-plane/bff: .venv-pantheon/bin/python3 -m pytest -q -p no:cacheprovider tests/test_owner_unavailable_503_consistency.py",
+    "result": "23 passed (existing 9 stay green; 10 new league-route 503 cases, 3 new degrade-stays-200 cases)"
+  },
+  "runtime_budget": {"new_writers": 0, "new_jobs": 0, "new_emitters": 0, "extra_reconciler_reads": 0, "notes": "exception mapping only"},
+  "hosted_proof": "pending: after deploy, read-only as admin the routes answer 200; the BFF log of the next Root acceptance window must have no 'Unhandled BFF request error' with PaperReconcilerUnavailableError. Not run in this task."
+}

@@ -430,6 +430,26 @@ def _read_queue(connection: _BoundedConnection, tenant_id: str, now: float) -> d
     return {"collected": collected, "closed": closed, "cards": cards}
 
 
+def _distinct_sources(calls: int, sources: Any, recorded: bool) -> dict[str, Any]:
+    """Distinct sources called today and calls per source, from the same ``calls`` row.
+
+    Matches ``ExtractionLedger.summary()``. A ledger without the ``sources``
+    column, or a day whose calls were all counted before it existed (calls but
+    0 sources), reports null with a reason instead of a fabricated 0.
+    """
+    if not recorded:
+        return {"distinct_sources": None, "calls_per_source": None,
+                "distinct_sources_reason": "ledger_sources_column_missing"}
+    count = int(sources or 0)
+    if calls > 0 and count == 0:
+        return {"distinct_sources": None, "calls_per_source": None,
+                "distinct_sources_reason": "ledger_sources_not_recorded_for_day"}
+    out: dict[str, Any] = {"distinct_sources": count, "calls_per_source": round(calls / count, 3) if count else None}
+    if not count:
+        out["calls_per_source_reason"] = "no_calls_today"
+    return out
+
+
 def _read_ledger(
     ledger_path: Path,
     newest: list[dict[str, Any]],
@@ -456,9 +476,12 @@ def _read_ledger(
                     card.update(claim=None, claim_status="ledger_unavailable")
                 return _unavailable(LEDGER_SOURCE, "extraction_ledger_not_initialized")
             cols = {str(r[1]) for r in connection.execute("PRAGMA table_info(calls)")}
+            sources_recorded = "sources" in cols
             row = connection.execute(
-                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap, "
-                f"{'unsent' if 'unsent' in cols else 'NULL'} AS unsent FROM calls WHERE day = ?", (day,)
+                f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap,"
+                f" {'sources' if sources_recorded else 'NULL'} AS sources,"
+                f" {'unsent' if 'unsent' in cols else 'NULL'} AS unsent FROM calls WHERE day = ?",
+                (day,),
             ).fetchone()
             for card in newest:
                 found = None
@@ -578,15 +601,17 @@ def _read_ledger(
             card.setdefault("claim_status", "ledger_unavailable")
         return _unavailable(LEDGER_SOURCE, _failure_reason(exc, "extraction_ledger_unreadable"))
     recorded_cap = row["cap"] if row is not None else None
+    calls = int(row["n"]) if row is not None else 0
     return {
         "status": "ok",
         "source": LEDGER_SOURCE,
         "scope": "service",  # one daily budget shared by every tenant of this deployment
         "utc_day": day,
-        "calls": int(row["n"]) if row is not None else 0,
+        "calls": calls,
         "unsent_calls": (int(row["unsent"]) if row is not None else 0) if "unsent" in cols else None,
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
+        **_distinct_sources(calls, row["sources"] if row is not None else 0, sources_recorded),
         **ritual_obs,
     }
 

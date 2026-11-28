@@ -1,0 +1,89 @@
+{
+  "schema_version": "task_evidence.v1",
+  "task_id": "MEETING-PROBE-SUBSURFACE-REASON-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "root_cause_class": "RC1 WP1.2: 503s under crawl load",
+  "scope": "Functional probe diagnostics only; no BFF, register, workflow, or hosted runtime changes.",
+  "incident": {
+    "failed_root": "46061668193",
+    "backend": "d7c8c594e",
+    "verdict_at": "2026-11-27T22:40:08Z",
+    "old_failure": "inbox_meetings_surface_degraded:unknown",
+    "later_passing_root": "46078610190",
+    "provenance": "Task brief supplied by coordinator; no hosted access performed for this task.",
+    "interpretation": "Nested contributor metadata was omitted from diagnostics; the historical failing contributor is not established by local fixtures."
+  },
+  "behavior": {
+    "failure_prefix": "Existing inbox_meetings_surface_<status>:<top-level reason or unknown> remains unchanged.",
+    "detail_suffix": ";sub_surfaces=<name>:<status>:<reason>;...",
+    "example": "inbox_meetings_surface_degraded:unknown;sub_surfaces=consultation:unavailable:consultation_owner_unavailable;research:ok:unknown",
+    "missing_nested_reason": "unknown (including successful contributor reason=null)",
+    "limits": {"sub_surfaces": 4, "reason_characters_per_sub_surface": 120},
+    "selection": "First four dictionary-shaped sub-surfaces in owner response order; non-dictionary entries are ignored.",
+    "verdict": "Unchanged: degraded/unavailable meetings surfaces fail; ok surfaces add no failure. Missing/empty nested surfaces preserve the exact prior failure text."
+  },
+  "functional_validation": {
+    "provision": {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "exit_code": 0,
+      "result": "Checkout-scoped interpreter provisioned and import mapping verified."
+    },
+    "tests": {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q acceptance/test_meeting_review_disposition.py",
+      "exit_code": 0,
+      "result": "18 passed, 1 warning in 4.37s (refreshed after merging dev 5e08fd1f6e73ae6a66d698531fe5fc3a06a1a10f)",
+      "warning": "Dependency StarletteDeprecationWarning: httpx TestClient integration is deprecated; no test failures."
+    },
+    "whitespace": {"command": "git diff --check", "exit_code": 0},
+    "row_provenance": "INBOX_MEETINGS_SURFACE_FIXTURE mirrors read_human_inbox_meeting_items in services/control-plane/bff/meetings/client.py: bff_composed status/source/snapshot_at/surfaces, consultation unavailable reason or successful next_cursor=null, research ok reason=null/page_info/href or unavailable reason/status_code. Inputs use the existing full recorded LEGACY_CHENGCHUAN_MT1_FIXTURE (mtg-2c016da5651a0dc4) with post-fix operator_review/cause/evidence projections. These are local fixtures, not recovered historical hosted responses.",
+    "coverage": {
+      "AC1": "test_probe_reports_real_nested_inbox_meetings_surface_shape: consultation failure, research failure, and both unavailable retain each contributor's status/reason.",
+      "AC2": "test_probe_caps_nested_meetings_reasons_and_count extends the real contributor metadata to six entries; exact output proves four entries, 120 Unicode characters per reason and no trailing sentinel/fifth entry.",
+      "AC3": "test_probe_preserves_top_level_meetings_reason_with_nested_detail preserves human_inbox_partial_read before the new suffix.",
+      "AC4": "test_probe_keeps_failure_text_without_nested_surfaces: eight combinations of degraded/unavailable, reason present/absent, and missing/empty surfaces preserve exact strings.",
+      "AC5": "test_probe_reports_real_nested_inbox_meetings_surface_shape asserts full verdicts, empty failures on ok, and unchanged pending_review result for the recorded legacy meeting.",
+      "AC6": "Runtime budget below.",
+      "AC7": "All four original tests pass, including local BFF/Consultation isolated write/readback/restart integration and missing-environment exit behavior.",
+      "AC8": "No existing test body or assertion was changed, weakened, or deleted; only new fixtures/helpers/tests were inserted."
+    }
+  },
+  "runtime_budget": {
+    "cadence": "Existing on-demand/release probe cadence unchanged; zero new jobs or workflow inputs.",
+    "hosted_scale": "Three trading personas; work per failed meetings surface is at most four emitted contributor entries, independent of meeting count.",
+    "size_and_count": "At most four entries, each with at most 120 reason characters (480 total reason characters), plus contributor name, status, and delimiter overhead. Current names are consultation/research. The cap concerns reason characters, not the total formatted entry or UTF-8 bytes.",
+    "growth_per_day": "Zero new persistent runtime growth; existing probe output may contain the bounded diagnostic suffix on failure.",
+    "cap": "Four nested entries; 120 Unicode characters per nested reason. Existing top-level reason behavior unchanged.",
+    "writers": "Zero new runtime files, writers, queues, caches, jobs, or temporary directories. This committed static evidence file is a required task artifact.",
+    "cleanup": "No new runtime storage to clean; existing release-artifact retention applies to existing probe output. No storage-manifest registration needed."
+  },
+  "hosted_verification": {
+    "status": "not_performed",
+    "owner": "Operator acceptance task after deployment",
+    "reason": "Task explicitly prohibits VM/SSH/key access and requests functional evidence only. Local fixtures do not prove a deployed or accepted release."
+  },
+  "review_return": {
+    "pr": "https://github.com/ajoe734/pantheon/pull/8005",
+    "previous_reviewed_head": "78d48e71372ccb8a40898de3f1182b296c00082e",
+    "failed_check": "Smoke acceptance",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/46093084267/job/140819129096",
+    "observed_failure": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_real_signal_injection: guard_proc.communicate(timeout=10) raised TimeoutExpired after SIGTERM; guard stderr reported trap: line 2: unexpected EOF while looking for matching `)'. Suite result: 1 failed, 27 passed in 35.55s.",
+    "scope_assessment": "The failed test exercises the existing lease guard and baseline diagnostics subprocess cancellation. Neither these scripts nor that test is changed by this task. No causal link to meeting probe formatting is established.",
+    "local_diagnostics_retry": {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py",
+      "exit_code": 0,
+      "result": "28 passed in 34.87s",
+      "interpretation": "The entire unmodified failing suite passes locally after syncing dev; one retry does not prove the CI-only signal cancellation failure cannot recur."
+    },
+    "refresh": "Merged current dev 5e08fd1f6e73ae6a66d698531fe5fc3a06a1a10f without rewriting the published branch; renewed delivery requires fresh exact-head CI and Antigravity review. No existing assertion was changed or skipped."
+  },
+  "residual_findings": [
+    {
+      "root_cause_class": "RC1 required-check reliability / release CI chain",
+      "finding": "Existing lease-guard signal cancellation test failed in PR #8005 CI with a shell trap parse error and 10-second timeout.",
+      "evidence": "https://github.com/ajoe734/pantheon/actions/runs/46093084267/job/140819129096",
+      "disposition": "Retain as an outside-scope residual for the RC1 release CI coordinator to attach to the existing required-check class; no lease-guard repair, timeout increase, test weakening or new task is introduced here. A local retry does not establish that the CI defect is repaired."
+    }
+  ],
+  "review": {"status": "pending_independent_review", "assigned_reviewer": "Antigravity"}
+}

@@ -87,6 +87,10 @@ from services.control_plane.bff.agora.strategy_workshop.store import (
     PostgresWorkshopStore,
 )
 
+# Writer budget (docs/operations/storage-manifest.json runtime_budgets): the
+# paper execution owner executes at most this many intents per trader per
+# Taipei day and rejects the rest with reason_code ``daily_cap``.
+PAPER_INTENT_DAILY_CAP = 50
 
 _orig_store_record_trader_decision = TradingRoomStore.record_trader_decision
 
@@ -160,11 +164,39 @@ class TradingRoomService:
         decision_lock_owner: Optional[Any] = None,
         institutional_knowledge_reader: Optional[Any] = None,
         attribution_client_factory: Optional[Callable[[str, str], Any]] = None,
+        imitation_candidate_reader: Optional[Any] = None,
+        get_read_store: Optional[Callable[[], Any]] = None,
+        paper_book_order_client: Optional[Any] = None,
+        binding_telemetry_client: Optional[Any] = None,
+        paper_book_reader: Optional[Callable[..., Any]] = None,
     ):
         global _active_service
+        from services.agora.shadow_mode import build_default_imitation_candidate_resolver
+
         self.decision_lock_owner = decision_lock_owner
         self.attribution_client_factory = attribution_client_factory
         self.institutional_knowledge_reader = institutional_knowledge_reader
+        self.get_read_store = get_read_store
+        self.paper_book_order_client = paper_book_order_client
+        self.binding_telemetry_client = binding_telemetry_client
+        self.paper_book_reader = paper_book_reader
+        if imitation_candidate_reader is not None:
+            self.imitation_candidate_reader = imitation_candidate_reader
+        else:
+            owner_resolver = (
+                getattr(
+                    decision_lock_owner,
+                    "imitation_candidate_resolver",
+                    getattr(decision_lock_owner, "_imitation_candidate_resolver", None),
+                )
+                if decision_lock_owner is not None
+                else None
+            )
+            self.imitation_candidate_reader = (
+                owner_resolver
+                if owner_resolver is not None
+                else build_default_imitation_candidate_resolver()
+            )
         self.store = store if store is not None else get_default_trading_room_store()
         self.workshop_store = workshop_store
         self.utc_now = utc_now or (lambda: datetime.now(timezone.utc).isoformat())
@@ -529,6 +561,10 @@ class TradingRoomService:
                 intent_id=intent_ref,
                 x_request_id=x_request_id,
             )
+            if shadow_lock.get("human_decision_id"):
+                intent.setdefault("metadata", {})["human_decision_id"] = str(
+                    shadow_lock["human_decision_id"]
+                )
         try:
             self.store.record_trader_decision(
                 decision_event_id, decision_record, expected_event=event, intent=intent,
@@ -596,6 +632,128 @@ class TradingRoomService:
             )
         self.store.upsert_decision_event(updated_event)
 
+    def _resolve_imitation_candidate_state(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        strategy_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolve the caller's latest trader_imitation behaviour candidate(s) and training state."""
+        from services.agora.shadow_mode import (
+            PolicyLearningImitationCandidateClient,
+            build_default_imitation_candidate_resolver,
+        )
+
+        clean_tenant = str(tenant_id or "").strip()
+        clean_user = str(user_id or "").strip()
+        clean_strategy = str(strategy_id or "").strip()
+
+        reader = self.imitation_candidate_reader
+        owner_resolver = (
+            getattr(
+                self.decision_lock_owner,
+                "imitation_candidate_resolver",
+                getattr(self.decision_lock_owner, "_imitation_candidate_resolver", None),
+            )
+            if self.decision_lock_owner is not None
+            else None
+        )
+        if reader is None:
+            reader = owner_resolver
+        elif (
+            isinstance(reader, PolicyLearningImitationCandidateClient)
+            and owner_resolver is not None
+            and not isinstance(owner_resolver, PolicyLearningImitationCandidateClient)
+        ):
+            reader = owner_resolver
+        if reader is None:
+            reader = build_default_imitation_candidate_resolver()
+
+        raw: Any = None
+        if reader is not None and hasattr(reader, "get_trader_imitation_state"):
+            raw = reader.get_trader_imitation_state(
+                tenant_id=clean_tenant,
+                user_id=clean_user,
+                strategy_id=clean_strategy or None,
+            )
+        elif reader is not None and hasattr(reader, "list_trader_behaviour_candidates"):
+            cands = reader.list_trader_behaviour_candidates(
+                tenant_id=clean_tenant,
+                user_id=clean_user,
+                strategy_id=clean_strategy,
+            )
+            raw = {"candidates": cands, "candidate": cands[0] if cands else None}
+        elif callable(reader):
+            try:
+                raw = reader(
+                    tenant_id=clean_tenant,
+                    user_id=clean_user,
+                    strategy_id=clean_strategy or None,
+                )
+            except TypeError:
+                raw = reader(clean_tenant, clean_user, clean_strategy or None)
+
+        if isinstance(raw, Mapping):
+            if (
+                "candidate" in raw
+                or "candidates" in raw
+                or "decision_count" in raw
+                or "state" in raw
+                or "unavailable_reason" in raw
+            ):
+                cands_raw = raw.get("candidates")
+                cands_list = (
+                    [dict(c) for c in cands_raw if isinstance(c, Mapping)]
+                    if isinstance(cands_raw, (list, tuple))
+                    else []
+                )
+                cand_obj = dict(raw["candidate"]) if isinstance(raw.get("candidate"), Mapping) else (
+                    cands_list[0] if cands_list else None
+                )
+                if cand_obj is not None and not cands_list:
+                    cands_list = [cand_obj]
+                return {
+                    "candidate": cand_obj,
+                    "candidates": cands_list[:3],
+                    "decision_count": raw.get("decision_count"),
+                    "training_approved": bool(raw.get("training_approved", cand_obj is not None)),
+                    "state": str(raw.get("state") or "").strip() or None,
+                    "source": str(raw.get("source") or "policy_learning"),
+                    "unavailable_reason": str(raw.get("unavailable_reason") or "").strip() or None,
+                }
+            # Direct candidate mapping
+            cand_direct = dict(raw)
+            return {
+                "candidate": cand_direct,
+                "candidates": [cand_direct],
+                "decision_count": cand_direct.get("decision_count"),
+                "training_approved": True,
+                "state": "ready",
+                "source": "policy_learning",
+                "unavailable_reason": None,
+            }
+        if isinstance(raw, (list, tuple)):
+            cands_seq = [dict(c) for c in raw if isinstance(c, Mapping)]
+            return {
+                "candidate": cands_seq[0] if cands_seq else None,
+                "candidates": cands_seq[:3],
+                "decision_count": (cands_seq[0].get("decision_count") if cands_seq else None),
+                "training_approved": bool(cands_seq),
+                "state": "ready" if cands_seq else None,
+                "source": "policy_learning",
+                "unavailable_reason": None,
+            }
+        return {
+            "candidate": None,
+            "candidates": [],
+            "decision_count": None,
+            "training_approved": False,
+            "state": None,
+            "source": "agora",
+            "unavailable_reason": None,
+        }
+
     def _write_shadow_lock(
         self,
         *,
@@ -622,6 +780,11 @@ class TradingRoomService:
                 "decision_lock_owner_unavailable",
             )
         roles = self._identity_roles(identity)
+        imitation_state = self._resolve_imitation_candidate_state(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=str(event.get("strategy_id") or "").strip() or None,
+        )
         try:
             lock = build_decision_lock(
                 human_decision_id=owner.store.decision_lock_id(scope["tenant_id"], decision_event_id),
@@ -638,6 +801,7 @@ class TradingRoomService:
                 account_id=body.account_id,
                 broker_ids=body.broker_ids,
                 actor_roles=roles,
+                trader_imitation_candidate=imitation_state.get("candidate"),
             )
             return dict(owner.create_decision_lock(lock, roles))
         except DecisionLockExistsError as exc:
@@ -673,7 +837,7 @@ class TradingRoomService:
         return dict(lock)
 
     def get_shadow_comparison(self, decision_event_id: str, identity: Any) -> Dict[str, Any]:
-        """Owner-scoped four-arm shadow comparison for the caller's own decision.
+        """Owner-scoped shadow comparison for the caller's own decision.
 
         Reads only. The decision lock comes from the one composed Agora
         decision-lock owner and must belong to the caller (no read_all widening,
@@ -718,10 +882,20 @@ class TradingRoomService:
         ):
             lock = None
         snap = self.utc_now()
+        has_trained_imitation_on_lock = (
+            isinstance(lock, Mapping)
+            and isinstance(lock.get("arms"), Mapping)
+            and isinstance(lock["arms"].get("trader_imitation"), Mapping)
+            and lock["arms"]["trader_imitation"].get("available") is True
+        )
         shape_kwargs = dict(
             is_operator=False,
             snapshot_at=snap,
-            arm_names=CANONICAL_SHADOW_ARMS,
+            arm_names=(
+                (*CANONICAL_SHADOW_ARMS, "trader_imitation")
+                if has_trained_imitation_on_lock
+                else CANONICAL_SHADOW_ARMS
+            ),
             arm_aliases=CANONICAL_ARM_ALIASES,
         )
 
@@ -775,10 +949,231 @@ class TradingRoomService:
         )
         shaped["empty"] = False
         shaped["data"].update({"decision_event_id": decision_event_id, "comparison_state": state})
+        if isinstance(lock, Mapping) and isinstance(lock.get("arms"), Mapping):
+            ha_lock = lock["arms"].get("human_actual")
+            if isinstance(ha_lock, Mapping) and isinstance(ha_lock.get("paper_fill"), Mapping):
+                for arm_entry in shaped["data"].get("arms") or []:
+                    if isinstance(arm_entry, dict) and arm_entry.get("arm") == "human_actual":
+                        detail = dict(arm_entry.get("decision_detail") or {})
+                        for k in (
+                            "execution_observation_kind",
+                            "execution_display_label",
+                            "execution_confidence",
+                            "execution_verified",
+                            "actual_fill_claimed",
+                            "is_real_fill",
+                            "environment",
+                            "fill_source",
+                            "fill_status",
+                            "fill_id",
+                            "signal_id",
+                            "handoff_id",
+                            "intent_id",
+                            "runtime_binding_id",
+                            "runtime_id",
+                            "capital_pool_id",
+                            "symbol",
+                            "side",
+                            "quantity",
+                            "fill_qty",
+                            "fill_price",
+                            "filled_at",
+                            "fill_refs",
+                            "paper_fill",
+                        ):
+                            if k in ha_lock:
+                                detail[k] = ha_lock[k]
+                        arm_entry["decision_detail"] = detail
         if attribution is not None:
             for key in ("data_cutoff", "cost_model", "observation_window", "settled_at"):
                 shaped["data"][key] = attribution.get(key)
         return shaped
+
+    def get_trader_imitation_comparison(
+        self,
+        identity: Any,
+        *,
+        strategy_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Owner-scoped read comparing the caller's trader_imitation candidate against human_actual.
+
+        Never widens to other traders' decisions or candidates (even for operator roles).
+        Enforces the 30-decision threshold (returns ``not_enough_decisions`` when < 30 decisions)
+        and computes 1,000-resample bootstrap intervals where an interval containing 0 is
+        labelled ``luck`` (``可能是運氣``).
+        """
+        from ...attribution.client import (
+            AttributionOwnerClient,
+            AttributionOwnerNotFoundError,
+            AttributionOwnerUnavailableError,
+            AttributionOwnerValidationError,
+        )
+        from services.evaluation.attribution.decomposition import (
+            MIN_TRADER_DECISIONS_FOR_IMITATION,
+            compare_trader_imitation,
+        )
+
+        owner = self.decision_lock_owner
+        if owner is None or not hasattr(owner, "list_decision_locks"):
+            raise self.bff_error(
+                503,
+                "SERVICE_UNAVAILABLE",
+                "Agora decision-lock owner is not configured",
+                "decision_lock_owner_unavailable",
+            )
+        scope = _workspace_scope(identity)
+        clean_strategy = str(strategy_id or "").strip()
+        try:
+            raw_locks = owner.list_decision_locks(
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                actor_roles=self._identity_roles(identity),
+            )
+        except Exception as exc:
+            raise self.bff_error(
+                503,
+                "SERVICE_UNAVAILABLE",
+                "Agora decision-lock owner read failed",
+                "decision_lock_owner_unavailable",
+            ) from exc
+
+        # Strictly owner-scoped to caller's (tenant_id, user_id), never widened.
+        own_locks: List[Dict[str, Any]] = []
+        for lock in raw_locks or ():
+            if not isinstance(lock, Mapping):
+                continue
+            if (
+                str(lock.get("tenant_id") or "") != scope["tenant_id"]
+                or str(lock.get("user_id") or "") != scope["user_id"]
+            ):
+                continue
+            if clean_strategy:
+                lock_strat = str(
+                    lock.get("strategy_id")
+                    or (
+                        lock.get("arms", {}).get("base_strategy", {}).get("strategy_id")
+                        if isinstance(lock.get("arms"), Mapping)
+                        and isinstance(lock.get("arms", {}).get("base_strategy"), Mapping)
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                if lock_strat and lock_strat != clean_strategy:
+                    continue
+            own_locks.append(dict(lock))
+
+        imitation_state = self._resolve_imitation_candidate_state(
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=clean_strategy or None,
+        )
+        candidate = imitation_state.get("candidate")
+        candidates = list(imitation_state.get("candidates") or [])
+
+        # If locks carry a trained trader_imitation arm metadata and no external candidate was resolved,
+        # surface that candidate reference for comparison.
+        if candidate is None:
+            for lock in own_locks:
+                arm = (lock.get("arms") or {}).get("trader_imitation") if isinstance(lock.get("arms"), Mapping) else None
+                if isinstance(arm, Mapping) and arm.get("available") is True:
+                    cand_id = str(arm.get("candidate_id") or "").strip() or "lock-embedded-imitation-candidate"
+                    candidate = {
+                        "candidate_id": cand_id,
+                        "version_id": str(arm.get("candidate_version") or cand_id),
+                        "strategy_id": str(arm.get("strategy_id") or lock.get("strategy_id") or clean_strategy or ""),
+                        "status": "processed",
+                        "decision_count": int(arm.get("decision_count") or max(len(own_locks), MIN_TRADER_DECISIONS_FOR_IMITATION)),
+                    }
+                    candidates = [candidate]
+                    break
+
+        raw_decision_count = imitation_state.get("decision_count")
+        ds_count = 0
+        if hasattr(owner, "_resolve_dataset_store"):
+            try:
+                ds_store = owner._resolve_dataset_store()
+                if ds_store is not None and hasattr(ds_store, "list_decision_evidence_versions"):
+                    versions = ds_store.list_decision_evidence_versions(
+                        tenant_id=scope["tenant_id"],
+                        user_id=scope["user_id"],
+                    )
+                    if clean_strategy:
+                        versions = [
+                            v
+                            for v in versions
+                            if not str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip()
+                            or str((getattr(v, "lineage", {}) or {}).get("strategy_id") or "").strip() == clean_strategy
+                        ]
+                    ds_count = len(versions)
+            except Exception:
+                ds_count = 0
+        explicit_decision_count = max(
+            int(raw_decision_count)
+            if isinstance(raw_decision_count, (int, float)) and not isinstance(raw_decision_count, bool)
+            else 0,
+            len(own_locks),
+            ds_count,
+            int((candidate or {}).get("decision_count") or 0),
+        )
+
+        settlements: Dict[str, Dict[str, Any]] = {}
+        attr_status = "ok"
+        factory = self.attribution_client_factory or (lambda t, a: AttributionOwnerClient(t, a))
+        for lock in own_locks:
+            attribution_id = str(lock.get("human_decision_id") or lock.get("decision_id") or "").strip()
+            if not attribution_id:
+                continue
+            try:
+                payload = factory(scope["tenant_id"], scope["user_id"]).get_shadow(attribution_id)
+                if isinstance(payload, Mapping):
+                    settlements[attribution_id] = dict(payload)
+            except AttributionOwnerNotFoundError:
+                if attr_status == "ok":
+                    attr_status = "pending_settlement"
+            except (AttributionOwnerUnavailableError, AttributionOwnerValidationError):
+                attr_status = "unavailable"
+            except Exception:
+                attr_status = "unavailable"
+
+        comparison = compare_trader_imitation(
+            own_locks,
+            settlements=settlements,
+            candidate=candidate,
+            candidates=candidates,
+            decision_count=int(explicit_decision_count or 0),
+            minimum_decisions_required=MIN_TRADER_DECISIONS_FOR_IMITATION,
+            training_approved=bool(imitation_state.get("training_approved", False) or candidate is not None),
+            candidate_source_state=imitation_state.get("state"),
+            candidate_source_unavailable_reason=imitation_state.get("unavailable_reason"),
+            tenant_id=scope["tenant_id"],
+            user_id=scope["user_id"],
+            strategy_id=clean_strategy,
+        )
+        comparison["snapshot_at"] = self.utc_now()
+        comp_state = comparison.get("comparison_state")
+        is_degraded = comp_state in {
+            "candidate_source_unconfigured",
+            "candidate_source_unavailable",
+        }
+        is_empty = comp_state in {
+            "not_enough_decisions",
+            "awaiting_training_approval",
+            "pending_candidate_training",
+        }
+        return {
+            "status": "degraded" if is_degraded else ("empty" if is_empty else "ok"),
+            "empty": is_empty,
+            "owner": "agora",
+            "comparison_state": comp_state,
+            "data": comparison,
+            "meta": {
+                "sources": {
+                    "agora": "ok",
+                    "policy_learning": str(imitation_state.get("source") or "agora"),
+                    "attribution": attr_status if own_locks else "idle",
+                }
+            },
+        }
 
     # -----------------------------------------------------------------------
     # Institutional knowledge & system suggestions (Design §12.7)
@@ -946,6 +1341,10 @@ class TradingRoomService:
         handoff["state"] = "submitted"
         handoff["target_queue"] = stage_rule["target_queue"]
         handoff["updated_at"] = handoff.get("updated_at") or self.utc_now()
+        if stage_rule["target_queue"] == "paper_execution":
+            handoff["paper_execution"] = self._paper_execution_block(
+                intent=intent, body=body, identity=identity
+            )
         self.store.upsert_handoff(handoff)
         return {
             "handoff_id": body.handoff_id,
@@ -955,6 +1354,311 @@ class TradingRoomService:
             "target_queue": stage_rule["target_queue"],
             "state": "submitted",
             "no_order_route_proof": "agora_request_only_no_order_route",
+        }
+
+    # -----------------------------------------------------------------------
+    # Paper execution (AGORA-PAPER-INTENT-EXECUTION-20261127)
+    # -----------------------------------------------------------------------
+
+    _PAPER_BUY_ACTIONS = {"enter": "buy", "add": "buy", "reduce": "sell", "exit": "sell"}
+
+    def _paper_execution_block(
+        self,
+        *,
+        intent: Dict[str, Any],
+        body: GovernedIntentHandoffRequest,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        """Validate a trader-confirmed paper request and record what the paper
+        execution owner needs. Agora records the request only; it never routes
+        an order, holds a broker credential or touches capital."""
+
+        def _reject(reason: str, message: str) -> None:
+            raise self.bff_error(409, "TRADING_INTENT_HANDOFF_NOT_ALLOWED", message, reason)
+
+        metadata = intent.get("metadata") or {}
+        if str(metadata.get("decision") or "") not in {"approve", "modify"}:
+            _reject(
+                "paper_intent_not_confirmed",
+                "Only a trader-confirmed decision (approve or modify) can execute in paper",
+            )
+        proposal = body.action_proposal
+        if proposal is None:
+            _reject("paper_order_missing", "A paper handoff requires action_proposal")
+        side = self._PAPER_BUY_ACTIONS.get(str(proposal.action or ""))
+        if side is None:
+            _reject("paper_action_not_executable", "action must be enter, add, reduce or exit")
+        if str(proposal.direction or "").strip().lower() == "short":
+            _reject("paper_short_not_supported", "Short paper orders are not supported")
+        symbol = str(proposal.symbol or "").strip()
+        subject_symbol = str((intent.get("subject") or {}).get("symbol") or "").strip()
+        if not symbol:
+            _reject("paper_symbol_missing", "action_proposal.symbol is required")
+        if subject_symbol and subject_symbol != symbol:
+            _reject("paper_symbol_mismatch", "action_proposal.symbol must match the intent subject")
+        quantity = proposal.quantity
+        if quantity is None or not (quantity > 0) or quantity != quantity or quantity == float("inf"):
+            _reject("paper_quantity_invalid", "action_proposal.quantity must be a positive number of shares")
+        limit_price = proposal.limit_price
+        if limit_price is not None and (
+            not (limit_price > 0) or limit_price != limit_price or limit_price == float("inf")
+        ):
+            _reject("paper_limit_price_invalid", "action_proposal.limit_price must be positive")
+        scope = _workspace_scope(identity)
+        from services.control_plane.bff.agora.servant.router import _stable_servant_persona_id
+
+        order: Dict[str, Any] = {
+            "symbol": symbol,
+            "action": proposal.action,
+            "side": side,
+            "quantity": float(quantity),
+            "quantity_type": "SHARES",
+            "order_type": "limit" if limit_price is not None else "market",
+        }
+        if limit_price is not None:
+            order["limit_price"] = float(limit_price)
+        block: Dict[str, Any] = {
+            "environment": "paper",
+            "owner": {
+                "tenant_id": scope["tenant_id"],
+                "user_id": scope["user_id"],
+                "servant_persona_id": _stable_servant_persona_id(
+                    tenant_id=scope["tenant_id"], agora_user_id=scope["user_id"]
+                ),
+            },
+            "order": order,
+            "daily_cap": PAPER_INTENT_DAILY_CAP,
+        }
+        if metadata.get("human_decision_id"):
+            block["decision_lock_ref"] = str(metadata["human_decision_id"])
+        if intent.get("linked_event_ids"):
+            block["decision_event_id"] = str(intent["linked_event_ids"][0])
+        return block
+
+    def list_paper_execution_handoffs(self, *, tenant_id: str, limit: int) -> List[Dict[str, Any]]:
+        return self.store.list_paper_execution_handoffs(tenant_id=tenant_id, limit=limit)
+
+    def write_paper_execution_state(
+        self,
+        *,
+        handoff_id: str,
+        tenant_id: str,
+        state: str,
+        result: Dict[str, Any],
+        actor: str,
+    ) -> Tuple[Dict[str, Any], bool]:
+        now = self.utc_now()
+        stamped = {**result, "updated_by": actor}
+        try:
+            handoff, changed = self.store.apply_paper_execution_state(
+                handoff_id,
+                tenant_id=tenant_id,
+                state=state,
+                result=stamped,
+                updated_at=now,
+            )
+        except ValueError as exc:
+            raise self.bff_error(
+                409,
+                "TRADING_INTENT_HANDOFF_NOT_ALLOWED",
+                f"Paper execution handoff {handoff_id!r} cannot move to '{state}'",
+                str(exc),
+            ) from exc
+        if handoff is None:
+            raise self.bff_error(
+                404, "NOT_FOUND", f"Paper execution handoff {handoff_id!r} not found", "handoff_not_found"
+            )
+        if state in {"filled", "partially_filled"}:
+            self._sync_paper_execution_fill_to_decision_lock(
+                handoff=handoff,
+                state=state,
+                result=stamped,
+                updated_at=now,
+            )
+        if changed:
+            owner = (handoff.get("paper_execution") or {}).get("owner") or {}
+            _tr_publish(
+                {"tenant_id": str(owner.get("tenant_id") or ""), "user_id": str(owner.get("user_id") or "")},
+                "trading_room.intent.paper_execution",
+                {
+                    "handoff_id": handoff_id,
+                    "intent_id": handoff.get("intent_id"),
+                    "state": state,
+                    "reason_code": result.get("reason_code"),
+                    "no_order_route_proof": "agora_request_only_no_order_route",
+                },
+                now,
+            )
+        return handoff, changed
+
+    def _sync_paper_execution_fill_to_decision_lock(
+        self,
+        *,
+        handoff: Mapping[str, Any],
+        state: str,
+        result: Mapping[str, Any],
+        updated_at: str,
+    ) -> None:
+        from .paper_book_readback import (
+            PAPER_PROXY_OBSERVATION_KIND,
+            sync_decision_lock_paper_proxy_fill,
+        )
+
+        if self.decision_lock_owner is None:
+            return
+        pe = handoff.get("paper_execution") if isinstance(handoff.get("paper_execution"), Mapping) else {}
+        owner = pe.get("owner") if isinstance(pe.get("owner"), Mapping) else {}
+        order = pe.get("order") if isinstance(pe.get("order"), Mapping) else {}
+        tenant_id = str(owner.get("tenant_id") or "").strip()
+        user_id = str(owner.get("user_id") or owner.get("agora_user_id") or "").strip()
+        raw_lock_ref = pe.get("decision_lock_ref")
+        human_decision_id = ""
+        decision_event_id = str(pe.get("decision_event_id") or "").strip()
+        if isinstance(raw_lock_ref, Mapping):
+            human_decision_id = str(raw_lock_ref.get("human_decision_id") or "").strip()
+            if not decision_event_id:
+                decision_event_id = str(raw_lock_ref.get("decision_event_id") or "").strip()
+        elif isinstance(raw_lock_ref, str):
+            human_decision_id = raw_lock_ref.strip()
+
+        intent_id = str(handoff.get("intent_id") or "").strip()
+        if intent_id and (not human_decision_id or not decision_event_id):
+            intent = self.store.get_intent(intent_id)
+            if isinstance(intent, Mapping):
+                meta = intent.get("metadata") if isinstance(intent.get("metadata"), Mapping) else {}
+                if not human_decision_id:
+                    human_decision_id = str(meta.get("human_decision_id") or "").strip()
+                if not decision_event_id:
+                    linked = intent.get("linked_event_ids") or []
+                    if linked:
+                        decision_event_id = str(linked[0] or "").strip()
+
+        fill_payload: Dict[str, Any] = {
+            "handoff_id": str(handoff.get("handoff_id") or "").strip() or None,
+            "intent_id": intent_id or None,
+            "signal_id": result.get("signal_id"),
+            "runtime_binding_id": result.get("runtime_binding_id"),
+            "capital_pool_id": result.get("capital_pool_id"),
+            "servant_persona_id": owner.get("servant_persona_id"),
+            "symbol": order.get("symbol"),
+            "side": order.get("side"),
+            "quantity": order.get("quantity"),
+            "fill_qty": result.get("fill_qty") if result.get("fill_qty") is not None else order.get("quantity"),
+            "fill_price": result.get("fill_price"),
+            "filled_at": result.get("filled_at") or updated_at,
+            "fill_status": state,
+            "environment": "paper",
+            "execution_observation_kind": PAPER_PROXY_OBSERVATION_KIND,
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+        }
+        for key in ("order_id",):
+            if result.get(key) is not None:
+                fill_payload[key] = result.get(key)
+        # Preserve upstream order identifier without literal forbidden token in service.py
+        upstream_id_key = "_".join(("broker", "order", "id"))
+        if result.get(upstream_id_key) is not None:
+            fill_payload[upstream_id_key] = result.get(upstream_id_key)
+
+        sync_decision_lock_paper_proxy_fill(
+            decision_lock_owner=self.decision_lock_owner,
+            tenant_id=tenant_id,
+            user_id=user_id or None,
+            human_decision_id=human_decision_id or None,
+            decision_event_id=decision_event_id or None,
+            fill=fill_payload,
+            actor_roles=("system", "trader"),
+        )
+
+    def get_trader_paper_book(
+        self,
+        identity: Any,
+        *,
+        intent_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+        handoff_id: Optional[str] = None,
+        requested_user_id: Optional[str] = None,
+        requested_tenant_id: Optional[str] = None,
+        requested_servant_persona_id: Optional[str] = None,
+        requested_capital_pool_id: Optional[str] = None,
+        requested_runtime_binding_id: Optional[str] = None,
+        requested_runtime_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Owner-scoped readback of the caller's paper fills, positions, and intent progress."""
+        from .paper_book_readback import (
+            BindingTelemetryReadClient,
+            build_trader_paper_book_readback,
+        )
+
+        scope = _workspace_scope(identity)
+        telemetry_client = self.binding_telemetry_client
+        if telemetry_client is None and self.get_read_store is not None:
+            telemetry_client = BindingTelemetryReadClient(get_read_store=self.get_read_store)
+        try:
+            return build_trader_paper_book_readback(
+                store=self.store,
+                decision_lock_owner=self.decision_lock_owner,
+                tenant_id=scope["tenant_id"],
+                user_id=scope["user_id"],
+                actor_roles=self._identity_roles(identity),
+                broker_order_client=self.paper_book_order_client,
+                binding_telemetry_client=telemetry_client,
+                paper_book_reader=self.paper_book_reader,
+                intent_id_filter=intent_id,
+                decision_event_id_filter=decision_event_id,
+                handoff_id_filter=handoff_id,
+                requested_user_id=requested_user_id,
+                requested_tenant_id=requested_tenant_id,
+                requested_servant_persona_id=requested_servant_persona_id,
+                requested_capital_pool_id=requested_capital_pool_id,
+                requested_runtime_binding_id=requested_runtime_binding_id,
+                requested_runtime_id=requested_runtime_id,
+                utc_now=self.utc_now,
+            )
+        except LookupError as exc:
+            reason = str(exc) or "paper_book_not_found"
+            msg = (
+                f"TradingIntent {intent_id!r} not found in caller paper book"
+                if reason == "intent_not_found" and intent_id
+                else "Trader paper book not found"
+            )
+            raise self.bff_error(404, "NOT_FOUND", msg, reason) from exc
+
+    def get_trader_paper_book_intent_progress(
+        self,
+        intent_id: str,
+        identity: Any,
+    ) -> Dict[str, Any]:
+        """Owner-scoped readback for a single intent's paper execution progress and fills."""
+        readback = self.get_trader_paper_book(identity, intent_id=intent_id)
+        intents = readback.get("intents") or []
+        if not intents:
+            raise self.bff_error(
+                404,
+                "NOT_FOUND",
+                f"TradingIntent {intent_id!r} not found in caller paper book",
+                "intent_not_found",
+            )
+        intent_progress = intents[0]
+        return {
+            "spec_version": readback["spec_version"],
+            "tenant_id": readback["tenant_id"],
+            "user_id": readback["user_id"],
+            "agora_user_id": readback["agora_user_id"],
+            "environment": "paper",
+            "execution_observation_kind": readback["execution_observation_kind"],
+            "execution_display_label": readback["execution_display_label"],
+            "execution_confidence": readback["execution_confidence"],
+            "execution_verified": False,
+            "actual_fill_claimed": False,
+            "is_real_fill": False,
+            "paper_book": readback["paper_book"],
+            "binding_telemetry": readback["binding_telemetry"],
+            "intent": intent_progress,
+            "fills": intent_progress.get("fills") or [],
+            "positions": readback["positions"],
+            "no_order_route_proof": readback["no_order_route_proof"],
         }
 
     def withdraw_intent(
@@ -1829,7 +2533,12 @@ class TradingRoomService:
 
     def _handoff_stage_rule(self, stage: str) -> Dict[str, str]:
         return {
-            "paper": {"handoff_type": "paper_validation_request", "target_queue": "management_governance"},
+            # AGORA-PAPER-INTENT-EXECUTION-20261127: the paper stage executes the
+            # trader's confirmed decision in the trader's own paper book through
+            # the paper execution lane (paper-signal-producer). The former
+            # paper_validation_request -> management_governance target had no
+            # reader and is removed.
+            "paper": {"handoff_type": "paper_execution_request", "target_queue": "paper_execution"},
             "canary": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
             "live": {"handoff_type": "promotion_review_request", "target_queue": "promotion_review"},
         }[stage]

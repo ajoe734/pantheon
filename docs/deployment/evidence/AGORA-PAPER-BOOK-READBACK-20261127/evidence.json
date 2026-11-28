@@ -1,0 +1,104 @@
+{
+  "task_id": "AGORA-PAPER-BOOK-READBACK-20261127",
+  "title": "The trader reads their own paper fills and positions in Agora",
+  "design_reference": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (§8.3 step 4, §12 T9)",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "delivery_state": "source_and_tests_verified_pending_merge_and_hosted_deploy",
+  "prerequisite": {
+    "task_id": "AGORA-PAPER-INTENT-EXECUTION-20261127",
+    "pr": 7953,
+    "merge_commit": "5e08fd1f648400338ae754eb4a3bf831b196215c",
+    "status": "done"
+  },
+  "acceptance": {
+    "owner_scoped_paper_book_readback_route_and_404_isolation": {
+      "status": "verified_in_source_and_tests",
+      "routes": [
+        "GET /bff/agora/trading-room/paper-book",
+        "GET /bff/agora/trading-room/paper-book/intents/{intent_id}"
+      ],
+      "owner_sources": [
+        "GET /api/broker/paper/orders?capital_pool_id={capital_pool_id}",
+        "read_surface.get_telemetry_summary(runtime_id) / GET /api/telemetry/runtime-summaries/{runtime_id}",
+        "AgoraWriteService (agora.decision_locks) + TradingRoomStore (agora.trading_room_store_state)"
+      ],
+      "non_enumerating_404": "Unenrolled callers with no paper book and any caller querying another trader's user_id, trader_id, tenant_id, servant_persona_id, capital_pool_id, runtime_binding_id, runtime_id, intent_id, handoff_id, or decision_event_id receive HTTP 404 (paper_book_not_found / intent_not_found)."
+    },
+    "pantheon_paper_proxy_labelling_and_human_actual_arm_population": {
+      "status": "verified_in_source_and_tests",
+      "execution_observation_kind": "pantheon_paper_proxy",
+      "execution_display_label": "交易員決策（紙上代理）",
+      "execution_confidence": 0.75,
+      "actual_fill_claimed": false,
+      "execution_verified": false,
+      "is_real_fill": false,
+      "decision_lock_arm_update": "apply_paper_proxy_fill_to_decision_lock (services/agora/shadow_mode.py) and AgoraWriteService.record_decision_lock_paper_proxy_fill (services/agora/service.py) populate lock['arms']['human_actual'] and lock['paper_fill'] as pantheon_paper_proxy on both state writeback and paper-book readback reconciliation while rejecting declared_no_trade locks and any verified/imported/real fill claim."
+    },
+    "hosted_proof": {
+      "status": "pending_post_merge_dev_deploy_and_operator_paper_execution_secret",
+      "detail": "Consistent with AGORA-PAPER-INTENT-EXECUTION-20261127 (docs/deployment/evidence/AGORA-PAPER-INTENT-EXECUTION-20261127/evidence.json), hosted dev execution and readback proof requires post-merge deployment to dev plus the operator-created secret DEV_AGORA_PAPER_EXECUTION_SERVICE_TOKEN and AGORA_PAPER_EXECUTION_SERVICE_TENANTS (the paper execution consumer remains state=not_configured until those variables are set on hosted dev). End-to-end execution + readback + human_actual settlement is verified in services/control-plane/bff/tests/test_agora_paper_book_readback.py."
+    }
+  },
+  "runtime_budget": {
+    "new_recurring_jobs": 0,
+    "new_emitters": 0,
+    "new_persistent_writers": 0,
+    "existing_writers_touched": [
+      {
+        "writer": "agora.decision_locks",
+        "cadence": "At most once per filled/partially_filled paper intent (bounded by the 50 intents/trader/Taipei-day cap from AGORA-PAPER-INTENT-EXECUTION-20261127)",
+        "size_per_update_bytes": 512,
+        "growth_per_day": "In-place update on existing decision lock row (~0.5 KB added to existing row; 0 new rows created)",
+        "cap_and_cleanup": "Governed by existing agora.decision_locks entry in docs/operations/storage-manifest.json"
+      },
+      {
+        "writer": "agora.trading_room_store_state",
+        "cadence": "In-place handoff state reconciliation only when broker paper order reports a fill prior to consumer state writeback",
+        "size_per_update_bytes": 0,
+        "growth_per_day": "0 net bytes beyond AGORA-PAPER-INTENT-EXECUTION-20261127 handoff result fields",
+        "cap_and_cleanup": "Bounded by 10-entry state_history cap and 50 intents/trader/Taipei-day cap"
+      }
+    ]
+  },
+  "artifacts": [
+    "services/agora/shadow_mode.py",
+    "services/agora/store.py",
+    "services/agora/service.py",
+    "services/agora/write_authority.py",
+    "services/control-plane/bff/agora/trading_room/paper_book_readback.py",
+    "services/control-plane/bff/agora/trading_room/routes/intents.py",
+    "services/control-plane/bff/agora/trading_room/router.py",
+    "services/control-plane/bff/agora/trading_room/service.py",
+    "services/control-plane/bff/agora/trading_room/store.py",
+    "services/control-plane/bff/agora/router.py",
+    "services/control-plane/bff/tests/test_agora_paper_book_readback.py",
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "docs/bff/contract_snapshots/route-diff-baseline.json",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/AGORA-PAPER-BOOK-READBACK-20261127/evidence.json"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_paper_book_readback.py services/control-plane/bff/tests/test_agora_paper_intent_execution.py services/control-plane/bff/tests/test_agora_shadow_mode.py",
+      "result": "62 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/agora_schema_bundle.py --verify",
+      "result": "passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check",
+      "result": "passed (692 routes match snapshot)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
+      "result": "passed (Route diff baseline matches current fail-hard surface)"
+    }
+  ],
+  "residual_findings": []
+}

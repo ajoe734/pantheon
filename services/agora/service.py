@@ -94,6 +94,9 @@ class AgoraEvidenceWriteService:
         return sorted(items, key=lambda item: (str(item["created_at"]), item["evidence_id"]))
 
 
+_UNSET_IMITATION_RESOLVER = object()
+
+
 class AgoraWriteService:
     """Direct write owner service for Agora operations."""
 
@@ -104,9 +107,16 @@ class AgoraWriteService:
         dsn: Optional[str] = None,
         schema: str = "agora",
         dataset_store: Optional[Any] = None,
+        imitation_candidate_resolver: Optional[Any] = _UNSET_IMITATION_RESOLVER,
     ) -> None:
+        from .shadow_mode import build_default_imitation_candidate_resolver
+
         self.store = store or AgoraStore(dsn=dsn, schema=schema)
         self.dataset_store = dataset_store
+        if imitation_candidate_resolver is _UNSET_IMITATION_RESOLVER:
+            self.imitation_candidate_resolver: Optional[Any] = build_default_imitation_candidate_resolver()
+        else:
+            self.imitation_candidate_resolver = imitation_candidate_resolver
         try:
             from services.control_plane.bff.agora.dataset_extraction.extractor import (
                 ensure_journal_evidence_emission_wired,
@@ -667,16 +677,145 @@ class AgoraWriteService:
             )
             return None
 
+    def _attach_trader_imitation_arm(self, lock: Dict[str, Any]) -> Dict[str, Any]:
+        from .shadow_mode import (
+            canonical_checksum,
+            predict_trader_imitation_action,
+            unavailable,
+        )
+
+        prepared = dict(lock)
+        arms = dict(prepared.get("arms")) if isinstance(prepared.get("arms"), dict) else {}
+        existing = arms.get("trader_imitation")
+        if isinstance(existing, dict) and existing.get("available") is True:
+            prepared["arms"] = arms
+            opt = dict(prepared.get("optional_alt_versions")) if isinstance(prepared.get("optional_alt_versions"), dict) else {}
+            opt.setdefault("trader_imitation", dict(existing))
+            prepared["optional_alt_versions"] = opt
+            return prepared
+
+        candidate: Any = None
+        resolver = self.imitation_candidate_resolver
+        if resolver is not None:
+            trader_identity = prepared.get("trader_identity") if isinstance(prepared.get("trader_identity"), dict) else {}
+            tenant_id = str(prepared.get("tenant_id") or trader_identity.get("tenant_id") or "").strip()
+            user_id = str(
+                prepared.get("user_id")
+                or prepared.get("agora_user_id")
+                or trader_identity.get("user_id")
+                or trader_identity.get("agora_user_id")
+                or ""
+            ).strip()
+            strategy_id = str(
+                prepared.get("strategy_id")
+                or ((prepared.get("decision_time_snapshot") or {}) if isinstance(prepared.get("decision_time_snapshot"), dict) else {}).get("strategy_id")
+                or ""
+            ).strip()
+            try:
+                if hasattr(resolver, "resolve_candidate"):
+                    candidate = resolver.resolve_candidate(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id or None,
+                    )
+                elif hasattr(resolver, "get_trader_imitation_state"):
+                    state = resolver.get_trader_imitation_state(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id or None,
+                    )
+                    candidate = state.get("candidate") if isinstance(state, dict) else state
+                elif callable(resolver):
+                    raw_cand = resolver(
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        strategy_id=strategy_id,
+                    )
+                    if isinstance(raw_cand, dict) and (
+                        "candidate" in raw_cand or "active_candidate" in raw_cand
+                    ) and not (
+                        raw_cand.get("policy_weights")
+                        or raw_cand.get("policy")
+                        or raw_cand.get("artifact")
+                        or raw_cand.get("weights")
+                    ):
+                        candidate = raw_cand.get("candidate") or raw_cand.get("active_candidate")
+                    else:
+                        candidate = raw_cand
+            except Exception as exc:
+                _logger.warning("Failed to resolve trader imitation candidate for lock: %s", exc)
+                candidate = None
+
+        imitation_arm: Optional[Dict[str, Any]] = None
+        if isinstance(candidate, dict):
+            if candidate.get("available") is False:
+                imitation_arm = unavailable(
+                    str(
+                        candidate.get("unavailable_reason")
+                        or candidate.get("reason")
+                        or "no_trader_imitation_candidate_on_decision_event"
+                    )
+                )
+            else:
+                snap = (
+                    prepared.get("decision_time_snapshot")
+                    if isinstance(prepared.get("decision_time_snapshot"), dict)
+                    else {}
+                )
+                pred = predict_trader_imitation_action(candidate, snapshot=snap, event=prepared)
+                if pred.get("available") is True:
+                    imitation_arm = pred
+
+        changed = False
+        if imitation_arm is not None:
+            arms["trader_imitation"] = dict(imitation_arm)
+            changed = True
+        elif "trader_imitation" not in arms:
+            arms["trader_imitation"] = unavailable("no_trader_imitation_candidate_on_decision_event")
+            changed = True
+
+        if changed:
+            prepared["arms"] = arms
+            opt = dict(prepared.get("optional_alt_versions")) if isinstance(prepared.get("optional_alt_versions"), dict) else {}
+            opt["trader_imitation"] = dict(arms["trader_imitation"])
+            prepared["optional_alt_versions"] = opt
+            if "checksum" in prepared:
+                prepared["checksum"] = canonical_checksum(prepared)
+        return prepared
+
     def create_decision_lock(
         self,
         lock: Dict[str, Any],
         actor_roles: Union[Sequence[str], str],
     ) -> DictRecord:
         assert_authorized("AgoraDecisionLock", "create", actor_roles)
-        created = self.store.create_decision_lock(lock)
+        enriched = self._attach_trader_imitation_arm(lock)
+        created = self.store.create_decision_lock(enriched)
         self._emit_decision_lock_evidence(created)
         self._mark_habit_profiles_stale(created)
         return created
+
+    def record_decision_lock_paper_proxy_fill(
+        self,
+        human_decision_id: str,
+        *,
+        tenant_id: str,
+        fill: Dict[str, Any],
+        actor_roles: Union[Sequence[str], str] = ("system",),
+        user_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        assert_authorized("AgoraDecisionLock", "record_paper_proxy_fill", actor_roles)
+        updated = self.store.record_decision_lock_paper_proxy_fill(
+            human_decision_id,
+            tenant_id=tenant_id,
+            fill=fill,
+            user_id=user_id,
+            decision_event_id=decision_event_id,
+        )
+        if updated is not None:
+            self._mark_habit_profiles_stale(updated)
+        return updated
 
     # -------------------------------------------------------------------------
     # Trader habit profile facts (AGORA-TRADER-HABIT-PROFILE-20261127, SD §6)
@@ -844,10 +983,15 @@ def build_agora_write_service(
     schema: str = "agora",
     bootstrap: bool = True,
     dataset_store: Optional[Any] = None,
+    imitation_candidate_resolver: Optional[Any] = _UNSET_IMITATION_RESOLVER,
 ) -> AgoraWriteService:
     """Factory creating an AgoraWriteService backed by durable Postgres storage."""
     store = build_agora_store(dsn=dsn, schema=schema, bootstrap=bootstrap)
-    return AgoraWriteService(store=store, dataset_store=dataset_store)
+    return AgoraWriteService(
+        store=store,
+        dataset_store=dataset_store,
+        imitation_candidate_resolver=imitation_candidate_resolver,
+    )
 
 
 __all__ = ["AgoraWriteService", "build_agora_write_service"]

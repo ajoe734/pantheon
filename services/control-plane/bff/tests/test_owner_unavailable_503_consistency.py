@@ -99,3 +99,64 @@ def test_persona_fleet_returns_503_when_paper_reconciler_times_out(monkeypatch):
     monkeypatch.setattr(persona_collection, "_persona_fleet_slim_list_payload", _reconciler_timeout)
     with _isolated_final_read_models() as client:
         _assert_503(client.get("/bff/management/persona-fleet", headers=HEADERS))
+
+
+# Every ranking.py read whose handler composes PM-12 league rows reaches the
+# paper fleet reconciler (via _enrich_persona_item_with_bindings ->
+# _pm12_runtime_session_resolution). A reconciler timeout there must answer 503
+# DEPENDENCY_UNAVAILABLE, not an unhandled 500
+# (BFF-PERSONA-LEAGUE-RECONCILER-UNAVAILABLE-503-20261127).
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/bff/management/persona-league",
+        "/bff/management/persona-league/rankings",
+        "/bff/management/persona-league/movers",
+        "/bff/management/persona-league/tiers",
+        "/bff/management/persona-league/heatmap",
+        "/bff/management/quarterly-ranking",
+        "/bff/management/quarterly-ranking/drilldown?personaId=persona_001",
+        "/bff/management/quarterly-ranking/recommendations",
+        "/bff/management/promotion-reviews",
+        "/bff/management/promotion-reviews/review-x",
+    ],
+)
+def test_league_reads_return_503_when_paper_reconciler_times_out(monkeypatch, path):
+    from services.control_plane.bff.personas import service as persona_service
+
+    def _reconciler_timeout(*_a, **_kw):
+        raise PaperReconcilerUnavailableError("paper fleet reconciler query failed: timed out")
+
+    monkeypatch.setattr(persona_service, "_enrich_persona_item_with_bindings", _reconciler_timeout)
+    persona_service._pm12_league_rows_cache_clear()
+    try:
+        with _isolated_final_read_models() as client:
+            response = client.get(path, headers=HEADERS)
+    finally:
+        persona_service._pm12_league_rows_cache_clear()
+    _assert_503(response)
+    assert response.json()["error"]["message"] == "Paper fleet reconciler unavailable"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/bff/management/cockpit",
+        "/bff/management/trading-pulse/rankings",
+        "/api/v1/operator/runtime-state",
+    ],
+)
+def test_degrading_reads_stay_200_when_paper_reconciler_times_out(monkeypatch, path):
+    calls = []
+
+    def _reconciler_timeout(*_a, **_kw):
+        calls.append(path)
+        raise PaperReconcilerUnavailableError("paper fleet reconciler query failed: timed out")
+
+    monkeypatch.setattr(
+        ReadSurfacePorts, "list_authoritative_paper_runtime_monitoring_sessions", _reconciler_timeout
+    )
+    with _isolated_final_read_models() as client:
+        response = client.get(path, headers=HEADERS)
+    assert calls, f"{path} no longer reaches the reconciler read"
+    assert response.status_code == 200, response.text
