@@ -1425,7 +1425,7 @@
    "bound_status": "unreviewed",
    "cap": "none verified in code",
    "cleanup": "none found by the static inventory",
-   "growth_driver": "SQLite database written by the owner service; one `calls` row per day, one `record_attempts` row per record version attempted (pruned after 30 days), `events` and `cards` per extracted record",
+   "growth_driver": "SQLite database written by the owner service; one `calls` row per day, one `record_attempts` row per record version attempted (pruned after 30 days), `events` and `cards` per extracted record; L2-UNSENT-CALLS-NOT-COUNTED-AND-ADAPTER-DOWN-BACKOFF-20261127 adds calls.unsent (one integer per existing daily row, no new rows) and bounded unsent events in this same database",
    "growth_per_day": "unmeasured: no hosted measurement yet (RC3 WP3.3)",
    "kind": "sqlite",
    "name": "l2_extraction_ledger.sqlite",
@@ -1434,7 +1434,18 @@
     "services/source_ingestion/distillation_worker.py"
    ],
    "register_class": "RC3",
-   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)"
+   "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "unsent_budget": {
+    "cadence": "existing 60-second distillation tick; stop at first unsent transport/policy failure, <=1 outage event/tick (about 1440/day); local input refusal may also produce one unsent event per processed record, within the existing tick batch limit",
+    "growth_per_day": "counter adds at most 8 bytes per existing daily row; outage reason events about 1 MiB/day typical and <=4.6 MB UTF-8 payload/day at 1440 events, until the global count cap; no new file, table or recurring job",
+    "cap": "one calls.unsent scalar per existing day row; at most MAX_UNSENT_EVENTS=10080 unsent events, source_id <=256 and detail <=500 characters (~0.8 KB typical / <=3.2 KB UTF-8 payload each; ~8 MB typical / <=33 MB payload total plus existing SQLite overhead); unsent-only partial index <=10080 keys",
+    "cleanup": "each unsent write atomically prunes oldest unsent events above 10080; deleted pages reused by SQLite; original calls rows and non-unsent events/cards retain the existing RC3 WP3.1 unreviewed history obligation",
+    "bound_proof": {
+     "file": "services/source_ingestion/hypothesis_card.py",
+     "contains": "MAX_UNSENT_EVENTS = 10_080"
+    },
+    "acceptance": "services/source_ingestion/tests/test_hypothesis_extraction.py::test_unsent_migration_and_event_cap_preserve_spent_history"
+   }
   },
   {
    "bound_status": "unreviewed",

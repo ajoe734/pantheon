@@ -4,7 +4,7 @@
   "reviewer": "Antigravity",
   "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
   "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
-  "source_base": "dd5c6f51b526d686ca9ab6b3c6c3af09af157714",
+  "source_base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
   "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
   "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
   "incident": {
@@ -203,6 +203,11 @@
     "conflict_resolution": "Preserve new dev persona-purpose and private-visibility instances and parallel frontend sequencing in the WP2.3 register row; retain task status, evidence link and unchanged boundaries.",
     "review": "All previous-head approvals are stale. Hand off the final published head and this committed manifest to Antigravity for independent review.",
     "new_head_ci": "Pending publication and GitHub execution; no passed CI claim.",
-    "retry_policy": "If the same lifecycle failure recurs on the synced head, rerun its failed CI job once and keep the residual finding in handoff. Do not edit that test file."
+    "retry_policy": "If the same lifecycle failure recurs on the synced head, rerun its failed CI job once and keep the residual finding in handoff. Do not edit that test file.",
+    "subsequent_dev_sync": {
+      "base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
+      "upstream_pr": 7998,
+      "resolution": "Clean merge of latest dev before owner handoff. All imported L2 extraction files match dev exactly; no additional task product edits. Focused contracts revalidated after sync."
+    }
   }
 }

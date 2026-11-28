@@ -452,7 +452,8 @@ class HypothesisCompiler:
                 extra={"cached": True},
             )
         if self._ledger is not None:
-            reservation = self._ledger.reserve_attempt(sid, digest)
+            reservation_day = self._ledger.utc_day()
+            reservation = self._ledger.reserve_attempt(sid, digest, day=reservation_day)
             if reservation == DAILY_CAP_REACHED:
                 detail = f"daily cap {self._ledger.daily_cap} reached"
                 self._ledger.record(sid, BUDGET_EXHAUSTED, detail)
@@ -473,6 +474,10 @@ class HypothesisCompiler:
         except Exception as exc:
             usage = getattr(self._proposer, "last_usage", None)
             failure_code, detail = _classify_proposer_failure(exc)
+            from services.source_ingestion.semantic_extraction_client import SemanticExtractionClientError
+            if self._ledger is not None and isinstance(exc, SemanticExtractionClientError) and exc.unsent_reason:
+                self._ledger.note_unsent(sid, day=reservation_day, reason=exc.unsent_reason, detail=detail)
+                return CompileOutcome("extraction_unavailable", detail, extra={"unsent_reason": exc.unsent_reason})
             if self._ledger is not None:
                 self._ledger.note_call_failure(sid, digest, failure_code, detail)
                 self._ledger.record(sid, "proposer_failed", detail, usage=usage)
