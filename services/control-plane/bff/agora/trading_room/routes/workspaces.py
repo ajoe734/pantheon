@@ -164,6 +164,38 @@ def build_workspaces_router(ctx: TradingRoomRouteContext) -> APIRouter:
         }
 
     # ------------------------------------------------------------------
+    # POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject
+    # ------------------------------------------------------------------
+
+    @router.post("/bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject")
+    def reject_workspace_proposal(
+        strategy_id: str,
+        proposal_id: str,
+        response: Response,
+        body: Optional[Dict[str, Any]] = None,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        ctx._check_write_auth(identity)
+
+        rejected = ctx.service.reject_workspace_proposal(
+            strategy_id=strategy_id,
+            proposal_id=proposal_id,
+            body=body,
+            identity=identity,
+            idempotency_key=idempotency_key,
+        )
+        etag = _proposal_etag(rejected["proposal"])
+        response.headers["ETag"] = etag
+        return {
+            "data": rejected,
+            "meta": ctx._meta(etag=etag, strategy_id=strategy_id, proposal_id=proposal_id),
+        }
+
+    # ------------------------------------------------------------------
     # GET /bff/agora/trading-room/workspaces/lookup
     # ------------------------------------------------------------------
 
@@ -485,6 +517,95 @@ def build_workspaces_router(ctx: TradingRoomRouteContext) -> APIRouter:
                 workspace_id=proposal["workspaceId"],
                 proposal_id=proposal_id,
                 version_id=version["id"],
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject
+    # ------------------------------------------------------------------
+
+    @router.post("/bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject")
+    def reject_widget_revision_proposal(
+        proposal_id: str,
+        response: Response,
+        body: Optional[Dict[str, Any]] = None,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        ctx._check_write_auth(identity)
+
+        rejected = ctx.service.reject_widget_revision_proposal(
+            proposal_id=proposal_id,
+            body=body,
+            identity=identity,
+            idempotency_key=idempotency_key,
+        )
+        etag = _revision_proposal_etag(rejected["proposal"])
+        response.headers["ETag"] = etag
+        return {
+            "data": rejected,
+            "meta": ctx._meta(
+                etag=etag,
+                workspace_id=rejected["proposal"]["workspaceId"],
+                proposal_id=proposal_id,
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # GET /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals
+    # ------------------------------------------------------------------
+
+    @router.get("/bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals")
+    def list_workspace_revision_proposals(
+        workspace_id: str,
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+    ) -> Dict[str, Any]:
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        proposals = ctx.service.list_workspace_revision_proposals(
+            workspace_id=workspace_id,
+            identity=identity,
+        )
+        return {
+            "data": proposals,
+            "meta": ctx._meta(
+                workspace_id=workspace_id,
+                pending_count=proposals["pending_count"],
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers
+    # ------------------------------------------------------------------
+
+    @router.post("/bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers")
+    def evaluate_workspace_revision_triggers(
+        workspace_id: str,
+        body: Dict[str, Any],
+        authorization: Optional[str] = Header(default=None),
+        pantheon_session: Optional[str] = Cookie(default=None),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> Dict[str, Any]:
+        identity = ctx.extract_identity(authorization, session_cookie=pantheon_session)
+        ctx.require_read_role(identity)
+        ctx._check_write_auth(identity)
+        result = ctx.service.evaluate_workspace_revision_triggers(
+            workspace_id=workspace_id,
+            body=body or {},
+            identity=identity,
+            idempotency_key=idempotency_key,
+        )
+        return {
+            "data": result,
+            "meta": ctx._meta(
+                workspace_id=workspace_id,
+                trigger=result.get("trigger"),
+                triggered=result.get("triggered"),
+                pending_count=result.get("pending_count"),
             ),
         }
 

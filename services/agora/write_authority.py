@@ -40,6 +40,9 @@ WRITE_AUTHORITY_MATRIX: Dict[Tuple[str, str], List[str]] = {
     ("AgoraDecisionLock", "record_paper_proxy_fill"): ["operator", "admin", "trader", "system", "persona"],
     ("AgoraDecisionLock", "read_all"): ["operator", "admin"],
     ("AgoraInteraction", "resolve_context"): ["operator", "admin", "trader"],
+    ("AgoraTraderReport", "create"): ["operator", "admin", "trader", "system", "persona"],
+    ("AgoraTraderReport", "process"): ["system", "persona", "operator", "admin", "trader"],
+    ("AgoraTraderReport", "purge"): ["system", "persona"],
 }
 
 
