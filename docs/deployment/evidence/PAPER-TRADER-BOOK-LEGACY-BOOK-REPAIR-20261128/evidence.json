@@ -1,0 +1,107 @@
+{
+  "task_id": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128",
+  "title": "Repaired trader paper book is paused on a US symbol and its ledger row floods directory warnings",
+  "status": "ready_for_review",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "review_independence": {
+    "owner_family": "claude",
+    "reviewer_family": "codex",
+    "cross_family_verified": true
+  },
+  "problem_register_ref": {
+    "file": "docs/operations/problem-register.md",
+    "section": "RC4. Nobody looks at the whole design",
+    "row": "Agora servant row; updated by the register owner (f4c32790) with this task, not edited here"
+  },
+  "root_cause": {
+    "universe": "The hosted ledger row (pre-#7983) has no request_payload.symbols, so PersonaProvisioningCoordinator._paper_universe (persona_provisioning_coordinator.py ~3963) minted and approved the book's StrategyArtifact on the legacy SPY default. PAPER-TRADER-BOOK-EXECUTABLE-INTENT-ONLY-20261127 commit 4fc8eb0e4 removed the SPY->2330.TW swap from _resolve_paper_book_execution_projection, so the in-place repair projected the approved SPY artifact: binding metadata.symbol=SPY. The reconciler (paper_fleet_reconciler.py _check_market_admission ~2142) then asked Source for SPY and paused the binding with session_admission.reason_code=market_input_missing. trader_paper_book.py::_binding_has_executable_projection did not look at the symbol, so a replay of ensure treated the SPY-projected binding as complete, and _validate_runtime_binding_readback rejected the paused binding with runtime_binding_not_active before any repair.",
+    "ledger_warning": "The book's bff.persona_provisioning row shares the servant persona_id but its normalized_name (agora-servant-<id>) differs from the servant Persona name, so _persona_record_for_provisioning raised ProvisioningConflict for it on every directory read (personas/service.py ~2871, ~2968) and logged a warning without an id (2979 times 04:01Z-10:47Z). The row stayed state=provisioning, current_step=deployment_plan_readback, attempt_count=50 because nothing ever finalized it."
+  },
+  "design_constraint": {
+    "summary": "The approved artifact (registry_id, version, checksum) is immutable and RuntimeBinding.artifact_id/artifact_version/plan_id cannot be changed by transition (only metadata merges). The legacy artifact's own parameters.symbols therefore stay ['SPY'] for this binding id. The repair keeps the approved object_store, artifact_checksum and market_data_policy byte for byte and moves only the projected market symbol to the book default universe, with provenance in metadata.book_universe. A trader paper book emits no strategy signals (paper_signal_producer.py _is_trader_servant_paper_book_binding), so the artifact's own universe is never evaluated.",
+    "reviewer_attention": "If the reviewer requires the approved artifact itself to carry 2330.TW, that needs a runtime-manager re-point of artifact_id/version on the same binding id (a new writer, out of this task's artifacts and the no-new-writer budget) or a new binding id; neither is attempted here."
+  },
+  "changes": [
+    {
+      "path": "services/control-plane/bff/personas/trader_paper_book.py",
+      "summary": "trader_paper_book_default_universe (TWD -> 2330.TW) is now the single source for new and repaired books. _resolve_paper_book_execution_projection applies _apply_book_default_universe_to_legacy_projection only when the approved artifact's own universe is exactly the legacy default SPY with no market and the book currency has a different default universe. _binding_has_executable_projection now returns False for a TWD book projected on SPY, so ensure repairs it and a repaired book is left unchanged on replay. _repair_runtime_binding_execution_projection_in_place repairs an active binding (pending_pause, paused, active) or a binding the reconciler paused with session_admission.reason_code market_input_* (paused metadata patch, then active) on the same binding_id; an operator pause or any other pause still raises runtime_binding_not_active with zero transitions, and an already-executable market-paused book is left to the reconciler. _finalize_trader_paper_book_ledger_record moves the book's existing ledger row to state=succeeded, current_step=trader_paper_book_provisioned through the existing store acquire/release, never creates a row, never revives retired/compensated, and writes nothing on replay. is_trader_paper_book_ledger_record identifies the row by the trader-paper-book: idempotency-key prefix and the user_private_agora_servant_paper_book mandate (hosted rows have no book_kind)."
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "summary": "The Persona directory projection, the single-persona detail read and the paper risk renewal scan skip the trader paper book ledger row (it is not a Persona provisioning request). A real Persona provisioning conflict is untouched: it is still skipped and still logs."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py",
+      "summary": "New: recorded hosted legacy book (SPY artifact leased by the legacy ledger row; binding paused by the reconciler, and an active variant), operator-pause and executable-market-pause preservation, directory/detail warning counts, ledger classifier."
+    },
+    {
+      "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
+      "summary": "The book row is now terminal (succeeded) after ensure; the hosted provisioning-shaped record is asserted as a detached record. Enrollment stays non-actionable for both."
+    }
+  ],
+  "acceptance_criteria": {
+    "AC1_legacy_spy_book_moves_to_twd_universe_on_same_binding": {
+      "status": "verified_by_tests",
+      "tests": [
+        "services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py::test_recorded_legacy_spy_book_moves_to_twd_default_universe_on_same_binding[hosted-reconciler-paused]",
+        "services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py::test_recorded_legacy_spy_book_moves_to_twd_default_universe_on_same_binding[active-spy-projection]"
+      ],
+      "facts": "Hosted ids rb-77d962be4e324032808324109f2c154e / pool-persona-paper-3ca8da543bef6ede0a07 / pcb-persona-paper-3ca8da543bef6ede0a07. After ensure: one CapitalPool, one PersonaCapitalBinding, one RuntimeBinding (same id), status active, metadata.symbol=2330.TW, object_store/artifact_checksum/market_data_policy equal the approved SPY projection, desired-state lists the binding with no exclusions. See design_constraint for the artifact's own universe."
+    },
+    "AC2_idempotent_when_already_twd_projected": {
+      "status": "verified_by_tests",
+      "tests": [
+        "the same parametrized tests: the replay makes zero transitions, leaves the binding byte-equal and does not write the ledger row (attempt_count and updated_at unchanged)",
+        "services/control-plane/bff/tests/test_trader_paper_book_provisioning.py::test_existing_hosted_trader_paper_book_without_execution_projection_is_repaired_in_place_on_same_binding_id"
+      ]
+    },
+    "AC3_no_reconciler_or_admission_special_case": {
+      "status": "verified_by_diff_and_grep",
+      "evidence": [
+        "git diff --stat over services/paper_fleet_reconciler, services/runtime-manager and services/runtime_manager is empty for this task",
+        "grep -c 'trader_servant_paper_book|book_kind': services/paper_fleet_reconciler/paper_fleet_reconciler.py = 0, services/runtime-manager/fleet_desired_state.py = 0",
+        "Admission is the shared path: paper_fleet_reconciler.py _check_market_admission (~2142) -> services/execution/market_snapshot_admission.py admit_market_snapshot (~1034), reading binding.metadata.symbol exactly as for the three Taiwan trading personas; auto-resume is the shared reconciler branch at ~1167 (reason_code startswith market_input_)."
+      ]
+    },
+    "AC4_ledger_row_terminal_and_no_warning_but_real_conflict_still_logs": {
+      "status": "verified_by_tests",
+      "tests": [
+        "test_recorded_legacy_spy_book_moves_to_twd_default_universe_on_same_binding (ledger state succeeded, current_step trader_paper_book_provisioned, result.runtime_binding_id, lease released)",
+        "test_directory_read_skips_book_ledger_row_but_still_skips_and_logs_real_conflict (mutation-checked: 2 warnings per directory read without the skip, 1 with it)",
+        "services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py::test_hosted_shape_payload_parity_and_conflicting_owner_skip (a non-book conflicting row still logs)"
+      ]
+    },
+    "AC5_runtime_budget": {
+      "status": "recorded",
+      "new_writers": 0,
+      "ledger_rows": {"before": "1 trader book row in the hosted ledger", "after": "same row, updated in place (no insert)"},
+      "warnings_per_directory_read": {
+        "hosted_before": "1 for the book row (2979 total 04:01Z-10:47Z, about 1 per directory read)",
+        "after": "0 for the book row; a real conflicting row still logs 1",
+        "test_fixture": "2 before the skip (book row + real conflict), 1 after"
+      },
+      "added_calls": "None on read paths (one in-memory prefix/mandate check per ledger row). ensure adds at most one ledger store.get and, only when the row is not already terminal for this binding, one acquire/release pair. The paper risk renewal scan skips the book row, so the terminal row adds no renewal owner calls."
+    },
+    "AC6_hosted_proof_after_deploy": {
+      "status": "pending_hosted",
+      "required": "Coordinator 70b5f70f read-only plus one operator-approved POST /bff/agora/servant/paper-book/ensure as admintest: desired-state lists rb-77d962be4e324032808324109f2c154e with a TWD symbol; reconciler runs one worker on the next Taiwan session; GET /api/v1/telemetry/rt-persona-paper-3ca8da543bef6ede0a07/summary returns 200; zero strategy signals; no new conflicting owner scope warning for the row. Note: ensure resumes the binding to active; the reconciler re-evaluates market admission itself and may pause it again with market_input_stale outside a session, which it auto-resumes on the next admitted snapshot."
+    },
+    "AC7_register_and_review_independence": {
+      "status": "register_update_by_owner_f4c32790; reviewer Codex is a different model family than owner Claude2"
+    }
+  },
+  "verification": {
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/tests/test_agora_paper_book_readback.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/tests/test_persona_provisioning_terminal_cleanup.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/runtime-manager/test_fleet_desired_state.py (142 passed, 4 skipped)",
+      ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_bff_persona_provisioning_baseline_500.py (159 passed)",
+      "Broad persona/directory/renewal sweep of 25 files: 23 failures that fail identically on the base commit (git archive of the parent of the anchor commit, run from its own tree), 0 new failures; the extra failures seen in a single large mixed-order session pass when the files run alone."
+    ]
+  },
+  "residual_findings": [
+    {
+      "id": "RESIDUAL-LEGACY-BOOK-ARTIFACT-UNIVERSE-STAYS-SPY",
+      "summary": "The legacy book's approved artifact parameters.symbols remain ['SPY'] (immutable registry entry, immutable binding artifact identity). Only the projected binding symbol moves to 2330.TW. Irrelevant to execution because a trader paper book emits no strategy signals; recorded so a future re-point mechanism can close it."
+    }
+  ]
+}
