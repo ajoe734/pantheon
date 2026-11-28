@@ -62,7 +62,7 @@ def _canonical_digest(payload: Any) -> str:
 
 
 _LIFECYCLE_TRANSITIONS = {
-    "draft": frozenset({"research_only"}),
+    "draft": frozenset({"research_only", "retired"}),
     "research_only": frozenset({"consultable", "frozen"}),
     "consultable": frozenset({"paper_owner", "frozen"}),
     "paper_owner": frozenset({"live_owner", "frozen"}),
@@ -93,6 +93,7 @@ _AUTHENTICATED_READ_ROLES = (
 )
 _LIFECYCLE_POLICY_ROLES = {
     ("draft", "research_only"): _PERSONA_PLANE_ROLES,
+    ("draft", "retired"): _GOVERNANCE_PLANE_ROLES,
     ("research_only", "consultable"): _GOVERNANCE_PLANE_ROLES,
     ("consultable", "paper_owner"): _GOVERNANCE_PLANE_ROLES,
     ("paper_owner", "live_owner"): _GOVERNANCE_PLANE_ROLES,
