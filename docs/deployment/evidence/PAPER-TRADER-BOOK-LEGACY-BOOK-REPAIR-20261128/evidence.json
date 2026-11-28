@@ -60,10 +60,6 @@
     {
       "path": "services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py",
       "summary": "Round 1, unchanged this round: the book row is terminal (succeeded) after ensure."
-    },
-    {
-      "path": "docs/operations/storage-manifest.json",
-      "summary": "persona_provisioning ledger table entry: trader paper book generation history growth, cap (3 generations) and cleanup/retention."
     }
   ],
   "acceptance_criteria": {
@@ -109,7 +105,7 @@
     "AC5_runtime_budget": {
       "status": "recorded",
       "new_writers": 0,
-      "changed_writer": "services/control-plane/bff/persona_provisioning.py ledger table, written only through the existing store.acquire/checkpoint/release by ensure_trader_paper_book (_begin_next_trader_paper_book_generation, _finalize_trader_paper_book_ledger_record) and retire_case; registered in docs/operations/storage-manifest.json entry services/control-plane/bff/persona_provisioning.py::{self.table} (cap, cleanup, growth_driver, growth_per_day updated; scripts/check_storage_manifest.py passed=true, 0 failures)",
+      "changed_writer": "services/control-plane/bff/persona_provisioning.py ledger table, written only through the existing store.acquire/checkpoint/release by ensure_trader_paper_book (_begin_next_trader_paper_book_generation, _finalize_trader_paper_book_ledger_record) and retire_case. docs/operations/storage-manifest.json is outside this task's artifact contract (the status tool rejects it), so the entry services/control-plane/bff/persona_provisioning.py::{self.table} must be updated through its owning lane with the cap, cleanup, growth_driver and growth_per_day text in storage_manifest_registration_for_owning_lane below.",
       "ledger_rows": {
         "before": "1 trader book row",
         "after": "1 (same row, re-leased for generation 2; zero extra rows)"
@@ -132,7 +128,15 @@
         "hosted_before": "1 for the book row (2979 total 04:01Z-10:47Z)",
         "after": "0 for the book row; a real conflicting row still logs 1"
       },
-      "added_calls": "Read paths: one in-memory prefix/mandate check per ledger row. read_trader_paper_book adds one ledger GET. ensure adds one ledger GET plus two generation-live ledger GETs (start of the generation ensure and before the RuntimeBinding deploy); the replacement itself (once per legacy book) adds retire_case owner calls plus a full generation-2 create."
+      "added_calls": "Read paths: one in-memory prefix/mandate check per ledger row. read_trader_paper_book adds one ledger GET. ensure adds one ledger GET plus two generation-live ledger GETs (start of the generation ensure and before the RuntimeBinding deploy); the replacement itself (once per legacy book) adds retire_case owner calls plus a full generation-2 create.",
+      "storage_manifest_registration_for_owning_lane": {
+        "entry": "services/control-plane/bff/persona_provisioning.py::{self.table}",
+        "growth_driver_append": "PAPER-TRADER-BOOK-LEGACY-BOOK-REPAIR-20261128: ensure_trader_paper_book moves a replaced trader paper book generation's references, retirement receipt, result and owner ids under references.book_generations[N] on the same ledger row via the existing store.acquire/release, once per replaced legacy book; no recurring job",
+        "growth_per_day_append": "0 B/day steady state; one replacement appends ~61.5 KB once per replaced legacy book (hosted has exactly 1)",
+        "cap_append": "TRADER_PAPER_BOOK_MAX_GENERATIONS=3 per ledger row enforced in code (trader_paper_book_generation_cap): at most 2 retired generations (<= ~123 KB), row <= ~185 KB",
+        "cleanup_append": "no cleanup job: retired generations are the audit trail of retired owner ids, kept for the life of the row and bounded by the generation cap",
+        "status": "not registered by this task; needs the owning lane (task owner of docs/operations/storage-manifest.json) before the budget is complete"
+      }
     },
     "AC6_hosted_proof_after_deploy": {
       "status": "pending_hosted",
@@ -149,8 +153,7 @@
       ".venv-pantheon python -m pytest -q services/control-plane/bff/tests/test_trader_paper_book_legacy_book_repair.py services/control-plane/bff/tests/test_trader_paper_book_provisioning.py services/control-plane/bff/tests/test_trader_paper_book_enrollment_skip_and_refusal_cap.py services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/test_persona_provisioning_coordinator.py services/control-plane/bff/tests/test_agora_paper_book_readback.py services/runtime-manager/test_fleet_desired_state.py -> 322 passed (after merging origin/dev 3892a3f3a), 4 skipped, exit 0"
     ],
     "round_3": [
-      "same 10 manifest suites -> 326 passed (52 in the three trader paper book files + 274 in the other seven, 4 skipped), exit 0",
-      "scripts/check_storage_manifest.py -> passed=true, failures=[]",
+      "same 10 manifest suites -> 326 passed (52 in the three trader paper book files + 274 in the other seven, 4 skipped), exit 0; after merging origin/dev ec4b1fe3e trader/directory suites 67 passed, 4 skipped",
       "git diff --check -> clean"
     ]
   },
@@ -178,7 +181,7 @@
       "test_stale_generation_fence_refuses_retire_advance_and_finalize_without_writes",
       "test_generation_history_is_capped_before_any_retirement_write"
     ],
-    "P2": "AC5 now records serialized size, daily growth, cap and cleanup/retention, and the storage-manifest entry is updated.",
+    "P2": "AC5 records serialized size, daily growth, cap (enforced in code) and cleanup/retention. The storage-manifest entry is outside this task's artifact contract and is handed to its owning lane with exact text (AC5.storage_manifest_registration_for_owning_lane).",
     "evidence_corrections": "AC7 corrected: the register row already cites this task. PR body rewritten to describe the generation replacement."
   }
 }
