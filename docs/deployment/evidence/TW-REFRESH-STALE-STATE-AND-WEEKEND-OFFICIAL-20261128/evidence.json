@@ -83,7 +83,23 @@
       "command": "bash -n scripts/deploy_nonprod_vm.sh",
       "exit_code": 0
     },
-    "full_suites": "Results to be recorded after bounded foreground batches terminate."
+    "full_suites": [
+      {
+        "command": "timeout 900s .venv-pantheon/bin/python3 -m pytest scripts/test_dev_tw_market_refresh.py scripts/test_tw_official_reconcile_after_collector.py -q",
+        "result": "141 passed in 347.82s",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 900s .venv-pantheon/bin/python3 -m pytest scripts/test_deploy_nonprod_vm.py -q",
+        "result": "250 passed, 2 skipped in 418.91s",
+        "exit_code": 0
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0
+      }
+    ],
+    "environment": "Checkout-scoped .venv-pantheon provisioned using python3 scripts/dev/provision_python_distribution.py (exit 0). Initial system python3 lacked pytest; no tests counted from that failed invocation."
   },
   "acceptance_7_hosted": {
     "status": "pending_after_independent_review_and_merge",
