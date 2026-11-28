@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -20,6 +22,26 @@ LOGIN_URL_INDICATORS = (
     "service_login",
     "sso.cmoney.tw",
 )
+
+RATE_LIMIT_BACKOFF_SECONDS = 86400
+
+
+def _utc(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def rate_limit_retry_at(finished_at: str, retry_after: str | None = None) -> str:
+    """One retry per rolling day; never shorten a provider's Retry-After."""
+    finished = _utc(finished_at)
+    retry = finished + timedelta(seconds=RATE_LIMIT_BACKOFF_SECONDS)
+    if retry_after:
+        try:
+            provider = (finished + timedelta(seconds=int(retry_after))
+                        if retry_after.strip().isdigit() else parsedate_to_datetime(retry_after))
+            retry = max(retry, provider.astimezone(timezone.utc))
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return retry.isoformat().replace("+00:00", "Z")
 
 
 def classify_access_block(
@@ -62,6 +84,7 @@ class SourceRuntimeState:
     last_run_at: str | None = None
     last_status: str = "idle"
     block_history: list[str] | None = None
+    retry_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +97,7 @@ class SourceRuntimeState:
             "last_run_at": self.last_run_at,
             "last_status": self.last_status,
             "block_history": list(self.block_history or []),
+            "retry_at": self.retry_at,
         }
 
     @classmethod
@@ -90,6 +114,7 @@ class SourceRuntimeState:
             last_run_at=str(data["last_run_at"]) if data.get("last_run_at") else None,
             last_status=str(data.get("last_status") or "idle"),
             block_history=[str(x) for x in (data.get("block_history") or [])],
+            retry_at=str(data["retry_at"]) if data.get("retry_at") else None,
         )
 
 
@@ -128,17 +153,29 @@ class CollectorStateStore:
                 os.unlink(tmp_name)
 
     def get_source_state(
-        self, source_id: str, *, current_policy_hash: str | None = None
+        self, source_id: str, *, current_policy_hash: str | None = None,
+        now: datetime | None = None,
     ) -> SourceRuntimeState:
         data = self._load_all()
         raw = data["sources"].get(source_id) or {}
         state = SourceRuntimeState.from_dict(source_id, raw)
-        # Per SD §6.3: a paused source resumes only when its config (fetch_policy_hash) changes
+        now = now or datetime.now(timezone.utc)
+        history = state.block_history or []
+        rate_limited = bool(history) and all(reason.startswith("http_429:") for reason in history)
+        # Migrate existing 429 pauses without granting an immediate retry before cooldown.
+        if state.paused and rate_limited and not state.retry_at and state.last_run_at:
+            state.retry_at = rate_limit_retry_at(state.last_run_at)
+        missing_gdelt_export = (source_id == "collector-gdelt" and bool(history)
+                                and all(reason.startswith("gdelt_http_404:")
+                                        and reason.endswith(".export.CSV.zip") for reason in history))
+        # Authorization/login blocks still need an explicit policy change. Only a
+        # purely transient rate limit (or the old missing-export bug) auto-recovers.
         if (
             state.paused
-            and current_policy_hash
-            and state.paused_policy_hash
-            and current_policy_hash != state.paused_policy_hash
+            and ((current_policy_hash and state.paused_policy_hash
+                  and current_policy_hash != state.paused_policy_hash)
+                 or missing_gdelt_export
+                 or (rate_limited and state.retry_at and now >= _utc(state.retry_at)))
         ):
             state.paused = False
             state.paused_reason = None
@@ -146,6 +183,7 @@ class CollectorStateStore:
             state.consecutive_blocks = 0
             state.block_history = []
             state.last_status = "idle"
+            state.retry_at = None
             self.save_source_state(state)
         return state
 
@@ -162,8 +200,9 @@ class CollectorStateStore:
         finished_at: str,
         policy_hash: str,
         block_reason: str | None,
+        retry_after: str | None = None,
     ) -> SourceRuntimeState:
-        state = self.get_source_state(source_id, current_policy_hash=policy_hash)
+        state = self.get_source_state(source_id, current_policy_hash=policy_hash, now=_utc(finished_at))
         state.last_run_id = run_id
         state.last_run_at = finished_at
 
@@ -174,12 +213,13 @@ class CollectorStateStore:
             state.paused_reason = None
             state.paused_policy_hash = None
             state.last_status = "complete"
+            state.retry_at = None
         else:
             history = list(state.block_history or [])
             history.append(block_reason)
-            state.block_history = history
+            state.block_history = history[-self.auto_pause_threshold :]
             state.consecutive_blocks += 1
-            if state.consecutive_blocks >= self.auto_pause_threshold:
+            if block_reason.startswith("http_429:") or state.consecutive_blocks >= self.auto_pause_threshold:
                 state.paused = True
                 state.paused_reason = (
                     f"auto_paused_after_{state.consecutive_blocks}_consecutive_blocks:"
@@ -187,6 +227,8 @@ class CollectorStateStore:
                 )
                 state.paused_policy_hash = policy_hash
                 state.last_status = "paused"
+                state.retry_at = (rate_limit_retry_at(finished_at, retry_after)
+                                  if all(reason.startswith("http_429:") for reason in history) else None)
             else:
                 state.last_status = "partial"
 

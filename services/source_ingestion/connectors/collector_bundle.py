@@ -824,6 +824,13 @@ def source_offering(status_doc: Mapping[str, Any] | None, source_id: str) -> dic
         entry = sources.get(source_id, {}) if isinstance(sources, Mapping) else {}
     if not isinstance(entry, Mapping) or not isinstance(entry.get("offered"), bool):
         return {"offered": None, "reason": "collector_offering_unverified"}
+    state = str(entry.get("status") or "")
+    reason = str(entry.get("paused_reason") or entry.get("reason") or "").strip()
+    if state in {"paused", "partial"} and reason:
+        # This is producer availability, never a successful empty delivery. Keep
+        # it in the existing snapshot, rather than minting a failed run/DLQ on
+        # every due tick. A later host state change re-admits the source.
+        return {"offered": False, "reason": reason, "collector_status": state}
     return {"offered": entry["offered"], "reason": entry.get("offered_reason")}
 
 
@@ -1699,7 +1706,7 @@ class CollectorBundleAdapter:
                 raise
             verified.append(bundle)
             window_stops[bundle.cursor] = skip + remaining
-            if bundle.status == "partial":
+            if bundle.status in {"partial", "paused"}:
                 resolution = self._resolve_partial_bundle(transport, bundle, source_entries, deadline)
                 if resolution is not None:
                     # Acknowledged without delivering its rows (traversal only, like a rejected bundle).
@@ -1723,7 +1730,7 @@ class CollectorBundleAdapter:
         all_records: list[SourceRecord] = []
         paused: list[str] = []
         for bundle in verified:
-            if bundle.status == "paused":
+            if bundle.status == "paused" and not bundle.resolution:
                 paused.append(f"{bundle.run_id}:{bundle.manifest.get('paused_reason') or 'paused'}")
                 break
             skip = partial_skip if bundle.cursor == base_cursor else 0
@@ -1862,7 +1869,21 @@ class CollectorBundleAdapter:
         from that bundle once), or an unscheduled closure confirmed by both venues.
         Anything else keeps the sweep stopped (None).
         """
-        if self.source_type != "market" or self.source_id not in _PRICE_HISTORY_PEERS:
+        if self.source_type != "market":
+            # Empty producer failures carry no records. Traverse them only after
+            # verifying a later complete run of this source; never acknowledge
+            # the current incomplete boundary or discard a partial payload.
+            if bundle.items or not (bundle.manifest.get("paused_reason") or bundle.manifest.get("reason")):
+                return None
+            for key, entry in sorted(source_entries, reverse=True, key=lambda pair: pair[0]):
+                if key <= bundle.cursor:
+                    continue
+                later = self._verify_ordered_bundle(
+                    transport, expected_source_id=self.source_id, entry=entry, item_window=None, deadline=deadline)
+                if later.status == "complete":
+                    return f"superseded:{later.run_id}", None
+            return None
+        if self.source_id not in _PRICE_HISTORY_PEERS:
             return None
         trade_day = _run_trade_date(bundle.run_id)
         if trade_day is None:
@@ -2336,7 +2357,7 @@ class CollectorBundleAdapter:
         raw_plan = [(b, {}) for b in verified if b.status != "paused"]
         next_cursor = cursor
         for bundle in verified:
-            if bundle.status == "paused":
+            if bundle.status == "paused" and not bundle.resolution:
                 break
             next_cursor = (f"{bundle.cursor}{_PARTIAL_CURSOR_MARK}{len(bundle.items)}"
                            if bundle.unresolved_partial else bundle.cursor)
@@ -2353,7 +2374,7 @@ class CollectorBundleAdapter:
             running = 0
             consumed_bundles: list[VerifiedBundle] = []
             for bundle in verified:
-                if bundle.status == "paused":
+                if bundle.status == "paused" and not bundle.resolution:
                     break
                 n = max(len(bundle.items) - skips.get(bundle.cursor, 0), 0)
                 if running + n > kept:

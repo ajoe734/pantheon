@@ -392,17 +392,17 @@ class CollectorRunner:
                 f"source {source_id!r} is disabled by default in fetch-policy.json"
             )
 
+        started_iso = started_at if isinstance(started_at, str) else utc_iso(started_at)
+        finished_iso = finished_at if isinstance(finished_at, str) else utc_iso(finished_at)
         current_state = self.state_store.get_source_state(
-            source_id, current_policy_hash=policy.policy_hash
+            source_id, current_policy_hash=policy.policy_hash,
+            now=datetime.fromisoformat(started_iso.replace("Z", "+00:00")),
         )
         if current_state.paused:
             raise SourcePausedError(
                 f"source {source_id!r} is auto-paused ({current_state.paused_reason}); "
-                "it resumes only when its fetch policy configuration changes"
+                f"retry_at={current_state.retry_at}; authorization blocks require a policy change"
             )
-
-        started_iso = started_at if isinstance(started_at, str) else utc_iso(started_at)
-        finished_iso = finished_at if isinstance(finished_at, str) else utc_iso(finished_at)
 
         collector = self.build_collector(policy)
         kwargs = dict(collect_kwargs or {})
@@ -446,6 +446,8 @@ class CollectorRunner:
                 finished_at=finished_iso,
                 policy_hash=policy.policy_hash,
                 block_reason=blocked.block_reason,
+                retry_after=next((str(v) for k, v in (blocked.response.headers or {}).items()
+                                  if k.lower() == "retry-after"), None),
             )
             bundle_status = "paused" if updated_state.paused else "partial"
             paused_reason = updated_state.paused_reason if updated_state.paused else blocked.block_reason

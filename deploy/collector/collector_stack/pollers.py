@@ -487,7 +487,16 @@ class GdeltRawFeedPoller:
         if cached.is_file():
             body = cached.read_bytes()
         else:
-            response = self._fetch(download_url)
+            try:
+                response = self._fetch(download_url)
+            except FetchAccessBlockedError as exc:
+                if exc.response.http_status != 404:
+                    raise
+                # An absent quarter-hour export is a gap, not an access block.
+                # No cache/receipt is created: the next run reads the latest index.
+                self.skipped_count += 1
+                self.empty_reason = f"missing_export_404:{name}"
+                return []
             body = response.body
         if len(body) != size or hashlib.md5(body).hexdigest() != expected_md5:
             # Never keep a corrupt cache entry; the next scheduled run can retry.
