@@ -287,6 +287,7 @@ class BundleWriter:
         consecutive_blocks: int = 0,
         skipped_count: int = 0,
         reason: str | None = None,
+        retry_at: str | None = None,
     ) -> dict[str, Any]:
         status_path = self.root_dir / "status.json"
         sources_map: dict[str, Any] = {}
@@ -308,6 +309,7 @@ class BundleWriter:
             "consecutive_blocks": consecutive_blocks,
             "skipped_items": skipped_count,
             "reason": reason,
+            "retry_at": retry_at,
         }
         # Include sources that have never run, retaining the legacy per-run fields.
         # Fetch capability comes solely from policy plus host credential/timer evidence.

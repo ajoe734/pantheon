@@ -1,13 +1,17 @@
-"""Per-source fetch state and consecutive 429/403/login-redirect auto-pause (SD §6.3)."""
+"""Shared fetch state: daily 429 recovery and policy-gated authorization pauses."""
 
 from __future__ import annotations
 
 import json
 import os
 import tempfile
+import fcntl
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from functools import wraps
+from threading import RLock
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
@@ -42,6 +46,14 @@ def rate_limit_retry_at(finished_at: str, retry_after: str | None = None) -> str
         except (ValueError, TypeError, OverflowError):
             pass
     return retry.isoformat().replace("+00:00", "Z")
+
+
+def _transaction(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.transaction():
+            return method(self, *args, **kwargs)
+    return locked
 
 
 def classify_access_block(
@@ -124,6 +136,26 @@ class CollectorStateStore:
     def __init__(self, state_file: Path | str, *, auto_pause_threshold: int = 2) -> None:
         self.state_file = Path(state_file)
         self.auto_pause_threshold = auto_pause_threshold
+        self._mutex = RLock()
+        self._lock_depth = 0
+
+    @contextmanager
+    def transaction(self):
+        # Atomic rename protects a file, but does not protect concurrent
+        # read/modify/write operations by different source timer containers.
+        with self._mutex:
+            if self._lock_depth:
+                yield
+                return
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.state_file.with_suffix(".lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                self._lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._lock_depth -= 1
+                    fcntl.flock(lock, fcntl.LOCK_UN)
 
     def _load_all(self) -> dict[str, Any]:
         if not self.state_file.is_file():
@@ -152,6 +184,7 @@ class CollectorStateStore:
             if os.path.exists(tmp_name):
                 os.unlink(tmp_name)
 
+    @_transaction
     def get_source_state(
         self, source_id: str, *, current_policy_hash: str | None = None,
         now: datetime | None = None,
@@ -187,11 +220,13 @@ class CollectorStateStore:
             self.save_source_state(state)
         return state
 
+    @_transaction
     def save_source_state(self, state: SourceRuntimeState) -> None:
         data = self._load_all()
         data["sources"][state.source_id] = state.to_dict()
         self._save_all(data)
 
+    @_transaction
     def record_run_outcome(
         self,
         *,
@@ -235,10 +270,12 @@ class CollectorStateStore:
         self.save_source_state(state)
         return state
 
+    @_transaction
     def get_daily_quota_usage(self, quota_key: str, date_str: str) -> int:
         data = self._load_all()
         return int((data.get("quotas", {}).get(quota_key) or {}).get(date_str) or 0)
 
+    @_transaction
     def add_daily_quota_usage(self, quota_key: str, date_str: str, units: int) -> int:
         data = self._load_all()
         quotas = data.setdefault("quotas", {})

@@ -15,7 +15,7 @@ This directory contains the self-contained configuration, container stack, syste
    - Author handles are replaced on the collector host by `HMAC-SHA256(salt, platform + "+" + handle)` using a host-local salt (`/etc/pantheon-collector/author_hmac.salt`) that never leaves the host.
    - Display names, avatars, follower lists, and profile pages are stripped and never written to disk.
    - Raw bundles older than 90 days are automatically pruned (`pantheon-collector-prune.timer`).
-6. **Automatic Source Pause**: Two consecutive runs encountering HTTP `429`, HTTP `403`, or a login redirect automatically pause that source and emit a `paused` manifest entry (`status: "paused"`). A paused source resumes only when its fetch policy configuration changes.
+6. **Automatic Source Pause**: HTTP `429` pauses immediately for at least 24 hours (or a longer provider `Retry-After`), with `retry_at` in host status; the next timer after that boundary retries automatically. HTTP `403`, login redirects and other repeated blocks still pause after two runs and require a policy change. Legacy pauses caused solely by missing GDELT export files recover automatically; a missing quarter-hour export now emits `partial` with `missing_export_404:<file>` and is skipped without an access-block counter. Independent paper containers serialize arXiv requests and wait three seconds before releasing the shared request lock.
 
 ---
 
@@ -549,3 +549,85 @@ Nothing is re-collected by `COLLECTOR-TW-SUSPENSION-HOLIDAYS-20261115`:
      `3` TPEx `sprcHis`) = `20` seconds.
    - Total bounded re-collection budget: `986` requests (`4,930` seconds ≈ `82.2`
      minutes sequential wall-clock time).
+
+
+## Paused-source recovery and hosted acceptance (2026-11-28)
+
+The hosted steady intake selector reads one stable availability snapshot per source.
+An explicitly offered source whose host status is `paused` or `partial` with a
+nonempty `paused_reason` or `reason` is temporarily not offered, with that exact
+state and reason in `collector_offering`. This snapshot changes when the host
+state changes; it creates no per-tick ingest run, DLQ entry, success receipt or
+acknowledgement. A missing/unexplained state retains the existing fail-closed
+pull behavior. Direct/manual pulls still enforce the unchanged empty-outcome
+rule. Once a complete run is available, the adapter can traverse older empty,
+reasoned failures only after verifying a later complete bundle; nonempty partial
+bundles and all unverified evidence retain the existing refusal behavior.
+
+Runtime budget: existing hourly GDELT cadence is unchanged (24 scheduled attempts,
+at most 48 HTTP requests/day). A continuing 429 admits at most one retry per source
+per rolling 24 hours, including across restarts. arXiv and OpenAlex pollers issue
+one request each per run; the composite corpus issues one to each plus its existing
+RSS routes. Thus during continuing rate limits the standalone and composite paths
+can each contribute at most one provider request/day (two aggregate per provider,
+if the composite reaches that provider). Healthy six-hour timers retain their
+existing frequency: at most eight arXiv and eight OpenAlex requests/day across the
+two paths; no new timer is installed. arXiv uses a shared single-connection lock
+and three-second spacing; provider terms checked on 2026-11-28:
+[arXiv](https://info.arxiv.org/help/api/tou.html),
+[OpenAlex](https://help.openalex.org/api/authentication/).
+
+State adds one nullable timestamp per configured source (27 on this host, under
+2 KB per file) in the existing state/status files; these overwrite in place with
+zero net history growth/day. Two empty lock files (`state/collector-state.lock`,
+`state/arxiv-api.lock`) remain constant at zero data bytes and need no periodic
+cleanup. Block history is capped at two reasons. No availability history writer
+is added. Existing bundles retain the daily 90-day pruner: at scheduled scale
+GDELT is at most 2,160 retained runs, each paper source at most 360. The last hosted
+complete examples measured 11,390 bytes/GDELT run, 47,765/arXiv, 213,628/OpenAlex,
+and 474,843/composite (raw plus metadata); at healthy timer frequency these imply
+273,360, 191,060, 854,512 and 1,899,372 bytes/day respectively, estimates rather
+than a hard byte cap. Existing GDELT ZIP cache/receipt cleanup and index pruning
+are residual RC3 obligations, recorded in task evidence. Budget and the two lock
+writers are registered in `docs/operations/storage-manifest.json`.
+
+Before: the dispatch audit counted 4,888 failed scheduled runs for the five scoped
+sources over 2026-11-21 21:08Z to 11-28 03:51Z (~778/day); total historical DLQ was
+about 7,586 across sources. After this change the expected growth for a held,
+reasoned availability state is zero runs and zero DLQ entries/day. The actual
+post-release rate remains unmeasured until hosted acceptance.
+
+The release/hosted-ops owner deploys this change after merge, using the existing
+`RELEASE` procedure: archive the exact merged `deploy/collector/`, retain the old
+`/opt/pantheon-collector.<sha>-<time>` directory and rollback image tag, preserve
+host secrets and documented policy overrides, validate config, rebuild/switch,
+and record the release identity. Do not replace policy or enable YouTube timers
+without first resolving their operational intent. No host deployment was made by
+this task. YouTube is disabled on the inspected host; retained journal/auth records
+did not identify who disabled it or establish intent. Hosted-ops must either
+restore its intended timer or publish an intentional pause and retain the actor
+and decision evidence.
+
+After at least 24 hours, collect read-only snapshots from collector and hosted dev
+and run the standalone probe (no network access or runtime initialization):
+
+```bash
+python3 deploy/collector/probe_paused_recovery.py \
+  --collector-status /tmp/collector-status.json \
+  --ingest-schedule /tmp/ingest_schedule.jsonl \
+  --dlq /tmp/dead_letter_queue.jsonl \
+  --connector-map /tmp/collector-connector-map.json \
+  --since <release-switch-UTC> --observed-at <snapshot-UTC>
+```
+
+The connector map is an object mapping the five source ids in the probe to their
+actual distinct hosted connector ids. Retain unfiltered schedule/DLQ snapshots
+covering the entire observation window. The probe requires fresh complete GDELT
+and arXiv host runs and positive persisted hosted receipts, emits their ids, and
+rejects any scoped failed run or new dead letter in the window. YouTube needs the
+same proof, or a paused host status with disabled timer plus
+`--youtube-pause-evidence <file>` containing `intentional: true`, `actor`, and a
+nonempty `evidence_ref` to the hosted-ops/operator decision. An unexplained disabled
+timer does not pass. Keep exact collector and hosted release identities beside
+the probe output. Broader hosted intake acceptance stays with
+`COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113`.

@@ -1,0 +1,240 @@
+{
+  "schema_version": "collector_paused_recovery_evidence.v1",
+  "task_id": "COLLECTOR-HOST-PAUSED-SOURCES-NEVER-RESUME-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "review_status": "pending_independent_review",
+  "delivery_state": null,
+  "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+  "anchor_commit": "621fe7def",
+  "host_before": {
+    "observed_at": "2026-11-28T04:06:35.459770+00:00",
+    "host": "165.232.172.111",
+    "release": "89b0b0695",
+    "read_only": true,
+    "status": {
+      "updated_at": "2026-11-28T03:15:05Z",
+      "sources": {
+        "collector-gdelt": {
+          "cadence_seconds": 3600,
+          "consecutive_blocks": 2,
+          "last_run_at": "2026-11-18T11:15:06Z",
+          "last_run_id": "run-20261118T111506Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": "auto_paused_after_2_consecutive_blocks:gdelt_http_404:https://data.gdeltproject.org/gdeltv2/20261118101500.export.CSV.zip;gdelt_http_404:https://data.gdeltproject.org/gdeltv2/20261118111500.export.CSV.zip",
+          "policy_enabled": true,
+          "reason": null,
+          "skipped_items": 0,
+          "source_id": "collector-gdelt",
+          "status": "paused",
+          "timer_enabled": null
+        },
+        "collector-paper-arxiv": {
+          "cadence_seconds": 86400,
+          "consecutive_blocks": 2,
+          "last_run_at": "2026-11-17T06:18:51Z",
+          "last_run_id": "run-20261117T061851Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": "auto_paused_after_2_consecutive_blocks:http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10;http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10",
+          "policy_enabled": true,
+          "reason": null,
+          "skipped_items": 0,
+          "source_id": "collector-paper-arxiv",
+          "status": "paused",
+          "timer_enabled": null
+        },
+        "collector-papers": {
+          "cadence_seconds": 86400,
+          "consecutive_blocks": 2,
+          "last_run_at": "2026-11-17T06:18:46Z",
+          "last_run_id": "run-20261117T061846Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": "auto_paused_after_2_consecutive_blocks:http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10;http_429:https://export.arxiv.org/api/query?search_query=%28cat%3Aq-fin.%2A+OR+cat%3Astat.ML%29+AND+%28all%3A%22quantitative+finance%22+OR+all%3A%22machine+learning%22%29&max_results=10",
+          "policy_enabled": true,
+          "reason": null,
+          "skipped_items": 0,
+          "source_id": "collector-papers",
+          "status": "paused",
+          "timer_enabled": null
+        },
+        "collector-paper-openalex": {
+          "cadence_seconds": 86400,
+          "consecutive_blocks": 1,
+          "last_run_at": "2026-11-28T00:19:06Z",
+          "last_run_id": "run-20261128T001906Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": "http_429:https://api.openalex.org/works?search=%22asset+pricing%22&per-page=10",
+          "policy_enabled": true,
+          "reason": null,
+          "skipped_items": 0,
+          "source_id": "collector-paper-openalex",
+          "status": "partial",
+          "timer_enabled": null
+        },
+        "collector-tw-twse-index-breadth": {
+          "cadence_seconds": 86400,
+          "consecutive_blocks": 0,
+          "last_run_at": "2026-11-28T00:19:07Z",
+          "last_run_id": "run-20261128T001907Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": null,
+          "policy_enabled": true,
+          "reason": "parse_failed: invalid numeric value '--'",
+          "skipped_items": 0,
+          "source_id": "collector-tw-twse-index-breadth",
+          "status": "partial",
+          "timer_enabled": null
+        },
+        "collector-youtube-finance": {
+          "cadence_seconds": 86400,
+          "consecutive_blocks": 0,
+          "last_run_at": "2026-11-21T12:34:55Z",
+          "last_run_id": "run-20261121T123455Z",
+          "offered": true,
+          "offered_reason": null,
+          "paused_reason": null,
+          "policy_enabled": true,
+          "reason": null,
+          "skipped_items": 0,
+          "source_id": "collector-youtube-finance",
+          "status": "complete",
+          "timer_enabled": null
+        }
+      }
+    },
+    "last_complete_sizes": {
+      "collector-gdelt": {
+        "bundle_count": 113,
+        "latest_complete": [
+          {
+            "run_id": "run-20261118T071507Z",
+            "items": 5,
+            "raw_bytes": 1876,
+            "metadata_bytes": 9514
+          }
+        ]
+      },
+      "collector-paper-arxiv": {
+        "bundle_count": 27,
+        "latest_complete": [
+          {
+            "run_id": "run-20261116T181517Z",
+            "items": 10,
+            "raw_bytes": 26303,
+            "metadata_bytes": 21462
+          }
+        ]
+      },
+      "collector-paper-openalex": {
+        "bundle_count": 70,
+        "latest_complete": [
+          {
+            "run_id": "run-20261127T181815Z",
+            "items": 10,
+            "raw_bytes": 200967,
+            "metadata_bytes": 12661
+          }
+        ]
+      },
+      "collector-papers": {
+        "bundle_count": 26,
+        "latest_complete": [
+          {
+            "run_id": "run-20261116T181641Z",
+            "items": 70,
+            "raw_bytes": 341671,
+            "metadata_bytes": 133172
+          }
+        ]
+      }
+    },
+    "youtube_timer": {
+      "UnitFileState": "disabled",
+      "ActiveState": "inactive",
+      "LastTriggerUSec": null,
+      "last_run_id": "run-20261121T123455Z",
+      "actor": null,
+      "intentional": null,
+      "inspected": "systemctl show; scoped service/timer journal since 2026-11-20; retained auth records; no timer stop/disable attribution found"
+    },
+    "gdelt_journal": "2026-11-18 11:15:13Z paused; status lists missing 10:15 and 11:15 export files",
+    "breadth_reason": "parse_failed: invalid numeric value '--'"
+  },
+  "implementation": [
+    "GDELT export 404 emits reasoned partial, skips access-block accounting and makes no cache/receipt; legacy missing-export pauses recover",
+    "First 429 pauses for >=86400s or longer Retry-After; legacy pure 429 pauses auto-resume on next timer after cooldown; 403/login and mixed authorization histories retain explicit policy reset",
+    "flock serializes state read/modify/write across timer containers; bounded two-reason block history",
+    "Standalone/composite arXiv share one connection lock and 3s post-request spacing",
+    "Reasoned paused/partial source availability is a stable existing snapshot (not offered); steady selector emits no repeated scheduled failure/DLQ; no success or empty marker fabricated",
+    "Nonmarket empty reasoned partial/paused bundles can be traversed after full verification of a later complete same-source bundle; nonempty partials remain pending; empty outcome proof rules unchanged"
+  ],
+  "validation": {
+    "focused_initial": "12 passed on changed source; 9 failed / 3 passed on original origin/dev 9cf0aeff7",
+    "regression_command": "timeout 180s /tmp/agvenv/bin/python -m pytest -q deploy/collector/tests services/source_ingestion/tests/test_collector_paused_recovery.py services/source_ingestion/tests/test_collector_outcome_truth.py services/source_ingestion/tests/test_collector_partial_bundle_resolution.py services/source_ingestion/tests/test_controller_worker.py",
+    "regression_result": "658 passed, 6 skipped (optional backends), 1 dependency deprecation warning, exit 0, 66.67s",
+    "new_concurrency_and_probe_command": "timeout 45s /tmp/agvenv/bin/python -m pytest -q deploy/collector/tests/test_transient_recovery.py deploy/collector/tests/test_recovery_probe.py",
+    "new_concurrency_and_probe_result": "14 passed, exit 0, 1.15s",
+    "baseline_final_result": "11 failed, 3 passed, exit 1, 2.73s on origin/dev 9cf0aeff7 with final regression tests copied into an archive export (no source edits)",
+    "git_diff_check": "git diff --check: exit 0",
+    "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 entries / 4 waivers / no failures, exit 0"
+  },
+  "runtime_budget": {
+    "manifest": "docs/operations/storage-manifest.json",
+    "cadence": "No timer change; GDELT hourly; paper timers six-hourly healthy, at most one retry/source/rolling24h during continuing 429",
+    "new_storage": "2 empty stable lock files; nullable retry timestamp per configured source in replaced state/status files; <2 KB/file for 27 sources; 0 net history bytes/day",
+    "request_count": "GDELT <=48/day; during continuous 429 <=1 request/day standalone arXiv/OpenAlex and <=1 request/provider/day composite if reached; healthy <=8 requests/day/provider across standalone+composite paths; arXiv shared lock +3s spacing",
+    "estimated_healthy_bundle_bytes_per_day": {
+      "gdelt": 273360,
+      "arxiv": 191060,
+      "openalex": 854512,
+      "composite": 1899372
+    },
+    "bundle_retention": "existing 90-day daily pruner, no aggregate byte cap; existing ZIP cache/index retention is RC3 residual",
+    "dlq_before": "dispatch audit: 4,888 failed runs / ~6.28 days for the 5 scoped sources (~778/day); total historical DLQ ~7586 includes other sources",
+    "dlq_after_expected": "0 new failed runs/DLQ entries per held reasoned source per day",
+    "dlq_after_measured": null
+  },
+  "hosted_acceptance": {
+    "status": "pending",
+    "deployment_owner": "release/hosted-ops (4d1476a3 domain), not this source worker",
+    "collector_deployed_sha": null,
+    "hosted_deployed_sha": null,
+    "gdelt_ingest_run_ids": [],
+    "arxiv_ingest_run_ids": [],
+    "youtube_decision_ref": null,
+    "probe": "deploy/collector/probe_paused_recovery.py",
+    "window": "at least 24 hours after switch; unfiltered retained schedule/DLQ snapshots plus actual connector map and collector status",
+    "release_procedure": "archive exact merged deploy/collector; retain old /opt/pantheon-collector.<sha>-<time> plus rollback image tag; preserve secrets and documented policy overrides; validate/rebuild/switch/record RELEASE; no deployment performed by this task",
+    "parent_acceptance_task": "COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113"
+  },
+  "residual_findings": [
+    {
+      "class": "RC2 collector intake",
+      "finding": "YouTube disabled timer intent and actor unresolved; existing logs do not prove intentional pause",
+      "owner": "release/hosted-ops",
+      "disposition": "Must resolve before hosted acceptance; restore intended timer or publish explicit paused reason with actor/decision evidence. No timer enabled by source worker."
+    },
+    {
+      "class": "RC2 market-data parser",
+      "finding": "Index breadth parse_failed: invalid numeric value '--'",
+      "owner": "market-data domain cb4f6795",
+      "disposition": "Recorded under same collector package; this task reports reasoned partial and suppresses per-tick failure, does not fabricate numeric zero."
+    },
+    {
+      "class": "RC3 collector storage retention",
+      "finding": "Existing GDELT ZIP/receipt cache and bundle index have no verified cleanup; daily bundle prune deletes dated directories only",
+      "owner": "market-data/source storage domain cb4f6795",
+      "disposition": "Attach to existing RC3 collector writer inventory; no new cache writer introduced; do not claim retained aggregate byte cap."
+    }
+  ],
+  "provider_terms_checked": {
+    "at": "2026-11-28",
+    "arxiv": "https://info.arxiv.org/help/api/tou.html",
+    "openalex": "https://help.openalex.org/api/authentication/"
+  }
+}

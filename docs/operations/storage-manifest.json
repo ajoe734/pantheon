@@ -6526,6 +6526,21 @@
     "file": "scripts/openclaw-configure-shared-model-pool.sh",
     "contains": "retired-stock-bootstrap"
    }
+  },
+  {
+   "name": "Collector transient recovery and availability snapshots",
+   "task": "COLLECTOR-HOST-PAUSED-SOURCES-NEVER-RESUME-20261128",
+   "owner": "collector / source_ingestion",
+   "writer": "existing collector-state.json and status.json atomic replacements; state/collector-state.lock (CollectorStateStore.transaction), state/arxiv-api.lock (ArxivPaperPoller.collect); existing BundleWriter only",
+   "cadence": "existing GDELT hourly timer (24/day, <=48 HTTP requests/day); existing paper six-hour timers (4/day per source while healthy); a continuing 429 retries at most once per rolling 24h per source, or later Retry-After",
+   "size_per_day": "27 nullable retry_at fields: under 2 KB added to each replaced state/status file; two zero-byte lock files. Last complete hosted raw+metadata bytes/run: GDELT 11390, arXiv 47765, OpenAlex 213628, composite 474843. At normal cadence estimated 273360 / 191060 / 854512 / 1899372 bytes/day respectively",
+   "growth": "retry fields overwrite in place, zero net daily growth; no availability event journal. Held states create 0 ingest runs or DLQ entries/day; before scoped scheduled failures ~778/day (dispatch audit)",
+   "cap": "one timestamp per configured source (27), two reasons per block history; one zero-byte file each at state/collector-state.lock and state/arxiv-api.lock, constant inode count 2 per host. Existing bundles age cap 90 days (~2160 GDELT runs / 360 per paper source at scheduled scale); existing bundles have no aggregate byte cap",
+   "cleanup": "state/status replaced atomically; existing daily 90-day bundle pruner; lock inodes stay empty. Existing GDELT ZIP/receipt cache and index retention are RC3 residuals; no new cache/history writer introduced",
+   "bound_proof": {
+    "file": "deploy/collector/collector_stack/state.py",
+    "contains": "RATE_LIMIT_BACKOFF_SECONDS = 86400"
+   }
   }
  ]
 }

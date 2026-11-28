@@ -1,5 +1,7 @@
 """Regressions for missing GDELT exports and bounded rate-limit recovery."""
 import json
+import multiprocessing
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -8,6 +10,7 @@ from collector_stack.config import DEFAULT_POLICY_PATH, load_collector_config
 from collector_stack.fetchers import FetchResponse, FixtureTransport
 from collector_stack.runner import CollectorRunner, SourcePausedError
 from collector_stack.state import CollectorStateStore
+from collector_stack.pollers import ArxivPaperPoller
 
 
 def test_missing_export_is_recorded_without_pausing(tmp_path, fixtures_dir, test_hasher):
@@ -49,6 +52,12 @@ def test_429_one_request_then_daily_retry_survives_restart(tmp_path, test_hasher
                                started_at="2026-11-29T00:00:01Z", finished_at="2026-11-29T00:00:02Z")
     assert len(transport.calls) == 2 and again.status == "paused"
     assert again.state.retry_at == "2026-11-30T00:00:02Z"
+    good = b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>https://arxiv.org/abs/2611.00001</id><title>Pricing</title><summary>Finance</summary><published>2026-11-28T00:00:00Z</published><category term="q-fin.ST"/></entry></feed>'
+    transport.register(url, good)
+    recovered = runner().run_source("collector-paper-arxiv", run_id="recovered",
+        started_at="2026-11-30T00:00:02Z", finished_at="2026-11-30T00:00:03Z")
+    assert recovered.status == "complete" and recovered.bundle.manifest["items"]
+    assert recovered.state.retry_at is None
 
 
 @pytest.mark.parametrize("retry_after", ["172800", "Mon, 30 Nov 2026 00:00:00 GMT"])
@@ -73,3 +82,73 @@ def test_legacy_pause_recovery_does_not_release_authorization_blocks(tmp_path):
     now = datetime(2026, 11, 28, tzinfo=timezone.utc)
     for source in sources:
         assert store.get_source_state(source, current_policy_hash="same", now=now).paused == (source in {"login", "forbidden"})
+
+
+def _quota_worker(path, start):
+    store = CollectorStateStore(path)
+    original = store._save_all
+    def slow_save(data):
+        time.sleep(0.002)
+        original(data)
+    store._save_all = slow_save
+    start.wait(5)
+    for _ in range(20):
+        store.add_daily_quota_usage("provider", "2026-11-28", 1)
+
+
+def test_source_containers_do_not_lose_each_others_state(tmp_path):
+    ctx = multiprocessing.get_context("fork")
+    start = ctx.Event()
+    path = tmp_path / "state.json"
+    workers = [ctx.Process(target=_quota_worker, args=(path, start)) for _ in range(3)]
+    for worker in workers:
+        worker.start()
+    start.set()
+    try:
+        for worker in workers:
+            worker.join(10)
+            assert worker.exitcode == 0
+        assert CollectorStateStore(path).get_daily_quota_usage("provider", "2026-11-28") == 60
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(5)
+
+
+def _arxiv_worker(root, start, events):
+    class Transport:
+        def request(self, url, **kwargs):
+            events.put(("request", time.monotonic()))
+            multiprocessing.Event().wait(0.03)
+            return FetchResponse(url, url, 200, b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+    policy = load_collector_config(DEFAULT_POLICY_PATH, env={}).get_source("collector-paper-arxiv")
+    poller = ArxivPaperPoller(policy, transport=Transport(), request_lock_path=root / "arxiv-api.lock")
+    def spacing(seconds):
+        assert seconds == 3.0
+        events.put(("spacing", time.monotonic()))
+        multiprocessing.Event().wait(0.03)
+    poller.fetcher.sleep_fn = spacing
+    start.wait(5)
+    poller.collect()
+
+
+def test_paper_containers_serialize_arxiv_requests_and_spacing(tmp_path):
+    ctx = multiprocessing.get_context("fork")
+    start, events = ctx.Event(), ctx.Queue()
+    workers = [ctx.Process(target=_arxiv_worker, args=(tmp_path, start, events)) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    start.set()
+    try:
+        for worker in workers:
+            worker.join(10)
+            assert worker.exitcode == 0
+        trace = sorted((events.get(timeout=1) for _ in range(4)), key=lambda item: item[1])
+        assert [item[0] for item in trace] == ["request", "spacing", "request", "spacing"]
+        assert trace[2][1] - trace[1][1] >= 0.025
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(5)

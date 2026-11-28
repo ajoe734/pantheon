@@ -337,7 +337,8 @@ class CollectorRunner:
             )
         if sid == "collector-paper-arxiv":
             return ArxivPaperPoller(
-                policy, transport=self.transport, contact_user_agent=ua
+                policy, transport=self.transport, contact_user_agent=ua,
+                request_lock_path=self.root_dir / "state" / "arxiv-api.lock",
             )
         if sid == "collector-paper-openalex":
             return OpenAlexPaperPoller(
@@ -373,6 +374,7 @@ class CollectorRunner:
                 config=self.config,
                 transport=self.transport,
                 contact_user_agent=ua,
+                request_lock_path=self.root_dir / "state" / "arxiv-api.lock",
             )
         raise CollectorConfigError(f"no spider or poller registered for source_id: {sid!r}")
 
@@ -468,6 +470,7 @@ class CollectorRunner:
                 paused_reason=paused_reason,
                 cadence_seconds=policy.cadence_seconds,
                 consecutive_blocks=updated_state.consecutive_blocks,
+                retry_at=updated_state.retry_at,
             )
             return RunOutcome(
                 source_id=source_id,
@@ -624,11 +627,13 @@ class _CompositePaperCollector:
         config: CollectorConfig,
         transport: FetchTransport,
         contact_user_agent: str,
+        request_lock_path: Path | None = None,
     ) -> None:
         self.arxiv = ArxivPaperPoller(
             config.get_source("collector-paper-arxiv"),
             transport=transport,
             contact_user_agent=contact_user_agent,
+            request_lock_path=request_lock_path,
         )
         self.openalex = OpenAlexPaperPoller(
             config.get_source("collector-paper-openalex"),

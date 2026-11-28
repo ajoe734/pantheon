@@ -381,7 +381,7 @@ class VerifiedBundle:
     verified_through: int | None = None
     # manifest.json + items.jsonl bytes read for this bundle (cache accounting).
     source_bytes: int = 0
-    # Why a producer-partial bundle was acknowledged without delivering rows
+    # Why a producer-partial/paused bundle can be traversed without rows
     # ("superseded:<run_id>" or "market_closure:<date>"); empty = unresolved.
     resolution: str = ""
 
@@ -1862,12 +1862,11 @@ class CollectorBundleAdapter:
         self, transport: BundleTransport, bundle: VerifiedBundle,
         source_entries: Sequence[tuple[str, Mapping[str, Any]]], deadline: float | None,
     ) -> tuple[str, dict[str, Any] | None] | None:
-        """Why a producer-partial price bundle may be acknowledged without rows, else None.
+        """Independent evidence that permits traversal of an incomplete bundle.
 
-        Only the two price-history sources resolve, and only on independent evidence:
-        a later complete bundle of the same source for the same trade date (the rows come
-        from that bundle once), or an unscheduled closure confirmed by both venues.
-        Anything else keeps the sweep stopped (None).
+        Empty reasoned nonmarket failures need a verified later complete run.
+        Price-history partials need a later complete run for the same trade date
+        or an unscheduled closure confirmed by both venues. Other bundles wait.
         """
         if self.source_type != "market":
             # Empty producer failures carry no records. Traverse them only after

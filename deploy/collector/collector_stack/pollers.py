@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import fcntl
 import hashlib
 import math
 import tempfile
@@ -691,10 +692,12 @@ class ArxivPaperPoller:
         *,
         transport: FetchTransport,
         contact_user_agent: str = "PantheonCollector/1.0 (+mailto:collector-ops@example.invalid)",
+        request_lock_path: Path | None = None,
     ) -> None:
         if policy.min_interval_seconds < 3.0:
             raise CollectorConfigError("arXiv export API requires min_interval_seconds >= 3.0")
         self.policy = policy
+        self.request_lock_path = request_lock_path
         self.fetcher = PolicyEnforcedFetcher(
             policy, transport=transport, contact_user_agent=contact_user_agent
         )
@@ -713,7 +716,19 @@ class ArxivPaperPoller:
         target_url = _configured_url(url, "https://export.arxiv.org/api/query?" + urlencode({
             "search_query": _policy_query(self.policy, arxiv=True), "max_results": 10,
         }))
-        response = self.fetcher.fetch(target_url)
+        if self.request_lock_path is None:
+            response = self.fetcher.fetch(target_url)
+        else:
+            # Standalone and composite paper containers share one host volume.
+            # arXiv's single-connection / 3-second rule applies across both.
+            self.request_lock_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.request_lock_path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                try:
+                    response = self.fetcher.fetch(target_url)
+                finally:
+                    self.fetcher.sleep_fn(3.0)
+                    fcntl.flock(lock, fcntl.LOCK_UN)
         root = ET.fromstring(response.text)
         items: list[CollectedItem] = []
 
