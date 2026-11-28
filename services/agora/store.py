@@ -1514,6 +1514,7 @@ class AgoraStore:
             for excess in weekly_rows[max(1, int(weekly_cap)) :]:
                 if self._trader_reports.delete_if_matches(str(excess["report_id"]), excess):
                     removed["excess_weekly"] += 1
+        removed["reports"] = removed["expired_on_demand"] + removed["excess_weekly"]
         return removed
 
     def purge_expired_trader_reports(
@@ -1552,6 +1553,7 @@ class AgoraStore:
             for excess in weekly_rows[max(1, int(weekly_cap)) :]:
                 if self._trader_reports.delete_if_matches(str(excess["report_id"]), excess):
                     removed["excess_weekly"] += 1
+        removed["reports"] = removed["expired_on_demand"] + removed["excess_weekly"]
         return removed
 
     def count_on_demand_trader_reports_for_day(

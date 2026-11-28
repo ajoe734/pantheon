@@ -922,14 +922,18 @@ class AgoraWriteService:
         user_id: str,
         strategy_id: Optional[str] = None,
         cadence: Optional[str] = None,
+        trigger: Optional[str] = None,
         limit: int = 26,
         now: Optional[str] = None,
     ) -> List[DictRecord]:
+        eff_cadence = cadence
+        if eff_cadence is None and trigger:
+            eff_cadence = "weekly" if trigger in {"weekly", "weekly_post_attribution"} else trigger
         return self.store.list_trader_reports(
             tenant_id,
             user_id,
             strategy_id=strategy_id,
-            cadence=cadence,
+            cadence=eff_cadence,
             limit=limit,
             now=now,
         )
@@ -939,20 +943,22 @@ class AgoraWriteService:
         *,
         tenant_id: str,
         user_id: str,
-        report_day: str,
+        report_day: Optional[str] = None,
+        day: Optional[str] = None,
         now: Optional[str] = None,
     ) -> int:
+        eff_day = str(report_day or day or "")
         return self.store.count_on_demand_trader_reports_for_day(
             tenant_id,
             user_id,
-            report_day,
+            eff_day,
             now=now,
         )
 
     def claim_trader_report(
         self,
         *,
-        lease_owner: str,
+        lease_owner: str = "agora-interaction-worker",
         actor_roles: Union[Sequence[str], str] = ("persona",),
         lease_seconds: float = 600,
         now: Optional[str] = None,

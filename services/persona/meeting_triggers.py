@@ -403,7 +403,12 @@ class MeetingTriggers:
         if cache_key in self._weekly_runs_requested or self._weekly_run_done_for_tenant(
             clean_tenant, week, snapshots or {}
         ):
-            return {"status": "already_requested", "iso_week": week}
+            cached = self._weekly_runs_requested.get(cache_key) or {}
+            return {
+                "status": "already_requested",
+                "iso_week": week,
+                **({"run_id": cached["run_id"]} if cached.get("run_id") else {}),
+            }
         if self.attribution is None:
             return {"status": "not_requested", "iso_week": week, "reason": "attribution_owner_unconfigured"}
         window_end = (day - timedelta(days=day.weekday() + 1)).isoformat()  # last Sunday

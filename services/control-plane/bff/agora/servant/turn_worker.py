@@ -352,7 +352,9 @@ class ServantTurnWorker:
         if self.reports is not None and hasattr(self.owner, "claim_trader_report"):
             while processed < limit:
                 queued_report = self.owner.claim_trader_report(
+                    lease_owner=self.worker_id,
                     actor_roles=_WORKER_ROLES,
+                    lease_seconds=self.lease_seconds,
                     now=self.clock(),
                 )
                 if queued_report is None:
@@ -379,7 +381,7 @@ class ServantTurnWorker:
         mt = triggers if triggers is not None else MeetingTriggers()
         attribution_run = mt.ensure_weekly_attribution_run(
             tenant_id=tenant_id,
-            snapshots=list(snapshots or []),
+            snapshots=dict(snapshots) if isinstance(snapshots, Mapping) else {},
         )
         run_id: Optional[str] = None
         if isinstance(attribution_run, Mapping):

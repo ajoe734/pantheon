@@ -683,22 +683,35 @@ class TradingRoomStore:
                     continue
             eff_ws_id = rec_ws_id or (next(iter(target_workspace_ids)) if len(target_workspace_ids) == 1 else None)
             items.append({
+                "id": pid,
                 "proposal_id": pid,
+                "proposalId": pid,
                 "proposal_kind": "workspace_proposal",
+                "proposalKind": "workspace_proposal",
                 "workspace_id": eff_ws_id,
+                "workspaceId": eff_ws_id,
                 "strategy_id": rec_strat_id,
+                "strategyId": rec_strat_id,
                 "strategy_version": prop.get("strategyVersion"),
+                "strategyVersion": prop.get("strategyVersion"),
                 "view_id": None,
+                "viewId": None,
                 "widget_id": None,
+                "widgetId": None,
                 "trigger": str(gmeta.get("trigger") or "strategy_version_selected"),
                 "proposer": str(gmeta.get("proposer") or "trading_servant"),
                 "change_summary": str(gmeta.get("changeSummary") or prop.get("rationale") or ""),
+                "changeSummary": str(gmeta.get("changeSummary") or prop.get("rationale") or ""),
                 "rationale": str(prop.get("rationale") or ""),
                 "status": str(prop.get("status") or "preview"),
                 "created_at": str(prop.get("generatedAt") or ""),
+                "createdAt": str(prop.get("generatedAt") or ""),
                 "habit_refs": list(gmeta.get("habitRefs") or []),
+                "habitRefs": list(gmeta.get("habitRefs") or []),
                 "trigger_details": gmeta.get("triggerDetails") or {},
+                "triggerDetails": gmeta.get("triggerDetails") or {},
                 "superseded_by": gmeta.get("supersededBy"),
+                "supersededBy": gmeta.get("supersededBy"),
                 "proposal": prop,
             })
 
@@ -711,22 +724,35 @@ class TradingRoomStore:
             if target_workspace_ids and prop_ws_id not in target_workspace_ids:
                 continue
             items.append({
+                "id": pid,
                 "proposal_id": pid,
+                "proposalId": pid,
                 "proposal_kind": "widget_revision_proposal",
+                "proposalKind": "widget_revision_proposal",
                 "workspace_id": prop_ws_id,
+                "workspaceId": prop_ws_id,
                 "strategy_id": str(tmeta.get("strategyId") or resolved_strategy_id or ""),
+                "strategyId": str(tmeta.get("strategyId") or resolved_strategy_id or ""),
                 "strategy_version": tmeta.get("strategyVersion"),
+                "strategyVersion": tmeta.get("strategyVersion"),
                 "view_id": prop.get("viewId"),
+                "viewId": prop.get("viewId"),
                 "widget_id": prop.get("widgetId"),
+                "widgetId": prop.get("widgetId"),
                 "trigger": str(tmeta.get("trigger") or "manual_or_servant_widget_revision"),
                 "proposer": str(tmeta.get("proposer") or "trading_servant"),
                 "change_summary": str(tmeta.get("changeSummary") or prop.get("instruction") or ""),
+                "changeSummary": str(tmeta.get("changeSummary") or prop.get("instruction") or ""),
                 "rationale": str(prop.get("rationale") or ""),
                 "status": str(prop.get("status") or "preview"),
                 "created_at": str(tmeta.get("createdAt") or ""),
+                "createdAt": str(tmeta.get("createdAt") or ""),
                 "habit_refs": list(tmeta.get("habitRefs") or []),
+                "habitRefs": list(tmeta.get("habitRefs") or []),
                 "trigger_details": tmeta.get("triggerDetails") or {},
+                "triggerDetails": tmeta.get("triggerDetails") or {},
                 "superseded_by": tmeta.get("supersededBy"),
+                "supersededBy": tmeta.get("supersededBy"),
                 "proposal": prop,
             })
 
@@ -740,15 +766,24 @@ class TradingRoomStore:
                     ws_key, tenant_id=tenant_id, user_id=user_id
                 )
             )
+        widget_props = [it["proposal"] for it in items if it.get("proposal_kind") == "widget_revision_proposal"]
+        ws_props = [it["proposal"] for it in items if it.get("proposal_kind") == "workspace_proposal"]
         return {
             "workspace_id": primary_ws or None,
+            "workspaceId": primary_ws or None,
             "strategy_id": resolved_strategy_id or None,
+            "strategyId": resolved_strategy_id or None,
             "pending_proposal": pending[0] if pending else None,
+            "pendingProposal": pending[0] if pending else None,
             "pending_count": len(pending),
+            "pendingCount": len(pending),
             "max_pending_per_workspace": 1,
             "direct_servant_edit_allowed": False,
             "proposals": items,
+            "widget_revision_proposals": widget_props,
+            "workspace_proposals": ws_props,
             "change_log": decisions,
+            "changeLog": decisions,
         }
 
     # ------------------------------------------------------------------

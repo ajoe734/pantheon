@@ -1,0 +1,135 @@
+{
+  "task_id": "AGORA-SERVANT-REVISIONS-AND-REPORT-20261127",
+  "title": "The servant proposes workspace revisions as the strategy changes and writes a weekly trader report",
+  "design_doc": "docs/04/pantheon_agora_servant_core_2026-11-27/SD_AGORA_SERVANT_CORE_2026-11-27.md (§9.2, §9.3, §10, §11, §12 T11, §13 residual 3)",
+  "problem_register_class": "RC4 — Agora: the trading servant does not serve the human trader (SD-AGORA-SERVANT-CORE-CAPABILITIES-20261127 T11)",
+  "owner": "Antigravity",
+  "reviewer": "Claude2",
+  "delivery_state": "source_and_tests_verified_pending_merge_and_hosted_deploy",
+  "dependencies": {
+    "AGORA-SERVANT-DATA-TOOLS-20261127": "done",
+    "AGORA-TRADER-HABIT-PROFILE-20261127": "done",
+    "AGORA-PAPER-BOOK-READBACK-20261127": "done",
+    "IMITATION-TRADER-SHADOW-COMPARISON-20261127": "done"
+  },
+  "acceptance_criteria": {
+    "ac1_sd_section_9_2_workspace_revision_triggers": {
+      "status": "verified_local",
+      "triggers": [
+        "Trigger 1 (new strategy version selected): POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select emits workshop.version.selected and invokes TradingRoomService.on_strategy_version_selected, producing one TradingRoomWorkspaceProposal with changeSummary naming what changed in the strategy and habitRefs.",
+        "Trigger 2 (repeated trader edits): TradingRoomService._check_repeated_trader_edits_trigger fires on PATCH /bff/agora/trading-room/workspaces/{workspace_id}/layout and PATCH /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id} when the same widget is edited >= 3 times within 7 days by user_modified, producing one WidgetRevisionProposal that makes the edit the default.",
+        "Trigger 3 (data source freshness or governed active regime transition): TradingRoomService.evaluate_workspace_revision_triggers / _propose_data_or_regime_change produces one WidgetRevisionProposal when a widget data source turns stale, unavailable, or newly fresh, or when a governed active RegimeState (state=active, model_status=approved) transitions on macro or the strategy primary axis, while refusing to trigger on missing, proposed, or candidate regime records."
+      ],
+      "invariants": [
+        "At most one pending (status='preview') revision proposal exists per workspace: TradingRoomStore.supersede_pending_proposals_for_workspace marks any earlier preview proposal as superseded whenever a new workspace or widget revision proposal is created.",
+        "The servant never edits the active workspace directly: triggers leave dashboardVersion and widget specs unchanged until trader acceptance, and _reject_servant_direct_mutation blocks any direct layout/view/widget mutation carrying a servant actor with 409 OPERATION_NOT_ALLOWED.",
+        "Trader acceptance or rejection (POST .../accept, POST .../reject) records the decision in the V11 §10.3 changeLog with proposer='trading_servant', decidedBy, status ('accepted' or 'rejected'), reason, and rollbackAvailable."
+      ],
+      "routes": [
+        "GET /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals",
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers",
+        "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/reject",
+        "POST /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/reject"
+      ]
+    },
+    "ac2_sd_section_9_3_weekly_and_on_demand_trader_report": {
+      "status": "verified_local",
+      "sections": [
+        "strategy_version (owner: agora)",
+        "decisions (owner: agora — offered, taken, accept, modify, reject, shadow, expired)",
+        "paper_book (owners: paper_execution, telemetry — fills_count, positions_count, realized_pnl, unrealized_pnl, active_capital, exposure)",
+        "interventions (owner: evaluation — follow_count, override_count, value_added_score, sample_size)",
+        "shadow_comparison (owner: evaluation — compared_decisions, mean_return_delta_bps)",
+        "imitation (owner: policy_learning — candidate_version, trainer_feedback agree/disagree/skip, promotion_blockers)",
+        "habit_changes (owner: agora — shown_features_count, decision_count)",
+        "stale_data_sources (owner: source_ingest — stale_or_unavailable_count, sources)",
+        "suggested_next_steps (owner: agora — suggestion_count, items)"
+      ],
+      "owner_attribution_and_number_guard": "Every numeric metric across sections, facts, and citations carries non-empty owner, source (source_id), and as_of. Report narrative is rendered through tool_turn.render_answer so any unreferenced model digit is stripped to 〔未引用數字〕 and recorded in number_guard.",
+      "cadence_and_caps": "Produced weekly after attribution (trigger='weekly_post_attribution') and on demand via POST /bff/agora/servant/reports or command bar 整理本週報表 (trigger='on_demand'), capped at 3 on-demand reports per trader per day (HTTP 429 trader_report_daily_cap_exceeded on the 4th).",
+      "routes": [
+        "GET /bff/agora/servant/reports",
+        "GET /bff/agora/servant/reports/{report_id}",
+        "POST /bff/agora/servant/reports"
+      ]
+    },
+    "ac3_sd_section_13_residual_3_weekly_attribution_without_persona_cycle": {
+      "status": "verified_local",
+      "implementation": [
+        "services/persona/meeting_triggers.py::MeetingTriggers.ensure_weekly_attribution_run — requests the weekly attribution run idempotently per (tenant_id, iso_week) via AttributionPort.request_weekly_run even when no persona is enrolled (first is None in _mt3) or via MeetingTriggers.run_without_persona_cycle.",
+        "services/control-plane/bff/agora/servant/turn_worker.py::ServantTurnWorker.run_weekly_post_attribution_reports — invokes MeetingTriggers.ensure_weekly_attribution_run and produces each trader's weekly report via TraderReportService.ensure_weekly_report_after_attribution."
+      ]
+    },
+    "ac4_runtime_budget_cap_cleanup_and_storage_manifest": {
+      "status": "verified_local",
+      "writer": "agora.trader_reports",
+      "cadence": "1 weekly report per active trader and strategy after weekly attribution + at most 3 on-demand reports per trader per day",
+      "max_row_bytes": 20480,
+      "count_at_hosted_scale": "10 traders x 3 strategies = 30 weekly rows/week (<= 600 KB/week, ~86 KB/day) + <= 30 on-demand rows/day (<= 600 KB/day)",
+      "growth_per_day": "<= 686 KB/day before pruning; steady-state bounded to <= 780 rows (<= 16 MB)",
+      "cap": "26 weekly reports per trader and strategy (~6 months, TRADER_REPORT_WEEKLY_HISTORY_CAP = 26); 3 on-demand reports per trader per day (TRADER_REPORT_ONDEMAND_DAILY_CAP = 3) with 7-day retention (TRADER_REPORT_ONDEMAND_RETENTION_DAYS = 7)",
+      "cleanup": "AgoraStore.prune_trader_reports on each write + AgoraStore.purge_expired_trader_reports invoked hourly in ServantTurnWorker.maybe_purge",
+      "storage_manifest": "Registered as bounded schema_table:agora.trader_reports in docs/operations/storage-manifest.json (verified by scripts/check_storage_manifest.py)"
+    },
+    "ac5_hosted_proof": {
+      "status": "pending_post_merge_dev_deploy",
+      "blocking_condition": "This worker cannot deploy to hosted Dev and holds no hosted dev trader credential. Hosted proof requires merging this branch to dev, deploying operator-bff and agora-interaction-worker to hosted dev, and executing the read/write probe below as the dev trader.",
+      "procedure_after_deploy": [
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals/triggers (or select a new workshop strategy version) as the dev trader and verify GET /bff/agora/trading-room/workspaces/{workspace_id}/revision-proposals returns pending_count=1 while workspace dashboardVersion is unchanged.",
+        "POST /bff/agora/servant/reports (or send command-bar quick_task='整理本週報表') as the dev trader and verify GET /bff/agora/servant/reports/{report_id} returns status='completed' with all 9 sections and owner/source/as_of on every metric."
+      ],
+      "recorded": null
+    }
+  },
+  "no_persona_or_meeting_proof": {
+    "persona_calls": 0,
+    "meeting_calls": 0,
+    "order_routes_called": 0
+  },
+  "artifacts": [
+    "scripts/run_agora_interaction_worker.py",
+    "services/agora/service.py",
+    "services/agora/store.py",
+    "services/agora/write_authority.py",
+    "services/control-plane/bff/agora/servant/reports.py",
+    "services/control-plane/bff/agora/servant/router.py",
+    "services/control-plane/bff/agora/servant/turn_worker.py",
+    "services/control-plane/bff/agora/strategy_workshop/routes/versions.py",
+    "services/control-plane/bff/agora/trading_room/routes/workspaces.py",
+    "services/control-plane/bff/agora/trading_room/service.py",
+    "services/control-plane/bff/agora/trading_room/store.py",
+    "services/persona/meeting_triggers.py",
+    "services/control-plane/bff/tests/test_agora_servant_revisions_and_report.py",
+    "services/control-plane/openapi/agora_v1_14.openapi.yaml",
+    "services/control-plane/specs/agora/v15/capability_manifest_v1_14.json",
+    "services/control-plane/specs/agora/bundle_index.v1_14.json",
+    "services/control-plane/bff/contract_snapshots/backend_routes_manifest.json",
+    "docs/bff/contract_snapshots/route-diff-baseline.json",
+    "docs/operations/storage-manifest.json",
+    "docs/operations/problem-register.md",
+    "docs/deployment/evidence/AGORA-SERVANT-REVISIONS-AND-REPORT-20261127/evidence.json"
+  ],
+  "validation": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_revisions_and_report.py",
+      "result": "8 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/persona/test_meeting_triggers.py",
+      "result": "35 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/agora/trading_room/test_trading_room.py services/control-plane/bff/agora/strategy_workshop/test_versions.py",
+      "result": "84 passed, 1 skipped"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/check_storage_manifest.py",
+      "result": "passed (381 entries, 0 failures)"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 scripts/bff_route_manifest_backend.py --check && .venv-pantheon/bin/python3 scripts/bff_route_diff.py --check-baseline",
+      "result": "passed (699 routes match snapshot)"
+    }
+  ],
+  "residual_findings": []
+}

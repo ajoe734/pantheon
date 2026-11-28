@@ -960,7 +960,7 @@ class TraderReportService:
             if narrative_override is not None:
                 narrative_mode = "override_guarded"
 
-        allowed_tokens = _allowed_number_tokens(facts, "", [active_version])
+        allowed_tokens = _allowed_number_tokens(facts, active_version, [active_version])
         rendered, used_ids, guard_report = render_answer(
             raw_template,
             facts_by_id,
@@ -1035,6 +1035,9 @@ class TraderReportService:
         expires_at: Optional[str] = None
         if norm_trigger == "on_demand":
             expires_at = _format_iso(_parse_iso(now) + timedelta(days=TRADER_REPORT_ONDEMAND_RETENTION_DAYS))
+        iso_year, iso_wk, _ = end_dt.isocalendar()
+        cadence_val = "weekly" if norm_trigger == "weekly_post_attribution" else "on_demand"
+        iso_week_val = str(attribution_run_id or f"{iso_year:04d}-W{iso_wk:02d}")
 
         report: Dict[str, Any] = {
             "report_id": report_id,
@@ -1046,7 +1049,10 @@ class TraderReportService:
             "strategy_id": clean_strategy,
             "strategy_version": active_version,
             "trigger": norm_trigger,
+            "cadence": cadence_val,
             "day": now[:10],
+            "report_day": now[:10],
+            "iso_week": iso_week_val,
             "window_start": win_start,
             "window_end": win_end,
             "window_days": int(window_days or 7),
@@ -1069,17 +1075,15 @@ class TraderReportService:
             **({"expires_at": expires_at} if expires_at else {}),
         }
 
-        stored = self.owner.put_trader_report(
-            report_id,
+        _created, stored = self.owner.put_trader_report(
             report,
-            user_id,
             actor_roles,
             enforce_daily_cap=(norm_trigger == "on_demand"),
             now=now,
         )
         if idempotency_key:
-            self._idempotency_cache[f"{tenant_id}:{user_id}:{idempotency_key}"] = report_id
-        return stored
+            self._idempotency_cache[f"{tenant_id}:{user_id}:{idempotency_key}"] = str(stored.get("report_id") or report_id)
+        return dict(stored)
 
     def process_queued_report(
         self,
@@ -1122,14 +1126,13 @@ class TraderReportService:
             "updated_at": now,
             "completed_at": now,
         }
-        return self.owner.put_trader_report(
-            str(completed["report_id"]),
+        _created, stored = self.owner.put_trader_report(
             completed,
-            user_id or "agora-interaction-worker",
             actor_roles,
             enforce_daily_cap=False,
             now=now,
         )
+        return dict(stored)
 
     def ensure_weekly_report_after_attribution(
         self,
@@ -1335,11 +1338,12 @@ def create_servant_reports_router(
             trigger=trigger,
             limit=limit,
         )
-        today = utc_now()[:10]
+        today = svc.clock()[:10]
         ondemand_used = svc.owner.count_on_demand_trader_reports_for_day(
             tenant_id=scope.tenant_id,
             user_id=scope.user_id,
             day=today,
+            now=svc.clock(),
         )
         return _envelope(
             {
