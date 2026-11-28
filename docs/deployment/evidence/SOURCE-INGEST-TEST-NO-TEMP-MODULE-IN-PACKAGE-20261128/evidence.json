@@ -52,46 +52,246 @@
     ],
     "parallel_standalone_command": ".venv-pantheon/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py::test_run_controller_once_concurrent_same_key_multiprocess",
     "terminal_records": [
-      {"round": 1, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "6dd33141cfd5fd0c36282124aac194df75b001fd663aef05e80a4d141d15fde2"},
-      {"round": 1, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"},
-      {"round": 2, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "06c91cad76b3d9135d01c031463de9d30fefacc81ae3a6057d373bcdeb17d5a9"},
-      {"round": 2, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "4014033607bc52eed73602df3126bed197e72abc344415ddfab2bf1d2a06219f"},
-      {"round": 3, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "036c97053f2a8a318fb6ff5484c30b1e2b7ae7c2235bcf19c8a612206c2f6dab"},
-      {"round": 3, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"},
-      {"round": 4, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "dd2d0b30fe6e5aec51ddeb7118ab3375c1c68d025ffde1d75f60523aa1051e3b"},
-      {"round": 4, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"},
-      {"round": 5, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "3282ee1df375a95d44c4e693f48ec2e2ce0a0139951220d8059da3b6222fcacd"},
-      {"round": 5, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "2b38bea586f6566a5ace012e1477ba7dd3e599443b5ab807077223fc7fd49484"},
-      {"round": 6, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "4d1e2d8405a18e806633e460605dd6c7b6a5f5142b89f54c19480f8313d8c25b"},
-      {"round": 6, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"},
-      {"round": 7, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "eb018255944f7de7366278f7b563f0e86237221cab0ef83a86dea1f446cd0aa2"},
-      {"round": 7, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"},
-      {"round": 8, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "8f9c49dcacbba3955a859c2e3847c045844217644343d870cd22091a5fb0230f"},
-      {"round": 8, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "43320ff4b79ea3894d108145d2d01a1409e5600f9c3e30bef26daff9cc27a2e7"},
-      {"round": 9, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "d002b6e2d71f1513347a8dd2d580ebd84b25e3d66d67f867b23bf255ae244a67"},
-      {"round": 9, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "c972b257d505bb1ba3c12af07677ae6c33fd74cacb2197f641d9529df3f962dc"},
-      {"round": 10, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "2ac8f0daea99906e8418752b55ba5278665cda426845294d9d6cc840a5a10704"},
-      {"round": 10, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "5b6af0c27926dd8cda5be8713c0e3453a7a3aa2596b5f86eefbc382c5b177fff"},
-      {"round": 11, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "cb96fe2d63bb00c17938d26e55f4f451e744f9d6de79023688ca1553d07c199e"},
-      {"round": 11, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"},
-      {"round": 12, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "8a0ad29964388b2d9eea33ca51c65a088c5f40807ece1c753476333dd741452b"},
-      {"round": 12, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "01b75beb7b0597f640ac9f620561b3967e0cb9c22b749c45c463e054acf44ace"},
-      {"round": 13, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "40e3737ec60e7f4fefc6fcfbdbcdaad615c4cd8f22dee0ac6b459ac6c02206ab"},
-      {"round": 13, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"},
-      {"round": 14, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "e623bb0e442095acaba9d784da2a4ea4cd4ba6f10e7a81353330c3fa12d9f115"},
-      {"round": 14, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "6b19a9156f4a5a0e26dda1aa3fa761d666fd6f947b4a5f844e57268607f0b44a"},
-      {"round": 15, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "9ef3a1c673110ee386f04327e11ae8990a079a6200756f6d7ccd9d1a4a9e56c4"},
-      {"round": 15, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "bfb7345c62d7938734a2b10c1060fea3a9f5cff4ddb9e980aeabaf0904e7e05e"},
-      {"round": 16, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "a905bdd88df6237d4ea6a24c724481ba4e5cc8bfbbb1dee24769ac64ad64c9be"},
-      {"round": 16, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "79a039ba779f058de7471c31a5f53436f8835ec1e13585c50136495cfc3a2a00"},
-      {"round": 17, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"},
-      {"round": 17, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"},
-      {"round": 18, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "219130beb28fbb790c0b560bf564cc85cb4bb2d3f09e2b85e5d46e64c8417ad7"},
-      {"round": 18, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"},
-      {"round": 19, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"},
-      {"round": 19, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"},
-      {"round": 20, "label": "both-files", "exit_code": 0, "terminal_log_sha256": "dc525e0411857c45a5dda86e23a7dfbbbb176d9a42cea7055a4266f18688e137"},
-      {"round": 20, "label": "concurrent-multiprocess", "exit_code": 0, "terminal_log_sha256": "b88921feaebc5931c4ac91c3fbd41214e8d9695c7aea217dd7c4bb62fb3896f0"}
+      {
+        "round": 1,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "6dd33141cfd5fd0c36282124aac194df75b001fd663aef05e80a4d141d15fde2"
+      },
+      {
+        "round": 1,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"
+      },
+      {
+        "round": 2,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "06c91cad76b3d9135d01c031463de9d30fefacc81ae3a6057d373bcdeb17d5a9"
+      },
+      {
+        "round": 2,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "4014033607bc52eed73602df3126bed197e72abc344415ddfab2bf1d2a06219f"
+      },
+      {
+        "round": 3,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "036c97053f2a8a318fb6ff5484c30b1e2b7ae7c2235bcf19c8a612206c2f6dab"
+      },
+      {
+        "round": 3,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"
+      },
+      {
+        "round": 4,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "dd2d0b30fe6e5aec51ddeb7118ab3375c1c68d025ffde1d75f60523aa1051e3b"
+      },
+      {
+        "round": 4,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "c9a4802b1e58c1e28ee37828e22ea5a5bce4aadd9dff73452d51ac965fd37f94"
+      },
+      {
+        "round": 5,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "3282ee1df375a95d44c4e693f48ec2e2ce0a0139951220d8059da3b6222fcacd"
+      },
+      {
+        "round": 5,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "2b38bea586f6566a5ace012e1477ba7dd3e599443b5ab807077223fc7fd49484"
+      },
+      {
+        "round": 6,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "4d1e2d8405a18e806633e460605dd6c7b6a5f5142b89f54c19480f8313d8c25b"
+      },
+      {
+        "round": 6,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"
+      },
+      {
+        "round": 7,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "eb018255944f7de7366278f7b563f0e86237221cab0ef83a86dea1f446cd0aa2"
+      },
+      {
+        "round": 7,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "b44a222a56166eab2503b920f54f5756cd9bf13e01ace2276c8bec7035f57bbd"
+      },
+      {
+        "round": 8,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "8f9c49dcacbba3955a859c2e3847c045844217644343d870cd22091a5fb0230f"
+      },
+      {
+        "round": 8,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "43320ff4b79ea3894d108145d2d01a1409e5600f9c3e30bef26daff9cc27a2e7"
+      },
+      {
+        "round": 9,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "d002b6e2d71f1513347a8dd2d580ebd84b25e3d66d67f867b23bf255ae244a67"
+      },
+      {
+        "round": 9,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "c972b257d505bb1ba3c12af07677ae6c33fd74cacb2197f641d9529df3f962dc"
+      },
+      {
+        "round": 10,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "2ac8f0daea99906e8418752b55ba5278665cda426845294d9d6cc840a5a10704"
+      },
+      {
+        "round": 10,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "5b6af0c27926dd8cda5be8713c0e3453a7a3aa2596b5f86eefbc382c5b177fff"
+      },
+      {
+        "round": 11,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "cb96fe2d63bb00c17938d26e55f4f451e744f9d6de79023688ca1553d07c199e"
+      },
+      {
+        "round": 11,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"
+      },
+      {
+        "round": 12,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "8a0ad29964388b2d9eea33ca51c65a088c5f40807ece1c753476333dd741452b"
+      },
+      {
+        "round": 12,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "01b75beb7b0597f640ac9f620561b3967e0cb9c22b749c45c463e054acf44ace"
+      },
+      {
+        "round": 13,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "40e3737ec60e7f4fefc6fcfbdbcdaad615c4cd8f22dee0ac6b459ac6c02206ab"
+      },
+      {
+        "round": 13,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"
+      },
+      {
+        "round": 14,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "e623bb0e442095acaba9d784da2a4ea4cd4ba6f10e7a81353330c3fa12d9f115"
+      },
+      {
+        "round": 14,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "6b19a9156f4a5a0e26dda1aa3fa761d666fd6f947b4a5f844e57268607f0b44a"
+      },
+      {
+        "round": 15,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "9ef3a1c673110ee386f04327e11ae8990a079a6200756f6d7ccd9d1a4a9e56c4"
+      },
+      {
+        "round": 15,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "bfb7345c62d7938734a2b10c1060fea3a9f5cff4ddb9e980aeabaf0904e7e05e"
+      },
+      {
+        "round": 16,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "a905bdd88df6237d4ea6a24c724481ba4e5cc8bfbbb1dee24769ac64ad64c9be"
+      },
+      {
+        "round": 16,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "79a039ba779f058de7471c31a5f53436f8835ec1e13585c50136495cfc3a2a00"
+      },
+      {
+        "round": 17,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"
+      },
+      {
+        "round": 17,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "653a4be89e5143db9f8d3b1731f1e0a5ac9eaa419f7ef21c42f76641e5de69ea"
+      },
+      {
+        "round": 18,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "219130beb28fbb790c0b560bf564cc85cb4bb2d3f09e2b85e5d46e64c8417ad7"
+      },
+      {
+        "round": 18,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "f6a045f41f979ef53bc4d8f565c7e03eb095f8d7eec4b9178d41eba33fa5d72f"
+      },
+      {
+        "round": 19,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "63ac92db9f4a614040079bc6968a2220ec1eb175126c181e599cebd8cefed906"
+      },
+      {
+        "round": 19,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "f7337d1714dbc1c20019e93daf849f4f173f2c1bcdf5ecdb32d87cfbbca925de"
+      },
+      {
+        "round": 20,
+        "label": "both-files",
+        "exit_code": 0,
+        "terminal_log_sha256": "dc525e0411857c45a5dda86e23a7dfbbbb176d9a42cea7055a4266f18688e137"
+      },
+      {
+        "round": 20,
+        "label": "concurrent-multiprocess",
+        "exit_code": 0,
+        "terminal_log_sha256": "b88921feaebc5931c4ac91c3fbd41214e8d9695c7aea217dd7c4bb62fb3896f0"
+      }
     ],
     "additional_checks": [
       "Original test_deployed_reader_reads_compacted_journal_identically AST equals origin/dev.",
@@ -116,6 +316,12 @@
       "class": "RC2 market-data deployment identity",
       "finding": "Production _runtime_deployment still hashes arbitrary stray package *.py and can race if another runtime actor removes one after enumeration.",
       "disposition": "Recorded in the existing Required check that fails under CI load register row for coordinator follow-through. Digest policy and production hardening are outside this test-only task."
+    },
+    {
+      "owner": "L2-CALLS-PER-SOURCE-SPLIT-EXTRACTION-AND-COMPILE-20261128 owner Codex",
+      "class": "RC2 Required check that fails under CI load",
+      "finding": "Unrelated discovery stale-world subprocess assertion failed on its fixture date; this blocked PR #8034 shard 2.",
+      "disposition": "Resolved by existing owner commit ac40bbce3 in merged PR #8031; synced from dev and both stale-world and stdlib subprocess regressions pass. No new task required."
     }
   ],
   "delivery": "PR #8034; owner resubmits the compact evidence manifest for independent Claude2 review and canonical supervisor merge. No hosted deployment claimed.",
@@ -123,5 +329,15 @@
     "git_object": "6c292e2bb367606acb988eb785d7c4d8708e5399:docs/deployment/evidence/SOURCE-INGEST-TEST-NO-TEMP-MODULE-IN-PACKAGE-20261128/evidence.json",
     "sha256": "f606051f7faca9cd8dc097ea5e796a8a4a6a42a284e147d43ce9377f18577392",
     "contents": "Original full reproduction traceback, validation driver source, and 40 collected terminal outputs; retrieve with git show <git_object>."
+  },
+  "ci_return_20261128": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46141714061/job/140973086192",
+    "failed_job_log_sha256": "5247cff70a7df23f784083c3f8bc09ec2653ac71d3b1fe7d5b7d9f139a3c1626",
+    "failure": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets expected exit 1 but got 0: its fixed 2026-11-28 fixture was still fresh on the real CI clock.",
+    "resolution": "Synced origin/dev 8f7e84d7a (full SHA in git merge parent) via merge 5d260e05e. PR #8031 already carries ac40bbce3c2d07bc5402a6b2ec72ed6bbe851659, which explicitly ages the synthetic world to 2020. No additional discovery implementation changes made in this task.",
+    "validation_command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q services/source_ingestion/tests/test_latest_market_snapshot_compaction.py services/source_ingestion/tests/test_controller_worker_manual_once.py acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets acceptance/test_discovery_pipeline_day.py::test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages",
+    "validation_result": "27 passed, 1 skipped in 19.96s; terminal exit 0. Skip is the pre-existing opt-in journal benchmark. Both deployed-reader tests executed.",
+    "scope_check": "Diff against current dev remains exactly the four original scoped artifacts; no production diff. Earlier 20 full-file and 20 concurrent multiprocess rounds remain recorded above.",
+    "review": "Previous approval is invalid for the refreshed head; resubmit PR #8034 to assigned reviewer Claude2 with the updated committed manifest."
   }
 }
