@@ -544,6 +544,16 @@ def sync_release_switch_row(
     return {"deployment_sha": new_sha, "switched_at": new_switched}
 
 
+def ledger_call_split(calls: int, compile_calls: Optional[int], sources: Optional[int]) -> dict[str, Any]:
+    """Split the daily point read without changing the total-call contract."""
+    if compile_calls is None:
+        return {"extraction_calls": None, "compile_calls": None, "extraction_calls_per_source": None,
+                "calls_split_reason": "ledger_compile_calls_column_missing"}
+    extraction = calls - compile_calls
+    return {"extraction_calls": extraction, "compile_calls": compile_calls,
+            "extraction_calls_per_source": round(extraction / sources, 3) if sources else None}
+
+
 class ExtractionLedger:
     """SQLite-backed daily call counter, per-record attempts and outcome record.
 
@@ -576,7 +586,7 @@ class ExtractionLedger:
         with self._conn() as c:
             c.execute("CREATE TABLE IF NOT EXISTS calls (day TEXT PRIMARY KEY, n INTEGER NOT NULL)")
             cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
-            for name in ("timeouts", "billing", "unavailable", "unsent"):
+            for name in ("timeouts", "billing", "unavailable", "unsent", "compile_calls"):
                 if name not in cols:
                     c.execute(f"ALTER TABLE calls ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
             if "cap" not in cols:
@@ -668,7 +678,9 @@ class ExtractionLedger:
     def utc_day() -> str:
         return _today()
 
-    def reserve_attempt(self, source_id: str = "", digest: str = "", *, day: str | None = None) -> str:
+    def reserve_attempt(
+        self, source_id: str = "", digest: str = "", *, day: str | None = None, step: str = "extraction",
+    ) -> str:
         """Atomically reserve one model call; returns ``RESERVED`` or why not.
 
         Refusals: ``daily_cap`` (all records), ``record_daily_limit`` (this
@@ -678,6 +690,8 @@ class ExtractionLedger:
         limits no longer depend on it.
         """
         del digest
+        if step not in ("extraction", "compile"):
+            raise ValueError(f"Unknown model call step: {step}")
         with self._lock, self._conn() as c:
             # Serialize the read/check/increment across processes sharing the
             # production ledger, not only threads in this extractor instance.
@@ -695,10 +709,10 @@ class ExtractionLedger:
                 return DAILY_CAP_REACHED
             first_today = 1 if source_id and today_n == 0 else 0
             c.execute(
-                "INSERT INTO calls(day, n, cap, sources) VALUES(?, 1, ?, ?)"
+                "INSERT INTO calls(day, n, cap, sources, compile_calls) VALUES(?, 1, ?, ?, ?)"
                 " ON CONFLICT(day) DO UPDATE SET n = n + 1, cap = excluded.cap,"
-                " sources = sources + excluded.sources",
-                (day, self._daily_cap, first_today),
+                " sources = sources + excluded.sources, compile_calls = compile_calls + excluded.compile_calls",
+                (day, self._daily_cap, first_today, int(step == "compile")),
             )
             if source_id:
                 c.execute(
@@ -745,7 +759,9 @@ class ExtractionLedger:
         """Remaining calls under today's daily cap (0 when exhausted)."""
         return max(0, self._daily_cap - self.calls_today())
 
-    def note_unsent(self, source_id: str, *, day: str, reason: str, detail: str) -> None:
+    def note_unsent(
+        self, source_id: str, *, day: str, reason: str, detail: str, step: str = "extraction",
+    ) -> None:
         """Refund exactly one caller-owned reservation and record no-provider evidence.
 
         Reservations remain spent after ambiguous failure or process crash. The
@@ -755,6 +771,8 @@ class ExtractionLedger:
 
         if reason not in UNSENT_CALL_REASONS:
             raise ValueError(f"Unknown unsent reason: {reason}")
+        if step not in ("extraction", "compile"):
+            raise ValueError(f"Unknown model call step: {step}")
         with self._lock, self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             _, before = self._source_attempts(c, source_id, day)
@@ -766,7 +784,9 @@ class ExtractionLedger:
             _, after = self._source_attempts(c, source_id, day)
             c.execute(
                 "UPDATE calls SET n = MAX(0, n - 1), unsent = unsent + 1,"
-                " sources = MAX(0, sources - ?) WHERE day=?", (int(before > 0 and after == 0), day),
+                " compile_calls = MAX(0, compile_calls - ?),"
+                " sources = MAX(0, sources - ?) WHERE day=?",
+                (int(step == "compile"), int(before > 0 and after == 0), day),
             )
             c.execute(
                 "INSERT INTO events(ts, source_id, outcome, detail) VALUES(?,?,'unsent',?)",
@@ -886,10 +906,13 @@ class ExtractionLedger:
     def summary(self) -> dict[str, Any]:
         """Today's spend: calls, cap, and calls that ended in timeout/billing/unavailable."""
         with self._conn() as c:
+            split_recorded = "compile_calls" in {r[1] for r in c.execute("PRAGMA table_info(calls)")}
             row = c.execute(
-                "SELECT n, timeouts, billing, unavailable, sources, unsent FROM calls WHERE day=?", (_today(),)
+                "SELECT n, timeouts, billing, unavailable, sources, unsent,"
+                f" {'compile_calls' if split_recorded else 'NULL'} FROM calls WHERE day=?", (_today(),)
             ).fetchone()
-        n, timeouts, billing, unavailable, sources, unsent = (int(v or 0) for v in (row or (0, 0, 0, 0, 0, 0)))
+        n, timeouts, billing, unavailable, sources, unsent = (int(v or 0) for v in (row[:6] if row else (0,) * 6))
+        compile_calls = int(row[6] or 0) if split_recorded and row else (0 if split_recorded else None)
         return {
             "day": _today(),
             "calls": n,
@@ -900,6 +923,7 @@ class ExtractionLedger:
             "unavailable_calls": unavailable,
             "distinct_sources": sources,
             "calls_per_source": round(n / sources, 3) if sources else None,
+            **ledger_call_split(n, compile_calls, sources),
         }
 
     def get_card(self, source_id: str, digest: str) -> Optional[dict[str, Any]]:

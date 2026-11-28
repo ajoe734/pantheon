@@ -499,6 +499,17 @@ def _search_items(
             continue
         latest = attempts[-1]
         raw = _run_reason(latest)
+        result = latest.get("template_search") if isinstance(latest.get("template_search"), dict) else {}
+        receipts = result.get("attempts") if isinstance(result.get("attempts"), dict) else {}
+        templates_attempted = result.get("templates_attempted", len(receipts))
+        excluded_by_reason: Dict[str, int] = {}
+        # Older hosted runs predate the aggregate; derive it from their recorded rows.
+        for exclusion in result.get("excluded") or []:
+            if isinstance(exclusion, dict) and exclusion.get("reason"):
+                code = str(exclusion["reason"])
+                excluded_by_reason[code] = excluded_by_reason.get(code, 0) + 1
+        if isinstance(result.get("excluded_by_reason"), dict):
+            excluded_by_reason = dict(result["excluded_by_reason"])
         persona_id = demand.get("persona_id")
         items.append(
             {
@@ -509,6 +520,8 @@ def _search_items(
                 "persona_id": persona_id,
                 "display_name": names.get(str(persona_id)) or None,
                 "attempt_count": len(attempts),
+                "templates_attempted": templates_attempted,
+                "excluded_by_reason": excluded_by_reason,
                 "latest_run_id": latest.get("run_id") or latest.get("id"),
                 "latest_at": latest.get("updated_at") or latest.get("created_at"),
                 "outcome": latest.get("status"),

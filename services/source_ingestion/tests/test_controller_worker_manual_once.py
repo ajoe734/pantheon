@@ -18,6 +18,9 @@ from services.source_ingestion.controller_worker import (
     run_controller_once,
     run_controller_tick,
 )
+from services.source_ingestion.tests.test_latest_market_snapshot_compaction import (
+    package_python_write_guard,  # noqa: F401 -- autouse fixture for this module too
+)
 
 
 CONNECTOR_ID = "tw-official-market-datasets"

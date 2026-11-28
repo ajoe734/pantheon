@@ -91,14 +91,8 @@ class DatasetKeyDeclaration:
     retention_days: int | None = None  # None = no expiry; read by SOURCE-RETENTION-SWEEPER
     day_budget_bytes: int | None = None  # section 6A growth budget per trading day (stored bytes)
     readers: tuple[str, ...] = ()
-    retention_sessions: int | None = None  # newest stored date partitions, including pinned dates in the window
 
     def __post_init__(self) -> None:
-        if self.retention_sessions is not None:
-            if self.retention_sessions <= 0 or self.retention_days is not None:
-                raise ValueError("retention_sessions must be positive and cannot coexist with retention_days")
-            if self.partition_field != "trade_date":
-                raise ValueError("session retention requires trade_date partitions")
         if self.partition_field not in self.key_fields:
             raise ValueError("partition_field must be part of key_fields")
         if self.key_aliases and len(self.key_aliases) != len(self.key_fields):
@@ -1077,11 +1071,10 @@ _DATE_ALIASES = ("date", "trade_date", "as_of_date", "event_time")
 _SYMBOL_ALIASES = ("symbol_canonical", "symbol", "stock_id", "code")
 
 
-def _decl(dataset, key, aliases, *, partition="trade_date", optional=(), retention=2555, sessions=None, budget, readers=()):
+def _decl(dataset, key, aliases, *, partition="trade_date", optional=(), retention=2555, budget, readers=()):
     return DatasetKeyDeclaration(
         dataset=dataset, key_fields=tuple(key), partition_field=partition, key_aliases=tuple(tuple(a) for a in aliases),
-        optional_key_fields=tuple(optional), retention_days=retention, day_budget_bytes=budget, readers=tuple(readers),
-        retention_sessions=sessions)
+        optional_key_fields=tuple(optional), retention_days=retention, day_budget_bytes=budget, readers=tuple(readers))
 
 
 _MB = 1_000_000
@@ -1103,7 +1096,7 @@ KEYED_DATASETS: dict[str, DatasetKeyDeclaration] = {d.dataset: d for d in (
           (_SYMBOL_ALIASES, _DATE_ALIASES, ("side", "direction"), ("rank", "broker_rank", "broker_id")),
           # SOURCE-BROKER-WHOLE-MARKET-DAILY-20261127: whole market (about 2,000-2,600 symbols x 20 buy + 20 sell), compact
           # rows: measured 2.15 MB gzip for 2,000 symbols (80,000 rows); 6 MB leaves room for 2,600 symbols and real names.
-          retention=None, sessions=750, budget=6 * _MB, readers=("services/data-plane/taiwan_reference.py",)),
+          retention=750, budget=6 * _MB, readers=("services/data-plane/taiwan_reference.py",)),
     _decl("tw_broker_branch_detail", ("symbol", "trade_date", "broker_id", "branch_id"),
           (_SYMBOL_ALIASES, _DATE_ALIASES, ("broker_id", "securities_trader_id"), ("branch_id", "branch", "securities_trader")),
           retention=250, budget=5 * _MB),
@@ -1404,7 +1397,6 @@ class KeyedDatasetStore:
         return {"dataset": self.declaration.dataset, "partitions": len(sizes), "total_bytes": sum(sizes),
                 "max_day_bytes": max(sizes, default=0), "day_budget_bytes": limit,
                 "retention_days": self.declaration.retention_days,
-                "retention_sessions": self.declaration.retention_sessions,
                 "alarms": [] if limit is None or max(sizes, default=0) <= limit else [f"{self.declaration.dataset}_day_over_budget"]}
 
 

@@ -2777,11 +2777,11 @@ def _persona_fleet_prefetch_independent_reads(tenant_id: Optional[str] = None) -
 # --- _persona_provisioning_records_shared ---
 def _persona_provisioning_records_shared(store: Any, clean_tenant: str) -> List[Any]:
     """Durable provisioning ledger read, shared per request (value or failure)."""
-    # Full inputs preserve risk provenance/policy metadata that the old SQL
-    # slim projection dropped. Postgres validates its cross-request
+    # Directory inputs include risk provenance/policy metadata. Postgres
+    # selects only projection inputs in SQL and validates its cross-request
     # cache on this call; request sharing adds no time-based staleness.
     return cached_owner_call(
-        ("persona_provisioning_records", "directory_full", id(store), clean_tenant),
+        ("persona_provisioning_records", "directory", id(store), clean_tenant),
         lambda: _persona_provisioning_records_directory(store, clean_tenant),
     )
 
