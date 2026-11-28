@@ -65,6 +65,12 @@
       "acceptance_item": 4,
       "before": "recorded expired_2330_D20261125 HOLD expected attention total 1 after expiry",
       "after": "attention total 0 and no items both before and after expiry; list/detail side and next_step null; expired reason and decision_action hold retained"
+    },
+    {
+      "test": "test_release_probe_reports_skip_pass_and_wrong_expiry",
+      "acceptance_items": [4, 6],
+      "before": "synthetic expired HOLD timeline injected side=hold, unavailable in the public API",
+      "after": "timeline has no side; HOLD classification uses detail outcome.reason_detail.decision_action; pass/fail assertions retained"
     }
   ],
   "validation": [
@@ -135,5 +141,22 @@
     "initial_validation": "Same test selection without explicit DSN: exit 0; 102 passed, 2 skipped, 3 warnings in 26.92s. Explicit DSN rerun covers the two skipped shared-identity tests.",
     "unchanged_scope": "No implementation changes during this resumption. AC3/AC4 HOLD integration assertions remain the only lifecycle test changes. FE side=null compatibility confirmed in canonical task next. No capacity code or threshold changes; existing capacity residual remains with the coordinator as directed.",
     "hosted_acceptance": "pending deployment; no new hosted evidence claimed"
+  },
+  "public_response_probe_repair_20261128": {
+    "rejected_head": "9e2b9901e344bef94e3109a6bde9589439ac2df4",
+    "anchor_commit": "92b9f48842fe630372897e653c3cefea7f6af801",
+    "repair": "Probe reads HOLD action from public detail outcome.reason_detail.decision_action. New recorded producer -> projector -> actual BFF list/detail/timeline route regressions cover unchanged HOLD and explicitly derived BUY/SELL events without injecting unavailable timeline side/action fields.",
+    "expiry_reason_disposition": "Review's pre-existing expire_event_reason residual is repaired within the BFF read layer: expired_no_price trade_decision timeline rows missing reason_code receive the same target_session_not_reconciled_by_expiry reason as outcome. Existing nonempty reason codes are preserved. Stored events, projector and settlement remain unchanged; incorrect public timeline reason codes still fail the probe.",
+    "regression_command": "timeout 45s /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q --tb=short --disable-warnings services/control-plane/bff/tests/test_trade_journey_parked_expired.py -k 'release_probe_uses_rendered or release_probe_reports'",
+    "before_fix": "exit 1; 4 failed, 8 deselected, 3 warnings in 1.47s. HOLD reported expire_event_reason and two expire_next_step errors; BUY/SELL reported expire_event_reason.",
+    "after_fix": "exit 0; 4 passed, 8 deselected, 3 warnings in 1.69s. New route tests also corrupt each list/detail next_step and the public timeline reason, requiring exit 1; source projection timeline remains unchanged.",
+    "provision": "python3 scripts/dev/provision_python_distribution.py and --check-only: exit 0; checkout-scoped .venv-pantheon verified imports from a foreign cwd without PYTHONPATH",
+    "validation_command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same DSN> .venv-pantheon/bin/python -m pytest -q --tb=short --disable-warnings [same 11 targets as review_rehandoff_20261128.validation_command]",
+    "validation_result": "exit 0; 107 passed, 0 skipped, 3 warnings in 43.96s; subprocess timeout 150s, outer timeout 180s; PostgreSQL container cleanup collected before terminal output",
+    "additional_validation": "Same focused selection under /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python: exit 0; 107 passed, 0 skipped, 3 warnings in 46.53s; isolated PostgreSQL 16 cleanup collected",
+    "fixture_preservation": "recorded_hosted_bodies JSON values and source_sha256 match rejected head exactly; original capture remains unchanged",
+    "review_assignment": "Codex2 is the canonical recovery reviewer after Antigravity terminal quota; same-family exception follows explicit recovery assignment in task context",
+    "runtime_budget": "read path only; no new writer, job, persisted state or daily storage growth; existing bounded probe scans unchanged",
+    "residual_findings": "Existing projector capacity timing failure remains with the coordinator as recorded in residual_findings; no threshold change. Hosted acceptance remains pending deployment."
   }
 }
