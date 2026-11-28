@@ -34,6 +34,8 @@ CANONICAL_SHADOW_ARMS: Tuple[str, ...] = (
     "base_strategy",
     "committee_variant",
 )
+TRADER_IMITATION_ARM = "trader_imitation"
+OPTIONAL_ALT_SHADOW_ARMS: Tuple[str, ...] = (TRADER_IMITATION_ARM,)
 
 SETTLEMENT_SOURCES: Tuple[str, ...] = (
     "verified_broker_fill",
@@ -287,9 +289,14 @@ def map_action_to_direction_and_weight(
 map_action_to_exposure = map_action_to_direction_and_weight
 
 
-def _extract_lock_arms(lock: Mapping[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+def _extract_lock_arms(
+    lock: Mapping[str, Any],
+    *,
+    imitation_candidate: Optional[Mapping[str, Any]] = None,
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str], Tuple[str, ...]]:
     """Extract normalized arm specs and unavailable reasons from C4 or A4 decision locks."""
     raw_arms = lock.get("arms") if isinstance(lock.get("arms"), Mapping) else {}
+    opt_arms = lock.get("optional_alt_versions") if isinstance(lock.get("optional_alt_versions"), Mapping) else {}
     unavail_reasons: Dict[str, str] = {}
 
     raw_unavail = lock.get("unavailable_arms")
@@ -395,7 +402,100 @@ def _extract_lock_arms(lock: Mapping[str, Any]) -> Tuple[Dict[str, Dict[str, Any
         else:
             unavail_reasons[arm_name] = f"{arm_name}_invalid_payload"
 
-    return arms_out, unavail_reasons
+    # 3. optional_alt_versions: trader_imitation (T10)
+    cand = imitation_candidate or (
+        lock.get("trader_imitation_candidate")
+        if isinstance(lock.get("trader_imitation_candidate"), Mapping)
+        else None
+    )
+    imit_raw = (
+        raw_arms.get(TRADER_IMITATION_ARM)
+        if TRADER_IMITATION_ARM in raw_arms
+        else opt_arms.get(TRADER_IMITATION_ARM)
+    )
+    has_imitation_arm = (
+        TRADER_IMITATION_ARM in raw_arms
+        or TRADER_IMITATION_ARM in opt_arms
+        or TRADER_IMITATION_ARM in unavail_reasons
+        or cand is not None
+    )
+    arm_order: Tuple[str, ...] = (
+        CANONICAL_SHADOW_ARMS + (TRADER_IMITATION_ARM,)
+        if has_imitation_arm
+        else CANONICAL_SHADOW_ARMS
+    )
+
+    if has_imitation_arm and TRADER_IMITATION_ARM not in unavail_reasons:
+        if isinstance(imit_raw, Mapping) and (
+            imit_raw.get("policy_weights") or imit_raw.get("policy") or imit_raw.get("weights")
+        ) and not _clean(
+            imit_raw.get("action") or imit_raw.get("suggestion") or imit_raw.get("suggested_action")
+        ):
+            cand = imit_raw
+        if cand is not None and (
+            not isinstance(imit_raw, Mapping)
+            or imit_raw.get("available") is False
+            or not _clean(
+                imit_raw.get("action")
+                or imit_raw.get("suggestion")
+                or imit_raw.get("suggested_action")
+            )
+        ):
+            from services.agora.shadow_mode import predict_trader_imitation_action
+
+            snap = (
+                lock.get("decision_time_snapshot")
+                if isinstance(lock.get("decision_time_snapshot"), Mapping)
+                else {}
+            )
+            pred = predict_trader_imitation_action(cand, snapshot=snap, event=lock)
+            if pred.get("available") is True:
+                imit_raw = pred
+            elif imit_raw is None:
+                imit_raw = pred
+
+        if imit_raw is None:
+            unavail_reasons[TRADER_IMITATION_ARM] = "no_trader_imitation_recorded"
+        elif isinstance(imit_raw, Mapping):
+            if imit_raw.get("available") is False:
+                unavail_reasons[TRADER_IMITATION_ARM] = _clean(
+                    imit_raw.get("unavailable_reason")
+                    or imit_raw.get("reason")
+                    or "trader_imitation_unavailable"
+                )
+            else:
+                suggestion = _clean(
+                    imit_raw.get("suggestion")
+                    or imit_raw.get("suggested_action")
+                    or imit_raw.get("action")
+                    or imit_raw.get("decision")
+                    or imit_raw.get("verdict")
+                    or imit_raw.get("stance")
+                )
+                if not suggestion:
+                    unavail_reasons[TRADER_IMITATION_ARM] = _clean(
+                        imit_raw.get("unavailable_reason")
+                        or imit_raw.get("reason")
+                        or "trader_imitation_missing_suggestion"
+                    )
+                else:
+                    arms_out[TRADER_IMITATION_ARM] = {
+                        "action": suggestion,
+                        "quantity": imit_raw.get("quantity", imit_raw.get("suggested_size")),
+                        "weight": imit_raw.get("weight", imit_raw.get("suggested_weight")),
+                        "price": imit_raw.get("price"),
+                        "candidate_id": _clean(imit_raw.get("candidate_id")) or None,
+                        "candidate_version": imit_raw.get("candidate_version"),
+                        "strategy_ref": _clean(
+                            imit_raw.get("strategy_ref") or imit_raw.get("strategy_id")
+                        )
+                        or None,
+                        "confidence": imit_raw.get("confidence"),
+                    }
+        else:
+            unavail_reasons[TRADER_IMITATION_ARM] = "trader_imitation_invalid_payload"
+
+    return arms_out, unavail_reasons, arm_order
 
 
 def _match_fills_for_arm(
@@ -485,8 +585,9 @@ def settle_decision_lock(
     window_sessions: Optional[int] = None,
     settled_at: Optional[str] = None,
     prior_settlement: Optional[Mapping[str, Any] | ShadowDecisionSettlement] = None,
+    imitation_candidate: Optional[Mapping[str, Any]] = None,
 ) -> ShadowDecisionSettlement:
-    """Deterministically settle all four shadow arms of a decision lock."""
+    """Deterministically settle all shadow arms of a decision lock (including trader_imitation)."""
     decision_id = (
         _clean(lock.get("decision_id"))
         or _clean(lock.get("human_decision_id"))
@@ -528,7 +629,10 @@ def settle_decision_lock(
         raise ValueError("observation window requires at least 1 trading session")
     stamp = _clean(settled_at) or _utc_now()
 
-    arms_specs, unavail_reasons = _extract_lock_arms(lock)
+    arms_specs, unavail_reasons, arm_order = _extract_lock_arms(
+        lock,
+        imitation_candidate=imitation_candidate,
+    )
 
     # Prior outcomes lookup for A4 §3 superseding
     prior_arms: Dict[str, Mapping[str, Any]] = {}
@@ -550,7 +654,7 @@ def settle_decision_lock(
                 settled_at=None,
                 unavailable_reason=unavail_reasons.get(arm_name, reason),
             )
-            for arm_name in CANONICAL_SHADOW_ARMS
+            for arm_name in arm_order
         )
         return ShadowDecisionSettlement(
             decision_id=decision_id,
@@ -629,7 +733,7 @@ def settle_decision_lock(
     assert benchmark_exit_close is not None
 
     settled_records: List[SettledArmRecord] = []
-    for arm_name in CANONICAL_SHADOW_ARMS:
+    for arm_name in arm_order:
         if arm_name in unavail_reasons or arm_name not in arms_specs:
             settled_records.append(
                 SettledArmRecord(
@@ -842,10 +946,12 @@ __all__ = [
     "CANONICAL_SHADOW_ARMS",
     "CostModelConfig",
     "OBSERVATION_WINDOW_SESSIONS",
+    "OPTIONAL_ALT_SHADOW_ARMS",
     "SETTLEMENT_SOURCES",
     "SETTLEMENT_SOURCE_PRIORITY",
     "SettledArmRecord",
     "ShadowDecisionSettlement",
+    "TRADER_IMITATION_ARM",
     "map_action_to_exposure",
     "settle_decision_lock",
 ]

@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-11-27",
+    "snapshot_date": "2026-11-28",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 687,
+    "total_routes": 692,
     "status_values": [
       "implemented",
       "alias",
@@ -471,6 +471,24 @@
     {
       "method": "GET",
       "path": "/bff/agora/trading-room/decision-events/{param}/system-suggestions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/imitation-comparison",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/paper-book/intents/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -3935,6 +3953,12 @@
     },
     {
       "method": "GET",
+      "path": "/internal/agora/paper-execution/handoffs",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/internal/agora/platform-source",
       "family": "unknown",
       "status": "implemented"
@@ -4135,6 +4159,12 @@
     {
       "method": "POST",
       "path": "/internal/agora/dataset-handoffs/{param}/ack",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/internal/agora/paper-execution/handoffs/{param}/state",
       "family": "unknown",
       "status": "implemented"
     },

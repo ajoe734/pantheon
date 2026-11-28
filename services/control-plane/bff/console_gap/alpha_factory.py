@@ -584,6 +584,24 @@ def _classify_cards(
     return document_checked
 
 
+def _llm_per_source(llm: Dict[str, Any]) -> Dict[str, Any]:
+    """Distinct sources and calls per source from the owner ledger read; null with a reason, never 0."""
+    sources = _int_at(llm, "distinct_sources")
+    if sources is None:
+        reason = llm.get("distinct_sources_reason") if "distinct_sources" in llm else None
+        return {
+            "distinct_sources": None,
+            "calls_per_source": None,
+            "distinct_sources_reason": str(reason or "owner_distinct_sources_not_reported"),
+        }
+    raw = llm.get("calls_per_source")
+    per_source = float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+    out: Dict[str, Any] = {"distinct_sources": sources, "calls_per_source": per_source}
+    if per_source is None:
+        out["calls_per_source_reason"] = str(llm.get("calls_per_source_reason") or "owner_calls_per_source_not_reported")
+    return out
+
+
 def _count(value: Optional[int], surface: Dict[str, Any]) -> Dict[str, Any]:
     if value is None or surface.get("status") != "ok":
         return {"value": None, "status": "unavailable", "reason": surface.get("reason") or "owner_read_failed"}
@@ -802,6 +820,7 @@ def create_alpha_factory_router(
         if llm_count["status"] == "ok":
             llm_count["cap"] = _int_at(llm, "daily_cap")
             llm_count["scope"] = llm.get("scope")
+            llm_count.update(_llm_per_source(llm))
         counts = {
             "collected_text_records": _count(_int_at(records, "last_24h", "total"), records_surface),
             "closed_text_records": _count(_int_at(closed, "last_24h", "total"), closed_surface),

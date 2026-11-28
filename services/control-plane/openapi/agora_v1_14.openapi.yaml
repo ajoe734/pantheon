@@ -526,7 +526,44 @@
           }
         },
         "x-business-owner": "agora-decision-lock+attribution",
-        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+        "description": "Reads only. Uses the one composed Agora decision-lock owner (the same instance the Management shadow route and the Trading Room decision write use) and requires the lock to belong to the caller. Settlement is forwarded from the attribution owner keyed by the lock's human_decision_id; an unsettled decision answers comparison_state pending_settlement and an attribution outage answers unavailable, never fabricated values. AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127: 送 Shadow writes an immutable AgoraDecisionLock with execution_observation_kind=declared_no_trade and arms.human_actual.execution_observation_kind=declared_no_trade (no shadow stage handoff queue is created), which services/evaluation settles across all four arms and serves here. IMITATION-TRADER-SHADOW-COMPARISON-20261127: also settles and returns the optional trader_imitation arm when present. Trader audience: no trader_identity block. Management GET /bff/management/attribution/shadow/{decision_id} keeps its contract and audience."
+      }
+    },
+    "/bff/agora/trading-room/imitation-comparison": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped trader imitation comparison",
+        "operationId": "get_trader_imitation_comparison_bff_agora_trading_room_imitation_comparison_get",
+        "parameters": [
+          {
+            "name": "strategy_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Strategy Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner-scoped comparison of how close the trader's behaviour candidate (trader_imitation) is to human_actual: action agreement rate, outcome gap, 1,000-resample bootstrap intervals (labelled luck / 可能是運氣 when containing 0), and differences. Returns comparison_state=not_enough_decisions when the trader has fewer than 30 decisions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerView"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The composed Agora decision-lock owner is unavailable; no substitute is created (reason decision_lock_owner_unavailable)."
+          }
+        },
+        "x-business-owner": "agora-decision-lock+policy-learning+attribution",
+        "description": "IMITATION-TRADER-SHADOW-COMPARISON-20261127: Reads only. Compares the caller's trained behaviour candidate (at most 3 kept per trader and strategy, trained only after training approval and at least 30 decisions) against human_actual across the caller's decision locks and shadow settlements. Agreement and outcome gap carry 1,000-resample bootstrap intervals and any interval containing 0 is labelled luck (可能是運氣)."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/messages": {
@@ -597,7 +634,7 @@
           }
         },
         "x-business-owner": "agora+source-ingest",
-        "description": "AGORA-SERVANT-DATA-TOOLS-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. Uncovered requests list the missing data. No persona or meeting is called."
+        "description": "AGORA-SERVANT-DATA-TOOLS-20261127 & AGORA-SERVANT-CLARIFY-20261127: agora-interaction-worker runs the turn with the fixed read-only tool set (market_bars, candidate_pool, candidate_ranking, broker_branch_flow, disclosures, news, my_decisions, my_journal, my_shadow, institutional_facts, propose_research), at most 4 tool rounds. Every number in the answer is a cited fact; numbers the model wrote are removed. When the trader's choice changes the data selected or the result, a turn may return at most one typed clarification card (WorkshopNextDecisionV114 shape) and at most two in a row before answering with stated assumptions. Trader choices are recorded as servant.clarification.answered session events, and style choices (horizon, universe, risk_tolerance) emit habit facts for AGORA-TRADER-HABIT-PROFILE-20261127. Uncovered requests list the missing data. No persona or meeting is called."
       }
     },
     "/bff/agora/servant/sessions/{session_id}/stream": {
@@ -627,7 +664,7 @@
         ],
         "responses": {
           "200": {
-            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode).",
+            "description": "text/event-stream; servant.message.completed and servant.message.degraded carry ServantMessageCompletedEventData (citations, missing_data, tool_rounds, answer_mode, clarification, cards, stated_assumptions) and servant.clarification.answered carries ServantClarificationAnsweredEventData.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -644,6 +681,191 @@
           }
         },
         "x-business-owner": "agora"
+      }
+    },
+    "/bff/agora/trading-intents/{intent_id}/handoffs": {
+      "post": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Submit a governed handoff for a trader-confirmed intent (paper stage executes in the trader's paper book)",
+        "operationId": "submit_trading_intent_handoff_bff_agora_trading_intents__intent_id__handoffs_post",
+        "parameters": [
+          {
+            "name": "intent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Intent ETag or *"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Write idempotency key"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Request id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GovernedIntentHandoffV114"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Request-only handoff recorded (status queued). For requested_stage paper the record targets paper_execution and the paper execution lane writes its state back (accepted, rejected with a typed reason, filled, partially_filled). Agora routes no order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GovernedIntentHandoffReceipt"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Intent not found for the caller."
+          },
+          "409": {
+            "description": "Stage/type/queue mismatch, intent not draft, or the paper request is not executable (paper_intent_not_confirmed, paper_order_missing, paper_action_not_executable, paper_short_not_supported, paper_symbol_missing, paper_symbol_mismatch, paper_quantity_invalid, paper_limit_price_invalid)."
+          },
+          "422": {
+            "description": "Validation Error (including the removed paper_validation_request handoff type and management_governance queue)."
+          }
+        },
+        "x-business-owner": "paper_execution",
+        "description": "AGORA-PAPER-INTENT-EXECUTION-20261127: stage table paper -> paper_execution_request/paper_execution (shadow writes a declared_no_trade decision lock instead of a handoff queue, AGORA-SHADOW-HANDOFF-TO-DECISION-LOCK-20261127), canary and live -> promotion_review_request/promotion_review. A paper request carries the confirmed order (symbol, side from action, quantity in shares, optional limit) and the decision lock reference; the paper-signal-producer consumer validates owner, paper binding, risk and idempotency and executes it in the trader's own paper book through DecisionSignalProducer, at most 50 per trader per Taipei day. Canary and live stay request-only behind promotion review. Schema: specs/agora/v15/governed_intent_handoff.schema.json."
+      }
+    },
+    "/bff/agora/trading-room/paper-book": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped readback of the trader's paper fills, positions, and intent progress",
+        "operationId": "get_trading_room_paper_book_bff_agora_trading_room_paper_book_get",
+        "parameters": [
+          {
+            "name": "intent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "decision_event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "handoff_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caller's paper fills (labelled pantheon_paper_proxy and populating the linked decision lock's human_actual arm as a paper proxy), paper positions from binding telemetry and paper fills, and each intent's execution progress.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradingRoomPaperBookReadbackEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Caller has no paper book or queried another trader's book/intent (non-enumerating 404)."
+          }
+        },
+        "x-business-owner": "paper_execution+telemetry+agora-decision-lock",
+        "description": "AGORA-PAPER-BOOK-READBACK-20261127: Reads the authenticated trader's paper orders and fills from the paper broker read surface and runtime binding telemetry from the telemetry read surface. Every fill is labelled pantheon_paper_proxy (never a real fill: actual_fill_claimed=false, execution_verified=false, is_real_fill=false) and populates the linked decision lock's human_actual arm as a paper proxy. Another trader gets a non-enumerating 404."
+      }
+    },
+    "/bff/agora/trading-room/paper-book/intents/{intent_id}": {
+      "get": {
+        "tags": [
+          "agora-trading"
+        ],
+        "summary": "Owner-scoped readback of one intent's paper execution progress and pantheon_paper_proxy fills",
+        "operationId": "get_trading_room_paper_book_intent_bff_agora_trading_room_paper_book_intents__intent_id__get",
+        "parameters": [
+          {
+            "name": "intent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Single intent's paper execution progress, pantheon_paper_proxy fill(s), and caller's paper positions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradingRoomPaperBookIntentReadbackEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Admission denied."
+          },
+          "403": {
+            "description": "Admission denied."
+          },
+          "404": {
+            "description": "Intent not found or owned by another trader (non-enumerating 404)."
+          }
+        },
+        "x-business-owner": "paper_execution+telemetry+agora-decision-lock",
+        "description": "AGORA-PAPER-BOOK-READBACK-20261127: Owner-scoped readback for one intent's paper execution progress and pantheon_paper_proxy fills. Another trader gets 404."
       }
     },
     "/bff/agora/workshops/{workshop_id}/completeness": {
@@ -1274,14 +1496,10 @@
       "ServantMessageRequestV114": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "content"
-        ],
-        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127).",
+        "description": "v1.2 ServantMessageRequest plus the optional command-bar context (AGORA-SERVANT-DATA-TOOLS-20261127) and optional clarification_choice (AGORA-SERVANT-CLARIFY-20261127).",
         "properties": {
           "content": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 4000
           },
           "attachment_refs": {
@@ -1294,6 +1512,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ServantCommandContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clarification_choice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkshopDecisionRequestV114"
               },
               {
                 "type": "null"
@@ -1453,6 +1681,7 @@
             "enum": [
               "model",
               "facts_only",
+              "clarification",
               "none",
               null
             ]
@@ -1466,6 +1695,412 @@
                 "type": "null"
               }
             ]
+          },
+          "clarification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkshopNextDecisionV114"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cards": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/WorkshopNextDecisionV114"
+            }
+          },
+          "stated_assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServantStyleHabitFactV114": {
+        "type": "object",
+        "required": [
+          "fact_id",
+          "id",
+          "kind",
+          "style_dimension",
+          "feature_key",
+          "target_block",
+          "decision_id",
+          "option_id",
+          "option_label",
+          "value",
+          "unit",
+          "source_id",
+          "owner",
+          "as_of",
+          "freshness"
+        ],
+        "properties": {
+          "fact_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "const": "trader_style_choice"
+          },
+          "style_dimension": {
+            "type": "string",
+            "enum": [
+              "horizon",
+              "universe",
+              "risk_tolerance"
+            ]
+          },
+          "feature_key": {
+            "type": "string",
+            "enum": [
+              "holding_period",
+              "rejected_candidates",
+              "position_size"
+            ]
+          },
+          "target_block": {
+            "type": "string",
+            "enum": [
+              "entry_holding",
+              "market_scope",
+              "sizing_leverage"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "option_id": {
+            "type": "string"
+          },
+          "option_label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "used_servant_default": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string",
+            "const": "agora"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "strategy_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "freshness": {
+            "type": "string",
+            "const": "fresh"
+          },
+          "query_hash": {
+            "type": "string"
+          },
+          "cited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ServantClarificationAnsweredEventData": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "message_id",
+          "event_type",
+          "decision_id",
+          "question_id",
+          "question",
+          "option_id",
+          "option_label",
+          "used_servant_default",
+          "resolves",
+          "target_blocks"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string",
+            "const": "servant.clarification.answered"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "question_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "response_kind": {
+            "type": "string",
+            "enum": [
+              "option",
+              "freeform"
+            ]
+          },
+          "option_id": {
+            "type": "string"
+          },
+          "option_label": {
+            "type": "string"
+          },
+          "used_servant_default": {
+            "type": "boolean"
+          },
+          "resolves": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_blocks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "style_dimension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "horizon",
+              "universe",
+              "risk_tolerance",
+              null
+            ]
+          },
+          "habit_fact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ServantStyleHabitFactV114"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "GovernedIntentHandoffV114": {
+        "type": "object",
+        "description": "Request body; full record schema: services/control-plane/specs/agora/v15/governed_intent_handoff.schema.json",
+        "required": [
+          "handoff_id",
+          "intent_id",
+          "requested_stage",
+          "handoff_type",
+          "state",
+          "strategy_id",
+          "strategy_spec_registry_id",
+          "requested_by",
+          "created_at",
+          "no_order_route_proof"
+        ],
+        "properties": {
+          "spec_version": {
+            "type": "string",
+            "enum": [
+              "1.0"
+            ]
+          },
+          "handoff_id": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "requested_stage": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "paper",
+              "canary",
+              "live"
+            ]
+          },
+          "handoff_type": {
+            "type": "string",
+            "enum": [
+              "shadow_start",
+              "paper_execution_request",
+              "promotion_review_request"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "submitted"
+            ]
+          },
+          "strategy_id": {
+            "type": "string"
+          },
+          "strategy_spec_registry_id": {
+            "type": "string"
+          },
+          "requested_by": {
+            "type": "object"
+          },
+          "target_queue": {
+            "type": "string",
+            "enum": [
+              "paper_execution",
+              "promotion_review"
+            ]
+          },
+          "action_proposal": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "enter",
+                  "add",
+                  "reduce",
+                  "exit",
+                  "review"
+                ]
+              },
+              "symbol": {
+                "type": "string"
+              },
+              "direction": {
+                "type": "string"
+              },
+              "size_hint": {
+                "type": "string"
+              },
+              "portfolio_pct": {
+                "type": "number"
+              },
+              "quantity": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "limit_price": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "non_binding": {
+                "type": "boolean",
+                "const": true
+              }
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "no_order_route_proof": {
+            "type": "string",
+            "enum": [
+              "agora_request_only_no_order_route"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "GovernedIntentHandoffReceipt": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "handoff_id": {
+                "type": "string"
+              },
+              "intent_id": {
+                "type": "string"
+              },
+              "requested_stage": {
+                "type": "string"
+              },
+              "handoff_type": {
+                "type": "string"
+              },
+              "target_queue": {
+                "type": "string",
+                "enum": [
+                  "paper_execution",
+                  "promotion_review"
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "submitted"
+                ]
+              },
+              "no_order_route_proof": {
+                "type": "string",
+                "enum": [
+                  "agora_request_only_no_order_route"
+                ]
+              }
+            }
+          },
+          "meta": {
+            "type": "object"
           }
         }
       },
@@ -2590,6 +3225,451 @@
                 "type": "integer"
               }
             }
+          }
+        }
+      },
+      "TradingRoomPaperBookFillV114": {
+        "type": "object",
+        "required": [
+          "fill_id",
+          "environment",
+          "execution_observation_kind",
+          "execution_display_label",
+          "execution_verified",
+          "actual_fill_claimed",
+          "is_real_fill",
+          "no_order_route_proof"
+        ],
+        "properties": {
+          "fill_id": {
+            "type": "string"
+          },
+          "broker_order_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoff_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "intent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "human_decision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capital_pool_id": {
+            "type": "string"
+          },
+          "runtime_binding_id": {
+            "type": "string"
+          },
+          "runtime_id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "side": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fill_qty": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fill_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "filled_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fill_status": {
+            "type": "string",
+            "enum": [
+              "filled",
+              "partially_filled"
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "const": "paper"
+          },
+          "execution_observation_kind": {
+            "type": "string",
+            "const": "pantheon_paper_proxy"
+          },
+          "execution_display_label": {
+            "type": "string"
+          },
+          "execution_confidence": {
+            "type": "number"
+          },
+          "execution_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "actual_fill_claimed": {
+            "type": "boolean",
+            "const": false
+          },
+          "is_real_fill": {
+            "type": "boolean",
+            "const": false
+          },
+          "human_actual_arm_populated": {
+            "type": "boolean"
+          },
+          "no_order_route_proof": {
+            "type": "string",
+            "const": "agora_paper_book_readback_only"
+          }
+        }
+      },
+      "TradingRoomPaperBookPositionV114": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "quantity",
+          "direction",
+          "environment",
+          "execution_observation_kind",
+          "actual_fill_claimed",
+          "is_real_position"
+        ],
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "net_quantity": {
+            "type": "number"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "avg_entry_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "mark_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "capital_pool_id": {
+            "type": "string"
+          },
+          "runtime_binding_id": {
+            "type": "string"
+          },
+          "runtime_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "const": "paper"
+          },
+          "execution_observation_kind": {
+            "type": "string",
+            "const": "pantheon_paper_proxy"
+          },
+          "actual_fill_claimed": {
+            "type": "boolean",
+            "const": false
+          },
+          "is_real_position": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "TradingRoomPaperBookIntentProgressV114": {
+        "type": "object",
+        "required": [
+          "lifecycle_state",
+          "progress_stage",
+          "environment",
+          "execution_observation_kind",
+          "actual_fill_claimed",
+          "no_order_route_proof"
+        ],
+        "properties": {
+          "intent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "human_decision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "side": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requested_quantity": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lifecycle_state": {
+            "type": "string"
+          },
+          "handoff_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoff_state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress_stage": {
+            "type": "string"
+          },
+          "signal_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "broker_order_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "broker_order_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fill_qty": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "fill_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "filled_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "const": "paper"
+          },
+          "execution_observation_kind": {
+            "type": "string",
+            "const": "pantheon_paper_proxy"
+          },
+          "actual_fill_claimed": {
+            "type": "boolean",
+            "const": false
+          },
+          "human_actual_arm_populated": {
+            "type": "boolean"
+          },
+          "fills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookFillV114"
+            }
+          },
+          "no_order_route_proof": {
+            "type": "string",
+            "const": "agora_paper_book_readback_only"
+          }
+        }
+      },
+      "TradingRoomPaperBookReadbackEnvelope": {
+        "type": "object",
+        "required": [
+          "status",
+          "environment",
+          "execution_observation_kind",
+          "actual_fill_claimed",
+          "fills",
+          "positions",
+          "intents",
+          "no_order_route_proof"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "const": "paper"
+          },
+          "execution_observation_kind": {
+            "type": "string",
+            "const": "pantheon_paper_proxy"
+          },
+          "execution_display_label": {
+            "type": "string"
+          },
+          "actual_fill_claimed": {
+            "type": "boolean",
+            "const": false
+          },
+          "execution_verified": {
+            "type": "boolean",
+            "const": false
+          },
+          "is_real_fill": {
+            "type": "boolean",
+            "const": false
+          },
+          "fills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookFillV114"
+            }
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookPositionV114"
+            }
+          },
+          "intents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookIntentProgressV114"
+            }
+          },
+          "no_order_route_proof": {
+            "type": "string",
+            "const": "agora_paper_book_readback_only"
+          }
+        }
+      },
+      "TradingRoomPaperBookIntentReadbackEnvelope": {
+        "type": "object",
+        "required": [
+          "status",
+          "environment",
+          "execution_observation_kind",
+          "actual_fill_claimed",
+          "intent",
+          "fills",
+          "positions",
+          "no_order_route_proof"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "const": "paper"
+          },
+          "execution_observation_kind": {
+            "type": "string",
+            "const": "pantheon_paper_proxy"
+          },
+          "actual_fill_claimed": {
+            "type": "boolean",
+            "const": false
+          },
+          "intent": {
+            "$ref": "#/components/schemas/TradingRoomPaperBookIntentProgressV114"
+          },
+          "fills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookFillV114"
+            }
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TradingRoomPaperBookPositionV114"
+            }
+          },
+          "no_order_route_proof": {
+            "type": "string",
+            "const": "agora_paper_book_readback_only"
           }
         }
       }

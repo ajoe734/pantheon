@@ -1,7 +1,15 @@
+"""Offline LP-002 imitation smoke harness entrypoint (NOT run as a runtime service).
+
+IMITATION-TRADER-SHADOW-COMPARISON-20261127:
+``services/learning/imitation/`` is retained solely as the offline LP-002 OSS
+package-pin and behavior-cloning smoke harness. It is not built by
+``cloudbuild.yaml`` and is not run by any Docker Compose or hosted service.
+Production/hosted trader behaviour imitation runs in ``services/policy-learning``
+and its existing hourly ``policy-learning-shadow-eval-scheduler``.
+"""
 from __future__ import annotations
 
 import os
-import time
 
 from smoke_test import main as smoke_main
 
@@ -13,11 +21,11 @@ def main() -> int:
         return smoke_main(["--backend", backend])
 
     print(
-        "Pantheon imitation worker image is ready. "
-        "Set PANTHEON_IMITATION_MODE=smoke to execute the governed BC smoke test."
+        "services/learning/imitation/worker.py is an offline LP-002 smoke harness and is not run as a runtime worker. "
+        "Active trader imitation runs in services/policy-learning (policy-learning-svc + policy-learning-shadow-eval-scheduler). "
+        "Set PANTHEON_IMITATION_MODE=smoke to execute the offline BC smoke test."
     )
-    while True:
-        time.sleep(3600)
+    return 0
 
 
 if __name__ == "__main__":

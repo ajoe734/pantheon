@@ -1285,6 +1285,61 @@ class AgoraStore:
         data = self._decision_locks.get(human_decision_id)
         return DictRecord(data) if data else None
 
+    def record_decision_lock_paper_proxy_fill(
+        self,
+        human_decision_id: str,
+        *,
+        tenant_id: str,
+        fill: Dict[str, Any],
+        user_id: Optional[str] = None,
+        decision_event_id: Optional[str] = None,
+    ) -> Optional[DictRecord]:
+        """Attach a paper-book proxy fill (`pantheon_paper_proxy`) to the lock's
+        ``human_actual`` arm without ever marking ``actual_fill_claimed`` or
+        ``execution_verified`` true.
+        """
+        from .shadow_mode import apply_paper_proxy_fill_to_decision_lock
+
+        candidate_ids: List[str] = []
+        clean_lock_id = str(human_decision_id or "").strip()
+        if clean_lock_id:
+            candidate_ids.append(clean_lock_id)
+        clean_event_id = str(decision_event_id or "").strip()
+        if clean_event_id and tenant_id:
+            derived = self.decision_lock_id(str(tenant_id), clean_event_id)
+            if derived not in candidate_ids:
+                candidate_ids.append(derived)
+
+        target_id: Optional[str] = None
+        current: Optional[Dict[str, Any]] = None
+        for cid in candidate_ids:
+            found = self._decision_locks.get(cid)
+            if found is not None:
+                target_id = cid
+                current = dict(found)
+                break
+        if current is None or target_id is None:
+            return None
+        if str(current.get("tenant_id") or "") != str(tenant_id):
+            return None
+        if user_id is not None and str(user_id).strip() and str(current.get("user_id") or "") != str(user_id).strip():
+            return None
+
+        updated = apply_paper_proxy_fill_to_decision_lock(current, fill)
+        if updated.get("checksum") == current.get("checksum"):
+            return DictRecord(current)
+        if hasattr(self._decision_locks, "compare_and_set"):
+            swapped, latest = self._decision_locks.compare_and_set(target_id, current, updated)
+            if swapped:
+                return DictRecord(updated)
+            if latest is not None and str(latest.get("tenant_id") or "") == str(tenant_id):
+                retried = apply_paper_proxy_fill_to_decision_lock(dict(latest), fill)
+                self._decision_locks.put(target_id, retried)
+                return DictRecord(retried)
+            return None
+        self._decision_locks.put(target_id, updated)
+        return DictRecord(updated)
+
     def list_decision_locks(self) -> List[DictRecord]:
         return [DictRecord(row) for row in self._decision_locks.list_all()]
 
