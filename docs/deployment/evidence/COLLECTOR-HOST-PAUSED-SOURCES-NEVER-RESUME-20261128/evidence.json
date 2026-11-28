@@ -5,8 +5,8 @@
   "reviewer": "Antigravity2",
   "review_status": "pending_independent_review",
   "delivery_state": null,
-  "base_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
-  "anchor_commit": "621fe7def",
+  "base_sha": "c38cb75b6bbf77c8124675fd7956f7ebbc033534",
+  "anchor_commit": "cd6e7b9c709330f2abb8a1349a0cabbafb1d78c3",
   "host_before": {
     "observed_at": "2026-11-28T04:06:35.459770+00:00",
     "host": "165.232.172.111",
@@ -181,7 +181,11 @@
     "new_concurrency_and_probe_result": "14 passed, exit 0, 1.15s",
     "baseline_final_result": "11 failed, 3 passed, exit 1, 2.73s on origin/dev 9cf0aeff7 with final regression tests copied into an archive export (no source edits)",
     "git_diff_check": "git diff --check: exit 0",
-    "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 entries / 4 waivers / no failures, exit 0"
+    "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 entries / 4 waivers / no failures, exit 0",
+    "adapter_command": "timeout 120s /tmp/agvenv/bin/python -m pytest -q services/source_ingestion/tests/test_collector_bundle_connector.py services/source_ingestion/tests/test_collector_bundle_whole_market_day.py",
+    "adapter_result": "138 passed, 4 skipped, exit 0, 97.52s",
+    "post_rebase_command": "timeout 60s /tmp/agvenv/bin/python -m pytest -q deploy/collector/tests/test_transient_recovery.py deploy/collector/tests/test_recovery_probe.py services/source_ingestion/tests/test_collector_paused_recovery.py",
+    "post_rebase_result": "21 passed, exit 0"
   },
   "runtime_budget": {
     "manifest": "docs/operations/storage-manifest.json",
@@ -236,5 +240,6 @@
     "at": "2026-11-28",
     "arxiv": "https://info.arxiv.org/help/api/tou.html",
     "openalex": "https://help.openalex.org/api/authentication/"
-  }
+  },
+  "baseline_sha": "9cf0aeff70d7611dda3d5bca4f5f460147aad003"
 }

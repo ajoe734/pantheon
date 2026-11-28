@@ -320,8 +320,8 @@ Retry-After; keep authorization blocks policy-gated; protect concurrent state
 updates and serialize arXiv requests across paper containers. Intake reports the
 stable availability snapshot and skips scheduling a held source without claiming
 verified empty success, then traverses old empty reasoned failures only after a
-later complete bundle is verified. Local regressions and source review are
-pending publication; deployment and hosted proof remain pending with the
+later complete bundle is verified. Local regressions passed; source review/merge remain pending. Deployment and
+hosted proof remain pending with the
 release/hosted-ops owner and existing `COLLECTOR-HOSTED-INTAKE-ACCEPTANCE-20261113`.
 Before: 4,888 scoped failures over 6.28 days (~778/day), dispatch audit; expected
 held-state DLQ/run growth 0/day, actual after-release measurement pending.
