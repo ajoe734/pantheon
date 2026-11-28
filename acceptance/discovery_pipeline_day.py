@@ -26,6 +26,7 @@ variable is missing.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -455,12 +456,22 @@ def stage_hypothesis_cards(
         return _failed(name, "llm_calls_over_cap", calls_today=calls, unsent_calls_today=unsent, cap=cap)
     sources = _int(llm.get("distinct_sources"))
     per_source = round(calls / sources, 3) if sources else None
+    compile_calls = _int(owner_calls.get("compile_calls"))
+    extraction_per_source = owner_calls.get("extraction_calls_per_source")
+    if (isinstance(extraction_per_source, bool)
+            or not isinstance(extraction_per_source, (int, float))
+            or not math.isfinite(extraction_per_source) or extraction_per_source < 0):
+        extraction_per_source = None
+    basis = "extraction" if extraction_per_source is not None else "total"
+    checked_per_source = extraction_per_source if basis == "extraction" else per_source
+    split_values = {"compile_calls": compile_calls, "extraction_calls_per_source": extraction_per_source,
+                    "calls_per_source_basis": basis}
     # The distinct-source count comes from the ledger through the owner summary
     # and the BFF board. Until that read is plumbed the stage still reports the
     # calls it can read and says the ratio is not measurable (not a pass on it).
-    if per_source is not None and per_source > MAX_CALLS_PER_SOURCE:
+    if checked_per_source is not None and checked_per_source > MAX_CALLS_PER_SOURCE:
         return _failed(name, "llm_calls_per_source_over_limit", calls_today=calls, unsent_calls_today=unsent, cap=cap,
-                       distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE)
+                       distinct_sources=sources, calls_per_source=per_source, limit=MAX_CALLS_PER_SOURCE, **split_values)
     recent = _newest_cards(board, now)
     verified = [c for c in recent if c.get("claim_status") == "ok"]
     today, _ = _count(board, "hypothesis_cards_today")
@@ -476,6 +487,7 @@ def stage_hypothesis_cards(
         "cap": cap,
         "distinct_sources": sources,
         "calls_per_source": per_source,
+        **split_values,
         "calls_per_source_status": "measured" if per_source is not None else "distinct_sources_not_reported",
         "release_switched_at": switch_iso,
         "ritual_events_since_switch": ritual_events,
