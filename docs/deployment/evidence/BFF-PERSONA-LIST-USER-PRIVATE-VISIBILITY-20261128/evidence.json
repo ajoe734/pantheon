@@ -2,13 +2,13 @@
   "task_id": "BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128",
   "owner": "Codex",
   "original_implementation_owner": "Antigravity2",
-  "reviewer": "Codex2",
+  "reviewer": "Antigravity",
   "reviewer_independence": {
     "owner_family": "Codex",
-    "reviewer_family": "Codex",
-    "independent": false,
-    "status": "pending_coordinator_reassignment_after_owner_recovery",
-    "required_action": "Canonical recovery changed the owner from Antigravity2 to Codex while retaining Codex2 as reviewer. Acceptance #8 requires a different-family reviewer. Coordinator must settle the running owner lease and reassign the reviewer through the governed workflow before approval; no cross-family capacity exception is claimed."
+    "reviewer_family": "Antigravity",
+    "independent": true,
+    "status": "independent_assignment_confirmed_pending_exact_head_review",
+    "required_action": "The governed show command on 2026-11-28 confirms owner Codex and reviewer Antigravity after Human/Ops reassignment. Antigravity2 authored the original anchor and is not the reviewer. Freeze the published PR head and this committed manifest through handoff to Antigravity; independent approval remains pending and no capacity exception is claimed."
   },
   "root_cause_class": "RC2 / WP2.3 user-private Agora servant visibility in BFF persona list and detail",
   "source_base": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
@@ -156,12 +156,15 @@
     "AC5": "services/control-plane/bff/BFF_API_CONTRACT.md states that GET /bff/personas rows and totals and GET /bff/personas/{persona_id} apply the user_private owner rule shared with GET /bff/management/persona-fleet.",
     "AC6": "Runtime budget verified in tests and documented below: no new writer, at most one Agora scope resolution per request, and zero new owner reads.",
     "AC7": "Hosted proof procedure after deploy documented below (read-only as admintest).",
-    "AC8": "Pending: canonical recovery now assigns owner Codex and reviewer Codex2, both Codex family. Coordinator must assign a different-family reviewer before approval. No independent review or capacity exception is claimed."
+    "AC8": "The governed canonical show command confirms owner Codex and assigned reviewer Antigravity, from different model families. The reassignment resolves the former Codex/Codex2 assignment hold. Independent exact-head review is pending; neither approval nor a capacity exception is claimed."
   },
   "validation": {
-    "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0 (.venv-pantheon/bin/python3)",
+    "provision": "python3 scripts/dev/provision_python_distribution.py -> exit 0 (.venv-pantheon/bin/python3); resumed worker verified the existing provision with timeout 30 python3 scripts/dev/provision_python_distribution.py --check-only -> exit 0",
     "focused_and_acceptance_command": "timeout 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_list_private_visibility.py services/control-plane/bff/tests/test_list_scope_classification.py acceptance/test_persona_day.py acceptance/test_pool_risk_snapshot_day.py acceptance/test_mgmt_registry_pages_readable.py",
-    "focused_and_acceptance_result": "106 passed, 3 warnings in 28.67s; exit 0"
+    "focused_and_acceptance_result": "Resumed worker rerun on 2026-11-28: 106 passed, 3 warnings in 41.59s; exit 0",
+    "evidence_json_command": "python3 -m json.tool docs/deployment/evidence/BFF-PERSONA-LIST-USER-PRIVATE-VISIBILITY-20261128/evidence.json",
+    "diff_check_command": "git diff --check origin/dev",
+    "evidence_and_diff_result": "Both exit 0 before the review evidence commit."
   },
   "runtime_budget": {
     "new_writer": false,
@@ -186,9 +189,25 @@
   "residual_findings": [
     {
       "finding": "15 sub-routes under GET /bff/personas/{persona_id}/* in detail.py (9: route-policy, runtime-profile, activity, evaluations, memory, audit, skills, tools, capabilities), lifecycle.py (2: strategy-pool/publish-history, strategy-matches), and trade_journal.py (4: trade-journal, trade-journal/{episode_id}, trade-reflections, trade-patterns) do not apply _persona_fleet_record_visible_to and only check _require_read_role + _ensure_persona_exists (or _allowed + bound_tenant in trade_journal.py).",
-      "disposition": "Inventoried per Acceptance #3 and intentionally left unchanged in this task; hand off to persona-loop coordinator to attach to WP2.3 or a dedicated sub-route visibility work package if sub-route owner-scoping is required."
+      "disposition": "Inventoried per Acceptance #3 and unchanged in this task. Coordinator 70b5f70f acknowledged responsibility in the canonical task next message on 2026-11-28 and is taking this residual to the owning WP2.3 problem-register row; retain it in the exact-head review handoff."
     }
   ],
+  "ci_followup": {
+    "observed_head": "59936ee883616b20e18fb72e143c222c9e4dd81e",
+    "branch_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/46137644402",
+    "status": "failed_on_two_out_of_scope_tests_at_previous_head; refreshed_head_checks_pending",
+    "failures": [
+      {
+        "test": "acceptance/test_discovery_pipeline_day.py::test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets",
+        "disposition": "Coordinator-diagnosed fixed-NOW versus real-clock failure between 10:00Z and 17:35Z on 2026-11-28; owned by CI-DISCOVERY-PROBE-TEST-DATED-WORLD-20261128. Do not edit this test in this task."
+      },
+      {
+        "test": "services/source_ingestion/tests/test_controller_worker_manual_once.py::test_run_controller_once_concurrent_same_key_multiprocess",
+        "disposition": "Coordinator reported FileNotFoundError to the market-data owner. Do not edit this test in this task; if it recurs after the coordinator reruns failed jobs after 17:35Z, retain it as a residual finding in handoff."
+      }
+    ],
+    "coordinator_plan": "Coordinator 70b5f70f reruns the failed jobs after 17:35Z. These failures are not passing checks or declared-task dependency blockers; exact-head review may proceed while required merge checks remain pending."
+  },
   "resolved_findings": [
     {
       "finding": "The private servant fixture introduced by PR #8011 inherited an owner different from the test caller and was correctly filtered out by the new rule.",
