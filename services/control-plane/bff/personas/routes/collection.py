@@ -29,6 +29,7 @@ from ..service import (
     _persona_create_required_data_sources,
     _persona_create_response,
     _persona_create_validate_paper_only,
+    _persona_fleet_record_visible_to,
     _persona_fleet_shared_payload,
     _persona_fleet_slim_list_payload,
     _persona_intent_all_items,
@@ -177,8 +178,14 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
         _require_read_role(identity)
         snapshot_at = utc_now()
         tenant_id = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        viewer_user_id = _fleet_viewer_user_id(identity, tenant_id, utc_now)
         directory = _get_persona_directory_snapshot(tenant_id, snapshot_at=snapshot_at)
-        raw_personas = list(directory.records_by_id.values())
+        raw_personas = [
+            raw
+            for raw in directory.records_by_id.values()
+            if _persona_fleet_record_visible_to(raw, viewer_user_id)
+        ]
+        canonical_total = len(raw_personas)
         if state:
             raw_personas = [
                 raw for raw in raw_personas if _persona_record_projected_state(raw) == state
@@ -187,7 +194,6 @@ def build_collection_router(ctx: PersonaRouteContext) -> APIRouter:
             raw_personas = [
                 raw for raw in raw_personas if _persona_record_archetype(raw) == archetype
             ]
-        canonical_total = len(directory.records_by_id)
         filtered_total = len(raw_personas)
         catalog_default_total = len(directory.catalog_defaults_by_id)
         page_raw, next_page_token = _page_slice(raw_personas, page_token, page_size)
