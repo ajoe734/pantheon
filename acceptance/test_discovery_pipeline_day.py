@@ -12,7 +12,7 @@ import stat
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -895,8 +895,49 @@ def test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages(serve
     assert "reason=ritual_marked_events_since_switch:1" in fail_done.stdout
 
 
+def stale_world(now_utc):
+    """Date every timestamp and date in the normal wire shapes 31 days back."""
+    board, health = good_board(), good_health()
+    stale_at = now_utc - timedelta(days=31)
+    stale = stale_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    stale_day = stale_at.strftime("%Y-%m-%d")
+    for item in board["data"]["discovered"]:
+        item["since"] = stale
+    board["data"]["scaffolded"][0]["latest_at"] = stale
+    board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = stale_day
+    board["data"]["discovery_summary"]["llm_calls"].update(
+        utc_day=stale_day, release_switched_at=stale,
+        ritual_events_oldest_scanned_at=stale,
+    )
+    health["data"]["last_success"]["at"] = stale
+    health["data"]["downstream_actual_state"]["checked_at"] = stale
+    return board, health
+
+
+def test_stale_world_fails_at_the_original_clock_window_and_real_now():
+    real_now = datetime.now(timezone.utc)
+    moments = [NOW, NOW.replace(hour=10), NOW.replace(hour=17, minute=34), real_now]
+    # Keep one world stale at every checkpoint, even when this test is run
+    # more than 31 days after the historical failure window.
+    board, health = stale_world(min(moments))
+    for moment in moments:
+        report = dpd.judge(board, health, moment)
+        assert report["verdict"] == "failed", (moment, report)
+        for name, reason in (
+            ("template_search", "last_search_stale"),
+            ("governed_market_dataset", "governed_snapshot_stale"),
+            ("templates_evaluated", "evaluation_stale"),
+            ("distillation_dead_letters", "distillation_state_stale"),
+        ):
+            result = stage(report, name)
+            assert result["status"] == "failed" and result["reason"] == reason, (moment, result)
+
+
 def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
-    done = exec_probe(server)  # the synthetic world is from 2026-11-28; the wall clock is later
+    # The subprocess uses the real UTC clock; all served dates are 31 days
+    # before test time, independently of the fixed NOW used by other tests.
+    Handler.board, Handler.health = stale_world(datetime.now(timezone.utc))
+    done = exec_probe(server)
     out = done.stdout + done.stderr
     assert done.returncode == 1 and "VERDICT failed" in out
     assert "tok-SECRET-VALUE" not in out and "client-SECRET-VALUE" not in out
@@ -977,3 +1018,34 @@ def test_hosted_20261127_empty_search_cannot_pass_search_or_gate(integrity_reaso
             outcome='failed', reason='template_search_unavailable:template_integrity_mismatch:171',
             reason_code='template_search_unavailable')
         assert stage(run(board), 'template_search')['reason'] == 'last_search_attempted_nothing'
+
+
+@pytest.mark.parametrize("extraction_ratio, expected", [(1.0, "passed"), (1.5, "passed"), (1.6, "failed")])
+def test_card_ratio_uses_owner_extraction_step(extraction_ratio, expected):
+    board = good_board()
+    board["data"]["counts"]["llm_calls_today"].update(value=200, distinct_sources=100)
+    board["data"]["discovery_summary"]["llm_calls"].update(
+        extraction_calls=int(extraction_ratio * 100), compile_calls=200 - int(extraction_ratio * 100),
+        extraction_calls_per_source=extraction_ratio)
+    result = stage(run(board), "hypothesis_cards")
+    assert result["status"] == expected
+    values = result["values"]
+    assert values["calls_today"] == 200 and values["calls_per_source"] == 2.0
+    assert values["compile_calls"] == 200 - int(extraction_ratio * 100)
+    assert values["extraction_calls_per_source"] == extraction_ratio
+    assert values["calls_per_source_basis"] == "extraction"
+    if expected == "failed":
+        assert result["reason"] == "llm_calls_per_source_over_limit"
+
+
+@pytest.mark.parametrize("ratio", ["missing", None, "1.0", True, float("nan"), float("inf"), -1])
+def test_missing_or_unreadable_split_keeps_1128_total_failure(ratio):
+    board = good_board()
+    board["data"]["counts"]["llm_calls_today"].update(value=400, distinct_sources=207)
+    if ratio != "missing":
+        board["data"]["discovery_summary"]["llm_calls"]["extraction_calls_per_source"] = ratio
+    result = stage(run(board), "hypothesis_cards")
+    assert result["status"] == "failed" and result["reason"] == "llm_calls_per_source_over_limit"
+    assert result["values"]["calls_per_source"] == 1.932
+    assert result["values"]["calls_per_source_basis"] == "total"
+    assert result["values"]["extraction_calls_per_source"] is None

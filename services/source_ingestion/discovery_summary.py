@@ -39,6 +39,7 @@ from services.source_ingestion.hypothesis_card import (
     active_deployment_sha,
     daily_cap_from_env,
     has_first_run_ritual_marker,
+    ledger_call_split,
     valid_deployment_sha,
 )
 
@@ -480,6 +481,7 @@ def _read_ledger(
             row = connection.execute(
                 f"SELECT n, {'cap' if 'cap' in cols else 'NULL'} AS cap,"
                 f" {'sources' if sources_recorded else 'NULL'} AS sources,"
+                f" {'compile_calls' if 'compile_calls' in cols else 'NULL'} AS compile_calls,"
                 f" {'unsent' if 'unsent' in cols else 'NULL'} AS unsent FROM calls WHERE day = ?",
                 (day,),
             ).fetchone()
@@ -612,6 +614,11 @@ def _read_ledger(
         "daily_cap": int(recorded_cap) if recorded_cap is not None else int(default_cap),
         "cap_source": "ledger" if recorded_cap is not None else "service_env",
         **_distinct_sources(calls, row["sources"] if row is not None else 0, sources_recorded),
+        **ledger_call_split(
+            calls,
+            (int(row["compile_calls"]) if row is not None else 0) if "compile_calls" in cols else None,
+            row["sources"] if row is not None and sources_recorded else None,
+        ),
         **ritual_obs,
     }
 

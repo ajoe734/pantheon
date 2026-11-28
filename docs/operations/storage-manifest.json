@@ -1435,6 +1435,15 @@
    ],
    "register_class": "RC3",
    "task": "to_be_opened: RC3 WP3.1 remaining writers (review each unreviewed writer, then bound or prove it)",
+   "call_step_budget": {
+    "task": "L2-CALLS-PER-SOURCE-SPLIT-EXTRACTION-AND-COMPILE-20261128",
+    "cadence": "existing distillation tick only; every extraction/compile reservation and proven-unsent refund updates the same UTC-day calls row",
+    "size_and_count": "one INTEGER NOT NULL DEFAULT 0 compile_calls per existing calls row; one row per UTC day across the service, no new writer, table, file, job or cadence",
+    "growth_per_day": "at most 8 logical bytes per existing daily row (SQLite encoding/page overhead varies); no extra rows",
+    "cap": "compile_calls <= calls.n; shared daily cap remains 400 and per-source limits remain 3/day and 6/total; existing calls history has no hard row cap (RC3 WP3.1)",
+    "cleanup": "same lifetime as calls rows; no new retention path; whole-ledger history remains the existing RC3 WP3.1 obligation",
+    "acceptance": "services/source_ingestion/tests/test_hypothesis_extraction.py::test_call_step_split_and_mixed_limits; test_compile_refund_removes_both_counts_and_uses_original_day; test_compile_column_additive_migration_and_absent_summary"
+   },
    "unsent_budget": {
     "cadence": "existing 60-second distillation tick; stop at first unsent transport/policy failure, <=1 outage event/tick (about 1440/day); local input refusal may also produce one unsent event per processed record, within the existing tick batch limit",
     "growth_per_day": "counter adds at most 8 bytes per existing daily row; outage reason events about 1 MiB/day typical and <=4.6 MB UTF-8 payload/day at 1440 events, until the global count cap; no new file, table or recurring job",
@@ -6136,7 +6145,7 @@
     "name": "PostgresPersonaProvisioningStore._directory_cache",
     "kind": "in_process_cache",
     "owner": "control-plane",
-    "task": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
+    "task": "BFF-PERSONA-LEDGER-SLIM-DIRECTORY-20261128",
     "register_class": "RC3",
     "bound_status": "bounded",
     "bound_proof": {
@@ -6146,11 +6155,15 @@
     "readers": [
      "services/control-plane/bff/personas/service.py"
     ],
-    "growth_driver": "on-demand directory read; one revision SELECT on every call; no scheduled job, TTL or emitter",
-    "growth_per_day": "no append growth; replace per tenant (including one optional all-tenant key) on committed ledger change; hosted brief reports 5 changed rows/day",
-    "cap": "per BFF store: at most 8 keys; each holds a complete tenant directory, 170 rows at hosted scale (brief: about 6 MB stored / 17.6 MB text); 32 MiB recursive Python object size per entry, 64 MiB total retained object budget; oversized reads bypass retention; transient response/query allocations are separate",
-    "cleanup": "LRU eviction on insertion; changed revision replaces that key; process/store destruction releases all entries; no disk persistence",
-    "size_at_hosted_scale": "Local PostgreSQL 16.15 hosted-shape fixture: one tenant / 170 records / 165 retired, references 5,874,566 B stored and 18,598,107 B JSON text; 19,666,289 B retained Python objects per cached tenant (optional all-tenant key duplicates inputs). Hosted brief: about 6 MB stored / 17.6 MB text. Measurements and isolated BFF process RSS are in task evidence."
+    "growth_driver": "on-demand SQL-slim directory reads; one revision SELECT every call, row SELECT only on cache miss/changed revision (or oversized bypass); no scheduled job or TTL",
+    "growth_per_day": "0 append growth; resident data is replaced on revision change and bounded by caps; <=5 replacement generations/day under task-author changed-row estimate, not a fixed write-rate assertion",
+    "cap": "<=8 LRU slots per BFF store; <=32 MiB per retained input graph and <=64 MiB total. SQL selects projection fields plus all three risk keys, not owner receipts. Oversized slot stores only stamp/None/measured size (no rows), in the same 8-slot limit; fixed bookkeeping/lock overhead and transient query/response copies are separate.",
+    "cleanup": "LRU eviction removes both records and per-stamp size metadata; changed revision replaces the scope; process/store destruction releases all memory; no disk persistence. Sizing runs only for new resident scope/stamp; negative slots avoid repeating the size walk on unchanged oversized reads.",
+    "size_at_hosted_scale": "Final local PostgreSQL 16 synthetic hosted-shape fixture: 170 rows, 17,588,147 B references JSON text, 39,526,122 B decoded full entry (above 32 MiB), 1,272,404 B retained slim entry (~1.27 MB). One tenant plus all-tenant entry: 2,544,808 B retained inputs. Local TOAST references are 8,044,909 B, not the task-author hosted 5.3 MB: compression depends on synthetic contents; fixture matches recorded key counts/relative byte weights, 17.6 MB text, 39.6 MB full and ~1.25 MB slim graph scales. #7999 previously measured only 19.7 MB locally and did not retain its actual hosted 39.6 MB full input.",
+    "cadence": "one stamp validation per directory caller; rows loaded once per resident scope/stamp; task-author hosted ledger changes about 5 rows/day (statement trigger also advances for no-op writes)",
+    "count_at_hosted_scale": "170 ledger rows / 165 retired / 4 succeeded / 1 provisioning per tenant; one tenant key normally, optional all-tenant key duplicates inputs; <=8 LRU slots per BFF store",
+    "emitter_budget": "Oversized bypass emits one warning per observed global revision per store naming size and cap, zero on retained hits/quiet repeats; one integer suppression state. Uses existing BFF logger/sink and its existing retention, adds no new file or emitter job.",
+    "measurement_ref": "docs/deployment/evidence/BFF-PERSONA-LEDGER-SLIM-DIRECTORY-20261128/evidence.json"
    },
    "measurement_ref": "docs/deployment/evidence/BFF-PERSONA-LEDGER-READ-REUSE-20261127/evidence.json"
   }
