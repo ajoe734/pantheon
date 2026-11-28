@@ -5,8 +5,9 @@
   "register_class": "RC2",
   "domain_owner": "cb4f6795",
   "delivery": {
-    "status": "source implementation awaiting independent review; hosted acceptance pending",
-    "startup_repair": "#8021 (separate source-ingest cold-start work, no duplicate changes)"
+    "status": "PR #8032 published; independent review admission blocked by missing artifact contract paths; not merged/deployed/accepted",
+    "startup_repair": "#8021 (separate source-ingest cold-start work, no duplicate changes)",
+    "pr": "https://github.com/ajoe734/pantheon/pull/8032"
   },
   "incident": {
     "run_id": 46114700528,
@@ -162,5 +163,14 @@
     "status": "pending",
     "assigned_reviewer": "Antigravity"
   },
-  "compatibility": "Existing never_entered and superseded_by_release retirement stays unchanged. A different running image remains superseded_by_release (existing #8003 contract), not restored_in_place. Same-image env mismatch or stopped recorded container follows existing restore path."
+  "compatibility": "Existing never_entered and superseded_by_release retirement stays unchanged. A different running image remains superseded_by_release (existing #8003 contract), not restored_in_place. Same-image env mismatch or stopped recorded container follows existing restore path.",
+  "review_admission": {
+    "status": "blocked",
+    "attempted_head": "b40d52c0e63937a0add5828eb1b6fba40a767415",
+    "error": "changed file docs/operations/storage-manifest.json is outside the task artifact contract for repository pantheon",
+    "also_requires_declared_artifact": "scripts/probe_tw_refresh_restore.py",
+    "required_actor": "Human/Ops",
+    "correction": "With canonical task blocked, use the governed artifact-contract add command for docs/operations/storage-manifest.json and scripts/probe_tw_refresh_restore.py, then reopen the same task and repeat exact-head handoff to Antigravity. No replacement task, hand-edited JSON, identity impersonation or gate modification.",
+    "why_required": "Repository AGENTS.md requires changed persistent writers registered in storage manifest and an executable read-only acceptance probe; retain both committed artifacts rather than drop these delivery requirements."
+  }
 }
