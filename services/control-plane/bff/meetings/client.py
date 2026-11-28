@@ -2128,9 +2128,11 @@ def _inbox_owner_budget():
     # the former two 40% phases together, leaving 20% for inbox projection.
     from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
     allowance = human_inbox_surface_timeout_seconds() * 0.8
-    remaining = remaining_management_read_budget(allowance)
-    budget = min(allowance, remaining) if remaining is not None else allowance
-    token = management_read_deadline.set(time.monotonic() + max(0, budget))
+    deadline = time.monotonic() + allowance
+    parent_deadline = management_read_deadline.get()
+    if parent_deadline is not None:
+        deadline = min(deadline, parent_deadline)
+    token = management_read_deadline.set(deadline)
     try:
         yield
     finally:

@@ -3,7 +3,7 @@
   "owner": "Codex",
   "reviewer": "Claude2",
   "root_cause_class": "RC1 WP1.2 inbox owner reads",
-  "delivery_state": "implementation; source review and merge pending; hosted acceptance pending",
+  "delivery_state": "Blocked before review; draft source only, not merged, deployed or accepted.",
   "baseline": {
     "source_commit": "292379ab4c1cb0899e40585b13c96a6f6a38242d",
     "events": [
@@ -41,7 +41,10 @@
       }
     ],
     "inbox_seconds": 0.3972926359856501,
-    "kind": "in-process slow HTTP fakes with incident meeting and existing Research ticket fixture"
+    "kind": "in-process slow HTTP fakes with incident meeting and existing Research ticket fixture",
+    "command": "PYTHONPATH=\"$PWD\" timeout 60 /tmp/bff-meeting-action-venv/bin/python -m pytest -q -s /tmp/test_bff_owners_baseline.py",
+    "exit_code": 0,
+    "runner_source": "import io\nimport json\nimport time\nfrom urllib.parse import urlsplit\n\nfrom services.control_plane.bff.tests.test_meetings_human_inbox import (\n    inbox_meetings_stack, budget_stack, _auth_headers,\n)\nfrom services.control_plane.bff.tests.test_meeting_action_human_response import ticket\nfrom services.control_plane.bff.core.owner_reads import management_read_deadline\n\n\ndef test_measure_sequential_owner_phases(budget_stack, monkeypatch):\n    import urllib.request\n    client, _, _ = budget_stack\n    monkeypatch.setenv(\"PANTHEON_RESEARCH_ORCHESTRATOR_API_URL\", \"http://research.test\")\n    original = urllib.request.urlopen\n    origin = time.monotonic()\n    events = []\n\n    def transport(req, timeout):\n        owner = \"research\" if urlsplit(req.full_url).hostname == \"research.test\" else \"consultation\"\n        event = {\"owner\": owner, \"path\": urlsplit(req.full_url).path,\n                 \"start_seconds\": time.monotonic() - origin,\n                 \"deadline_seconds\": management_read_deadline.get() - origin,\n                 \"socket_timeout_seconds\": timeout}\n        events.append(event)\n        time.sleep(0.18)\n        if owner == \"research\":\n            result = io.BytesIO(json.dumps({\"data\": [ticket()], \"page_info\": {\"next_page_token\": None}}).encode())\n            result.status = 200\n        else:\n            result = original(req, timeout=timeout)\n        event[\"end_seconds\"] = time.monotonic() - origin\n        return result\n\n    monkeypatch.setattr(urllib.request, \"urlopen\", transport)\n    response = client.get(\"/bff/management/human-inbox?source_type=meeting\", headers=_auth_headers())\n    assert response.status_code == 200, response.text\n    research = next(e for e in events if e[\"owner\"] == \"research\")\n    consultation = [e for e in events if e[\"owner\"] == \"consultation\"]\n    assert research[\"start_seconds\"] >= max(e[\"end_seconds\"] for e in consultation)\n    assert response.json()[\"meta\"][\"surfaces\"][\"meetings\"][\"status\"] == \"ok\"\n    result = {\"source_commit\": \"292379ab4c1cb0899e40585b13c96a6f6a38242d\", \"events\": events,\n              \"inbox_seconds\": time.monotonic() - origin,\n              \"kind\": \"in-process slow HTTP fakes with incident meeting and existing Research ticket fixture\"}\n    with open(\"/tmp/bff-owners-baseline.json\", \"w\") as output:\n        json.dump(result, output, indent=2)\n    print(json.dumps(result))\n"
   },
   "implementation": {
     "owner_deadline": "One absolute deadline computed before either owner starts: min(parent deadline, start + 0.8 * human_inbox_surface_timeout_seconds()).",
@@ -52,7 +55,8 @@
       "Consultation and Research services",
       "Acceptance probe and problem register",
       "Owner authorization, tenant checks, private evidence filtering and pagination"
-    ]
+    ],
+    "parent_deadline": "Use min of absolute timestamps directly; avoids the former few-microsecond parent extension when converting remaining duration back into a deadline."
   },
   "runtime_budget": {
     "cadence": "On demand, one meetings contributor per admitted human inbox request; no recurring job.",
@@ -62,7 +66,8 @@
     "size": "Existing pages remain capped at 100 meetings and 100 Research tickets; existing Research response limit remains 4 MiB. No new persisted payload.",
     "growth_per_day": "0 persistent bytes, files, rows or jobs; fixed pools reuse threads.",
     "cleanup": "Request futures/results are released after collection; late futures only hold their own data until completion. Slots release via done callbacks. Shared pool threads end with the BFF process.",
-    "writers": "No new persistent writer, cache, workflow input or job. This fixed task evidence file is source documentation only."
+    "writers": "No new persistent writer, cache, workflow input or job. This fixed task evidence file is source documentation only.",
+    "known_limit": "A running Python transport cannot be interrupted. A late read holds its bounded slot until it finishes; saturated pools report capacity exhaustion without admitting a new queue entry. No claim of a new size cap on existing consultation proposals/catalogue."
   },
   "assertion_changes": [
     "Socket timeout and remaining-budget bounds increase 0.4 -> 0.8 because both owners share the former two sequential 40% phases.",
@@ -70,9 +75,38 @@
     "Surface-cap parametrization is retained; expected owner fraction increases 0.4 -> 0.8 and the test name describes the new shared phases.",
     "The existing 30-read consultation test keeps its 0.4 second elapsed assertion and its three-party barrier. No existing test removed or disabled."
   ],
-  "validation": {
-    "status": "running; anchor checkpoint"
-  },
+  "validation": [
+    {
+      "command": "timeout 90 /tmp/bff-meeting-action-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_meetings_human_inbox.py --junitxml=/tmp/bff-owners-parallel-tests.xml",
+      "exit_code": 0,
+      "result": "35 passed in 16.16 s; intermediate anchor before parent-deadline and slot-release coverage."
+    },
+    {
+      "command": "timeout 180 /tmp/bff-meeting-action-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_meetings_human_inbox.py services/control-plane/bff/tests/test_meeting_action_human_response.py services/control-plane/bff/tests/test_meetings_views.py services/control-plane/bff/tests/test_research_router.py services/control-plane/bff/tests/test_research_tasks_read.py -o junit_family=legacy --junitxml=/tmp/bff-owners-regression.xml",
+      "exit_code": 1,
+      "result": "306 passed, 2 failed in 70.41 s. Parent deadline exact equality failed by 1.91 microseconds (fixed and verified in final focused run). Existing out-of-contract test_meeting_action_human_response.py:583 requires <=0.4 seconds (BLOCKER, unchanged)."
+    },
+    {
+      "command": "timeout 60 /tmp/bff-meeting-action-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_meetings_human_inbox.py -o junit_family=legacy --junitxml=/tmp/bff-owners-final-focused.xml",
+      "exit_code": 0,
+      "result": "38 passed in 17.21 s on final source, including parent deadlines, both slow-owner directions, late-result rejection and slot reuse."
+    },
+    {
+      "command": "timeout 180 /tmp/bff-meeting-action-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_human_inbox_governance_latency.py services/control-plane/bff/tests/test_human_inbox_truth.py services/control-plane/bff/tests/test_bff_b3_human_inbox.py services/control-plane/bff/tests/test_human_inbox_owner_filtered_reads.py services/control-plane/bff/tests/test_owner_read_context_lifespan.py -o junit_family=legacy --junitxml=/tmp/bff-owners-inbox-regression.xml",
+      "exit_code": 0,
+      "result": "45 passed in 27.19 s. Other contributor and context regressions unchanged."
+    },
+    {
+      "command": "timeout 30 /tmp/bff-meeting-action-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_meeting_action_human_response.py::test_slow_consultation_retains_research_items_and_uses_contributor_budget -o junit_family=legacy --junitxml=/tmp/bff-owners-contract-blocker.xml",
+      "exit_code": 1,
+      "result": "1 failed in 0.93 s on final source: timeouts 0.799373, 0.798543, 0.798465 fail existing <=0.4 assertion at line 583."
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed"
+    }
+  ],
   "hosted_acceptance": {
     "status": "pending operator acceptance; no VM or SSH access performed",
     "required": [
@@ -81,5 +115,152 @@
     ],
     "claims": "Local fake HTTP timing and regression tests are functional evidence only; they do not establish deployed or accepted delivery."
   },
-  "residual_findings": []
+  "residual_findings": [
+    {
+      "kind": "artifact_contract_missing_required_test",
+      "path": "services/control-plane/bff/tests/test_meeting_action_human_response.py",
+      "line": 583,
+      "test": "test_slow_consultation_retains_research_items_and_uses_contributor_budget",
+      "reason": "The existing regression asserts every consultation socket timeout <=0.4, whereas the common parallel owner deadline now allows 0.8. This required test file is absent from the task artifacts.",
+      "task_rule": "if an item here is wrong or a needed file is missing from the artifact contract then block with the exact reason instead of working around it",
+      "required_action": "Coordinator must add this test file to the canonical artifact contract before the worker updates the obsolete allowance assertion, reruns regressions and hands off for Claude2 review.",
+      "disposition": "Stop implementation; preserve scoped anchors and draft PR. No out-of-contract file changed; no assertion bypass or special-case budget added."
+    }
+  ],
+  "row_provenance": {
+    "consultation": "Existing full INCIDENT_MEETING row mtg-2c016da5651a0dc4 retained unchanged, including synthesis, pending operator_review, participants and private evidence.",
+    "research": "Full ticket() fixture from test_meeting_action_human_response.py, reused unchanged with meeting_action, input_request, revision and lifecycle fields; not a hosted capture.",
+    "scale": "Existing 100-row incident-copy consultation test and 30 sequential local calls retained; one full Research ticket per new concurrency test."
+  },
+  "review_independence": {
+    "owner_family": "Codex",
+    "reviewer_family": "Claude",
+    "exception": null,
+    "status": "Not handed off for review because artifact contract must first be extended."
+  },
+  "local_measurements": [
+    {
+      "kind": "local simulated transport; not hosted evidence",
+      "calls": 30,
+      "owner_reads_seconds": {
+        "list_meetings": {
+          "median": 0.1818021740182303,
+          "max": 0.1823927640216425,
+          "count": 30
+        },
+        "list_proposals": {
+          "median": 0.18069749895948917,
+          "max": 0.1844749340089038,
+          "count": 30
+        },
+        "get_catalogue": {
+          "median": 0.1802449989481829,
+          "max": 0.18401784403249621,
+          "count": 30
+        }
+      },
+      "inbox_seconds": {
+        "median": 0.19845460704527795,
+        "max": 0.2180016509955749
+      }
+    },
+    {
+      "kind": "local simulated HTTP transport; not hosted evidence",
+      "slow_owner": "consultation",
+      "inbox_seconds": 0.20766119204927236,
+      "events": [
+        {
+          "owner": "research",
+          "path": "/api/research/tickets",
+          "start_seconds": 0.022981798043474555,
+          "deadline_seconds": 0.8224095980403945,
+          "timeout": 0.799522879999131,
+          "end_seconds": 0.033749026944860816
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings",
+          "start_seconds": 0.023187138023786247,
+          "deadline_seconds": 0.8224095980403945,
+          "timeout": 0.7992559490958229,
+          "end_seconds": 0.20431211299728602
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings/proposals",
+          "start_seconds": 0.023278417997062206,
+          "deadline_seconds": 0.8224095980403945,
+          "timeout": 0.7991663800785318,
+          "end_seconds": 0.20401246205437928
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings/catalogue",
+          "start_seconds": 0.02352153800893575,
+          "deadline_seconds": 0.8224095980403945,
+          "timeout": 0.798996560042724,
+          "end_seconds": 0.20376541302539408
+        }
+      ]
+    },
+    {
+      "kind": "local simulated HTTP transport; not hosted evidence",
+      "slow_owner": "research",
+      "inbox_seconds": 0.20791755197569728,
+      "events": [
+        {
+          "owner": "research",
+          "path": "/api/research/tickets",
+          "start_seconds": 0.023352867923676968,
+          "deadline_seconds": 0.8228486579610035,
+          "timeout": 0.7995781400240958,
+          "end_seconds": 0.20408460195176303
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings",
+          "start_seconds": 0.0234951579477638,
+          "deadline_seconds": 0.8228486579610035,
+          "timeout": 0.7993937400169671,
+          "end_seconds": 0.03446386696305126
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings/proposals",
+          "start_seconds": 0.02372411801479757,
+          "deadline_seconds": 0.8228486579610035,
+          "timeout": 0.799239440006204,
+          "end_seconds": 0.03417210699990392
+        },
+        {
+          "owner": "consultation",
+          "path": "/api/consult/meetings/catalogue",
+          "start_seconds": 0.023848647950217128,
+          "deadline_seconds": 0.8228486579610035,
+          "timeout": 0.7990364199504256,
+          "end_seconds": 0.03400407696608454
+        }
+      ]
+    }
+  ],
+  "acceptance_results": {
+    "1": "PASS: baseline slow fake measurements record serial owner phases and distinct deadlines.",
+    "2": "PASS: four-party barrier and identical absolute deadlines with slow consultation and slow Research independently.",
+    "3": "PASS locally: configured 0.3, 0.6 and capped 1.0 second surface budgets, plus exhausted and shorter parent deadlines. Other contributor regression batch passed.",
+    "4": "PASS in scoped tests: consultation read_timeout:<read>, partial item retention and private filtering preserved.",
+    "5": "PENDING operator hosted acceptance: 60 sequential reads.",
+    "6": "RECORDED: fixed shared four-worker Research pool, bounded slots, no persistent writer or recurring job.",
+    "7": "PENDING operator hosted acceptance: first two post-deploy Roots.",
+    "8": "BLOCKED: no test deleted or disabled; necessary new allowance contradicts an unchanged assertion outside the artifact contract. Scoped assertion changes justified above."
+  },
+  "blocker": {
+    "kind": "artifact_contract_missing_required_test",
+    "path": "services/control-plane/bff/tests/test_meeting_action_human_response.py",
+    "line": 583,
+    "test": "test_slow_consultation_retains_research_items_and_uses_contributor_budget",
+    "reason": "The existing regression asserts every consultation socket timeout <=0.4, whereas the common parallel owner deadline now allows 0.8. This required test file is absent from the task artifacts.",
+    "task_rule": "if an item here is wrong or a needed file is missing from the artifact contract then block with the exact reason instead of working around it",
+    "required_action": "Coordinator must add this test file to the canonical artifact contract before the worker updates the obsolete allowance assertion, reruns regressions and hands off for Claude2 review.",
+    "disposition": "Stop implementation; preserve scoped anchors and draft PR. No out-of-contract file changed; no assertion bypass or special-case budget added."
+  }
 }

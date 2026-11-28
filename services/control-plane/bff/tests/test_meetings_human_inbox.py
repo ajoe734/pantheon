@@ -23,7 +23,8 @@ from fastapi.testclient import TestClient
 from services.control_plane.bff.auth.policy import bff_error, extract_identity, require_read_role
 from services.control_plane.bff.core.app_factory import build_bff_app
 from services.control_plane.bff.core.owner_reads import (
-    OwnerReadContextMiddleware, management_read_deadline, remaining_management_read_budget,
+    OwnerReadContextMiddleware, authorization, management_read_deadline,
+    remaining_management_read_budget, selected_tenant,
 )
 from services.control_plane.bff.governance.service import human_inbox_surface_timeout_seconds
 from services.control_plane.bff.management_read_models import create_management_router
@@ -761,3 +762,62 @@ def test_research_pagination_is_preserved(parallel_owners_stack):
     assert research["reason"] == "owner_page_has_more"
     assert research["page_info"]["next_page_token"] == "opaque-owner-next"
     _assert_owner_items(response)
+
+
+@pytest.mark.parametrize("parent_seconds", [-1, 0.15])
+def test_common_owner_deadline_never_extends_parent(parallel_owners_stack, parent_seconds):
+    _, _, _, controls = parallel_owners_stack
+    controls.update(consultation_delay=0.2, research_delay=0.2)
+    parent_deadline = time.monotonic() + parent_seconds
+    tokens = [
+        (authorization, authorization.set(_auth_headers()["Authorization"])),
+        (selected_tenant, selected_tenant.set("tenant-a")),
+        (management_read_deadline, management_read_deadline.set(parent_deadline)),
+    ]
+    try:
+        started = time.monotonic()
+        items, surface = meetings_client.read_human_inbox_meeting_items(
+            "2026-11-28T16:00:00Z", tenant_id="tenant-a",
+        )
+        elapsed = time.monotonic() - started
+        assert management_read_deadline.get() == parent_deadline
+    finally:
+        for variable, token in reversed(tokens):
+            variable.reset(token)
+    assert items == []
+    assert surface["surfaces"]["research"]["reason"] == "read_timeout:list_research_ticket_page"
+    if parent_seconds < 0:
+        assert controls["events"] == []
+        assert elapsed < 0.05
+    else:
+        assert elapsed < 0.2
+        assert len(controls["events"]) == 4
+        assert {e["deadline"] for e in controls["events"]} == {parent_deadline}
+
+
+def test_late_research_retains_slot_until_finished_then_reuses_it(parallel_owners_stack, monkeypatch):
+    client, _, _, controls = parallel_owners_stack
+    monkeypatch.setenv("PANTHEON_BFF_HUMAN_INBOX_SURFACE_TIMEOUT_SECONDS", "0.3")
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(meetings_client, "_INBOX_RESEARCH_SLOTS", slots)
+    controls["research_delay"] = 0.5
+    first = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert first.status_code == 200, first.text
+    assert first.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["reason"] == (
+        "read_timeout:list_research_ticket_page")
+    assert not slots.acquire(blocking=False)
+    second = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert second.status_code == 200, second.text
+    assert second.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["reason"] == (
+        "owner_read_capacity_exhausted:list_research_ticket_page")
+    research_events = [e for e in controls["events"] if e["owner"] == "research"]
+    assert len(research_events) == 1
+    assert research_events[0]["finished"].wait(timeout=1)
+    # Transport completion precedes the future callback by a few instructions.
+    assert slots.acquire(timeout=0.1)
+    slots.release()
+    controls["research_delay"] = 0.01
+    third = client.get("/bff/management/human-inbox?source_type=meeting", headers=_auth_headers())
+    assert third.status_code == 200, third.text
+    assert third.json()["meta"]["surfaces"]["meetings"]["surfaces"]["research"]["status"] == "ok"
+    _assert_owner_items(third)
