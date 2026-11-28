@@ -62,6 +62,27 @@
       "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_strategy_list_overlap_reads.py --tb=short",
       "exit_code": 0,
       "result": "18 passed, 3 warnings in 7.48s; terminal output collected."
+    },
+    {
+      "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py",
+      "exit_code": 0,
+      "result": "123 passed, 1 skipped, 3 warnings in 47.06s; terminal output collected.",
+      "skip_reason": "RANKING_TEST_DSN is not set; live PostgreSQL strategy-list latency test skipped."
+    },
+    {
+      "command": "timeout 240s .venv-pantheon/bin/python scripts/ci_test_inventory.py run-shard --shard 4 --of 12 --jobs 3 --timeout 60",
+      "exit_code": 1,
+      "result": "64 test files passed, 1 failed by TIMEOUT after 60s; wall 168s. Not counted as a passed batch. The slow pre-existing file was test_bff_approvals_decide_contract.py, which needed 75.49s in the original CI job. The repaired overlap file passed all 18 tests. Terminal output collected."
+    },
+    {
+      "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q -p no:cacheprovider -rfE --tb=short services/control-plane/bff/test_bff_approvals_decide_contract.py",
+      "exit_code": 0,
+      "result": "133 passed, 1 warning in 81.29s; terminal output collected. Resolves the locally shortened timeout without source changes."
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check && git diff --check",
+      "exit_code": 0,
+      "result": "test inventory ok; no whitespace errors after CI repair."
     }
   ],
   "reader_inventory": {
@@ -105,6 +126,8 @@
     },
     "repair": "Compare the entire response with the historical response plus exactly the two required cohort fields; this fixture contains no non-trading personas. Preserve historical route and concurrency barrier negative control, owner call counts, pagination, data rows and failure outcomes.",
     "acceptance_scope": "Acceptance 6: regression readers remain compatible; no runtime source change or additional owner reads.",
-    "review": "Previous approval does not apply to the new head. Fresh Antigravity exact-head review required."
+    "review": "Previous approval does not apply to the new head. Fresh Antigravity exact-head review required.",
+    "repair_anchor": "c19fb1779cf8df2e97a33e4b99d55cb19de07778",
+    "validation_summary": "Original readers: 123 passed, 1 skipped. Overlap: 18 passed. Shard batch: 64 files passed and 1 timed out under a locally shortened 60s limit, so the batch is not passed. That remaining file passed separately: 133 passed in 81.29s under a 180s bound. All 65 shard files have passing terminal results across the two batches; hosted CI with its normal 300s/file limit remains pending on the new head."
   }
 }
