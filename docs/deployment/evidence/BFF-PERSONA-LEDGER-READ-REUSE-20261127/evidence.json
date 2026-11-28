@@ -2,7 +2,7 @@
   "task_id": "BFF-PERSONA-LEDGER-READ-REUSE-20261127",
   "owner": "Codex",
   "reviewer": "Antigravity",
-  "state": "legacy_contract_repaired_local_validation_passed",
+  "state": "implementation_validated_pending_ci_and_independent_review",
   "delivery": {
     "merged": false,
     "deployed": false,
@@ -15,7 +15,7 @@
     "mechanism": "Singleton transactional bigint revision updated by an AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE statement trigger catches every committed statement, even unchanged updated_at and direct SQL from another connection. Every cache call reads that one revision; cold rows and stamp share REPEATABLE READ READ ONLY snapshot. A concurrent commit is visible on the next call, rollback changes neither visible stamp nor rows. Query errors propagate; no TTL/stale-on-error answer. Fresh get/get_by_persona/list_by_tenant/list_all remain uncached.",
     "cache": "Store-local full row inputs, detached deep copies, LRU 8 keys / 32 MiB per key / 64 MiB retained recursive object budget; no cross-service helper was suitable because Registry cache relies on its own stored summary_rev/index/delta model.",
     "fleet": "_persona_provisioning_records_shared now uses full-input stamp validation rather than lossy slim SQL; request sharing is kept. Legacy slim methods remain callable, but this reader no longer selects them.",
-    "pending": "Legacy test artifacts authorized 2026-11-28 and repaired on the same branch; 118 legacy/reconciliation checks and 9 hosted-shape/local Postgres checks pass. Current-dev integration, fresh CI and independent exact-head review remain. No merge, hosted deployment or acceptance claimed.",
+    "pending": "Legacy artifact contract repaired; task merged current dev 9cf0aeff70d7611dda3d5bca4f5f460147aad003 using merge commit 585481ddf915decc7cc58318a231e051f24c7f30. Post-merge 276 provisioning checks and 9 hosted-shape/Postgres checks pass. Broader batch: 276 passed, 4 failed, 1 skipped; the exact four failures reproduce on pristine current-dev source with no task commits. Fresh PR CI and independent Antigravity review remain; no source merge, hosted deployment or acceptance claimed.",
     "first_deploy_startup": "PostgresPersonaProvisioningStore.__init__ synchronously calls _bootstrap before returning the store. On the first BFF start against the old populated ledger, CREATE TABLE IF NOT EXISTS creates the revision table, INSERT establishes its singleton, and CREATE OR REPLACE FUNCTION/TRIGGER installs transactional invalidation before the first directory read. All bootstrap statements commit together on context exit; failure prevents store construction rather than answering with an unvalidated cache. No separate prior migration run is required. test_postgres_first_start_upgrades_existing_ledger_before_directory_reads removes the revision table/function/trigger from a real 170-row local Postgres ledger, reconstructs the store, compares cold/warm snapshot and both HTTP payloads with the full baseline (HTTP 200), and verifies the first post-upgrade write invalidates the warmed cache. Hosted role/schema ownership and CREATE privilege are task-author read-only facts, not worker verification."
   },
   "fleet_projection_audit": {
@@ -118,6 +118,31 @@
       "command": "python3 scripts/check_storage_manifest.py --output /tmp/bff-ledger-reuse-storage-check-20261128.json",
       "exit_code": 0,
       "result": "381 entries, passed=true, no failures"
+    },
+    {
+      "command": "timeout --signal=INT 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py services/control-plane/bff/tests/test_persona_provisioning_reconcile.py services/control-plane/bff/test_persona_provisioning_store.py services/control-plane/bff/test_persona_provisioning_coordinator.py --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "Post-merge: 276 passed, 3 warnings in 46.32s"
+    },
+    {
+      "command": "PANTHEON_TEST_PROVISIONING_DSN=postgresql://postgres@127.0.0.1:32813/postgres timeout --signal=INT 120 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_directory_ledger_reuse.py --disable-warnings --tb=short",
+      "exit_code": 0,
+      "result": "Post-merge: 9 passed, 3 warnings in 17.09s; local Postgres 16.15"
+    },
+    {
+      "command": "timeout --signal=INT 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_operational_status.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_persona_fleet_shared_read.py services/control-plane/bff/tests/test_persona_fleet_current_latency.py services/control-plane/bff/tests/test_persona_archived_lifecycle.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py services/control-plane/bff/tests/test_persona_provisioning_read_surface_mutation.py services/control-plane/bff/tests/test_persona_owner_lifecycle_truth.py services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_tenant_fallback_audit.py services/control-plane/bff/tests/test_bff_test_architecture.py --disable-warnings --tb=short",
+      "exit_code": 1,
+      "result": "Post-merge: 4 failed, 276 passed, 1 skipped, 3 warnings in 131.60s. Three ranking evaluator nodes plus compact-list CPU threshold (old 0.051604176 CPU s, new 0.024943452 CPU s). No timeout."
+    },
+    {
+      "command": "In pristine git-archive snapshot of dev 9cf0aeff70d7611dda3d5bca4f5f460147aad003, provision its own .venv-pantheon using scripts/dev/provision_python_distribution.py; timeout --signal=INT 180 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_persona_evaluator_mounted_ranking.py services/control-plane/bff/tests/test_bff_persona_list_compact_rows.py --disable-warnings --tb=short",
+      "exit_code": 1,
+      "result": "4 failed, 5 passed, 3 warnings in 3.48s. Same exact three mounted ranking evaluator failures and compact-list CPU threshold fail on dev without any task changes; establishes unrelated baseline. Separate dependency-inheriting checkout-scoped venv, no PYTHONPATH override."
+    },
+    {
+      "command": "python3 scripts/check_storage_manifest.py --output /tmp/bff-ledger-reuse-storage-after-dev.json",
+      "exit_code": 0,
+      "result": "Post-merge passed=true, failures=[], 381 entries, 4 waivers"
     }
   ],
   "test_changes": {
@@ -164,15 +189,15 @@
     },
     {
       "finding": "Existing test_persona_evaluator_mounted_ranking.py has three isolated failures: zero evaluator proposals and unchanged ranking snapshot after lifecycle update.",
-      "disposition": "Persona-loop/ranking owner must triage under its register class; no repair in this ledger-read task and no claim of pre-existing baseline verification. Exact isolated failure facts above."
+      "disposition": "Persona-loop/ranking owner/coordinator must attach to its register class and triage. All three exact failures reproduce on pristine dev 9cf0aeff7; no repair or weakened assertions in this ledger-read task."
     },
     {
       "finding": "Existing compact Persona list CPU benchmark misses its 70% reduction threshold locally (50.734 ms vs 19.048 ms CPU, about 62.5% reduction).",
-      "disposition": "RC3 performance-test owner/coordinator must triage determinism; projection methods are untouched, no threshold weakened or test deleted."
+      "disposition": "RC3 performance-test owner/coordinator must triage determinism. Exact node also fails on pristine dev 9cf0aeff7; no threshold weakened or test deleted."
     },
     {
       "finding": "Composed-app store identity node reported failure in the incomplete 1224-node run.",
-      "disposition": "Passes standalone (1 passed in 5.70s). Coordinator/test-isolation owner must triage ordering/global-state dependence in the broad run; no unrelated composition repair attempted."
+      "disposition": "Prior incomplete-run finding: standalone passes. No new broad isolation claim; coordinator/test-isolation owner must attach and triage ordering/global-state dependence."
     }
   ],
   "brief_correction": {
@@ -322,5 +347,10 @@
     ],
     "resolved": true,
     "resolution": "Task author expanded all three legacy test artifact paths and reopened this task 2026-11-28 03:41Z; governed show confirmed in_progress, Codex/Antigravity, no declared dependencies."
+  },
+  "baseline_verification": {
+    "commit": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+    "method": "git archive extracted into a unique local /tmp source snapshot because shared worktree metadata is read-only; snapshot has its own provisioned venv and no task code. Tests run from snapshot root.",
+    "result": "The four broader failures reproduce on unchanged dev. No unrelated test assertion or production code repaired."
   }
 }
