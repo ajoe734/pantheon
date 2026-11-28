@@ -1,0 +1,90 @@
+{
+  "task_id": "MGMT-STRATEGY-HIDDEN-COHORT-COUNT-CONTRACT-20261128",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
+  "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
+  "source_base": "1107807702c128980011bd42bace5c37177a336a",
+  "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
+  "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
+  "incident": {
+    "root_run": "46078610190",
+    "backend": "2c72f5e28",
+    "frontend": "0284c136d",
+    "failure": "meta_hidden_test_persona_strategy_count_missing",
+    "cause": "Merged #7982 nulled the compatibility count for a combined cohort, while the existing release probe and frontend require an integer."
+  },
+  "contract": {
+    "default": "Both hidden_persona_strategy_count and hidden_test_persona_strategy_count always carry the same non-negative combined cohort count. persona_exclusion_scope is [test] or [test, non_trading] from the existing directory lookup.",
+    "diagnostic": "include_test_personas=true keeps all rows and zero hidden counts, with persona_exclusion_scope=[].",
+    "directory_unavailable": "Keep visible persona rows, zero hidden persona counts and the existing persona_states unavailable surface, with scope=[test].",
+    "registry_unavailable": "Keep existing HTTP 503 dependency error; do not fabricate list metadata.",
+    "probe": "Prefer integer hidden_persona_strategy_count, fall back to integer hidden_test_persona_strategy_count; reject bool, null, strings and missing values when neither key is valid.",
+    "attribution": "Document the existing separate hidden_non_trading_persona_count in meta and data.summary; no attribution source changes."
+  },
+  "unchanged_boundaries": [
+    "Non-trading and test exclusion, ordering, pagination, candidate counts and owner reads from #7982",
+    "services/control-plane/bff/strategies/routes/common.py (BFF-PERSONA-LEDGER-READ-REUSE-20261127)",
+    "execute-plans frontend (FE-STRATEGY-HIDDEN-COHORT-BANNER-20261128)"
+  ],
+  "runtime_budget": {
+    "cadence": "Existing GET request only; 0 new scheduled jobs or emitters.",
+    "owner_reads": "0 additional owner reads per request; reuse the existing one persona directory read and already-computed Registry count. Tests retain <=2 summary reads for the bounded cases; existing paginated walk count unchanged.",
+    "persistent_writers": 0,
+    "hosted_size_and_count": "0 new stored bytes, rows, files, queues or caches at any hosted scale; fixed response metadata only.",
+    "growth_per_day_bytes": 0,
+    "cap_bytes": 0,
+    "cleanup": "No runtime state added; no new cleanup or storage manifest registration required."
+  },
+  "validation": [
+    {
+      "command": "timeout 180s /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py",
+      "exit_code": 0,
+      "result": "122 passed, 1 skipped, 3 dependency deprecation warnings in 45.63s; terminal output collected. A further explicit Registry-unavailable regression is validated separately.",
+      "skip_reason": "RANKING_TEST_DSN is not set; live PostgreSQL strategy-list latency test skipped."
+    },
+    {
+      "command": "python3 scripts/ci_test_inventory.py check",
+      "exit_code": 0,
+      "result": "test inventory ok"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "No whitespace errors."
+    },
+    {
+      "command": "timeout 60s /tmp/bff-ledger-reuse-venv/bin/python -m pytest -q services/control-plane/bff/tests/test_management_non_trading_read_scope.py",
+      "exit_code": 0,
+      "result": "38 passed, 3 dependency deprecation warnings in 5.96s; includes explicit Registry-unavailable regression, terminal output collected."
+    }
+  ],
+  "reader_inventory": {
+    "command": "git grep -l hidden_test_persona_strategy_count",
+    "validated_tests": [
+      "acceptance/test_mgmt_registry_pages_readable.py",
+      "acceptance/test_mgmt_strategy_meeting_research_readable.py",
+      "services/control-plane/bff/tests/test_strategy_list_latency.py",
+      "services/control-plane/bff/tests/test_strategy_list_test_scope.py",
+      "services/control-plane/bff/tests/test_strategy_list_default_view.py",
+      "services/control-plane/bff/tests/test_management_non_trading_read_scope.py"
+    ],
+    "unchanged": [
+      "services/control-plane/bff/strategies/service.py",
+      "acceptance/fixtures/hosted_mgmt_strategy_meeting_research_20261120.json",
+      "acceptance/README.md",
+      "Historical evidence manifests"
+    ]
+  },
+  "hosted_acceptance": {
+    "status": "pending_merge_deployment_and_next_Root",
+    "proof": null,
+    "requirements": [
+      "After independent review and canonical merge, verify the hosted manifest serves this backend and verify all expected services healthy.",
+      "The next Root must pass probe:mgmt-strategy-meeting-research-readable; record the Root and probe output.",
+      "Authenticated admintest GET /bff/strategies must show both count keys as the same integer; record actual release identities, count and scope without credentials."
+    ],
+    "read_only_probe": "acceptance/probes/mgmt-strategy-meeting-research-readable"
+  },
+  "residual_findings": []
+}

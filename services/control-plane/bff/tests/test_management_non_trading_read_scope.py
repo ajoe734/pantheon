@@ -225,3 +225,17 @@ def test_combined_hidden_count_is_compatible_without_extra_reads(monkeypatch, in
     assert body["page_info"]["total"] == TOTAL_COUNT - (0 if include_test else 2)
     assert world.directory_reads == ["tenant-dev"]
     assert len(world.owner_summary_calls) <= 2
+
+
+def test_strategy_registry_unavailable_keeps_dependency_error(monkeypatch):
+    app, registry = _build_app(monkeypatch, _World())
+
+    def unavailable(**kwargs):
+        raise RuntimeError("Registry owner unavailable")
+
+    monkeypatch.setattr(registry, "strategy_spec_summary_page", unavailable)
+    response = TestClient(app).get("/bff/strategies?page_size=200", headers=HEADERS)
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
+    assert set(body["meta"]) == {"correlationId"}
