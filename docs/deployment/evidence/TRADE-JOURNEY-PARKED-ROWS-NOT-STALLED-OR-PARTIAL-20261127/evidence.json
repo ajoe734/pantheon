@@ -53,6 +53,12 @@
       "acceptance_item": 4,
       "before": "recorded expired_2330_D20261125 HOLD expected review_market_data_refresh",
       "after": "next_step null; side null; decision_action hold"
+    },
+    {
+      "test": "services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip",
+      "acceptance_item": 4,
+      "before": "recorded expired_2330_D20261125 HOLD expected attention total 1 after expiry",
+      "after": "attention total 0 and no items both before and after expiry; list/detail side and next_step null; expired reason and decision_action hold retained"
     }
   ],
   "validation": [
@@ -77,6 +83,14 @@
     "status": "pending deployment",
     "probe": "acceptance/probes/trade-journey-parked-expired",
     "note": "No hosted acceptance claimed; recorded source responses predate this fix."
+  },
+  "ci_resumption": {
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46113001832/job/140883125811",
+    "failure": "Service suites (postgres): 1 failed, 567 passed, 33 skipped; recorded HOLD integration test retained an attention expectation contradicted by AC4",
+    "local_reproduction": "Before fix: timeout-free focused pytest command returned exit 1, 1 failed in 4.86s with the same assert 0 == 1 at test_lifecycle_projector.py:3737",
+    "local_regression": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip: exit 0, 1 passed, 1 dependency deprecation warning in 4.99s; ephemeral PostgreSQL 16 container cleaned by fixture",
+    "scope": "Update existing producer -> relational projector -> BFF integration assertions required by AC3/AC4/AC6; no production code changes in CI repair",
+    "merged_base": "287701d460de11ef8a2cc6b0323c45417d10d48f"
   },
   "review_resumption": {
     "reason": "Artifact contract revised by Human/Ops; old head rejected by handoff because it lacked current dev",
