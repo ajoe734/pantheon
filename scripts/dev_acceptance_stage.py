@@ -356,11 +356,21 @@ def _first_counted_read(route: dict) -> str:
     return f"; first failed read {read['method']} {read['path']} {outcome}{elapsed}"
 
 
-def summarize_crawl(manifest: dict) -> dict:
+def _transport_error(error: str) -> str:
+    """Keep the pinned transport's METHOD pathname: message, dropping request query/fragment."""
+    request, separator, message = error.partition(": ")
+    method, space, path = request.partition(" ")
+    if separator and space:
+        error = f"{method} {_read_path(path)}: {message}"
+    return error[:200]
+
+
+def summarize_crawl(manifest: dict, *, redact_env: dict | None = None) -> dict:
     """Routes and statuses only: no token, no response body, no request URL query.
 
     Failed routes also carry a bounded, allowlisted copy of the crawl's failedReads
     (method, path, status or error name, counted, elapsedMs) and failedReadsOmitted.
+    Optional pinnedTransport carries at most 20 errors and a terminated-before-send count.
     """
     routes, failed, non_get = [], [], set()
     read_budget = FAILED_READ_CAP_PER_RUN
@@ -388,10 +398,19 @@ def summarize_crawl(manifest: dict) -> dict:
                 url = str((request or {}).get("url") or "")
                 non_get.add(f"{method} {urllib.parse.urlsplit(url).path if '://' in url else url.split('?', 1)[0]}")
     result = manifest.get("result") or {}
-    return {"pass": result.get("pass") is True, "overall": str(result.get("overall") or ""),
-            "failures": [str(f)[:200] for f in (result.get("failures") or [])][:20],
-            "routeCount": len(routes), "routes": routes, "failedRoutes": failed,
-            "nonGetRequests": sorted(non_get)[:50]}
+    summary = {"pass": result.get("pass") is True, "overall": str(result.get("overall") or ""),
+               "failures": [str(f)[:200] for f in (result.get("failures") or [])][:20],
+               "routeCount": len(routes), "routes": routes, "failedRoutes": failed,
+               "nonGetRequests": sorted(non_get)[:50]}
+    if "pinnedTransport" in manifest:  # absent in older crawl manifests
+        transport = manifest["pinnedTransport"]
+        summary["pinnedTransport"] = {
+            # Redact before clipping so a secret crossing the cap cannot leave an unredacted prefix.
+            "errors": [_transport_error(redact(error, redact_env or {}))
+                       for error in (transport.get("errors") or [])[:20]],
+            "terminatedBeforeSendCount": len(transport.get("terminatedBeforeSend") or []),
+        }
+    return summary
 
 
 def _find_manifest(out_dir: Path) -> dict | None:
@@ -458,7 +477,12 @@ def crawl_check(*, frontend_dir: Path | None, prepared: str, identity: dict, ide
     if manifest is None:
         artifact["outputTail"] = tail[-500:]
         return skipped("crawl_no_report", seconds, detail=f"skipped: crawl_no_report (exit {code}); {tail[-400:]}")
-    summary = json.loads(redact(json.dumps(summarize_crawl(manifest)), redact_env))
+    summary = json.loads(redact(json.dumps(summarize_crawl(manifest, redact_env=redact_env)), redact_env))
+    if "pinnedTransport" in summary:
+        transport = summary["pinnedTransport"]
+        # Redaction can expand a short secret into a longer marker; enforce the final entry cap too.
+        transport["errors"] = [error[:200] for error in transport["errors"]]
+        artifact["pinnedTransport"] = transport
     artifact.update({"seconds": round(seconds, 2), "exitCode": code, "crawlOverall": summary["overall"],
                      "crawlFailures": summary["failures"], "routeCount": summary["routeCount"],
                      "routes": summary["routes"], "failedRoutes": summary["failedRoutes"],
@@ -473,6 +497,9 @@ def crawl_check(*, frontend_dir: Path | None, prepared: str, identity: dict, ide
                       for r in summary["failedRoutes"][:10])
     detail = (f"failed routes: {named}" if named else "no failing route") + \
         f"; crawl failures: {', '.join(summary['failures']) or 'none'}{note}"
+    errors = (summary.get("pinnedTransport") or {}).get("errors") or []
+    if errors:
+        detail += f"; pinned transport errors: {'; '.join(errors[:3])}"
     return _crawl_result("failed", exit_code=code, seconds=seconds, detail=detail,
                          failed_routes=summary["failedRoutes"]), artifact
 
