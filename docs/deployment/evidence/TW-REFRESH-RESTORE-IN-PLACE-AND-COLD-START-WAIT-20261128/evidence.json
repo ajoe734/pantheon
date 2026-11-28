@@ -151,7 +151,12 @@
       "local_before": "timeout 120 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_finmind_broker_backfill.py::test_backfill_market_open_guard_blocks_start_inside_window_and_stops_between_sessions -q: exit 1, 1 failed in 0.73s; same assertion as CI.",
       "change": "Use production defaults with both budget overrides removed; assert initial refusal at 00:30Z, admission at 00:29Z, and crossing 00:30Z between sessions or during throttle sleep with injected clocks. Preserve wall-deadline, no-second-fetch and keyed-store assertions. No runtime policy change.",
       "local_after": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest services/source_ingestion/tests/test_finmind_broker_backfill.py -q: exit 0, 24 passed in 11.77s.",
-      "contract_requirement": "Human/Ops must add services/source_ingestion/tests/test_finmind_broker_backfill.py to canonical artifacts while blocked and reopen before renewed exact-head handoff. Source-owned ci-red return authorized repair; the current artifact list omits this dependent test file."
+      "contract_requirement": "Human/Ops must add services/source_ingestion/tests/test_finmind_broker_backfill.py to canonical artifacts while blocked and reopen before renewed exact-head handoff. Source-owned ci-red return authorized repair; the current artifact list omits this dependent test file.",
+      "base": "origin/dev 25edbe5be61d893d63ca72e8ad4d3676630271d1 integrated in 0a0cc9a37 without conflicts",
+      "final_command": "timeout 180 \"$PANTHEON_DEPENDENCY_PYTHON\" -m pytest scripts/test_deploy_nonprod_vm.py scripts/test_dev_tw_market_refresh.py services/source_ingestion/tests/test_finmind_broker_backfill.py -q -k \"kept_entered_record or restore_readiness_timeout or injected_monotonic_deadline or manage_restore or restored_in_place_match or market_open_guard or broker_backfill_market_open_guard or exact_restore or restore_acceptance_probe or test_finmind_broker_backfill\"",
+      "final_terminal_result": "exit 0; 65 passed, 373 deselected in 36.93s",
+      "static_checks": "bash -n scripts/deploy_nonprod_vm.sh; git diff --check origin/dev...HEAD; python3 scripts/check_storage_manifest.py: all exit 0, storage passed=true, 382 entries, no failures",
+      "scope": "Focused restore/guard/probe regressions plus all 24 backfill tests passed after current-dev integration. Full Smoke acceptance must run on the new PR head; old failed run is not relabelled as passing."
     }
   },
   "hosted_acceptance": {
