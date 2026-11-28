@@ -4,7 +4,7 @@
   "reviewer": "Antigravity",
   "review_independence": "Codex and Antigravity are different model families; canonical independent review pending.",
   "root_cause_class": "WP2.3 servant-selection instance in docs/operations/problem-register.md; repair of merged #7982, not a new feature.",
-  "source_base": "9cf0aeff70d7611dda3d5bca4f5f460147aad003",
+  "source_base": "dd5c6f51b526d686ca9ab6b3c6c3af09af157714",
   "anchor_commit": "c5f3c8a59377ad9605f1bd3704abdb4b8aec4987",
   "implementation_status": "source_validated_pending_independent_review_merge_and_hosted_acceptance",
   "incident": {
@@ -94,6 +94,27 @@
       "command": "python3 scripts/ci_test_inventory.py check; git diff --check",
       "exit_code": 0,
       "result": "test inventory ok; no whitespace errors after dev sync."
+    },
+    {
+      "command": "timeout 180s .venv-pantheon/bin/python -m pytest -q acceptance/test_mgmt_strategy_meeting_research_readable.py acceptance/test_mgmt_registry_pages_readable.py services/control-plane/bff/tests/test_management_non_trading_read_scope.py services/control-plane/bff/tests/test_strategy_list_test_scope.py services/control-plane/bff/tests/test_strategy_list_default_view.py services/control-plane/bff/tests/test_strategy_list_latency.py services/control-plane/bff/tests/test_strategy_list_overlap_reads.py",
+      "exit_code": 0,
+      "result": "141 passed, 1 skipped, 3 warnings in 54.02s on merge anchor cefc0eb89; terminal output collected.",
+      "skip_reason": "RANKING_TEST_DSN is not set; live PostgreSQL strategy-list latency test skipped."
+    },
+    {
+      "command": "timeout 120s .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py",
+      "exit_code": 0,
+      "result": "132 passed, 1 skipped in 9.65s on merge anchor cefc0eb89; terminal output collected. The old CI failure did not reproduce in this full-file run; no lifecycle source or test edits."
+    },
+    {
+      "command": "timeout 60s .venv-pantheon/bin/python -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_backfill_hosted_chain_persona_scope.py",
+      "exit_code": 0,
+      "result": "137 passed, 1 skipped, 1 warning in 15.12s; terminal output collected. Exact two-file CI invocation passes locally; old CI failure not reproduced."
+    },
+    {
+      "command": "PATH=\"$PWD/.venv-pantheon/bin:$PATH\" timeout 180s bash -c './scripts/run-acceptance.sh smoke && python3 -m pytest -q services/trade_journey/test_hosted_lifecycle_probe.py scripts/test_backfill_hosted_chain_persona_scope.py'",
+      "exit_code": 124,
+      "result": "TIMEOUT at 180s during pre-existing scripts/test_deploy_nonprod_vm.py at 28%; not counted as passed. Earlier stage0 schema checks and unit suites completed, but the overall dispatcher did not complete and the chained lifecycle invocation was not reached. Terminal output and exit status collected. The exact lifecycle invocation passes separately (137 passed, 1 skipped); new-head hosted CI remains required."
     }
   ],
   "reader_inventory": {
@@ -124,7 +145,14 @@
     ],
     "read_only_probe": "acceptance/probes/mgmt-strategy-meeting-research-readable"
   },
-  "residual_findings": [],
+  "residual_findings": [
+    {
+      "finding": "Previous-head Smoke acceptance failed in the unchanged trade-journey lifecycle probe test; the full file passes locally after dev sync. Order dependence or flakiness is suspected, not established.",
+      "owner_chain": "Trade-journey hosted lifecycle probe / owning coordinator; outside this BFF metadata contract scope.",
+      "disposition": "Record the exact failed CI job and local passing evidence for coordinator classification; if it recurs on the synced head, retry once per dispatch instruction. No lifecycle test or implementation changes in this task.",
+      "evidence": "https://github.com/ajoe734/pantheon/actions/runs/46104630272/job/140855730901"
+    }
+  ],
   "ci_return": {
     "pr": 8006,
     "previous_head": "aa4ae3d5e560efbba6d607abea7dc469e281bc3b",
@@ -161,5 +189,20 @@
     "register_resolution": "Preserve current dev hosted and task records; add PR #8006 fresh-review status, unchanged boundaries and task evidence reference.",
     "review": "Fresh Antigravity review must bind the newly published exact head; all previous-head approvals are stale.",
     "hosted": "Still pending deployment and next Root probe; no hosted completion claimed."
+  },
+  "ci_red_resume": {
+    "previous_reviewed_head": "e6fac6a9fde55a00d8706f06ee0473b07f4490d7",
+    "failed_run": "https://github.com/ajoe734/pantheon/actions/runs/46104630272",
+    "failed_job": "https://github.com/ajoe734/pantheon/actions/runs/46104630272/job/140855730901",
+    "raw_log_command": "gh api repos/ajoe734/pantheon/actions/jobs/140855730901/logs",
+    "raw_log_exit_code": 0,
+    "raw_log_result": "Smoke acceptance: 1 failed, 136 passed, 1 skipped in 10.32s. test_natural_mode_accepts_journey_ending_in_reconciliation_completed asserts code == 0 but receives 1. The smoke dispatcher itself passed.",
+    "merge_anchor": "cefc0eb89173dc24fa4f064b9d58955a4df179b0",
+    "base": "dd5c6f51b526d686ca9ab6b3c6c3af09af157714",
+    "sync_method": "Merge current dev to preserve published history and use normal non-force push, as required by closeout policy. Imported deployment files match origin/dev exactly.",
+    "conflict_resolution": "Preserve new dev persona-purpose and private-visibility instances and parallel frontend sequencing in the WP2.3 register row; retain task status, evidence link and unchanged boundaries.",
+    "review": "All previous-head approvals are stale. Hand off the final published head and this committed manifest to Antigravity for independent review.",
+    "new_head_ci": "Pending publication and GitHub execution; no passed CI claim.",
+    "retry_policy": "If the same lifecycle failure recurs on the synced head, rerun its failed CI job once and keep the residual finding in handoff. Do not edit that test file."
   }
 }
