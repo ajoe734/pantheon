@@ -1,0 +1,678 @@
+{
+  "task_id": "HOLDINGS-COST-HOSTED-ACCEPTANCE-20261106",
+  "kind": "hosted_readonly_measurement",
+  "measured_at": "2026-11-26T02:52:49.674Z",
+  "measured_by": "Claude (auto worker, read-only)",
+  "verdict": "not_passed",
+  "verdict_reason": "Every runtime served by the Performance Center is flat: the holdings endpoint and table have 0 rows. With no open Taiwan holding there is no row to show TWD, average entry, last close with as-of date, unrealized PnL and broker (AC1), no row to compare against the recomputation (AC2 row part), no open pre-deployment position to watch across a restart (AC3), and no fill after the measured deployment (AC4). Not counted as a vacuous pass.",
+  "deployed_pair": {
+    "frontend_manifest": {
+      "url": "https://app.dev.mvl-cap.tw/deployment.json",
+      "deploymentState": "accepted",
+      "bffCommit": "b3f93d448f44aa426f3a4848c93df3e5a1ae8aa3",
+      "frontendSha": "38e5337d1f832a8582ce4eaac63cb5febbfb943e",
+      "acceptedAt": "2026-11-25T20:35:33Z",
+      "root_run": 45684275970
+    },
+    "bff_version_at_measurement": {
+      "source_commit_sha": "8e67d240e034f4f133ffa926383b584536bc2e35",
+      "image_digest": "sha256:e4514fd22b65e5540ae34ab5c82b8c1ac0ce462571d852052e8ff09eee06ab9a",
+      "build_time": "2026-11-26T02:22:04Z"
+    },
+    "note": "At measurement time Dev release run 45740904149 (BFF 8e67d240e + FE 38e5337d1) was in progress: BFF and telemetry containers had already been recreated (telemetry StartedAt 2026-11-26T02:49:09Z) while the manifest still named the accepted pair b3f93d448 + 38e5337d1. Both BFF SHAs contain the TELEMETRY-POSITION-NET-PNL-COSTS fix (74769aa24) and the PM12 serving-binding fix; the empty holdings come from telemetry state (no open positions), not from the BFF version."
+  },
+  "browser": {
+    "method": "real Chromium, real form login (admintest, dev-login) at https://app.dev.mvl-cap.tw/auth, then /management/performance; secret read in-process, never logged",
+    "final_path": "/management/performance",
+    "holdings_http": 200,
+    "holdings_url": "/bff/management/portfolio-book/holdings",
+    "holdings_response": {
+      "data": {
+        "summary": {
+          "holding_count": 0,
+          "incident_count": 0,
+          "source_coverage": {
+            "source_row_count": 0,
+            "runtime_count": 4,
+            "telemetry_runtime_count": 4,
+            "stale_row_count": 0,
+            "missing_binding_count": 0,
+            "degraded_source_count": 0
+          },
+          "source_row_count": 0,
+          "stale_row_count": 0,
+          "runtime_count": 4,
+          "telemetry_runtime_count": 4,
+          "degraded_source_count": 0,
+          "missing_binding_count": 0
+        },
+        "items": []
+      },
+      "page_info": {
+        "next_page_token": null,
+        "total": 0
+      },
+      "meta": {
+        "snapshot_at": "2026-11-26T02:53:09Z",
+        "surfaces": {
+          "portfolio_book_holdings": {
+            "status": "ok",
+            "source": "bff_composed",
+            "snapshot_at": "2026-11-26T02:53:09Z"
+          },
+          "runtime_bindings": {
+            "status": "ok",
+            "source": "service",
+            "snapshot_at": "2026-11-26T02:53:09Z"
+          },
+          "telemetry_summaries": {
+            "status": "ok",
+            "source": "service",
+            "snapshot_at": "2026-11-26T02:53:09Z"
+          }
+        },
+        "total": 0,
+        "incidents": [],
+        "filters": {},
+        "composition_sources": [
+          "GET /api/v1/telemetry/{runtime_id}/summary"
+        ]
+      }
+    },
+    "table_headers": [
+      "HOLDING",
+      "數量",
+      "進場均價",
+      "最新收盤價",
+      "市值",
+      "未實現損益",
+      "商品種類",
+      "契約月",
+      "乘數",
+      "保留保證金",
+      "決策原因",
+      "STAGE / CAPITAL SCOPE",
+      "RUNTIME / BROKER",
+      "SOURCE CONFIDENCE",
+      "RISK",
+      "ACTIONS"
+    ],
+    "table_rows": [
+      [
+        "No holdings match the current filters."
+      ]
+    ],
+    "visible_missing_currency_count": 0,
+    "page_errors": [],
+    "non_get_bff_requests": [
+      "POST /bff/auth/dev-login (login only)"
+    ],
+    "business_writes": [],
+    "network": [
+      {
+        "m": "GET",
+        "url": "/bff/auth/readiness",
+        "status": 401,
+        "ms": 4414
+      },
+      {
+        "m": "POST",
+        "url": "/bff/auth/dev-login",
+        "status": 200,
+        "ms": 2994
+      },
+      {
+        "m": "GET",
+        "url": "/bff/auth/readiness",
+        "status": 200,
+        "ms": 3582
+      },
+      {
+        "m": "GET",
+        "url": "/bff/auth/readiness",
+        "status": 200,
+        "ms": 1051
+      },
+      {
+        "m": "GET",
+        "url": "/bff/management/portfolio-book/holdings",
+        "status": 200,
+        "ms": 3262
+      },
+      {
+        "m": "GET",
+        "url": "/bff/version",
+        "status": 200,
+        "ms": 1208
+      }
+    ]
+  },
+  "telemetry_state": {
+    "method": "read-only: python3 -I inside pantheon-telemetry-1 reading /data/telemetry/runtime_summaries.json (no HTTP, no writes)",
+    "serving_runtimes": [
+      "rt-3252fa75",
+      "rt-3b65a843",
+      "rt-49c1c3d1",
+      "rt-ad81501b"
+    ],
+    "runtimes": {
+      "rt-ad81501b": {
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "positions": [],
+        "_positions_by_symbol": {
+          "2330.TWSE": 0.0
+        },
+        "_cost_by_symbol": {
+          "2330.TWSE": {
+            "quantity": 0.0,
+            "average_price": null,
+            "realized_pnl": -175.0,
+            "costs": 11.890875,
+            "costs_known": true
+          }
+        },
+        "_currency_by_symbol": {
+          "2330.TWSE": "TWD"
+        },
+        "_broker_by_symbol": {
+          "2330.TWSE": "shioaji_paper"
+        },
+        "_cost_applied_fill_count": 2,
+        "ledger_fill_count": 2,
+        "pnl": -186.89087499999732
+      },
+      "rt-3b65a843": {
+        "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+        "positions": [],
+        "_positions_by_symbol": {
+          "0050.TWSE": 0.0
+        },
+        "_cost_by_symbol": {
+          "0050.TWSE": {
+            "quantity": 0.0,
+            "average_price": null,
+            "realized_pnl": -9.649999999999991,
+            "costs": 0.33869125,
+            "costs_known": true
+          }
+        },
+        "_currency_by_symbol": {
+          "0050.TWSE": "TWD"
+        },
+        "_broker_by_symbol": {
+          "0050.TWSE": "shioaji_paper"
+        },
+        "_cost_applied_fill_count": 2,
+        "ledger_fill_count": 2,
+        "pnl": -9.988691250022384
+      },
+      "rt-3252fa75": {
+        "positions": [],
+        "ledger_fill_count": 0,
+        "note": "active binding has no fills; prior binding rb-7f3c1be5... fully closed 2026-11-16"
+      },
+      "rt-49c1c3d1": {
+        "positions": [],
+        "ledger_fill_count": 0,
+        "note": "no fills on any binding"
+      }
+    }
+  },
+  "canonical_fills": {
+    "method": "read-only: psql in pantheon-postgres-1 with PGOPTIONS=-c default_transaction_read_only=on; telemetry_events WHERE event_type='paper_fill_simulated' AND runtime_id IN the four serving runtimes (all history)",
+    "count": 16,
+    "sha256_of_raw_rows": "dd0eff0fb00f66b964d092b9201724d220cbc2fc9e14faac96cb6d13d87f9de3",
+    "fills": [
+      {
+        "event_id": "8b86a000-146f-469f-82ee-59313f2a9952",
+        "created_at": "2026-11-10T07:01:46+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "symbol": "0050.TWSE",
+        "kind": "stock_future",
+        "ledger_fill_count": 1,
+        "action": "BUY",
+        "fill_quantity": 2.0,
+        "fill_price": 97.1,
+        "multiplier": 1000.0,
+        "fee": 16.0,
+        "tax": 3.884,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "0b3b134f-1801-4b7a-b3b5-3c169027bcde",
+        "created_at": "2026-11-10T07:01:47+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 1,
+        "action": "BUY",
+        "fill_quantity": 43.0,
+        "fill_price": 2285.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "f65c3dd8-5ed2-42e8-b382-506289f8230c",
+        "created_at": "2026-11-10T07:01:48+00:00",
+        "runtime_id": "rt-3252fa75",
+        "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "symbol": "2317.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 1,
+        "action": "BUY",
+        "fill_quantity": 414.0,
+        "fill_price": 241.5,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "a5ebc866-ca4d-4e35-b56a-1c71a4c9301a",
+        "created_at": "2026-11-12T22:01:22+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 2,
+        "action": "SELL",
+        "fill_quantity": -43.0,
+        "fill_price": 2340.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "61d175d9-5325-40a0-954a-106109702e2c",
+        "created_at": "2026-11-12T22:01:23+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "symbol": "0050.TWSE",
+        "kind": "stock_future",
+        "ledger_fill_count": 2,
+        "action": "SELL",
+        "fill_quantity": -2.0,
+        "fill_price": 103.55,
+        "multiplier": 1000.0,
+        "fee": 16.0,
+        "tax": 4.142,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "f6b56bad-3c86-4a26-8232-2743688f9013",
+        "created_at": "2026-11-12T22:01:28+00:00",
+        "runtime_id": "rt-3252fa75",
+        "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "symbol": "2317.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 2,
+        "action": "SELL",
+        "fill_quantity": -414.0,
+        "fill_price": 240.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "d3b7cf65-4aa9-4cdf-9523-c2041b8cd27c",
+        "created_at": "2026-11-13T11:01:23+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "symbol": "0050.TWSE",
+        "kind": "stock_future",
+        "ledger_fill_count": 3,
+        "action": "BUY",
+        "fill_quantity": 2.0,
+        "fill_price": 101.1,
+        "multiplier": 1000.0,
+        "fee": 16.0,
+        "tax": 4.044,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "a67e6797-d3ae-4912-96c0-ec8041a421e8",
+        "created_at": "2026-11-14T07:45:09+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 3,
+        "action": "BUY",
+        "fill_quantity": 1.0,
+        "fill_price": 2350.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "b05c063a-7687-4aa1-af9d-c5a6cfc7a2cb",
+        "created_at": "2026-11-14T07:45:10+00:00",
+        "runtime_id": "rt-3252fa75",
+        "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "symbol": "2317.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 3,
+        "action": "BUY",
+        "fill_quantity": 1.0,
+        "fill_price": 241.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "2640d44a-f619-4954-8f13-a36081ad3b29",
+        "created_at": "2026-11-16T06:43:53+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "symbol": "0050.TWSE",
+        "kind": "stock_future",
+        "ledger_fill_count": 4,
+        "action": "SELL",
+        "fill_quantity": -2.0,
+        "fill_price": 102.5,
+        "multiplier": 1000.0,
+        "fee": 16.0,
+        "tax": 4.1,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "c465b3fe-c530-4399-80a8-0e0ebf0e8a49",
+        "created_at": "2026-11-16T06:52:08+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 4,
+        "action": "SELL",
+        "fill_quantity": -1.0,
+        "fill_price": 2215.0,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "000600fb-6496-47d9-a550-1fa23449c1e2",
+        "created_at": "2026-11-16T06:52:09+00:00",
+        "runtime_id": "rt-3252fa75",
+        "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "symbol": "2317.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 4,
+        "action": "SELL",
+        "fill_quantity": -1.0,
+        "fill_price": 218.5,
+        "multiplier": 1.0,
+        "fee": "absent",
+        "tax": "absent",
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "12757ca4-2d60-42c5-9f64-54be38e8ea65",
+        "created_at": "2026-11-19T23:46:17+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 1,
+        "action": "BUY",
+        "fill_quantity": 1.0,
+        "fill_price": 2165.0,
+        "multiplier": 1.0,
+        "fee": 3.085125,
+        "tax": 0.0,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "82c70998-8277-4b7f-bd3e-519a066a8192",
+        "created_at": "2026-11-19T23:46:17+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+        "symbol": "0050.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 1,
+        "action": "BUY",
+        "fill_quantity": 1.0,
+        "fill_price": 94.05,
+        "multiplier": 1.0,
+        "fee": 0.13402125,
+        "tax": 0.0,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "8c748855-f4dc-4273-a4de-161d2dd0cae5",
+        "created_at": "2026-11-23T23:34:52+00:00",
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+        "symbol": "0050.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 2,
+        "action": "SELL",
+        "fill_quantity": -1.0,
+        "fill_price": 84.4,
+        "multiplier": 1.0,
+        "fee": 0.12027000000000002,
+        "tax": 0.0844,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      },
+      {
+        "event_id": "50c1c88f-c412-4187-9f5c-6ab57145fd98",
+        "created_at": "2026-11-23T23:34:52+00:00",
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "symbol": "2330.TWSE",
+        "kind": "cash_share",
+        "ledger_fill_count": 2,
+        "action": "SELL",
+        "fill_quantity": -1.0,
+        "fill_price": 1990.0,
+        "multiplier": 1.0,
+        "fee": 2.83575,
+        "tax": 5.97,
+        "currency": "TWD",
+        "broker": "shioaji_paper"
+      }
+    ]
+  },
+  "independent_recomputation": {
+    "method": "Decimal moving average per (runtime, binding, symbol) ordered by ledger_fill_count; realized = (exit - avg) x closed qty x multiplier; costs = sum of fee+tax where present; absent keys = legacy zero-cost shape",
+    "per_binding": [
+      {
+        "runtime_id": "rt-3252fa75",
+        "binding_id": "rb-7f3c1be55a224fdaa36bbdd7a7532b4b",
+        "symbol": "2317.TWSE",
+        "fills": 4,
+        "ledger_fill_counts": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "first": "2026-11-10T07:01:48+00:00",
+        "last": "2026-11-16T06:52:09+00:00",
+        "quantity": "0.0",
+        "average_entry": null,
+        "gross_realized": "-643.500",
+        "costs": "0",
+        "net_realized": "-643.500",
+        "costs_known": true
+      },
+      {
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-2b0df30559154a93902c209b0318d95c",
+        "symbol": "0050.TWSE",
+        "fills": 2,
+        "ledger_fill_counts": [
+          1,
+          2
+        ],
+        "first": "2026-11-19T23:46:17+00:00",
+        "last": "2026-11-23T23:34:52+00:00",
+        "quantity": "0.0",
+        "average_entry": null,
+        "gross_realized": "-9.6500",
+        "costs": "0.33869125000000002",
+        "net_realized": "-9.98869125000000002",
+        "costs_known": true
+      },
+      {
+        "runtime_id": "rt-3b65a843",
+        "binding_id": "rb-3516fc86e6f84649a499fc89f3c562b3",
+        "symbol": "0050.TWSE",
+        "fills": 4,
+        "ledger_fill_counts": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "first": "2026-11-10T07:01:46+00:00",
+        "last": "2026-11-16T06:43:53+00:00",
+        "quantity": "0.0",
+        "average_entry": null,
+        "gross_realized": "15700.0000",
+        "costs": "80.170",
+        "net_realized": "15619.8300",
+        "costs_known": true
+      },
+      {
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-3823397e125e4579ba5f4174067087ed",
+        "symbol": "2330.TWSE",
+        "fills": 4,
+        "ledger_fill_counts": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "first": "2026-11-10T07:01:47+00:00",
+        "last": "2026-11-16T06:52:08+00:00",
+        "quantity": "0.0",
+        "average_entry": null,
+        "gross_realized": "2230.000",
+        "costs": "0",
+        "net_realized": "2230.000",
+        "costs_known": true
+      },
+      {
+        "runtime_id": "rt-ad81501b",
+        "binding_id": "rb-eb74118dd3ca4b169496b1c239087512",
+        "symbol": "2330.TWSE",
+        "fills": 2,
+        "ledger_fill_counts": [
+          1,
+          2
+        ],
+        "first": "2026-11-19T23:46:17+00:00",
+        "last": "2026-11-23T23:34:52+00:00",
+        "quantity": "0.0",
+        "average_entry": null,
+        "gross_realized": "-175.000",
+        "costs": "11.890875",
+        "net_realized": "-186.890875",
+        "costs_known": true
+      }
+    ],
+    "comparison_with_telemetry": [
+      {
+        "runtime_id": "rt-ad81501b",
+        "symbol": "2330.TWSE",
+        "recomputed": {
+          "quantity": "0.0",
+          "average_entry": null,
+          "gross_realized": "-175.000",
+          "costs": "11.890875",
+          "net_realized": "-186.890875"
+        },
+        "telemetry": {
+          "quantity": 0.0,
+          "average_price": null,
+          "gross_realized": -175.0,
+          "costs": 11.890875,
+          "runtime_pnl": -186.89087499999732
+        },
+        "quantity_match": true,
+        "average_match": true,
+        "gross_realized_match": true,
+        "costs_match": true,
+        "net_realized_plus_unrealized_equals_runtime_pnl": true
+      },
+      {
+        "runtime_id": "rt-3b65a843",
+        "symbol": "0050.TWSE",
+        "recomputed": {
+          "quantity": "0.0",
+          "average_entry": null,
+          "gross_realized": "-9.6500",
+          "costs": "0.33869125000000002",
+          "net_realized": "-9.98869125000000002"
+        },
+        "telemetry": {
+          "quantity": 0.0,
+          "average_price": null,
+          "gross_realized": -9.649999999999991,
+          "costs": 0.33869125,
+          "runtime_pnl": -9.988691250022384
+        },
+        "quantity_match": true,
+        "average_match": true,
+        "gross_realized_match": true,
+        "costs_match": true,
+        "net_realized_plus_unrealized_equals_runtime_pnl": true
+      }
+    ]
+  },
+  "acceptance": [
+    {
+      "ac": 1,
+      "status": "not_demonstrable",
+      "detail": "0 holding rows in the logged-in Performance Center (\"No holdings match the current filters.\"); visible '幣別未提供' count 0, but there is no row showing TWD, average entry, last close/as-of, unrealized PnL or broker."
+    },
+    {
+      "ac": 2,
+      "status": "partial",
+      "detail": "No rows to compare. Telemetry's closed-position state for both runtimes with fills on the serving binding equals the independent recomputation (qty 0, gross realized -175 / -9.65, costs 11.890875 / 0.33869125) and realized net (+0 unrealized) equals the reported runtime pnl within 0.01 (-186.890875 vs -186.890875; -9.98869125 vs -9.988691250)."
+    },
+    {
+      "ac": 3,
+      "status": "not_demonstrable",
+      "detail": "The positions opened 2026-11-19T23:46Z were closed 2026-11-23T23:34Z, before this measurement. After the telemetry restart at 2026-11-26T02:49:09Z the persisted cost state (_cost_applied_fill_count 2, costs_known true) still equals the recomputation with no double count, but no open pre-deployment position exists to show cost values on a row before and after a restart."
+    },
+    {
+      "ac": 4,
+      "status": "not_demonstrable",
+      "detail": "Latest fill on any serving runtime is 2026-11-23T23:34:52Z, before Root 45684275970 (accepted 2026-11-25T20:35:33Z) and before release 45740904149. Those 2026-11-19 buys and 2026-11-23 sells were ingested by deployed code that already contained the cost fix (Dev releases 44614873615 fb8ed951d and 45254432363 adaa418de both contain 74769aa24) and their effect matches the recomputation, but no fill arrived after the measured deployment."
+    },
+    {
+      "ac": 5,
+      "status": "recorded",
+      "detail": "Measured values recorded above with the manifest pair b3f93d448 + 38e5337d1 and the BFF image actually serving (8e67d240e) at measurement time."
+    }
+  ],
+  "what_would_close_it": "An open Taiwan holding on a serving runtime of an accepted pair (the next paper BUY that is not closed before measurement), measured in the browser and against the recomputation, then a telemetry restart and one further fill on that runtime, re-measured.",
+  "writes": "none: no BFF business writes, no telemetry/Postgres writes, no restart triggered by this task"
+}
