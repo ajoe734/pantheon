@@ -125,5 +125,15 @@
       "Correlated trade_decision lookup cost at about 158000 hosted journeys, including attention AND evaluation",
       "metrics stalled_count equals list stalled=true total on recorded bodies"
     ]
+  },
+  "review_rehandoff_20261128": {
+    "reason": "Human/Ops expanded the artifact contract to include the existing lifecycle roundtrip test; renew exact-head independent review after synchronizing dev.",
+    "base_commit": "1ae1c6af9f48376b3449fd69690b92c6b7eb8d63",
+    "merge_commit": "d1970a5230269fbdad0e29697bcbeeea62b6ef5f",
+    "validation_command": "TEST_DATABASE_URL=<isolated PostgreSQL 16 DSN> DATABASE_URL=<same DSN> /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q --disable-warnings services/control-plane/bff/tests/test_trade_journey_parked_expired.py services/control-plane/bff/tests/test_trade_journey_readable.py services/control-plane/bff/tests/test_trade_journey_readable_residuals.py services/control-plane/bff/tests/test_trade_journey_metrics_scope.py services/control-plane/bff/tests/test_trade_journey_list_identity.py services/control-plane/bff/tests/test_trade_journey_shared_identity_filter.py services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py services/control-plane/bff/test_trade_journey_contract.py services/control-plane/bff/test_trade_journey_correlation_envelope.py services/control-plane/bff/test_tj_e2e_007_sse_attention.py services/trade_journey/test_lifecycle_projector.py::test_recorded_park_expire_postgres_bff_roundtrip",
+    "validation_result": "exit 0; 104 passed, 0 skipped, 3 warnings in 24.91s; subprocess timeout 150s; outer timeout 180s; isolated PostgreSQL container cleanup collected before terminal output",
+    "initial_validation": "Same test selection without explicit DSN: exit 0; 102 passed, 2 skipped, 3 warnings in 26.92s. Explicit DSN rerun covers the two skipped shared-identity tests.",
+    "unchanged_scope": "No implementation changes during this resumption. AC3/AC4 HOLD integration assertions remain the only lifecycle test changes. FE side=null compatibility confirmed in canonical task next. No capacity code or threshold changes; existing capacity residual remains with the coordinator as directed.",
+    "hosted_acceptance": "pending deployment; no new hosted evidence claimed"
   }
 }
