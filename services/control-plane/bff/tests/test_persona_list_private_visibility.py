@@ -496,4 +496,3 @@ def test_persona_purpose_and_list_scope_rows_from_day_probe_task_unchanged_for_o
     assert [row["id"] for row in body["data"]] == [r["id"] for r in recorded_rows]
     assert [row["listScope"] for row in body["data"]] == expected_scopes
     assert [row["personaPurpose"] for row in body["data"]] == expected_purposes
-
