@@ -896,7 +896,20 @@ def test_probe_runs_in_clean_stdlib_only_interpreter_without_site_packages(serve
 
 
 def test_probe_fails_on_a_dated_world_get_only_and_never_prints_secrets(server):
-    done = exec_probe(server)  # the synthetic world is from 2026-11-28; the wall clock is later
+    # The subprocess uses the real clock: keep this world stale even on the
+    # fixed NOW date used by the in-process tests above.
+    stale = "2020-01-01T00:00:00Z"
+    for item in Handler.board["data"]["discovered"]:
+        item["since"] = stale
+    Handler.board["data"]["scaffolded"][0]["latest_at"] = stale
+    Handler.board["data"]["templates"][0]["evaluation"]["evaluation_context"]["window_end"] = "2020-01-01"
+    Handler.board["data"]["discovery_summary"]["llm_calls"].update(
+        utc_day="2020-01-01", release_switched_at=stale,
+        ritual_events_oldest_scanned_at=stale,
+    )
+    Handler.health["data"]["last_success"]["at"] = stale
+    Handler.health["data"]["downstream_actual_state"]["checked_at"] = stale
+    done = exec_probe(server)
     out = done.stdout + done.stderr
     assert done.returncode == 1 and "VERDICT failed" in out
     assert "tok-SECRET-VALUE" not in out and "client-SECRET-VALUE" not in out
