@@ -48,7 +48,10 @@ if args[0] == "ps":
     for r in rows: print(r["id"])
 elif args[0] == "inspect":
     r = next(r for r in rows if r["id"] == args[-1])
-    print("|".join([r["service"], r.get("oneoff", "False"), r["restart"], r["state"], r["image"], r["id"]]))
+    if "org.opencontainers.image.revision" in args[2]:
+        print(os.environ["PANTHEON_DEPLOY_SHA"])
+    else:
+        print("|".join([r["service"], r.get("oneoff", "False"), r["restart"], r["state"], r["image"], r["id"]]))
 elif args[0] == "image" and args[1] == "inspect":
     sys.exit(0 if args[2] in os.environ.get("RETAINED_IMAGES", "").split() else 1)
 elif args[0] == "tag":
@@ -57,15 +60,25 @@ elif args[0] == "tag":
     data[args[2]] = args[1]
     tags.write_text(json.dumps(data))
 elif args[0] == "compose" and "config" in args:
+    if os.environ.get("CONFIG_STDERR"):
+        print(os.environ["CONFIG_STDERR"], file=sys.stderr)
+    if os.environ.get("CONFIG_EXIT"):
+        sys.exit(int(os.environ["CONFIG_EXIT"]))
     names = [r["service"] for r in rows]
-    print(json.dumps({{"services": {{n: {{"image": "pantheon-" + n + ":t"}} for n in names}}}}))
+    names += os.environ.get("EXPECTED_STEADY_FOR_TEST", "").split()
+    print(json.dumps({{"services": {{n: {{"restart": "unless-stopped", **(
+        {{}} if os.environ.get("CONFIG_NO_IMAGE") else {{"image": "pantheon-" + n + ":t"}})}} for n in names}}}}))
+elif args[0] == "compose" and "ps" in args:
+    for r in rows:
+        if r["service"] == args[-1]: print(r["id"])
 elif args[0] == "compose" and "up" in args:
     if os.environ.get("FAIL_UP"):
         sys.exit(1)
-    data = json.loads(state.with_name("tags.json").read_text())
+    tags = state.with_name("tags.json")
+    data = json.loads(tags.read_text()) if tags.exists() else {{}}
     for r in rows:
         if r["service"] == args[-1]:
-            r["image"] = data["pantheon-" + r["service"] + ":t"]
+            r["image"] = data.get("pantheon-" + r["service"] + ":t", os.environ.get("CANDIDATE_IMAGE"))
             r["state"] = "running"
     state.write_text(json.dumps(rows))
 elif args[0] == "start":
@@ -76,7 +89,7 @@ elif args[0] == "start":
 """, encoding="utf-8")
     stub.chmod(0o755)
     return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PANTHEON_STEADY_RESTORE_WAIT_SECONDS": "1", "RETAINED_IMAGES": os.environ.get("RETAINED_IMAGES", f"{BASE} {SRC}"),
-            "EXPECTED_STEADY_FOR_TEST": "source-ingest source-ingest-scheduler"}
+            "EXPECTED_STEADY_FOR_TEST": os.environ.get("EXPECTED_STEADY_FOR_TEST", "source-ingest source-ingest-scheduler")}
 
 
 def _ctr(service, state, image, cid, restart="unless-stopped", **extra):
@@ -87,18 +100,22 @@ def _run(tmp_path: Path, before: list[dict], after: list[dict]):
     """Capture a baseline from ``before`` then run the compensation check on ``after``."""
     baseline = tmp_path / "baseline.txt"
     env = _stub_docker(tmp_path, before)
-    fmt = re.search(r"^STEADY_SERVICE_FORMAT=.*$", DEPLOY_SCRIPT.read_text(encoding="utf-8"), re.M).group(0)
-    prelude = ('set -uo pipefail\ninfo() { echo "[info] $*"; }\n' + fmt + "\n"
-               + 'expected_steady_services() { printf "%s\\n" ${EXPECTED_STEADY_FOR_TEST:-}; }\n'
-               + _function("steady_service_rows") + _function("capture_steady_service_baseline")
-               + _function("steady_service_problems") + _function("recreate_steady_service_on_baseline_image")
-               + _function("verify_steady_services_restored"))
+    prelude = _steady_prelude()
     (tmp_path / "state.json").write_text(json.dumps(before))
     subprocess.run(["bash", "-c", prelude + f'capture_steady_service_baseline {baseline}'], env=env, check=True)
     (tmp_path / "state.json").write_text(json.dumps(after))
     res = subprocess.run(["bash", "-c", prelude + f'verify_steady_services_restored {baseline}'],
                          env=env, capture_output=True, text=True, timeout=60)
     return baseline, res, json.loads((tmp_path / "state.json").read_text())
+
+
+def _steady_prelude():
+    fmt = re.search(r"^STEADY_SERVICE_FORMAT=.*$", DEPLOY_SCRIPT.read_text(encoding="utf-8"), re.M).group(0)
+    return ('set -euo pipefail\ninfo() { echo "[info] $*"; }\n' + fmt + "\n"
+               + 'expected_steady_services() { printf "%s\\n" ${EXPECTED_STEADY_FOR_TEST:-}; }\n'
+               + _function("steady_service_rows") + _function("capture_steady_service_baseline")
+               + _function("steady_service_problems") + _function("recreate_steady_service_on_baseline_image")
+               + _function("verify_steady_services_restored"))
 
 
 BEFORE = [_ctr("source-ingest", "running", SRC, "c1"), _ctr("source-ingest-scheduler", "running", BASE, "c2"),
@@ -305,3 +322,107 @@ def test_failed_recreate_is_named_with_the_reason(tmp_path, monkeypatch):
     assert res.returncode != 0
     assert "steady_service_compensation_incomplete: dev-paper-principal-issuer" in out
     assert "recreate on the baseline image failed" in out
+
+
+# Root 46095941360: the brief supplies these observed identity prefixes, not
+# full digests/IDs. Keep those prefixes verbatim rather than inventing bytes.
+NOV28_BASE_IMAGE = "sha256:03797094bdc4"
+NOV28_ISSUER = _ctr("dev-paper-principal-issuer", "running", NOV28_BASE_IMAGE, "27129bc604b6")
+
+
+def _nov28_pre_rollout(tmp_path):
+    """Execute the real root pre-rollout order, including actual issuer start.
+
+    Infrastructure helpers are inert; Docker retains the actual six-field row
+    shape. The candidate digest is synthetic because the brief doesn't name it.
+    """
+    before = [*BEFORE, NOV28_ISSUER]
+    env = _stub_docker(tmp_path, before)
+    env.update(EXPECTED_STEADY_FOR_TEST="source-ingest source-ingest-scheduler dev-paper-principal-issuer",
+               RETAINED_IMAGES=f"{BASE} {SRC} {NOV28_BASE_IMAGE}", CANDIDATE_IMAGE=CAND,
+               PANTHEON_DEPLOY_SHA="5f634668b", DEV_PAPER_PRINCIPALS_SUPPORTED="true",
+               PANTHEON_DEV_COMPOSE_PROFILES="root,dev-paper-principals",
+               PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="false",
+               PANTHEON_DEV_PAPER_EXPRESSION_LAYER="false",
+               PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="120")
+    source = DEPLOY_SCRIPT.read_text()
+    root = source.index('\n  root)\n', source.index('case "${PANTHEON_DEPLOY_COMPONENT}" in'))
+    start = source.index("    validate_source_refresh_profile\n", root)
+    end = source.index('    DEV_PRE_DEPLOY_BFF_SHA=', start)
+    segment = source[start:end]
+    # Ordering regression must include bootstrap: it can recreate postgres too.
+    assert segment.index("capture_steady_service_baseline") < segment.index("bootstrap_dev_lifecycle_projection")
+    inert = ("validate_source_refresh_profile validate_required_loop_workers ensure_dev_management_ai_bucket "
+             "ensure_dev_management_ai_postgres_role prune_dev_management_ai_telemetry_for_disk "
+             "retire_dormant_and_one_off_profile_containers prune_dev_release_artifacts_for_build "
+             "prune_dev_docker_storage_for_build check_dev_deploy_disk_preflight seal_dev_candidate_images "
+             "bootstrap_dev_lifecycle_projection resolve_bounded_source_refresh_active_symbols "
+             "dump_dev_root_failure_diagnostics")
+    prelude = _steady_prelude() + _function("expected_steady_services") + _function("start_dev_paper_principal_issuer")
+    prelude += '\nrollback_dev_bff_on_failure() { echo "unexpected rollback: $*" >&2; exit 99; }\n'
+    prelude += "\n".join(f"{name}() {{ :; }}" for name in inert.split()) + "\n"
+    # Use the production mktemp call, in this test's private temporary directory.
+    env["TMPDIR"] = str(tmp_path)
+    result = subprocess.run(["bash", "-c", prelude + segment + '\nprintf "BASELINE=%s\\n" "$DEV_STEADY_SERVICE_BASELINE_FILE"'],
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    baseline = Path(next(line.removeprefix("BASELINE=") for line in result.stdout.splitlines()
+                         if line.startswith("BASELINE=")))
+    assert f"dev-paper-principal-issuer|{NOV28_BASE_IMAGE}" in baseline.read_text().splitlines()
+    current = json.loads((tmp_path / "state.json").read_text())
+    assert next(r for r in current if r["service"] == NOV28_ISSUER["service"])["image"] == CAND
+    return baseline, env
+
+
+@pytest.mark.parametrize("sealed_restore_restores_issuer", [True, False])
+def test_nov28_root_sequence_restores_pre_deploy_issuer(tmp_path, sealed_restore_restores_issuer):
+    baseline, env = _nov28_pre_rollout(tmp_path)
+    if sealed_restore_restores_issuer:
+        # Sealed restore did restore the issuer correctly on 11/28; baseline
+        # verification must accept it, without attempting to reinstall candidate.
+        state = tmp_path / "state.json"
+        rows = json.loads(state.read_text())
+        for row in rows:
+            if row["service"] == NOV28_ISSUER["service"]:
+                row["image"] = NOV28_BASE_IMAGE
+        state.write_text(json.dumps(rows))
+    result = subprocess.run(["bash", "-c", _steady_prelude() + f'verify_steady_services_restored {baseline}'],
+                            env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "steady_service_compensation_incomplete" not in result.stdout + result.stderr
+    rows = json.loads((tmp_path / "state.json").read_text())
+    assert next(r for r in rows if r["service"] == NOV28_ISSUER["service"])["image"] == NOV28_BASE_IMAGE
+    tags = tmp_path / "tags.json"
+    if sealed_restore_restores_issuer:
+        assert not tags.exists(), "already restored issuer must not be re-tagged"
+    else:
+        assert json.loads(tags.read_text()) == {"pantheon-dev-paper-principal-issuer:t": NOV28_BASE_IMAGE}
+
+
+@pytest.mark.parametrize("config_exit", [0, 17])
+def test_compose_reference_failure_reports_status_and_bounded_redacted_stderr(tmp_path, monkeypatch, config_exit):
+    secret = "opaque-environment-secret"
+    monkeypatch.setenv("SERVICE_API_KEY", secret)
+    diagnostic = (f"invalid config {secret} Bearer bearer-credential "
+                  "TOKEN=inline-credential password='quoted secret' "
+                  "https://user:pass@example.invalid/ eyJabcdef.abcdefghi.signature\n" + "x" * 500)
+    _b, res, _ = _run_issuer(tmp_path, monkeypatch, CONFIG_EXIT=str(config_exit),
+                           CONFIG_NO_IMAGE="1", CONFIG_STDERR=diagnostic)
+    out = res.stdout + res.stderr
+    assert res.returncode != 0
+    assert "steady_service_compensation_incomplete: dev-paper-principal-issuer" in out
+    assert f"compose config exit status={config_exit}" in out
+    excerpt = out.split("; stderr=", 1)[1].split(")", 1)[0]
+    assert len(excerpt) == 300
+    for value in (secret, "bearer-credential", "inline-credential", "quoted secret", "user:pass", "eyJabcdef"):
+        assert value not in out
+    assert "[REDACTED]" in excerpt and "[REDACTED_JWT]" in excerpt
+
+
+def test_issuer_without_pre_deploy_container_keeps_empty_image_baseline(tmp_path, monkeypatch):
+    monkeypatch.setenv("EXPECTED_STEADY_FOR_TEST", "source-ingest source-ingest-scheduler dev-paper-principal-issuer")
+    baseline, result, final = _run(tmp_path, BEFORE, ISSUER_AFTER)
+    assert "dev-paper-principal-issuer|" in baseline.read_text().splitlines()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert next(r for r in final if r["service"] == "dev-paper-principal-issuer")["image"] == CAND
+    assert not (tmp_path / "tags.json").exists()
