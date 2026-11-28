@@ -36,17 +36,17 @@
     "cap_and_cleanup": "Existing calls/events/cards and CompilerStore writers remain registered in docs/operations/storage-manifest.json. Input answers and inactive record attempts have 30-day pruning; existing events/cards/compiler rows lack a verified hard size cap or cleanup. This task adds none."
   },
   "tests": {
-    "command_regression": "timeout 300 .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py -q --tb=short --disable-warnings",
-    "regression": "346 passed, 3 warnings in 81.25s; terminal exit 0 (326 source-ingestion + 20 adapter schema contract tests)",
+    "command_regression": "timeout 300 .venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_extraction.py services/source_ingestion/tests/test_hypothesis_compiler.py services/source_ingestion/tests/test_hypothesis_compiler_wiring.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_semantic_extraction.py services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py acceptance/test_discovery_pipeline_day.py -q --tb=short --disable-warnings",
+    "regression": "445 passed, 3 warnings in 124.99s; terminal exit 0; includes both appended extraction suites from catalogue grounding and PR #7998, real adapter schema contract and discovery probe tests",
     "command_adapter_schema": ".venv-pantheon/bin/python3 -m pytest services/openclaw-gateway-adapter/tests/test_hypothesis_card_schema_contract.py -q --tb=short",
-    "adapter_schema_contract": "20 adapter schema contract tests included in the current combined regression batch; terminal exit 0",
+    "adapter_schema_contract": "20 adapter schema contract tests included in the refreshed combined regression batch; terminal exit 0",
     "command_probe": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_hypothesis_compiler.py::test_hosted_evidence_probe_reports_real_store_rows_read_only -q --tb=short",
     "probe_fixture": "1 passed in 2.45s; terminal exit 0; executes the embedded probe against real temporary ledger/compiler stores and verifies unchanged database bytes",
     "storage_manifest": "python3 scripts/check_storage_manifest.py: passed, 380 existing entries, no failures",
     "diff": "git diff --check: passed",
     "environment": "python3 scripts/dev/provision_python_distribution.py --print-python: provisioned task-scoped .venv-pantheon; system python has no pytest",
     "command_research_integration": "timeout 300 .venv-pantheon/bin/python3 -m pytest services/research/tests/test_hypothesis_card_gate_candidate.py services/research/tests/test_card_admission_production_integration.py -q --tb=short --disable-warnings",
-    "research_integration": "13 passed, 127 warnings in 190.08s; terminal exit 0; covers all seven CI failures and neighbouring card-to-admission integration cases"
+    "research_integration": "13 passed, 127 warnings in 192.41s; terminal exit 0 after dev 483f11762 refresh; covers all seven original CI failures and neighbouring card-to-admission integration cases"
   },
   "hosted_acceptance": {
     "status": "pending",
@@ -77,5 +77,13 @@
       "result": "1 failed, 15 warnings in 15.70s; terminal exit 1; same missing registry payload as CI"
     },
     "base_refresh": "Merged origin/dev dd5c6f51b526d686ca9ab6b3c6c3af09af157714 without conflicts; earlier review does not apply to the refreshed head."
+  },
+  "review_return": {
+    "previous_head": "9d667560ac2780dab3af96029bfb8be2ceb2d2bc",
+    "reason": "Antigravity source/test review passed but canonical approve admission rejected PR #8012 conflicts with current dev; owner refresh and new exact-head review required.",
+    "base": "483f1176236f4fbb34cd2c35adc5799d9f756cbd",
+    "anchor_commit": "80910d8465a5347183772c2d818ddb7651041fec",
+    "resolution": "The sole content conflict appended two independent test blocks to test_hypothesis_extraction.py. Retain both complete blocks. Automatic production merge retains PR #7998 unsent-call refund and adapter-backoff behavior alongside catalogue stamping; no new production edits.",
+    "residual_findings": "Existing RC3 retention and RC2 first-24-hour hosted acceptance obligations below remain open; no new out-of-scope finding during refresh."
   }
 }
